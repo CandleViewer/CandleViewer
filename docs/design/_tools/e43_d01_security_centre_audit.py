@@ -27,14 +27,25 @@ Gates (each FAIL led by its name):
               the base, and §10.1 carries the G-T2.2 label pair (tertiary on raised).
   G-GATE      the safety reading: the gate records and does not enforce (C-2.21); enabling LIVE
               switches no session (C-2.11); the enable is a typed `ENABLE LIVE` then a fresh
-              `live_enablement` code; turning off needs no typed word and no code and is never T2
-              or hidden; its consequence is `11`'s sentence verbatim; every confirm starts on
-              Cancel; the C-2.6 carve-out is stated; the withdrawal finding is fix-only; the
-              posture never renders a checkbox; a Manager's popover carries no admin link.
+              `live_enablement` code, pinned per place (§6.3's SCR-006 bullet: bound to this one
+              request; the GATE-06 row: single-use and bound to the request; neither names a grace,
+              a window or a reuse); turning off needs no typed word and no code and is never T2 or
+              hidden: §6.4's "`enabled` or its state is unknown" rule is pinned, and the GATE-01,
+              GATE-07, GATE-08 and GATE-13 rows each draw Turn off present and never disabled,
+              hidden, absent, gated or T2; an unconfirmed turn-off (GATE-14) keeps the last
+              server-sent state, offers Retry and points at the kill switch; an enable whose outcome
+              is unknown (GATE-11b) re-reads the gate and never says "Nothing changed"; the
+              consequence is `11`'s sentence verbatim; every confirm starts on Cancel; the C-2.6
+              carve-out is stated; the withdrawal finding is fix-only, with its server-side refusal on
+              G-4; the gate rows are B17's evidence keys (`28`:7206–7211); a finding is never below
+              `info`; the skip link and the idempotent turn-off are stated; the posture never renders a
+              checkbox; a Manager's popover carries no admin link.
   G-SECRET    no secret material: key ids only as `...` plus four characters, no IPv4 literal,
-              and "secret" only in §1's no-secret item.
-  G-D8        D8 is read from the merged threat model (`TM`:749, :1045); E42-T06's ADR appears only
-              on request rows and never with a number; no admin-operations doc is cited.
+              "secret" only in §1's no-secret item, and no credential-shaped value anywhere: no run
+              of 16 or more letters and digits that mixes both, no `X-BAPI-` header, no `api_key`,
+              no `sign=` and no `Bearer` value.
+  G-D8        D8 is read as ruled (`14`:43, :3069) and the threat model's open as stale (`TM`:749,
+              :1045); E42-T06's ADR is never cited with a number; no admin-operations doc is cited.
   G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
               deny word in the spec; no deny word in this tool's text or the pins.
@@ -66,7 +77,7 @@ SPEC_REL = "docs/design/E43/E43-D01.md"
 TOOL_REL = "docs/design/_tools/e43_d01_security_centre_audit.py"
 PINS_REL = "docs/design/_tools/e43_d01_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
-BASE = "d023df0f66409807f2594ccd5086cd6d5017b16a"  # origin/main when written; re-pinned by content
+BASE = "a7d659a5bee5d06a28950f324800f84dc3853e6f"  # origin/main when written; re-pinned by content
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
 CONTRAST_PATH = ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
@@ -79,21 +90,18 @@ PATHS: dict[str, str] = {
     "22": "docs/plan/22-api-openapi.yaml",
     "28": "docs/plan/28-statechart-catalogue.md",
     "TM": "docs/security/threat-models/e42-admin.md",
+    "E09D06": "docs/design/E09/E09-D06.md",
     "E09D09": "docs/design/E09/E09-D09.md",
     "E42D02": "docs/design/E42/E42-D02.md",
     "E42D04": "docs/design/E42/E42-D04.md",
     "E38D02": "docs/design/E38/E38-D02.md",
     "DS": ".claude/rules/32-design-specs.md",
 }
-CITE = re.compile(
-    r"`(\d\d|TM|E09D09|E42D0[24]|E38D02|DS)`:(\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)"
-)
+CITE = re.compile(r"`(\d\d|TM|E09D0[69]|E42D0[24]|E38D02|DS)`:(\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)")
 TOKEN_NAME = re.compile(
     r"`((?:color|font|border|radius|type|space|size|motion|opacity|elevation)\.[a-z0-9.-]*[a-z0-9])`"
 )
-CLOSING = re.compile(
-    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE
-)
+CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE)
 LOCAL_PATH = re.compile(
     "/" + "home/|/" + "tmp/|\\bno" + "tes/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b"
 )  # assembled
@@ -144,6 +152,7 @@ REQUIRED_FRAMES = (
     "SCR-074/not-permitted",
     "SCR-010/gate-locked",
     "SCR-010/live-turned-off",
+    "SCR-137/gate-off-unconfirmed",
 )
 ACS = ("AC-1", "AC-2", "AC-3", "AC-4")
 FRAME = re.compile(r"`((?:SCR-\d{3}|[a-z-]+)/[a-z0-9-]+)`")
@@ -152,6 +161,10 @@ OPS_DOC = re.compile(r"docs/ops")
 T06_ADR = "E42-T06's ADR"
 MASK = re.compile(r"[Kk]ey \.\.\.([A-Za-z0-9]*)")
 IPV4 = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
+# a credential-shaped value: a long run mixing letters and digits (a hex digest, a random id), a
+# Bybit signing header, a named key field, a signed query or a bearer value
+CRED_RUN = re.compile(r"(?<![A-Za-z0-9])(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{16,}")
+CRED_NAMED = re.compile(r"x-bapi-|api_key|\bsign=|\bbearer\s+[A-Za-z0-9._~+/-]{8,}", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -165,9 +178,7 @@ class Texts:
 
 def git(*args: str) -> str | None:
     try:
-        r = subprocess.run(
-            ["git", "-C", str(ROOT), *args], capture_output=True, check=False
-        )
+        r = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, check=False)
     except OSError:
         return None
     return r.stdout.decode("utf-8", "surrogateescape") if r.returncode == 0 else None
@@ -302,8 +313,7 @@ def contrast_values(row_: list[str]) -> list[str]:
     cc = mod("contrast_check")
     fg, bg = tok(row_[1]), tok(row_[2])
     return [
-        f"{cc.contrast_ratio(hex_rgb(color(th, fg)), hex_rgb(color(th, bg))):.2f}"
-        for th in THEMES
+        f"{cc.contrast_ratio(hex_rgb(color(th, fg)), hex_rgb(color(th, bg))):.2f}" for th in THEMES
     ]
 
 
@@ -314,11 +324,7 @@ def cvd_values(row_: list[str]) -> tuple[str, str]:
     ds = [cv.delta_e76(ha, hb)] + [
         cv.delta_e76(cv.simulate(ha, d), cv.simulate(hb, d)) for d in DEFICIENCIES
     ]
-    under = [
-        n
-        for n, d in zip(("normal", *DEFICIENCIES), ds, strict=True)
-        if d < cv.JND_FLOOR
-    ]
+    under = [n for n, d in zip(("normal", *DEFICIENCIES), ds, strict=True) if d < cv.JND_FLOOR]
     return " / ".join(f"{d:.2f}" for d in ds), (", ".join(under) if under else "none")
 
 
@@ -390,9 +396,7 @@ def g_token(t: Texts) -> list[str]:
     known = known_tokens()
     names = sorted(set(TOKEN_NAME.findall(t.spec)))
     return [
-        f"`{n}` does not resolve in the token JSON at the base"
-        for n in names
-        if n not in known
+        f"`{n}` does not resolve in the token JSON at the base" for n in names if n not in known
     ]
 
 
@@ -511,16 +515,12 @@ def g_t2(t: Texts) -> list[str]:
         if len(r) < 4 or "T2" not in r[3]:
             continue
         if not RENDERING.search(r[3]):
-            bad.append(
-                f"{r[0]}: a T2 control with no rendering (2a, 2b or the sentence form)"
-            )
+            bad.append(f"{r[0]}: a T2 control with no rendering (2a, 2b or the sentence form)")
         quote = T2_REASON.search(r[3])
         if not quote:
             bad.append(f"{r[0]}: a T2 presentation with no quoted reason after T2")
         elif "PROPOSED" not in r[3] and not any(k.match(quote[1]) for k in keys):
-            bad.append(
-                f"{r[0]}: {quote[1]!r} is no E09-D09 key's text and is not PROPOSED"
-            )
+            bad.append(f"{r[0]}: {quote[1]!r} is no E09-D09 key's text and is not PROPOSED")
     return bad
 
 
@@ -540,15 +540,93 @@ GATE_TEXTS = (
         "No copy on these surfaces says the screen enforces anything",
     ),
     ("§1 item 3", "Enabling live makes LIVE **selectable**; it switches no session."),
-    ("§6.3", "class `live_enablement`"),
     ("§6.4", "It is **never T2 and never hidden** while live may be on"),
+    ("§6.4", "shows whenever the gate is `enabled` **or its state is unknown**"),
+    ("§6.4", "it shows from mount until the server reports `locked` or `eligible`"),
+    ("§6.4", 'the screen never shows "turned off" before the server reports `locked`'),
     ("§6.4", "**no typed word and no code**"),
     ("§7.2", "**Protective writes are never gated.**"),
+    ("§6.3", "the match is exact and case-sensitive"),
+    ("§3", '**"Skip to live gate"** joins the top-of-page skip-link set'),
+    ("§6.4", "**PROPOSED idempotent**"),
+    ("§5.1", "`debug` is never a finding severity"),
     (
         "§7.2",
         "cancel, close, flatten, reduce-only orders and setting or tightening a stop stay enabled",
     ),
 )
+
+
+# the rows that draw Turn off live trading…, each with the phrase that keeps it present and usable
+TURN_OFF_ROWS = (
+    ("GATE-01", "Turn off live trading… present and T1 from mount"),
+    ("GATE-07", "Turn off enabled, never gated"),
+    ("GATE-08", 'Confirm "Turn off live trading" enabled from the start'),
+    ("GATE-13", "Turn off live trading… present and T1"),
+)
+TURN_OFF_NEG = re.compile(r"\b(?:disabled|hidden|absent|gated|T2)\b")
+NEVER = re.compile(r"\bnever (?:disabled|hidden|absent|gated|T2)\b")
+SEVERITIES = ("Critical", "Error", "Warning", "Info")  # BQ-05: never `debug`
+REUSE = re.compile(r"\b(?:grace|reus\w*|window|\d+ minutes?)\b", re.IGNORECASE)
+
+
+def turn_off(t: Texts) -> list[str]:
+    """Turn off is present and usable wherever live may be on (INV-B17-d, BQ-06)."""
+    bad = []
+    for lead, need in TURN_OFF_ROWS:
+        cells = " ; ".join(row(t, lead)[2:])
+        if need not in cells:
+            bad.append(f"{lead}: Turn off is not drawn present ({need[:40]!r})")
+        for clause in re.split(r"[;.]", cells):
+            if "Turn off" in clause and TURN_OFF_NEG.search(NEVER.sub("", clause)):
+                bad.append(f"{lead}: Turn off is drawn disabled, hidden, absent or gated")
+    return bad
+
+
+def step_up(t: Texts) -> list[str]:
+    """The enable's fresh code, pinned in §6.3 and in the GATE-06 row separately."""
+    bad = []
+    six3 = [ln for ln in section(t.spec, "### 6.3").split("\n") if "**Then SCR-006**" in ln]
+    if len(six3) != 1:
+        bad.append("§6.3: no SCR-006 bullet")
+    else:
+        for need in ("class `live_enablement`", "the code is bound to this one request"):
+            if need not in six3[0]:
+                bad.append(f"§6.3: the SCR-006 bullet lacks {need!r}")
+        if REUSE.search(six3[0]):
+            bad.append("§6.3: the SCR-006 bullet lets a code be reused")
+    g6 = " ; ".join(row(t, "GATE-06")[1:])
+    for need in ("class `live_enablement`", "single-use", "bound to the request"):
+        if need not in g6:
+            bad.append(f"GATE-06: lacks {need!r}")
+    if REUSE.search(g6):
+        bad.append("GATE-06: lets a code be reused")
+    return bad
+
+
+def unconfirmed(t: Texts) -> list[str]:
+    """GATE-14 and GATE-11b: the client never claims an outcome the server did not send."""
+    bad = []
+    g14 = " ; ".join(row(t, "GATE-14")[1:])
+    for need in (
+        "It may still be on.",
+        "Retry",
+        "kill switch",
+        "the status line keeps the last server-sent state until a re-read",
+        'role="alert"',
+    ):
+        if need not in g14:
+            bad.append(f"GATE-14: lacks {need!r}")
+    g11b = " ; ".join(row(t, "GATE-11b")[1:])
+    for need in ("re-reads the gate", "GATE-13 until the read succeeds", 'never "Nothing changed"'):
+        if need not in g11b:
+            bad.append(f"GATE-11b: lacks {need!r}")
+    for i, ln in enumerate(t.spec.split("\n"), 1):
+        if "Nothing changed" in ln and not ln.startswith(("| GATE-11a ", "| GATE-11b ")):
+            bad.append(f'spec:{i} claims "Nothing changed" outside GATE-11a / GATE-11b')
+    if "never added by the client" not in row(t, "GATE-11a")[3]:
+        bad.append('GATE-11a: the client may add "Nothing changed" of its own')
+    return bad
 
 
 def g_gate(t: Texts) -> list[str]:
@@ -569,11 +647,21 @@ def g_gate(t: Texts) -> list[str]:
             bad.append(f"{lead}: the confirm does not start with focus on Cancel")
     if "T2" in row(t, "GATE-07")[3]:
         bad.append("GATE-07: the off control is drawn gated")
+    bad += turn_off(t) + step_up(t) + unconfirmed(t)
     wd = row(t, "Withdrawal permission detected")
     if not wd[4].startswith("no (C-2.8"):
         bad.append("§5.1: the withdrawal finding is drawn dismissible")
     if "T2" not in row(t, "SEC-12")[3]:
         bad.append("SEC-12: the fix-only finding's Dismiss… is not T2")
+    sev = [r[1] for r in table_rows(section(t.spec, "### 5.1"), "") if len(r) == 5][2:]
+    if not sev or any(s not in SEVERITIES for s in sev):
+        bad.append("§5.1: a finding severity below `info` (BQ-05)")
+    keys = re.findall(r'"(\w+)": false', "\n".join(at(t, "28").split("\n")[7205:7211]))
+    six2 = section(t.spec, "### 6.2")
+    if len(keys) != 4 or any(not re.search(rf"\n\| [^|\n]*\(`{k}`\)", six2) for k in keys):
+        bad.append("§6.2: the gate rows are not B17's four evidence keys (`28`:7206–7211)")
+    if "fix-only refusal" not in row(t, "G-4")[1]:
+        bad.append("G-4: no G-row for the server-side fix-only refusal (BQ-04)")
     if "**no link**" not in row(t, "SW-02")[3]:
         bad.append("SW-02: a Manager's popover carries an admin link")
     for i, ln in enumerate(t.spec.split("\n"), 1):
@@ -593,11 +681,11 @@ def g_secret(t: Texts) -> list[str]:
     for i, ln in enumerate(t.spec.split("\n"), 1):
         for m in MASK.finditer(ln):
             if not re.fullmatch(r"[A-Za-z0-9]{4}", m[1]):
-                bad.append(
-                    f"spec:{i} shows a key id that is not `...` plus four characters"
-                )
+                bad.append(f"spec:{i} shows a key id that is not `...` plus four characters")
         if IPV4.search(ln):
             bad.append(f"spec:{i} shows an address literal")
+        if CRED_RUN.search(ln) or CRED_NAMED.search(ln):
+            bad.append(f"spec:{i} carries a credential-shaped value")
         if "secret" in ln.lower().replace("g-secret", "") and not ln.startswith(
             "4. **No secret material.**"
         ):
@@ -608,19 +696,15 @@ def g_secret(t: Texts) -> list[str]:
 def g_d8(t: Texts) -> list[str]:
     bad = []
     one = section(t.spec, "## 1.")
-    for need in ("`TM`:749", "`TM`:1045", "D8-invariant"):
+    for need in ("`TM`:749", "`TM`:1045", "D8-invariant", "`14`:43, :3069", "D8 is ruled"):
         if need not in one:
             bad.append(f"§1 item 6 lacks {need}")
     for i, ln in enumerate(t.spec.split("\n"), 1):
         if ADR_NUMBER.search(ln):
-            bad.append(
-                f"spec:{i} names an ADR number (E42-T06's ADR is unnumbered here)"
-            )
+            bad.append(f"spec:{i} names an ADR number (E42-T06's ADR is unnumbered here)")
         if OPS_DOC.search(ln):
             bad.append(f"spec:{i} cites an admin-operations doc")
-        if T06_ADR in ln and not (
-            ln.startswith(("| R-", "**Pre-stage.**")) or "request row" in ln
-        ):
+        if T06_ADR in ln and not (ln.startswith(("| R-", "**Pre-stage.**")) or "request row" in ln):
             bad.append(f"spec:{i} leans on E42-T06's ADR outside a request row")
     row(t, "C-2")  # the D8 conflict row must exist (LookupError otherwise)
     return bad
@@ -631,9 +715,7 @@ def g_cite(t: Texts) -> list[str]:
     pinned = parse_pins(t.pins)
     for label, h in hashes.items():
         if label not in pinned:
-            bad.append(
-                f"cite {label} is unpinned: verify it by content, then --repin-ruled"
-            )
+            bad.append(f"cite {label} is unpinned: verify it by content, then --repin-ruled")
         elif pinned[label] != h:
             bad.append(f"cite {label}: the line at its base is not the pinned content")
     return bad
@@ -662,11 +744,7 @@ def g_scope(t: Texts) -> list[str]:
     if t.changed is None:
         return ["cannot list the changed paths (git failed)"]
     own = ", ".join(OWN_PATHS)
-    return [
-        f"{p} is touched; this ticket owns {own}"
-        for p in t.changed
-        if p not in OWN_PATHS
-    ]
+    return [f"{p} is touched; this ticket owns {own}" for p in t.changed if p not in OWN_PATHS]
 
 
 GATES: dict[str, Callable[[Texts], list[str]]] = {
@@ -704,11 +782,7 @@ def changed_paths() -> list[str] | None:
 
 def load() -> Texts:
     spec = (ROOT / SPEC_REL).read_text(encoding="utf-8")
-    pins = (
-        (ROOT / PINS_REL).read_text(encoding="utf-8")
-        if (ROOT / PINS_REL).exists()
-        else ""
-    )
+    pins = (ROOT / PINS_REL).read_text(encoding="utf-8") if (ROOT / PINS_REL).exists() else ""
     tool = (ROOT / TOOL_REL).read_text(encoding="utf-8")
     return Texts(spec, pins, tool, changed_paths(), {})
 
@@ -731,9 +805,7 @@ def fill(t: Texts) -> str:
 def sub(old: str, new: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
         if t.spec.count(old) != 1:
-            raise SystemExit(
-                f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times"
-            )
+            raise SystemExit(f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times")
         return replace(t, spec=t.spec.replace(old, new))
 
     return f
@@ -794,11 +866,34 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-GATE", "gate the protective writes", sub("**Protective writes are never gated.**", "**Protective writes follow the band.**")),
     ("G-GATE", "give a Manager the admin link", set_cell("SW-02", 3, 'T2 "Live trading is off until the live gate opens." (PROPOSED); rendering 2a, with a "Security centre" link')),
     ("G-GATE", "draw a posture checkbox", add_line("Each check carries a checkbox the Owner can set.")),
+    ("G-GATE", "drop Turn off from the loading row (GATE-01)", set_cell("GATE-01", 3, "Enable absent until the state is read; no claim either way")),
+    ("G-GATE", "disable Turn off while the summary refreshes (GATE-07)", set_cell("GATE-07", 3, "Turn off enabled, never gated; Turn off natively disabled while the summary refreshes")),
+    ("G-GATE", "disable the turn-off Confirm (GATE-08)", set_cell("GATE-08", 2, "§6.4's dialog; Confirm \"Turn off live trading\" natively disabled until the summary re-reads")),
+    ("G-GATE", "hide Turn off while the state is unknown (GATE-13)", set_cell("GATE-13", 2, "\"Live trading: status unknown\"; Turn off live trading… hidden")),
+    ("G-GATE", "narrow §6.4's rule to `enabled` only", sub("shows whenever the gate is `enabled` **or its state is unknown**", "shows only when the gate is `enabled`")),
+    ("G-GATE", "drop §6.3's SCR-006 bullet", lambda t: replace(t, spec="\n".join(ln for ln in t.spec.split("\n") if "**Then SCR-006**" not in ln))),
+    ("G-GATE", "drop the GATE-06 row", drop_row("| GATE-06 ")),
+    ("G-GATE", "let §6.3's code be reused", sub("the code is bound to this one request", "a code from the last 15 minutes is reused")),
+    ("G-GATE", "let GATE-06's code be reused", set_cell("GATE-06", 3, "E09's modal; the code is single-use and bound to the request; a code from the last 15 minutes is reused")),
+    ("G-GATE", "drop the kill-switch pointer from GATE-14", set_cell("GATE-14", 2, "§6.4's dialog stays open with the server's reason; Retry; the status line keeps the last server-sent state until a re-read")),
+    ("G-GATE", "claim turned off before the server (GATE-14)", set_cell("GATE-14", 2, "\"It may still be on.\" Retry; the kill switch; the status line reads turned off")),
+    ("G-GATE", "claim Nothing changed after a timeout (GATE-11b)", set_cell("GATE-11b", 3, "one polite \"Live trading wasn't enabled. Nothing changed.\"")),
+    ("G-GATE", "let the typed token match loosely", sub("the match is exact and case-sensitive", "the match ignores case")),
+    ("G-GATE", "drop the skip link from §3 (BQ-10)", sub('**"Skip to live gate"** joins', "a link joins")),
+    ("G-GATE", "drop the idempotent turn-off (BQ-06)", sub("**PROPOSED idempotent**", "refused")),
+    ("G-GATE", "give a finding the `debug` severity (BQ-05)", set_cell("Overdue rotation", 1, "Debug")),
+    ("G-GATE", "drop a B17 evidence key's row", drop_row("| Runbooks signed ")),
+    ("G-GATE", "drop the fix-only refusal G-row (BQ-04)", set_cell("G-4", 1, "no dismiss operation")),
     ("G-SECRET", "show a full key id", add_line("The row names key ...a1B2c3D4e5 in full.")),
     ("G-SECRET", "show an allowlisted address", add_line("The allowlist expects 100.64.0.7.")),
     ("G-SECRET", "name secret material in a row", add_line("The dialog shows the API secret once.")),
+    ("G-SECRET", "put a key-like value in a row", set_cell("SEC-09", 2, "the three items; sample api_key q8Hn3vT0pLm2Rx9Kw7")),
+    ("G-SECRET", "put a signature header in a row", add_line("| X-1 | the request carries X-BAPI-" + "SIGN: " + "9f2c4e1a" * 3 + " |")),
+    ("G-SECRET", "put a bearer value in a row", add_line("| X-2 | Authorization: Bearer abcDEFghiJKLmno |")),
+    ("G-SECRET", "put a mixed run in a row", set_cell("SEC-11", 2, "the card leaves the list; finding 7Qx2Lm9Pz4Rt8Vw1Ny")),
     ("G-D8", "number E42-T06's ADR", add_line("The admin window is ADR-0022's.")),
     ("G-D8", "cite E42-T06's ADR as an owner", add_line("Per E42-T06's ADR, the window covers the enable.")),
+    ("G-D8", "read D8 as open again", sub("`14`:43, :3069", "`14`:43")),
     ("G-D8", "cite an admin-operations doc", add_line("See the runbook in docs/ops for the off-switch.")),
     ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:2876)", "(`14`:2879)")),
     ("G-HYGIENE", "write a closing keyword against #1138", sub("carries the closing line.", "carries the closing line. Closes #1138.")),
@@ -811,9 +906,7 @@ def selftest() -> tuple[bool, list[str]]:
     base = replace(load(), changed=list(OWN_PATHS))
     before = base.spec
     found = audit(base)
-    out = [f"self-test: baseline {len(found)} FAIL"] + [
-        f"  baseline {g}: {m}" for g, m in found
-    ]
+    out = [f"self-test: baseline {len(found)} FAIL"] + [f"  baseline {g}: {m}" for g, m in found]
     ok = not found
     for i, (gate, what, fn) in enumerate(MUTATIONS, 1):
         gates = sorted({g for g, _ in audit(fn(base))})
