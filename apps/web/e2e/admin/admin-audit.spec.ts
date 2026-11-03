@@ -4,8 +4,8 @@ import { AUDIT_JOB_ID, stubAdminReads, stubAuditLog } from "../support/admin";
 import { seriousAxe } from "../support/axe";
 
 // E42-S04 (#1135) admin-audit.spec: SCR-135 and SCR-136 (E42-D04 §4 to §8) in a real browser, every
-// call answered at the network layer (C-13.5: no backend). The owner's log inside CMP-087 and the
-// export through the `audit` step-up and a download.
+// call answered at the network layer (C-13.5: no backend). The owner's log inside CMP-087, the
+// manager's My activity in the plain shell, the export through the `audit` step-up and a download.
 
 const main = (page: Page) => page.getByRole("main");
 const row = (page: Page, id: number) => page.locator(`tr[data-entry="${id}"]`);
@@ -259,5 +259,24 @@ test("E42-S04 an open chain break is the critical banner, with the halt line", a
   await expect(main(page).getByRole("button", { name: /Retry|Dismiss|Acknowledge/u })).toHaveCount(
     0,
   );
+  expect(await seriousAxe(page)).toEqual([]);
+});
+
+test("E42-S04 a manager's My activity: the plain shell, own actions only, nothing owner-only sent", async ({
+  page,
+}) => {
+  const paths: string[] = [];
+  page.on("request", (r) => paths.push(new URL(r.url()).pathname));
+  await stubSession(page, { role: "manager" });
+  const wire = await stubAuditLog(page, { own: true });
+  await page.goto("/admin/audit?q=withdrawal&ip=100.84.12.9");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("My activity");
+  await expect(main(page).getByText("Showing your actions only")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Admin area" })).toHaveCount(0);
+  await expect(main(page).getByText("That filter isn't available in your view.")).toBeVisible();
+  await expect(row(page, 1_204_295)).toBeVisible(); // the projection as served, nothing dropped
+  expect(wire.reads.every((search) => !/[?&](q|ip|actor_user_id)=/u.test(search))).toBe(true);
+  expect(paths.filter((p) => /\/AdminArea-[^/]+\.js$/u.test(p))).toEqual([]);
+  expect(paths.filter((p) => p.startsWith("/api/v1/admin/incidents"))).toEqual([]);
   expect(await seriousAxe(page)).toEqual([]);
 });

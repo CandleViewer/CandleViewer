@@ -32,7 +32,9 @@ async function renderAt(path: string, heading: RegExp, extra?: ReactNode) {
       <RouterProvider router={router} />
     </PreferencesProvider>,
   );
-  await screen.findByRole("heading", { name: heading });
+  // R-360 renders behind its own lazy chunk, My activity (E42-S04), as the admin area does: a busy
+  // host transforms a cold chunk's modules first, so it has the tree test's budget for one
+  await screen.findByRole("heading", { name: heading }, { timeout: 20_000 });
   await act(async () => {}); // flush the effects that register the rail's command
   return router;
 }
@@ -81,7 +83,7 @@ describe("E10-S01 S5: current page", () => {
   it.each([
     ["/terminal/last", /R-101/, "Terminal"],
     ["/settings/appearance", /Appearance/, "Settings"],
-    ["/admin/audit", /R-360/, "Admin"],
+    ["/admin/audit", /^My activity$/, "Admin"], // claims alone: R-360's plain-shell view (E42-S04)
   ])(
     "marks only the item owning %s with aria-current=page and a non-colour cue",
     async (path, h, item) => {
@@ -95,6 +97,7 @@ describe("E10-S01 S5: current page", () => {
       expect(current[0]?.style.fontWeight).toBe("var(--font-weight-medium)");
       expect(links.filter((a) => a.style.borderLeft.includes("solid"))).toEqual(current);
     },
+    30_000,
   );
 });
 

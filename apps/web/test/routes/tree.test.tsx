@@ -293,8 +293,9 @@ describe("E42-S01: the admin routes inside CMP-087 AdminLayout", () => {
   it("frames R-360 /admin/audit for an owner only: a manager keeps the plain shell", async () => {
     sessionFor("manager");
     const plain = renderAt("/admin/audit");
-    const stub = { name: "R-360 — owned by E09", level: 1 } as const;
-    expect(await screen.findByRole("heading", stub, ROUTE_WAIT)).toBeInTheDocument();
+    // E42-S04 (BQ-8 (a)): a manager's R-360 is My activity, in the plain shell
+    const own = { name: "My activity", level: 1 } as const;
+    expect(await screen.findByRole("heading", own, ROUTE_WAIT)).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Admin area" })).toBeNull();
     plain.unmount();
     sessionFor("owner");

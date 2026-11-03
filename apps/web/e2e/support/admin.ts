@@ -125,10 +125,11 @@ export async function stubAdminReads(
 }
 
 // SCR-135 and SCR-136's calls (E42-S04, #1135), answered at the network layer (C-13.5), after E42-D04
-// §1's worked example: the owner `basiltt`, LIVE, 2026-10-22 "as of 14:02:11", the break at entry
-// 1,204,118. No value is secret-shaped: hashes and keys repeat one character.
+// §1's worked example: the owner `basiltt`, the manager `alex`, LIVE, 2026-10-22 "as of 14:02:11",
+// the break at entry 1,204,118. No value is secret-shaped: hashes and keys repeat one character.
 
 const OWNER_ID = "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001";
+const ALEX_ID = "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002";
 export const AUDIT_JOB_ID = "19000000-0000-4000-8000-000000000001";
 const STEP_UP_CHALLENGE = "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
 
@@ -176,6 +177,22 @@ export const AUDIT_PAGES = {
   first: auditPage([auditEntry(1_204_300), auditEntry(1_204_299), auditEntry(1_204_298)], "c1"),
   second: auditPage([auditEntry(1_204_297), auditEntry(1_204_296)], null),
   filtered: auditPage([auditEntry(1_204_299, { severity: "error", outcome: "failure" })], null),
+  own: auditPage(
+    [
+      auditEntry(1_204_295, {
+        actor_user_id: ALEX_ID,
+        actor_username: "alex",
+        environment: null,
+        ip: null,
+        session_id: null,
+        subject_label: null,
+        entry_hash: null,
+        prev_hash: null,
+        detail: {},
+      }),
+    ],
+    null,
+  ),
 };
 
 const CHAIN_BREAK: Schemas["Incident"] = {
@@ -232,10 +249,11 @@ export interface AuditWire {
 }
 
 /**
- * SCR-135's server: the list reads by cursor and filter (`rows`: page 1's size, 3 by default), the
- * incidents (`broken`: one open chain break), the export (`stepUp`: its first answer `403
- * step_up_required`; `outcome`: the job's end) and its download (the file's bytes, `403
- * step_up_required` first under `stepUp`). Registered after `stubAdminReads`, so it answers first.
+ * SCR-135's server: the list reads by cursor and filter (`rows`: page 1's size, 3 by default;
+ * `own`: a Manager's projected page 1), the incidents (`broken`: one open chain break), the export
+ * (`stepUp`: its first answer `403 step_up_required`; `outcome`: the job's end) and its download
+ * (the file's bytes, `403 step_up_required` first under `stepUp`). Registered after
+ * `stubAdminReads`, so it answers first.
  */
 export async function stubAuditLog(
   page: Page,
@@ -244,15 +262,18 @@ export async function stubAuditLog(
     readonly stepUp?: boolean;
     readonly outcome?: "succeeded" | "failed";
     readonly rows?: number;
+    readonly own?: boolean;
   } = {},
 ): Promise<AuditWire> {
   const first =
-    options.rows === undefined
-      ? AUDIT_PAGES.first
-      : auditPage(
-          Array.from({ length: options.rows }, (_, i) => auditEntry(1_204_300 - i)),
-          "c1",
-        );
+    options.own === true
+      ? AUDIT_PAGES.own
+      : options.rows === undefined
+        ? AUDIT_PAGES.first
+        : auditPage(
+            Array.from({ length: options.rows }, (_, i) => auditEntry(1_204_300 - i)),
+            "c1",
+          );
   const wire = {
     reads: [] as string[],
     stepUps: [] as string[],

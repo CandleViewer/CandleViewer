@@ -3,7 +3,9 @@
  * (E42-D03 §11: "the 404 with no call and no admin code loaded"). The admin area is one module behind
  * `React.lazy`, SCR-120's overview inside it; this file counts both modules' evaluations, which stand
  * for the chunk a browser would fetch. One test, so no other test can have loaded either module
- * first: the module registry is this file's.
+ * first: the module registry is this file's. E42-S04 (#1135, BQ-8 (a)): R-360 is a Manager's My
+ * activity, its own chunk, whose one call is its own scoped `GET /admin/audit`; every other admin
+ * route still makes no admin call and loads no admin code.
  */
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
@@ -42,7 +44,7 @@ function sessionFor(role: Role): void {
 /** What a denied session sees on an admin route: the hidden route's 404, or R-360's own page. */
 function deniedHeading(role: Role, id: string): string {
   if (id !== "R-360") return "Page not found";
-  return role === "manager" ? "R-360 — owned by E09" : "You don't have access to this";
+  return role === "manager" ? "My activity" : "You don't have access to this";
 }
 
 /** A route's render with the admin area's lazy chunk: a busy host can take seconds over it. */
@@ -86,10 +88,11 @@ describe("E42-S01 BQ-7: the admin area's code sits behind the guard", () => {
       }
       expect([chunk.loads, chunk.overview]).toEqual([0, 0]); // R-300's overview included
       // None of the area's reads either: no `/admin/*` call, and not the Users tile's
-      // `/users/invites`, its one read outside that prefix (S-5330-04).
+      // `/users/invites`, its one read outside that prefix (S-5330-04). The one exception is a
+      // Manager's My activity at R-360 (E42-S04, BQ-8 (a)): its own scoped list read, page 1.
       const areaReads = (url: string): boolean =>
         url.includes("/api/v1/admin") || url.includes("/api/v1/users/invites");
-      expect(requested().filter(areaReads)).toEqual([]);
+      expect(requested().filter(areaReads)).toEqual(["/api/v1/admin/audit?limit=200"]);
 
       // The positive control, through the same watchers: an owner walks in from the journal.
       sessionFor("owner");

@@ -87,9 +87,11 @@ test("E42-S01 /admin/audit is framed for an owner only: a manager keeps the plai
   const paths = watchPaths(page);
   await stubSession(page, { role: "manager" });
   await page.goto("/admin/audit");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("R-360 — owned by E09");
+  // E42-S04 (BQ-8 (a)): a manager's R-360 is My activity, its own chunk and its own scoped read
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("My activity");
   await expect(band(page)).toHaveCount(0);
   expect(paths().filter((p) => ADMIN_CHUNK.test(p))).toEqual([]);
+  expect(paths().filter((p) => ADMIN_API.test(p))).toEqual(["/api/v1/admin/audit"]);
 });
 
 /** The owner on R-303 whose first invite the server refuses with a step-up challenge. */
