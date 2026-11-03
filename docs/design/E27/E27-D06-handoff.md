@@ -171,8 +171,8 @@ that line, `e27.scr127.typed` and `e27.scr127.hint.typed` at stage 2, and the me
 | `revokeApiKey`       | `DELETE /exchange-accounts/{accountId}/keys/{keyId}` | `keys:manage`      |
 
 Topics: `system` (`rate_budget_free_pct`, `secrets.kek_unavailable`). RBAC: the Owner only (`D03`:1399). Events:
-`admin.key_health_viewed` (analytics), `admin.key_marked_compromised` (audit, no operation and no registered code:
-§10). Budget: computed server-side and cached 60 s, never an exchange call from the browser (`14`:2715). Data detail:
+`admin.key_health_viewed` (analytics), `admin.key_marked_compromised` (audit, no operation and no registered code;
+BLOCKS the build, R6 in §10). Budget: computed server-side and cached 60 s, never an exchange call from the browser (`14`:2715). Data detail:
 `D03`:1399.
 
 ### 4.5 SCR-129 — Disable, delete and the revoke dialog
@@ -365,7 +365,7 @@ an event with none shows "Recorded in the audit log" and is routed to the regist
 | `account.key_rotated`          | audit     | SCR-127          | registered: `apikey.rotated` (`24`:5360); the marker keeps D03's `api_key.rotate` (C-2) |
 | `account.key_revoked`          | audit     | SCR-129, SCR-128 | registered: `api_key.revoke` ahead, `api_key.revoked` on completion (`24`:5372)         |
 | `admin.secrets_policy_changed` | audit     | SCR-128          | dropped: the policy has no write (D03 C15)                                              |
-| `admin.key_marked_compromised` | audit     | SCR-128          | no operation and no registered code (G-6); the card writes none                         |
+| `admin.key_marked_compromised` | audit     | SCR-128          | BLOCKS the build: no code is registered (R6)                                            |
 | `admin.accounts_list_viewed`   | analytics | SCR-125          | PROPOSED here: the payload is the verdict form, never a label                           |
 | `admin.key_form_opened`        | analytics | SCR-126          | PROPOSED: the key step opened                                                           |
 | `admin.key_test_run`           | analytics | SCR-125, SCR-128 | PROPOSED: the Test press                                                                |
@@ -374,6 +374,12 @@ an event with none shows "Recorded in the audit log" and is routed to the regist
 
 Disable and delete are registered for E27-S04 (`24`:5370), so SCR-129's markers name them
 (`e27.scr129.marker.disable`, `e27.scr129.marker.delete`; BQ-09, ruled); both drops above hold.
+
+**Requests to owners.** A-5 … A-8 and A-10 (§14) are the first five rows routed to an owner; R6 is the sixth.
+
+| R   | To                                                               | Request                                                                                                                                                                                   | Blocks                                                                   |
+| --- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| R6  | the `24` audit-registry owner; E27-S03 (#897) and E27-S04 (#898) | `admin.key_marked_compromised` is a key action (C-12.12) and C-2.9 audits every key action: register an ahead code and a completion code for it before any build of the compromise action | the compromise action on SCR-128's card: no build until both codes exist |
 
 ## 11. Budgets (restated from `14`, never re-decided)
 
@@ -496,6 +502,7 @@ writer). The `deck` stage reads the deck and the tool only, so the deck lands fi
 adds this pack and the pins (`--stage full`). Gates: G-DECK (each row parses,
 its text on its cited line), G-COVER (every E27-D03 §12 id once, by id, merged text unchanged unless lifted), G-RULES (§2), G-SECRET (no key material
 in any field; no show, copy-out or unmask offer),
-G-INDEX (§3 against `14` and D03's boards), G-DATA (§4 against `22`, `23` and `24`), G-EVENT (§10 against `T`),
+G-INDEX (§3 against `14` and D03's boards), G-DATA (§4 against `22`, `23` and `24`), G-EVENT (§10 against `T`; the
+compromise row blocks the build), G-RULING (§16.1's BQ-01 … BQ-10 rows; §10's registered spellings),
 G-MOTION (§7 against D04), G-A11Y (§8 against D05), G-BUDGET and G-AHEAD (the anchors), G-AROW, G-CITE (every cite
 pinned by content), G-FILLED, G-HYGIENE and G-SCOPE.
