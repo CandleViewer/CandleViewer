@@ -186,7 +186,8 @@ def gate_deck(root: Path, t: Texts) -> list[str]:
                 bad.append(f"G-DECK {key}: no source line and no 'no literal' note")
             continue
         for s in [text, *deck["variants"].get(key, [])]:
-            if not line or s not in line:
+            cut = f'"{s}' in line and not re.search(re.escape(f'"{s}"') + r"(?!\w)", line)
+            if not line or s not in line or cut or s.count('"') % 2:
                 bad.append(f"G-DECK {key}: {s!r} is not verbatim on {src}")
     for side in ("proposed", "derived", "variants", "security", "conflict", "retired"):
         bad += [f"G-DECK {side} names no entry {k}" for k in deck[side] if k not in keys]
@@ -443,12 +444,14 @@ def check(root: Path = ROOT, override: Texts | None = None) -> list[str]:
 
 
 # ---------- self-test ---------------------------------------------------------------------------
+CUT = '\\"Kill switch: engaged\\" while it is on) still refuse them while either is on."'
 #: (id, gate, target, find, replace): each must trip its own gate and no other.
 MUTATIONS: tuple[tuple[str, str, str, str, str], ...] = (
     ("M-1", "G-DECK", "deck", "Acknowledging isn't built yet.", "Acknowledging is not built."),
     ("M-2", "G-DECK", "deck", '\\"Acknowledge: {title}\\"', '\\"Acknowledge {title}\\"'),
     ("M-3", "G-DECK", "deck", '"gate.wrong": "SCR-149', '"gate.wrongly": "SCR-149'),
     ("M-4", "G-DECK", "deck", "E09-D09 (D09:95)", "E09-D09 (D09:99999)"),
+    ("M-5", "G-DECK", "deck", CUT, '"'),  # a string cut at its embedded quote
 )
 FULL_MUTATIONS: tuple[tuple[str, str, str, str, str], ...] = ()
 
