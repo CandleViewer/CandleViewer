@@ -22,7 +22,8 @@
  *   a set); a failed one, or a failed page, is the store's `readFailed` if it was asked last.
  * - **S-02:** no first `snap` within 5 s, or a refused subscription, is "Could not load"; `retry()`
  *   re-subscribes, and reads REST again after a failed read. A narrowing re-reads the directory,
- *   as the positions feed does, and the subscription is made again only when the directory changed.
+ *   as the positions feed does, and the subscription is made again only when the directory changed;
+ *   while it waits, a failed re-read is D03:191's "Could not load", and `retry()` reads it again.
  */
 import type { ConsumerSpec, TopicHandle, WsClient } from "../../../lib/ws/api";
 import { createFrameScheduler, type FrameMark } from "../../../lib/ws/client/frameScheduler";
@@ -73,7 +74,7 @@ export interface FillsFeedOptions {
 }
 
 export interface FillsFeed {
-  /** S-02's Retry: re-reads the directory if it failed, else re-subscribes. */
+  /** S-02's Retry: re-reads a failed directory (a narrowing's too) and re-makes a failed feed. */
   retry(): void;
   stop(): void;
 }
@@ -101,6 +102,9 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
   let budget: unknown;
   const queue: unknown[] = []; // REST items to apply: 1,000 a read, `MAX_QUEUED` at most (C-2.18)
   let readSeq = 0; // the reads asked so far: the last one decides `readFailed`
+  let readLost = false; // that last read failed, or a page of it
+  let narrowing = false; // a narrowing waits for a read to say who stayed
+  let directoryLost = false; // and its directory re-read failed: the candidates stay barred
   let lastBackfill = Number.NEGATIVE_INFINITY;
   let owed: unknown; // the timer of a backfill asked inside the interval
   let effective: Readonly<Record<string, unknown>> | null = null;
@@ -120,6 +124,9 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
     handle?.release();
     handle = null;
   }
+
+  /** D03:191's "Could not load" and Retry: the last read failed, or a narrowing's directory. */
+  const showLost = (): void => store.setReadFailed(readLost || directoryLost);
 
   function subscribe(ids: readonly string[]): void {
     release();
@@ -147,7 +154,10 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
     const seq = (readSeq += 1);
     void readExecutions(api, named, BACKFILL_PAGES, abort.signal).then((out) => {
       if (stopped) return;
-      if (seq === readSeq) store.setReadFailed(out.kind !== "ok" || out.value.failure !== null);
+      if (seq === readSeq) {
+        readLost = out.kind !== "ok" || out.value.failure !== null;
+        showLost();
+      }
       if (out.kind === "ok") queue.push(...out.value.items.slice(0, MAX_QUEUED - queue.length));
     });
   }
@@ -172,6 +182,10 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
       if (stopped) return;
       if (outcome.kind !== "ok") {
         if (!narrowed) store.setAccounts(null);
+        else if (narrowing) {
+          directoryLost = true; // its candidates' fills are refused until a read settles it
+          showLost();
+        }
         return;
       }
       const directory = outcome.items.map(accountInfo).filter((a): a is AccountInfo => a !== null);
@@ -207,8 +221,16 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
         store.applyRest(slice);
         applied += slice.length;
       }
-      if (store.takeNarrowed()) loadAccounts(true); // 23 §9.5: the directory says who left
-      if (store.takeSettled()) backfill(); // and REST brings back who stayed
+      if (store.takeNarrowed()) {
+        narrowing = true;
+        loadAccounts(true); // 23 §9.5: the directory says who left
+      }
+      if (store.takeSettled()) {
+        narrowing = false;
+        directoryLost = false;
+        showLost();
+        backfill(); // and REST brings back who stayed
+      }
       store.setLink(!isDown(client.getState()));
       const at = now();
       if (store.commit(at - lastCommit < COMMIT_INTERVAL_MS)) {
@@ -263,13 +285,19 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
   return {
     retry() {
       if (stopped) return;
-      // Retry acts on what was shown: a failed feed is made again, a failed read read again; a
-      // live feed never is made again, as the frames it has not read yet would be lost
-      const { status, readFailed } = store.getSnapshot();
+      // Retry reads again what failed (a read, the directory) and makes a failed feed again; a live
+      // feed never is made again, as the frames it has not read yet would be lost
+      const { status } = store.getSnapshot();
+      const lost = { read: readLost, directory: directoryLost };
+      readLost = false; // as `markRetrying` clears the line: a read that fails again sets it
+      directoryLost = false;
       store.markRetrying();
-      if (readFailed) readRest();
+      if (lost.read) readRest();
       if (accountIds === null) loadAccounts();
-      else if (status === "snapshot_failed" || status === "revoked") subscribe(accountIds);
+      else {
+        if (lost.directory) loadAccounts(true);
+        if (status === "snapshot_failed" || status === "revoked") subscribe(accountIds);
+      }
     },
     stop() {
       if (stopped) return;
