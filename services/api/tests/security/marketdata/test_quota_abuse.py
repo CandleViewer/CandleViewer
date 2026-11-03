@@ -138,18 +138,24 @@ def test_binary_heatmaps_whose_window_cannot_hold_their_depth_weigh_three_times(
     world: QuotaWorld,
 ) -> None:
     """23 §16.2: a `heatmap.*` whose window cannot hold its depth weighs at the structured factor
-    whatever its encoding. Binary depth-500 heatmaps at grouping 1 reach the connection's points at
-    a third of the count of grouping-2 ones, whose window holds depth 500."""
+    whatever its encoding. Binary depth-500 heatmaps at grouping 1, named or left out (§6.1's
+    default), reach the connection's points at a third of the count of grouping-2 ones, whose
+    window holds depth 500."""
     alice = world.login("alice")
     seen = counted("points_connection")
-    for grouping, fit in ((2, 6), (1, 2)):
+    legs: tuple[tuple[dict[str, int], int], ...] = (
+        ({"price_grouping": 2}, 6),
+        ({"price_grouping": 1}, 2),
+        ({}, 2),  # `price_grouping` left out
+    )
+    for option, fit in legs:
         with socket(world, alice) as c:
-            wide = {"depth": 500, "time_bucket_ms": 250, "price_grouping": grouping}
+            wide = {"depth": 500, "time_bucket_ms": 250, **option}
             found = results(c, *(heatmap(s, **wide) for s in SYMBOLS[: fit + 1]))
             assert codes(found) == [None] * fit + ["subscription_limit"]
             assert found[fit]["error"] == refused(MESSAGES["points_connection"])
             assert world.held(alice)[:2] == (192, fit)
-    assert seen["points_connection"]() == 2
+    assert seen["points_connection"]() == 3
 
 
 def test_a_structured_heatmaps_ctl_keeps_its_factor(world: QuotaWorld) -> None:
