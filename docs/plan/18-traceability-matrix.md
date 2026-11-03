@@ -366,6 +366,8 @@ API surface for this domain: `GET /positions`, `GET /positions/{positionId}`, `P
 
 ### 2.20 RULE — Rule engine (14 stories)
 
+Black-box test plan, node-graph editor (E37-Q01): [`qa/plans/e37-node-editor-test-plan.md`](../../qa/plans/e37-node-editor-test-plan.md) — case ↔ scenario table in its §14, checked by `qa/plans/_tools/e37_q01_plan_check.py`.
+
 API surface for this domain: `GET /rules`, `POST /rules`, `GET /rules/{ruleId}`, `PUT /rules/{ruleId}`, `GET /rules/{ruleId}/versions`, `GET /rules/{ruleId}/versions/{versionId}`, `PUT /rules/{ruleId}/active-version`, `POST /rules/validate`, `POST /rules/{ruleId}/simulate`, `PUT /rules/{ruleId}/mode`, `GET /rules/{ruleId}/runs`, `GET /rules/runs/{runId}/events`, `POST /trading/kill-switch`.
 
 | Story                                                   | Pri    | Screens                            | Components                                                                                                                                                                                                                               | Flows         | FM             |

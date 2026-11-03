@@ -148,3 +148,6 @@ docs/plan/backlog/_tools/published.json
 # E15-K01 (#371): the spike's results, written by docs/plan/spikes/E15-K01-harness/run.mjs (Prettier-formatted
 # when first committed) and never hand-edited; ignored so no later commit reflows the generated file
 docs/plan/spikes/E15-K01-results.json
+
+# E37-Q01: a stored-IR fixture cut mid-object on purpose; it does not parse
+tests/fixtures/e37/corrupt_ir_truncated.json

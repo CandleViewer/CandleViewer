@@ -1,0 +1,58 @@
+{
+  "rule_id": "00000000-0000-4000-8000-0000000e3702",
+  "version": 1,
+  "name": "Breakeven after 1R (hand-placed layout)",
+  "description": "RC-11 with positions placed by hand, off any layout grid, and two comment notes.",
+  "enabled": true,
+  "mode": "simulate",
+  "scope": { "level": "position", "symbols": ["BTCUSDT"] },
+  "trigger": { "type": "on_position_update", "debounce_ms": 500 },
+  "conditions": {
+    "node_id": "g1",
+    "op": "all_of",
+    "children": [
+      {
+        "node_id": "c1",
+        "op": "gte",
+        "left": { "metric": "unrealised_r_multiple" },
+        "right": { "const": 1 }
+      },
+      {
+        "node_id": "c2",
+        "op": "is_true",
+        "left": { "metric": "position_open" }
+      }
+    ]
+  },
+  "actions": [
+    {
+      "node_id": "a1",
+      "type": "move_to_breakeven",
+      "params": { "offset_ticks": 1 }
+    },
+    {
+      "node_id": "a2",
+      "type": "log_journal_tag",
+      "params": { "tag": "be_1r" }
+    }
+  ],
+  "limits": { "once_per": "position" },
+  "editor": "graph",
+  "graph_layout": {
+    "positions": {
+      "trigger": { "x": 0, "y": 0 },
+      "g1": { "x": 312, "y": 48 },
+      "c1": { "x": 611, "y": -37 },
+      "c2": { "x": 611, "y": 119 },
+      "a1": { "x": 934, "y": 21 },
+      "a2": { "x": 934, "y": 187 },
+      "note1": { "x": -26, "y": 208 },
+      "note2": { "x": 402, "y": -151 }
+    },
+    "collapsed": [],
+    "comments": [
+      { "id": "note1", "text": "Stop moves to entry plus one tick." },
+      { "id": "note2", "text": "The tag feeds the daily review." }
+    ]
+  }
+}
