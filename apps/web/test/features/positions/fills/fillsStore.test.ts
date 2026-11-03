@@ -2,7 +2,8 @@
  * E29-S04 (#979) the fills store (`fillsStore.ts`) on the goldens: one row per (account, exec id)
  * whatever the source, its order and the commit window (BQ-9), the dedupe counter, newest first
  * from REST's newest-first pages and WS's oldest-first snapshot, the 5,000 bound, the directory,
- * revocation and narrowing (SR-E29-11), a failed read, and the new-fills pill (D01 D13 g).
+ * revocation and narrowing (SR-E29-11), a failed read, the reads Retry starts afresh after a
+ * revoke, and the new-fills pill (D01 D13 g).
  */
 import { describe, expect, it } from "vitest";
 import { createFillsStore, MAX_FILLS } from "../../../../src/features/positions/fills/fillsStore";
@@ -580,6 +581,43 @@ describe("revocation and narrowing (SR-E29-11, E29-D05 F-02)", () => {
     store.applyRest(restItems());
     store.commit();
     expect(accountsOf(store).has(SUB1)).toBe(false);
+  });
+});
+
+describe("Retry starts the reads afresh after a revoke (S-02)", () => {
+  it("Retry after a revoke aborts the reads asked before it; the next carry a new signal", () => {
+    const store = started();
+    store.applyFrames([snap(snapshotBody()), reset("revoked")]);
+    const before = store.readSignal();
+    store.markRetrying();
+    expect(before.aborted).toBe(true);
+    expect(store.readSignal().aborted).toBe(false);
+  });
+
+  it("the same after a revoke before the first snapshot; a read asked after the Retry applies", () => {
+    const store = started();
+    store.applyFrames([reset("revoked")]);
+    const before = store.readSignal();
+    store.markRetrying();
+    store.applyRest(restItems());
+    store.commit();
+    expect([before.aborted, store.getSnapshot().all.length]).toEqual([true, 14]);
+  });
+
+  it("Retry after a failed feed or a failed read aborts nothing", () => {
+    const store = started();
+    const read = store.readSignal();
+    store.markSnapshotFailed();
+    store.setReadFailed(true);
+    store.markRetrying();
+    expect(read.aborted).toBe(false);
+  });
+
+  it("stop aborts the reads asked before it", () => {
+    const store = started();
+    const read = store.readSignal();
+    store.setStarted(false);
+    expect(read.aborted).toBe(true);
   });
 });
 
