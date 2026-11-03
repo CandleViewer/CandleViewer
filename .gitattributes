@@ -19,6 +19,7 @@ packages/protocol/src/generated/** linguist-generated=true
 docs/plan/ws-schema.json linguist-generated=true
 services/api/candleviewer/api/_generated/** linguist-generated=true
 services/api/candleviewer/ws/_generated/** linguist-generated=true
+services/api/candleviewer/alerts/_generated/** linguist-generated=true
 
 # E17-T07: the cv.v1 wire-contract golden is text with LF endings. It is deliberately not marked
 # linguist-generated: a change to it is the reviewable act that changes the contract (`--extend` for

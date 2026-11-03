@@ -26,6 +26,13 @@ const SURFACES = [
     ],
   },
   {
+    name: "notificationOverrides",
+    about: [
+      "the critical-override constant (notification-overrides.json,",
+      "E40-D01 §5; scripts/generate-notification-overrides.mjs)",
+    ],
+  },
+  {
     name: "bars",
     about: [
       "bar domain model mirroring services/api/candleviewer/bars/",
