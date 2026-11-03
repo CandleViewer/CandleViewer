@@ -27,6 +27,7 @@ import { installCrashReporter } from "./crash/reportCrash.js";
 import {
   applySystemUpdate,
   clearDegraded,
+  clearFlags,
   setShellState,
   type ConnectionState,
 } from "./bootstrap/store.js";
@@ -150,6 +151,7 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
       stopActive = null;
       setActiveClient(null);
       clearDegraded(); // the facts and row 9's timer are this client's; nothing fires after stop()
+      clearFlags(); // unread again: the next socket's snapshot is the truth
     }
   };
   stopActive = stop;
