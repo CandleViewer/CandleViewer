@@ -4,15 +4,17 @@ Only `regen_goldens --suite conformance --write --reason ...` calls `write`. Sam
 as the E12-T04 goldens (never in CI, `--reason` required, a changed kind needs a `BUILD_VERSIONS`
 bump); the manifest records the build_versions the goldens were produced under.
 
-Tape-only exemption (#2200): the manifest also records a fingerprint of the builder sources and
-the spec hash of every live case. A regeneration that changes only a tape (builder code and spec
-hashes identical to the recorded ones) needs no `BUILD_VERSIONS` bump; any builder-code or
-spec-hash change still does. A manifest written before the fingerprint existed counts as unchanged
-once, and the next write records it.
+Tape-only exemption (#2200): the manifest also records a fingerprint of the import closure of the
+runner (`candleviewer.*`, `bars/rows.py` excluded) and the spec hash of every live case. A golden
+change on a tape whose bytes did NOT change always needs the `BUILD_VERSIONS` bump for its kind.
+A golden change on a tape whose bytes changed needs it only if the fingerprint or a spec hash
+differs from the recorded one (a missing record counts as differing). Any edit to the closure
+therefore forces a fixture regeneration.
 """
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import tomllib
 from dataclasses import dataclass, field
@@ -49,23 +51,64 @@ def recorded_versions() -> dict[str, int]:
     return {str(k): int(v) for k, v in bv.items()}
 
 
-#: Sources whose behaviour decides what a builder emits (`rows.py` holds the versions: excluded).
-_BUILDER_SOURCES = (
-    "activity_builders.py",
-    "builder_set.py",
-    "models.py",
-    "renko_builder.py",
-    "spec.py",
-    "threshold_builders.py",
-    "time_builder.py",
-)
+_PKG = "candleviewer"
+_EXCLUDED = frozenset({"candleviewer.bars.rows"})  # holds BUILD_VERSIONS itself
+
+
+def _pkg_root() -> Path:
+    return Path(str(rows.__file__)).parents[1]
+
+
+def _module_file(mod: str) -> Path | None:
+    base = _pkg_root().parent.joinpath(*mod.split("."))
+    for cand in (base.with_suffix(".py"), base / "__init__.py"):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def _imports(path: Path, mod: str) -> set[str]:
+    """Every `candleviewer.*` module imported anywhere in `path` (inline imports included)."""
+    pkg = mod if path.name == "__init__.py" else mod.rpartition(".")[0]
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8-sig"))):
+        if isinstance(node, ast.Import):
+            found.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                up = pkg.split(".")[: len(pkg.split(".")) - (node.level - 1)]
+                base = ".".join([*up, *([base] if base else [])])
+            found.add(base)
+            found.update(f"{base}.{a.name}" for a in node.names)  # `from pkg import submodule`
+    return {m for m in found if m == _PKG or m.startswith(_PKG + ".")}
+
+
+def builder_closure() -> list[str]:
+    """Module names of the import closure of `bench.bar_conformance.runner`, restricted to
+    `candleviewer.*` (ancestor packages included, `bars/rows.py` excluded), sorted."""
+    seen: set[str] = set()
+    todo = list(_imports(Path(str(cf.__file__)), "bench.bar_conformance.runner"))
+    while todo:
+        mod = todo.pop()
+        f = _module_file(mod)
+        if mod in seen or f is None:
+            continue
+        seen.add(mod)
+        parts = mod.split(".")
+        todo.extend(".".join(parts[:i]) for i in range(1, len(parts)))  # ancestor `__init__`s
+        todo.extend(_imports(f, mod))
+    return sorted(seen - _EXCLUDED)
 
 
 def builder_fingerprint() -> str:
-    d = Path(str(rows.__file__)).parent
     h = hashlib.sha256()
-    for name in _BUILDER_SOURCES:
-        h.update(name.encode() + b"\0" + (d / name).read_bytes() + b"\0")
+    for mod in builder_closure():
+        f = _module_file(mod)
+        if f is None:  # builder_closure only yields modules that resolve to a file
+            raise RuntimeError(f"closure module {mod} has no source file")
+        src = f.read_bytes().removeprefix(b"\xef\xbb\xbf").replace(b"\r\n", b"\n")
+        h.update(mod.encode() + b"\0" + src + b"\0")
     return h.hexdigest()
 
 
@@ -80,12 +123,10 @@ def _recorded() -> dict[str, Any]:
 
 
 def builder_code_changed(rec: dict[str, Any]) -> bool:
-    """True when the builder sources or any spec hash differ from the recorded ones. A manifest
-    without the fingerprint (legacy) is treated as unchanged: the next write records it."""
+    """True when the builder import closure or any spec hash differs from the recorded ones. A
+    manifest missing either record fails closed (counts as changed)."""
     fp, specs = rec.get("builder_code_sha256"), rec.get("spec_hashes")
-    return (fp is not None and fp != builder_fingerprint()) or (
-        specs is not None and dict(specs) != spec_hashes()
-    )
+    return fp != builder_fingerprint() or specs is None or dict(specs) != spec_hashes()
 
 
 def _toml_str(s: str) -> str:
@@ -98,12 +139,15 @@ def build(reason: str = "") -> Plan:
     p = Plan()
     entries: list[str] = []
     changed_kinds: set[str] = set()
+    forced_kinds: set[str] = set()  # golden changed while its tape's bytes did not
+    tape_changed = False
     for name, d in tapes.TAPES.items():
         tape, meta = d.build()
         blob = tapes.serialise(tape)
         tpath = tapes.tape_path(name)
         p.files[_rel(tpath)] = blob
-        if not tpath.exists() or tpath.read_bytes() != blob:
+        tape_changed = not tpath.exists() or tpath.read_bytes() != blob
+        if tape_changed:
             p.changed.append(_rel(tpath))
             p.summary.append(f"tape {name}: {len(tape)} prints, {len(blob)} bytes")
         results = cf.run(tape, d.symbol)
@@ -119,6 +163,8 @@ def build(reason: str = "") -> Plan:
             if old != ls:
                 p.changed.append(_rel(gp))
                 changed_kinds.add(spec.kind)
+                if not tape_changed:
+                    forced_kinds.add(spec.kind)
                 n_old = "new" if old is None else str(len(old))
                 p.summary.append(f"golden {name}/{label}: bars {n_old} -> {len(ls)}")
             gold.append(f'  {{ pair = "{label}", bars = {len(ls)}, sha256 = "{cf.digest(ls)}" }}')
@@ -126,8 +172,8 @@ def build(reason: str = "") -> Plan:
     for label, msg in cf.rejected_cases().items():
         entries.append(_rejected(label, msg))
     rec = recorded_versions()
-    if builder_code_changed(_recorded()):  # a tape-only regeneration needs no bump (#2200)
-        p.unbumped = sorted(k for k in changed_kinds if rec.get(k) == BUILD_VERSIONS[k])
+    needs = changed_kinds if builder_code_changed(_recorded()) else forced_kinds  # #2200
+    p.unbumped = sorted(k for k in needs if rec.get(k) == BUILD_VERSIONS[k])
     p.manifest = _manifest_head(reason) + "\n".join(entries)
     mp = _rel(cf.MANIFEST)
     p.files[mp] = p.manifest.encode()

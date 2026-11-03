@@ -2,8 +2,8 @@
 # --suite conformance; never hand-edited (a hand edit fails the manifest test).
 licence = "Public market-data shape only (no account, order id, key or UID). Synthetic: generated, not recorded, so no third-party licence applies."
 public_market_data_only = true
-reason = "edge-ticks gains a closing trade at exactly 2x the range:20 width so a >= to > mutation of the range jump check is caught (tape-only: builders unchanged, no version bump)"
-builder_code_sha256 = "b6bfeb33c76c613f913101991d724c4337687a3edc52f3b9539db6224b55d2a6"
+reason = "edge-ticks gains a closing trade at exactly 2x the range:20 width so a >= to > mutation of the range jump check is caught (tape-only: builders unchanged, no version bump); the manifest fingerprint now covers the runner's candleviewer import closure"
+builder_code_sha256 = "d52fb66fcd4867b93c6a83376802ef08990e193d07a00d1918bed73eee3a39b0"
 [build_versions]
 delta = 1
 range = 1
