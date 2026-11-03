@@ -319,6 +319,11 @@ def corpus_seeds() -> list[tuple[str, str, bytes]]:
             "malformed",
             _h(HEATMAP_COLUMN, 1) + struct.pack("<IqqI", 0, 0, -5, 2) + bytes(32),
         ),
+        (  # the step is checked whatever the row count, none included
+            "heatmap-price-step-0-no-rows",
+            "malformed",
+            _h(HEATMAP_COLUMN, 1) + struct.pack("<IqqI", 0, 0, 0, 0),
+        ),
         (
             "footprint-cell-count-body-plus-1",
             "malformed",

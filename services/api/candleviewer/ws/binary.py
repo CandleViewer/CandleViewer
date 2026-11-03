@@ -18,9 +18,10 @@ import base64
 import binascii
 import itertools
 import struct
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from time import perf_counter
-from typing import Any, Final
+from typing import Final
 
 from candleviewer.ws._generated.cvwb_layout import HEADER, KINDS, MAGIC, Kind, Part
 from candleviewer.ws.errors import WsError
@@ -55,6 +56,8 @@ Group = tuple[Record, tuple[Record, ...]]
 #: The group prefix field derived from ``len(cells)``. It is not the last field (``flags``
 #: follows it), so the codec finds it by name in the generated layout.
 _GROUP_COUNT: Final = "cell_count"
+#: The heatmap column prefix field `_heatmap_bounds` checks (§3.4), found by name in the layout.
+_PRICE_STEP: Final = "price_step"
 #: Group ``flags`` bits the encoder may send: bit0 ``confirm``. Bits 1-7 are reserved, 0 on send
 #: and ignored on receive (section 3.4), so a later flag is additive.
 _GROUP_KNOWN_FLAGS: Final = 0b0000_0001
@@ -202,6 +205,10 @@ def encode(frame: Frame, weight: int = 0) -> bytes:
         raise FrameEncodeError(f"{kind.name}: records live inside groups")
     if kind.group_prefix is not None:
         _check_groups(frame.groups, kind.group_prefix, kind.name)
+    if kind.id == HEATMAP_COLUMN and kind.body_prefix is not None and frame.prefix is not None:
+        # E21-X02 (§3.4): a column both decoders refuse is never encoded, so a round trip is total.
+        rows = len(frame.records)
+        _heatmap_bounds(kind.name, kind.body_prefix, frame.prefix, rows, FrameEncodeError)
     out = bytearray(HEADER.size + _body_size(frame, kind))
     rec = _st(kind.record)
     try:
@@ -343,15 +350,21 @@ def _fits(count: int, stride: int, available: int, what: str) -> None:
         )
 
 
-def _heatmap_bounds(what: str, prefix: list[Any], row_count: int) -> None:
+def _heatmap_bounds(
+    what: str,
+    part: Part,
+    prefix: Sequence[int],
+    row_count: int,
+    error: Callable[[str], Exception] = FrameMalformedError,
+) -> None:
     """§3.4 (E21-X02): a heatmap column's `row_count` within the grid's rows and its `price_step`
-    positive, else `frame_malformed`; `prefix` is (`ts_offset_ms`, `price_min`, `price_step`)."""
+    positive, else `error` (`frame_malformed` on decode, `FrameEncodeError` on encode). `prefix`
+    is the body prefix without `row_count`; the step is found by its field's name in `part`, the
+    generated layout, as `_count_at` finds a group's count."""
     if row_count > HEATMAP_MAX_ROWS:
-        raise FrameMalformedError(
-            f"{what}: row_count={row_count} is above the grid's {HEATMAP_MAX_ROWS} rows"
-        )
-    if prefix[2] <= 0:
-        raise FrameMalformedError(f"{what}: price_step={prefix[2]} is not positive")
+        raise error(f"{what}: row_count={row_count} is above the grid's {HEATMAP_MAX_ROWS} rows")
+    if prefix[part.fields.index(_PRICE_STEP)] <= 0:
+        raise error(f"{what}: price_step is not positive")
 
 
 def _rows(view: memoryview, off: int, count: int, part: Part, what: str) -> tuple[Record, ...]:
@@ -394,7 +407,7 @@ def decode(data: bytes | bytearray | memoryview) -> Frame:
         off += kind.body_prefix.size
         _fits(row_count, kind.record.size, n - off, kind.name)
         if kind.id == HEATMAP_COLUMN:  # E21-X02 (§3.4): the grid's rows and a positive step,
-            _heatmap_bounds(kind.name, prefix, row_count)  # before any row is read
+            _heatmap_bounds(kind.name, kind.body_prefix, prefix, row_count)  # before any row read
         rows = _rows(view, off, row_count, kind.record, kind.name)
         return Frame(body_kind, rows, flags, p_scale, q_scale, ts_base, prefix=tuple(prefix))
     if kind.group_prefix is not None:

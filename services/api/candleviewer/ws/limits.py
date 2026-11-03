@@ -133,6 +133,11 @@ DEEP_BOOK_ROWS_PER_PUBLISH = 5
 DEEP_BOOK_MEASURED_DEPTH = 200
 #: The book publisher's window at depth 200 and 500 is 100 ms (`book/ws_topic.WINDOW_S`).
 DEEP_BOOK_PUBLISHES_PER_S = 10
+#: A `heatmap.*` subscription whose effective `encoding` is `structured` weighs this many times its
+#: binary points in the connection's and the user's ledgers: G-03's per-row bound ratio (§6.1), a
+#: structured row's bound to a binary row's (`orderflow.heatmap.STRUCTURED_ROW_BYTES` ÷ `ROW_BYTES`,
+#: which `test_quota.py` pins it to). The server's spec points do not change with encoding.
+STRUCTURED_HEATMAP_WEIGHT = 3
 #: SR-E12-07 (§8.4): the share, in percent of each limit of a connection's outbound
 #: budget, that its queued `bars.*` frames may hold, so `book` and `trades` are not starved.
 BARS_SHARE_PCT = 50

@@ -2,7 +2,7 @@
 // the grid's 512 rows and a `price_step` of zero or less, as `frame_malformed`, before anything is
 // read or sized from the wire, as the server's decoder does (tests/unit/ws/test_cvwb_heatmap_bounds.py).
 // The shared fuzz corpus (tests/fuzz/ws-frames/corpus.json) runs the same cases on both decoders.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   BINARY_FRAME_MAGIC,
   BinaryFrameError,
@@ -47,10 +47,17 @@ describe("Malformed binary frame", () => {
     expect(decodeHeatmapColumn(column(512, 1n)).rows).toHaveLength(512);
   });
 
-  it("refuses a row_count above 512 before any row is read, whatever the body holds", () => {
-    const error = refusal(column(513, 1n));
-    expect(error.code).toBe("frame_malformed");
-    expect(error.message).toBe("heatmap column row_count=513 is above the grid's 512 rows");
+  it("checks the row bound before any row is read: a row_count above 512 reads no row", () => {
+    // Row sizes are the only u64 reads after the header's one time base (`ts_base_ms`).
+    const reads = vi.spyOn(DataView.prototype, "getBigUint64");
+    try {
+      const error = refusal(column(513, 1n)); // every row present: the grid's bound refuses it
+      expect(error.code).toBe("frame_malformed");
+      expect(error.message).toBe("heatmap column row_count=513 is above the grid's 512 rows");
+      expect(reads.mock.calls.length).toBeLessThanOrEqual(1);
+    } finally {
+      reads.mockRestore();
+    }
     for (const rowCount of [513, 0xffffffff]) {
       const short = refusal(column(rowCount, 1n, 0)); // rows the body lacks: SR-128's check first
       expect(short.code).toBe("frame_malformed");
@@ -58,12 +65,13 @@ describe("Malformed binary frame", () => {
     }
   });
 
-  it("refuses a price_step of zero or less", () => {
+  it("refuses a price_step of zero or less, naming no value read from the wire", () => {
     for (const step of [0n, -1n, -(2n ** 63n)]) {
       const error = refusal(column(2, step));
       expect(error.code).toBe("frame_malformed");
-      expect(error.message).toBe(`heatmap column price_step=${step} is not positive`);
+      expect(error.message).toBe("heatmap column price_step is not positive");
     }
+    expect(refusal(column(0, 0n)).message).toBe("heatmap column price_step is not positive");
     expect(decodeHeatmapColumn(column(2, 1n)).priceStep).toBe("0.1");
   });
 

@@ -31,6 +31,9 @@ from candleviewer.orderflow.heatmap import (
     HEATMAP_MAX_SPECS_PER_SERVER,
     HEATMAP_MAX_SPECS_PER_SYMBOL,
     QUOTA_ROWS_PER_POINT,
+    ROW_BYTES,
+    ROWS,
+    STRUCTURED_ROW_BYTES,
     HeatmapSpec,
     HeatmapTopic,
     column_points,
@@ -74,6 +77,7 @@ def heatmap(symbol: str = "BTCUSDT", **opts: Any) -> Charge:
 WORKED = [
     ("heatmap.BTCUSDT", {"depth": 50, "time_bucket_ms": 1000}, 2),
     ("heatmap.BTCUSDT", {"depth": 200, "time_bucket_ms": 500}, 13),
+    ("heatmap.BTCUSDT", {"depth": 200, "time_bucket_ms": 500, "encoding": "structured"}, 39),
     ("heatmap.BTCUSDT", {"depth": 200, "time_bucket_ms": 100}, 63),
     ("heatmap.BTCUSDT", {"depth": 500, "time_bucket_ms": 100}, 80),
     ("heatmap.BTCUSDT", {"depth": 500, "time_bucket_ms": 100, "throttle_ms": 50}, 160),
@@ -95,17 +99,54 @@ def test_the_measured_server_case_weighs_twice_the_servers_budget() -> None:
     assert HEATMAP_MAX_POINTS_PER_SERVER == 1280
 
 
+def _option(value: str) -> int | str:
+    return int(value.replace(" ", "")) if value[0].isdigit() else value
+
+
 def test_the_contract_states_the_worked_values_the_code_weighs() -> None:
-    """The worked values table below 23 §16.2's limits is the one `WORKED` holds."""
+    """The worked values table below 23 §16.2's limits is the one `WORKED` holds, and its last row,
+    the server's measured case, is 32 depth-500 specs at 100 ms and twice the server's budget."""
     text = _DOC.read_text(encoding="utf-8")
     sec = text[text.index("### 16.2 Limits summary") : text.index("### 16.3 ")]
     rows = re.findall(r"^\| (`heatmap\.\*`[^|]*|deep `book\.\*`[^|]*?)\s*\| (\d+)\s*\|$", sec, re.M)
     stated = []
     for what, points in rows:
-        opts = {k: int(v.replace(" ", "")) for k, v in re.findall(r"`(\w+)` (\d[\d ]*\d|\d)", what)}
+        pairs = re.findall(r"`(\w+)` (\d[\d ]*\d|\d|[a-z]+)", what)
+        opts = {k: _option(v) for k, v in pairs}
         ch = "heatmap.BTCUSDT" if what.startswith("`heatmap") else f"book.BTCUSDT.{what[-3:]}"
         stated.append((ch, opts, int(points)))
     assert stated == WORKED
+    server = re.search(
+        r"^\| (\d+) heatmap specs at `time_bucket_ms` (\d+) and (\d+) rows \(the server's\)\s*"
+        r"\| (\d[\d ]*\d)\s*\|$",
+        sec,
+        re.M,
+    )
+    assert server is not None
+    specs, bucket, rows_, points = (int(g.replace(" ", "")) for g in server.groups())
+    assert (specs, rows_) == (HEATMAP_MAX_SPECS_PER_SERVER, ROWS)
+    assert points == specs * spec_points(HeatmapSpec("BTCUSDT", 500, 1, bucket))
+    assert points == 2 * HEATMAP_MAX_POINTS_PER_SERVER
+
+
+@pytest.mark.parametrize(
+    "opts",
+    [
+        {"depth": 50, "time_bucket_ms": 1000},
+        {"depth": 200, "time_bucket_ms": 500},
+        {"depth": 500, "time_bucket_ms": 100, "throttle_ms": 50},
+    ],
+)
+def test_a_structured_heatmap_weighs_three_times_its_binary_points(opts: dict[str, Any]) -> None:
+    """23 §16.2: a structured subscription weighs three times its binary weight, the per-row bound
+    ratio of G-03, in the connection's and the user's ledgers; its spec, and so the server's spec
+    points, are the same in both encodings."""
+    binary, structured = heatmap(**opts), heatmap(encoding="structured", **opts)
+    assert heatmap(encoding="binary", **opts) == binary  # binary is the family's default
+    assert structured.points == limits.STRUCTURED_HEATMAP_WEIGHT * binary.points
+    spec = structured.spec
+    assert spec is not None and spec == binary.spec  # the producer's cost: its bucket, either way
+    assert spec_points(spec) == column_points(spec.depth, opts["time_bucket_ms"])
 
 
 def test_depth_500_and_a_100ms_bucket_weigh_more_than_depth_50_at_1000ms() -> None:
@@ -160,6 +201,7 @@ def test_the_budgets_are_the_interim_values() -> None:
     assert (limits.MAX_HEATMAP_SUBSCRIPTIONS, limits.MAX_HEATMAP_SUBSCRIPTIONS_PER_USER) == (8, 16)
     assert (limits.MAX_HEATMAP_SPECS_PER_USER, limits.MAX_HEATMAP_SPECS_PER_USER_SYMBOL) == (8, 2)
     assert QUOTA_ROWS_PER_POINT == 64
+    assert limits.STRUCTURED_HEATMAP_WEIGHT == STRUCTURED_ROW_BYTES // ROW_BYTES == 3  # G-03's
 
 
 # -- the ledgers ----------------------------------------------------------------------------------
@@ -232,6 +274,28 @@ def test_a_users_specs_of_one_symbol_stop_at_two() -> None:
     assert quota.refusal(Charge(8, HeatmapSpec("ETHUSDT", 200, 5, 500))) is None
     assert _quota(users, BOB).refusal(Charge(8, three)) is None
     assert quota.refusal(Charge(8, three), Charge(8, two)) is None  # a ctl moving off `two` fits
+
+
+def test_a_ctl_off_a_spec_held_twice_keeps_counting_that_spec() -> None:
+    """A spec another subscription of the user still holds stays the user's: moving one of its two
+    subscriptions to a new spec adds one, refused past the user's eight distinct specs and past one
+    symbol's two; once the spec is held once, the same move only replaces it."""
+    users = UserQuota()
+    first, second = _quota(users), _quota(users)
+    for n in range(8):
+        first.charge(Charge(1, _spec(n)))
+    second.charge(Charge(1, _spec(0)))  # spec 0, held twice
+    assert second.refusal(Charge(1, _spec(8)), Charge(1, _spec(0))) == "heatmap_specs_user"
+    first.credit(Charge(1, _spec(0)))  # held once: moving off it frees it
+    assert second.refusal(Charge(1, _spec(8)), Charge(1, _spec(0))) is None
+    users = UserQuota()
+    a, b = _quota(users), _quota(users)
+    one, two, three = (HeatmapSpec("BTCUSDT", 200, g, 500) for g in (1, 2, 5))
+    for quota, spec in ((a, one), (a, two), (b, one)):  # `one` held twice
+        quota.charge(Charge(8, spec))
+    assert b.refusal(Charge(8, three), Charge(8, one)) == "heatmap_specs_user_symbol"
+    a.credit(Charge(8, one))
+    assert b.refusal(Charge(8, three), Charge(8, one)) is None
 
 
 def test_a_ctl_is_checked_less_its_own_charge_and_a_lower_one_always_fits() -> None:
@@ -406,6 +470,20 @@ def _scenario(reason: QuotaReason) -> tuple[ConnectionAuthz, dict[str, Any]]:
     raise AssertionError(reason)
 
 
+#: Each reason's whole fixed message, at the caps `_scenario` gives it: the quota's own six, the
+#: deep-book cap's and the producer's three, each naming its limit and remedy only (BQ-6's rider).
+FIXED: dict[QuotaReason, str] = {
+    **MESSAGES,
+    "deep_book_connection": "At most 4 deep book subscriptions (depth 200 or more) per connection.",
+    "heatmap_specs_symbol": "At most 1 heatmap specs per symbol are served.",
+    "heatmap_specs_server": "At most 1 heatmap specs are served.",
+    "points_server": (
+        "The server's heatmap budget of 13 points is spent; use a slower bucket or a shallower "
+        "depth."
+    ),
+}
+
+
 def _counts() -> dict[str, float]:
     name = "cv_ws_subscription_quota_rejections_total"
     return {r: REGISTRY.get_sample_value(name, {"reason": r}) or 0.0 for r in REASONS}
@@ -420,8 +498,8 @@ def test_each_quota_refusal_counts_once_under_its_reason(reason: QuotaReason) ->
     assert conn.services.user_quota.held(conn.actor_user_id) == held  # it keeps no charge
     after = _counts()
     assert {r: after[r] - before[r] for r in REASONS} == {r: float(r == reason) for r in REASONS}
-    if reason in MESSAGES:
-        assert refused["error"]["message"] == MESSAGES[reason]
+    assert set(FIXED) == set(REASONS)
+    assert refused["error"]["message"] == FIXED[reason]  # the whole fixed text, nothing appended
 
 
 def test_every_reason_series_exists_at_zero_from_import() -> None:

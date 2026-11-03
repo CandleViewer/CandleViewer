@@ -21,8 +21,9 @@ from structlog.testing import capture_logs
 
 from candleviewer.auth.view_as import ViewAsBinding, ViewAsPhase
 from candleviewer.bus.bus import Bus
-from candleviewer.orderflow.heatmap import HeatmapTopic
+from candleviewer.orderflow.heatmap import HeatmapSpec, HeatmapTopic
 from candleviewer.ws.gateway import make_ws_router
+from candleviewer.ws.permissions import ConnectionAuthz
 from candleviewer.ws.sequencing import SnapshotBody
 from candleviewer.ws.upstream import UpstreamRefs
 from candleviewer.ws_wiring import heatmap_part
@@ -100,8 +101,18 @@ class QuotaWorld(RawWorld):
 
     def held(self, login: Login) -> tuple[int, int, int]:
         """The user's points, `heatmap.*` subscriptions and distinct specs (the process ledger)."""
-        points, heatmaps, specs = self.registry.services.user_quota.held(login.user_id)
+        points, heatmaps, specs = self.user_held(login)
         return points, heatmaps, len(specs)
+
+    def user_held(self, login: Login) -> tuple[int, int, dict[HeatmapSpec, int]]:
+        """The ledger's own entry for the user: points, `heatmap.*` subscriptions, and the
+        subscriptions on each spec; `(0, 0, {})` once it holds nothing."""
+        return self.registry.services.user_quota.held(login.user_id)
+
+    def authz(self, login: Login, n: int = 0) -> ConnectionAuthz:
+        """The `n`th live socket of `login`'s user, as the registry holds it."""
+        authz: ConnectionAuthz = self.registry._conns[login.user_id][n][0]
+        return authz
 
 
 @pytest.fixture(params=list(OFFERS))

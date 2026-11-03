@@ -1,15 +1,16 @@
 """E21-X02 (#652; 23 §3.4, AC-HM-04): the server's heatmap column decoder (`ws/binary.decode`)
 refuses a `row_count` above the grid's 512 rows and a `price_step` of zero or less, as
 `frame_malformed`, before anything is read or sized from the wire, and a column shorter than its
-rows, as the client's does (`packages/protocol/test/runtime-heatmap-bounds.test.ts`). The shared
-fuzz corpus (`tests/fuzz/ws-frames/corpus.json`) runs the same cases on both decoders."""
+rows, as the client's does (`packages/protocol/test/runtime-heatmap-bounds.test.ts`); the encoder
+refuses to write such a column, so a round trip is total. The shared fuzz corpus
+(`tests/fuzz/ws-frames/corpus.json`) runs the same cases on both decoders."""
 
 from __future__ import annotations
 
 import struct
 
 import pytest
-from hypothesis import given
+from hypothesis import example, given
 from hypothesis import strategies as st
 
 from candleviewer.orderflow.heatmap import ROWS
@@ -19,6 +20,7 @@ from candleviewer.ws.binary import (
     HEATMAP_COLUMN,
     HEATMAP_MAX_ROWS,
     Frame,
+    FrameEncodeError,
     FrameMalformedError,
     decode,
     encode,
@@ -55,9 +57,12 @@ def test_malformed_binary_frame_a_row_count_above_512_is_refused_before_any_allo
 
 
 def test_malformed_binary_frame_a_price_step_of_zero_or_less_is_refused() -> None:
+    """Whatever the row count, none included; the message names no value read from the wire."""
     for step in (0, -1, -(2**63)):
-        with pytest.raises(FrameMalformedError, match=f"price_step={step} is not positive"):
-            decode(column(2, step))
+        for rows in (2, 0):
+            with pytest.raises(FrameMalformedError) as refused:
+                decode(column(rows, step))
+            assert str(refused.value) == "heatmap_column: price_step is not positive"
     assert decode(column(2, 1)).prefix == (100, 99_000, 1)
 
 
@@ -75,6 +80,7 @@ def test_malformed_binary_frame_a_heatmap_column_shorter_than_its_rows_is_refuse
     st.integers(-(2**63), 2**63 - 1),
     st.integers(0, 8),
 )
+@example(0, 0, 0)  # no rows and a step of zero: the step is checked all the same
 def test_malformed_binary_frame_a_column_decodes_only_within_its_bounds(
     row_count: int, price_step: int, short: int
 ) -> None:
@@ -90,3 +96,18 @@ def test_malformed_binary_frame_a_column_decodes_only_within_its_bounds(
     frame = decode(wire)
     assert isinstance(frame, Frame) and len(frame.records) == row_count
     assert encode(frame) == wire
+
+
+def test_the_encoder_refuses_a_column_past_the_grids_rows() -> None:
+    """A column both decoders refuse is never encoded, so every encoded column decodes."""
+    rows = tuple((0, 0) for _ in range(HEATMAP_MAX_ROWS + 1))
+    with pytest.raises(FrameEncodeError, match="row_count=513 is above the grid's 512 rows"):
+        encode(Frame(HEATMAP_COLUMN, rows, 0, 1, 3, 0, prefix=(100, 99_000, 1)))
+    full = Frame(HEATMAP_COLUMN, rows[:-1], 0, 1, 3, 0, prefix=(100, 99_000, 1))
+    assert decode(encode(full)) == full  # the grid's 512 rows exactly: encoded and decoded
+
+
+def test_the_encoder_refuses_a_column_whose_step_is_not_positive() -> None:
+    for step in (0, -1):
+        with pytest.raises(FrameEncodeError, match="price_step is not positive"):
+            encode(Frame(HEATMAP_COLUMN, ((1, 2),), 0, 1, 3, 0, prefix=(100, 99_000, step)))
