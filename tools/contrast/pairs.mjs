@@ -227,6 +227,8 @@ export const PAIRS = [
     bg: "color.status.warning.subtle",
     threshold: THRESHOLD.TEXT,
   },
+  // Also CMP-158's info glyph on its fill: E32-D06 §7's PROPOSED non-text pair for its first
+  // consumer (E37-S02), gated here at the stricter text bar, so it takes no second row.
   {
     fg: "color.status.info.strong",
     bg: "color.status.info.subtle",
