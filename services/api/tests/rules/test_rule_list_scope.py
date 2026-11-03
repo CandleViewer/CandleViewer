@@ -303,7 +303,11 @@ def test_only_the_system_reads_read_every_rule() -> None:
         and node.func.attr == "all"
         and ast.unparse(node.func.value) == "self._s"
     }
-    assert readers == {"verify_system_rules", "evaluable_rules"}
+    assert readers == {
+        "verify_system_rules",
+        "evaluable_rules",
+        "kill_all",  # the kill switch's system read: no principal; it returns moved rule ids
+    }
 
 
 # ----- what a scope admits (BQ-6: exactly `_visible`'s answers) ---------------------------------
