@@ -7,7 +7,9 @@
   `decided` for every other rule and carries Amendments 1 and 2.
 - Date: 2026-11-03
 - Deciders: Owner (`@basiltt`) through main-orchestrator (the delegation on #1778, owner veto on #2701; ruling of
-  record on #1029); the Architect and the Security engineer as CODEOWNERS of `docs/plan/` and `docs/security/`.
+  record on #1029); the Architect and the Security engineer. `.github/CODEOWNERS` gives `docs/plan/` and
+  `docs/security/` (both under `/docs/`) to `@CandleViewer/architecture` and `@basiltt`, and gives the security team
+  `docs/plan/04-security-program.md` and the top-level `/security/`, which is not `docs/security/`.
   Author: virtarix-worker-3 for main-orchestrator.
 - Consulted: `docs/plan/04-security-program.md` SR-040a (W9, W10, KV14); `docs/security/threat-models/E29-oms.md` O-9,
   F-18, OM-T10, OM-D07, OM-I05, OM-I06, SR-E29-08, SR-E29-09, §12.3 notes 2 and 10; `24-internal-schemas.md` §8.6, §14.2;
@@ -97,6 +99,9 @@ Negative / risks:
   (`06-performance-and-load-standard.md` §5.2); live itself is measured only in R4 (E44).
 - A refusal's exact exchange wording is one audited read away for the Owner, and absent for a Manager or a Viewer: the
   CandleViewer text and the return code are what they have.
+- Three texts written before decision 2 still show the exchange's message to the user, where decision 2 gives it to the
+  Owner's diagnostics read alone, and their owners reconcile them: the rejection scenarios of E30-S01, the SCR-077
+  drawer scenario of E30-T02 and `11-user-stories.md:2915` (US-ORD-001).
 
 ### Why not the alternatives
 

@@ -2245,7 +2245,7 @@ Every order we ever intend to place gets a row **before** the network call, with
 | `created_ts`          | timestamptz    | no   | `now()`    | Local create                                                      |
 | `submitted_ts`        | timestamptz    | yes  | NULL       |                                                                   |
 | `exchange_created_ts` | timestamptz    | yes  | NULL       | Bybit `createdTime`                                               |
-| `exchange_updated_ts` | timestamptz    | yes  | NULL       | Bybit `updatedTime` — used for staleness compare                  |
+| `exchange_updated_ts` | timestamptz    | yes  | NULL       | Bybit `updatedTime`, set when a reconciliation pass adopts a row  |
 | `last_reconciled_at`  | timestamptz    | yes  | NULL       |                                                                   |
 | `is_paper`            | boolean        | no   | `false`    | Paper-matcher orders never hit the network                        |
 | `lifecycle_state`     | enum           | yes  | NULL       | `order_lifecycle_state`: the B1 chart state verbatim (`0034`)     |

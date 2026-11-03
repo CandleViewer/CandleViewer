@@ -743,8 +743,8 @@ CandleViewer/
 │     │  ├─ bus/                  # topics, queue policies, conflation
 │     │  ├─ exchange/             # ports + adapters
 │     │  │  ├─ base.py            # ExchangeAdapter protocol (§9)
-│     │  │  └─ bybit/             # rest.py, ws_public.py, ws_private.py, ws_trade.py,
-│     │  │                        # normalize.py, errors.py, ratelimit.py, instruments.py
+│     │  │  └─ bybit/             # rest.py, ws_public.py, ws_private.py, normalize.py, errors.py,
+│     │  │                        # ratelimit.py, instruments.py; ws_trade.py is post-v1, not built (ADR-0044)
 │     │  ├─ ingestion/            # connection mgr, planner, watchdog, sequence tracker
 │     │  ├─ book/                 # state, resync, aggregation, liquidity tracker
 │     │  ├─ bars/                 # builders per kind, store
@@ -1879,9 +1879,13 @@ are per state, never per account.
 | WS frame decode in worker           | p95 ≤ 4 ms                                               |
 | Chart frame                         | ≤ 16.7 ms at 60 fps with 100k bars + footprint + heatmap |
 | Total tick → pixel                  | ≤ 250 ms                                                 |
-| Order click → exchange ack          | p99 ≤ 500 ms (live), ≤ 800 ms (demo); both REST in v1    |
+| Order click → exchange ack          | p99 ≤ 500 ms (live), ≤ 800 ms (demo); see the note below |
 | Fan-out of 5 accounts               | all legs submitted within 1.5 s                          |
 | Cold app start to first chart frame | ≤ 3 s (Electron), ≤ 4 s (browser)                        |
+
+The live figure of the order-click budget assumed a WS trade path; v1 has none (ADR-0044), so both environments are
+REST. `06-performance-and-load-standard.md` §5.2 states live as a p95 < 500 ms target until R4 (not a hard gate), and
+E29-K01 and E29-Q03 own the measured REST numbers.
 
 ### 13.3 Accessibility and internationalisation hooks
 

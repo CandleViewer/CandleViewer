@@ -240,7 +240,7 @@ own signing, by #913 L1d-1), 6 inherent Critical and 25 High. Main
 findings: the client's `intent` decides whether an opening order needs a native
 stop and which rate bucket pays; the shipped REST client resends an order create after a timeout or 5xx with no
 lookup; the `untracked` path and a mismatched duplicate-id lookup had no B1 contract (its contract half is on `main`
-since #3800, the rest is E29-T03's); `order_events.payload` can keep headers or an `auth` frame; cancel, background
+since #3800, and E29-T03 built the rest); `order_events.payload` can keep headers or an `auth` frame; cancel, background
 or another UID's traffic can starve a stop. SR-E29-01..17 (model §10); AC-01..AC-31. The open Critical and High
 findings are RSK-076 to RSK-081 in `32-risk-register.md`; the §12.2 residuals are RR-18 to RR-21 in §16.1, owner
 sign-off pending (queued on #2701).
