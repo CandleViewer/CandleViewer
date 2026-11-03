@@ -3,23 +3,25 @@
 // 55 fps / 512 MB claims stay modelled until E11-T06 / T08). Pan, feed and theme-switch frames at
 // 5k and 100k bars: each frame timed alone, the median and p95 bound, `gpuMemoryMbEstimate`
 // recorded and bound; pan and feed also on OHLC bars (120 in view: the stem and ticks path). The AC:
-// a theme switch takes < 1 ms and uploads nothing.
+// a theme switch takes < 1 ms and uploads nothing. E12-S07: hollow (120 in view) and Heikin-Ashi
+// rows, and a kind switch at 100k bars inside its 100 ms budget.
 import { describe, expect, it } from "vitest";
 import { CandleSeriesBench } from "../../../bench/scenes/candle-series.js";
+import type { SeriesShape } from "../../../src/layers/candle/series.js";
 import { percentile } from "../../../bench/stats.mjs";
 import { FakeGl } from "../../gl/fake-gl.js";
 import { budget, why } from "@candleviewer/config/perf-calibration";
 
 type Step = (bench: CandleSeriesBench, t: number) => void;
-type Shape = "candles" | "bars";
 
 /** 5 runs of 300 frames after a warm-up run: every frame's ms, and the run's GPU estimate. */
 function run(
   step: Step,
   n: number,
-  shape: Shape = "candles",
+  shape: SeriesShape = "candles",
   window = 0,
   gapEvery = 0,
+  ha = false,
 ): { p50: number; p95: number; gpuMb: number; bytes: number } {
   const frames: number[] = [];
   let gpuMb = 0;
@@ -32,6 +34,7 @@ function run(
       shape,
       window,
       gapEvery,
+      ha,
     );
     bench.backend.takeUploadedBytes();
     for (let f = 1; f <= 300; f += 1) {
@@ -95,5 +98,50 @@ describe("perf budgets: candle series", () => {
     const r = run((b, t) => b.switchTheme(t), n, "bars", 120, 10);
     expect(r.p95, why(r.p95, 1)).toBeLessThanOrEqual(budget(1));
     memory(r, n, false);
+  });
+
+  it.each([5_000, 100_000])("%i hollow bars: a pan / feed frame, median <= 0.3 ms, p95 <= 1 ms", (n) => {
+    const pan = run((b, t) => b.pan(t), n, "hollow", 120);
+    expect(pan.p50, why(pan.p50, 0.3)).toBeLessThanOrEqual(budget(0.3));
+    expect(pan.p95, why(pan.p95, 1)).toBeLessThanOrEqual(budget(1));
+    memory(pan, n, false);
+    const feed = run((b, t) => b.feed(t), n, "hollow", 120);
+    expect(feed.p50, why(feed.p50, 0.3)).toBeLessThanOrEqual(budget(0.3));
+    expect(feed.p95, why(feed.p95, 1)).toBeLessThanOrEqual(budget(1));
+    memory(feed, n, true);
+  });
+
+  it.each([5_000, 100_000])("%i Heikin-Ashi bars: a pan / feed frame, median <= 0.3 ms, p95 <= 1 ms", (n) => {
+    const pan = run((b, t) => b.pan(t), n, "candles", 0, 0, true);
+    expect(pan.p50, why(pan.p50, 0.3)).toBeLessThanOrEqual(budget(0.3));
+    expect(pan.p95, why(pan.p95, 1)).toBeLessThanOrEqual(budget(1));
+    memory(pan, n, false);
+    const feed = run((b, t) => b.feed(t), n, "candles", 0, 0, true);
+    expect(feed.p50, why(feed.p50, 0.3)).toBeLessThanOrEqual(budget(0.3));
+    expect(feed.p95, why(feed.p95, 1)).toBeLessThanOrEqual(budget(1));
+    memory(feed, n, true);
+  });
+
+  it("100 000 bars: a kind switch and its frame <= 100 ms (median of 5 runs, each target)", () => {
+    const targets: [SeriesShape, boolean][] = [
+      ["candles", true],
+      ["hollow", false],
+      ["hollow", true],
+      ["bars", false],
+      ["candles", false],
+    ];
+    const per: number[] = [];
+    for (let r = -1; r < 5; r += 1) {
+      const bench = new CandleSeriesBench(100_000, new FakeGl(), () => performance.now());
+      let worst = 0;
+      targets.forEach(([shape, ha], i) => {
+        const start = performance.now();
+        bench.switchKind((i + 1) * 16, shape, ha);
+        worst = Math.max(worst, performance.now() - start);
+      });
+      if (r >= 0) per.push(worst); // run -1 is the warm-up
+    }
+    const ms = percentile(per, 50) ?? Number.NaN;
+    expect(ms, why(ms, 100)).toBeLessThanOrEqual(budget(100));
   });
 });

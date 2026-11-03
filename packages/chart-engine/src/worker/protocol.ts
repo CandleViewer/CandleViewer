@@ -98,9 +98,17 @@ export interface BufferLayout {
 export type ScaleModeName = "linear" | "log" | "percent" | "indexed";
 const SCALE_MODES: ReadonlySet<unknown> = new Set(["linear", "log", "percent", "indexed"]);
 
-/** E12-S06: the series kinds a runtime-owned `BarStore` backs (candles and OHLC bars). */
-export type BarSeriesKind = "candles" | "bars";
-const BAR_SERIES: ReadonlySet<unknown> = new Set(["candles", "bars"]);
+/**
+ * E12-S06: the series kinds a runtime-owned `BarStore` backs (candles and OHLC bars); E12-S07
+ * adds hollow candles (BQ-5: a kind; Heikin-Ashi is an option of the candle kinds).
+ */
+export type BarSeriesKind = "candles" | "hollow" | "bars";
+const BAR_SERIES: ReadonlySet<unknown> = new Set(["candles", "hollow", "bars"]);
+/**
+ * E12-S07: a combination the chart cannot draw (Heikin-Ashi with a footprint, or over OHLC bars):
+ * refused, the previous combination keeps drawing. An `error` event's code, recoverable.
+ */
+export const ENGINE_SERIES_INCOMPATIBLE = "ENGINE_SERIES_INCOMPATIBLE";
 
 /** The pointer a pick's tolerance comes from (E11-S08, BQ-130): 10 px, 16 px for touch. */
 export type PickPointer = "mouse" | "pen" | "touch";
@@ -144,6 +152,16 @@ export type Command =
       readonly pane?: number;
     }
   | { readonly k: "removeSeries"; readonly series: number }
+  /**
+   * E12-S07 (additive): redraws series `series` as `kind`, Heikin-Ashi on or off (absent: off),
+   * over the same store: no data is resent. Viewport, scale and drawings are untouched.
+   */
+  | {
+      readonly k: "setSeriesKind";
+      readonly series: number;
+      readonly kind: BarSeriesKind;
+      readonly heikinAshi?: boolean;
+    }
   | { readonly k: "release" };
 
 export type ToWorker =
@@ -434,6 +452,12 @@ function validCommand(cmd: unknown): boolean {
       );
     case "removeSeries":
       return seriesId(cmd["series"]);
+    case "setSeriesKind":
+      return (
+        seriesId(cmd["series"]) &&
+        BAR_SERIES.has(cmd["kind"]) &&
+        optional(cmd["heikinAshi"], isBool)
+      );
     case "release":
       return true;
     default:

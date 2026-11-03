@@ -852,3 +852,70 @@ Deviations from the plan (#395 plan §2–§3), each for a stated reason:
    together.
 4. Each series gets a 16-entry (320 B) seam buffer, uploaded once at its first build even when it
    has no gap; the PR 1 runtime tests now count that upload and its VAO.
+
+## Hollow candles, Heikin-Ashi and series-kind switching (E12-S07 PR A)
+
+**Hollow candles** are a series kind (`SeriesType` `"hollow"`, BQ-5). They draw with the same
+`candle` program, ring and three hosts as candles, through two parts: 5, the hollow wick, and 6,
+the hollow body. Both place exactly as the wick and body (E12-D06 §3.2). The ring writes two meta
+bits per bar (D06 §4.2). Bit 8, `hollow`, is set when close ≥ open: the body is an outline and its
+interior is not painted (the shader discards it; the 2D painter strokes the edges). Bit 9,
+`colourUp`, is set when close ≥ the previous close: the body is up-coloured and the wick is
+1 hairline, else down-coloured and 2 hairlines. The wick stays `color.candle.wick`. The first bar
+held has no previous close, so close vs open drives both. A doji keeps the §9 doji body
+geometry but takes the colour and the wick weight from the colour-up bit (D06 §9 doji row:
+"Hollow: the body keeps §4.2's previous-close colour and wick weight"). A zero-range bar keeps
+its neutral §9 mark. Below 3 CSS px the hosts draw the candle's wick and body (D06 §5.5).
+
+`meta` bit allocation (`CANDLE_META`): 0..3 the store's flags, 4..5 `dir`, 8 `hollow`,
+9 `colourUp`. Bits 6, 7 and 10..31 stay free for other marks. Bits 8 and 9 are written only
+while the ring is hollow or Heikin-Ashi, so a candle or OHLC ring's words are byte-identical to
+E12-S06. A bar's colour bit reads the previous close, so a hollow write that stops short of the
+end takes one more bar (a mid-series patch of bar j writes [j, j + 2)). An append at the end
+extends nothing.
+
+**Heikin-Ashi** is a view transform, not a series kind: the `heikinAshi` option of `CandleOptions`
+(BQ-5). `HaRing` (`src/layers/candle/heikin-ashi.ts`) holds the D06 §3.3 recurrence per physical
+slot in float64. HA close is (O + H + L + C) / 4. HA open is (previous HA open + previous HA
+close) / 2, seeded (O + C) / 2 at the store's first bar (BQ-2). HA high and low take the real high
+and low together with the HA open and close. Values are rounded half up to ticks only when written
+(BQ-4). The `HaRing` exists only while HA is on (BQ-3, about 16 B a bar) and writes the HA candles
+into the series' own `CandleRing`. Each sync transforms [first mutated bar, length): an append or a
+forming update transforms one bar, a patch runs to the end, and a prepend or a reallocation reseeds
+from the first bar. An eviction recomputes nothing, so the bars kept keep their values. Prices stay
+real (R-4): the store is never touched, a pick returns the store's bar index, and the legend and
+crosshair read the store. HA combines with hollow; the hollow bits then read the HA open and close.
+
+**Switching.** The worker command `setSeriesKind { series, kind, heikinAshi? }` is additive (§6).
+The `heikinAshi` series option goes through the same path. The command redraws the series over its
+own store, with no data resent: `CandleRing.setMode` rewrites the ring in place, in the same array,
+so the VAOs stay and the upload is one sub-range of every bar. The hosts and their node ids are kept
+(the scene graph cannot remove nodes), and the draw-trace labels follow the kind
+(`series.hollow.*`). Three combinations are refused, each with a recoverable `error` with code
+`ENGINE_SERIES_INCOMPATIBLE` while nothing changes, so the previous combination keeps drawing:
+Heikin-Ashi while the chart holds footprint data; Heikin-Ashi over OHLC bars (D06 §3.3 defines HA
+over candles); and a footprint batch arriving while a series draws Heikin-Ashi (the batch is
+acked, not stored). The inline message is `apps/web` work. The public `SeriesHandle.setKind`
+arrives with the app wiring; until then the worker command is the API (the pane stub sends no
+series commands). Two internal metrics
+(`runtime.seriesMetrics(id)`) track this. `series_type_switch_duration_ms{target}` measures from
+the switch to the end of its first frame, in `SWITCH_BUCKETS_MS` buckets, with target `hollow`,
+`candles+heikin-ashi` and so on. `series_incompatible_combination_total{combination}` counts
+refusals.
+
+Bench (`bench/scenes/candle-series.ts`, `*.perf.test.ts` budgets, no baseline moved): hollow and HA
+pan and feed rows at 5k and 100k bars keep 2 draws and the two-bar feed upload. A kind switch at
+100k bars, including the HA transform, takes about 5 ms against a 100 ms budget. Goldens:
+`candle-golden` pins the hollow four marks and an HA raster as CPU stand-in text. The SwiftShader
+rows are `it.todo`s for E11-T08 #391.
+
+Known gap for the autoscale wiring ticket (not fixed here): autoscale fits the real prices, but an
+HA candle can reach above the real high or below the real low (its open is the previous HA
+midpoint). The price extent source must read the displayed ring values (or offer an HA-extremes
+mode), and `CandleRing.setMode` must bump that source's version so autoscale refits on a switch.
+
+Deviation from the plan (#533 plan §2): the plan put HA in a second `CandleRing`. A backend keeps
+the first source a node is attached to, so a second ring would mean remounting three hosts on every
+switch, and the scene graph cannot remove the old ones. `HaRing` therefore holds only the float64
+state and writes into the series' existing ring; switching back rewrites the real bars from the
+store.

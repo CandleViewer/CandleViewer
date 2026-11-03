@@ -5,7 +5,11 @@
 // binds per batch (the part and the ring's head, mask and length), the per-frame geometry and the
 // palette, written in place (no per-frame allocation). A theme without a candle token makes it
 // undrawable (BQ-4), never a fallback colour. Hit-testing reads the same geometry twin.
+// E12-S07: the hollow shape (the same hosts, ring and program; parts 5 / 6 at L0) and `setShape`,
+// which switches candles / hollow / OHLC in place: the parts are the per-frame `u_batch.x`, so a
+// switch rewrites nothing on the GPU but the ring's derived bits (`CandleRing.setMode`).
 import type { AttributeLayout, BatchUniforms, VertexSource } from "../../scene/gpu-types.js";
+import type { BarStore } from "../../model/BarStore.js";
 import type { SceneGraph } from "../../scene/graph.js";
 import { PROGRAM } from "../../scene/instance-layout.js";
 import { type HostContext, type HostDeps, type HostedPlugin, SeriesHost } from "../host.js";
@@ -15,9 +19,11 @@ import {
   candleRect,
   GEOM,
   GEOM_FLOATS,
+  HOLLOW_FROM,
   OHLC_TICKS_FROM,
   PART_VERTICES,
 } from "./geometry.js";
+import { HaRing } from "./heikin-ashi.js";
 import { candlePalette, PALETTE_FLOATS, PaletteError } from "./palette.js";
 import { CANDLE_STRIDE, type CandleRing } from "./ring.js";
 import { SeamRing } from "./seams.js";
@@ -30,12 +36,20 @@ export const CANDLE_ATTRIBUTES: AttributeLayout = {
     [1, 4, 1],
   ],
 };
-export type SeriesShape = "candles" | "bars";
-/** Host names and the parts they declare, per shape: two marks, then the seam. */
+export type SeriesShape = "candles" | "hollow" | "bars";
+/**
+ * Host names and the parts they declare, per shape: two marks, then the seam. A host draws the
+ * part its block names each frame, so a shape switch keeps the hosts mounted for the first shape.
+ */
 export const SERIES_PARTS: Readonly<Record<SeriesShape, readonly (readonly [string, number])[]>> = {
   candles: [
     ["wick", CANDLE_PART.wick],
     ["body", CANDLE_PART.body],
+    ["seam", CANDLE_PART.seam],
+  ],
+  hollow: [
+    ["wick", CANDLE_PART.hollowWick],
+    ["body", CANDLE_PART.hollowBody],
     ["seam", CANDLE_PART.seam],
   ],
   bars: [
@@ -47,6 +61,7 @@ export const SERIES_PARTS: Readonly<Record<SeriesShape, readonly (readonly [stri
 /** The draw-trace label prefix per shape (`series.candle.wick`, `series.ohlc.ticks`, …). */
 const LABEL: Readonly<Record<SeriesShape, string>> = {
   candles: "series.candle",
+  hollow: "series.hollow",
   bars: "series.ohlc",
 };
 const SEAM = 2; // the seam's block and host index
@@ -77,10 +92,17 @@ export class CandleSeries implements HostedPlugin {
   /** BQ-12 (`CandleOptions.isTimeAligned`, default true): false never draws the seam. */
   timeAligned = true;
 
+  /** The shape drawn now (`setShape`); the hosts keep the names of the shape they mounted as. */
+  shape: SeriesShape;
+  private readonly mounted: SeriesShape;
+
   constructor(
     readonly ring: CandleRing,
-    readonly shape: SeriesShape = "candles",
+    shape: SeriesShape = "candles",
   ) {
+    this.shape = shape;
+    this.mounted = shape;
+    if (shape === "hollow") ring.setMode(null, true, ring.ha); // `setKind` rewrites a synced ring
     this.seams = new SeamRing(ring);
     ring.seams = this.seams;
     this.sources = [ring, ring, this.seams];
@@ -95,16 +117,41 @@ export class CandleSeries implements HostedPlugin {
   }
 
   collect(ctx: HostContext): void {
-    const parts = SERIES_PARTS[this.shape];
+    const parts = SERIES_PARTS[this.mounted];
     for (let i = 0; i < parts.length; i += 1) {
       const part = (parts[i] as readonly [string, number])[1];
       ctx.instances(part === CANDLE_PART.seam ? this.seams : this.ring, "candle", part);
     }
   }
 
+  /**
+   * E12-S07: draws as `shape`, Heikin-Ashi on or off, from the next frame. The batches' labels
+   * change; the ring is rewritten in place once when its hollow bits or the HA transform turn on
+   * or off (`CandleRing.setMode`); the `HaRing` exists only while HA is on (BQ-3).
+   */
+  setKind(shape: SeriesShape, heikinAshi: boolean, store: BarStore): void {
+    const ring = this.ring;
+    ring.setMode(store, shape === "hollow", heikinAshi ? (ring.ha ?? new HaRing()) : null);
+    this.shape = shape;
+    const names = SERIES_PARTS[shape];
+    for (let p = 0; p < this.blocks.length; p += 1) {
+      const name = (names[p] as readonly [string, number])[0];
+      (this.blocks[p] as BatchUniforms).label = `${LABEL[shape]}.${name}`;
+    }
+  }
+
+  get heikinAshi(): boolean {
+    return this.ring.ha !== null;
+  }
+
+  /** The host-id prefix of the shape the hosts mounted as (`series.candle`, `series.ohlc`, …). */
+  get mountLabel(): string {
+    return LABEL[this.mounted];
+  }
+
   /** Adds the hosts to pane `paneId`'s series layer as `<base>.<name>` (`SERIES_PARTS`). */
   mount(graph: SceneGraph, paneId: string, base: string, deps: HostDeps): readonly SeriesHost[] {
-    this.hosts = SERIES_PARTS[this.shape].map(([name, part]) => {
+    this.hosts = SERIES_PARTS[this.mounted].map(([name, part]) => {
       const host = new SeriesHost(`${base}.${name}`, this, deps, { part, program: PROGRAM.candle });
       graph.addNode(paneId, "series", host);
       host.visible = this.drawable;
@@ -136,7 +183,8 @@ export class CandleSeries implements HostedPlugin {
   /**
    * Per frame, before submission: the geometry, the ring's state and the parts, in place. OHLC
    * bars under 5 CSS px draw the candle mark (D06 §3.2): their two batches switch to the wick and
-   * body parts. The seam draws only while a `gap_before` bar lies in logical [first, last].
+   * body parts. Hollow candles under 3 CSS px draw the candle's mark (D06 §4.2, §5.5). The seam
+   * draws only while a `gap_before` bar lies in logical [first, last].
    */
   frame(spacingCss: number, dpr: number, first = 0, last = -1, plotTop = 0, plotBottom = 0): void {
     candleGeometry(spacingCss, dpr, this.geom);
@@ -145,13 +193,22 @@ export class CandleSeries implements HostedPlugin {
     const r = this.ring;
     const head = r.head;
     const mask = r.capacity - 1;
-    const ohlc = this.shape === "bars" && spacingCss >= OHLC_TICKS_FROM;
+    const shape = this.shape;
+    const ohlc = shape === "bars" && spacingCss >= OHLC_TICKS_FROM;
+    const hollow = shape === "hollow" && spacingCss >= HOLLOW_FROM;
     for (let p = 0; p < this.blocks.length; p += 1) {
       const blk = this.blocks[p] as BatchUniforms;
       const ints = blk.ints;
       if (p !== SEAM) {
-        const part =
-          this.shape === "candles" || !ohlc ? p : p === 0 ? CANDLE_PART.stem : CANDLE_PART.ticks;
+        const part = ohlc
+          ? p === 0
+            ? CANDLE_PART.stem
+            : CANDLE_PART.ticks
+          : hollow
+            ? p === 0
+              ? CANDLE_PART.hollowWick
+              : CANDLE_PART.hollowBody
+            : p;
         ints[0] = part;
         blk.vertices = PART_VERTICES[part] ?? 4;
       }
@@ -195,13 +252,13 @@ export class CandleSeries implements HostedPlugin {
     const hi = v[at + 1] as number;
     const lo = v[at + 2] as number;
     const c = v[at + 3] as number;
-    const dir = ((v[at + 4] as number) >> 4) & 3;
+    const mark = (v[at + 4] as number) >> 4;
     let best = Infinity;
     let part = -1;
     for (let b = 0; b < SEAM; b += 1) {
       const p = (this.blocks[b] as BatchUniforms).ints[0] ?? 0;
       for (let sub = 0; sub < (p === CANDLE_PART.ticks ? 2 : 1); sub += 1) {
-        candleRect(p, index, o, hi, lo, c, dir, k, indexBase, tickBase, this.geom, RECT, sub);
+        candleRect(p, index, o, hi, lo, c, mark, k, indexBase, tickBase, this.geom, RECT, sub);
         const w = RECT[2] as number;
         if (w <= 0) continue;
         const rx = RECT[0] as number;

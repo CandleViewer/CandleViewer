@@ -53,6 +53,7 @@ export interface Pane {
 
 export type SeriesType =
   | "candles"
+  | "hollow" // E12-S07 (BQ-5, additive): hollow candles (E12-D06 §4.2)
   | "bars"
   | "line"
   | "area"
@@ -65,6 +66,7 @@ export type SeriesType =
 
 export interface SeriesOptionsMap {
   candles: CandleOptions;
+  hollow: CandleOptions;
   footprint: FootprintOptions;
   profile: ProfileOptions;
   heatmap: HeatmapOptions;
@@ -351,6 +353,11 @@ export interface CandleOptions {
   downColorToken: string;
   /** E12-S06 (BQ-12, additive): false suppresses the gap seam (and E11-S06's time labels). */
   isTimeAligned?: boolean;
+  /**
+   * E12-S07 (BQ-5, additive): draw the Heikin-Ashi transform (E12-D06 §3.3); prices read real
+   * (R-4). Refused with a footprint or on OHLC bars (`ENGINE_SERIES_INCOMPATIBLE`); absent: off.
+   */
+  heikinAshi?: boolean;
 }
 
 export interface LineOptions {
@@ -398,6 +405,7 @@ export interface BubbleData {
 /** Full-replace payloads per series type (`setData`, `prependHistory`). */
 export interface SeriesDataMap {
   candles: CandleData;
+  hollow: CandleData;
   bars: CandleData;
   line: LineData;
   area: LineData;
@@ -412,7 +420,7 @@ export interface SeriesDataMap {
 /**
  * Incremental payloads per series type (`append`). §8 types `append` for every series type, so
  * every type has an entry; the merge rule differs by type (26 §3.3 mutation API):
- * - `candles`, `bars`, `line`, `area`, `baseline`, `histogram`: the payload's first bar patches
+ * - `candles`, `hollow`, `bars`, `line`, `area`, `baseline`, `histogram`: the first bar patches
  *   the last bar held when their times are equal, and the rest append (`patchLastBar`,
  *   `appendBars`).
  * - `footprint`: upserts the payload's cells by bar index (`upsertFootprintCells(barIndex,
@@ -425,6 +433,7 @@ export interface SeriesDataMap {
  */
 export interface SeriesDeltaMap {
   candles: CandleData;
+  hollow: CandleData;
   bars: CandleData;
   line: LineData;
   area: LineData;

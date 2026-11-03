@@ -5,18 +5,30 @@
 import { hairlineDevicePx } from "../../viewport/pixels.js";
 import { projectRel } from "../../viewport/transform.js";
 import { PALETTE } from "./palette.js";
-import { CANDLE_DIR } from "./ring.js";
+import { CANDLE_DIR, MARK } from "./ring.js";
 
 /**
  * `u_batch.x`: what a batch draws. Candles: the wick and the body. OHLC bars (D06 §3.2): the stem
  * and the open / close ticks (a 10-vertex strip, two quads joined by degenerate bridges, BQ-15).
- * The gap seam (BQ-8): one hairline at the left edge of each `gap_before` bar's slot.
+ * The gap seam (BQ-8): one hairline at the left edge of each `gap_before` bar's slot. E12-S07,
+ * the hollow candle (D06 §4.2): its wick (weight by the colour-up bit) and its body (colour by
+ * the colour-up bit; outline-only, interior unpainted, by the hollow bit).
  */
-export const CANDLE_PART = { wick: 0, body: 1, ticks: 2, stem: 3, seam: 4 } as const;
+export const CANDLE_PART = {
+  wick: 0,
+  body: 1,
+  ticks: 2,
+  stem: 3,
+  seam: 4,
+  hollowWick: 5,
+  hollowBody: 6,
+} as const;
 /** Strip vertices per instance: 4 for a quad, 10 for the two ticks (BQ-15). */
-export const PART_VERTICES: readonly number[] = [4, 4, 10, 4, 4];
+export const PART_VERTICES: readonly number[] = [4, 4, 10, 4, 4, 4, 4];
 /** D06 §3.2: OHLC ticks are drawn from 5 CSS px; below it the bar draws the candle mark. */
 export const OHLC_TICKS_FROM = 5;
+/** D06 §4.2 / §5.5: the hollow marks are L0's (s ≥ 3 CSS px); below, the candle's L1 / L2 mark. */
+export const HOLLOW_FROM = 3;
 
 /**
  * `u_geom` (two vec4 rows): body width, hairline and OHLC tick in device px, spacing in CSS px;
@@ -62,19 +74,39 @@ export function candleGeometry(spacingCss: number, dpr: number, out: Float32Arra
 export const fullOutline = (w: number, geom: ArrayLike<number>): boolean =>
   w >= FULL_OUTLINE_CSS * (geom[GEOM.dpr] ?? 1);
 
-/** The palette row a part of a `dir` bar is drawn in (the shader's choice, line for line). */
-export function partColor(part: number, dir: number): number {
-  if (part === CANDLE_PART.wick || part === CANDLE_PART.seam || dir >= CANDLE_DIR.doji) {
-    return PALETTE.wick; // D06 §9: doji and zero-range marks are neutral; R-6
+/**
+ * The palette row a part of a bar is drawn in (the shader's choice, line for line). `mark` is
+ * `meta >> 4` (`MARK`): the dir, and for the hollow parts the colour-up bit (D06 §4.2). A hollow
+ * doji keeps that colour (D06 §9 doji row: "Hollow: the body keeps §4.2's previous-close colour
+ * and wick weight"); a zero-range bar stays neutral.
+ */
+export function partColor(part: number, mark: number): number {
+  const dir = mark & MARK.dir;
+  if (part === CANDLE_PART.wick || part === CANDLE_PART.seam || part === CANDLE_PART.hollowWick) {
+    return PALETTE.wick; // R-6: wicks and the seam are neutral
   }
+  if (part === CANDLE_PART.hollowBody && dir !== CANDLE_DIR.zeroRange) {
+    return mark & MARK.colourUp ? PALETTE.up : PALETTE.down;
+  }
+  if (dir >= CANDLE_DIR.doji) return PALETTE.wick; // D06 §9: doji and zero-range are neutral
   return dir === CANDLE_DIR.up ? PALETTE.up : PALETTE.down;
 }
 
 /**
+ * D06 §4.2: a hollow body (close ≥ open) is outline-only. A doji or zero-range body is at most
+ * 2 hairlines tall, all edge, so it paints whole (the same pixels).
+ */
+export const hollowFill = (part: number, mark: number): boolean =>
+  part === CANDLE_PART.hollowBody &&
+  (mark & MARK.dir) < CANDLE_DIR.doji &&
+  (mark & MARK.hollow) !== 0;
+
+/**
  * Part `part` (`CANDLE_PART`) of bar `index` (logical) as [x, y, w, h] in `u_viewport` px, y
  * down: the shader's arithmetic in float64. `k` is the pane block's floats (`u_k`, `u_viewport`,
- * `u_log`), `tickBase` / `indexBase` its ints; `dir` the ring's classification. `sub` picks the
- * OHLC tick (0 open, 1 close); a part with nothing to draw gets w = 0.
+ * `u_log`), `tickBase` / `indexBase` its ints; `mark` the ring's `meta >> 4` (its dir in the low
+ * bits, `MARK`). `sub` picks the OHLC tick (0 open, 1 close); a part with nothing to draw gets
+ * w = 0. The hollow wick and body place exactly as the candle's.
  */
 export function candleRect(
   part: number,
@@ -83,7 +115,7 @@ export function candleRect(
   h: number,
   l: number,
   c: number,
-  dir: number,
+  mark: number,
   k: ArrayLike<number>,
   indexBase: number,
   tickBase: number,
@@ -106,10 +138,20 @@ export function candleRect(
     out[3] = (bottom > 0 ? bottom : (k[5] ?? 0)) - top;
     return;
   }
+  const dir = mark & MARK.dir;
   // The body's left edge snapped to a device pixel; every part is centred on it from there.
   const left = Math.floor(centre - body * 0.5 + 0.5);
-  // D06 §3.1 / §3.2: 1 hairline up, 2 down; doji and zero-range marks keep one.
-  const weight = dir === CANDLE_DIR.down ? 2 * hair : hair;
+  // D06 §3.1 / §3.2: 1 hairline up, 2 down; doji and zero-range marks keep one. §4.2: the hollow
+  // wick's weight follows the colour-up bit (close vs previous close), not the body's dir; a
+  // doji's too (§9 doji row), a zero-range bar's not.
+  const weight =
+    part === CANDLE_PART.hollowWick && dir !== CANDLE_DIR.zeroRange
+      ? mark & MARK.colourUp
+        ? hair
+        : 2 * hair
+      : dir === CANDLE_DIR.down
+        ? 2 * hair
+        : hair;
   const stem = left + Math.floor((body - hair) * 0.5);
   let x = stem;
   let w = weight;
@@ -127,6 +169,7 @@ export function candleRect(
     y1 = y0 + weight;
   } else if (
     part === CANDLE_PART.body ||
+    part === CANDLE_PART.hollowBody ||
     (part === CANDLE_PART.stem && dir === CANDLE_DIR.zeroRange)
   ) {
     w = body;
@@ -143,7 +186,7 @@ export function candleRect(
     }
     x = left + Math.floor((body - w) * 0.5);
   } else {
-    // The wick (candles) or the stem (OHLC): high → low on the centre column.
+    // The wick (candles, hollow) or the stem (OHLC): high → low on the centre column.
     y0 = projectRel(k, l - tickBase);
     y1 = projectRel(k, h - tickBase);
   }

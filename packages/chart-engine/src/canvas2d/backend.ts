@@ -7,7 +7,7 @@
 import type { BackendFailure, RenderBackend } from "../gl/backend.js";
 import type { VertexSource } from "../gl/buffers.js";
 import type { BatchUniforms, BatchUniformSource, PaneUniformSource } from "../gl/submit.js";
-import { CANDLE_PART, partColor } from "../layers/candle/geometry.js";
+import { CANDLE_PART, hollowFill, partColor } from "../layers/candle/geometry.js";
 import { CANDLE_DIR, CANDLE_STRIDE } from "../layers/candle/ring.js";
 import { PALETTE } from "../layers/candle/palette.js";
 import { DrawTrace } from "../gl/trace.js";
@@ -191,8 +191,9 @@ export class Canvas2DBackend implements RenderBackend {
   /**
    * E12-S06: a candle part's live bars, slot for slot through the batch's (head, mask, n), into
    * the palette rows' buckets (`partColor`, the shader's choice). A ref is `at * 2 + sub`: an up
-   * body's tint is `sub` 1 in the tint bucket, after its outline's; the OHLC ticks are the open
-   * (0) and close (1) quads. The seam reads its own `[0, instances)` entries.
+   * body's tint is `sub` 1 in the tint bucket, after its outline's; a hollow body (E12-S07) is
+   * `sub` 1 alone, its outline without the interior; the OHLC ticks are the open (0) and close
+   * (1) quads. The seam reads its own `[0, instances)` entries.
    */
   private candles(blk: BatchUniforms, ints: Int32Array, i: number): void {
     const part = blk.ints[0] ?? 0; // scalar locals: no per-frame array
@@ -204,9 +205,14 @@ export class Canvas2DBackend implements RenderBackend {
     for (let j = 0; j < n; j += 1) {
       const at = (seam ? j : (head + j) & mask) * CANDLE_STRIDE;
       if (at < 0 || at + CANDLE_STRIDE > ints.length) break; // a ring shorter than its block
-      const dir = ((ints[at + 4] ?? 0) >> 4) & 3;
-      const row = partColor(part, dir);
+      const mark = (ints[at + 4] ?? 0) >> 4;
+      const dir = mark & 3;
+      const row = partColor(part, mark);
       const bucket = this.bucketOf(PROGRAM.candle, pal, row * 4, 0);
+      if (hollowFill(part, mark)) {
+        this.push(bucket, i, at * 2 + 1);
+        continue;
+      }
       this.push(bucket, i, at * 2);
       if (part === CANDLE_PART.ticks) this.push(bucket, i, at * 2 + 1);
       else if (part === CANDLE_PART.body && dir === CANDLE_DIR.up) {

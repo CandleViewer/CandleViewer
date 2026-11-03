@@ -5,11 +5,18 @@
 // frame). Candles show every bar at the spacing floor (BQ-13); OHLC rows show `window` bars
 // (≈ 13 px: the stem and the 10-vertex ticks) or, without one, the floor's candle mark. The unit
 // test counts draws, uploads and allocations; candle-series.perf.test.ts times the frames.
+// E12-S07 rows: hollow candles (`shape` "hollow", the hollow parts from 3 px: give a `window`)
+// and Heikin-Ashi (`ha`: the HaRing transform on every write), and `switchKind`, one kind switch
+// (an in-place ring rewrite and its upload) then the frame.
 import { GLBackend } from "../../src/gl/backend.js";
 import type { GL2Like } from "../../src/gl/gl-types.js";
 import { CandleRing } from "../../src/layers/candle/ring.js";
 import { BarSeries } from "../../src/layers/candle/bars.js";
-import { CANDLE_ATTRIBUTES, CandleSeries } from "../../src/layers/candle/series.js";
+import {
+  CANDLE_ATTRIBUTES,
+  CandleSeries,
+  type SeriesShape,
+} from "../../src/layers/candle/series.js";
 import { type BarBatch, BarStore } from "../../src/model/BarStore.js";
 import { BatchBuilder } from "../../src/scene/batch-builder.js";
 import type { FrameCallback } from "../../src/scene/frame-clock.js";
@@ -69,9 +76,10 @@ export class CandleSeriesBench {
     n: number,
     gl: GL2Like,
     private readonly now: () => number = () => 0,
-    shape: "candles" | "bars" = "candles",
+    shape: SeriesShape = "candles",
     window = 0,
     gapEvery = 0,
+    ha = false,
   ) {
     this.graph.addPane("main");
     this.viewport = new ChartViewport(this.store);
@@ -81,7 +89,8 @@ export class CandleSeriesBench {
     this.backend.setPaneUniforms(() => this.uniforms);
     this.builder = new BatchBuilder(this.graph, this.backend);
     this.ring = new CandleRing(this.builder);
-    this.series = shape === "bars" ? new BarSeries(this.ring) : new CandleSeries(this.ring);
+    this.series = shape === "bars" ? new BarSeries(this.ring) : new CandleSeries(this.ring, shape);
+    if (ha) this.series.setKind(shape, true, this.store);
     const deps = { viewport: this.viewport, pane: 0, theme: () => this.theme };
     const blocks = new Map<string, (typeof this.series.blocks)[number]>();
     this.series.mount(this.graph, "main", "series.candle.0.0", deps).forEach((h, p) => {
@@ -157,6 +166,13 @@ export class CandleSeriesBench {
   switchTheme(t: number): void {
     this.series.setTheme(t % 32 < 16 ? SWAPPED : THEME);
     this.graph.markTheme();
+    this.frame(t);
+  }
+
+  /** E12-S07: one kind switch over the same store (no data resent), then the frame. */
+  switchKind(t: number, shape: SeriesShape, ha: boolean): void {
+    this.series.setKind(shape, ha, this.store);
+    for (const h of this.series.hosts) this.graph.markData(h.id);
     this.frame(t);
   }
 
