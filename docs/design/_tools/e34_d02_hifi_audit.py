@@ -37,9 +37,11 @@ Gates (each FAIL led by its name):
               Cancel working orders are never asked for the arm and stay enabled under the
               registered states and view-as.
   G-RULED     OQ-1 is carried, not decided (the confirm names the whole position and what the
-              group added); the Manager scope is stated (C-12.4); the Viewer's frame has no Send.
-  G-D01       the unmerged E34-D01 (#936) and E34-D03 (#997) appear only on request rows or in a
-              sentence naming a request row, never as a cite or by path.
+              group added); the Manager scope is stated (C-12.4); the Viewer's frame has no Send;
+              §3.1's status cell is E34-D03's shared CMP-258, with no row-status cell of its own.
+  G-D01       the unmerged E34-D01 (#936) and E34-D03 (#997), and any CMP id `15` lacks at the
+              base, appear only on request rows or in a sentence naming a request row, never as a
+              cite or by path.
   G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
               deny word in the spec; no deny word in this tool's text or the pins.
@@ -177,6 +179,7 @@ PROTECTIVE = "Unwind and Cancel working orders stay enabled"
 SAFETY_LINE = (
     "No control on SCR-061 turns the native stop off, and no frame shows a way to omit it."
 )
+OWN_CELL = "SCR-061 defines no row-status component of its own."
 NOTICE = "Every order carries a stop-loss at the exchange. This cannot be turned off."
 
 
@@ -597,14 +600,22 @@ def g_ruled(t: Texts) -> list[str]:
         bad.append("§5: the Manager scope to assigned accounts is not stated (C-12.4)")
     if "no Send" not in row(t, "S061-33")[4]:
         bad.append("S061-33: the Viewer's frame offers a Send")
+    three1 = section(t.spec, "### 3.1")
+    if "CMP-258" not in three1 or OWN_CELL not in three1:
+        bad.append("§3.1: the status cell is not E34-D03's shared CMP-258 (coordination ruling)")
     return bad
 
 
 def g_d01(t: Texts) -> list[str]:
     bad = []
+    merged = set(re.findall(r"^### (CMP-\d{3})\b", at(t, "15"), re.MULTILINE))
     for i, ln in enumerate(t.spec.split("\n"), 1):
-        if UNMERGED.search(ln) and not (ln.startswith("| R-") or "request row" in ln):
+        on_request = ln.startswith("| R-") or "request row" in ln
+        if UNMERGED.search(ln) and not on_request:
             bad.append(f"spec:{i} leans on unmerged research or design outside a request row")
+        for cmp_id in sorted(set(re.findall(r"CMP-\d{3}", ln)) - merged):
+            if not on_request:
+                bad.append(f"spec:{i} names {cmp_id}, not in `15` at the base, off a request row")
         if MEMO_PATH.search(ln):
             bad.append(f"spec:{i} cites the unmerged E34-D01 memo by path or line")
     return bad
@@ -786,6 +797,8 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-RULED", "drop the Manager scope", sub("**Manager scope (C-12.4).**", "**Scope.**")),
     ("G-RULED", "give the Viewer a Send", sub("rendering the sentence form, CMP-026 with `cta` omitted; no Send", "rendering the sentence form, CMP-026 with `cta` omitted; Send shown")),
     ("G-D01", "lean on E34-D01 outside a request row", sub("**Rows:** `size.row.compact`", "**Rows (E34-D01 P-1):** `size.row.compact`")),
+    ("G-D01", "name the unmerged CMP-258 off a request row", sub("CMP-258 (a request row, R-7); the tokens", "CMP-258; the tokens")),
+    ("G-RULED", "define a row-status cell of SCR-061's own", sub(OWN_CELL, "SCR-061 defines its own status cell.")),
     ("G-D01", "cite the memo by path", sub("Only these words appear on SCR-061.", "Only these words appear on SCR-061 (research/e34 memo).")),
     ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:1503) and, in a dialog", "(`14`:1502) and, in a dialog")),
     ("G-HYGIENE", "write a closing keyword against #996", sub("carries the closing line.", "carries the closing line. Closes #996.")),
