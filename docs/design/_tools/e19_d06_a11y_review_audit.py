@@ -6,17 +6,17 @@ public text, hygiene, G-UNTOUCHED, the runner and the mutation harness) live in
 `spec_audit_lib.py`, which sits beside this file byte-identical (G-HELPER); this file keeps only
 E19-D06's rows. It reads, AS TEXT at a pinned commit, every document the review cites (the base
 for the plan, the merged E19-D02, the memo, the rules and E26-D02; the three unmerged parents at
-their PR heads), and, from the working tree, the review, its pins file and the helper. The only
+their PR heads), and, from the working tree, the review, the helper and `14`. The only
 repo code it runs is `contrast_ratio()` of `docs/design/_tools/contrast_check.py` and
 `simulate()` / `contrast_ratio()` / `delta_e76()` of `docs/research/_tools/cvd_simulate.py`,
 loaded by path; E19-D03's written figures are read from its text at its pin, never copied.
 
 Gates: G-CITE, G-KEYCITE, G-VERSION, G-AC, G-INBOX, G-DECISIONS, G-TABLE, G-KEYS, G-T2, G-LIVE,
-G-COLOUR, G-CONTRAST, G-CVD, G-VERDICT, G-FINDINGS, G-IDS, G-HANDOFF, G-ENV, G-WALK, G-RULING,
-G-RULED, G-NOCLOSE, G-PUBLIC, G-HYGIENE, G-HELPER, G-UNTOUCHED and G-MUTLIST (section 16.3 equals
-this tool's list). Pins (G-RULED): each BQ bullet's sha256[:16] in `e19_d06_ruled_pins.txt`;
-`--repin-ruled` is the only writer. The BQ list is comment 6598368330 on #501; its ruling is
-pending, so every bullet reads PENDING (G-RULING) until a ruling flips it.
+G-COLOUR, G-CONTRAST, G-CVD, G-VERDICT, G-FINDINGS, G-IDS, G-HANDOFF, G-ENV, G-MOTION, G-WALK,
+G-RULING, G-RULED, G-NOCLOSE, G-PUBLIC, G-HYGIENE, G-HELPER, G-UNTOUCHED, G-POINTER and G-MUTLIST
+(section 16.3 equals this tool's list). Pins (G-RULED): each BQ bullet's sha256[:16] in
+`RULED_PINS` below, no separate pins file (the ruling's hand-off-pack rule 2); `--repin-ruled`
+is the only writer. The BQ list is comment 6598368330 on #501, RULED by comment 6608044786.
 
 Usage (from the repo root):
   python3 -I -B docs/design/_tools/e19_d06_a11y_review_audit.py --check | --json | --self-test
@@ -40,18 +40,49 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "497856e27"  # origin/main where the BQ list read every cite
+BASE = "b81479ab0"  # origin/main where the ruling fold re-read every cite
 D03_HEAD = "35032f521"  # #5517 (E19-D03, #438) head; re-pinned to its merge commit
 D04_HEAD = "b720bd97f"  # #5553 (E19-D04, #439) head; re-pinned to its merge commit
 D05_HEAD = "eacb7cce2"  # #5555 (E19-D05, #500) head; re-pinned to its merge commit
-BQ_LIST = "6598368330"  # the BQ list on #501; no ruling yet
+BQ_LIST = "6598368330"  # the BQ list on #501
+RULING = "6608044786"  # its ruling of record
+AMENDED = frozenset({6, 7, 8, 12, 13, 14, 15})  # the rest AGREE
 HELPER_SHA = "62b56d6446b218cd"  # sha256[:16] of the shared helper as landed
+
+PIN_MARK = "# ruled-" + "pins:"  # the block --repin-ruled rewrites
+# ruled-pins:begin (sha256[:16] of each BQ bullet; written by --repin-ruled only)
+RULED_PINS = (
+    "BQ-0 e15b4ee159e64764",
+    "BQ-1 1d531e6056af8027",
+    "BQ-2 3bea5f26fab87a9e",
+    "BQ-3 18b24acd51fde850",
+    "BQ-4 94c62cc11354b579",
+    "BQ-5 e17f624915c2ee08",
+    "BQ-6 d1d88118077edfff",
+    "BQ-7 00c19ce21a7a3c49",
+    "BQ-8 b6995fd458810cbf",
+    "BQ-9 2743dbd6cc066444",
+    "BQ-10 1b5cf514e50b53a8",
+    "BQ-11 4f3f5231422e5dbb",
+    "BQ-12 ce92980deacfea70",
+    "BQ-13 35e1c533e039681a",
+    "BQ-14 72c51605f39a5c1e",
+    "BQ-15 a3cfb7aaa9bbca31",
+)
+# ruled-pins:end
 
 SPEC_REL = "docs/design/E19/E19-D06.md"
 TOOL_REL = "docs/design/_tools/e19_d06_a11y_review_audit.py"
-PIN_REL = "docs/design/_tools/e19_d06_ruled_pins.txt"
 LIB_REL = "docs/design/_tools/spec_audit_lib.py"
-OWN = (SPEC_REL, TOOL_REL, PIN_REL, LIB_REL)
+P14_REL = "docs/plan/14-screens-catalogue.md"
+OWN = (SPEC_REL, TOOL_REL, LIB_REL)
+# RULED BQ-14: the one link-only line this PR adds to `14`, under SCR-038's E19-D02 line.
+ANCHOR = "- **Wireframes (E19-D02):** [E19-D02.md](../design/E19/E19-D02.md) §2–§7"
+POINTER = (
+    "- **A11y review (E19-D06):** [E19-D06.md](../design/E19/E19-D06.md) §3, §7 (the table "
+    "strategy and the announcement policy, text first, owner approval pending; a pointer only, "
+    "it changes no requirement here)."
+)
 BACKLOG_REL = "docs/plan/backlog/E19.json"
 
 PLAN = {
@@ -72,6 +103,15 @@ KEYED = {
     "M": L.DocRef("docs/design/research/e19-profiles.md", BASE),
     "DS": L.DocRef(".claude/rules/32-design-specs.md", BASE),
     "E26-D02": L.DocRef("docs/design/E26/E26-D02.md", BASE),
+    "E47-D04": L.DocRef("docs/design/E47/E47-D04.md", BASE),
+    "E47-D06": L.DocRef("docs/design/E47/E47-D06.md", BASE),
+    "E47-D07": L.DocRef("docs/design/E47/E47-D07.md", BASE),
+    "E17-D02": L.DocRef("docs/design/E17/E17-D02.md", BASE),
+    "E12-D11": L.DocRef("docs/design/E12/E12-D11.md", BASE),
+    "E08-D12": L.DocRef("docs/design/E08/E08-D12.md", BASE),
+    "E09-D10": L.DocRef("docs/design/E09/E09-D10.md", BASE),
+    "README": L.DocRef("docs/design/README.md", BASE),
+    "KM": L.DocRef("apps/web/src/keymap/keymap.json", BASE),
 }
 _ALTS = "|".join(re.escape(k) for k in sorted(KEYED, key=len, reverse=True))
 # `NN`:line, KEY:line or `KEY`:line, with an optional –end.
@@ -81,62 +121,57 @@ CITE_RE = re.compile(
 )
 
 # The load-bearing cites, pinned to their words (`--repin` proposes moves).
+# fmt: off
 KEY_CITES: tuple[L.KeyCite, ...] = tuple(
     L.KeyCite(d, n, s)
     for d, n, s in (
-        ("14", 1014, "a table alternative lists each price row"),
-        ("14", 1015, "up to 5 000 rows"),
-        ("14", 1028, "the mode selector is a radio group"),
-        ("05", 99, "Roving tabindex"),
-        ("05", 100, "Focus is never silently stolen"),
-        ("05", 101, "trap focus"),
-        ("05", 104, "essential exception"),
-        ("05", 150, "accessible name of the window region"),
-        ("05", 162, "profile-histogram bars"),
-        ("05", 185, "default 1 update / 2s per field"),
-        ("05", 187, "reduce announcements"),
-        ("05", 249, "Ctrl+Shift+M"),
-        ("05", 251, "2.2.2"),
+        ("14", 1014, "a table alternative lists each price row"), ("14", 1015, "up to 5 000 rows"),
+        ("14", 1028, "the mode selector is a radio group"), ("05", 99, "Roving tabindex"),
+        ("05", 100, "Focus is never silently stolen"), ("05", 101, "trap focus"),
+        ("05", 104, "essential exception"), ("05", 150, "accessible name of the window region"),
+        ("05", 162, "profile-histogram bars"), ("05", 185, "default 1 update / 2s per field"),
+        ("05", 187, "reduce announcements"), ("05", 249, "Ctrl+Shift+M"), ("05", 251, "2.2.2"),
         ("05", 252, "No content flashes more than 3 times per second"),
-        ("05", 205, "**Profile table**"),
-        ("05", 229, "load more rows"),
-        ("15", 592, "the shared composite-grid pattern"),
-        ("15", 1298, "never fill-colour alone"),
-        ("15", 2409, "each TPO letter-block is DOM-mirrored"),
-        ("16", 146, "never the 24 px targets"),
-        ("23", 753, "1 000 ms"),
+        ("05", 205, "**Profile table**"), ("05", 229, "load more rows"),
+        ("15", 592, "the shared composite-grid pattern"), ("15", 1298, "never fill-colour alone"),
+        ("15", 2410, "each TPO letter-block is DOM-mirrored"),
+        ("16", 146, "never the 24 px targets"), ("23", 753, "1 000 ms"),
         ("23", 1346, "drop `heatmap` and `profile` to 1 000 ms"),
-        ("24", 981, "class ProfileLevel(BaseModel):"),
-        ("D02", 97, "no DEMO / LIVE badge"),
-        ("D02", 100, "R-4 Announcements"),
-        ("D02", 256, "none (E17's system notice owns it)"),
-        ("D02", 271, "Initial focus: the first radio of Period"),
-        ("D02", 273, "focus trapped"),
+        ("24", 981, "class ProfileLevel(BaseModel):"), ("D02", 97, "no DEMO / LIVE badge"),
+        ("D02", 100, "R-4 Announcements"), ("D02", 256, "none (E17's system notice owns it)"),
+        ("D02", 271, "Initial focus: the first radio of Period"), ("D02", 273, "focus trapped"),
         ("D02", 339, "MEMO A-6's TPO count"),
         ("D02", 340, "header controls → histogram mirror → legend → table"),
         ("D02", 343, "essential exception"),
         ("D02", 383, "{level word} {price}: volume {v}, delta {d}"),
-        ("D03", 175, "the engine draws from system colours"),
-        ("D03", 183, "wrap, never truncate"),
-        ("D03", 285, "Behaviour (1.4.13)"),
-        ("D03", 355, "The Levels group"),
-        ("D03", 424, "D03-C11"),
-        ("D03", 442, "D03-A3"),
-        ("D03", 461, "no tritan matrix"),
-        ("D04", 183, "24 × 24 CSS px"),
-        ("D04", 260, "profile range stop"),
-        ("D04", 405, "D04-C6"),
-        ("D05", 166, "RenderFlags.animate"),
-        ("D05", 170, "The canvas is not recoloured by the OS"),
-        ("D05", 172, "wrap or truncate with a"),
-        ("D05", 243, "WCAG 2.2.2"),
-        ("D05", 394, "Combined M-2 + M-4 + M-8"),
-        ("D05", 433, '"Final" spoken alone'),
-        ("E26-D02", 44, "profile"),
-        ("M", 265, "A-6"),
-        ("DS", 15, "G-T2 miss is a Major"),
+        ("D03", 175, "the engine draws from system colours"), ("D03", 183, "wrap, never truncate"),
+        ("D03", 285, "Behaviour (1.4.13)"), ("D03", 355, "The Levels group"),
+        ("D03", 424, "D03-C11"), ("D03", 442, "D03-A3"), ("D03", 461, "no tritan matrix"),
+        ("D04", 183, "24 × 24 CSS px"), ("D04", 260, "profile range stop"), ("D04", 405, "D04-C6"),
+        ("D05", 166, "RenderFlags.animate"), ("D05", 170, "The canvas is not recoloured by the OS"),
+        ("D05", 172, "wrap or truncate with a"), ("D05", 243, "WCAG 2.2.2"),
+        ("D05", 394, "Combined M-2 + M-4 + M-8"), ("D05", 433, '"Final" spoken alone'),
+        ("E26-D02", 44, "profile"), ("M", 265, "A-6"), ("DS", 15, "G-T2 miss is a Major"),
+        ("05", 105, "2.5.7"), ("05", 119, "R-11"), ("16", 142, "documented compensating control"),
+        ("16", 743, "7. Ticket's linked downstream"),
+        ("E47-D04", 117, "R-2 One stop per composite"),
+        ("E47-D04", 122, "R-7 Restore to the invoker"),
+        ("E47-D06", 151, "one Tab stop (the plot stop)"),
+        ("E47-D06", 171, "| profile | mirror rows"), ("E47-D06", 191, "| N-3 | profile level"),
+        ("E47-D06", 192, "| N-4 | TPO level"),
+        ("E47-D06", 220, "**Profile** (`05`'s column set verbatim"),
+        ("E47-D06", 270, "`Alt+T` toggles it in that panel's context"),
+        ("E47-D07", 243, "one composite per cadence"),
+        ("E47-D07", 247, "at most once per 5 s per region"), ("E47-D07", 638, "1 / 2 / 5 s"),
+        ("E17-D02", 88, "Heatmap refresh slowed to 1 second."),
+        ("E26-D02", 446, "replay of 13 September 2026"), ("KM", 337, '"id": "chart.table_toggle"'),
+        ("README", 44, "Mandatory evidence on EVERY design ticket"),
+        ("E12-D11", 69, "no boards and no Penpot page"),
+        ("E08-D12", 60, "no boards, no Penpot page"),
+        ("E09-D10", 43, "No new boards, no Penpot page"),
     )
 )
+# fmt: on
 
 DEFICIENCIES = ("deuteranopia", "protanopia", "tritanopia")
 CANVAS = "color.surface.canvas"
@@ -153,19 +188,14 @@ TPO_ALIAS: dict[str, dict[str, str]] = {
 }
 TPO_ALIAS["high-contrast"] = TPO_ALIAS["dark"]
 # Section 9.1: the pairs the profile draws (ink or text, background, floor).
+# fmt: off
 PAIRS: tuple[tuple[str, str, float], ...] = (
-    ("color.profile.bar", CANVAS, 3.0),
-    ("color.profile.poc", CANVAS, 3.0),
-    ("color.profile.valuearea", CANVAS, 3.0),
-    ("color.tpo.letter", CANVAS, 4.5),
-    ("color.tpo.initialbalance", CANVAS, 3.0),
-    ("color.tpo.letter", "color.surface.raised", 4.5),
-    ("color.text.tertiary", CANVAS, 3.0),
-    ("color.text.secondary", CANVAS, 3.0),
-    ("color.buy.default", CANVAS, 3.0),
-    ("color.sell.default", CANVAS, 3.0),
-    ("color.chart.focus.ring", CANVAS, 3.0),
-    ("color.focus.ring", CANVAS, 3.0),
+    ("color.profile.bar", CANVAS, 3.0), ("color.profile.poc", CANVAS, 3.0),
+    ("color.profile.valuearea", CANVAS, 3.0), ("color.tpo.letter", CANVAS, 4.5),
+    ("color.tpo.initialbalance", CANVAS, 3.0), ("color.tpo.letter", "color.surface.raised", 4.5),
+    ("color.text.tertiary", CANVAS, 3.0), ("color.text.secondary", CANVAS, 3.0),
+    ("color.buy.default", CANVAS, 3.0), ("color.sell.default", CANVAS, 3.0),
+    ("color.chart.focus.ring", CANVAS, 3.0), ("color.focus.ring", CANVAS, 3.0),
     ("color.focus.ring", "color.surface.raised", 3.0),
     ("color.focus.ring", "color.surface.overlay", 3.0),
     ("color.text.primary", "color.surface.raised", 4.5),
@@ -174,16 +204,15 @@ PAIRS: tuple[tuple[str, str, float], ...] = (
     ("color.text.secondary", "color.surface.overlay", 4.5),
     ("color.text.tertiary", "color.surface.overlay", 4.5),
 )
+# fmt: on
 # Section 9.2: the inks under simulation, each on the canvas.
+# fmt: off
 INKS: tuple[tuple[str, float], ...] = (
-    ("color.profile.bar", 3.0),
-    ("color.profile.poc", 3.0),
-    ("color.profile.valuearea", 3.0),
-    ("color.tpo.letter", 4.5),
-    ("color.tpo.initialbalance", 3.0),
-    ("color.buy.default", 3.0),
+    ("color.profile.bar", 3.0), ("color.profile.poc", 3.0), ("color.profile.valuearea", 3.0),
+    ("color.tpo.letter", 4.5), ("color.tpo.initialbalance", 3.0), ("color.buy.default", 3.0),
     ("color.sell.default", 3.0),
 )
+# fmt: on
 D03_CHECKED = INKS[:5]  # D03 section 2.2 writes these five on the canvas (D03:132-136)
 SIDE_PAIR = ("color.buy.default", "color.sell.default")
 
@@ -192,7 +221,7 @@ AREAS = ("order-flow", "design-system")
 DISPOSITIONS = ("decision", "F row", "A row", "C row", "G row", "verdict")
 LR_OBJECTS = ("level", "state", "action", "press", "silent")
 LR_POLITE = ("polite", "off")
-LR_RATES = ("1 per 2 s", "once", "once per press", "never")
+LR_RATES = ("the cadence", "≤ 1 per 5 s", "once", "once per press", "never")
 LR_SILENT_NEED = ("VAH or VAL", "print", "re-bucket", "patches", "reduce announcements")
 VERDICTS = (
     "compliant if #5517 merges as is",
@@ -211,17 +240,10 @@ MOTION_V = (("2.3.1", "`05`:252", "D05:389"), ("2.2.2", "`05`:251", "D05:243"))
 SCENARIOS = 6
 INBOX = 24
 DECISIONS = 10
-# `24` ProfileLevel's fields (`24`:982-988) and the column each projects to, in order.
-LEVEL_COLUMNS = (
-    ("price_ticks", "Price"),
-    ("volume", "Volume"),
-    ("buy_volume", "Buy"),
-    ("sell_volume", "Sell"),
-    ("delta", "Delta"),
-    ("trade_count", "Trades"),
-    ("tpo_count", "TPO count"),
-)
-TAIL_COLUMNS = ("% of POC", "Value area", "Level")
+# RULED BQ-6: `05`'s five columns (`05`:209-213), adopted verbatim by E47-D06 (:224-228).
+COLUMNS = ("Price", "Volume", "Delta", "% of POC", "Value area")
+COLUMN_ROWS = (("05", 208), ("E47-D06", 223))  # 0-based first row of each table
+NOT_COLUMNS = ("Buy", "Sell", "Trades", "Level", "TPO count")
 TABLE_NEED = (
     "at most 200 rows mounted",
     "`aria-rowcount`",
@@ -233,7 +255,7 @@ TABLE_NEED = (
 HOLD = "**Hold:** #501 is not Done and E19-D07 (#502) does not start while a Blocking row stands"
 PARENT_RE = re.compile(r"#416 boards PR #5587|#438 boards PR|#439 boards PR|#500 boards PR")
 STORY_RE = re.compile(r"#638|#639|#640|#642|#679|#680|#681|#747|#748")
-ENV_NEED = ("DEMO / LIVE", "global chrome", "REPLAY chip", '"Replay" in its region name')
+ENV_NEED = ("DEMO / LIVE", "global chrome", "REPLAY chip", '"replay of {date}"')
 ACCOUNT_WORDS = re.compile(r"\b(?:account|credential|balance|api key|secret)\b", re.IGNORECASE)
 F_HEAD_RE = re.compile(
     r"^## 12\. Findings — F (\d+) \(Blocking (\d+) · Major (\d+) · Minor (\d+) · Info (\d+)\)"
@@ -428,15 +450,15 @@ def g_decisions(t: L.Tree) -> list[str]:
 def g_table(t: L.Tree) -> list[str]:
     ad = {r[0]: r[1] for r in rows(t, "## 3. Adopted decisions") if len(r) > 1}
     bad = [f"AD-01 lacks {n!r}" for n in TABLE_NEED if n not in ad.get("AD-01", "")]
-    model = docs_of(t).lines("24") or ()
-    fields = [ln.split(":")[0].strip() for ln in model[981:988]]
-    if fields != [f for f, _ in LEVEL_COLUMNS]:
-        bad.append(f"`24` ProfileLevel is {fields}")
-    cols = [c for _, c in LEVEL_COLUMNS] + list(TAIL_COLUMNS)
+    d = docs_of(t)
+    for key, first in COLUMN_ROWS:
+        got = [L.cells(ln)[0] for ln in (d.lines(key) or ())[first : first + 5]]
+        if got != list(COLUMNS):
+            bad.append(f"{key}'s profile columns are {got}")
     text = ad.get("AD-02", "")
-    at = [text.find(f"**{c}**") for c in cols]
-    if -1 in at or at != sorted(at):
-        bad.append("AD-02's columns are not ProfileLevel's order then % of POC, Value area, Level")
+    at = [text.find(f"**{c}**") for c in COLUMNS]
+    if -1 in at or at != sorted(at) or any(f"**{c}**" in text for c in NOT_COLUMNS):
+        bad.append("AD-02's columns are not `05`'s five in order, and no other")
     return bad
 
 
@@ -481,10 +503,13 @@ def g_live(t: L.Tree) -> list[str]:
     silent = " ".join(r[2] for r in got if len(r) > 2 and r[1] == "silent")
     bad += [f"no silent row for {w}" for w in LR_SILENT_NEED if w not in silent]
     level = [r for r in got if len(r) > 5 and r[1] == "level"]
-    if len(level) != 1 or level[0][4] != "1 per 2 s" or "`05`:185" not in level[0][5]:
-        bad.append("the POC row")
-    if any(r[4] == "1 per 2 s" for r in got if len(r) > 4 and r[1] != "level"):
-        bad.append("a rated row other than the POC's")
+    if len(level) != 1 or level[0][4] != "the cadence" or "E47-D07:243" not in level[0][5]:
+        bad.append("the POC row is not the one ambient field")
+    for r in got:
+        if len(r) > 5 and r[1] != "level" and r[4] == "the cadence":
+            bad.append(f"{r[0]} ambient, not the POC")
+        if len(r) > 5 and (r[1] == "state") != (r[4] == "≤ 1 per 5 s" and "E47-D07:247" in r[5]):
+            bad.append(f"{r[0]} status pacing")
     return bad
 
 
@@ -671,30 +696,31 @@ def g_ruling(t: L.Tree) -> list[str]:
     return L.check_ruling(
         spec(t),
         heading_line=(
-            "## The questions BQ-0 … BQ-15 — defaults built; " f"ruling pending (comment {BQ_LIST})"
+            "## The questions BQ-0 … BQ-15 — "
+            f"RULED (orchestrator, comment {RULING}, on the BQ list {BQ_LIST})"
         ),
         list_ref=f"comment {BQ_LIST} on #501",
         count=16,
-        verdict=lambda _n: f"PENDING (comment {BQ_LIST})",
-        need=("Default built:",),
+        verdict=lambda n: f"RULED ({RULING}), {'AMEND' if n in AMENDED else 'AGREE'}",
+        forbid=("PENDING (comment",),
     )
 
 
 def g_ruled(t: L.Tree) -> list[str]:
-    return L.check_hash_pins(spec(t), t.text("pins"))
+    return L.check_hash_pins(spec(t), "\n".join(RULED_PINS))
 
 
 def g_noclose(t: L.Tree) -> list[str]:
-    return L.closing_keywords(t.named("spec", "pins", "tool"))
+    return L.closing_keywords(t.named("spec", "tool"))
 
 
 def g_public(t: L.Tree) -> list[str]:
-    texts = t.named("spec", "pins", "tool")
+    texts = t.named("spec", "tool")
     return L.scan_public(texts) + L.comment_findings(t.named("spec"), F_MARK_RE)
 
 
 def g_hygiene(t: L.Tree) -> list[str]:
-    return L.whitespace_hygiene(t.named("spec", "pins", "tool"))
+    return L.whitespace_hygiene(t.named("spec", "tool"))
 
 
 def g_helper(t: L.Tree) -> list[str]:
@@ -703,7 +729,17 @@ def g_helper(t: L.Tree) -> list[str]:
 
 
 def g_untouched(t: L.Tree) -> list[str]:
-    return L.untouched(t.changed, OWN)
+    return L.untouched(t.changed, OWN, budgets={P14_REL: (1, 0)}, numstat=t.numstat)
+
+
+def g_pointer(t: L.Tree) -> list[str]:
+    base = (repo().show(repo().diff_base(BASE), P14_REL) or "").splitlines()
+    at = next((i for i, ln in enumerate(base) if ln.startswith(ANCHOR)), None)
+    if at is None:
+        return ["SCR-038's E19-D02 line is not in `14`"]
+    want = base[: at + 1] + [POINTER] + base[at + 1 :]
+    ok = t.text("p14").splitlines() == want
+    return [] if ok else ["`14` is not its base plus the one pointer line under SCR-038"]
 
 
 def g_mutlist(t: L.Tree) -> list[str]:
@@ -714,7 +750,8 @@ def g_mutlist(t: L.Tree) -> list[str]:
 GATES = tuple(L.Gate("G-" + f.__name__[2:].upper(), f) for f in (
     g_cite, g_keycite, g_version, g_ac, g_inbox, g_decisions, g_table, g_keys, g_t2, g_live,
     g_colour, g_contrast, g_cvd, g_verdict, g_findings, g_ids, g_handoff, g_env, g_motion, g_walk,
-    g_ruling, g_ruled, g_noclose, g_public, g_hygiene, g_helper, g_untouched, g_mutlist,
+    g_ruling, g_ruled, g_noclose, g_public, g_hygiene, g_helper, g_untouched, g_pointer,
+    g_mutlist,
 ))
 # fmt: on
 
@@ -740,10 +777,10 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        r"(\| IB-09 \|[^\n]*?\| )G row", r"\1deferred", regex=True),
     _M("M-06", "G-DECISIONS", "a decision with no owner ticket", "spec",
        r"(\| AD-06 \|[^\n]*\| )E19-T04 #642( *\|)", r"\1the engine\2", regex=True),
-    _M("M-07", "G-TABLE", "the columns leave ProfileLevel's order", "spec",
-       "**Buy**, **Sell**", "**Sell**, **Buy**"),
+    _M("M-07", "G-TABLE", "the columns leave `05`'s order", "spec",
+       "**Volume**, **Delta**", "**Delta**, **Volume**"),
     _M("M-08", "G-TABLE", "the mounted cap raised", "spec",
-       "at most 200 rows mounted (the lane", "at most 500 rows mounted (the lane"),
+       "at most 200 rows mounted (PROPOSED", "at most 500 rows mounted (PROPOSED"),
     _M("M-09", "G-KEYS", "a walk needs a pointer", "spec",
        "`Tab` to Settings; `Enter`; `Tab` through", "click Settings; `Tab` through"),
     _M("M-10", "G-KEYS", "a stop per letter allowed", "spec",
@@ -754,8 +791,8 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "`rbac.view_as` first (D02:112; D04:111)", "`rbac.permission` first (D02:112; D04:111)"),
     _M("M-13", "G-LIVE", "a print spoken", "spec",
        r"(\| LR-12 \|[^\n]*?\| )off( +\| )never", r"\1polite\2once", regex=True),
-    _M("M-14", "G-LIVE", "a rate not from 05", "spec",
-       r"(\| LR-01 \|[^\n]*?\| )1 per 2 s", r"\g<1>1 per 1 s", regex=True),
+    _M("M-14", "G-LIVE", "the POC row leaves the cadence", "spec",
+       r"(\| LR-01 \|[^\n]*?\| )the cadence", r"\g<1>1 per 1 s", regex=True),
     _M("M-15", "G-LIVE", "an assertive message", "spec",
        r"(\| LR-06 \|[^\n]*?\| )polite", r"\1assertive", regex=True),
     _M("M-16", "G-COLOUR", "a meaning out of D03's order", "spec",
@@ -773,7 +810,7 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-21", "G-VERDICT", "a compliant verdict names an F row", "spec",
        r"(\| V-02 \|[^\n]*?\| )compliant( +\|)", r"\1compliant — F-10\2", regex=True),
     _M("M-22", "G-FINDINGS", "the heading count drifts", "spec",
-       "Major 2 · Minor 8 · Info 2)", "Major 2 · Minor 7 · Info 2)"),
+       "Major 2 · Minor 10 · Info 3)", "Major 2 · Minor 9 · Info 3)"),
     _M("M-23", "G-FINDINGS", "a finding loses its story", "spec",
        r"(\| F-03 \|[^\n]*?E19-D07 #502) · E19-S01 #638", r"\1", regex=True),
     _M("M-24", "G-FINDINGS", "the hold sentence dropped", "spec",
@@ -784,11 +821,11 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-27", "G-ENV", "the script speaks an account", "spec",
        "the Settings button's name; nothing else", "the Settings button's name and the account"),
     _M("M-28", "G-ENV", "the replay name dropped", "spec",
-       'and "Replay" in its region name, "Profile', 'and a frame, "Profile'),
+       'its region name ending "replay of {date}"', 'its region name ending "Replay"'),
     _M("M-29", "G-WALK", "an eleventh walkthrough item", "spec",
        "10. Comment `approved`", "10. One more pass.\n11. Comment `approved`"),
     _M("M-30", "G-RULING", "the heading names another comment", "spec",
-       "ruling pending (comment 6598368330)", "ruling pending (comment 6598368331)"),
+       "RULED (orchestrator, comment 6608044786", "RULED (orchestrator, comment 6608044787"),
     _M("M-31", "G-RULED", "a BQ default edited without a re-pin", "spec",
        "Default built: virtualised, at most 200", "Default built: virtualised, at most 250"),
     _M("M-32", "G-NOCLOSE", "a closing keyword", "spec",
@@ -812,12 +849,16 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "| 2.3.1 / `05`:252 — nothing flashes", "| `05`:252 — nothing flashes"),
     _M("M-41", "G-MOTION", "V-29 loses the in-app override", "spec",
        "reduce, by OS or `Ctrl+Shift+M`, keeps meaning", "reduce, by the OS setting, keeps meaning"),
+    _M("M-42", "G-POINTER", "the `14` pointer line reworded", "p14",
+       "§3, §7 (the table strategy", "§3, §7 (the binding table strategy"),
 )
 # fmt: on
 
 
 # ---------- modes ---------------------------------------------------------------------------------
 def read_tree() -> L.Tree:
+    base = repo().diff_base(BASE)
+
     def disk(rel: str) -> str:
         p = ROOT / rel
         return p.read_text(encoding="utf-8") if p.exists() else ""
@@ -825,11 +866,12 @@ def read_tree() -> L.Tree:
     return L.Tree(
         files={
             "spec": disk(SPEC_REL),
-            "pins": disk(PIN_REL),
             "tool": disk(TOOL_REL),
             "lib": disk(LIB_REL),
+            "p14": disk(P14_REL),
         },
-        changed=repo().changed_paths(repo().diff_base(BASE)),
+        changed=repo().changed_paths(base),
+        numstat={P14_REL: repo().numstat(base, P14_REL)},
     )
 
 
@@ -858,10 +900,15 @@ def repin() -> int:
 
 
 def repin_ruled() -> int:
-    lines = L.bq_hash_pins((ROOT / SPEC_REL).read_text(encoding="utf-8"))
-    head = "# E19-D06 ruled pins: sha256[:16] of each BQ bullet; written by --repin-ruled only"
-    L.write_pins(ROOT / PIN_REL, "\n".join([head, *lines]))
-    print(f"pinned {len(lines)} BQ lines")
+    pins = L.bq_hash_pins((ROOT / SPEC_REL).read_text(encoding="utf-8"))
+    p = ROOT / TOOL_REL
+    src = p.read_text(encoding="utf-8")
+    a = src.index(PIN_MARK + "begin")
+    a = src.index("\n", a) + 1
+    b = src.index(PIN_MARK + "end")
+    body = "RULED_PINS = (\n" + "".join(f'    "{x}",\n' for x in pins) + ")\n"
+    L.write_pins(p, src[:a] + body + src[b:])
+    print(f"pinned {len(pins)} BQ lines")
     return 0
 
 
