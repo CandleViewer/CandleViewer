@@ -408,9 +408,10 @@ class SessionService:
         login callers never pass it, so a brand-new session still gets
         `now + ABSOLUTE_LIFETIME`.
 
-        *view_as* is the view-as context `refresh()` carries to the successor
+        *view_as* is the view-as context a rotation carries to its successor
         as the claim returned it (#3085, SR-013), inserted with the row and
-        unchanged: nothing extends its expiry. A sign-in never passes it.
+        unchanged: nothing extends its expiry. Only `_mint_successor` passes it,
+        for `refresh()` and `rotate()`; a sign-in never does.
 
         *last_seen_at* is the activity stamp `refresh()` carries to the
         successor (#4012): a token rotation is no user activity, so it never
@@ -587,8 +588,11 @@ class SessionService:
                 "refresh token reuse detected (concurrent refresh); session family revoked"
             )
 
-        minted = await self.mint(
-            str(presented.user_id),
+        # The view-as context (#3085 SR-013) and the rest of the claim-row state (#4012, #4051,
+        # #4743) come from `claimed`, never `presented`: `_mint_successor`, shared with `rotate()`.
+        minted = await self._mint_successor(
+            claimed,
+            user_id=str(presented.user_id),
             ip=ip or presented.ip,
             user_agent=user_agent or presented.user_agent,
             device_label=device_label or presented.device_label,
@@ -601,34 +605,8 @@ class SessionService:
             # never be able to extend a session past its original 12 h
             # absolute lifetime (ticket "Scope / Deliverables").
             expires_at=presented.expires_at,
-            # #3085 SR-013: the view-as context as the claim's RETURNING row holds it, never as
-            # `presented` was read before the claim (an end, clear or start may land in between),
-            # live, held or cleared alike. The rotated row keeps its copy: it is revoked, and the
-            # sweeper skips a copy another row carries (`ViewAsSessionStore.list_view_as_due`).
-            # The claim and this insert are two transactions (`SessionRepository` has one per
-            # call, and #2911's disable window sits between them), so until the insert commits
-            # only the rotated row holds the context. The sweeper's grace runs from the claim's
-            # `revoked_at`, the `now` read above, so the gap it must exceed includes the claim's
-            # own waits. Each unit of work can wait for a pool connection (30 s) and open one
-            # (asyncpg, 60 s), and each statement runs under the unit's `statement_timeout` (30 s):
-            # one for the claim, two for the insert (the user-row lock wait, the insert), 270 s in
-            # all. A pre-ping, a stalled connection, a commit and the event loop are outside that.
-            # A request cancelled in the gap leaves an orphan the sweeper ends `session_ended`
-            # after the grace, rightly: no live session holds the context. A shorter grace could
-            # end, as `session_ended`, a context a slow successor then carries.
-            view_as=claimed.view_as,
-            # #4012: the idle clock runs from the last user activity, which a background token
-            # refresh is not. Carried from the claim's row (as `view_as` is), so a re-stamp that
-            # landed after `presented` was read still counts; a tab that only refreshes locks
-            # after its idle timeout, and its next refresh is refused `SessionIdleLocked` above.
-            last_seen_at=claimed.last_seen_at,
-            # #4051 SR-025: the step-up brake survives a rotation, read from the claim's row
-            # (as `last_seen_at` is), so a strike recorded after `presented` was read counts.
-            step_up_failures=claimed.step_up_failures,
-            readonly_until=claimed.readonly_until,
-            # #4743: a lock by request that landed after `presented` was read, before the claim,
-            # is on the claim's row: the successor is locked too, so a rotation never lifts it.
-            locked_at=claimed.locked_at,
+            session_id=None,  # `mint` draws the successor's id
+            step_up_elevations=None,  # a refresh carries no grant (#4051 SR-025)
         )
         await self._repository.link_rotation(
             prev_session_id=str(presented.id), next_session_id=str(minted.session_id)
@@ -657,6 +635,7 @@ class SessionService:
         window, lock by request), plus the grants *carry_grants* keeps of that row's
         `step_up_elevations` (C-5). A grant used before the claim is not on that row, and no write
         reaches the row after it (`revoked_at` is set), so a carried grant is used once at most.
+        Both mint through `_mint_successor`, the one carrier of a view-as context (#3085).
 
         Nothing is published: the client re-`auth`s its sockets in place with the successor's
         token (23 section 4.1). The claim takes `auth_sessions_active` down and the mint up, so a
@@ -674,8 +653,9 @@ class SessionService:
         if claimed is None:
             raise SessionRevoked("rotated")
         auth_sessions_active.dec()
-        minted = await self.mint(
-            str(claimed.user_id),
+        minted = await self._mint_successor(
+            claimed,
+            user_id=str(claimed.user_id),
             ip=ip or claimed.ip,
             user_agent=user_agent or claimed.user_agent,
             device_label=claimed.device_label,
@@ -684,11 +664,6 @@ class SessionService:
             mfa_satisfied=claimed.mfa_satisfied_at is not None,
             expires_at=claimed.expires_at,
             session_id=successor_id,
-            view_as=claimed.view_as,
-            last_seen_at=claimed.last_seen_at,
-            step_up_failures=claimed.step_up_failures,
-            readonly_until=claimed.readonly_until,
-            locked_at=claimed.locked_at,
             step_up_elevations=carry_grants(claimed.step_up_elevations, now),
         )
         try:  # a unit of work of its own, after the insert's
@@ -699,6 +674,72 @@ class SessionService:
             await self._end_unlinked(str(minted.session_id))
             raise
         return RefreshOutcome(minted=minted, previous_session_id=claimed.id)
+
+    async def _mint_successor(
+        self,
+        claimed: SessionRecord,
+        *,
+        user_id: str,
+        ip: str | None,
+        user_agent: str | None,
+        device_label: str | None,
+        is_electron: bool,
+        idle_timeout_s: int,
+        mfa_satisfied: bool,
+        expires_at: datetime,
+        session_id: uuid.UUID | None,
+        step_up_elevations: dict[str, datetime] | None,
+    ) -> MintedSession:
+        """Mint the successor of a rotation's claim, for `refresh()` and `rotate()` (#2101): the
+        one call of `mint` that passes a view-as context (#3085, SR-013; pinned by
+        `tests/unit/architecture/test_view_as_mint_callers.py`). The successor inherits the
+        claimed context and the rest of the claim-row state both paths carry (idle clock, step-up
+        strikes and read-only window, lock by request), read from *claimed*, the claim's RETURNING
+        row; every other field is the caller's, as each path passes it. A rotation hands over a
+        context that already has its record (C-2.9) and never widens it: the same context, its
+        target and its expiry, as the claim holds it."""
+        return await self.mint(
+            user_id,
+            ip=ip,
+            user_agent=user_agent,
+            device_label=device_label,
+            is_electron=is_electron,
+            idle_timeout_s=idle_timeout_s,
+            mfa_satisfied=mfa_satisfied,
+            expires_at=expires_at,
+            session_id=session_id,
+            # #3085 SR-013: the view-as context as the claim's RETURNING row holds it, never as a
+            # row read before the claim holds it (`refresh()`'s `presented`: an end, clear or start
+            # may land in between), live, held or cleared alike. The rotated row keeps its copy: it
+            # is revoked, and the sweeper skips a copy another row carries
+            # (`ViewAsSessionStore.list_view_as_due`).
+            # The claim and this insert are two transactions (`SessionRepository` has one per
+            # call, and #2911's disable window sits between them), so until the insert commits
+            # only the rotated row holds the context. The sweeper's grace runs from the claim's
+            # `revoked_at`, the caller's `now`, so the gap it must exceed includes the claim's
+            # own waits. Each unit of work can wait for a pool connection (30 s) and open one
+            # (asyncpg, 60 s), and each statement runs under the unit's `statement_timeout` (30 s):
+            # one for the claim, two for the insert (the user-row lock wait, the insert), 270 s in
+            # all. A pre-ping, a stalled connection, a commit and the event loop are outside that.
+            # A request cancelled in the gap leaves an orphan the sweeper ends `session_ended`
+            # after the grace, rightly: no live session holds the context. A shorter grace could
+            # end, as `session_ended`, a context a slow successor then carries.
+            view_as=claimed.view_as,
+            # #4012: the idle clock runs from the last user activity, which a background token
+            # refresh is not, nor a step-up's rotation. Carried from the claim's row (as `view_as`
+            # is), so a re-stamp that landed after an earlier read (`presented`) still counts; a
+            # tab that only refreshes locks after its idle timeout, and its next refresh is
+            # refused `SessionIdleLocked` (`refresh()`).
+            last_seen_at=claimed.last_seen_at,
+            # #4051 SR-025: the step-up brake survives a rotation, read from the claim's row
+            # (as `last_seen_at` is), so a strike recorded after an earlier read counts.
+            step_up_failures=claimed.step_up_failures,
+            readonly_until=claimed.readonly_until,
+            # #4743: a lock by request that landed after an earlier read, before the claim, is on
+            # the claim's row: the successor is locked too, so a rotation never lifts it.
+            locked_at=claimed.locked_at,
+            step_up_elevations=step_up_elevations,
+        )
 
     async def _end_unlinked(self, session_id: str) -> None:
         """Revoke the successor of a rotation whose family link failed (`rotate`, #2101) as
