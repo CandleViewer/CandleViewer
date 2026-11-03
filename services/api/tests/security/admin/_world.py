@@ -22,6 +22,9 @@ A session serves its state for a while only: its access token ends 12 minutes af
 shared clock (a TOTP step and, stale, the grant's lapse), so it first reserves that span
 (`reserve`): if a session would stop serving the state within it, every actor signs in again and
 the state is entered again (`settle`). No cell meets a session that another cell's exchange aged.
+Time is all `reserve` renews: a session that something other than the clock changed (revoked,
+locked, read-only, viewing as, struck, or elevated other than its state says) is refused first,
+naming its actor, so the cells after the route that changed it still meet the change.
 
 The audit stand-in refuses an unregistered action as `AuditWriter.emit` does, so every asserted
 record is one production could write.
@@ -54,8 +57,8 @@ from candleviewer.auth.metrics import normalise_permission
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, SessionRecord
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.service import AuthService
-from candleviewer.auth.session_service import access_token_expires_at
-from candleviewer.auth.step_up import GRACE_WINDOW
+from candleviewer.auth.session_service import access_token_expires_at, is_live_session
+from candleviewer.auth.step_up import GRACE_WINDOW, grace_expires_at
 from candleviewer.auth.totp import generate_code, time_step_for
 from tests.contract.rbac import rbac_harness as matrix
 from tests.csrf_helpers import csrf_headers
@@ -248,19 +251,25 @@ class AdminWorld:
     def serves_until(self) -> datetime:
         """The first instant a session stops serving the state, read from its row: its access
         token's end (`access_token_expires_at`), its idle lock, which no request moves (#2300),
-        and in the fresh state each grace window's end."""
+        and in the fresh state each grace window's end. A fresh row without a class's window is
+        refused (`_window`), never read as a deadline: no clock removed it."""
         ends: list[datetime] = []
         for actor in self.actors.values():
             row = self._row(actor)
             ends += [access_token_expires_at(row), row.idle_deadline()]
             if self.state == "fresh":
-                ends += [row.step_up_elevations.get(c, self.clock.now) for c in self.classes]
+                ends += [_window(actor, row, c) for c in self.classes]
         return min(ends)
 
     def reserve(self, span: timedelta) -> None:
         """Before an exchange that moves the clock by up to `span`: if a session would stop
         serving the state within it, every actor signs in again, one TOTP step on, and `settle`
-        enters the state again, so the exchange ages out no session that a later cell uses."""
+        enters the state again, so the exchange ages out no session that a later cell uses.
+        Only time is renewed: first, a session that is not intact (`_damage`) is refused, naming
+        its actor, so a cell after the route that damaged it still meets the damage."""
+        for name, actor in self.actors.items():
+            if (damage := self._damage(self._row(actor))) is not None:
+                raise RuntimeError(f"{name}'s session {damage}: reserve renews only what time aged")
         if self.clock.now + span < self.serves_until():
             return
         self.tick()  # a TOTP step that no step-up so far has used
@@ -269,6 +278,32 @@ class AdminWorld:
         self.settle(self.state, self.classes)
         if self.clock.now + span >= self.serves_until():  # a harness error, never an xfail's
             raise RuntimeError(f"no session serves the {self.state} state for {span}")
+
+    def _damage(self, row: SessionRecord) -> str | None:
+        """How `row` differs at `clock.now` from what `settle` and the clock leave, or None. It
+        is live (`peek_access_token` reads a revoked row too, so revocation is checked on its
+        own); it is not read-only, viewing as another user or struck by a failed step-up; and
+        fresh, it holds a live window of every class, or in any other state no live grace window
+        or one-shot grant (a stale exchange's last send leaves a challenge: it grants nothing)."""
+        now, held = self.clock.now, row.step_up_elevations
+        if row.is_revoked:
+            return "is revoked"
+        if not is_live_session(row, now=now):
+            return "is not live"
+        if row.readonly_until is not None:
+            return "is read-only"
+        if row.view_as is not None:
+            return "views as another user"
+        if row.step_up_failures != 0:
+            return "counts a failed step-up"
+        if self.state == "fresh":
+            lapsed = [c for c in self.classes if c not in held or held[c] <= now]
+            return f"holds no live {lapsed[0]} window" if lapsed else None
+        if grace_expires_at(held, now) is not None:
+            return "holds a live grace window"
+        if any(key.startswith("once:") and until > now for key, until in held.items()):
+            return "holds a live one-shot grant"  # `step_up._ONCE`, a no-grace class's (#2304)
+        return None
 
     def _row(self, actor: Actor) -> SessionRecord:
         row = self._call(self.auth.sessions.peek_access_token, actor.token)
@@ -282,6 +317,14 @@ class AdminWorld:
         if portal is None:
             raise RuntimeError("the world's client is closed")
         return portal.call(fn, *args)
+
+
+def _window(actor: Actor, row: SessionRecord, action_class: str) -> datetime:
+    """When `row`'s `action_class` window ends; a row without one is refused, naming the actor."""
+    until = row.step_up_elevations.get(action_class)
+    if until is None:
+        raise RuntimeError(f"{actor.name}'s session holds no {action_class} window")
+    return until
 
 
 def denials(permission: str) -> float:
