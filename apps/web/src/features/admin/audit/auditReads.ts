@@ -1,25 +1,32 @@
 /**
- * The audit log's calls (E42-S04; E42-D04 §4 and §7; the build plan's §3): the list read, the
- * tamper check and the incident read SCR-135 makes, each through `apiFetch` (the step-up module's
- * `sendHeld`) and typed from the generated contract (`docs/plan/22-api-openapi.yaml`, C-4.16);
- * the export's calls come with its job. Every answer settles as one of four kinds:
+ * The audit log's calls (E42-S04; E42-D04 §4, §7 and §8; the build plan's §3): the six operations
+ * SCR-135, SCR-136 and the export make, each through `apiFetch` (the step-up module's `sendHeld`,
+ * so a refused export or download can be re-sent unchanged) and typed from the generated contract
+ * (`docs/plan/22-api-openapi.yaml`, C-4.16). Every answer settles as one of four kinds:
  * - `ok`: a `2xx` whose body is vetted first. An unknown enum value or a missing or ill-shaped
  *   member is an unreadable answer, never a guessed value; members the contract does not name are
  *   dropped.
  * - `refused`: any other status, with the problem's `code`, `Retry-After` (the header, else the
- *   problem's `retry_after_seconds`), its `instance` as the Ref and its field errors (`field` and
- *   `rule` only: the server never echoes a value).
+ *   problem's `retry_after_seconds`), its `instance` as the Ref, its field errors (`field` and
+ *   `rule` only: the server never echoes a value) and, on the export and its download, the shipped
+ *   step-up gate's hold (`readChallenge`, `holdRequest`), as `features/invites/inviteApi.ts` does.
  * - `unknown`: a write that got no answer, so it may have run (D04 X11); a read never is.
  * - `failed`: a read that got no answer in its bound (`timeout`), none at all (`network`, an abort
  *   included), or an answer it could not read (`unreadable`).
  * List reads stop at 6 s (BQ-11, PROPOSED), above the query's 4 s server stop (`22`
  * `queryAuditLog` Limits), so the server's own `503` is what a slow query shows; the tamper check
- * waits past its 60 s run deadline (BQ-6).
+ * waits past its 60 s run deadline (BQ-6) and the export's calls have their own bound.
  * `csrf_token_invalid` is `apiFetch`'s own retry. The module keeps no state: the stores own the
  * timing, at the cadences `AUDIT_CADENCE` sets together.
  */
 import type { generated } from "@candleviewer/protocol";
-import { holdRequest, sendHeld, type HeldRequest } from "../../stepUp/challenge";
+import {
+  holdRequest,
+  readChallenge,
+  sendHeld,
+  type HeldRequest,
+  type StepUpChallenge,
+} from "../../stepUp/challenge";
 
 type Schemas = generated.rest.components["schemas"];
 type Ops = generated.rest.operations;
@@ -30,6 +37,9 @@ export type EntryOutcome = Schemas["AuditOutcome"];
 export type Severity = Schemas["Severity"];
 export type Environment = Schemas["Environment"];
 export type PageMeta = Schemas["PageMeta"];
+export type Job = Schemas["Job"];
+export type JobStatus = NonNullable<Job["status"]>;
+export type AuditExportResult = Schemas["AuditExportResult"];
 export type Incident = Schemas["Incident"];
 export type Problem = Schemas["Problem"];
 /** `queryAuditLog`'s parameters: the filter set, `limit` and `cursor`. */
@@ -43,6 +53,8 @@ export type VerifyBody = NonNullable<
   Ops["verifyAuditChain"]["requestBody"]
 >["content"]["application/json"];
 export type VerifyResult = Ops["verifyAuditChain"]["responses"][200]["content"]["application/json"];
+export type ExportBody = Ops["exportAuditLog"]["requestBody"]["content"]["application/json"];
+export type ExportAccepted = Ops["exportAuditLog"]["responses"][202]["content"]["application/json"];
 type IncidentsOk = Ops["listIncidents"]["responses"][200]["content"]["application/json"];
 export type IncidentPageBody = Pick<IncidentsOk, "meta"> & { readonly items: readonly Incident[] };
 /** A problem's field error as the client keeps it: the field and the rule, never a message. */
@@ -50,6 +62,19 @@ export type FieldError = Required<Pick<NonNullable<Problem["errors"]>[number], "
 
 /** Whose entries a page reads: the Owner's raw log, or a Manager's own projection (SR-067). */
 export type AuditView = "raw" | "own";
+
+/** A downloaded export: the bytes, held whole in memory, and the name to save them under. */
+export interface ExportFile {
+  readonly blob: Blob;
+  readonly fileName: string;
+  readonly contentType: string;
+}
+
+/** A `403 step_up_required`: its challenge, and the refused request held for one re-send. */
+export interface StepUpHold {
+  readonly challenge: StepUpChallenge;
+  readonly held: HeldRequest;
+}
 
 export interface AuditRefusal {
   readonly kind: "refused";
@@ -62,8 +87,10 @@ export interface AuditRefusal {
   readonly refId?: string | undefined;
   /** `400` / `422` field errors, at most ten (the server sends up to ten). */
   readonly errors?: readonly FieldError[] | undefined;
-  /** The problem's `detail`, short text only. */
+  /** The problem's `detail`, short text only: a `422 max_export_range` names its limit there. */
   readonly detail?: string | undefined;
+  /** The export's or the download's `403 step_up_required`, for the shipped gate. */
+  readonly stepUp?: StepUpHold | undefined;
 }
 
 export type AuditFailReason = "timeout" | "network" | "unreadable";
@@ -83,7 +110,7 @@ export interface CallOptions {
   /** The caller stops waiting (the page unmounted, a newer read replaced this one). */
   readonly signal?: AbortSignal | undefined;
   readonly timers?: AuditTimers | undefined;
-  /** The client's clock, for a `Retry-After` sent as a date. */
+  /** The client's clock, for a `Retry-After` sent as a date and a challenge's expiry. */
   readonly now?: (() => number) | undefined;
 }
 
@@ -98,6 +125,12 @@ export const AUDIT_READ_TIMEOUT_MS = 6_000;
  * result; the client waits past that, so a long run is never shown as lost while it still runs.
  */
 export const VERIFY_TIMEOUT_MS = 75_000;
+/**
+ * PROPOSED: the export's calls, its `POST`, each job poll and the download's answer (not its
+ * transfer). Each is answered once the server's record is written; the step-up gate's re-send
+ * bound.
+ */
+export const EXPORT_TIMEOUT_MS = 10_000;
 /**
  * PROPOSED: the incident read's page, newest `last_seen_at` first, every status (D04 §7). A standing
  * break older than the newest 100 would not be read after a reload; the nightly run refreshes its
@@ -141,10 +174,15 @@ export function jobPollDelay(n: number, failures = 0): number {
 /** The longest `Retry-After` taken as given; a longer one is read as a day. */
 const MAX_RETRY_AFTER_S = 86_400;
 
-/** The contract's paths (`22`, servers `/api/v1`). */
+/** The contract's paths (`22`, servers `/api/v1`); an id goes in as one encoded path segment. */
 export const AUDIT_PATHS = {
   query: "/api/v1/admin/audit", // queryAuditLog
   verify: "/api/v1/admin/audit/verify", // verifyAuditChain
+  export: "/api/v1/admin/audit/export", // exportAuditLog
+  /** getJob */
+  job: (jobId: string): string => `/api/v1/admin/jobs/${encodeURIComponent(jobId)}`,
+  /** downloadAuditExport */
+  download: (jobId: string): string => `/api/v1/admin/audit/exports/${encodeURIComponent(jobId)}`,
   incidents: "/api/v1/admin/incidents", // listIncidents
 } as const;
 
@@ -167,6 +205,7 @@ const isDate = (raw: unknown): raw is string =>
 const isDateOrNull = (raw: unknown): raw is string | null => raw === null || isDate(raw);
 const isIntOrNull = (raw: unknown): raw is number | null => raw === null || isInt(raw);
 
+const UUID = /^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 const CODE = /^[a-z][a-z0-9_]{0,63}$/;
 const REF = /^[\w:.-]{1,128}$/;
@@ -183,6 +222,7 @@ const every =
 const OUTCOMES = every<EntryOutcome>()(["success", "failure", "denied"]);
 const SEVERITIES = every<Severity>()(["debug", "info", "warning", "error", "critical"]);
 const ENVIRONMENTS = every<Environment>()(["live", "demo", "testnet"]);
+const JOB_STATUSES = every<JobStatus>()(["queued", "running", "succeeded", "failed", "cancelled"]);
 const INCIDENT_STATUSES = every<Incident["status"]>()(["open", "acknowledged", "resolved"]);
 const ELIDED = every<"before" | "after">()(["before", "after"]);
 
@@ -297,6 +337,76 @@ export function vetVerifyResult(raw: unknown): VerifyResult | null {
     anchor_hash,
     last_hash,
   };
+}
+
+/** `exportAuditLog`'s `202`: the job's id, a UUID. */
+export function vetExportAccepted(raw: unknown): ExportAccepted | null {
+  if (!isRecord(raw) || !isText(raw["job_id"]) || !UUID.test(raw["job_id"])) return null;
+  const out: Json = { job_id: raw["job_id"] };
+  if (!optional(raw, out, "download_url", isTextOrNull)) return null;
+  return out as ExportAccepted;
+}
+
+const SIGNATURE = /^[A-Za-z0-9+/]{86}==$/;
+const PUBLIC_KEY = /^[A-Za-z0-9+/]{43}=$/;
+const SIGNING_ID = /^cv-audit-export-v[0-9]+:[0-9a-f]{16}$/;
+
+/** A succeeded export's `AuditExportResult`, whole and in its served shape. */
+function exportResultOf(raw: unknown): AuditExportResult | null {
+  if (!isRecord(raw)) return null;
+  const { download_url, sha256, signature, signature_alg, key_id, public_key } = raw;
+  if (!isText(download_url) || !isText(sha256) || !HEX64.test(sha256)) return null;
+  if (!isText(signature) || !SIGNATURE.test(signature) || signature_alg !== "ed25519") return null;
+  if (!isText(key_id) || !SIGNING_ID.test(key_id)) return null;
+  if (!isText(public_key) || !PUBLIC_KEY.test(public_key)) return null;
+  const { compressed, size_bytes, row_count, from, to, expires_at } = raw;
+  if (typeof compressed !== "boolean" || !isCount(size_bytes) || !isCount(row_count)) return null;
+  if (!isDate(from) || !isDate(to) || !isDate(expires_at)) return null;
+  const out: Json = {
+    download_url,
+    sha256,
+    signature,
+    signature_alg,
+    key_id,
+    public_key,
+    compressed,
+    size_bytes,
+    row_count,
+    from,
+    to,
+    expires_at,
+  };
+  if (!optional(raw, out, "first_id", isIntOrNull)) return null;
+  if (!optional(raw, out, "last_id", isIntOrNull)) return null;
+  return out as AuditExportResult;
+}
+
+const isProgress = (raw: unknown): boolean =>
+  typeof raw === "number" && Number.isFinite(raw) && raw >= 0 && raw <= 100;
+
+/**
+ * `getJob`'s `200`. `status` is required here: a job the client cannot place is unreadable. `kind`
+ * is open-ended (`22` Job), so an unknown one is kept as served. A succeeded `audit_export` job
+ * needs its whole `AuditExportResult`; another kind's result is not read and is dropped.
+ */
+export function vetJob(raw: unknown): Job | null {
+  if (!isRecord(raw) || !member(JOB_STATUSES, raw["status"])) return null;
+  const out: Json = { status: raw["status"] };
+  const uuid = (value: unknown): boolean => isText(value) && UUID.test(value);
+  if (!optional(raw, out, "id", uuid)) return null;
+  if (!optional(raw, out, "kind", isText)) return null;
+  if (!optional(raw, out, "progress_pct", isProgress)) return null;
+  if (!optional(raw, out, "started_at", isDateOrNull)) return null;
+  if (!optional(raw, out, "finished_at", isDateOrNull)) return null;
+  if (!optional(raw, out, "error", isTextOrNull)) return null;
+  if (raw["kind"] === "audit_export" && raw["status"] === "succeeded") {
+    const result = exportResultOf(raw["result"]);
+    if (result === null) return null;
+    out["result"] = result;
+  } else if ("result" in raw) {
+    out["result"] = null;
+  }
+  return out as Job;
 }
 
 /** One `Incident`, its required members checked and its texts within the contract's lengths. */
@@ -456,8 +566,12 @@ function errorsOf(raw: unknown): readonly FieldError[] | undefined {
   return errors.length === 0 ? undefined : errors;
 }
 
-/** Any status but `2xx`, as a refusal. */
-async function refusalOf(res: Response, now: number): Promise<AuditRefusal> {
+/** Any status but `2xx`, as a refusal; `held` makes a `403 step_up_required` a step-up hold. */
+async function refusalOf(
+  res: Response,
+  held: HeldRequest | null,
+  now: number,
+): Promise<AuditRefusal> {
   const problem = await problemOf(res);
   const fields = isRecord(problem) ? problem : {};
   const code = isText(fields["code"]) && CODE.test(fields["code"]) ? fields["code"] : null;
@@ -472,6 +586,10 @@ async function refusalOf(res: Response, now: number): Promise<AuditRefusal> {
   const errors = errorsOf(fields["errors"]);
   if (errors !== undefined) out.errors = errors;
   if (isText(detail) && detail.length <= MAX_DETAIL) out.detail = detail;
+  if (held !== null && res.status === 403 && code === "step_up_required") {
+    const challenge = readChallenge(problem, res.headers.get("Date"), now);
+    if (challenge !== null) out.stepUp = { challenge, held };
+  }
   return out;
 }
 
@@ -481,10 +599,11 @@ const UNREADABLE = { kind: "failed", reason: "unreadable" } as const;
 async function jsonAnswer<T>(
   res: Response,
   vet: (raw: unknown) => T | null,
+  held: HeldRequest | null,
   now: number,
   aborted: () => boolean,
 ): Promise<AuditAnswer<T>> {
-  if (!res.ok) return refusalOf(res, now);
+  if (!res.ok) return refusalOf(res, held, now);
   let raw: unknown;
   try {
     raw = await res.json();
@@ -501,6 +620,8 @@ interface Exchange<T> {
   readonly timeoutMs: number;
   /** A write's lost answer is `unknown`; a read's is `failed`. */
   readonly write: boolean;
+  /** The bound covers the answer's head only; the body (a file) is read without it. */
+  readonly headOnly?: boolean;
   readonly read: (res: Response, now: number, aborted: () => boolean) => Promise<AuditAnswer<T>>;
 }
 
@@ -524,6 +645,7 @@ async function exchange<T>(spec: Exchange<T>, options: CallOptions = {}): Promis
   };
   try {
     const res = await sendHeld(spec.held, controller.signal);
+    if (spec.headOnly === true) clear();
     return await spec.read(res, now(), () => controller.signal.aborted);
   } catch {
     if (spec.write) return { kind: "unknown" };
@@ -549,7 +671,7 @@ function readJson<T>(
       held,
       timeoutMs,
       write: false,
-      read: (res, now, aborted) => jsonAnswer(res, vet, now, aborted),
+      read: (res, now, aborted) => jsonAnswer(res, vet, null, now, aborted),
     },
     options,
   );
@@ -578,14 +700,126 @@ export function verifyAuditChain(options?: CallOptions): Promise<AuditAnswer<Ver
       held,
       timeoutMs: VERIFY_TIMEOUT_MS,
       write: true,
-      read: (res, now, aborted) => jsonAnswer(res, vetVerifyResult, now, aborted),
+      read: (res, now, aborted) => jsonAnswer(res, vetVerifyResult, null, now, aborted),
     },
     options,
   );
+}
+
+/** Reads an export's answer: its first, or the gate's one re-send of `held`. */
+export function readExportAnswer(
+  response: Response,
+  held: HeldRequest,
+  now: number = Date.now(),
+): Promise<AuditAnswer<ExportAccepted>> {
+  return jsonAnswer(response, vetExportAccepted, held, now, () => false);
+}
+
+/**
+ * `POST /admin/audit/export` (D12, §8): the window, under the caller's `Idempotency-Key`, which it
+ * keeps for [Check again] so at most one export starts (X11). A `403 step_up_required` comes back
+ * held for the shipped gate; no answer is `unknown`, never a failure.
+ */
+export function exportAuditLog(
+  body: ExportBody,
+  idempotencyKey: string,
+  options?: CallOptions,
+): Promise<AuditAnswer<ExportAccepted>> {
+  const headers = {
+    ...ACCEPT_JSON,
+    "Content-Type": "application/json",
+    "Idempotency-Key": idempotencyKey,
+  };
+  const held = holdRequest("POST", AUDIT_PATHS.export, headers, JSON.stringify(body));
+  return exchange(
+    {
+      held,
+      timeoutMs: EXPORT_TIMEOUT_MS,
+      write: true,
+      read: (res, now, aborted) => jsonAnswer(res, vetExportAccepted, held, now, aborted),
+    },
+    options,
+  );
+}
+
+/** `GET /admin/jobs/{jobId}`: the export's progress (D13); an `admin.area_entered` row per call. */
+export function getJob(jobId: string, options?: CallOptions): Promise<AuditAnswer<Job>> {
+  return readJson(AUDIT_PATHS.job(jobId), vetJob, options, EXPORT_TIMEOUT_MS);
 }
 
 /** `GET /admin/incidents`: the newest incidents of every status, for D04 §7's episode. */
 export function listIncidents(options?: CallOptions): Promise<AuditAnswer<IncidentPageBody>> {
   const url = `${AUDIT_PATHS.incidents}?limit=${INCIDENT_LIMIT}`;
   return readJson(url, vetIncidentPage, options);
+}
+
+/** The extensions a saved export may carry (S-1135P2-03): the file is NDJSON, gzipped or not. */
+const EXPORT_NAME = /\.(?:ndjson|ndjson\.gz|gz)$/;
+
+/** A saved file's name: a plain NDJSON name the server gave, else `<job id>.ndjson[.gz]`. */
+export function fileNameOf(
+  disposition: string | null,
+  jobId: string,
+  contentType: string | null,
+): string {
+  const fallback = `${jobId}.ndjson${contentType?.startsWith("application/gzip") ? ".gz" : ""}`;
+  if (disposition === null) return fallback;
+  const extended = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(disposition)?.[1];
+  const plain = /filename\s*=\s*(?:"([^"]*)"|([^;\s]+))/i.exec(disposition);
+  let name = plain?.[1] ?? plain?.[2];
+  if (extended !== undefined) {
+    try {
+      name = decodeURIComponent(extended);
+    } catch {
+      name = undefined;
+    }
+  }
+  if (name === undefined) return fallback;
+  const base = (name.split(/[\\/]/).pop() ?? "").replace(/[^A-Za-z0-9._-]/g, "_");
+  if (base === "" || base.startsWith(".") || base.length > 128) return fallback;
+  return EXPORT_NAME.test(base) ? base : fallback;
+}
+
+/**
+ * Reads a download's answer: its first, or the gate's one re-send of `held`. Every answer settles:
+ * a body that breaks off mid-transfer is `failed` (`network`), never a rejection (C-1135P2-01).
+ */
+export async function readDownloadAnswer(
+  response: Response,
+  held: HeldRequest,
+  jobId: string,
+  now: number = Date.now(),
+): Promise<AuditAnswer<ExportFile>> {
+  if (!response.ok) return refusalOf(response, held, now);
+  const contentType = response.headers.get("Content-Type") ?? "application/octet-stream";
+  let blob: Blob;
+  try {
+    blob = await response.blob();
+  } catch {
+    return { kind: "failed", reason: "network" };
+  }
+  const fileName = fileNameOf(response.headers.get("Content-Disposition"), jobId, contentType);
+  return { kind: "ok", body: { blob, fileName, contentType } };
+}
+
+/**
+ * `GET /admin/audit/exports/{jobId}` (§8, X10): the file as bytes for the caller to save. The bound
+ * covers the answer's head; the transfer (tens of MB at the defaults) runs on the caller's signal
+ * alone. A `403 step_up_required` comes back held for the gate, which re-sends it once.
+ */
+export function downloadAuditExport(
+  jobId: string,
+  options?: CallOptions,
+): Promise<AuditAnswer<ExportFile>> {
+  const held = holdRequest("GET", AUDIT_PATHS.download(jobId), {}, null);
+  return exchange(
+    {
+      held,
+      timeoutMs: EXPORT_TIMEOUT_MS,
+      write: false,
+      headOnly: true,
+      read: (res, now) => readDownloadAnswer(res, held, jobId, now),
+    },
+    options,
+  );
 }
