@@ -313,6 +313,7 @@ SNAP_HEALTH_FIELDS: Final = (
     "exchange",
     "clock_offset_ms",
     "degraded_topics",
+    "safety_classes",  # #2302: the safety coverage, when the baseline carries it
 )
 #: §9.6 (#3085): the view-as binding of the session an `auth` presents, `None` when it holds no
 #: context. A read it cannot make raises, and the `auth` fails: never a scope it could not check.
@@ -993,12 +994,16 @@ class _Connection:
         """What `push_system` queues of `body`: the cut views, snap first, held deltas after.
 
         #2302: a `safety` body before the snap is not held: the snap's `safety_classes` states
-        each class as it is then, and `seed` keeps its bodies. After it, a principal the safety
-        state was not last seen under is reconciled first (`reconcile_safety`), so no body is
-        cut under one principal against what was sent under another."""
-        if body.get("kind") == SAFETY and not snap and not self.system_snapped:
-            return []
-        self._reconcile_if_rescoped()
+        each class as it is then, and `seed` keeps its bodies. After it, while the socket's
+        principal is not the one its safety state was last seen under (a change not yet
+        settled), a `safety` body is only kept: the settle's `reconcile_safety` sends the state
+        under the new principal, stamped then."""
+        if body.get("kind") == SAFETY and not snap:
+            if not self.system_snapped:
+                return []
+            if self._safety_unsettled():
+                self.safety_edges.observe(body)
+                return []
         self.safety_edges.observe(body)  # #2302: a body the fault check accepts, whatever the cut
         view = self._system_view(body)
         if view is None:
@@ -1042,25 +1047,24 @@ class _Connection:
         rescoped = self.safety_edges.rescope(
             lambda body: system_view(body, principal, flag_visible=self.flag_visible, now_ms=now),
             now,
-            principal,
+            principal=principal,
         )
         if rescoped:  # nothing to queue is no call: a scope change with no safety state is quiet
             self._queue_system([("d", cut) for cut in rescoped])
 
-    def _reconcile_if_rescoped(self) -> None:
-        """#2302: the principal changed since the safety state was last seen (a swap whose
-        `settle` has not run yet): reconcile now, before anything is cut under it. `settle`'s own
-        call then finds nothing to change."""
-        if self.authz is not None and self.authz.principal is not self.safety_edges.principal:
-            self.reconcile_safety()
+    def _safety_unsettled(self) -> bool:
+        """#2302: the socket's principal changed since its safety state was last seen, and the
+        change's `settle` (`reconcile_safety`) has not run yet. Every swap after the snap is
+        followed by a settle or an eviction (`ConnectionRegistry._fan_out`, `revoke_account`,
+        `run_auth`)."""
+        return self.authz is not None and self.authz.principal is not self.safety_edges.principal
 
     def _safety_due(self, key: tuple[str, str]) -> None:
         """§15.9 (#2302): the count-update window of `key` on this socket ended with an update
         held (`SafetyEdges`): the latest, cut under the principal now, unless a close is under
         way or the socket has no principal."""
-        if self.closing or self.authz is None:
-            return
-        self._reconcile_if_rescoped()
+        if self.closing or self.authz is None or self._safety_unsettled():
+            return  # unsettled: the settle's rescope sends the latest count
         principal, now = self.authz.principal, self.wall_ms()
         sent = self.safety_edges.release(
             key,
@@ -2048,6 +2052,8 @@ def make_ws_router(
                 body["feature_flags"] = flags["feature_flags"]
         body["kill_switch"] = state
         if system_baseline is not None:
+            # #2302: no await from here to `push_system(snap=True)`, so a safety body dropped
+            # before the snap (`_system_views`) is always in the coverage read here.
             try:
                 health = system_baseline()
             except Exception:

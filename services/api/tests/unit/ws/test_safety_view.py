@@ -209,7 +209,7 @@ def test_a_revoked_grant_sends_cleared_at_once_stamped_with_the_change() -> None
     edges, _ = _edges()
     assert _send(edges, _ON_A_AND_B, MANAGER) is not None
     change_ms = 1_789_133_007_777
-    sent = edges.rescope(_view_of(MANAGER_NONE, change_ms), change_ms)
+    sent = edges.rescope(_view_of(MANAGER_NONE, change_ms), change_ms, principal=MANAGER_NONE)
     assert sent == [
         {
             "kind": "safety",
@@ -222,7 +222,10 @@ def test_a_revoked_grant_sends_cleared_at_once_stamped_with_the_change() -> None
         }
     ]
     assert _send(edges, _CLEARED, MANAGER_NONE) is None
-    assert edges.rescope(_view_of(MANAGER_NONE, change_ms + 1), change_ms + 1) == []
+    assert (
+        edges.rescope(_view_of(MANAGER_NONE, change_ms + 1), change_ms + 1, principal=MANAGER_NONE)
+        == []
+    )
 
 
 def test_an_added_grant_shows_its_live_incident_at_once() -> None:
@@ -230,7 +233,7 @@ def test_an_added_grant_shows_its_live_incident_at_once() -> None:
     the publisher's next frame."""
     edges, _ = _edges()
     assert _send(edges, _ONLY_ON_B, MANAGER) is None  # kept, though nothing was sent
-    sent = edges.rescope(_view_of(MANAGER_B), _NOW)
+    sent = edges.rescope(_view_of(MANAGER_B), _NOW, principal=MANAGER_B)
     assert len(sent) == 1
     assert (sent[0]["state"], sent[0]["affected_count"], sent[0]["since_ms"]) == ("raised", 2, _T0)
 
@@ -238,7 +241,7 @@ def test_an_added_grant_shows_its_live_incident_at_once() -> None:
 def test_a_rescope_that_changes_nothing_sends_nothing() -> None:
     edges, _ = _edges()
     assert _send(edges, _ON_A_AND_B, MANAGER) is not None
-    assert edges.rescope(_view_of(MANAGER), _NOW) == []
+    assert edges.rescope(_view_of(MANAGER), _NOW, principal=MANAGER) == []
 
 
 @pytest.mark.parametrize("who", [OWNER, MANAGER, VIEWER, MANAGER_NONE])
@@ -433,9 +436,9 @@ def test_observe_keeps_a_clear_the_connection_could_not_see() -> None:
     """L4: a clear seen while the cut is nothing still drops the kept body."""
     edges, _ = _edges()
     assert _send(edges, _ON_A_AND_B, MANAGER) is not None
-    assert edges.rescope(lambda body: None, 1) != []  # role removed: cleared
+    assert edges.rescope(lambda body: None, 1, principal=None) != []  # role removed: cleared
     edges.observe(_CLEARED)  # the publisher's clear, which the gateway sees whatever the cut
-    assert edges.rescope(_view_of(MANAGER, 2), 2) == []
+    assert edges.rescope(_view_of(MANAGER, 2), 2, principal=MANAGER) == []
 
 
 # -- the scoped stamp and the per-connection window (#2302) -----------------------------------
@@ -537,7 +540,7 @@ def test_a_rescope_sends_a_held_count_at_once_and_restarts_the_window() -> None:
     assert _send(edges, _raised(_A1), MANAGER) is not None
     assert _send(edges, _raised({ACC_A: {"affected_count": 2, "since_ms": _T1}}), MANAGER) is None
     (first,) = loop.live()
-    sent = edges.rescope(_view_of(MANAGER), _NOW)
+    sent = edges.rescope(_view_of(MANAGER), _NOW, principal=MANAGER)
     assert [(f["state"], f["affected_count"]) for f in sent] == [("raised", 2)]
     assert first.cancelled and len(loop.live()) == 1
     loop.end_windows()
@@ -573,14 +576,16 @@ def test_a_faulty_body_then_a_rescope_sends_no_false_clear() -> None:
     faulty = {k: v for k, v in _ON_A_AND_B.items() if k != "_at_ms"} | {"affected_count": 4}
     assert _send(edges, faulty, MANAGER) is None
     edges.observe(faulty)
-    assert edges.rescope(_view_of(MANAGER), _NOW) == []
+    assert edges.rescope(_view_of(MANAGER), _NOW, principal=MANAGER) == []
 
 
 def test_a_faulty_clear_drops_no_kept_body() -> None:
     edges, _ = _edges()
     assert _send(edges, _ON_A_AND_B, MANAGER) is not None
     edges.observe({k: v for k, v in _CLEARED.items() if k != "_by_account"})
-    assert edges.rescope(_view_of(MANAGER_B), _NOW) != []  # B's raise is still known
+    assert (
+        edges.rescope(_view_of(MANAGER_B), _NOW, principal=MANAGER_B) != []
+    )  # B's raise is still known
 
 
 @pytest.mark.parametrize(
@@ -619,7 +624,7 @@ def test_a_frozen_grant_clears_at_once_stamped_with_the_change() -> None:
     edges, _ = _edges()
     assert _send(edges, _ON_A_AND_B, MANAGER) is not None
     frozen = principal("manager", grants=(AccountGrant(ACC_A, True, True, True),))
-    assert edges.rescope(_view_of(frozen, _NOW + 1), _NOW + 1) == [
+    assert edges.rescope(_view_of(frozen, _NOW + 1), _NOW + 1, principal=frozen) == [
         _frame_cleared() | {"since_ms": _NOW + 1}
     ]
 

@@ -4747,7 +4747,8 @@ scope) never do. So:
   whose state, count and since-time it already has: so a connection whose scoped count stays 0 is
   sent nothing at all for that class, neither a frame nor a boolean, since existence leaks too.
 - A change of the connection's scope (a grant withdrawn, frozen or added, a role change, an
-  in-place re-`auth`) is applied to its safety state at once, without waiting for the publisher:
+  in-place re-`auth`) is applied to its safety state when the change settles, without waiting
+  for the publisher (until then the connection's `safety` frames wait for it):
   the gateway keeps the last body per (`safety_class`, `environment`), at most 21, and sees each
   anew under the new scope. It sends `raised` for what the connection newly may see, and
   `cleared` for what it no longer may, with `since_ms` the time of the change, never the
@@ -4790,14 +4791,19 @@ start-up; until then it is `unknown`. A connection whose scoped count of a raise
 class is 0 gets `clear` for it, the same bytes as a class raised nowhere. After start-up an
 account-keyed item is `unknown` to a Manager or Viewer only on the fault path (a raised item
 whose breakdown is missing), so such an `unknown` can tell it that the class is raised somewhere;
-the fault is the producer's, counted, and never shows a count, a time or an account. This is an accepted residual: it fails safe, never as a false all-clear, and only on a producer fault. So a client that connects, reconnects or locks mid-incident shows
+the fault is the producer's, counted, and never shows a count, a time or an account. So a client that connects, reconnects or locks mid-incident shows
 the raised set from its first `system` frame, and knows which classes it cannot vouch for. The
 producer emits exactly one item per (`safety_class`, `environment`); the test of that comes with
 the producer. The field appears only on `kind: "health"` and is sent only on the snap; it is
 absent until the first emitter lands. A client keeps the latest state per (`safety_class`,
 `environment`) from the snap and every later `safety` frame. PROPOSED (#2302, the security
 review's M1): the issue's "the current raised set" alone, whose empty list would read as an
-all-clear before the emitters have looked.
+all-clear before the emitters have looked. A `safety` frame that would reach a connection before
+its `system` snap is not sent: the snap states each class as it is when it is built.
+
+Accepted residual (#2302): an account-keyed item shown `unknown` to a Manager or Viewer (a raised
+item without its breakdown) tells it that the class is raised somewhere. This is an accepted
+residual: it fails safe, never as a false all-clear, and only on a producer fault.
 
 Consumer rule (lock card, SCR-005 #1640, SCR-152, SCR-153; E09-D06 rule 1): while locked, the
 client renders only frames of `kind` `kill_switch`, `exchange_state`, `health`,

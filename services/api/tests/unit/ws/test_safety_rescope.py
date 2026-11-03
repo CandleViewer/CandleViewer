@@ -21,8 +21,16 @@ from candleviewer.ws.gateway import SYSTEM_HELD_MAX, _Connection
 from candleviewer.ws.metrics import cv_ws_system_frames_withheld_total
 from candleviewer.ws.permissions import ConnectionAuthz
 from tests.unit.ws.test_system_filter import ACC_A, ACC_B
-from tests.unit.ws.test_system_snap import _SNAP_BODY, _queued
-from tests.unit.ws.test_system_topic_roles import _DEADLINE_S, BASE_MS, KILL, _as, _Rig, _system
+from tests.unit.ws.test_system_snap import _SNAP_BODY, _queued, _rig
+from tests.unit.ws.test_system_topic_roles import (
+    _DEADLINE_S,
+    BASE_MS,
+    KILL,
+    _as,
+    _Rig,
+    _Socket,
+    _system,
+)
 
 _T0 = BASE_MS - 9_000
 #: risk_lockout raised on A (1) and B (2), as the publisher hands it over.
@@ -227,9 +235,19 @@ def _safety_sent(conn: _Connection) -> list[dict[str, Any]]:
     return [f["p"] for f in _queued(conn) if f.get("ch") == "system" and f["t"] == "d"]
 
 
-async def test_a_rescope_is_reconciled_before_any_later_body() -> None:
-    """The principal changes and a body arrives before the change is settled: the state is
-    reconciled under the new principal first, stamped then, and the settle adds nothing."""
+def _b_moved(n: int) -> dict[str, Any]:
+    """`_ON_A_AND_B` with B's count at `n`: a change of B only."""
+    return _ON_A_AND_B | {
+        "affected_count": 1 + n,
+        "_by_account": _ON_A_AND_B["_by_account"]
+        | {str(ACC_B): {"affected_count": n, "since_ms": _T0}},
+        "_at_ms": _T0 + 2,
+    }
+
+
+async def test_a_change_of_principal_is_sent_at_its_settle_not_at_a_later_body() -> None:
+    """After the principal changes, a body for another scope queues nothing; the settle queues
+    one `cleared`, stamped with the settle's time."""
     wall = _Wall()
     conn = _bare(wall)
     conn.push_system(_SNAP_BODY, snap=True)
@@ -238,18 +256,38 @@ async def test_a_rescope_is_reconciled_before_any_later_body() -> None:
     assert conn.authz is not None
     conn.authz.principal = _as(uuid.uuid4(), "manager", accounts=())  # not settled yet
     wall.ms = BASE_MS + 4_321
-    b_moved = _ON_A_AND_B | {
-        "affected_count": 6,
-        "_by_account": _ON_A_AND_B["_by_account"]
-        | {str(ACC_B): {"affected_count": 5, "since_ms": _T0}},
-        "_at_ms": _T0 + 2,
-    }
-    conn.push_system(b_moved)
-    sent = _safety_sent(conn)
-    assert [(p["state"], p["since_ms"]) for p in sent] == [("cleared", BASE_MS + 4_321)]
-    assert conn.safety_edges.principal is conn.authz.principal
-    conn.reconcile_safety()  # the settle
+    conn.push_system(_b_moved(5))
     assert _safety_sent(conn) == []
+    wall.ms = BASE_MS + 9_876
+    conn.reconcile_safety()  # the settle
+    sent = _safety_sent(conn)
+    assert [(p["state"], p["since_ms"]) for p in sent] == [("cleared", BASE_MS + 9_876)]
+    conn.push_system(_b_moved(6))
+    assert _safety_sent(conn) == []
+    conn.stop_close_timer()
+
+
+async def test_a_window_that_ends_before_the_settle_sends_nothing_until_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A count update held in a window that ends before the settle goes out at the settle,
+    under the new principal, and not before."""
+    held = _Held()
+    monkeypatch.setattr(gateway._Connection, "_call_later", held)
+    wall = _Wall()
+    conn = _bare(wall, accounts=(ACC_A, ACC_B))
+    conn.push_system(_SNAP_BODY, snap=True)
+    conn.push_system(_ON_A_AND_B)
+    assert [p["affected_count"] for p in _safety_sent(conn)] == [3]
+    conn.push_system(_b_moved(4))  # inside the raise's window: held
+    assert _safety_sent(conn) == []
+    assert conn.authz is not None
+    conn.authz.principal = _as(uuid.uuid4(), "manager", accounts=(ACC_A, ACC_B))
+    held.timers[0].cancel()
+    held.callbacks[0]()  # the window ends before the settle
+    assert _safety_sent(conn) == []
+    conn.reconcile_safety()  # the settle
+    assert [(p["state"], p["affected_count"]) for p in _safety_sent(conn)] == [("raised", 5)]
     conn.stop_close_timer()
 
 
@@ -277,3 +315,45 @@ async def test_safety_bodies_before_the_snap_never_displace_a_held_frame() -> No
     assert frames[1]["p"]["kind"] == "kill_switch"
     assert overflowed() == before
     conn.stop_close_timer()
+
+
+async def test_a_safety_body_during_the_snaps_flag_read_is_in_the_snap() -> None:
+    """The flag read is the snap's one await: a safety body broadcast meanwhile is not held, and
+    the coverage read after it states the class, so the snap carries it."""
+    gate, reading = asyncio.Event(), asyncio.Event()
+    coverage: list[dict[str, Any]] = []
+
+    async def slow(user: uuid.UUID, roles: frozenset[str]) -> dict[str, Any] | None:
+        reading.set()
+        await gate.wait()
+        return None
+
+    rig = _rig(lambda: {"kind": "health", "safety_classes": list(coverage)}, slow)
+    principal = _as(uuid.uuid4(), "manager", accounts=(ACC_A,))
+    async with asyncio.timeout(_DEADLINE_S):
+        rig.principals[principal.user_id] = principal
+        sock = _Socket()
+        rig.handlers.append((sock, asyncio.create_task(rig.endpoint(sock))))
+        sock.feed({"t": "hello", "id": "h"})
+        assert (await sock.sent.get())["t"] == "welcome"
+        sock.feed({"t": "auth", "id": "a", "p": {"access_token": str(principal.user_id)}})
+        await reading.wait()
+        coverage.append(
+            {k: v for k, v in _ON_A_AND_B.items() if k not in {"kind", "severity", "_at_ms"}}
+        )
+        assert rig.hub.broadcast_system(_ON_A_AND_B) == 1  # it reaches this very socket
+        gate.set()
+        assert (await sock.sent.get())["t"] == "auth_ok"
+        snap = await sock.sent.get()
+        assert (snap["t"], snap["s"]) == ("snap", 1)
+        assert snap["p"]["safety_classes"] == [
+            {
+                "safety_class": "risk_lockout",
+                "environment": "live",
+                "state": "raised",
+                "affected_count": 1,
+                "since_ms": _T0 + 1,
+            }
+        ]
+        assert await _system(sock) == []  # the body itself is not sent after the snap
+        await rig.close()

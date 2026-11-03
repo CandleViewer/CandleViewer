@@ -226,7 +226,7 @@ class SafetyEdges:
             self._bodies.pop(key, None)
 
     def rescope(
-        self, view_of: ViewOf, now_ms: int, principal: PrincipalSnapshot | None = None
+        self, view_of: ViewOf, now_ms: int, *, principal: PrincipalSnapshot | None
     ) -> list[Mapping[str, Any]]:
         """The connection's scope changed to `principal`'s (`view_of` cuts under it): each kept
         key seen anew under it, in key order, sent at once (a held count update goes with it). A
