@@ -920,7 +920,7 @@ switch, and the scene graph cannot remove the old ones. `HaRing` therefore holds
 state and writes into the series' existing ring; switching back rewrites the real bars from the
 store.
 
-## Candle LOD marks (E12-S09 PR 1 of 2, #421; pre-stage on E12-S06 / S07)
+## Candle LOD marks (E12-S09 PR 1b of 3, #421; pre-stage on E12-S06 / S07)
 
 The renderer side of the candle tiers (BQ-01). E11-S12 (#418) owns the selector, the ±15 %
 hysteresis, the decimator, `barsPerColumn` and `viewport.lod`; nothing of those is here (AC3 is
@@ -942,6 +942,8 @@ lastClose, …]` per §3.6, an empty column minLow > maxHigh. `ColumnEntries` tu
 - **Forming bar** (BQ-05, AC5): the decimator folds `[first, foldEnd(store))`; the forming bar is
   appended as its own entry at its own column, so it is never folded.
 - **`foldVolumeMax`** (BQ-06): the neutral max volume per column for E12-S08's sub-pane.
+- **`foldDeltaRange`** (BQ-06, ruling 6577189670): the per-column delta min / max beside it, into
+  two more f32 buffers; the fold only, its consumers (E12-S08, PR 2) are not wired here.
 - **`lodDisclosure(lod)`** (BQ-08, root export, additive): "Zoomed out · 1 column = N bars" and
   the mirror's "N bars per column", N rounded half up; L2 with nothing merged reads the PROPOSED
   "Zoomed out · high–low only". The chip, its announcements and the readout are PR 2's.

@@ -173,3 +173,47 @@ export function foldVolumeMax(
   }
   return last + 1;
 }
+
+/**
+ * BQ-06 (ruling 6577189670; D06-G2, hand-off E-5 / A-11.2): the per-column delta range beside
+ * `foldVolumeMax`, same grid and contract. `outMin[col - firstColumn]` / `outMax[...]` = the min
+ * / max `delta` of the bars in that column, so an all-negative column has a negative max; a
+ * column no bar falls in stays 0 / 0 (both are zeroed first; columns outside either are
+ * skipped). Pass `to = foldEnd(store)`: the forming bar is its own entry, never folded (D06
+ * §5.4). Bar i's column is non-decreasing in i, so the first bar to reach a column seeds both
+ * words: no touched-flag buffer, no allocation. Returns the columns written (as the volume fold).
+ */
+export function foldDeltaRange(
+  store: BarStore,
+  leftIndex: number,
+  pxPerBar: number,
+  from: number,
+  to: number,
+  firstColumn: number,
+  outMin: Float32Array,
+  outMax: Float32Array,
+): number {
+  outMin.fill(0);
+  outMax.fill(0);
+  if (!(pxPerBar > 0) || !Number.isFinite(pxPerBar) || !Number.isFinite(leftIndex)) return 0;
+  const delta = store.columns.delta;
+  const mask = store.capacity - 1;
+  const head = store.ringHead;
+  const width = Math.min(outMin.length, outMax.length);
+  const end = Math.min(Number.isFinite(to) ? Math.floor(to) : 0, store.length);
+  let last = -1;
+  for (let i = Math.max(0, Number.isFinite(from) ? Math.floor(from) : 0); i < end; i += 1) {
+    const at = Math.floor((i + 0.5 - leftIndex) * pxPerBar) - firstColumn;
+    if (at < 0 || at >= width) continue;
+    const d = delta[(head + i) & mask] as number;
+    if (at > last) {
+      outMin[at] = d;
+      outMax[at] = d;
+      last = at;
+    } else {
+      if (d < (outMin[at] as number)) outMin[at] = d;
+      if (d > (outMax[at] as number)) outMax[at] = d;
+    }
+  }
+  return last + 1;
+}
