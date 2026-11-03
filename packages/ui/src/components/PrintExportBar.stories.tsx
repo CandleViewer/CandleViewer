@@ -65,9 +65,11 @@ export const Exporting: Story = {
     const label = button.querySelector(".cv-button__label");
     const arc = button.querySelector(".cv-spinner");
     await expect(label).toBeVisible();
+    await expect(arc).toBeVisible();
     await expect(getComputedStyle(label ?? button).opacity).toBe("1");
-    await expect(arc?.getBoundingClientRect().left).toBeLessThan(
-      label?.getBoundingClientRect().left ?? 0,
+    // The arc leads the label, clear of it.
+    await expect(arc?.getBoundingClientRect().right).toBeLessThanOrEqual(
+      label?.getBoundingClientRect().left ?? Number.NEGATIVE_INFINITY,
     );
     button.focus();
     await userEvent.keyboard("{Enter}");
@@ -82,7 +84,10 @@ export const ExportingReducedMotion: Story = {
   globals: { motion: "on" },
   play: async ({ canvasElement }) => {
     await waitFor(() => expect(document.documentElement).toHaveAttribute("data-motion", "reduce"));
-    const running = canvasElement.querySelector(".cv-spinner__arc")?.getAnimations() ?? [];
+    const arc = canvasElement.querySelector(".cv-spinner__arc");
+    await expect(arc).toBeVisible();
+    await expect(arc === null ? "" : getComputedStyle(arc).animationName).toBe("none");
+    const running = arc?.getAnimations() ?? [];
     await expect(running.every((a) => a.playState !== "running")).toBe(true);
     await expect(exportCsv(canvasElement)).toHaveAttribute("aria-busy", "true");
   },
