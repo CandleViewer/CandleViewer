@@ -22,6 +22,7 @@ usage: e28_d03_hifi_audit.py [--check | --self-test | --json | --matrix | --writ
 from __future__ import annotations
 
 import codecs
+import hashlib
 import importlib.util
 import json
 import re
@@ -38,6 +39,7 @@ TOOLS = ROOT / "docs" / "design" / "_tools"
 SPEC = ROOT / "docs" / "design" / "E28" / "E28-D03.md"
 SCREENS = ROOT / "docs" / "plan" / "14-screens-catalogue.md"
 E09D09 = ROOT / "docs" / "design" / "E09" / "E09-D09.md"
+IMG = ROOT / "docs" / "design" / "E28" / "img"
 CATALOGUE = ROOT / "docs" / "plan" / "15-component-catalogue.md"
 THEMES = ("dark", "light", "high-contrast")
 BAR: dict[str, float | None] = {"text": 4.5, "non-text": 3.0, "reported": None, "rejected": 4.5}
@@ -181,6 +183,12 @@ class Texts(NamedTuple):
     catalogue: str
     base15: str  # `15` at the merge base with origin/main (the working copy when git has no base)
     e09: str  # E09-D09, the T2 rule §6.1 cites by line
+    files: dict[
+        str, bytes
+    ]  # docs/design/E28/img/*.png by file name (the exports and renders on disk)
+    changed: tuple[
+        str, ...
+    ]  # the paths that differ from the merge base with origin/main (committed or not)
 
 
 def git_show_base(rel: str) -> str | None:
@@ -194,10 +202,28 @@ def git_show_base(rel: str) -> str | None:
     return run("show", f"{base.strip()}:{rel}") if base else None
 
 
+def changed_paths() -> tuple[str, ...]:
+    def run(*a: str) -> str:
+        r = subprocess.run(
+            ["git", "-C", str(ROOT), *a], capture_output=True, text=True, check=False
+        )
+        return r.stdout if r.returncode == 0 else ""
+
+    base = run("merge-base", "HEAD", "origin/main").strip()
+    if not base:
+        return ()
+    names = set(run("diff", "--name-only", base).split()) | set(
+        run("ls-files", "--others", "--exclude-standard").split()
+    )
+    return tuple(sorted(names))
+
+
 def read_texts() -> Texts:
     spec, screens, cat = (p.read_text(encoding="utf-8") for p in (SPEC, SCREENS, CATALOGUE))
     base15 = git_show_base("docs/plan/15-component-catalogue.md") or cat
-    return Texts(spec, screens, cat, base15, E09D09.read_text(encoding="utf-8"))
+    files = {f.name: f.read_bytes() for f in IMG.glob("*.png")} if IMG.is_dir() else {}
+    e09 = E09D09.read_text(encoding="utf-8")
+    return Texts(spec, screens, cat, base15, e09, files, changed_paths())
 
 
 def section(spec: str, start: str, end: str) -> str:
@@ -247,6 +273,25 @@ def g_matrix(t: Texts, p: list[str]) -> dict[str, Any]:
     return {"pairs": len(rows), "gated": len(gated), "fail": sum(1 for r in gated if r["bad"])}
 
 
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+DRAWN = re.compile(
+    rf"drawn \(r\d+(, light)?\): board id `({UUID})`, `docs/design/E28/img/(E28-D03-(\d\d)-([a-z-]+)\.png)` "
+    r"\((\d+) × (\d+), sha256 `([0-9a-f]{64})`\)"
+)
+RENDER = re.compile(
+    r"^- `(E28-D03-(\d\d)-[a-z-]+-(greyscale|deuteranopia)\.png)` \(sha256 `([0-9a-f]{64})`\)$",
+    re.MULTILINE,
+)
+SCOPE = ("docs/design/E28/E28-D03.md", "docs/design/_tools/e28_d03_hifi_audit.py")
+SCOPE_AROWS = ("docs/plan/14-screens-catalogue.md", "docs/plan/15-component-catalogue.md")
+
+
+def png_size(data: bytes) -> tuple[int, int] | None:
+    if data[:8] != b"\x89PNG\r\n\x1a\n" or len(data) < 24:
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
 def g_register(t: Texts, p: list[str]) -> dict[str, Any]:
     s0 = section(t.spec, "## 0. ", "## 1. ")
     rows = [cells(ln) for ln in s0.splitlines() if re.match(r"^\|\s*\d\d\s*\|", ln)]
@@ -256,13 +301,62 @@ def g_register(t: Texts, p: list[str]) -> dict[str, Any]:
     if len(twins) * 3 > len(rows):
         p.append(f"[C] {len(twins)} light twins of {len(rows)} boards (more than one third)")
     for r in rows:
-        if len(r) != 5 or r[4] != PENDING:
-            p.append(f"[C] board {r[0]}: Status is not {PENDING!r}")
         if not re.fullmatch(r"`[a-z0-9-]+`", r[1]):
             p.append(f"[C] board {r[0]}: slug {r[1]!r}")
         if "twin" in r[1] and not r[3].startswith("light"):
             p.append(f"[C] board {r[0]}: a twin that is not light")
-    return {"boards": len(rows), "twins": len(twins)}
+    pending = [r[0] for r in rows if len(r) == 5 and r[4] == PENDING]
+    drawn = [r for r in rows if len(r) == 5 and DRAWN.fullmatch(r[4])]
+    odd = [r[0] for r in rows if r[0] not in pending and r not in drawn]
+    if odd:
+        p.append(f"[C] boards {odd}: Status is neither {PENDING!r} nor the drawn form")
+    mode = "pending" if len(pending) == len(rows) else "drawn" if len(drawn) == len(rows) else "mix"
+    if mode == "mix" and not odd:
+        p.append(f"[C] a mix: {len(pending)} pending and {len(drawn)} drawn")
+    renders = RENDER.findall(s0)
+    if mode == "drawn":
+        if not re.search(rf"page id `{UUID}`", s0):
+            p.append("[C] drawn, but §0 names no page id")
+        bad = []
+        for r in drawn:
+            m = DRAWN.fullmatch(r[4])
+            assert m is not None
+            light, name, no, slug = m.group(1), m.group(3), m.group(4), m.group(5)
+            if no != r[0] or f"`{slug}`" != r[1] or bool(light) != r[3].startswith("light"):
+                p.append(f"[C] board {r[0]}: the Status cell names another board, slug or theme")
+            data = t.files.get(name)
+            size = png_size(data) if data else None
+            want = (int(m.group(6)), int(m.group(7)))
+            if data is None or size != want or hashlib.sha256(data).hexdigest() != m.group(8):
+                bad.append(name)
+        for name, no, _, sha in renders:
+            data = t.files.get(name)
+            if data is None or hashlib.sha256(data).hexdigest() != sha:
+                bad.append(name)
+        if bad:
+            p.append(f"[C] exports or renders missing or not their size and sha256 on disk: {bad}")
+        want_r = {
+            f"{r[0]}-{k}" for r in rows if r[0] != "10" for k in ("greyscale", "deuteranopia")
+        }
+        got_r = {f"{no}-{k}" for _, no, k, _ in renders}
+        if got_r != want_r:
+            p.append(
+                f"[C] the render list is not boards 01–09 × greyscale and deuteranopia ({len(got_r)} listed)"
+            )
+        listed = {x[0] for x in renders}
+        for r in drawn:
+            dm = DRAWN.fullmatch(r[4])
+            if dm:
+                listed.add(dm.group(3))
+        stray = sorted(set(t.files) - listed)
+        if stray:
+            p.append(f"[C] PNGs on disk that §0 does not list: {stray}")
+    allowed = set(SCOPE) | set(SCOPE_AROWS)
+    img = re.compile(r"docs/design/E28/img/E28-D03-\d\d-[a-z-]+\.png")
+    out = [c for c in t.changed if c not in allowed and not img.fullmatch(c)]
+    if out:
+        p.append(f"[C] files outside the pack differ from the merge base: {out}")
+    return {"boards": len(rows), "twins": len(twins), "mode": mode, "renders": len(renders)}
 
 
 def checklist_items(screens: str) -> list[tuple[str, str]]:
@@ -315,8 +409,10 @@ def g_contrib(t: Texts, p: list[str]) -> dict[str, Any]:
             if f not in body:
                 p.append(f"[E] {ds} has no {f.strip('*:')} field")
     for cid in NEW_IDS:
-        if re.search(rf"^### {cid}\b", t.catalogue, flags=re.MULTILINE):
-            p.append(f"[E] {cid} is already an entry in 15 (re-allocate)")
+        if re.search(
+            rf"^### {cid}\b", t.base15, flags=re.MULTILINE
+        ):  # free at the base; PR 2 adds it
+            p.append(f"[E] {cid} is already an entry in 15 at the base (re-allocate)")
     return {"contributions": len(heads)}
 
 
@@ -337,12 +433,16 @@ def g_pointers(t: Texts, p: list[str]) -> dict[str, Any]:
         p.append(f"[F] the `14` A-rows name {scrs}, not the six screens")
     done: list[str] = []
     todo: list[str] = []
+    skipped = 0
+    applied_any = any(ln.startswith(POINTER) for ln in lines)
     for r in rows:
         scr, new = r[1].split()[-1], r[4].strip('"')
         m = re.match(r"after (\d+) ", r[2])
         k = int(m.group(1)) if m else 0
         if "boards drawn on page" not in new or "to draw" in new:
             p.append(f"[F] {r[0]}: the New text is not in its landed form (boards drawn)")
+            skipped += 1
+            continue
         if not new.startswith(POINTER) or r[3] != "— (no line)":
             p.append(f"[F] {r[0]}: not a pointer insertion")
             continue
@@ -352,9 +452,9 @@ def g_pointers(t: Texts, p: list[str]) -> dict[str, Any]:
             (done if ok else todo).append(r[0] if ok else f"{r[0]} misplaced")
             continue
         todo.append(r[0])
-        if not (0 < k <= len(lines) and lines[k - 1].startswith(D02)):
+        if not applied_any and not (0 < k <= len(lines) and lines[k - 1].startswith(D02)):
             p.append(f"[F] {r[0]}: `14`:{k} is not {scr}'s D02 line")
-    stray = sum(1 for ln in lines if ln.startswith(POINTER)) - len(done)
+    stray = max(0, sum(1 for ln in lines if ln.startswith(POINTER)) - len(done) - skipped)
     if (done and todo) or stray:
         p.append(f"[F] `14` A-rows: applied {done}, pending {todo}, stray lines {stray} (a mix)")
     return {"a14": len(rows), "mode": "applied" if done and not todo else "pending"}
@@ -426,6 +526,36 @@ def field_text(cat: str, cmp_: str, fname: str) -> str | None:
     return None
 
 
+def spec_entry(spec: str, cid: str, name: str) -> list[str]:
+    """§9's bullets for a new entry in the catalogue's form ("**Field**:"), plus its Design line."""
+    m = re.search(
+        rf"^### 9\.(\d) DS-[A-C] {re.escape(name)} \({cid}, PROPOSED\)\n\n(.*?)\n\n",
+        spec,
+        re.DOTALL | re.MULTILINE,
+    )
+    if not m:
+        return []
+    out = [re.sub(r"^- \*\*([^*]+):\*\* ", r"- **\1**: ", ln) for ln in m.group(2).split("\n")]
+    design = (
+        f"- **Design (DS spec):** [E28-D03.md](../design/E28/E28-D03.md) §9.{m.group(1)} "
+        "(E28-D03; owner approval pending; the id allocated at PR 2)"
+    )
+    return [*out, design]
+
+
+def new_entry(cat: str, cid: str) -> list[str]:
+    lines = cat.splitlines()
+    i = next((k for k, ln in enumerate(lines) if ln.startswith(f"### {cid} ")), None)
+    if i is None:
+        return []
+    out = []
+    for ln in lines[i + 2 :]:
+        if not ln.strip() or ln.startswith("#"):
+            break
+        out.append(ln)
+    return out
+
+
 def g_a15(t: Texts, p: list[str]) -> dict[str, Any]:
     """The appended `15` A-rows: Old verbatim at the base, New pending (PR 1) or applied (PR 2)."""
     done: list[str] = []
@@ -450,6 +580,18 @@ def g_a15(t: Texts, p: list[str]) -> dict[str, Any]:
             todo.append(r[0])
         else:
             p.append(f"[I] {r[0]}: {r[1]}'s {m.group(1)} differs from both Old and Old + New")
+    s14 = section(t.spec, "## 14. ", "## 15. ")
+    for ln in s14.splitlines():
+        m = re.match(r"^\|\s*(A-\d+)\s*\|\s*new (CMP-\d+) (\w+)\s*\|", ln)
+        if m:  # a new entry: its heading present at HEAD once applied, its text §9's
+            have = f"### {m.group(2)} {m.group(3)} " in t.catalogue
+            (done if have else todo).append(m.group(1))
+            if have and new_entry(t.catalogue, m.group(2)) != spec_entry(
+                t.spec, m.group(2), m.group(3)
+            ):
+                p.append(
+                    f"[I] {m.group(1)}: {m.group(2)} in `15` is not §9's entry (modulo the colon form)"
+                )
     if done and todo:
         p.append(f"[I] `15` A-rows: applied {done}, pending {todo} (a mix)")
     return {"a15": len(done) + len(todo), "mode": "applied" if done and not todo else "pending"}
@@ -586,7 +728,21 @@ def drop_cite_91(t: Texts) -> Texts:
         raise SystemExit("self-test: no §9.1")
     i = m.start()
     j = t.spec.index("\n### ", i + 1)
-    return t._replace(spec=t.spec[:i] + t.spec[i:j].replace("§6.1", "§6") + t.spec[j:])
+    t = t._replace(spec=t.spec[:i] + t.spec[i:j].replace("§6.1", "§6") + t.spec[j:])
+    if "### CMP-254 " in t.catalogue:  # once applied, the `15` entry moves with §9.1
+        k = t.catalogue.index("### CMP-254 ")
+        e = t.catalogue.index("\n### ", k + 1)
+        cat = t.catalogue[:k] + t.catalogue[k:e].replace("§6.1", "§6") + t.catalogue[e:]
+        t = t._replace(catalogue=cat)
+    return t
+
+
+def drop_tests_b(t: Texts) -> Texts:
+    """DS-B loses its Tests field, in §9.2 and, once applied, in its `15` entry."""
+    t = sub("spec", "- **Tests:** unit (never", "- unit (never")(t)
+    if "- **Tests**: unit (never" in t.catalogue:
+        t = sub("catalogue", "- **Tests**: unit (never", "- unit (never")(t)
+    return t
 
 
 def apply_one_15(t: Texts) -> Texts:
@@ -601,12 +757,38 @@ def apply_one_15(t: Texts) -> Texts:
     return t._replace(catalogue=t.catalogue.replace(line, line + " " + new.group(1), 1))
 
 
+def status_pending(t: Texts) -> Texts:
+    m = DRAWN.search(t.spec)
+    if not m:
+        raise SystemExit("self-test: no drawn Status cell")
+    return t._replace(spec=t.spec.replace(m.group(0), PENDING, 1))
+
+
+def swap_same_size(t: Texts) -> Texts:
+    """Board 01's export and its greyscale render share a size; swapping their bytes keeps every size."""
+    a, b = "E28-D03-01-profiles-list.png", "E28-D03-01-profiles-list-greyscale.png"
+    if a not in t.files or b not in t.files:
+        raise SystemExit("self-test: board 01's files are not on disk")
+    return t._replace(files={**t.files, a: t.files[b], b: t.files[a]})
+
+
+def render_missing(t: Texts) -> Texts:
+    name = "E28-D03-05-symbol-matrix-deuteranopia.png"
+    return t._replace(files={k: v for k, v in t.files.items() if k != name})
+
+
 MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
     ("A: an invented token", sub("spec", "`color.surface.canvas`", "`color.surface.bogus`")),
     ("B: a measured cell retyped", sub("spec", "14.35 / 15.62 / 16.25", "14.35 / 15.62 / 16.24")),
-    ("C: a board drawn early", sub("spec", "to draw (PR 2)", "drawn")),
+    ("C: a Status cell back to pending (a mix)", status_pending),
+    ("C: two same-size files swap bytes", swap_same_size),
+    ("C: a render missing on disk", render_missing),
+    (
+        "C: a file outside the pack differs",
+        lambda t: t._replace(changed=(*t.changed, "docs/plan/05-accessibility-standard.md")),
+    ),
     ("D: a checklist item reworded", sub("spec", "search/filter", "search")),
-    ("E: a contribution loses its Tests", sub("spec", "- **Tests:** unit (never", "- unit (never")),
+    ("E: a contribution loses its Tests", drop_tests_b),
     ("F: one pointer line applied early (A-13, the last in `14`)", apply_last),
     (
         "H: the T2 statement loses G-T2.5",
@@ -623,6 +805,14 @@ MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
         sub("spec", '"`title?` · `actions?: ReactNode`', '"`title` · `actions?: ReactNode`'),
     ),
     ("I: one `15` A-row applied early", apply_one_15),
+    (
+        "I: a new entry in `15` drifts from §9 (CMP-255 Tests)",
+        sub(
+            "catalogue",
+            "- **Tests**: unit (never counts unknown as ready), visual, axe.",
+            "- **Tests**: unit (never counts unknown as ready), visual.",
+        ),
+    ),
     (
         "J: a new string reworded where it is used",
         sub("spec", "the example needs this account's equity.", "the example needs the equity."),
