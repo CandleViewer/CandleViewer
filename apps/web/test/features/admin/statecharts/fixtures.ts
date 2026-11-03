@@ -183,6 +183,45 @@ export const LATCHED_DETAIL = {
   ],
 };
 
+/** The page's world (plan §8; E42-D05:201-202 with `latched_machine.py`, SC-CHAIN-TRIPS): the
+ * demo kill switch, clear; the latched order, triggered with two chain trips and two deferred
+ * events; and one latched B8 `position_protection`, which has no public id, so no row. The metrics
+ * source timed out (`22`'s `degradedOrder`), so no dropped receipts count is known. */
+export const WORLD_LIST = {
+  items: [DEGRADED_ORDER_LIST.items[0], LATCHED_ROW],
+  kinds: [
+    DEGRADED_ORDER_LIST.kinds[0],
+    {
+      machine_kind: "order",
+      environment: "demo",
+      machines: 1,
+      by_state: { triggered: 1 },
+      chain_trips: 2,
+      degraded_machines: 1,
+      dropped_receipts: null,
+    },
+    {
+      machine_kind: "position_protection",
+      environment: "demo",
+      machines: 1,
+      by_state: { naked: 1 },
+      chain_trips: 1,
+      degraded_machines: 1,
+      dropped_receipts: null,
+    },
+  ],
+  meta: { next_cursor: null, has_more: false, count: 2 },
+  snapshots: DEGRADED_ORDER_LIST.snapshots,
+  metrics: DEGRADED_ORDER_LIST.metrics,
+};
+
+/** "Latched only" in that world: the order alone; `kinds` is the same on every filter (`22`). */
+export const WORLD_LATCHED_LIST = {
+  ...WORLD_LIST,
+  items: [LATCHED_ROW],
+  meta: { next_cursor: null, has_more: false, count: 1 },
+};
+
 const POLICY = new Set([
   "strictConfig",
   "strict",

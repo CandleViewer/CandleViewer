@@ -4,7 +4,8 @@
  * fills or strokes a mark has its forced-colours twin, the same selector setting a system colour,
  * so no base rule outranks the forced block (A-1137-03); and no stroke is `border.default`, which
  * reads 1.4 to 1.6 : 1 on the page: the outlines are `text.tertiary`, as the edges are, the pair
- * `packages/ui/test/contrast/inspector-pairs.test.ts` pins at 3:1 in every theme (A-1137-04).
+ * `packages/ui/test/contrast/inspector-pairs.test.ts` pins at 3:1 in every theme (A-1137-04). The
+ * kind counters' headers wrap there too, never cut (A-1137-d05).
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -88,5 +89,16 @@ describe("the drawing's stylesheet (inspector.css)", () => {
     ]) {
       expect(new Map(strokes).get(outline), outline).toBe("var(--color-text-tertiary)");
     }
+  });
+});
+
+describe("the kind counters' headers (inspector.css)", () => {
+  it("test_inspector_css_the_kind_counters_headers_wrap_never_cut", () => {
+    // No grid, so no echo: a header too long for its column under 1.4.12 wraps (A-1137-d05).
+    const label = base.find((rule) =>
+      rule.selectors.includes(".cv-inspector-counters .cv-table__label"),
+    );
+    expect(label?.declarations.get("white-space")).toBe("normal");
+    expect(label?.declarations.get("overflow-wrap")).toBe("anywhere");
   });
 });
