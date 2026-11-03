@@ -8,8 +8,11 @@ Tape-only exemption (#2200): the manifest also records a fingerprint of the impo
 runner (`candleviewer.*`, `bars/rows.py` excluded) and the spec hash of every live case. A golden
 change on a tape whose bytes did NOT change always needs the `BUILD_VERSIONS` bump for its kind.
 A golden change on a tape whose bytes changed needs it only if the fingerprint or a spec hash
-differs from the recorded one (a missing record counts as differing). Any edit to the closure
-therefore forces a fixture regeneration.
+differs from the recorded one (a missing record counts as differing). A stale fingerprint (the
+closure was edited) fails safe: it only costs one refresh regeneration, and until then every
+changed golden needs the bump. Not fingerprinted: third-party packages and the interpreter
+version (a known limit; the per-tape check still covers a dependency bump that moves goldens on
+unchanged tapes).
 """
 
 from __future__ import annotations

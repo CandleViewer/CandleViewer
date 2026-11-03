@@ -7,7 +7,7 @@ manifest recorded; any builder or spec change still needs the bump. Nothing here
 from __future__ import annotations
 
 import dataclasses
-import os
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -63,9 +63,11 @@ def test_spec_hash_change_without_a_bump_is_still_refused(
     assert bank.build("reason").unbumped
 
 
-def test_committed_manifest_records_the_fingerprint_it_was_built_with() -> None:
+def test_committed_manifest_records_a_fingerprint_and_the_current_spec_hashes() -> None:
+    """Only the fingerprint's shape is pinned: a stale value fails safe (every changed golden then
+    needs the bump), so an unrelated edit to the closure must not fail unit CI."""
     rec = bank._recorded()
-    assert rec["builder_code_sha256"] == bank.builder_fingerprint()
+    assert re.fullmatch(r"[0-9a-f]{64}", rec["builder_code_sha256"])
     assert rec["spec_hashes"] == bank.spec_hashes()
 
 
@@ -125,14 +127,15 @@ def test_missing_fingerprint_or_spec_hashes_fail_closed() -> None:
 def test_hashed_set_covers_every_module_the_runner_loads() -> None:
     """The closure is derived from imports; a runtime import must never fall outside it."""
     code = (
-        "import sys, bench.bar_conformance.runner;"
+        "import sys; from bench.bar_conformance import runner;"
+        "from bench.bar_determinism import tapes;"
+        "runner.run(tapes.read_tape('edge-ticks')[:50], 'BTCUSDT');"
         "print('\\n'.join(sorted(m for m in sys.modules if m.startswith('candleviewer'))))"
     )
     root = Path(str(runner.__file__)).parents[2]
     out = subprocess.run(  # noqa: S603 -- fixed argv, no shell, no network
         [sys.executable, "-I", "-c", code],
         cwd=root,
-        env={**os.environ, "PYTHONPATH": str(root)},
         capture_output=True,
         text=True,
         check=True,
