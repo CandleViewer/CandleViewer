@@ -42,6 +42,21 @@ describe("normaliseTree", () => {
     expect(normaliseTree(out)).toBe(out);
   });
 
+  it.each([
+    '- heading "Account settings"',
+    '- button "Create account"',
+    '- link "Account"',
+    "- text: Meets WCAG 2.2 level AA, SC 1.4.11",
+  ])("keeps UI text %s", (line) => {
+    expect(normaliseTree(line)).toBe(line);
+  });
+
+  it("masks an account value only when it looks like an id", () => {
+    expect(normaliseTree("- text: Account #4471")).toBe("- text: Account #<account>");
+    expect(normaliseTree("- text: acct sub-77")).toBe("- text: acct <account>");
+    expect(normaliseTree("- text: Account: Main")).toBe("- text: Account: <account>");
+  });
+
   it("does not mask level markers or plain words", () => {
     const t = '- heading "Sign in to CandleViewer" [level=1]';
     expect(normaliseTree(t)).toBe(t);

@@ -1,14 +1,8 @@
 /**
- * Accessibility-tree normaliser for the Q03 snapshot work (E47-Q03 BQ-08 (a)).
- *
- * It masks volatile and sensitive values in `ariaSnapshot()` text before the text is compared or committed,
- * so a diff shows semantic change only and the repository never collects real account data. It is its own
- * module and does not edit the G006 corpus or collector (#1315's files): the journeys call
- * `normaliseTree(captured)` on the collector's output. Overlap with G006: it reads the same text format and
- * should be applied by tree.collect.ts once the corpus owner agrees (recorded in the PR).
- *
- * Mask list, in order (the first match wins for a span): email, UUID, ISO timestamp, clock time, labelled
- * account name, currency amount / balance, decimal or grouped number, long mixed token (ids, keys, order links).
+ * Accessibility-tree normaliser (E47-Q03 BQ-08 (a)): masks volatile and sensitive values in `ariaSnapshot()`
+ * text so a diff shows semantic change only and no account data is committed. Its own module: it does not
+ * edit the G006 corpus or collector (#1315's files), only reads their text format; tree.collect.ts applies it
+ * once the corpus owner agrees. Masks run in list order.
  */
 export interface Mask {
   readonly name: string;
@@ -30,9 +24,12 @@ export const MASKS: readonly Mask[] = [
   },
   { name: "clock", pattern: /\b\d{1,2}:\d{2}(?::\d{2})?(?:\s?[AP]M)?\b/g, token: "<time>" },
   {
+    // Needs an id-like value: a `:` or `#` separator, or a bare value holding a digit or hyphen.
+    // "Account settings" and "Create account" are UI text and survive.
     name: "account",
-    pattern: /\b(account|acct|sub-?account)(\s*[:#-]?\s+)(?!<)[\w.-]+/gi,
-    token: "$1$2<account>",
+    pattern:
+      /\b(account|acct|sub-?account)(?:(\s*[:#]\s*)(?!<)[\w.-]+|(\s+)(?!<)(?=[\w.-]*[\d-])[\w.-]+)/gi,
+    token: "$1$2$3<account>",
   },
   {
     name: "amount",
@@ -40,8 +37,10 @@ export const MASKS: readonly Mask[] = [
     token: "<amount>",
   },
   {
+    // A decimal is a price or size, except a standard's or section's number: "WCAG 2.2", "SC 1.4.11".
     name: "number",
-    pattern: /(?<![\w<])\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\w<])\d+\.\d+/g,
+    pattern:
+      /(?<![\w<])\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\w<.])(?<!(?:WCAG|ARIA|HTML|[Vv]ersion)\s)\d+\.\d+(?!\.?\d)/g,
     token: "<num>",
   },
   {

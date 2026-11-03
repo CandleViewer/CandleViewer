@@ -5,14 +5,10 @@ interface PointerWindow {
   __pointerEvents: number;
 }
 
-// Pointer events dispatched from inside the page. mousemove is not counted: the browser synthesises it
-// after layout shifts (#2063), the same rule as the G004 collector (a11y/keyboard.collect.ts).
+// mousemove is not counted: the browser synthesises it after layout shifts (#2063), as in G004.
 const COUNTED = ["mousedown", "mouseup", "click", "pointerdown", "pointerup", "touchstart"];
 
-/**
- * `test` for the a11y-nav project: `page` is the guarded page, and a journey that ends with a counted
- * pointer event in the document fails even if it got past the proxy.
- */
+/** `test` for the a11y-nav project: a guarded `page`, and a counted pointer event fails the test. */
 export const test = base.extend<{ page: Page }>({
   page: async ({ page }, use) => {
     await page.addInitScript((types: string[]) => {

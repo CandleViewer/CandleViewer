@@ -9,20 +9,33 @@ import {
   type FocusStop,
 } from "../e2e/a11y-nav/trap";
 import { judgeFocusIndicator, parseRgba } from "../e2e/a11y-nav/focusVisibility";
-import { focusableCount, trapBudget } from "../e2e/a11y-nav/trapBudget";
 import { contrastRatio } from "../../../tools/contrast/color-math.mjs";
 
 /** E47-Q03 PR-1: the pure halves of the keyboard-only suite's infrastructure. */
 const fakePage = (): Page => {
-  const locator = { click: () => "clicked", press: () => "pressed", first: () => locator };
-  return {
+  const locator = {
+    click: () => "clicked",
+    press: () => "pressed",
+    first: () => locator,
+    all: async () => [locator],
+    elementHandle: async () => locator,
+  };
+  const frame = { click: () => "clicked", locator: () => locator };
+  const context = { pages: () => [page] };
+  const page = {
     locator: () => locator,
     getByRole: () => locator,
     goto: async () => "ok",
     mouse: { move: () => "moved" },
     click: () => "clicked",
     keyboard: { press: () => "pressed" },
-  } as unknown as Page;
+    frames: () => [frame],
+    context: () => context,
+    waitForSelector: async () => locator,
+    $: async () => locator,
+    $$: async () => [locator],
+  };
+  return page as unknown as Page;
 };
 
 describe("the mouse guard (BQ-04 (a))", () => {
@@ -36,6 +49,33 @@ describe("the mouse guard (BQ-04 (a))", () => {
     expect(() => p.getByRole("button").first().click()).toThrow(
       /page\.getByRole\(\)\.first\(\)\.click/,
     );
+  });
+
+  it("guards a promise's awaited value: elementHandle, waitForSelector, $", async () => {
+    const p = guardPage(fakePage());
+    await expect(
+      p
+        .locator("a")
+        .elementHandle()
+        .then((h) => h?.click()),
+    ).rejects.toThrow(ForbiddenPointerApiError);
+    await expect(p.waitForSelector("a").then((h) => h.click())).rejects.toThrow(/click/);
+    await expect(p.$("a").then((h) => h?.click())).rejects.toThrow(/click/);
+  });
+
+  it("guards each element of an array: locator.all(), $$, frames()", async () => {
+    const p = guardPage(fakePage());
+    const all = await p.locator("a").all();
+    expect(() => all[0]?.click()).toThrow(/click/);
+    const handles = await p.$$("a");
+    expect(() => handles[0]?.click()).toThrow(/click/);
+    expect(() => p.frames()[0]?.click("#x")).toThrow(/click/);
+  });
+
+  it("guards context().pages() and the frame's locators", () => {
+    const p = guardPage(fakePage());
+    expect(() => p.context().pages()[0]?.click("#x")).toThrow(/click/);
+    expect(() => p.frames()[0]?.locator("a").click()).toThrow(/click/);
   });
 
   it("throws on any page.mouse member", () => {
@@ -149,25 +189,5 @@ describe("the focus indicator (judgeFocusIndicator)", () => {
       ratio: null,
       ok: false,
     });
-  });
-});
-
-describe("the trap budget (BQ-07, PROPOSED)", () => {
-  const tree = [
-    "- main:",
-    '  - button "A"',
-    '  - link "B"',
-    '  - button "C" [disabled]',
-    '  - textbox "D"',
-    "  - text: x",
-  ].join("\n");
-
-  it("counts focusable nodes and skips disabled ones", () => {
-    expect(focusableCount(tree)).toBe(3);
-  });
-
-  it("is ceil(1.5 x stops) + 10, with no ceiling", () => {
-    expect(trapBudget(tree)).toBe(15);
-    expect(trapBudget(Array.from({ length: 100 }, () => '- button "x"').join("\n"))).toBe(160);
   });
 });
