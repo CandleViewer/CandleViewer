@@ -8196,7 +8196,7 @@ export interface components {
       /** Format: email */
       email: string;
       /**
-       * @description TOTP is mandatory for every user (C-12.2); `false` is `422 validation_failed`.
+       * @description TOTP is mandatory for every user (C-12.2); `false` is refused with the generic invalid-invite `422` (`detail` `invalid invite request`), before any step-up, and nothing is written.
        * @default true
        * @enum {boolean}
        */

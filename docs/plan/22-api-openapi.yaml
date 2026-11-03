@@ -19258,7 +19258,7 @@ components:
           type: boolean
           enum: [true]
           default: true
-          description: "TOTP is mandatory for every user (C-12.2); `false` is `422 validation_failed`."
+          description: "TOTP is mandatory for every user (C-12.2); `false` is refused with the generic invalid-invite `422` (`detail` `invalid invite request`), before any step-up, and nothing is written."
         account_access:
           { type: array, items: { $ref: "#/components/schemas/AccountAccessGrantInput" } }
     UpdateUserRequest:
