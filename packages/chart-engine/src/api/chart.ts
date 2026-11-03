@@ -83,6 +83,14 @@ function positiveInt(value: number | undefined, fallback: number, name: string):
  * detection is lazy (first frame or `getStats`), so no caller needs to await anything.
  */
 export function createChart(opts: ChartOptions): Chart {
+  return openChart(opts, false);
+}
+
+/**
+ * Internal: `createChart` with the bench switch (README BQ-18). Only `src/api/bench.ts`, a
+ * separate build entry the app never imports, passes `true` (E11-T06).
+ */
+export function openChart(opts: ChartOptions, bench: boolean): Chart {
   // The hard ceilings are checked up front (E11-T01 security notes: no unbounded allocation).
   positiveInt(opts.maxBars, CHART_DEFAULTS.maxBars, "maxBars");
   positiveInt(opts.memoryBudgetMb, CHART_DEFAULTS.memoryBudgetMb, "memoryBudgetMb");
@@ -206,8 +214,8 @@ export function createChart(opts: ChartOptions): Chart {
     syncGroup: opts.syncGroup ?? null,
     reducedMotion,
     ...(opts.fonts !== undefined && { fonts: opts.fonts }),
-    // Bench mode (every-frame `frame`, the C-Q02-1 LOD trace) has no §8 option: README BQ-18.
-    bench: false,
+    // Bench mode (every-frame `frame`, the LOD trace, the stage marks) has no §8 option: BQ-18.
+    bench,
     listener: {
       deliver: onWorker,
       lost(final: boolean, correlationId: string): void {

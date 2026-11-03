@@ -44,6 +44,7 @@ export function startWorker(scope: WorkerScope): void {
     },
     probe: () => probeWorker(scope),
     text: createTextPlatform(scope as unknown as TextScope),
+    timeline: performance, // read by bench-mode charts only (E11-T06)
   });
   scope.onmessage = (ev) => runtime.handle(ev.data);
 }

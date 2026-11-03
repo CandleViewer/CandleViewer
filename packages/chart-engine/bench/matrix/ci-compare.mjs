@@ -17,12 +17,45 @@
 // times are quantised to the page's 0.1 ms timer, so a delta under two ticks is reported but never
 // flagged. Hosted runners vary in CPU model, so the hardware class compared is core count, arch and
 // GPU (SwiftShader on hosted runners), not the CPU model string.
+//
+// E11-T06 (rulings on BQ-04 / BQ-08): frame time, draw calls and memory each fail above 5 % (C-9.1
+// #16), on the median of the repetitions' p95s. The 0.2 ms floor is PROPOSED (no owner doc) and
+// binds only on a baseline under 4 ms (where 5 % is under two ticks); counters and memory have no
+// floor. A real-engine report (`config.page: "engine"`) also gets 26 §13's absolute gates, and
+// its per-rep p95 spread is published, never failed on; stub scenarios are listed by owner Epic.
 import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { validateReport } from "./matrix-lib.mjs";
+import { ENGINE_REPS, gateRows } from "../engine/engine-lib.mjs";
+import { medianOfP95 } from "../stats.mjs";
 
-export const DEFAULTS = Object.freeze({ thresholdPct: 5, minDeltaMs: 0.2 });
+export const DEFAULTS = Object.freeze({ thresholdPct: 5, minDeltaMs: 0.2, floorBelowMs: 4 });
+
+/** A metric's unit, from its name: counters and memory are never floored. */
+export const unitOf = (metric) =>
+  metric.endsWith("draw calls") ? "count" : metric.endsWith(" MB") ? "MB" : "ms";
+
+/**
+ * A cell's p95: the median of its per-rep p95s when the report carries them (C-9.1 #16); NaN
+ * when any rep's p95 is not finite, so a broken rep is never sorted into a passing median.
+ */
+const p95Of = (c) =>
+  Array.isArray(c.p95PerRep) && c.p95PerRep.length
+    ? c.p95PerRep.every((x) => typeof x === "number" && Number.isFinite(x))
+      ? medianOfP95(c.p95PerRep)
+      : NaN
+    : c.p95;
+const isEngine = (r) => r?.config?.page === "engine";
+
+/** Memory metrics recorded as imprecise (quantised heap): never compared, never failing (M3). */
+export function impreciseMetrics(report) {
+  const out = new Set();
+  for (const c of report?.cells ?? [])
+    if (c.status === "ok" && c.memoryPrecision === "imprecise")
+      out.add(`${c.scenario} memory MB`).add(`${c.scenario} peak memory MB`);
+  return out;
+}
 
 /** The comparable figures of one report, keyed by metric name. */
 export function metrics(report) {
@@ -34,9 +67,11 @@ export function metrics(report) {
         out[`B7 ${mode} decode p95`] = m.decodeP95Ms;
     } else if (c.scenario === "B9") out["B9 cold init"] = c.coldInitToFirstFrameMs;
     else {
-      out[`${c.scenario} frame p95`] = c.p95;
-      // C-9.1 #16 also gates draw calls; the counts are exact, so the same percentage applies.
+      out[`${c.scenario} frame p95`] = p95Of(c);
+      // C-9.1 #16 also gates draw calls and memory; the same percentage applies, with no floor.
       if (typeof c.drawCalls === "number") out[`${c.scenario} draw calls`] = c.drawCalls;
+      if (typeof c.memoryMb === "number") out[`${c.scenario} memory MB`] = c.memoryMb;
+      if (typeof c.peakMemoryMb === "number") out[`${c.scenario} peak memory MB`] = c.peakMemoryMb;
     }
   }
   return out;
@@ -48,7 +83,7 @@ export function comparability(a, b) {
   if (a.fixture?.sha256 !== b.fixture?.sha256) why.push("fixture differs");
   if (String(a.seed) !== String(b.seed)) why.push("seed differs");
   if (a.driverScriptSha256 !== b.driverScriptSha256) why.push("driver script differs");
-  for (const k of ["reps", "durationMs", "soakMs", "bars"])
+  for (const k of ["reps", "durationMs", "soakMs", "bars", "page"])
     if (a.config?.[k] !== b.config?.[k]) why.push(`config.${k} differs`);
   if (a.manifest?.flagSet?.name !== b.manifest?.flagSet?.name) why.push("flag set differs");
   const cls = (r) => {
@@ -59,29 +94,115 @@ export function comparability(a, b) {
   return why;
 }
 
-/** Rows of { metric, baseline, current, deltaMs, deltaPct, status }. `opts.enforce` renames the
- * regression status "REGRESSION (enforced)". */
+/**
+ * Rows of { metric, baseline, current, deltaMs, deltaPct, status }. `opts.enforce` renames the
+ * regression status "REGRESSION (enforced)", and a metric the baseline has but this run lacks or
+ * reads as non-finite (a not-runnable cell, a NaN) "MISSING (enforced)": a gate never passes on an
+ * absent figure. An imprecise memory figure is the one exception: recorded, never failing. A frame
+ * time of 0 reads as missing; a zero baseline is never compared ("ZERO BASELINE (enforced)" for a
+ * frame time under `enforce`).
+ * @param {{ thresholdPct: number, minDeltaMs: number, floorBelowMs?: number, enforce?: boolean }} [opts]
+ */
 export function compareToBaseline(report, baseline, opts = DEFAULTS) {
   const cur = metrics(report);
   const base = baseline ? metrics(baseline) : {};
   return Object.keys({ ...base, ...cur }).map((metric) => {
-    const b = base[metric];
-    const c = cur[metric];
-    if (c == null) return { metric, baseline: b, current: null, status: "missing in this run" };
+    const b = Number.isFinite(base[metric]) ? base[metric] : null;
+    const ms = unitOf(metric) === "ms";
+    // A frame time of 0 ms is no measurement (nothing rendered or marked): read as missing.
+    const c = ms && !(cur[metric] > 0) ? null : cur[metric];
+    if (c == null || !Number.isFinite(c)) {
+      const status = impreciseMetrics(report).has(metric)
+        ? "imprecise memory (not compared)"
+        : b != null && opts.enforce
+          ? "MISSING (enforced)"
+          : "missing in this run";
+      return { metric, baseline: b, current: null, status };
+    }
     if (b == null)
       return { metric, baseline: null, current: c, status: baseline ? "new" : "no baseline yet" };
+    // A non-positive baseline has no percentage: never "within threshold". A zero frame time is a
+    // broken baseline and fails under --enforce; a zero counter or memory figure is only reported.
+    if (!(b > 0)) {
+      const status =
+        ms && opts.enforce ? "ZERO BASELINE (enforced)" : "zero baseline (not compared)";
+      return { metric, baseline: b, current: c, status };
+    }
     const deltaMs = c - b;
-    const deltaPct = b > 0 ? (deltaMs / b) * 100 : null;
-    const big = Math.abs(deltaMs) >= opts.minDeltaMs - 1e-9;
+    const deltaPct = (deltaMs / b) * 100;
+    // The floor binds frame times under `floorBelowMs` only (PROPOSED, ruling BQ-04).
+    const floored = unitOf(metric) === "ms" && b < (opts.floorBelowMs ?? DEFAULTS.floorBelowMs);
+    const big = !floored || Math.abs(deltaMs) >= opts.minDeltaMs - 1e-9;
     let status = "within threshold";
-    if (big && deltaPct != null && deltaPct > opts.thresholdPct)
+    if (big && deltaPct > opts.thresholdPct)
       status = opts.enforce ? "REGRESSION (enforced)" : "REGRESSION (recorded)";
-    else if (big && deltaPct != null && deltaPct < -opts.thresholdPct) status = "improved";
+    else if (big && deltaPct < -opts.thresholdPct) status = "improved";
     return { metric, baseline: b, current: c, deltaMs, deltaPct, status };
   });
 }
 
 const f = (v, d = 2) => (typeof v === "number" && Number.isFinite(v) ? v.toFixed(d) : "-");
+
+/** 26 §13's absolute gates over a real-engine report; `enforce` names a breach as failing. */
+export function absoluteGates(report, enforce = false) {
+  if (!isEngine(report)) return [];
+  const over = enforce ? "OVER GATE (enforced)" : "OVER GATE (recorded)";
+  return (report.cells ?? [])
+    .flatMap((c) => gateRows(c.status === "ok" ? { ...c, p95: p95Of(c) } : c))
+    .map((g) => (g.status === "over gate" ? { ...g, status: over } : g));
+}
+
+/** Scenarios this engine report could not run (status `not-runnable`). */
+export function notRunScenarios(report) {
+  return (report.cells ?? []).filter((c) => c.status === "not-runnable").map((c) => c.scenario);
+}
+
+/** The per-rep p95 spread of each frame cell (AC2): published, never a failure (ruling BQ-08). */
+export function spreads(report) {
+  return (report.cells ?? [])
+    .filter((c) => c.status === "ok" && Array.isArray(c.p95PerRep) && c.p95PerRep.length > 1)
+    .map((c) => ({ scenario: c.scenario, reps: c.p95PerRep.length, spreadPct: c.spreadPct }));
+}
+
+/** Engine-section markdown: gates, spreads, stubs, the worst stage. Empty for a matrix report. */
+export function renderEngineSection(report, gates, enforce = false) {
+  if (!isEngine(report)) return "";
+  const L = [
+    "",
+    "### 26 §13 absolute gates",
+    "",
+    "| Gate | This run | Status |",
+    "| --- | --- | --- |",
+  ];
+  for (const g of gates) L.push(`| ${g.metric} | ${f(g.value)} | ${g.status} |`);
+  L.push("", "### Spread of the per-rep p95s (published, never failing)", "");
+  L.push("| Scenario | Reps | Spread % | Worst stage (06 §4.3) |", "| --- | --- | --- | --- |");
+  const cells = Object.fromEntries((report.cells ?? []).map((c) => [c.scenario, c]));
+  for (const s of spreads(report))
+    L.push(
+      `| ${s.scenario} | ${s.reps} | ${f(s.spreadPct, 1)} | ${cells[s.scenario]?.worstStage ?? "-"} |`,
+    );
+  for (const c of report.cells ?? []) {
+    if (c.status !== "ok") continue;
+    if (c.partial) L.push("", `**${c.scenario} ${c.partial}.**`);
+    if (c.memoryPrecision === "imprecise")
+      L.push("", `${c.scenario} memory: imprecise (quantised heap), recorded and not compared.`);
+    if (c.memoryScope) L.push("", `${c.scenario} memory: ${c.memoryScope}.`);
+  }
+  const stubs = (report.cells ?? []).filter((c) => c.status === "stub");
+  if (stubs.length)
+    L.push(
+      "",
+      `**Not implemented (stubs):** ${stubs.map((c) => `${c.scenario} (${c.owner})`).join(", ")}.`,
+    );
+  const broken = (report.cells ?? []).filter((c) => c.status === "not-runnable");
+  if (broken.length)
+    L.push(
+      "",
+      `**Not runnable${enforce ? " — NOT RUN (enforced)" : " — NOT RUN, recorded only"}:** ${broken.map((c) => c.scenario).join(", ")} (see the report).`,
+    );
+  return L.join("\n") + "\n";
+}
 
 export function renderSummary({
   runtime,
@@ -96,13 +217,13 @@ export function renderSummary({
     ? [
         `## Engine matrix (${runtime}) — GPU mode, enforced`,
         "",
-        `Report \`${file}\`; baseline ${baselineName ? `\`${baselineName}\`` : "none committed yet"}; a like-for-like regression > ${thresholds.thresholdPct} % (C-9.1 #16) and ≥ ${thresholds.minDeltaMs} ms fails the job (CI-BEN-001). A run that is not like-for-like is reported, never enforced.`,
+        `Report \`${file}\`; baseline ${baselineName ? `\`${baselineName}\`` : "none committed yet"}; a like-for-like regression > ${thresholds.thresholdPct} % (C-9.1 #16) in frame time, draw calls or memory fails the job; a frame time under ${thresholds.floorBelowMs ?? DEFAULTS.floorBelowMs} ms also needs ≥ ${thresholds.minDeltaMs} ms (PROPOSED floor) (CI-BEN-001). A run that is not like-for-like is reported, never enforced.`,
         "",
       ]
     : [
         `## Engine matrix (${runtime}) — recording only, not gating`,
         "",
-        `Report \`${file}\`; baseline ${baselineName ? `\`${baselineName}\`` : "none committed yet"}; flag at > ${thresholds.thresholdPct} % (06 §7.4) and ≥ ${thresholds.minDeltaMs} ms (two timer ticks). A regression here never fails the build in R0. Hosted software-GL numbers are regression tracking only, not reference-hardware evidence (the committed matrix on \`main\` is).`,
+        `Report \`${file}\`; baseline ${baselineName ? `\`${baselineName}\`` : "none committed yet"}; flag at > ${thresholds.thresholdPct} % (06 §7.4); a frame time under ${thresholds.floorBelowMs ?? DEFAULTS.floorBelowMs} ms also needs ≥ ${thresholds.minDeltaMs} ms (two timer ticks, PROPOSED floor). A regression here never fails the build in R0. Hosted software-GL numbers are regression tracking only, not reference-hardware evidence (the committed matrix on \`main\` is).`,
         "",
       ];
   if (notComparable.length)
@@ -142,6 +263,7 @@ export function run(argv, io = { log: console.log, error: console.error, append:
   const thresholds = {
     thresholdPct: Number(get("--threshold-pct") ?? DEFAULTS.thresholdPct),
     minDeltaMs: Number(get("--min-delta-ms") ?? DEFAULTS.minDeltaMs),
+    floorBelowMs: DEFAULTS.floorBelowMs,
   };
   const enforce = argv.includes("--enforce");
   const fail = (msg) => {
@@ -173,11 +295,17 @@ export function run(argv, io = { log: console.log, error: console.error, append:
     const bad = validateReport(baseline);
     if (bad.length) return fail(`baseline ${basename(bPath)} is invalid: ${bad.join("; ")}`);
   }
+  // An enforced engine gate is taken on C-9.1's five reps, never on a `--reps 1` pair.
+  if (enforce && isEngine(report) && !(Number(report.config?.reps) >= ENGINE_REPS))
+    return fail(
+      `${basename(path)} has ${report.config?.reps} reps; an enforced engine run needs ${ENGINE_REPS}`,
+    );
   const notComparable = baseline ? comparability(report, baseline) : [];
   // Enforcement needs a like-for-like baseline: with none, or a different one, it only reports.
   const enforcing = enforce && baseline != null && notComparable.length === 0;
   const rows = compareToBaseline(report, baseline, { ...thresholds, enforce: enforcing });
-  const md = renderSummary({
+  const gates = absoluteGates(report, enforce);
+  const md0 = renderSummary({
     runtime,
     file: basename(path),
     rows,
@@ -186,6 +314,7 @@ export function run(argv, io = { log: console.log, error: console.error, append:
     thresholds,
     enforce,
   });
+  const md = md0 + renderEngineSection(report, gates, enforce);
   io.log(md);
   const out = get("--summary");
   if (out) io.append(out, md);
@@ -193,14 +322,34 @@ export function run(argv, io = { log: console.log, error: console.error, append:
     io.log(
       `::warning title=engine-matrix ${runtime}::CI-BEN-002: not like-for-like with the baseline (${notComparable.join("; ")}): regressions reported, not enforced`,
     );
+  const missing = rows.filter((r) => r.status === "MISSING (enforced)");
+  if (missing.length > 0)
+    io.error(
+      `::error title=engine-matrix ${runtime}::CI-BEN-001: missing or non-finite in this run: ${missing.map((r) => r.metric).join(", ")}`,
+    );
+  const zero = rows.filter((r) => r.status === "ZERO BASELINE (enforced)");
+  if (zero.length > 0)
+    io.error(
+      `::error title=engine-matrix ${runtime}::CI-BEN-001: zero baseline: ${zero.map((r) => r.metric).join(", ")}`,
+    );
+  // Under --enforce a not-runnable scenario fails with or without a like-for-like baseline: a gate
+  // that was never measured never passes.
+  const notRun = enforce && isEngine(report) ? notRunScenarios(report) : [];
+  if (notRun.length > 0)
+    io.error(`::error title=engine-matrix ${runtime}::CI-BEN-001: not run: ${notRun.join(", ")}`);
   const regressed = rows.filter((r) => r.status === "REGRESSION (enforced)");
+  const breached = gates.filter((g) => g.status === "OVER GATE (enforced)");
+  if (breached.length > 0)
+    io.error(
+      `::error title=engine-matrix ${runtime}::CI-BEN-001: over the 26 §13 gate: ${breached.map((g) => g.metric).join(", ")}`,
+    );
   if (regressed.length > 0) {
     io.error(
       `::error title=engine-matrix ${runtime}::CI-BEN-001: regression above ${thresholds.thresholdPct} %: ${regressed.map((r) => r.metric).join(", ")}`,
     );
     return 1;
   }
-  return 0;
+  return breached.length + missing.length + zero.length + notRun.length > 0 ? 1 : 0;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

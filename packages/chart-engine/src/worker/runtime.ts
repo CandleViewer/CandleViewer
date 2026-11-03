@@ -45,6 +45,7 @@ import { type BarBatch, BarStore } from "../model/BarStore.js";
 import { ModelRejection, type MutationRange, RangeSlot } from "../model/counters.js";
 import { plotWidthOf } from "../interaction/wheel.js";
 import * as scene from "../scene/index.js";
+import { performanceStageMarker, type PerformanceTimeline } from "../scene/stage-marks.js";
 import { AtlasService, type AtlasCounters, type AtlasDetails } from "../text/atlas.js";
 import type { ChartFont, TextPlatform } from "../text/platform.js";
 import {
@@ -118,6 +119,8 @@ export interface RuntimeDeps {
   readonly priceSources?: readonly PriceExtentSource[];
   /** The atlas's font, raster and cache platform (E11-S11, BQ-261); null or absent: none here. */
   readonly text?: TextPlatform | null;
+  /** The timeline bench-mode charts mark their stages on (E11-T06); unused outside bench mode. */
+  readonly timeline?: PerformanceTimeline;
 }
 
 export interface RenderRuntime {
@@ -981,6 +984,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       const main = inst.series.get(inst.main);
       if (main !== undefined) viewport.setMap(main.store);
       inst.gestures.reduce = msg.reducedMotion === true;
+      // 06 §4.3's marks run in bench mode only; a production chart's scheduler keeps `null`.
+      if (msg.config.bench && deps.timeline !== undefined) {
+        inst.scheduler.marks = performanceStageMarker(deps.timeline);
+      }
       charts.set(msg.id, inst);
       touch(inst);
       return;

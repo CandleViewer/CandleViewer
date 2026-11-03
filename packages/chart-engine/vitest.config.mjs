@@ -17,6 +17,8 @@ export default defineConfig({
         // exercised by the owner's reference-machine run, not by unit tests.
         "bench/matrix/run-matrix.mjs",
         "bench/matrix/page/**",
+        // E11-T06: the real-engine page runs only in Chromium (its pure parts: bench/engine/*.mjs).
+        "bench/engine/page/**",
         "bench/matrix/electron/main.cjs",
         "bench/matrix/electron/preload.cjs",
         "bench/matrix/fixture-digest.mjs",

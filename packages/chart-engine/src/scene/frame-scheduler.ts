@@ -35,6 +35,20 @@ const RUN = 3; // consecutive frames that trigger a step-down or a recovery
 
 const LAYOUT_SLICE_MS = 2; // the ticket's layout clamp (C-3), timed apart from 06's nine (BQ-43)
 
+/** Mark boundaries past the nine stage ends (E11-T06): the frame's start and the layout's end. */
+export const MARK_FRAME_START = 9;
+export const MARK_LAYOUT_END = 10;
+/** Stages no hook times yet, marked (zero length) right after the bound stage before them. */
+const UNBOUND_AFTER = [0, 0, 2, 0, 0, 2, 0, 0, 0] as const;
+
+/**
+ * Bench-only stage marks (E11-T06, 06 §7.2): `mark(i)` closes boundary `i` (0 to 8: the end of
+ * `FRAME_STAGES[i]`; then `MARK_FRAME_START`, `MARK_LAYOUT_END`). Null outside bench mode.
+ */
+export interface StageMarker {
+  mark(boundary: number): void;
+}
+
 /** Per-stage durations of the last frame, ms (internal, BQ-S3: §8 `FrameStats` is frozen). */
 export class FrameTimings {
   readonly ms = new Float64Array(FRAME_STAGES.length);
@@ -108,6 +122,8 @@ export class FrameScheduler {
   frames = 0;
   deferredMutations = 0; // engine.frame.deferred_mutations: left queued by the last drain
   parkedMs = 0; // engine.frame.parked_ms: total time with no frame requested
+  /** Bench mode only (E11-T06): null in production, so a boundary costs one null check. */
+  marks: StageMarker | null = null;
   private readonly animations: Animation[] = [];
   private readonly onFrame = (t: number): void => this.frame(t);
   private handle = 0; // -1 once disposed: `wake()` is then a no-op
@@ -183,6 +199,7 @@ export class FrameScheduler {
   private run(t: number): void {
     const { ctx, sink, timings, hooks } = this;
     const start = this.clock.now();
+    this.marks?.mark(MARK_FRAME_START);
     timings.ms.fill(0);
     ctx.begin(t, this.budgetMs);
     if (this.resumed) ctx.dt = 0; // nothing animated while parked
@@ -200,6 +217,7 @@ export class FrameScheduler {
     at = this.stage(DATA_WINDOW, at);
     hooks.layout?.(ctx);
     const laidOut = this.clock.now();
+    this.marks?.mark(MARK_LAYOUT_END);
     timings.layoutMs = laidOut - at;
     at = laidOut;
     ctx.budgetMsRemaining = this.budgetMs - (at - start);
@@ -229,6 +247,11 @@ export class FrameScheduler {
   private stage(index: number, from: number): number {
     const now = this.clock.now();
     this.timings.ms[index] = (this.timings.ms[index] as number) + now - from;
+    const marks = this.marks;
+    if (marks !== null) {
+      const last = index + (UNBOUND_AFTER[index] as number);
+      for (let i = index; i <= last; i += 1) marks.mark(i);
+    }
     return now;
   }
 

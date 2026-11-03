@@ -120,6 +120,7 @@ function inlineLink(env: HostEnv, unlink: () => void): Link {
     setTimer: (cb, ms) => env.setTimer(cb, ms),
     probe: () => env.probe(),
     text: createTextPlatform(globalThis as unknown as TextScope),
+    timeline: performance, // read by bench-mode charts only (E11-T06)
   });
   return {
     runMode: "inline",
