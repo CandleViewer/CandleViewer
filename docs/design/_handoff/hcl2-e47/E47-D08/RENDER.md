@@ -72,3 +72,24 @@ live, and why>` line per live fix (or `SHEET-FIX none`). `out/` stays local (nev
   as a `SHEET-FIX` line.
 - After a tab reload, the first texts drawn may not paint in the first export. Look at each PNG, and re-set any
   blank texts (then re-export that board).
+
+## Big boards (from the E47-D06 render, 2026-11-03)
+
+- Boards of about 2,000 shapes or more push the single whole-board relayout call past the bridge's 120 s limit.
+  Run relayout per top-level child instead. Shape estimates run low: D06's boards 05 and 06 measured about
+  2,100 and 2,700 against 1,700 and 2,300 estimated.
+- Draw such a board one section per call and clear the selection after each call. A long selection slows the
+  tab, and D06's board 06 lost a whole first pass (114 sections drawn but never saved) on a reload.
+- Texts only measure while the window is in the foreground: keep it fronted.
+- Likely over 2,000 shapes here: board 06 heatmap-tiers (140 sections; about 1,850 nodes in its sheet, of which
+  1,398 are cell rects, so expect about 2,300 drawn). Draw it per section and run relayout per child. Next
+  largest, under the line but worth the same care: board 03 region-arbiter (about 640), board 07
+  pause-controls (about 610), board 09 safety-static (about 550) and board 02 budget-timeline (about 515).
+  All other boards are under 500.
+- Kit check, backticks in drawn cite text: present on every board. The footer "Data: synthetic, ... the TICKS
+  `burst` preset" line (footer · data and section value-6) draws backticks on all 10 boards, and board 09
+  also has one in its value-3 words line. Strip the backticks from the drawn text (keep the words) and report
+  it as one SHEET-FIX line per board.
+- Kit check, rect markers that should be dashed: none found. The only stroke-only rects are solid outlines
+  (`FR-2 region · outline` on board 03, `live cell · outline` on board 06), which are meant to be solid, so no
+  `dashed · ` name is missing.

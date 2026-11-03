@@ -71,3 +71,20 @@ live, and why>` line per live fix (or `SHEET-FIX none`). `out/` stays local (nev
   as a `SHEET-FIX` line.
 - After a tab reload, the first texts drawn may not paint in the first export. Look at each PNG, and re-set any
   blank texts (then re-export that board).
+
+## Big boards (from the E47-D06 render, 2026-11-03)
+
+- Boards of about 2,000 shapes or more push the single whole-board relayout call past the bridge's 120 s limit.
+  Run relayout per top-level child instead. Shape estimates run low: D06's boards 05 and 06 measured about
+  2,100 and 2,700 against 1,700 and 2,300 estimated.
+- Draw such a board one section per call and clear the selection after each call. A long selection slows the
+  tab, and D06's board 06 lost a whole first pass (114 sections drawn but never saved) on a reload.
+- Texts only measure while the window is in the foreground: keep it fronted.
+- Likely over 2,000 shapes here: none. The largest are board 06 (about 670 nodes in its sheet, 42 sections) and
+  boards 03, 07 and 09 (about 300 to 280). Even with the usual 20 to 30 percent undercount, the whole kit is
+  about 2,500 nodes in 10 boards, so the per-section drawing above is a precaution only.
+- Kit check, backticks in drawn cite text: present. Backtick-quoted ids remain in board 01 (section value-4),
+  board 02 (section b) and board 05 (sections label and value-3), for example `05`:152. Strip the backticks
+  from the drawn text (keep the words) and report each as a SHEET-FIX line.
+- Kit check, rect markers that should be dashed: none found. No rect in this kit is stroke-only and none has a
+  `dashed · ` name, so the dash post-step has nothing to do here.
