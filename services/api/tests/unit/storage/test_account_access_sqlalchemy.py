@@ -528,9 +528,13 @@ async def test_replace_logs_one_line_naming_its_outcome(
     ]
 
 
-def test_onboarding_binding_readers_ignore_revoked_grants() -> None:
+def test_onboarding_binding_readers_ignore_revoked_grants_and_deleted_accounts() -> None:
+    # #3027: like every grant reader, the checklist's skips a grant on a deleted account.
     for stmt in (onboarding._BOUND, onboarding._LATEST_BINDING):
-        assert "AND can_view" in stmt.text
+        assert "AND a.can_view AND e.deleted_at IS NULL" in stmt.text
+        assert "JOIN exchange_accounts AS e ON e.id = a.exchange_account_id" in stmt.text
+        assert "a.user_id = CAST(:u AS uuid)" in stmt.text
+    assert "max(a.created_at)" in onboarding._LATEST_BINDING.text
 
 
 # -- S9a: store hardening (#2648, design comment and rulings of 2026-10-16) --------------------

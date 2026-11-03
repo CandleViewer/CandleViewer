@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime
 from types import MappingProxyType
 from typing import Any, Final, cast
@@ -32,6 +33,7 @@ from uuid import UUID
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
+from candleviewer.storage.repositories.account_access import AccessLevel
 from candleviewer.storage.repositories.accounts import (
     SUB_ACCOUNT_CAP_CONFLICT,
     AccountKey,
@@ -279,6 +281,13 @@ _UPDATE = sa.text(
     "ea.last_reconciled_at AS last_reconciled_at, ea.created_at AS created_at, "
     "ea.updated_at AS updated_at, ea.deleted_at AS deleted_at"
 )
+# Account deletes take this transaction-scoped advisory lock first, so two deletes never overlap.
+# Without it, two owners deleting accounts that share a grantee each read `_GRANTEES_HOLDINGS`
+# before the other's revoke commits, and each record's "after" set still holds the other's
+# account. Only deletes take it (no other writer, no row lock), so it adds no lock-order edge.
+# Fixed bigint ("CVACCTD1" as ASCII), dedicated to account deletes; never reuse it elsewhere.
+ACCOUNT_DELETE_LOCK_KEY = 0x4356_4143_4354_4431
+_DELETE_LOCK = sa.text("SELECT pg_advisory_xact_lock(CAST(:key AS bigint))")
 _SOFT_DELETE = sa.text(
     "UPDATE exchange_accounts AS ea SET deleted_at = now(), trading_enabled = false, "
     "is_enabled = false, "
@@ -294,6 +303,20 @@ _LIVE_ACCOUNT_GRANTS = sa.text(
     "FROM user_account_access uaa JOIN users u ON u.id = uaa.user_id "
     "WHERE uaa.exchange_account_id = CAST(:account AS uuid) AND uaa.can_view "
     "ORDER BY uaa.user_id FOR NO KEY UPDATE OF uaa"
+)
+# The grantees' whole live sets, for their `users.access_change` records in the grant store's
+# shape (`can_view` rows, as its `_CURRENT` reads them: no join, so this account, deleted a
+# statement ago, is in the set). No row lock, so it adds no lock-order edge: a grant store write
+# of one of these users locks every row of the user, this account's held above among them,
+# before it writes any, so it committed before this read or waits for this commit; the freeze
+# writers take the same order (21 Sec.3.1.3). Another account delete is the one writer that
+# lock does not order, so deletes are serialised against each other by `_DELETE_LOCK`, taken
+# first in the transaction: the other delete's revoke has committed before this read.
+_GRANTEES_HOLDINGS = sa.text(
+    "SELECT user_id::text AS user_id, exchange_account_id::text AS account, "
+    "can_trade, frozen FROM user_account_access "
+    "WHERE user_id = ANY(CAST(:users AS uuid[])) AND can_view "
+    "ORDER BY user_id, exchange_account_id"
 )
 _REVOKE_ACCOUNT_GRANTS = sa.text(
     "UPDATE user_account_access SET can_view = false, can_trade = false, "
@@ -478,9 +501,11 @@ _COUNT_PROFILES = sa.text(
 
 OWNER_STATEMENTS = frozenset(
     {
-        _CREATE, _LOCK_PARENT, _COUNT_SUBS, _GET_OWNER, _LIST_OWNER, _UPDATE, _SOFT_DELETE,
-        _LIVE_ACCOUNT_GRANTS, _REVOKE_ACCOUNT_GRANTS, _GET_KEY, _LIST_KEYS, _LIST_GRANTEES,
-        _GRANTEES_TIMEOUT, _TRANSITION, _START_ROT, _GET_ROT, _LIST_ROTS, *_STEPS.values(),
+        _CREATE, _LOCK_PARENT, _COUNT_SUBS, _GET_OWNER, _LIST_OWNER, _UPDATE, _DELETE_LOCK,
+        _SOFT_DELETE,
+        _LIVE_ACCOUNT_GRANTS, _GRANTEES_HOLDINGS, _REVOKE_ACCOUNT_GRANTS, _GET_KEY, _LIST_KEYS,
+        _LIST_GRANTEES, _GRANTEES_TIMEOUT, _TRANSITION, _START_ROT, _GET_ROT, _LIST_ROTS,
+        *_STEPS.values(),
     }
 )  # fmt: skip
 GRANT_STATEMENTS = frozenset({_GET_GRANT, _LIST_GRANT})
@@ -570,6 +595,23 @@ def _require_owner(scope: object) -> OwnerScope:
     if not isinstance(scope, OwnerScope):
         raise AccountsStoreScopeDeniedError
     return scope
+
+
+async def _with_holdings(session: Any, grants: tuple[GranteeRow, ...]) -> tuple[GranteeRow, ...]:
+    """Each grantee with their whole live set and its frozen rows, read in the delete's
+    transaction after this account's grant rows are locked (`_GRANTEES_HOLDINGS`)."""
+    users = [str(g.user_id) for g in grants]
+    rows = (await session.execute(_GRANTEES_HOLDINGS, {"users": users})).mappings()
+    held: dict[UUID, list[tuple[UUID, AccessLevel]]] = {g.user_id: [] for g in grants}
+    frozen: dict[UUID, set[UUID]] = {g.user_id: set() for g in grants}
+    for r in rows:
+        user, account = UUID(str(r["user_id"])), UUID(str(r["account"]))
+        held[user].append((account, "trade" if r["can_trade"] else "read"))
+        if r["frozen"]:
+            frozen[user].add(account)
+    return tuple(
+        replace(g, held=tuple(held[g.user_id]), frozen=frozenset(frozen[g.user_id])) for g in grants
+    )
 
 
 class SqlAlchemyAccountsStore:
@@ -768,6 +810,8 @@ class SqlAlchemyAccountsStore:
         owner = _require_owner(scope)
         async with self._relational.unit_of_work() as uow:
             await self._gate(uow, owner)
+            # Serialise account deletes against each other (see `_DELETE_LOCK`), before any row.
+            await uow.session.execute(_DELETE_LOCK, {"key": ACCOUNT_DELETE_LOCK_KEY})
             # A DML `text()` statement returns a CursorResult at runtime; `AsyncSession.execute`
             # is typed as the base `Result`, so the cast only informs mypy. No getattr default:
             # a wrong result object fails loudly instead of reading as "not found".
@@ -786,6 +830,7 @@ class SqlAlchemyAccountsStore:
                     for r in rows
                 )
                 if grants:
+                    grants = await _with_holdings(uow.session, grants)
                     if write_ahead is not None:
                         await bounded_write_ahead(write_ahead(grants), self._audit_timeout_s)
                     await uow.session.execute(_REVOKE_ACCOUNT_GRANTS, params)

@@ -24,6 +24,8 @@ from decimal import Decimal
 from typing import Final, Literal, Protocol
 from uuid import UUID
 
+from candleviewer.storage.repositories.account_access import AccessLevel
+
 
 @dataclass(frozen=True, slots=True)
 class OwnerScope:
@@ -119,11 +121,18 @@ class ApiKeyRotationRow:
 
 @dataclass(frozen=True, slots=True)
 class GranteeRow:
-    """A user granted an account (`user_account_access` with `can_view`, frozen or not)."""
+    """A user granted an account (`user_account_access` with `can_view`, frozen or not).
+
+    The soft delete (#3027) also fills the grantee's whole live set, read in its transaction:
+    `held` (every live grant of the user, this account's included, in account-id order) and
+    `frozen` (those whose row is frozen), the grant store's `users.access_change` inputs. Other
+    reads leave both empty."""
 
     user_id: UUID
     username: str
     can_trade: bool
+    held: tuple[tuple[UUID, AccessLevel], ...] = ()
+    frozen: frozenset[UUID] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)

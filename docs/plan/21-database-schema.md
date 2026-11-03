@@ -637,9 +637,14 @@ user row first, then every row of that user. A bulk writer per account locks its
 `ORDER BY user_id, exchange_account_id`; an account soft delete takes (2), then (3) for the
 account's live grants, ascending `user_id`: it soft-revokes them (`can_view = can_trade = false`)
 in its own transaction, one `users.access_change` record per grantee written ahead with reason
-`account_deleted` (#3027), and every grant reader joins `exchange_accounts` with
-`deleted_at IS NULL`. Each writer bounds its waits with `lock_timeout` (5 s in the grant store);
-SQLSTATE `55P03` or `40P01` refuses the change with nothing written (HTTP 409 `conflict`). A reader
+`account_deleted` (#3027), carrying the grantee's whole live set before and after in the grant
+store's shape (each grant's account, level and `frozen` flag), read in that transaction without a
+row lock after a transaction-scoped advisory lock (`pg_advisory_xact_lock`, one fixed key for all
+account deletes, taken first) has serialised account deletes against each other, so a delete reads
+the grantee's set after any other delete's revoke has committed; no other writer takes that lock,
+so it adds no lock-order edge, and every grant reader joins `exchange_accounts` with `deleted_at IS NULL`. Each
+writer bounds its waits with `lock_timeout` (5 s in the grant store); SQLSTATE `55P03` or `40P01`
+refuses the change with nothing written (HTTP 409 `conflict`). A reader
 takes no row lock: the listing behind `GET /users/{userId}/account-access` (`list_grants`) neither
 waits for these writers nor holds one up, and shows only committed grants of live accounts.
 

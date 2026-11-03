@@ -48,6 +48,7 @@ from candleviewer.storage.repositories.account_access import (
     AccessUserNotActiveError,
     AccessUserNotFoundError,
     RemovalContext,
+    grants_state,
 )
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import require_active_owner
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -162,13 +163,7 @@ def _states(change: AccessChange, removal: RemovalContext) -> _States:
     """The live grants in account-id order with their level and `frozen` flag (never the free-text
     `frozen_reason`); a change that removes a grant adds the decision and the counts (#965 O2)."""
 
-    def grants(side: Mapping[uuid.UUID, AccessLevel]) -> list[dict[str, object]]:
-        return [
-            {"exchange_account_id": str(a), "level": lvl, "frozen": a in change.frozen}
-            for a, lvl in sorted(side.items())
-        ]
-
-    after: dict[str, object] = {"grants": grants(change.after)}
+    after: dict[str, object] = {"grants": grants_state(change.after, change.frozen)}
     if change.removed:
         after |= {
             "positions_decision": POSITIONS_DECISION,
@@ -176,7 +171,7 @@ def _states(change: AccessChange, removal: RemovalContext) -> _States:
             "open_order_count": removal.open_order_count,
             "acknowledged_unknown_positions": removal.acknowledged_unknown_positions,
         }
-    return {"grants": grants(change.before)}, after
+    return {"grants": grants_state(change.before, change.frozen)}, after
 
 
 def _donor(rows: Sequence[Any]) -> uuid.UUID | None:
