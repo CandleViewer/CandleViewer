@@ -15,7 +15,8 @@ _EXCHANGE_SUFFIXES = (".bybit.com", ".bytick.com")
 
 def assert_loopback_target(url: str) -> str:
     """Return the normalised host if `url` targets loopback, else raise `RuntimeError`."""
-    host = (urlsplit(url if "//" in url else f"//{url}").hostname or "").lower()
+    # A trailing dot is the same name (`localhost.`, `api.bybit.com.`): normalise it away.
+    host = (urlsplit(url if "//" in url else f"//{url}").hostname or "").lower().rstrip(".")
     if not host:
         raise RuntimeError("bench target has no host")
     if host in ("bybit.com", "bytick.com") or host.endswith(_EXCHANGE_SUFFIXES):

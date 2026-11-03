@@ -3,6 +3,12 @@
 BQ-02 (rulings pending, ORCH default): 5 %, plus an absolute noise floor like engine-bench's
 `--min-delta-ms`. Latency-style metrics are lower-is-better; throughput is higher-is-better.
 The verdict names the series and the measured delta (AC3). A baseline is never rewritten here.
+
+The noise floor applies to latency series only (names ending `_ms`); throughput and other
+series have none. Differences from `ci-compare.mjs` (packages/chart-engine/bench): the floor is
+strict (`worse > min_delta`), a baseline series missing from the run is an error (not skipped),
+and a run series with no baseline is not compared; `new_series` lists them so a caller can
+report them as new.
 """
 
 from __future__ import annotations
@@ -37,7 +43,7 @@ def compare_one(
     *,
     higher_is_better: bool = False,
     threshold: float = REGRESSION_THRESHOLD,
-    min_delta: float = MIN_DELTA_MS,
+    min_delta: float = 0.0,
 ) -> Delta:
     if baseline <= 0:
         raise ValueError(f"{series}: baseline must be > 0")
@@ -53,9 +59,10 @@ def compare(
     *,
     higher_is_better: frozenset[str] = frozenset(),
     threshold: float = REGRESSION_THRESHOLD,
-    min_delta: float = MIN_DELTA_MS,
+    min_delta_ms: float = MIN_DELTA_MS,
 ) -> list[Delta]:
-    """One `Delta` per baseline series; a series missing from the run is an error, not a pass."""
+    """One `Delta` per baseline series; a series missing from the run is an error, not a pass.
+    `min_delta_ms` is the floor of the `_ms` series only."""
     missing = sorted(set(baselines) - set(measured))
     if missing:
         raise KeyError(f"series missing from the run: {', '.join(missing)}")
@@ -66,10 +73,15 @@ def compare(
             measured[name],
             higher_is_better=name in higher_is_better,
             threshold=threshold,
-            min_delta=min_delta,
+            min_delta=min_delta_ms if name.endswith("_ms") else 0.0,
         )
         for name, base in sorted(baselines.items())
     ]
+
+
+def new_series(baselines: Mapping[str, float], measured: Mapping[str, float]) -> list[str]:
+    """Series in the run that have no baseline yet (reported, never gated)."""
+    return sorted(set(measured) - set(baselines))
 
 
 def failures(deltas: list[Delta]) -> list[str]:

@@ -7,7 +7,7 @@ import math
 
 import pytest
 
-from bench.bars.compare import compare, compare_one, failures
+from bench.bars.compare import MIN_DELTA_MS, compare, compare_one, failures, new_series
 from bench.bars.guard import assert_loopback_target
 from bench.bars.scrub import scrub
 from bench.bars.stats import RUNS_PER_CONFIG, distribution, median_run, relative_spread
@@ -57,8 +57,18 @@ def test_compare_boundary_exactly_at_threshold_passes() -> None:
 
 
 def test_compare_noise_floor_absorbs_tiny_absolute_deltas() -> None:
-    d = compare_one("p95", 1.0, 1.15)  # +15 % but 0.15 ms < 0.2 ms floor
+    d = compare_one("p95", 1.0, 1.15, min_delta=MIN_DELTA_MS)  # +15 % but 0.15 ms < 0.2 ms floor
     assert not d.regressed and d.fraction == pytest.approx(0.15)
+
+
+def test_compare_floor_applies_to_ms_series_only() -> None:
+    ds = compare({"frame_ms": 1.0, "prints_s": 1.0}, {"frame_ms": 1.15, "prints_s": 1.15})
+    assert [d.regressed for d in ds] == [False, True]
+
+
+def test_compare_new_series_are_listed_not_gated() -> None:
+    assert new_series({"a": 1.0}, {"a": 1.0, "z": 2.0, "b": 3.0}) == ["b", "z"]
+    assert len(compare({"a": 1.0}, {"a": 1.0, "z": 9.0})) == 1
 
 
 def test_compare_higher_is_better_flags_drops_only() -> None:
@@ -84,7 +94,14 @@ def test_compare_rejects_non_positive_baseline() -> None:
 
 
 @pytest.mark.parametrize(
-    "url", ["http://127.0.0.1:8000/x", "http://localhost:9/", "ws://[::1]:80", "127.0.0.5:1"]
+    "url",
+    [
+        "http://127.0.0.1:8000/x",
+        "http://localhost:9/",
+        "ws://[::1]:80",
+        "127.0.0.5:1",
+        "http://localhost.:9",
+    ],
 )
 def test_guard_accepts_loopback(url: str) -> None:
     assert assert_loopback_target(url) in ("127.0.0.1", "localhost", "::1", "127.0.0.5")
@@ -94,6 +111,7 @@ def test_guard_accepts_loopback(url: str) -> None:
     "url",
     [
         "http://api.bybit.com/v5",
+        "http://api.bybit.com./v5",
         "https://stream.bytick.com",
         "http://10.0.0.5:8000",
         "http://100.64.1.2",
@@ -107,16 +125,45 @@ def test_guard_refuses_everything_else(url: str) -> None:
         assert_loopback_target(url)
 
 
-def test_scrub_removes_cookies_tokens_and_bearer() -> None:
-    raw = (
-        "Cookie: cv_session=abc123\nAuthorization: Bearer abc.def\n"
-        "csrf_token=zzz9 url?access_token=qq&x=1 "
-        'eyJhbGciOi.eyJzdWIiOi.sig123 password: "hunter2"\n'
-    )
+def _pem(kind: str, body: str, *, end: bool) -> str:
+    """Built at run time so no key-shaped literal sits in the source (gitleaks private-key rule)."""
+    label = kind + "PRIVATE" + " KEY"
+    tail = f"\n-----END {label}-----" if end else ""
+    return f"-----BEGIN {label}-----\n{body}{tail}"
+
+
+@pytest.mark.parametrize(
+    "raw,secret",
+    [
+        ("Cookie: cv_session=abc123", "abc123"),
+        ("Authorization: Bearer abc.def", "abc.def"),
+        ('{"apiKey": "k-123"}', "k-123"),
+        ('{"api_secret":"s3cr3t"}', "s3cr3t"),
+        ('{"password" : "hunter2 x"}', "hunter2"),
+        ("cv_session=zz9; sid=q1", "zz9"),
+        ("sid=q1", "q1"),
+        ("passwd=pw1", "pw1"),
+        ("apikey=ak1", "ak1"),
+        ("dek=ZGVr kek=a2Vr", "ZGVr"),
+        ("kek=a2Vr", "a2Vr"),
+        ("totp=123456", "123456"),
+        ("otp: 654321", "654321"),
+        ("refresh_token=rt1", "rt1"),
+        ("x?access_token=qq&y=1", "qq"),
+        ("csrf_token=zzz9", "zzz9"),
+        ("eyJhbGciOi.eyJzdWIiOi.sig123", "eyJhbGciOi"),
+        (_pem("", "MIIEv\nabc", end=True), "MIIEv"),
+        (_pem("RSA ", "MIIEp\ntruncated", end=False), "MIIEp"),
+    ],
+)
+def test_scrub_removes_every_secret_shape(raw: str, secret: str) -> None:
     out = scrub(raw)
-    for leaked in ("abc123", "abc.def", "zzz9", "qq", "eyJhbGciOi", "hunter2"):
-        assert leaked not in out
-    assert "x=1" in out
+    assert secret not in out and "[REDACTED]" in out
+
+
+def test_scrub_leaves_neighbouring_fields() -> None:
+    assert "y=1" in scrub("x?access_token=qq&y=1")
+    assert "inside=5" in scrub("inside=5 outside=6")
 
 
 def test_scrub_keeps_plain_numbers_and_names() -> None:

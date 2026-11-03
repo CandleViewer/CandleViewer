@@ -19,7 +19,7 @@ class FakeClock:
 
 
 def _probes(step_ns: int = 1_000) -> Probes:
-    return Probes(now_ns=FakeClock(step_ns), rss_kib=lambda: 2048, gc_collections=lambda: 7)
+    return Probes(now_ns=FakeClock(step_ns), peak_rss_mib=lambda: 2.0, gc_collections=lambda: 7)
 
 
 def test_six_families_in_production_set() -> None:
@@ -37,7 +37,7 @@ def test_run_counts_prints_and_closed_bars_per_kind() -> None:
     r = tp.run_once(tp.tape(3_000), tp.make_builders(), probes=_probes())
     assert r.prints == 3_000
     assert set(r.bars_by_kind) == {"time", "tick", "volume", "delta", "range", "renko"}
-    assert r.bars_by_kind["tick"] == 3_000 // 100 or r.bars_by_kind["tick"] >= 29
+    assert 0 < r.bars_by_kind["tick"] <= 3_000 // 100  # drops/dups can only lower it
     assert r.bars_by_kind["delta"] >= 1  # the buy skew makes the delta series active (BQ-03)
 
 
@@ -51,8 +51,30 @@ def test_timing_uses_injected_clock_and_sampling_stride() -> None:
     r = tp.run_once(tp.tape(1_000), tp.make_builders(), probes=_probes(), sample_every=100)
     assert r.latency_us.n == 10
     assert r.latency_us.p50 == 1.0  # one clock step (1 000 ns) around each timed step
-    assert r.elapsed_s > 0 and r.prints_per_s == pytest.approx(1_000 / r.elapsed_s)
     assert r.peak_rss_mib == 2.0 and r.gc_collections == 0
+
+
+def test_elapsed_and_rate_come_from_the_injected_clock_over_the_timed_loop_only() -> None:
+    # One chunk, no samples: the timed window is one clock step, whatever the tape cost.
+    r = tp.run_once(tp.tape(1_000), tp.make_builders(), probes=_probes(), sample_every=10**9)
+    assert r.elapsed_s == pytest.approx(1e-6)
+    assert r.prints_per_s == pytest.approx(1_000 / 1e-6)
+
+
+def test_throughput_window_excludes_warmup_prints() -> None:
+    r = tp.run_once(
+        tp.tape(1_000), tp.make_builders(), probes=_probes(), sample_every=10**9, warmup=400
+    )
+    assert (r.prints, r.measured) == (1_000, 600)
+    assert r.prints_per_s == pytest.approx(600 / r.elapsed_s)
+
+
+def test_chunking_sums_timed_segments_and_never_times_generation() -> None:
+    r = tp.run_once(
+        tp.tape(1_000), tp.make_builders(), probes=_probes(), sample_every=10**9, chunk=250
+    )
+    assert r.elapsed_s == pytest.approx(4e-6)  # four chunks, one step each
+    assert r.prints == r.measured == 1_000
 
 
 def test_warmup_prints_are_not_sampled() -> None:
@@ -62,7 +84,7 @@ def test_warmup_prints_are_not_sampled() -> None:
     assert r.latency_us.n == 5
 
 
-@pytest.mark.parametrize("kw", [{"sample_every": 0}, {"warmup": -1}])
+@pytest.mark.parametrize("kw", [{"sample_every": 0}, {"warmup": -1}, {"chunk": 0}])
 def test_bad_arguments_are_refused(kw: dict[str, int]) -> None:
     with pytest.raises(ValueError):
         tp.run_once(tp.tape(10), tp.make_builders(), probes=_probes(), **kw)

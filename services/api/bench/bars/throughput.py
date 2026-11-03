@@ -9,8 +9,12 @@ families (time, tick, volume, range, delta, renko), not five. The delta series n
 whose |delta| reaches its threshold, so the tape is skewed to buys.
 
 Time, resource and GC readings are injected (`Probes`), so the unit tests check the counting
-and sampling mechanics without measuring real speed. Per-print latency is sampled every
-`sample_every`-th print (the whole six-builder step is timed) after `warmup` prints.
+and sampling mechanics without measuring real speed. Only the builder loop is timed: the tape
+is generated in chunks outside the timed window and the timed segments are summed. The first
+`warmup` prints run untimed, so `prints_per_s` and `elapsed_s` cover the measured prints only.
+Per-print latency is sampled every `sample_every`-th measured print (the whole six-builder step
+is timed; each sample adds two clock reads to the timed window). Peak RSS is the process
+high-water mark (`ru_maxrss`, normalised to MiB on Linux and macOS), not a per-run delta.
 Run: `python -m bench.bars.throughput --prints 100000 --runs 3`.
 """
 
@@ -21,9 +25,11 @@ import gc
 import json
 import logging
 import resource
+import sys
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
+from itertools import islice
 
 import structlog
 
@@ -57,18 +63,25 @@ SEED = 12528
 BUY_SKEW = 0.2  # so delta bars close (BQ-03); the soak feed's alternating prints leave them inert
 
 
+def peak_rss_mib() -> float:
+    """Process high-water RSS in MiB (`ru_maxrss` is KiB on Linux, bytes on macOS)."""
+    raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return raw / (1024.0 * 1024.0 if sys.platform == "darwin" else 1024.0)
+
+
 @dataclass(slots=True)
 class Probes:
-    """Injected readings: monotonic ns, peak RSS (KiB), cumulative GC collections."""
+    """Injected readings: monotonic ns, process peak RSS (MiB), cumulative GC collections."""
 
     now_ns: Callable[[], int] = time.perf_counter_ns
-    rss_kib: Callable[[], int] = lambda: int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    peak_rss_mib: Callable[[], float] = lambda: peak_rss_mib()
     gc_collections: Callable[[], int] = lambda: sum(s["collections"] for s in gc.get_stats())
 
 
 @dataclass(slots=True)
 class RunResult:
     prints: int
+    measured: int  # prints after warm-up: the ones `elapsed_s` and `prints_per_s` cover
     elapsed_s: float
     prints_per_s: float
     latency_us: Distribution
@@ -99,34 +112,47 @@ def run_once(
     probes: Probes | None = None,
     sample_every: int = 100,
     warmup: int = 0,
+    chunk: int = 4_096,
 ) -> RunResult:
     """Feed `trades` through every builder; count closed bars by kind and time the steps."""
-    if sample_every < 1 or warmup < 0:
-        raise ValueError("sample_every must be >= 1 and warmup >= 0")
+    if sample_every < 1 or warmup < 0 or chunk < 1:
+        raise ValueError("sample_every and chunk must be >= 1 and warmup >= 0")
     p = probes or Probes()
     closed: dict[str, int] = {b.spec.kind: 0 for b in builders}
     samples: list[float] = []
-    gc0, t_start, n = p.gc_collections(), p.now_ns(), 0
-    for trade in trades:
-        n += 1
-        timed = n > warmup and (n - warmup) % sample_every == 0
-        t0 = p.now_ns() if timed else 0
-        for b in builders:
-            for upd in b.on_trade(trade):
-                if upd.kind == "close":
-                    closed[b.spec.kind] += 1
-        if timed:
-            samples.append((p.now_ns() - t0) / 1_000.0)
-    elapsed = max(p.now_ns() - t_start, 1) / 1e9
+    gc0, n, measured, timed_ns = p.gc_collections(), 0, 0, 0
+    it = iter(trades)
+    while batch := list(islice(it, chunk)):  # generation stays outside the timed window
+        skip = max(0, min(len(batch), warmup - n))
+        n += len(batch)
+        for trade in batch[:skip]:  # warm-up: run and count bars, never timed
+            for b in builders:
+                for upd in b.on_trade(trade):
+                    closed[b.spec.kind] += upd.kind == "close"
+        if skip == len(batch):
+            continue
+        t0 = p.now_ns()
+        for trade in batch[skip:]:
+            measured += 1
+            timed = measured % sample_every == 0
+            s0 = p.now_ns() if timed else 0
+            for b in builders:
+                for upd in b.on_trade(trade):
+                    closed[b.spec.kind] += upd.kind == "close"
+            if timed:
+                samples.append((p.now_ns() - s0) / 1_000.0)
+        timed_ns += p.now_ns() - t0
+    elapsed = max(timed_ns, 1) / 1e9
     if not samples:
         samples = [0.0]
     return RunResult(
         prints=n,
+        measured=measured,
         elapsed_s=elapsed,
-        prints_per_s=n / elapsed,
+        prints_per_s=measured / elapsed,
         latency_us=distribution(samples),
         bars_by_kind=closed,
-        peak_rss_mib=p.rss_kib() / 1024.0,
+        peak_rss_mib=p.peak_rss_mib(),
         gc_collections=p.gc_collections() - gc0,
         sample_every=sample_every,
         warmup=warmup,
