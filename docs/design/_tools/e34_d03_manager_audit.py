@@ -10,13 +10,14 @@ Gates (each FAIL led by its name; spec §12):
   G-STATE §0 frames for the Scope; AC-1 … AC-4 mapped to listed frames; insets are state rows.
   G-TOKEN every named token merged. G-CONTRAST / G-CVD §8 recomputed, floors and verdicts held.
   G-SAFETY C-2.6: never omittable; Protection from `native_sl_confirmed`; no row or string offers a
-    leg without its stop; Retry's preview line carries it; closing copy keeps it; OQ-1 open.
+    leg without its stop; Retry's preview line carries it; closing copy keeps it; OQ-1 open; a
+    group cancel keeps every stop, take-profit and position (fixed literals, §1, M62-16, §7).
   G-T2 T2 rows name a rendering and quote an E09-D09 key, a registered state or OD-11's reason;
     §1 item 6 names the `lock` and quotes G-T2.1b / 2 / 3 from `DS`; the label pair is measured.
   G-MOTION a reduced-motion twin per §6 row; terminal changes and the summary are cuts.
   G-COPY §7 verbatim with a cite holding its words, or PROPOSED with an owner. G-VOCAB no retired
-    word quoted in §3, §4 or §7 rows. G-RECOVERY §3.5 RC-1 … RC-6, the protective ones never armed
-    and available in every state, the tone cited; the state rows use the labels.
+    word quoted in §3, §4 or §7 rows. G-RECOVERY §3.5 RC-1 … RC-6, RC-1 armed on LIVE (a fixed
+    literal), the protective ones never armed and in every state, the tone cited; the labels used.
   G-PROTECT no state row withholds a protective action; the threat rows keep them; `frozen` splits
     per OD-11 (Cancel passes, the closes Owner-enabled, a Manager's T2).
   G-CELL §5.3 covers every leg and group state (words, built glyph, tokens); no status component
@@ -24,6 +25,7 @@ Gates (each FAIL led by its name; spec §12):
   G-MERGED E34-D01 / E34-D02, and any CMP id `15` lacks, only on a request row, never by line.
   G-CITE cites in range and pinned. G-HYGIENE no closing keyword, local path, URL, agent name,
     double brace, tag line or deny word. G-SCOPE only the spec, this tool and the pins.
+  G-ID the shared cell's CMP id (BQ-06) is never written, in any case, anywhere in the spec.
 
 Usage (from the repo root): python3 -I docs/design/_tools/e34_d03_manager_audit.py
   --check | --self-test | --fill (§8's figures) | --repin-ruled (the pins' only writer)
@@ -87,7 +89,7 @@ _FRAMES = (
     "viewer-read-only", "manager-scope", "lockout-frozen",
 )  # fmt: skip
 REQUIRED_FRAMES = tuple(f"SCR-062/{f}" for f in _FRAMES) + tuple(
-    f"DS/{f}" for f in ("cmp-124-summary", "cmp-232-budget", "cmp-258-leg-status", "scope-confirm",
+    f"DS/{f}" for f in ("cmp-124-summary", "cmp-232-budget", "leg-status-cell", "scope-confirm",
                         "motion-twins")
 )  # fmt: skip
 ACS = ("AC-1", "AC-2", "AC-3", "AC-4")
@@ -103,6 +105,10 @@ PROTECTIVE = "Unwind, Retry unwind, Close group and Cancel working orders stay e
 WITHHOLD = re.compile(r"(?:\bUnwind\b|Retry unwind|Close group|Cancel working orders)[^.;|]{0,40}?\b(?:gated|withheld|waits?|hidden|disabled|not offered|unavailable)\b|no (?:recovery|protective) action")  # fmt: skip
 # the rows where a leg may be unprotected and something else might tempt a gate
 OD11 = '"Frozen — the owner closes or releases"'
+KEEPS = "Every stop-loss, take-profit and open position stays."  # `cancel.effect` and M62-16
+GROUP_CANCEL = "A group cancel never cancels an open leg's stop or take-profits"  # §1 item 3
+ARM = "on LIVE (a submit)"  # RC-1: a Retry is a new submit, armed on LIVE (R5)
+ID_258 = re.compile(r"(?i)\bcmp-258\b")  # BQ-06: the shared cell's id is not hard-coded
 STAMPED = ("M62-08", "M62-09", "M62-10", "M62-12", "M62-14", "M62-29", "RC-1", "RC-3")
 THREATS = ("M62-09", "M62-11", "M62-18", "M62-25", "M62-27", "M62-30")
 OWN_COMPONENT = re.compile(r"(?i)\b(?:new|own|second|another)\b[^|.;]{0,30}\b(?:status|state)\b[^|.;]{0,20}\b(?:component|cell|badge)\b|\bdefined here\b")  # fmt: skip
@@ -195,8 +201,7 @@ def section(text: str, head: str) -> str:
     i = text.find("\n" + head)
     if i < 0:
         return ""
-    depth = head.split(" ")[0]
-    j = text.find("\n" + depth + " ", i + 1)
+    j = text.find("\n" + head.split(" ")[0] + " ", i + 1)
     return text[i : j if j > 0 else len(text)]
 
 
@@ -215,7 +220,6 @@ _THEMES: dict[str, dict[str, str]] = {}
 
 
 def theme(name: str) -> dict[str, str]:
-    """The colour tokens of one theme, resolved as E10-D03's tool does."""
     if name not in _THEMES:
         v = mod("verify_tokens")
         allt: dict[str, Any] = dict(v.load(v.PRIMITIVES))
@@ -230,10 +234,7 @@ def theme(name: str) -> dict[str, str]:
 
 def known_tokens() -> set[str]:
     v = mod("verify_tokens")
-    names: set[str] = set(v.load(v.PRIMITIVES))
-    for th in THEMES:
-        names |= set(v.merged_set(v.THEMES[th]))
-    return names
+    return set(v.load(v.PRIMITIVES)).union(*(v.merged_set(v.THEMES[th]) for th in THEMES))
 
 
 def color(th: str, name: str) -> str:
@@ -268,19 +269,14 @@ def cvd_values(r: list[str]) -> tuple[str, str]:
     cv = mod("cvd_simulate")
     th = {"hc": "high-contrast"}.get(r[3], r[3])
     ha, hb = color(th, tok(r[1])), color(th, tok(r[2]))
-    ds = [cv.delta_e76(ha, hb)] + [
-        cv.delta_e76(cv.simulate(ha, d), cv.simulate(hb, d)) for d in DEFICIENCIES
-    ]
-    names = ("normal", *DEFICIENCIES)
-    under = [n for n, d in zip(names, ds, strict=True) if d < cv.JND_FLOOR]
+    ds = [cv.delta_e76(ha, hb)] + [cv.delta_e76(cv.simulate(ha, d), cv.simulate(hb, d)) for d in DEFICIENCIES]  # fmt: skip
+    under = [n for n, d in zip(("normal", *DEFICIENCIES), ds, strict=True) if d < cv.JND_FLOOR]
     return " / ".join(f"{d:.2f}" for d in ds), (", ".join(under) if under else "none")
 
 
 def verdict(role: str, values: list[str]) -> str:
     floor = FLOOR.get(role)
-    if floor is None:
-        return "structure"
-    return "pass" if min(map(float, values)) >= floor else "FAIL"
+    return "structure" if floor is None else ("pass" if min(map(float, values)) >= floor else "FAIL")  # fmt: skip
 
 
 def cites(text: str) -> list[tuple[str, int, int]]:
@@ -343,11 +339,8 @@ def g_state(t: Texts) -> list[str]:
 
 
 def g_token(t: Texts) -> list[str]:
-    known = known_tokens()
-    names = sorted(set(TOKEN_NAME.findall(t.spec)))
-    return [
-        f"`{n}` does not resolve in the token JSON at the base" for n in names if n not in known
-    ]
+    known, names = known_tokens(), sorted(set(TOKEN_NAME.findall(t.spec)))
+    return [f"`{n}` does not resolve in the token JSON at the base" for n in names if n not in known]  # fmt: skip
 
 
 def g_contrast(t: Texts) -> list[str]:
@@ -395,6 +388,8 @@ def g_safety(t: Texts) -> list[str]:
     one = norm(section(t.spec, "## 1."))
     if "never offers a way to omit, remove or turn off the stop" not in one:
         bad.append("§1 item 1 does not state that no surface offers to omit the stop")
+    if GROUP_CANCEL not in one:
+        bad.append("§1 item 3: a group cancel is not the literal that keeps every stop (C-2.6)")
     grid = section(t.spec, "### 2.1")
     prot = [r for r in table_rows(grid, "Protection") if len(r) > 2]
     if not prot or "native_sl_confirmed" not in " ".join(prot[0]):
@@ -415,8 +410,10 @@ def g_safety(t: Texts) -> list[str]:
     keys = {r[0]: r[1] for r in copy_rows(t)}
     if "stop-loss stays" not in keys.get("`close.stop_line`", ""):
         bad.append("copy `close.stop_line` does not keep each stop until flat")
-    if "stop-loss" not in keys.get("`cancel.effect`", ""):
-        bad.append("copy `cancel.effect` does not say every stop-loss stays")
+    if KEEPS not in keys.get("`cancel.effect`", ""):
+        bad.append(f"copy `cancel.effect` does not carry {KEEPS!r}")
+    if not any(r[0] == "M62-16" and KEEPS in r[2] for r in state_rows(t)):
+        bad.append(f"M62-16: the cancel confirm does not carry {KEEPS!r}")
     if "whole" not in keys.get("`unwind.account`", ""):
         bad.append("copy `unwind.account` does not name the account's whole position (OQ-1)")
     oq1 = row(t, "OQ-1")
@@ -440,7 +437,7 @@ RENDERING = re.compile(r"rendering (2a|2b|the sentence form)")
 T2_QUOTES = (
     ("G-T2.1b", '`aria-disabled="true"`, never the `disabled` attribute — it stays in the Tab order and a menu item stays arrow-reachable'),
     ("G-T2.2", "hi-fi label `color.text.tertiary`, reason `color.text.secondary`; for primary / buy / sell actions the fill becomes `color.surface.raised` with a `color.border.default` hairline; never `color.text.disabled`, never `opacity.disabled` on the label, glyph or reason"),
-    ("G-T2.3", "`Enter`, `Space` or a bound hotkey on a T2 control changes nothing and re-shows the reason inline with one polite announcement"),
+    ("G-T2.3", "`Enter`, `Space` or a bound hotkey on a T2 control changes nothing and re-shows the reason inline with one polite announcement; arrow keys land on a disabled menu item without activating it"),
 )  # fmt: skip
 
 
@@ -511,14 +508,10 @@ def g_copy(t: Texts) -> list[str]:
             if "owner" not in status:
                 bad.append(f"copy {r[0]}: PROPOSED with no owner")
             continue
-        if "verbatim" not in status:
+        if "verbatim" not in status or not cites(status):
             bad.append(f"copy {r[0]}: neither verbatim with a cite nor PROPOSED with an owner")
             continue
-        cs = cites(status)
-        if not cs:
-            bad.append(f"copy {r[0]}: verbatim with no cite")
-            continue
-        key, a, b = cs[0]
+        key, a, b = cites(status)[0]
         text = norm(" ".join(at(t, key).split("\n")[a - 1 : b])).lower()
         words = [w for w in re.split(r"\{[a-z_:]+\}", r[1].strip('"')) if w.strip(" .:")]
         for w in words:
@@ -557,6 +550,8 @@ def g_recovery(t: Texts) -> list[str]:
             r[4] != "never" or "in every state" not in r[5]
         ):
             bad.append(f"{rc}: a protective action is armed or not available in every state")
+    if rows.get("RC-1", [""] * 6)[4] != ARM:
+        bad.append(f"RC-1: Retry's Arm cell is not {ARM!r} (a new submit, R5)")
     if "CMP-001 `danger`" not in five or "`15`:522" not in five:
         bad.append("§3.5 does not state the one Confirm tone with its owner's cite")
     for lead, rxs in INSTANCES:
@@ -682,16 +677,19 @@ def g_hygiene(t: Texts) -> list[str]:
 def g_scope(t: Texts) -> list[str]:
     if t.changed is None:
         return ["cannot list the changed paths (git failed)"]
-    own = ", ".join(OWN_PATHS)
-    return [f"{p} is touched; this ticket owns {own}" for p in t.changed if p not in OWN_PATHS]
+    return [f"{p} is touched; this ticket owns {', '.join(OWN_PATHS)}" for p in t.changed if p not in OWN_PATHS]  # fmt: skip
+
+
+def g_id(t: Texts) -> list[str]:
+    lines = enumerate(t.spec.split("\n"), 1)
+    return [f"spec:{i} hard-codes the shared cell's CMP id (BQ-06)" for i, ln in lines if ID_258.search(ln)]  # fmt: skip
 
 
 GATES: dict[str, Callable[[Texts], list[str]]] = {
-    "G-STATE": g_state, "G-TOKEN": g_token, "G-CONTRAST": g_contrast, "G-CVD": g_cvd,
-    "G-SAFETY": g_safety, "G-T2": g_t2, "G-MOTION": g_motion, "G-COPY": g_copy,
-    "G-VOCAB": g_vocab, "G-RECOVERY": g_recovery, "G-PROTECT": g_protect, "G-CELL": g_cell,
-    "G-COUNT": g_count, "G-MERGED": g_merged, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
-    "G-SCOPE": g_scope,
+    "G-STATE": g_state, "G-TOKEN": g_token, "G-CONTRAST": g_contrast, "G-CVD": g_cvd, "G-SAFETY": g_safety, "G-T2": g_t2,
+    "G-MOTION": g_motion, "G-COPY": g_copy, "G-VOCAB": g_vocab, "G-RECOVERY": g_recovery, "G-PROTECT": g_protect,
+    "G-CELL": g_cell, "G-COUNT": g_count, "G-MERGED": g_merged, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
+    "G-SCOPE": g_scope, "G-ID": g_id,
 }  # fmt: skip
 
 
@@ -707,15 +705,11 @@ def audit(t: Texts) -> list[tuple[str, str]]:
 
 def changed_paths() -> list[str] | None:
     mb = git("merge-base", "HEAD", "origin/main")
-    if not mb:
-        return None
-    a = git("diff", "--name-only", mb.strip())
+    a = git("diff", "--name-only", mb.strip()) if mb else None
     b = git("status", "--porcelain", "--untracked-files=all")
     if a is None or b is None:
         return None
-    out = {p for p in a.split("\n") if p}
-    out |= {ln[3:].split(" -> ")[-1].strip('"') for ln in b.split("\n") if len(ln) > 3}
-    return sorted(out)
+    return sorted({p for p in a.split("\n") if p} | {ln[3:].split(" -> ")[-1].strip('"') for ln in b.split("\n") if len(ln) > 3})  # fmt: skip
 
 
 def load() -> Texts:
@@ -763,9 +757,7 @@ def set_cell(lead: str, col: int, value: str) -> Callable[[Texts], Texts]:
 
 def drop_row(lead: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
-        return replace(
-            t, spec="\n".join(ln for ln in t.spec.split("\n") if not ln.startswith(lead))
-        )
+        return replace(t, spec="\n".join(ln for ln in t.spec.split("\n") if not ln.startswith(lead)))  # fmt: skip
 
     return f
 
@@ -779,7 +771,11 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-CONTRAST", "report a ui pair as structure", set_cell("P-05", 3, "structure")),
     ("G-CVD", "type a ΔE figure off", set_cell("V-01", 4, "1.00 / 1.00 / 1.00 / 1.00")),
     ("G-SAFETY", "offer a leg without its stop", set_cell("M62-29", 3, "an order confirm with a box to send it without a stop; not served yet (G-1)")),
-    ("G-SAFETY", "let the cancel copy drop the stops", set_cell("`cancel.effect`", 1, '"Cancels the unfilled orders of {n} legs."')),
+    ("G-SAFETY", "let the cancel copy cancel the stops", set_cell("`cancel.effect`", 1, '"Cancels the unfilled orders and stop-losses of {n} legs."')),
+    ("G-SAFETY", "let M62-16's confirm cancel the stops", sub('"Cancels the unfilled orders of 5 legs. Every stop-loss, take-profit and open position stays."', '"Cancels the unfilled orders and stop-losses of 5 legs."')),
+    ("G-SAFETY", "let a group cancel take the stops in §1", sub("A group cancel never cancels an open leg's stop or take-profits", "A group cancel cancels each leg's orders, its stop included")),
+    ("G-RECOVERY", "let RC-1 go unarmed", set_cell("RC-1", 4, "never")),
+    ("G-T2", "drop G-T2.3's menu-item clause", sub("; arrow keys land on a disabled menu item without activating it.", ".")),
     ("G-SAFETY", "close OQ-1 silently", set_cell("OQ-1", 2, "the leg only")),
     ("G-SAFETY", "drop the never-omit statement", sub("never offers a way to omit, remove or turn off the stop", "shows the stop")),
     ("G-SAFETY", "drop the stop from Retry's preview line", sub('"sub_004: buy 0.060 BTCUSDT, stop 63,900.0 at the exchange"', '"sub_004: buy 0.060 BTCUSDT"')),
@@ -806,7 +802,9 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-CELL", "drop the unwinding leg state", drop_row("| LS-09 ")),
     ("G-COUNT", "drop the divergent badge's stamp", sub('the badge "not served yet" (G-5)', "the badge (G-5)")),
     ("G-PROTECT", "let a frozen Manager close with no OD-11 split", sub("the Owner's enabled, a Manager's T2 until E39-S03 rules |", "every role enabled |")),
-    ("G-MERGED", "hard-code CMP-258 in §5.3's heading", sub("### 5.3 LegStatusCell —", "### 5.3 CMP-258 LegStatusCell —")),
+    ("G-MERGED", "hard-code an unmerged CMP id in §5.3's heading", sub("### 5.3 LegStatusCell —", "### 5.3 CMP-259 LegStatusCell —")),
+    ("G-ID", "hard-code CMP-258 on RQ-10, a request row", sub("LegStatusCell takes the next free id at PR 2", "LegStatusCell takes CMP-258 at PR 2")),
+    ("G-ID", "write cmp-258 in lower case in §5.3", sub("until then the cell is LegStatusCell everywhere here.", "until then the cell is cmp-258 everywhere here.")),
     ("G-COUNT", "count protection in the client", sub('Protection "not served yet" (G-12)', '"5 of 5 protected"')),
     ("G-COUNT", "count accepted legs in the summary copy", set_cell("`group.partial`", 1, '"{k} of {n} accepted. {account} rejected: {reason}."')),
     ("G-MERGED", "name E34-D02 outside a request row", sub("**the one definition**: SCR-061 consumes it", "**the one definition**: E34-D02 consumes it")),
@@ -856,10 +854,7 @@ def main(argv: list[str]) -> int:
         if bad:
             print(f"refused: {bad[0]}")
             return 1
-        head = (
-            "# E34-D03 cite pins: the cite, a hash of its cited line(s) at its base."
-            " Written by --repin-ruled only.\n"
-        )
+        head = "# E34-D03 cite pins: the cite, a hash of its cited line(s) at its base. Written by --repin-ruled only.\n"  # fmt: skip
         body = "".join(f"{k}\t{h}\n" for k, h in hashes.items())
         (ROOT / PINS_REL).write_text(head + body, encoding="utf-8")
         print(f"wrote {PINS_REL} ({len(hashes)} cites)")
