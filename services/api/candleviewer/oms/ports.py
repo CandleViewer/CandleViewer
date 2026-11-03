@@ -1009,7 +1009,7 @@ class InterimRiskGate(Interim):
 
     def check(self, order: SizedOrder, *, profile: AccountProfile | None) -> RiskDecision:
         evaluated_at = self._now()
-        # nosemgrep: cv-oms-env-branch reason=interim-risk-gate-r4 owner=@CandleViewer/security review=2027-02-04  # noqa: E501
+        # nosemgrep: cv-oms-env-branch reason=interim-risk-gate-r4 owner=@CandleViewer/security review=2027-02-04  # noqa: E501 - semgrep marker format is fixed
         if order.environment in _UNEVALUATED:
             return RiskDecision(allowed=True, evaluated_at=evaluated_at)
         return RiskDecision(
@@ -1028,7 +1028,7 @@ class NoArmRecords(Interim):
     def check(
         self, *, session_id: UUID, environment: Environment, token: ArmToken | None
     ) -> Verdict:
-        # nosemgrep: cv-oms-env-branch reason=interim-arm-records owner=@CandleViewer/security review=2027-02-04  # noqa: E501
+        # nosemgrep: cv-oms-env-branch reason=interim-arm-records owner=@CandleViewer/security review=2027-02-04  # noqa: E501 - semgrep marker format is fixed
         return FAILED if environment in _ARMED else PASSED
 
 

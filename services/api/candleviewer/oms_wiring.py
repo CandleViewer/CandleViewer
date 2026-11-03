@@ -472,7 +472,7 @@ class TradingSwitchesBinding:
     ) -> TradingDisabled | OmsNotReady | None:
         if self._fenced():  # the lock lost: no new order at all, nothing else asked
             return OmsNotReady()
-        # nosemgrep: cv-oms-env-branch reason=live-enable-gate owner=@CandleViewer/security review=2027-02-04  # noqa: E501
+        # nosemgrep: cv-oms-env-branch reason=live-enable-gate owner=@CandleViewer/security review=2027-02-04  # noqa: E501 - semgrep marker format is fixed
         if environment not in _NOT_LIVE and not (self._live_enabled and self._live_flag()):
             return TradingDisabled()
         switched = self._kill_switch.refusal(account_id)
@@ -3174,7 +3174,7 @@ class OmsRuntime:
             notices = OrderNoticesRouter(self._pager)
             accounts = TradingAccountsBinding(stores.accounts, environment=env)
             # the size step's figures (24 Sec.9.3.6): on live, none, so every entry is refused
-            # nosemgrep: cv-oms-env-branch reason=live-no-day-figures owner=@CandleViewer/security review=2027-02-04  # noqa: E501
+            # nosemgrep: cv-oms-env-branch reason=live-no-day-figures owner=@CandleViewer/security review=2027-02-04  # noqa: E501 - semgrep marker format is fixed
             figures = NoDayFigures() if env not in _NOT_LIVE else DayRiskFigures(
                 env, port_for=router.port_for, tiers=_tiers(ingestion.instruments),
                 now=self._now, monotonic=self._monotonic,
