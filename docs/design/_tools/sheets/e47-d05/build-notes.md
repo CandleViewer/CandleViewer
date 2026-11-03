@@ -61,7 +61,7 @@ name and the raw sheet's sha256.
 
 ## Live-check fold
 
-The drawing lane's twelve SHEET-FIX lines are folded in, so a rebuild reproduces the boards as drawn (spec §20):
+Nine of the drawing lane's twelve SHEET-FIX lines are folded in, so a rebuild reproduces the boards as drawn (spec §20); the other three are drawing steps (the repaint, below):
 
 - the link underlines are the words' measured widths (`k.MEASURED_UNDERLINE`): 199 and 110 px at 100 % (01, 02,
   03; the estimates were 233 and 116), 314 and 173 px at 150 % (10; 358 and 179);
@@ -74,3 +74,7 @@ The drawing lane's twelve SHEET-FIX lines are folded in, so a rebuild reproduces
 
 Root heights stay at the kit's sizes (the live check kept them). The texts of boards 04, 06 and 09 that did not paint
 on the first board after a tab reload were set again live; that is a drawing step, not a kit change.
+
+After the drawing (the design read of the boards PR): board 08's drawing-point hint W-20 sits left of the 10:04 point,
+above the trend line (`gen/gen_08.py`), because the drawn one runs right across the last candle's body (≈ 1.21:1 over
+it); the drawn PNG keeps it, recorded in spec §20 as the second drawn deviation, and a redraw would replace that PNG.

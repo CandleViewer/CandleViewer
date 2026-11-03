@@ -66,8 +66,8 @@ COMPONENTS, TOKENS_FILE = TOOLS / "components.offline.json", TOOLS / "token-sync
 ASS_REL = "apps/web/src/features/a11y-preferences/AccessibilitySettingsScreen.tsx"
 FIXTURE_REL = "packages/fixtures/bybit/2026-10-05/rest/instruments_before.json"
 DOCS = {  # key -> (repo-relative path, md5 as read): every read is md5-checked; "ass" is read at SPEC_BASE
-    "spec": ("docs/design/E47/E47-D05.md", "8ea33dd1302df269f25632fcfaa51964"),
-    "handoff": ("docs/design/E47/E47-D05-handoff.md", "67b6a7d8913c110dcf754f6308ecfcdd"),
+    "spec": ("docs/design/E47/E47-D05.md", "e63e13fcaffe5e8e5f94592ed7c24784"),
+    "handoff": ("docs/design/E47/E47-D05-handoff.md", "ccc824d08192284a0a665d0a00e76b71"),
     "ass": (ASS_REL, "797df795698e1467fbd445296ede769f"),
     "fixture": (FIXTURE_REL, "edd9dd2a060c51bd4bd1450307728ddf"),
 }

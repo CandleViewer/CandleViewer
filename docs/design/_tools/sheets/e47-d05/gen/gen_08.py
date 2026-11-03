@@ -17,12 +17,12 @@ PANEL_W, PANEL_H, CANVAS_H = 1120, 600, 480
 STOP_TICKS = 18  # kit choice: the stop sits 18 ticks under the last print
 
 
-def handle_with_hint(name: str) -> k.Node:
+def handle_with_hint(name: str, hint_left: bool = False) -> k.Node:
     hint = k.text("hint · W-20", k.w("W-20"), k.CAPTION, k.TEXT_2, note="persistent text while the mode is on (§8.2)")
     h = k.hbox("drag handle (inert)", [k.icon("glyph", "drag-handle", k.TEXT_3)],
                {"justify": "center", "radius": k.R_CONTROL, "fill": k.RAISED}, w=24, h=24,
                note="a pointer target only, no keyboard role (not a T2 control); under the mode a drag moves nothing")
-    return k.hbox(name, [h, hint], {"gap": k.INSET_SM}, h=24)
+    return k.hbox(name, [hint, h] if hint_left else [h, hint], {"gap": k.INSET_SM}, h=24)
 
 
 def panel(title_kids: list[k.Node], body: k.Node, side: k.Node) -> k.Node:
@@ -97,7 +97,8 @@ def drawing_point_frame(fid: str) -> tuple[k.Node, list[str]]:
                     y=round(ys[0] + (ys[1] - ys[0]) * i / 24)) for i in range(1, 24)]
     pts = [k.rect(f"point {i + 1}", 8, 8, k.TEXT_LINK, {"radius": k.R_CONTROL}, x=xs[i] - 4, y=ys[i] - 4)
            for i in range(2)]
-    hnd = dict(handle_with_hint("handle"), x=xs[1] + 12, y=ys[1] - 12, abs=True)
+    hnd0 = handle_with_hint("handle", hint_left=True)  # left of the point, clear of the last candle (design read)
+    hnd = dict(hnd0, x=xs[1] - 12 - round(k.est_width(hnd0)), y=ys[1] - 30, abs=True)
     canvas = chart_canvas([*marks, *pts, hnd], hi, lo)
     k.copy_gap('"Time", "Price": the drawing point\'s field labels (§8.1: "x / y fields in time and price")')
     side = k.vbox("fields (revealed)", [k.field("Time", k.candle_minute(c1.minute), PS, wd=88),

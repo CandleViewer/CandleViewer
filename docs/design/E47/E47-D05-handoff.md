@@ -6,19 +6,19 @@ Components: **CMP-086 SettingsNav / SettingsLayout** (the own entry, one `h1`), 
 
 Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
-| Item                                                                | Evidence                                                                     |
-| ------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Box 1 — every option drawn with a plain-language effect description | [ ] text done (§4); boards 01, 02 drawn                                      |
-| Box 2 — OS detection shown as the default with an explicit override | [ ] text done (§5); board 04 drawn                                           |
-| Box 3 — streaming-announcement throttle control drawn               | [ ] text done (§7.1; D05-Q1); board 07 drawn                                 |
-| Box 4 — a link to the statement and to the keyboard cheatsheet      | [ ] text done (§9); board 01 drawn; the statement route is D05-G5            |
-| Box 5 — the page passes its own standard at 200 % zoom              | [ ] text done (§11, §12); board 03 drawn; a browser run is E47-S08's (#1322) |
-| Variants × states                                                   | [x] §10                                                                      |
-| Keyboard table                                                      | [x] §12                                                                      |
-| Live data                                                           | [x] §5.3 (one status), §7 (the tile is never a live region)                  |
-| Motion pair                                                         | [x] §6.1 (loop / still frames, Pause)                                        |
-| Data contract                                                       | [ ] NO: D05-G1, D05-G2, D05-G4, D05-G7                                       |
-| Sign-off                                                            | [ ] owner approval pending (#2701)                                           |
+| Item                                                                | Evidence                                                                                                                       |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Box 1 — every option drawn with a plain-language effect description | [ ] the owner checks it at the sign-off (spec §19.1); text done (§4); boards 01, 02 drawn                                      |
+| Box 2 — OS detection shown as the default with an explicit override | [ ] the owner checks it at the sign-off (spec §19.1); text done (§5); board 04 drawn                                           |
+| Box 3 — streaming-announcement throttle control drawn               | [ ] the owner checks it at the sign-off (spec §19.1); text done (§7.1; D05-Q1); board 07 drawn                                 |
+| Box 4 — a link to the statement and to the keyboard cheatsheet      | [ ] the owner checks it at the sign-off (spec §19.1); text done (§9); board 01 drawn; the statement route is D05-G5            |
+| Box 5 — the page passes its own standard at 200 % zoom              | [ ] the owner checks it at the sign-off (spec §19.1); text done (§11, §12); board 03 drawn; a browser run is E47-S08's (#1322) |
+| Variants × states                                                   | [x] §10                                                                                                                        |
+| Keyboard table                                                      | [x] §12                                                                                                                        |
+| Live data                                                           | [x] §5.3 (one status), §7 (the tile is never a live region)                                                                    |
+| Motion pair                                                         | [x] §6.1 (loop / still frames, Pause)                                                                                          |
+| Data contract                                                       | [ ] NO: D05-G1, D05-G2, D05-G4, D05-G7                                                                                         |
+| Sign-off                                                            | [ ] owner approval pending (#2701)                                                                                             |
 
 ## §B Who applies what
 

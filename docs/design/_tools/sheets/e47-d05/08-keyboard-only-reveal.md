@@ -12,8 +12,8 @@ Board 08 of 10 (§0 L72: §8: one example per kind (order line, drawing point, r
 
 ## Validator and size
 
-- `08-keyboard-only-reveal.json: 0 errors, 0 warnings, 16 sections, 46445 bytes` (exit 0)
-- 16 sections, 46445 bytes
+- `08-keyboard-only-reveal.json: 0 errors, 0 warnings, 16 sections, 46444 bytes` (exit 0)
+- 16 sections, 46444 bytes
 
 ## Live checks (6)
 
@@ -51,7 +51,7 @@ Board 08 of 10 (§0 L72: §8: one example per kind (order line, drawing point, r
 
 ## Sources (1)
 
-- spec docs/design/E47/E47-D05.md md5 8ea33dd1, hand-off docs/design/E47/E47-D05-handoff.md md5 67b6a7d8 (§0 L72; hand-off §H L97); shipped labels apps/web/src/features/a11y-preferences/AccessibilitySettingsScreen.tsx at 4c662fd5b md5 797df795; tick size packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a; ring geometry E47-D04 at 48c711e64 (§7.1)
+- spec docs/design/E47/E47-D05.md md5 e63e13fc, hand-off docs/design/E47/E47-D05-handoff.md md5 ccc824d0 (§0 L72; hand-off §H L97); shipped labels apps/web/src/features/a11y-preferences/AccessibilitySettingsScreen.tsx at 4c662fd5b md5 797df795; tick size packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a; ring geometry E47-D04 at 48c711e64 (§7.1)
 
 ## Tokens (41)
 
