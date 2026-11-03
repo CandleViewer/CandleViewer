@@ -22,6 +22,12 @@ from candleviewer.exchange.base.models import TradeEvent
 NAME = "edge-ticks"
 
 
+def _record_matches_current_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The committed fingerprint may be stale (it fails safe), so pin it to the current code."""
+    rec = {**bank._recorded(), "builder_code_sha256": bank.builder_fingerprint()}
+    monkeypatch.setattr(bank, "_recorded", lambda: rec)
+
+
 @pytest.fixture
 def one_tape_changed(monkeypatch: pytest.MonkeyPatch) -> None:
     """Only the edge tape, one print shorter: a tape-only change for every builder kind."""
@@ -33,6 +39,7 @@ def one_tape_changed(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(tapes, "TAPES", {NAME: dataclasses.replace(real, build=shorter)})
     monkeypatch.delenv("CI", raising=False)
+    _record_matches_current_code(monkeypatch)
 
 
 def test_tape_only_regeneration_is_exempt_from_the_build_version_bump(
@@ -79,6 +86,7 @@ def test_golden_change_on_an_unchanged_tape_still_needs_the_bump(
     bytes did not change, and those kinds are refused without the bump."""
     from candleviewer.bars import activity_builders, renko_builder
 
+    _record_matches_current_code(monkeypatch)
     monkeypatch.setattr(tapes, "TAPES", {NAME: tapes.TAPES[NAME]})
     for mod in (activity_builders, renko_builder):  # both bind the name at import time
         monkeypatch.setattr(mod, "MAX_BRICKS_PER_TRADE", 1)
@@ -102,20 +110,22 @@ def _temp_closure_copy(
 def test_editing_limits_py_changes_the_fingerprint(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    before = bank.builder_fingerprint()
     _temp_closure_copy(
         monkeypatch, tmp_path, "candleviewer.bars.limits", lambda b: b + b"MAX_BRICKS = 1\n"
     )
-    assert bank.builder_code_changed(bank._recorded())
+    assert bank.builder_fingerprint() != before
 
 
 def test_fingerprint_ignores_crlf_and_bom(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    before = bank.builder_fingerprint()
     _temp_closure_copy(
         monkeypatch,
         tmp_path,
         "candleviewer.bars.limits",
         lambda b: b"\xef\xbb\xbf" + b.replace(b"\n", b"\r\n"),
     )
-    assert not bank.builder_code_changed(bank._recorded())
+    assert bank.builder_fingerprint() == before
 
 
 def test_missing_fingerprint_or_spec_hashes_fail_closed() -> None:
