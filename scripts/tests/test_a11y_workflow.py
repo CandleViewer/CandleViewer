@@ -38,7 +38,7 @@ def test_gate_output_is_redacted_before_the_job_summary() -> None:
     for wf in (PR_JOB, NIGHTLY):
         for line in wf.splitlines():
             if "tools.a11y.gates" in line and "GITHUB_STEP_SUMMARY" in line:
-                assert "tools.a11y.redact -" in line, line
+                assert "2>&1 | python -m tools.a11y.redact -" in line, line  # stderr (A11Y-INFRA) too
 
 
 def test_no_workflow_level_write_permission_was_added() -> None:

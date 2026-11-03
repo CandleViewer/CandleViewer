@@ -207,3 +207,7 @@ def test_lighthouse_plan_is_built_from_the_inventory() -> None:
     rows = inventory.load_rows()
     plan = inventory.lighthouse_plan(rows, MANIFEST)["screens"]
     assert len(plan) == 10 and all("route" in e and "path" in e for e in plan)
+
+
+def test_session_lock_modal_is_hosted_on_the_signed_in_shell_route() -> None:
+    assert inventory.load_hosts()["SCR-005"] == "R-201"

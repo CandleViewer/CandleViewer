@@ -41,6 +41,11 @@ def _gone(out: str, *secrets: str) -> None:
         (f'"api_key": "{KEY}"', KEY),
         (f'"apiSecret":"{KEY}"', KEY),
         (f"apiKey={KEY}", KEY),
+        (f'textbox "API key": "{KEY}"', KEY),
+        (f'<input aria-label="API key" value="{KEY}">', KEY),
+        (f'<input aria-label="API secret" value="{KEY}">', KEY),
+        (f'textbox "API secret": "{KEY}"', KEY),
+        (f'"api key": "{KEY}"', KEY),
         (f'{{"sign": "{HEX_SIG}"}}', HEX_SIG),
         (f'"signature": "{HEX_SIG}"', HEX_SIG),
         (f"X-BAPI-SIGN: {HEX_SIG}", HEX_SIG),
@@ -97,6 +102,11 @@ def test_redact_json_strips_values_and_keys() -> None:
     flat = json.dumps(out)
     _gone(flat, EMAIL, CVS, HEX_SIG, "short", RECOVERY, RECOVERY2, PASSWORD, SESSION, TOTP)
     assert out["id"] == "color-contrast" and out["target"] == ["#login > input"]  # type: ignore[index]
+
+
+def test_json_key_with_a_space_redacts_its_value() -> None:
+    out = redact.redact_json({"API key": KEY, "API secret": KEY})
+    _gone(json.dumps(out), KEY)
 
 
 def test_two_keys_that_redact_alike_both_survive() -> None:

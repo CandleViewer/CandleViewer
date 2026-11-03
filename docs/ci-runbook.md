@@ -695,6 +695,11 @@ ran.
   (exit 3), never a pass: an unknown `coverage` value, a route id the manifest lacks, a pending row
   without an `owningTicket`, or a hosted row with no resolvable host. Reproduce: `python -m
 tools.a11y.gates inventory reports/a11y/axe.json [--tier full]`.
+  What the gate proves: that the host route is in the report, not that the overlay or state itself
+  was scanned (the 2FA step, the session-lock dialog, the step-up modal, the cheatsheet, banners, the
+  crash fallback, the tour) until the forced-state test hooks of BQ-04 land. And while #3470 is open a
+  guarded route visited bare is bounced to `/login`, so the full tier checks only that a route key is
+  present: a bounced route still passes.
 - **A11Y-G001 baseline entry expired or incomplete** (same check): `tools/a11y/axe-baseline.json`
   entries are `{fingerprint, finding, owner, ticket, target, expiry}` in `entries` (serious/critical,
   shrink-only) and `minor_entries` (moderate/minor, `rule|stable selector path`). The message names the
@@ -708,7 +713,7 @@ tools.a11y.gates inventory reports/a11y/axe.json [--tier full]`.
   values and in JSON keys. A file it cannot read as text (an image, a trace, a link) fails the step
   with `A11Y-INFRA`, and the upload step runs only when the redaction step succeeded, so nothing
   unredacted is uploaded. The gate output written to the job summary and the log passes through the
-  same filter. Redaction is pattern based: a value with no recognisable shape or label is not caught,
+  same filter (stderr included, so an `A11Y-INFRA` message too). Redaction is pattern based: a value with no recognisable shape or label is not caught,
   so a new kind of secret in a stub needs its shape added to `tools/a11y/redact.py`.
 - **CI-A11Y-002** (Storybook stories failed, `_job-a11y.yml`'s `storybook` job, in `pr.yml` and
   `storybook-nightly.yml`): a story's play function threw, or axe found a serious or critical

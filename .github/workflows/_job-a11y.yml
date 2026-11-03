@@ -171,22 +171,22 @@ jobs:
           set +e
           for g in "axe reports/a11y/axe.json" "lighthouse reports/a11y/lighthouse.json"                    "keyboard reports/a11y/keyboard.json" "flash reports/a11y/flash.json"                    "tree reports/a11y/trees"                    "inventory reports/a11y/axe.json"; do
             set -- $g
-            python -m tools.a11y.gates $g | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
+            python -m tools.a11y.gates $g 2>&1 | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
             rc=${PIPESTATUS[0]}
             [ "$rc" -ne 0 ] && fail=$rc
           done
-          python -m tools.a11y.gates flash reports/a11y/flash-canvas.json | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
+          python -m tools.a11y.gates flash reports/a11y/flash-canvas.json 2>&1 | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
           [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
-          python -m tools.a11y.gates flash reports/a11y/flash-coalescer.json --table | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
+          python -m tools.a11y.gates flash reports/a11y/flash-coalescer.json --table 2>&1 | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
           [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
           # Injected raw 5 Hz flash: the gate MUST trip on it, naming the component and rate.
-          python -m tools.a11y.gates flash reports/a11y/flash-injected.json --table | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
+          python -m tools.a11y.gates flash reports/a11y/flash-injected.json --table 2>&1 | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
           if [ "${PIPESTATUS[0]}" -ne 1 ]; then echo "A11Y-INFRA injected 5 Hz flash did not trip the flash gate"; fail=1; fi
           # Negative fixture: the strobing scene MUST trip the gate, else the gate is blind.
           python -m tools.a11y.gates flash reports/a11y/flash-negative.json > /dev/null
           if [ $? -ne 1 ]; then echo "A11Y-INFRA negative strobe fixture did not trip the flash gate"; fail=1; fi
           elapsed=$(( $(date +%s) - $(cat "$RUNNER_TEMP/a11y-start") ))
-          python -m tools.a11y.gates budget "$elapsed" --limit 720 | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
+          python -m tools.a11y.gates budget "$elapsed" --limit 720 2>&1 | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
           [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
           exit ${fail:-0}
 

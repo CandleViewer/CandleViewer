@@ -34,11 +34,11 @@ EXIT_OK, EXIT_UNREADABLE = 0, 3
 
 # --- names that mark a value as secret ---------------------------------------------------------
 
-_NAME = r"(?:api[-_]?key|api[-_]?secret|secret|token|password|passwd|totp|otp|one[-_]?time|recovery)"
+_NAME = r"(?:api[-_ ]?key|api[-_ ]?secret|secret|token|password|passwd|totp|otp|one[-_]?time|recovery)"
 # As an input's name/id/type/label the bare word `code` is a secret too; as a JSON key it is a rule id.
 _ATTR_NAME = r"(?:" + _NAME + r"|code|session|sid)"
 _KEY_RE = re.compile(
-    r"(?i)(?:^|[-_ .])(?:api[-_]?key|api[-_]?secret|secret|token|password|passwd|totp|otp|"
+    r"(?i)(?:^|[-_ .])(?:api[-_ ]?key|api[-_ ]?secret|secret|token|password|passwd|totp|otp|"
     r"sign|signature|authorization|cookie|set-cookie|session|sid|recovery[-_]?codes?|"
     r"x-bapi-[a-z-]+|email)(?:$|[-_ .])"
 )
@@ -59,7 +59,7 @@ _ATTR_AFTER = re.compile(
 _B32_SPACED = r"[A-Z2-7]{4}(?:[ -][A-Z2-7]{4}){3,}"
 _PATTERNS: tuple[re.Pattern[str], ...] = (
     # Bybit: key/secret fields, HMAC signature, X-BAPI-* headers (gitleaks rules, any quoting)
-    re.compile(r"""(?i)(?:api[-_]?key|api[-_]?secret)["']?\s*[:=]\s*["']?[A-Za-z0-9]{12,}"""),
+    re.compile(r"""(?i)(?:api[-_ ]?key|api[-_ ]?secret)["']?\s*[:=]\s*["']?[A-Za-z0-9]{12,}"""),
     re.compile(r"""(?i)["']?sign(?:ature)?["']?\s*[:=]\s*["']?[A-Fa-f0-9]{24,}"""),
     re.compile(r"""(?i)x-bapi-[a-z-]+["']?\s*[:=]\s*["']?[A-Za-z0-9+/=_-]{8,}"""),
     # CandleViewer tokens: no \b either side (see the module doc)
