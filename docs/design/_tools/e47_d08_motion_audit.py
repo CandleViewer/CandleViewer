@@ -3,7 +3,7 @@
 
 Standalone, offline, stdlib only; it executes no repo code and runs under `python3 -I`. It reads,
 AS TEXT at the pinned base (`git show`): the plan texts and the design texts the spec cites (E47-D03
-at its merge commit, E47-D05 and E47-D04 at their PR heads), the motion exception register, the
+at its merge commit, E47-D05 and E47-D04 at their merge commits, re-pinned from their PR heads), the motion exception register, the
 flash calibration note, the coalescer's defaults and the synthetic tick fixture's presets; and,
 from the working tree, the spec `docs/design/E47/E47-D08.md`, its hand-off and the pins file. Its
 form follows the E47-D04 tool (the same modes, anchored values, default-deny pins and mutations).
@@ -20,7 +20,7 @@ form follows the E47-D04 tool (the same modes, anchored values, default-deny pin
    states it; every §5 carrier has a hold), G-PENDING (BQ-0 ... BQ-17 once each, each "RULED" with
    the ruling's comment 6570059961 and none "ruling pending"; the heading names the ruling), G-PIN (the header names only the four
    pinned commits, each present in the object store), G-BOARDS (at most ten boards, twins at most a
-   third, every board pending, the not-drawn paragraph), G-INV (every inventory row: both variants
+   third, every board pending or drawn with its own PNG and its themes' gates, the not-drawn paragraph), G-INV (every inventory row: both variants
    in every tier, "unchanged" only on a static row, a canvas row's calm cell equals its reduced
    cell, a DOM row's calm cell is "as full", the owner a cite or a G-row of §18.2, every backticked
    token of the full cell on the owner's line, AC3's surfaces present), G-BUDGET (the simulation
@@ -68,9 +68,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 BASE = "85b6b6c1c"  # origin/main when the spec was written; every cite is read here
 D03_MERGE = "73fefc62b"  # E47-D03 (#1302), PR #5392 merged
-D05_HEAD = "3987edc89"  # E47-D05 (#1304), PR #5417 head; re-pins at its merge
-D04_HEAD = "1ff5d8cb9"  # E47-D04 (#1303), PR #5387 head; re-pins at its merge
-PINNED = (BASE, D03_MERGE, D05_HEAD, D04_HEAD)
+# R6: E47-D05 and E47-D04 were read at their PR heads (3987edc89, 1ff5d8cb9) and are re-pinned to their merge
+# commits; each head carries its merge's text.
+D05_MERGE = "5e4065a44"  # E47-D05 (#1304), PR #5417 merged
+D04_MERGE = "48c711e64"  # E47-D04 (#1303), PR #5387 merged
+PINNED = (BASE, D03_MERGE, D05_MERGE, D04_MERGE)
 
 SPEC_REL = "docs/design/E47/E47-D08.md"
 HAND_REL = "docs/design/E47/E47-D08-handoff.md"
@@ -82,6 +84,16 @@ OWN_BOARDS = re.compile(
     r"|docs/design/_tools/sheets/(?:e47-d08/[A-Za-z0-9._/-]+|MANIFEST\.sha256)"
 )
 PENDING_CELL = "pending: drawn in their own PR"
+_GATE = r"gate PASS \(own [\d,]+ px, other [\d,]+ px\)"
+# a drawn §0 cell: the board id, its PNG and size, frames, nodes and the dark gate; a twin adds its own export and gate
+DRAWN_CELL = re.compile(
+    r"drawn: board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
+    r"`docs/design/E47/img/E47-D08-(?P<nn>\d\d)-(?P<slug>[a-z0-9-]+)\.png` \(\d+ × \d+\), "
+    r"\d+ frames?, [\d,]+ nodes; dark " + _GATE + r"(?:; (?P<twin>light|hc) twin "
+    r"`docs/design/E47/img/E47-D08-(?P<nn2>\d\d)-(?P<slug2>[a-z0-9-]+)-(?P<word>light|high-contrast)\.png` "
+    r"\(\d+ × \d+\), (?P<gate2>light|hc) " + _GATE + r")?"
+)
+TWIN_WORD = {"light": "light", "hc": "high-contrast"}
 SPEC_LINES = 600
 HAND_LINES = 150
 
@@ -118,8 +130,8 @@ CITE_FILES = {
 }
 FILE_BASE = {
     CITE_FILES["D03"]: D03_MERGE,
-    CITE_FILES["D05"]: D05_HEAD,
-    CITE_FILES["D04"]: D04_HEAD,
+    CITE_FILES["D05"]: D05_MERGE,
+    CITE_FILES["D04"]: D04_MERGE,
 }
 
 BQ_LIST_ID = "6569517623"
@@ -547,8 +559,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-PIN",
         "spec",
         "",
-        "read at its head `3987edc89` (R6)",
-        "read at its head `3987edc80` (R6)",
+        "read at its merge `5e4065a44` (R6;",
+        "read at its merge `5e4065a40` (R6;",
     ),
     Mutation(
         "M-4",
@@ -755,8 +767,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-KEYWORD",
         "hand",
         "## §I",
-        "boards pending, drawn in their own PR.",
-        f"boards pending, drawn in their own PR. {KW} #1307.",
+        "boards drawn (spec §0, §20).",
+        f"boards drawn (spec §0, §20). {KW} #1307.",
     ),
     Mutation(
         "M-27",
@@ -764,8 +776,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-ANCHOR",
         "spec",
         "",
-        "**Status:** text first; the 10<!--=COUNT:boards-->",
-        "**Status:** text first; the 9<!--=COUNT:boards-->",
+        "then the boards: the 10<!--=COUNT:boards-->",
+        "then the boards: the 9<!--=COUNT:boards-->",
     ),
     Mutation(
         "M-28",
@@ -841,6 +853,34 @@ PROBES: tuple[Mutation, ...] = (
         "## §I",
         "checked against its owning spec row",
         "matched to its owning spec row",
+    ),
+    # the boards PR: a drawn §0 cell must name its own PNG and gate its own themes (probes, kept out of §17)
+    Mutation(
+        "P-3",
+        "drop board 01's PNG from its §0 cell",
+        "G-BOARDS",
+        "spec",
+        "## 0.",
+        "`docs/design/E47/img/E47-D08-01-inventory-map.png` (4640 × 998)",
+        "(4640 × 998)",
+    ),
+    Mutation(
+        "P-4",
+        "give board 09's twin the light gate in §0",
+        "G-BOARDS",
+        "spec",
+        "## 0.",
+        "hc twin `docs/design/E47/img/E47-D08-09-safety-static-high-contrast.png` (3280 × 998), hc gate",
+        "light twin `docs/design/E47/img/E47-D08-09-safety-static-high-contrast.png` (3280 × 998), light gate",
+    ),
+    Mutation(
+        "P-5",
+        "touch another ticket's sheet kit",
+        "G-UNTOUCHED",
+        "changed",
+        "",
+        "",
+        "docs/design/_tools/sheets/e47-d07/BUILD.md",
     ),
 )
 
@@ -1046,8 +1086,24 @@ def g_boards(t: Texts) -> list[Finding]:
         name = re.fullmatch(r"`E47-D08 / (\d\d) ([a-z0-9-]+)`", r[1])
         if not name or name.group(1) != r[0] or r[0] != f"{k:02d}":
             bad.append(f"board {r[0]} is misnamed")
-        if r[4] != PENDING_CELL:
-            bad.append(f"board {r[0]} is not pending")
+        drawn = DRAWN_CELL.fullmatch(r[4])
+        if r[4] != PENDING_CELL and not drawn:
+            bad.append(f"board {r[0]} is neither pending nor drawn")
+        elif drawn and not (name and (drawn["nn"], drawn["slug"]) == name.groups()):
+            bad.append(f"board {r[0]}'s drawn cell names another board's PNG")
+        elif drawn and {"dark", *([drawn["twin"]] if drawn["twin"] else [])} != themes:
+            bad.append(f"board {r[0]}'s drawn cell does not gate its themes {sorted(themes)}")
+        elif (
+            drawn
+            and drawn["twin"]
+            and not (
+                name is not None
+                and (drawn["nn2"], drawn["slug2"]) == name.groups()
+                and drawn["word"] == TWIN_WORD[drawn["twin"]]
+                and drawn["gate2"] == drawn["twin"]
+            )
+        ):
+            bad.append(f"board {r[0]}'s twin export or gate is not its own")
     if not any("**Not drawn (the text is binding)**" in ln for ln in body(t.spec, "## 0.")):
         bad.append("no 'not drawn' paragraph")
     return [("G-BOARDS", b, "spec", region) for b in bad] + off
