@@ -26,11 +26,16 @@ runs fails. `paint_ms` is CDP `LayoutDuration + RecalcStyleDuration`; GPU time i
 ## 3. Deriving `REDUCE_WORK_FRACTION` (PROPOSED, BQ-05)
 
 Run the profile collector three times, pairing each run's safe and reduced profile, and feed
-`python -m tools.a11y.motion_audit derive runs.json`. Per work key, with `r = reduced / safe`:
+`python -m tools.a11y.motion_audit derive runs.json`, where the file is
+`{"runs": [{"safe": P, "reduced": P}, x3]}` and each `P` is `{"running_animations", "script_ms",
+"paint_ms", "raf_callbacks"}` (the collector's `motion-profile.json` is one such pair). Per work key, with `r = reduced / safe`:
 
 - lower bound `mean(r) + 2 * stdev(r)`: the fraction must admit a genuine reduce run;
 - upper bound `1 - 3 * cv(safe)`: a run that removes nothing (ratio 1) must still fail through the
   motion-safe run's own noise.
+
+`mean + 2 * stdev` at n = 3 is a weak bound: a t-based 95 % multiplier for 2 degrees of freedom would
+be about 4.3. QA decides the multiplier when it signs the PROPOSED fraction.
 
 The proposal is the largest lower bound rounded up to 0.05. If it exceeds the smallest upper bound
 the scene is too noisy to separate work from noise and the derivation is `A11Y-INFRA`. The code's
@@ -39,6 +44,6 @@ fixtures, not measurements.
 
 ## 4. A-rows
 
-| Row | Source                                                               | Statement                                                    | Resolution                                                                                                                                     |
-| --- | -------------------------------------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| A-1 | `06` :25 says frame time "<=16.6 ms"; C-14.2 says "<16 ms p95 frame" | 16.6 ms is 1000/60 rounded; the two figures differ by 0.6 ms | The audit and benchmarks assert C-14.2's 16 ms (the Constitution wins, C-16.5), the stricter value. `06`'s 16.6 is left to its owner to align. |
+| Row | Source                                                               | Statement                                                      | Resolution                                                                                                                                     |
+| --- | -------------------------------------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| A-1 | `06` :25 says frame time "<=16.6 ms"; C-14.2 says "<16 ms p95 frame" | 16.6 ms is 1000/60 truncated; the two figures differ by 0.6 ms | The audit and benchmarks assert C-14.2's 16 ms (the Constitution wins, C-16.5), the stricter value. `06`'s 16.6 is left to its owner to align. |

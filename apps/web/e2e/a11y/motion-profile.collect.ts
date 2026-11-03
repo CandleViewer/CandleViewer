@@ -83,7 +83,11 @@ async function profileRun(
 
 test(`collect reduced-motion profile (${SURFACES}, ${CYCLES} cycles)`, async ({
   browser,
+  browserName,
 }, info) => {
+  // Chromium only: Performance.getMetrics is a CDP call, and profiles from another engine are not
+  // comparable. Anything else is an infrastructure error, never a silent skip.
+  if (browserName !== "chromium") throw new Error("A11Y-INFRA the motion profile needs Chromium");
   const safe = await profileRun(browser, info, "no-preference");
   const reduced = await profileRun(browser, info, "reduce");
   mkdirSync(REPORT_DIR, { recursive: true });
