@@ -7,8 +7,12 @@ and the parent lines it lifts. The shape is the hand-off-pack rule set of the or
 on the BQ list (comment 6608093192, rule 2): one small index, the deck and this check with its
 test; no ruled-pins file. The deck lands first (rule 1); PR 2 adds the pack and its gates here.
 
-- **G-DECK**: every string stands verbatim on its source line, from a parent on `main` (E26-D02;
-  E26-D03 and E26-D04 are PENDING, BQ-2); ids are unique; every slot example is in its string.
+- **G-DECK**: every string stands verbatim and whole on its source line (a quoted or backticked span,
+  an icon glyph aside; a span may wrap to the next line), from a parent on `main` (E26-D02; E26-D03
+  and E26-D04 are PENDING, BQ-2); ids are unique; every slot example is in its string.
+- **G-SCOPE**: the deck is the full copy of its parent: every double-quoted span of E26-D02 is a deck
+  string or an `excluded` quote (`"<line> <text>"`, with its group's reason); no exclusion is stale or
+  also a deck string; each PENDING parent has an `excluded` group with a reason and no deck source.
 - **G-LEAK** (SR-097): no string or slot carries a path, a file name, a UUID, an identifier word
   or a slot that would echo the server's text.
 - **G-PUBLIC**: no local path, host or worker name in the deck.
@@ -32,6 +36,8 @@ ROOT = Path(__file__).resolve().parents[3]
 DECK_REL = "docs/design/E26/E26-D07-copy.json"
 KEYS: dict[str, str] = {"D02": "docs/design/E26/E26-D02.md"}
 DECK_SOURCES = {"D02"}
+PENDING = {"D03", "D04"}  # parents not on main (ruling 6608093192, BQ-2): excluded, never sourced
+QUOTED = re.compile(r'"([^"]+)"')
 
 LEAK = (
     ("a path", re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+|\\")),
@@ -55,7 +61,7 @@ CLOSING = re.compile(
 )
 Texts = dict[str, str]
 Mutation = Callable[[Texts], Texts]
-GATES = ("G-DECK", "G-LEAK", "G-PUBLIC", "G-NOCLOSE")
+GATES = ("G-DECK", "G-SCOPE", "G-LEAK", "G-PUBLIC", "G-NOCLOSE")
 
 
 def read(rel: str, root: Path) -> list[str]:
@@ -77,11 +83,69 @@ def gate_deck(root: Path, t: Texts) -> list[str]:
             continue
         lines = cache.setdefault(alias, read(KEYS[alias], root))
         n = int(num)
-        if len(text) < 3 or not 1 <= n <= len(lines) or text not in lines[n - 1]:
-            bad.append(f"G-DECK {key}: the string is not verbatim on {source}")
+        if len(text) < 3 or not 1 <= n <= len(lines) or not whole(text, lines, n):
+            bad.append(f"G-DECK {key}: the string is not verbatim and whole on {source}")
         bad += [
             f"G-DECK {key}: slot {s!r} is not in the string" for s in e["slots"] if s not in text
         ]
+    return bad
+
+
+def whole(text: str, lines: list[str], n: int) -> bool:
+    """The string is a whole quoted or backticked span opening on line n (it may wrap once)."""
+    window = " ".join([lines[n - 1], *(x.lstrip() for x in lines[n : n + 1])])
+    span = re.compile(r'(["`])(?:[\u25b2\u25bc] )?' + re.escape(text) + r"\1")
+    return any(m.start() < len(lines[n - 1]) for m in span.finditer(window))
+
+
+def quoted_spans(lines: list[str]) -> set[str]:
+    """Every double-quoted span of 3+ characters as `"<line> <text>"`, a wrap read as a space."""
+    text = "\n".join(lines)
+    return {
+        f"{text.count(chr(10), 0, m.start()) + 1} {re.sub(r'\s*\n\s*', ' ', m.group(1))}"
+        for m in QUOTED.finditer(text)
+        if len(m.group(1)) >= 3
+    }
+
+
+def gate_scope(root: Path, t: Texts) -> list[str]:
+    deck = json.loads(t["deck"])
+    strings = {str(e["string"]) for e in deck["strings"]}
+    groups: list[dict[str, Any]] = deck["excluded"]
+    bad: list[str] = []
+    if set(deck["sources"]) != DECK_SOURCES:
+        bad.append(f"G-SCOPE sources: {sorted(deck['sources'])} is not {sorted(DECK_SOURCES)}")
+    parents = {str(g["parent"]) for g in groups if len(str(g.get("reason", ""))) >= 20}
+    bad += [
+        f"G-SCOPE {p}: a PENDING parent without an exclusion and its reason"
+        for p in sorted(PENDING - parents)
+    ]
+    bad += [
+        f"G-SCOPE {g['parent']}: an exclusion of an unknown parent"
+        for g in groups
+        if g["parent"] not in PENDING | DECK_SOURCES
+    ]
+    excluded = [str(q) for g in groups if g["parent"] in DECK_SOURCES for q in g.get("quotes", [])]
+    spans = quoted_spans(read(KEYS["D02"], root))
+    bad += [
+        f"G-SCOPE D02:{q}: excluded but not a quoted span (stale)"
+        for q in excluded
+        if q not in spans
+    ]
+    bad += [
+        f"G-SCOPE D02:{q}: excluded and also a deck string"
+        for q in excluded
+        if q.partition(" ")[2] in strings
+    ]
+    bad += [
+        f"G-SCOPE D02:{q}: duplicate exclusion"
+        for q in sorted({q for q in excluded if excluded.count(q) > 1})
+    ]
+    bad += [
+        f"G-SCOPE D02:{s}: neither a deck string nor excluded"
+        for s in sorted(spans, key=lambda x: int(x.partition(" ")[0]))
+        if s.partition(" ")[2] not in strings and s not in excluded
+    ]
     return bad
 
 
@@ -111,6 +175,7 @@ def check(root: Path = ROOT, t: Texts | None = None) -> list[str]:
     t = t if t is not None else texts(root)
     return [
         *gate_deck(root, t),
+        *gate_scope(root, t),
         *gate_leak(t),
         *gate_public(t),
         *gate_noclose(t),
@@ -128,13 +193,17 @@ def _first(deck: dict[str, Any], key: str = "") -> dict[str, Any]:
     return next(e for e in entries if not key or e["id"] == key)
 
 
+# "not recorded" is two deck strings (a cause word and a coverage word): mutate one, the span stays
+NEVER, NOT_REC = "replay.gap.cause.never_recorded", "replay.coverage.not_recorded"
 KW = "Clo" + "ses"  # a closing keyword, split so this file never holds one
 LOCAL = " see /" + "ho" + "me/x"  # a local path shape, split for the same reason
 MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     (
         "M-01",
         "G-DECK",
-        lambda t: _deck_edit(t, lambda d: _first(d).update(string="Choose a window to play")),
+        lambda t: _deck_edit(
+            t, lambda d: _first(d, NEVER).update(string="not recorded at all")  # off its line
+        ),
     ),
     ("M-02", "G-DECK", lambda t: _deck_edit(t, lambda d: _first(d).update(source="D02:99999"))),
     ("M-03", "G-DECK", lambda t: _deck_edit(t, lambda d: d["strings"].append(dict(_first(d))))),
@@ -172,6 +241,25 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
         "G-NOCLOSE",
         lambda t: _deck_edit(t, lambda d: d.update(note=d["note"] + f" {KW} #514.")),
     ),
+    # a truncated string still stands on its line, inside a longer span: whole strings only
+    (
+        "M-10",
+        "G-DECK",
+        lambda t: _deck_edit(t, lambda d: _first(d, NOT_REC).update(string="not record")),
+    ),
+    ("M-11", "G-SCOPE", lambda t: _deck_edit(t, lambda d: d["excluded"][2]["quotes"].pop(0))),
+    (
+        "M-12",
+        "G-SCOPE",
+        lambda t: _deck_edit(t, lambda d: d["excluded"][3]["quotes"].append("1 none")),
+    ),
+    ("M-13", "G-SCOPE", lambda t: _deck_edit(t, lambda d: d["excluded"].pop(0))),
+    (
+        "M-14",
+        "G-SCOPE",
+        lambda t: _deck_edit(t, lambda d: d["strings"].remove(_first(d, "replay.page.quota"))),
+    ),
+    ("M-15", "G-SCOPE", lambda t: _deck_edit(t, lambda d: d["sources"].update(D03="x"))),
 )
 
 

@@ -1,11 +1,110 @@
 {
   "ticket": "E26-D07",
-  "version": "v1 (ruled; deck slice)",
+  "version": "v1 (ruled; deck slice; L-A fold)",
   "base": "b81479ab0",
-  "note": "The copy deck of the E26-D07 hand-off pack (docs/design/E26/E26-D07.md section 9). Each string is verbatim on its source line of E26-D02 (docs/design/E26/E26-D02.md) on main; the strings of E26-D03 and E26-D04 are PENDING until those parents have PRs to pin (ruling 6608093192, BQ-2). Each entry's `id` is its copy key. Example values in a string are its slots; `slots` defines each. No string carries a path, a dataset or registry id, an account id or the server's error text (section 9.2). Checked by docs/design/_tools/e26_d07_handoff_check.py (G-DECK, G-LEAK).",
+  "note": "The copy deck of the E26-D07 hand-off pack (docs/design/E26/E26-D07.md section 9). Each string is verbatim, whole, on its source line of E26-D02 (docs/design/E26/E26-D02.md) on main; a string that wraps continues on the next line. The deck covers every double-quoted string of E26-D02: each is a deck string or stands in `excluded` with its reason. The strings of E26-D03 and E26-D04 are PENDING until those parents have PRs to pin (ruling 6608093192, BQ-2), so `excluded` names both. Each entry's `id` is its copy key. Example values in a string are its slots; `slots` defines each. No string carries a path, a dataset or registry id, an account id or the server's error text (section 9.2). Checked by docs/design/_tools/e26_d07_handoff_check.py (G-DECK, G-SCOPE, G-LEAK).",
   "sources": {
     "D02": "docs/design/E26/E26-D02.md"
   },
+  "excluded": [
+    {
+      "parent": "D03",
+      "reason": "E26-D03 is not on main: its strings are PENDING until it has a PR to pin (ruling 6608093192, BQ-2)."
+    },
+    {
+      "parent": "D04",
+      "reason": "E26-D04 is not on main: its strings are PENDING until it has a PR to pin (ruling 6608093192, BQ-2)."
+    },
+    {
+      "parent": "D02",
+      "reason": "Not SCR-097 copy: D02 quoting another document, the wireframe, a study script, a review or a superseded label.",
+      "quotes": [
+        "11 D01",
+        "18 the gate",
+        "45 the chip's clock shows the target",
+        "48 to the end",
+        "50 but not silently",
+        "56 keep live panes",
+        "96 same dockable panels as the terminal",
+        "61 labelled live region updated at most 1 Hz",
+        "61 the clock ≤1 Hz polite",
+        "401 Jump to real time",
+        "537 skip to the window's end",
+        "560 Live or replay? How sure, 1–5?",
+        "560 What told you?",
+        "570 leaving keeps the session",
+        "617 REPLAY - not a real order",
+        "621 inherits CMP-009",
+        "622 Use replay on recorded data",
+        "622 ✔(own)",
+        "707 jump to real time (exits replay after confirm)",
+        "708 a labelled live region updated at most 1 Hz",
+        "712 keep live panes",
+        "729 no data",
+        "729 some",
+        "747 some",
+        "749 §14.3 AC-3 sentence"
+      ]
+    },
+    {
+      "parent": "D02",
+      "reason": "An ARIA role, attribute value or state, not text.",
+      "quotes": [
+        "61 timer",
+        "61 off",
+        "165 selected",
+        "188 true",
+        "205 status",
+        "205 alert",
+        "212 true",
+        "448 status",
+        "449 alert",
+        "451 slider"
+      ]
+    },
+    {
+      "parent": "D02",
+      "reason": "A fragment, an elision or a repeat of a deck string (the deck carries the whole string).",
+      "quotes": [
+        "54 no data",
+        "55 Skipped a gap",
+        "62 Replay session closed — data as of 13:52:04",
+        "65 Playback stopped at 13:52:04.120",
+        "214 Preparing …",
+        "214 Seeking to …",
+        "235 Centre on mark",
+        "333 Paused at",
+        "333 Playback stopped at",
+        "344 Playback stopped at <time>.",
+        "386 Not replayed yet — …",
+        "644 Stepped one bar"
+      ]
+    },
+    {
+      "parent": "D02",
+      "reason": "A control label or another screen's or component's name: labels stand in D02's control and key maps, not in the deck.",
+      "quotes": [
+        "24 Paper 1",
+        "34 Open in replay",
+        "35 Replay from here",
+        "43 Replay",
+        "52 Simulated",
+        "63 Re-centre and resume auto-follow",
+        "63 Centre on mark",
+        "179 View-as session",
+        "277 Go to date",
+        "354 simulated",
+        "383 Centre on mark",
+        "401 Leave replay",
+        "617 simulated",
+        "617 Simulated",
+        "653 Centre on mark",
+        "707 Leave replay (confirm)",
+        "707 Leave replay",
+        "712 Allow real-time panels"
+      ]
+    }
+  ],
   "strings": [
     {
       "id": "replay.page.no_session",
@@ -553,6 +652,304 @@
       "string": "Not replayed yet — CandleViewer records this data but replay does not play it back yet.",
       "source": "D02:235",
       "status": "PROPOSED (D02 §5.3)",
+      "slots": {}
+    },
+    {
+      "id": "replay.gap.cause.ws_disconnect",
+      "screen": "SCR-097",
+      "string": "recording was interrupted (connection lost)",
+      "source": "D02:258",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.gap.cause.backend_restart",
+      "screen": "SCR-097",
+      "string": "(CandleViewer restarted)",
+      "source": "D02:259",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.gap.cause.exchange_outage",
+      "screen": "SCR-097",
+      "string": "(exchange outage)",
+      "source": "D02:260",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.gap.cause.retention_purge",
+      "screen": "SCR-097",
+      "string": "older data was removed by the retention policy",
+      "source": "D02:260",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.gap.cause.never_recorded",
+      "screen": "SCR-097",
+      "string": "not recorded",
+      "source": "D02:262",
+      "status": "key PROPOSED; words PROPOSED (E08-D06 §4.3, in flight)",
+      "slots": {}
+    },
+    {
+      "id": "replay.gap.cause.backpressure_drop",
+      "screen": "SCR-097",
+      "string": "rows dropped under write pressure",
+      "source": "D02:262",
+      "status": "key PROPOSED; words PROPOSED (E08-D06 §4.3, in flight)",
+      "slots": {}
+    },
+    {
+      "id": "replay.gap.cause.seq_jump",
+      "screen": "SCR-097",
+      "string": "order-book sequence jump",
+      "source": "D02:262",
+      "status": "key PROPOSED; words PROPOSED (E08-D06 §4.3, in flight)",
+      "slots": {}
+    },
+    {
+      "id": "replay.gap.cause.unknown",
+      "screen": "SCR-097",
+      "string": "reason not known",
+      "source": "D02:263",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.gap.stopped_stream",
+      "screen": "SCR-097",
+      "string": "Order book not recorded 13:52:10–13:55:40 UTC — …",
+      "source": "D02:55",
+      "status": "key PROPOSED",
+      "slots": {
+        "Order book": "the first missing stream's name",
+        "13:52:10–13:55:40": "the gap's span, hh:mm:ss–hh:mm:ss UTC",
+        "…": "the cause words of D02 §6.1 for the gap's reason"
+      }
+    },
+    {
+      "id": "replay.gap.skip_note",
+      "screen": "SCR-097",
+      "string": "Skipping jumps to 13:55:40: the tape won't show the trades inside; the chart's bars include them.",
+      "source": "D02:55",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:55:40": "the gap's end, hh:mm:ss UTC"
+      }
+    },
+    {
+      "id": "replay.coverage.recorded",
+      "screen": "SCR-097",
+      "string": "recorded",
+      "source": "D02:252",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.coverage.partial",
+      "screen": "SCR-097",
+      "string": "partial — order book not recorded",
+      "source": "D02:253",
+      "status": "key PROPOSED",
+      "slots": {
+        "order book": "the missing streams' names"
+      }
+    },
+    {
+      "id": "replay.coverage.no_data",
+      "screen": "SCR-097",
+      "string": "no data — recording was interrupted (connection lost)",
+      "source": "D02:254",
+      "status": "key PROPOSED",
+      "slots": {
+        "recording was interrupted (connection lost)": "the cause words of D02 §6.1 for the gap's reason"
+      }
+    },
+    {
+      "id": "replay.coverage.not_recorded",
+      "screen": "SCR-097",
+      "string": "not recorded",
+      "source": "D02:255",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.track.drag_pill",
+      "screen": "SCR-097",
+      "string": "13:52:30 · no data",
+      "source": "D02:272",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:52:30": "the time under the pointer",
+        "no data": "the coverage class there"
+      }
+    },
+    {
+      "id": "replay.track.drag_lands",
+      "screen": "SCR-097",
+      "string": "lands at 13:55:40, where recording resumes",
+      "source": "D02:274",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:55:40": "the no-data span's end"
+      }
+    },
+    {
+      "id": "replay.page.quota",
+      "screen": "SCR-097",
+      "string": "You have reached your limit of open replay sessions. Close one to continue.",
+      "source": "D02:326",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.sim.other_sessions",
+      "screen": "SCR-097",
+      "string": "Includes simulated rows from other sessions on Paper 1.",
+      "source": "D02:53",
+      "status": "key PROPOSED",
+      "slots": {
+        "Paper 1": "the session's paper account label"
+      }
+    },
+    {
+      "id": "replay.page.expired_idle",
+      "screen": "SCR-097",
+      "string": "Idle for 2 h",
+      "source": "D02:62",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.a11y.clock",
+      "screen": "SCR-097",
+      "string": "Replay clock",
+      "source": "D02:61",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.bookmark.row",
+      "screen": "SCR-097",
+      "string": "1 · 13:41:07 · label",
+      "source": "D02:280",
+      "status": "key PROPOSED",
+      "slots": {
+        "1": "the bookmark's number",
+        "13:41:07": "its time",
+        "label": "its note, plain text"
+      }
+    },
+    {
+      "id": "replay.bookmark.pruned",
+      "screen": "SCR-097",
+      "string": "unavailable — the data was removed by the retention policy",
+      "source": "D02:282",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.book.not_recorded",
+      "screen": "SCR-097",
+      "string": "Order book not recorded 13:52:10–13:55:40",
+      "source": "D02:383",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:52:10–13:55:40": "the gap's span, hh:mm:ss–hh:mm:ss"
+      }
+    },
+    {
+      "id": "replay.a11y.session_region",
+      "screen": "SCR-097",
+      "string": "Replay session",
+      "source": "D02:444",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.a11y.transport_region",
+      "screen": "SCR-097",
+      "string": "Replay transport",
+      "source": "D02:444",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.a11y.skip_link",
+      "screen": "SCR-097",
+      "string": "Skip to transport",
+      "source": "D02:445",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.a11y.window_name",
+      "screen": "SCR-097",
+      "string": "replay of 13 September 2026",
+      "source": "D02:446",
+      "status": "key PROPOSED",
+      "slots": {
+        "13 September 2026": "the window's date"
+      }
+    },
+    {
+      "id": "replay.a11y.position",
+      "screen": "SCR-097",
+      "string": "Replay position",
+      "source": "D02:451",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.a11y.position_value",
+      "screen": "SCR-097",
+      "string": "13:38:04 UTC, 13 September 2026 — recorded",
+      "source": "D02:452",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:38:04": "the thumb's time",
+        "13 September 2026": "its date",
+        "recorded": "the coverage class there"
+      }
+    },
+    {
+      "id": "replay.a11y.realtime_panel",
+      "screen": "SCR-097",
+      "string": "Real-time — not replay",
+      "source": "D02:690",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.a11y.panel_name",
+      "screen": "SCR-097",
+      "string": "Chart BTCUSDT 1 minute — DEMO, Paper 1 — replay of 13 September 2026",
+      "source": "D02:113",
+      "status": "key PROPOSED",
+      "slots": {
+        "Chart BTCUSDT 1 minute": "the panel's own name",
+        "DEMO": "the session's environment",
+        "Paper 1": "the session's paper account label",
+        "13 September 2026": "the window's date"
+      }
+    },
+    {
+      "id": "replay.a11y.no_account",
+      "screen": "SCR-097",
+      "string": "No account attached — replay of recorded data; nothing can be placed",
+      "source": "D02:123",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.a11y.lock",
+      "screen": "SCR-097",
+      "string": "Not available",
+      "source": "D02:194",
+      "status": "key PROPOSED",
       "slots": {}
     }
   ]
