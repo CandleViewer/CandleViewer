@@ -721,6 +721,15 @@ tools.a11y.gates inventory reports/a11y/axe.json [--tier full]`.
   2027-03-25: past that date the licence gate fails with `CI-SEC-004` until the entry is renewed.
   The job sets `PUPPETEER_SKIP_DOWNLOAD` and `puppeteer: false` in `allowBuilds`; pa11y drives
   Playwright's Chromium.
+- **QA result store and burn-down dashboard** (E47-Q04, `tools/a11y/store.py` and `dashboard.py`): gate
+  and trend results, not defects (those stay in `docs/plan/a11y/findings.json`), live in
+  `qa/evidence/e47/results/sprint-NN.json`, one file per 1-week sprint, one schema
+  (`qa/evidence/e47/results.schema.json`) for the writers Q02, Q03 and Q04. Record a run with
+  `python -m tools.a11y.store record reports/a11y --build <sha>`; recording the same (source, kind,
+  screen, build) again replaces it. `python -m tools.a11y.dashboard` writes `reports/a11y/dashboard.html`:
+  open defects by severity, screen and WCAG criterion from the register, and the last four sprints of
+  gate results from the store, as tables (the page is its own table equivalent). A malformed store file
+  is `A11Y-INFRA`. Neither command is wired into a workflow yet.
 - **Report redaction** (`python -m tools.a11y.redact reports/a11y`): after the gates have read the
   reports, a step rewrites them so the artifact holds no credential-shaped value (the `.gitleaks.toml`
   shapes: Bybit key, secret and signature fields, `cvs_`/`cvr_`/`cvi_` tokens, recovery codes, TOTP
