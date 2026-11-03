@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """E20-D02 (#574) check: the Deep Stats wireframe spec (text leg; boards pending).
 
-Standalone, stdlib only, offline and default-deny. The BQ list's ORCH-default (comment
-6609419059, BQ-0) keeps the shared audit helper out of this PR until it is on `main`, so this
-file carries its own small primitives. It reads, AS TEXT, the plan, design and backlog texts the
+Stdlib only, offline and default-deny. The ruling of record (comment 6609847458, BQ-0) puts the
+shared machinery in `spec_audit_lib.py` beside this file, byte-identical to its content pin and
+never a fork; this PR carries no copy of it and opens only once the helper is on `main`. This
+file keeps only its own rows and gates. It reads, AS TEXT, the plan, design and backlog texts the
 spec cites at the pinned base, the E20-D01 memo at its pinned PR head, and the spec from the
-working tree. It runs no other repo code.
+working tree. It runs no other repo code but the helper.
 
 Gates: G-CITE, G-QUOTE, G-AC, G-ROWS, G-MEMO, G-KEYS, G-GREY, G-SRC, G-BOARDS, G-BQ, G-AMEND,
 G-PIN, G-NOCLOSE, G-PUBLIC and G-MUTLIST (section 18.2 equals this tool's list).
@@ -29,15 +30,21 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import spec_audit_lib as L  # the shared helper sits beside this file
+
 ROOT = Path(__file__).resolve().parents[3]
 BASE = "b81479ab01109ee1efc6cdedb411bd5f75ecdd66"  # origin/main when the BQ list was written
 MEMO_HEAD = "57e01caf284be44b5e0f527e8f042432a0fe9aa7"  # PR 5640 head; re-pin at its merge
 BQ_LIST = "6609419059"  # the BQ list on #574
+RULING = "6609847458"  # the ruling of record on #574
 TICKET = "E20-D02"
 
 SPEC_REL = "docs/design/E20/E20-D02.md"
 TOOL_REL = "docs/design/_tools/e20_d02_wires_audit.py"
 OWN = (SPEC_REL, TOOL_REL)
+LIB_REL = "docs/design/_tools/spec_audit_lib.py"
+LIB_SHA256 = "62b56d6446b218cd300a9e2591e47b84f20962a6c33a58ebe9b8c2fbc83f48fd"
 BACKLOG_REL = "docs/plan/backlog/E20.json"
 MEMO_REL = "docs/design/research/e20-deep-stats.md"
 KEYED = {
@@ -68,10 +75,10 @@ SOURCE_PINS = (
     ("MEMO", 257, "| AD-8 "),
 )
 
-BQ_HEADING = "## The questions BQ-0"
-BQ_HEADING_LINE = f"{BQ_HEADING} … BQ-9 — defaults built; ruling pending (comment {BQ_LIST})"
-BQ_STATUS = f"Status: **defaults built; ruling pending (comment {BQ_LIST})**."
-BQ_ID = re.compile(r"- \*\*(BQ-\d+)")
+BQ_HEADING = L.BQ_HEADING
+BQ_HEADING_LINE = f"{BQ_HEADING} … BQ-9 — RULED (comment {RULING})"
+BQ_STATUS = f"Status: **RULED (comment {RULING})** on the BQ list (comment {BQ_LIST})."
+AMENDED = frozenset({0, 1, 5})  # the ruling's three fixes; every other BQ is AGREE
 STATUSES = ("done", "text-only", "pending (boards)", "owner approval pending")
 KEYS_NEEDED = ("`Alt+↑`", "`Alt+↓`", "Move up", "Move down", "E47-D04", "keeps focus")
 SIGN_GLYPHS = ("▲", "▼")
@@ -80,13 +87,6 @@ METRICS_RE = re.compile(r"`/market/metrics` `([a-z_]+)` \(`22`:(\d+)\)")
 CURLY_RE = re.compile(r"“([^”]+)”")
 QUOTE_MIN = 12
 HEX40 = re.compile(r"\b[0-9a-f]{40}\b")
-_KW = "|".join(("clo" + "se[sd]?", "fi" + "x(?:e[sd])?", "reso" + "lve[sd]?"))
-CLOSING_RE = re.compile(rf"\b(?:{_KW}):?\s*#\d+", re.IGNORECASE)
-# Paths and hosts, assembled from fragments so this file never matches its own scan.
-PUBLIC_RE = re.compile(
-    "|".join(("/" + "home/", "/" + "tmp/", r"\.lo" + r"cal\b", "scr" + "atch-", r"\.can" + "dle")),
-    re.IGNORECASE,
-)
 # sha256[:16] of the lower-cased words that name a person, a lane or a role on this project.
 IDENT_SHA16 = frozenset(
     {
@@ -98,7 +98,6 @@ IDENT_SHA16 = frozenset(
         "ff41d3fde1448a0e",
     }
 )
-COMMENT_RE = re.compile(r"<!--(.*?)-->", re.DOTALL)
 CITE_RE = re.compile(
     r"(?:`(?P<nn>\d\d)`|(?<![A-Za-z0-9-])(?P<named>"
     + "|".join(re.escape(k) for k in sorted(KEYED, key=len, reverse=True))
@@ -107,8 +106,9 @@ CITE_RE = re.compile(
 MORE_RE = re.compile(r":(\d+)(?:–(\d+))?")
 
 
-class AuditError(Exception):
-    """A setup failure (a missing commit, a mutation anchor): never a silent PASS."""
+AuditError = L.AuditError
+section = L.section
+table_rows = L.table_rows
 
 
 # ---------- git (read-only) -----------------------------------------------------------------------
@@ -157,38 +157,6 @@ def changed_paths() -> tuple[str, ...]:
 
 
 # ---------- markdown ------------------------------------------------------------------------------
-def section(text: str, prefix: str) -> str:
-    """The body under the first heading starting with `prefix`, up to the next heading of the
-    same or a higher level."""
-    level = len(prefix) - len(prefix.lstrip("#"))
-    out: list[str] = []
-    inside = False
-    for line in text.split("\n"):
-        if not inside:
-            inside = line.startswith(prefix)
-            continue
-        if re.match(rf"^#{{1,{level}}} ", line):
-            break
-        out.append(line)
-    return "\n".join(out)
-
-
-def table_rows(block: str) -> list[list[str]]:
-    """The body rows of the first table in `block`."""
-    out: list[list[str]] = []
-    seen_rule = False
-    for line in block.split("\n"):
-        if not line.startswith("|"):
-            if seen_rule and out:
-                break
-            continue
-        if re.fullmatch(r"\|[\s:|-]+\|", line.strip()):
-            seen_rule = True
-        elif seen_rule:
-            out.append([c.strip() for c in line.strip().strip("|").split("|")])
-    return out
-
-
 def norm(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
@@ -370,21 +338,32 @@ def g_boards(t: Tree) -> list[str]:
     return bad
 
 
+def verdict(n: int) -> str:
+    return f"RULED: {'AMEND' if n in AMENDED else 'AGREE'}."
+
+
 def g_bq(t: Tree) -> list[str]:
-    body = section(t.spec, BQ_HEADING)
-    bad = [] if BQ_HEADING_LINE in t.spec.split("\n") else ["heading"]
-    if BQ_STATUS not in body:
+    bad = L.check_ruling(
+        t.spec,
+        heading_line=BQ_HEADING_LINE,
+        list_ref=BQ_LIST,
+        count=10,
+        verdict=verdict,
+        forbid=("ORCH-default built.", "ruling pending", "DISAGREE"),
+    )
+    if BQ_STATUS not in section(t.spec, BQ_HEADING):
         bad.append("the status line")
-    bullets = [ln for ln in body.split("\n") if BQ_ID.match(ln)]
-    ids = [m.group(1) for b in bullets if (m := BQ_ID.match(b))]
-    if ids != [f"BQ-{n}" for n in range(10)]:
-        bad.append(f"ids {ids}")
-    bad += [f"BQ-{n} default" for n, b in enumerate(bullets) if "ORCH-default built." not in b]
-    return bad + (["RULED before a ruling"] if "RULED:" in body else [])
+    for n, bullet in enumerate(L.bq_bullets(t.spec)):
+        other = "RULED: AGREE." if n in AMENDED else "RULED: AMEND."
+        if other in bullet:
+            bad.append(f"BQ-{n} carries both verdicts")
+    return bad
 
 
 def g_amend(t: Tree) -> list[str]:
-    return [p for p in t.changed if p not in OWN]
+    """Only this pack's two files change; the helper may stand beside them untracked for a local
+    run until its carrier merges (its content pin is checked before any gate runs)."""
+    return [p for p in t.changed if p not in (*OWN, LIB_REL)]
 
 
 def g_pin(t: Tree) -> list[str]:
@@ -395,14 +374,14 @@ def g_pin(t: Tree) -> list[str]:
 
 
 def g_noclose(t: Tree) -> list[str]:
-    return [m.group(0) for m in CLOSING_RE.finditer(t.spec)]
+    return L.closing_keywords([("spec", t.spec)])
 
 
 def g_public(t: Tree) -> list[str]:
-    bad = [m.group(0) for m in PUBLIC_RE.finditer(t.spec)]
+    named = [("spec", t.spec)]
+    bad = L.scan_public(named) + L.comment_findings(named)
     words = {w.lower() for w in re.findall(r"[A-Za-z0-9]+", t.spec)}
-    bad += ["an identity word" for w in words if sha16(w) in IDENT_SHA16]
-    return bad + [f"comment {m.group(0)[:20]}" for m in COMMENT_RE.finditer(t.spec)]
+    return bad + ["an identity word" for w in words if sha16(w) in IDENT_SHA16]
 
 
 def sha16(word: str) -> str:
@@ -476,8 +455,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     _M("M-8", "G-SRC", "a row loses its source line", r"\n\| Range +\|[^\n]*", "", True),
     _M("M-9", "G-BOARDS", "a board marked drawn in the text leg",
        r"(`E20-D02 / 03 narrow-bar-readout`[^\n]*\| )PENDING", r"\1DRAWN", True),
-    _M("M-10", "G-BQ", "a default recorded as ruled", "the ceiling.** ORCH-default built.",
-       "the ceiling.** RULED: AGREE."),
+    _M("M-10", "G-BQ", "an AMEND recorded as AGREE", "the file name.** RULED: AMEND.",
+       "the file name.** RULED: AGREE."),
     _M("M-11", "G-AMEND", "an owner document edited", "", "docs/plan/14-screens-catalogue.md",
        changed=True),
     _M("M-12", "G-PIN", "the base pin loses its short sha", "Base `origin/main` `b81479ab0110`",
@@ -491,7 +470,15 @@ MUTATIONS: tuple[Mutation, ...] = (
 
 
 # ---------- modes ---------------------------------------------------------------------------------
+def check_helper() -> None:
+    """The helper beside this file must be the pinned content, never a fork or a trimmed copy."""
+    got = hashlib.sha256((ROOT / LIB_REL).read_bytes()).hexdigest()
+    if got != LIB_SHA256:
+        raise AuditError(f"{LIB_REL} is not the pinned helper ({got[:16]})")
+
+
 def read_tree() -> Tree:
+    check_helper()
     return Tree((ROOT / SPEC_REL).read_text(encoding="utf-8"), changed_paths())
 
 
@@ -511,9 +498,9 @@ def check() -> int:
 def self_test() -> int:
     """The clean tree passes; each mutation FAILs its own gate and no other; disk unchanged."""
     before = [(ROOT / rel).read_bytes() for rel in OWN]
-    loose = [k for k, v in globals().items() if isinstance(v, re.Pattern) and "<!--" in v.pattern]
-    if any(not globals()[k].flags & re.DOTALL for k in loose):
-        print("self-test: a comment regex lacks re.DOTALL")
+    loose = L.lint_comment_regexes(globals()) + L.lint_comment_regexes(vars(L))
+    if loose:
+        print(f"self-test: {loose}")
         return 1
     tree = read_tree()
     base = [n for n, d in run(tree) if d]
