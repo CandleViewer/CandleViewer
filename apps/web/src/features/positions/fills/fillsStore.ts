@@ -26,8 +26,9 @@
  *   yet: security first, SR-E29-11), and a withdrawn account gets E29-D05 F-02's line; the
  *   directory, a narrowed `sub_ok` or the next snapshot settles who stayed (`takeSettled`), and
  *   REST brings their fills back. No read brings back a withdrawn, narrowed-away or over-cap
- *   account's fills. Any other reset voids the WS baseline and keeps the fills: they are records,
- *   and the next `snap` follows.
+ *   account's fills (a withdrawn one's line can be dismissed; the account stays out until stop),
+ *   and after `revoked`, a snapshot or not, no read applies until Retry. Any other reset voids the
+ *   WS baseline and keeps the fills: they are records, and the next `snap` follows.
  */
 import { useSyncExternalStore } from "react";
 import type { TopicFrame } from "../../../lib/ws/api";
@@ -99,6 +100,7 @@ export interface FillsStore {
   takeSettled(): boolean;
   /** The list is at its top (new fills join it) or scrolled away (they wait, counted). */
   setAtTop(atTop: boolean): void;
+  /** Removes an account's withdrawn line; the account stays out until stop. */
   dismissWithdrawn(accountId: string): void;
   /**
    * Publishes one snapshot when anything changed; `true` when it did. `onlyUrgent` (inside the
@@ -149,7 +151,9 @@ export function createFillsStore(): FillsStore {
   const crossed = new Set<string>(); // the fills both sources brought, each counted once (G-W2)
   let dedupeHits = 0;
   let directory: Map<string, AccountInfo> | null = null;
-  let withdrawn: Withdrawn[] = [];
+  let withdrawn: Withdrawn[] = []; // E29-D05 F-02's lines: `dismissWithdrawn` removes one
+  // their accounts, barred until stop, dismissed or not (C-2.18: only accounts held or listed)
+  const withdrawnIds = new Set<string>();
   let pending: Set<string> | null = null; // a narrowing's candidates, until the directory says
   let narrowed = false;
   let settled = false;
@@ -173,7 +177,7 @@ export function createFillsStore(): FillsStore {
       directory?.has(accountId) === false ||
       pending?.has(accountId) === true ||
       overCap.includes(accountId) ||
-      withdrawn.some((w) => w.accountId === accountId)
+      withdrawnIds.has(accountId)
     );
   }
 
@@ -204,6 +208,7 @@ export function createFillsStore(): FillsStore {
 
   function noteWithdrawn(accountIds: Iterable<string>): void {
     for (const accountId of accountIds) {
+      withdrawnIds.add(accountId);
       if (withdrawn.some((w) => w.accountId === accountId)) continue;
       const label = directory?.get(accountId)?.label ?? null;
       withdrawn = [...withdrawn, { accountId, label }].slice(-MAX_WITHDRAWN);
@@ -251,7 +256,8 @@ export function createFillsStore(): FillsStore {
       pending = null;
       narrowed = false; // ended: nothing is re-read or re-made until Retry
     } else {
-      snapshotFailed = true; // refused before any snapshot (S-02)
+      revoked = true; // as after a snapshot: no read applies until Retry
+      snapshotFailed = true; // refused before any snapshot: S-02, which the status reads first
     }
   }
 
@@ -328,6 +334,7 @@ export function createFillsStore(): FillsStore {
         sorted = [];
         directory = null;
         withdrawn = [];
+        withdrawnIds.clear();
         pending = null;
         narrowed = false;
         settled = false;
