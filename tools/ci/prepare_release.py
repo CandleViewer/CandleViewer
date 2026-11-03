@@ -144,13 +144,17 @@ def is_ancestor(repo: str, ancestor: str, rev: str) -> bool:
 
 
 def changed_files(repo: str, sha: str) -> set[str]:
-    """Paths `sha` changes against its first parent (everything, for a root commit)."""
+    """Paths `sha` changes against its first parent (everything, for a root commit).
+
+    NUL-separated, so names with spaces stay whole; undecodable bytes become U+FFFD, which no
+    allow-listed path contains."""
     parents = _git(repo, "rev-list", "--parents", "-n", "1", sha).stdout.split()[1:]
     if parents:
-        out = _git(repo, "diff", "--no-renames", "--name-only", parents[0], sha).stdout
+        out = _git(repo, "diff", "--no-renames", "--name-only", "-z", parents[0], sha).stdout
     else:
-        out = _git(repo, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", sha).stdout
-    return set(out.split())
+        args = ("diff-tree", "--root", "--no-commit-id", "--name-only", "-z", "-r", sha)
+        out = _git(repo, *args).stdout
+    return set(out.split("\0")) - {""}
 
 
 def section_versions(text: str) -> list[str]:
@@ -298,7 +302,9 @@ def verify(
         fail(f"top version heading {headings[0] if headings else 'none'} != {VERSION_FILE} {v}")
     subject = _git(repo, "log", "-1", "--format=%s", sha).stdout.strip()
     titled = PREP_SUBJECT_RE.match(subject)
-    if titled and titled["version"] != v:
+    if titled is None:
+        fail(f"subject {subject!r} is not 'chore(infra-devops): prepare release {v}'")
+    elif titled["version"] != v:
         fail(f"subject version {titled['version']} != {VERSION_FILE} {v}")
     try:
         unreleased = sum(len(lines) for lines in _split_unreleased(text)[2].values())
