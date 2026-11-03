@@ -1,6 +1,7 @@
 {
-  "$comment": "Shrink-only axe baseline (E47-T02, schema v2 E47-Q04). Every entry in every section is {fingerprint, finding: A11Y-F..., justification (why it is tolerated now), owner, ticket, target, expiry}: target = planned fix date, expiry = last valid day (YYYY-MM-DD, UTC); an expired entry fails the gate naming its owner and ticket (A11Y-G001). `entries` = serious/critical, fingerprint screen|rule|selector (shrink-only). `minor_entries` = moderate/minor, fingerprint rule|stable selector path (React useId segments are :r*:). CODEOWNERS requires the Accessibility role to review any change; the PR must name the finding id justifying it. Empty = no known violations.",
+  "$comment": "Shrink-only axe baseline (E47-T02, schema v2 E47-Q04). Every entry in every section is {fingerprint, finding: A11Y-F..., justification (why it is tolerated now), owner, ticket, target, expiry}: target = planned fix date, expiry = last valid day (YYYY-MM-DD, UTC); an expired entry fails the gate naming its owner and ticket (A11Y-G001). `entries` = serious/critical, fingerprint screen|rule|selector (shrink-only). `minor_entries` = moderate/minor, fingerprint rule|stable selector path (React useId segments are :r*:). `pa11y_entries` = pa11y-ci errors (nightly), fingerprint code|stable selector path. CODEOWNERS requires the Accessibility role to review any change; the PR must name the finding id justifying it. Empty = no known violations.",
   "schemaVersion": 2,
   "entries": [],
-  "minor_entries": []
+  "minor_entries": [],
+  "pa11y_entries": []
 }

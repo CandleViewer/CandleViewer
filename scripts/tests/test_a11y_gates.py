@@ -326,7 +326,7 @@ def test_minor_key_ignores_react_use_id_segments() -> None:
 
 
 def test_expired_suppression_fails_naming_owner_and_ticket() -> None:
-    for section in ("entries", "minor_entries"):
+    for section in ("entries", "minor_entries", "pa11y_entries"):
         msgs = gates.check_baseline_schema({section: [_entry(expiry="2026-11-02")]}, NOW)
         assert len(msgs) == 1, section
         assert "expired" in msgs[0] and "owner=alice" in msgs[0] and "ticket=#1400" in msgs[0]
@@ -350,8 +350,12 @@ def test_baseline_entry_bad_date_and_target_after_expiry_fail() -> None:
 
 
 def test_baseline_pr_ids_cover_every_section() -> None:
-    head = {"entries": [_entry(fingerprint="a|b|c")], "minor_entries": [_entry()]}
-    assert len(gates.check_baseline_pr_ids({}, head, "no id")) == 2
+    head = {
+        "entries": [_entry(fingerprint="a|b|c")],
+        "minor_entries": [_entry()],
+        "pa11y_entries": [_entry(fingerprint="x|y")],
+    }
+    assert len(gates.check_baseline_pr_ids({}, head, "no id")) == 3
     assert not gates.check_baseline_pr_ids({}, head, "A11Y-F-0007")
 
 
@@ -398,3 +402,64 @@ def test_baseline_expiry_beyond_the_ninety_day_horizon_fails() -> None:
 def test_minor_entry_needs_an_a11y_f_finding_id() -> None:
     msgs = gates.check_baseline_schema({"minor_entries": [_entry(finding="BUG-7")]}, NOW)
     assert len(msgs) == 1 and "finding id" in msgs[0]
+
+
+# --- pa11y-ci (A11Y-G009): real output shapes --------------------------------------------------
+
+URL = "http://127.0.0.1:4173/login"
+CFG = {"urls": [{"url": URL, "_route": "R-001"}]}
+
+
+def _p11(*issues: dict, url: str = URL) -> dict:
+    return {"total": 1, "passes": 0, "errors": len(issues), "results": {url: list(issues)}}
+
+
+ERR = {"code": "WCAG2AA.Principle1.Guideline1_4.1_4_3.G18", "type": "error", "typeCode": 1,
+       "message": "contrast", "context": "<a>", "selector": "html > body > a", "runner": "htmlcs"}
+
+
+def test_pa11y_error_fails_naming_url_code_and_node() -> None:
+    msgs = gates.check_pa11y(_p11(ERR), {}, CFG)
+    assert len(msgs) == 1 and "A11Y-G009" in msgs[0]
+    assert URL in msgs[0] and "1_4_3" in msgs[0] and "html > body > a" in msgs[0]
+
+
+def test_pa11y_notice_warning_and_clean_pass_and_baselined_error_passes() -> None:
+    assert gates.check_pa11y(_p11({**ERR, "type": "notice"}, {**ERR, "type": "warning"}), {}, CFG) == []
+    assert gates.check_pa11y(_p11(), {}, CFG) == []
+    fp = f"{ERR['code']}|html > body > a"
+    assert gates.check_pa11y(_p11(ERR), {"pa11y_entries": [_entry(fingerprint=fp)]}, CFG) == []
+
+
+def test_pa11y_unscannable_page_in_its_real_shape_is_infra_not_a_pass() -> None:
+    # pa11y-ci reports a page it could not load as [{"message": "..."}]: no type, no code
+    broken = {"results": {URL: [{"message": "Failed to launch the browser process"}]}}
+    with pytest.raises(gates.InfraError, match="could not scan"):
+        gates.check_pa11y(broken, {}, CFG)
+
+
+@pytest.mark.parametrize("issue", [{"message": "x", "type": "error"}, {"code": "C", "message": "x"}, "oops"])
+def test_pa11y_issue_without_type_or_code_is_infra(issue: object) -> None:
+    with pytest.raises(gates.InfraError):
+        gates.check_pa11y({"results": {URL: [issue]}}, {}, CFG)
+
+
+def test_pa11y_empty_results_or_missing_configured_url_is_infra() -> None:
+    for res in ({}, {"results": {}}, {"results": None}):
+        with pytest.raises(gates.InfraError, match="no results"):
+            gates.check_pa11y(res, {}, CFG)
+    with pytest.raises(gates.InfraError, match="no result for"):
+        gates.check_pa11y(_p11(url="http://127.0.0.1:4173/other"), {}, CFG)
+    with pytest.raises(gates.InfraError):
+        gates.check_pa11y({"results": {URL: "Error: net::ERR_CONNECTION_REFUSED"}}, {}, CFG)
+
+
+def test_cli_pa11y_exit_codes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    cfg, bad, ok = tmp_path / "cfg.json", tmp_path / "bad.json", tmp_path / "ok.json"
+    cfg.write_text(json.dumps(CFG), encoding="utf-8")
+    bad.write_text(json.dumps(_p11(ERR)), encoding="utf-8")
+    ok.write_text(json.dumps(_p11()), encoding="utf-8")
+    base = ["--config", str(cfg)]
+    assert gates.main(["pa11y", str(ok), *base]) == 0
+    assert gates.main(["pa11y", str(bad), *base]) == 1
+    assert gates.main(["pa11y", str(tmp_path / "absent.json"), *base]) == 3

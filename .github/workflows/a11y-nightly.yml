@@ -22,6 +22,8 @@ jobs:
     timeout-minutes: 20
     env:
       A11Y_SWEEP: full
+      # E47-Q04: pa11y-ci > puppeteer must not fetch a Chromium; pa11y drives Playwright's instead.
+      PUPPETEER_SKIP_DOWNLOAD: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -64,6 +66,23 @@ jobs:
           python -m tools.a11y.gates budget "$elapsed" --limit 1200 2>&1 | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
           [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
           exit ${fail:-0}
+      # E47-Q04 (#1315 BQ-07): pa11y-ci, the second engine (LGPL-3.0, a dev-time CLI accepted in
+      # security/accepted-risks.yaml until the GA cut), over the inventory's mounted public routes.
+      # Absent output, an empty result or a configured URL with no result is A11Y-INFRA, never green.
+      - name: Collect and evaluate pa11y-ci (A11Y-G009)
+        if: always()
+        run: |
+          mkdir -p reports/a11y
+          chrome=$(cd apps/web && node --input-type=module -e 'import { chromium } from "@playwright/test"; console.log(chromium.executablePath())')
+          (cd apps/web && exec npx vite preview --port 4173 --host 127.0.0.1) &
+          VP=$!
+          for _ in $(seq 30); do curl -sf http://127.0.0.1:4173 >/dev/null && break; sleep 2; done
+          python -m tools.a11y.gates pa11y-config --chrome "$chrome" > reports/a11y/pa11yci.json
+          pnpm exec pa11y-ci --config reports/a11y/pa11yci.json --json > reports/a11y/pa11y.json || true
+          kill $VP || true
+          # bash -e -o pipefail: a red gate fails the step, and so does a redaction that fails
+          python -m tools.a11y.gates pa11y reports/a11y/pa11y.json --config reports/a11y/pa11yci.json 2>&1 | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
+
       # E47-Q04: the reports hold node HTML and page text; strip credential-shaped values after the
       # gates have read them. Only a redacted directory is uploaded.
       - name: Redact the reports before upload

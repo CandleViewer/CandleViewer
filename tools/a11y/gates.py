@@ -10,7 +10,8 @@ break-glass path never has to disable a gate for a real violation.
 
 Codes: G001 axe regression, G002 Lighthouse below floor, G003 contrast (see
 tools/contrast), G004 keyboard E2E, G005 flash rate, G006 a11y-tree drift, G007 runtime budget,
-G008 screen inventory (E47-Q04: a mounted screen absent from the axe report).
+G008 screen inventory (E47-Q04: a mounted screen absent from the axe report), G009 pa11y-ci
+(E47-Q04, nightly: an error the baseline does not list).
 """
 
 from __future__ import annotations
@@ -31,7 +32,8 @@ TRACKED_IMPACTS = ("moderate", "minor")
 # Sections of axe-baseline.json (BQ-05). Each entry is
 # {fingerprint, finding, justification, owner, ticket, target, expiry}: `entries` holds serious/critical (shrink-only,
 # keyed screen|rule|selector), `minor_entries` moderate/minor (keyed rule|stable selector path),
-BASELINE_SECTIONS = ("entries", "minor_entries")
+# `pa11y_entries` = pa11y-ci errors, fingerprint `code|stable selector path`.
+BASELINE_SECTIONS = ("entries", "minor_entries", "pa11y_entries")
 MAX_EXPIRY_DAYS = 90  # a suppression is a short loan, not a standing exemption
 ENTRY_FIELDS = ("fingerprint", "finding", "justification", "owner", "ticket", "target", "expiry")
 LIGHTHOUSE_FLOOR = 0.95
@@ -217,6 +219,47 @@ def check_inventory(report: dict, tier: str = "pr") -> list[str]:
         return inventory.check_inventory(report, rows, inventory.pr_scan_ids(), tier)
     except inventory.InventoryError as exc:
         raise InfraError(str(exc)) from exc
+
+# --- Gate 9: pa11y-ci (A11Y-G009) --------------------------------------------
+
+
+def pa11y_fingerprints(results: dict, config: dict | None = None) -> dict[str, str]:
+    """pa11y-ci `--json` output: {"results": {url: [issue]}}; only type "error" issues count.
+
+    Anything that is not a clean result is INFRA, never a pass: no results at all, a configured URL
+    missing from them, and a page pa11y-ci could not scan (it reports `[{"message": ...}]`, an entry
+    with no `type` and no `code`).
+    """
+    res = results.get("results")
+    if not isinstance(res, dict) or not res:
+        raise InfraError("A11Y-INFRA pa11y-ci output has no results (runner did not start?)")
+    wanted = [u["url"] for u in (config or {}).get("urls", []) if isinstance(u, dict) and "url" in u]
+    missing = [u for u in wanted if u not in res]
+    if missing:
+        raise InfraError(f"A11Y-INFRA pa11y-ci has no result for: {', '.join(missing)}")
+    out: dict[str, str] = {}
+    for url, issues in res.items():
+        if not isinstance(issues, list):
+            raise InfraError(f"A11Y-INFRA pa11y-ci could not scan {url}: {issues}")
+        for i in issues:
+            if not isinstance(i, dict) or "type" not in i or "code" not in i:
+                msg = i.get("message", i) if isinstance(i, dict) else i
+                raise InfraError(f"A11Y-INFRA pa11y-ci could not scan {url}: {msg}")
+            if i["type"] != "error":
+                continue
+            sel = stable_path([i.get("selector", "<page>")])
+            out[f"{i['code']}|{sel}"] = f"url={url} code={i['code']} node={sel}"
+    return out
+
+
+def check_pa11y(results: dict, baseline: dict, config: dict | None = None) -> list[str]:
+    allowed = {e.get("fingerprint") for e in baseline.get("pa11y_entries", [])}
+    return [
+        f"A11Y-G009 pa11y-ci error not in baseline: {msg}"
+        for key, msg in sorted(pa11y_fingerprints(results, config).items())
+        if key not in allowed
+    ]
+
 
 # --- Gate 2: Lighthouse ---------------------------------------------------
 
@@ -443,6 +486,13 @@ def main(argv: list[str] | None = None) -> int:
     iv = sub.add_parser("inventory")
     iv.add_argument("report")
     iv.add_argument("--tier", choices=("pr", "full"), default="pr")
+    pc = sub.add_parser("pa11y-config")
+    pc.add_argument("--base-url", default="http://127.0.0.1:4173")
+    pc.add_argument("--chrome", default=os.environ.get("CHROME_PATH"))
+    pa = sub.add_parser("pa11y")
+    pa.add_argument("results")
+    pa.add_argument("--config", required=True, help="the pa11y-config output the run used")
+    pa.add_argument("--baseline", default="tools/a11y/axe-baseline.json")
     sub.add_parser("lighthouse-plan")
     t = sub.add_parser("tree")
     t.add_argument("--snapshots", default="tools/a11y/tree-snapshots")
@@ -461,6 +511,19 @@ def main(argv: list[str] | None = None) -> int:
             report = _load(args.report)
             print(_inventory_line(args.tier))
             return _emit(check_inventory(report, args.tier))
+        if args.cmd == "pa11y-config":
+            m = inventory.load_manifest()
+            cfg = inventory.pa11y_config(
+                inventory.load_rows(manifest=m), m, args.base_url, args.chrome
+            )
+            print(json.dumps(cfg, indent=2))
+            return EXIT_OK
+        if args.cmd == "pa11y":
+            baseline = _load(args.baseline)
+            return _emit(
+                check_baseline_schema(baseline)
+                + check_pa11y(_load(args.results), baseline, _load(args.config))
+            )
         if args.cmd == "lighthouse-plan":
             m = inventory.load_manifest()
             print(json.dumps(inventory.lighthouse_plan(inventory.load_rows(manifest=m), m), indent=2))

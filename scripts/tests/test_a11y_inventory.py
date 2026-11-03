@@ -211,3 +211,14 @@ def test_lighthouse_plan_is_built_from_the_inventory() -> None:
 
 def test_session_lock_modal_is_hosted_on_the_signed_in_shell_route() -> None:
     assert inventory.load_hosts()["SCR-005"] == "R-201"
+
+
+def test_pa11y_config_lists_only_mounted_public_routes_with_the_chrome_path() -> None:
+    rows = inventory.load_rows()
+    cfg = inventory.pa11y_config(rows, MANIFEST, "http://127.0.0.1:4173/", "/opt/chrome")
+    urls = {u["_route"]: u["url"] for u in cfg["urls"]}
+    assert urls["R-001"] == "http://127.0.0.1:4173/login"
+    assert all(MANIFEST[r].public for r in urls)
+    assert "R-201" not in urls  # guarded: a bare visit is bounced to /login
+    assert cfg["defaults"]["chromeLaunchConfig"]["executablePath"] == "/opt/chrome"
+    assert cfg["defaults"]["standard"] == "WCAG2AA"

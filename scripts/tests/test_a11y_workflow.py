@@ -29,6 +29,15 @@ def test_nightly_runs_the_full_tier_inventory_and_redacts_before_upload() -> Non
     _redact_then_upload(NIGHTLY, "a11y-sweep-reports")
 
 
+def test_pa11y_runs_in_the_nightly_only_with_its_config_and_no_chromium_download() -> None:
+    assert "pa11y" not in PR_JOB
+    assert 'PUPPETEER_SKIP_DOWNLOAD: "true"' in NIGHTLY
+    assert "gates pa11y reports/a11y/pa11y.json --config reports/a11y/pa11yci.json" in NIGHTLY
+    assert NIGHTLY.index("pa11y-ci --config") < NIGHTLY.index("id: redact")
+    ws = (ROOT / "pnpm-workspace.yaml").read_text(encoding="utf-8")
+    assert "\n  puppeteer: false\n" in ws
+
+
 def test_gate_output_is_redacted_before_the_job_summary() -> None:
     for wf in (PR_JOB, NIGHTLY):
         for line in wf.splitlines():

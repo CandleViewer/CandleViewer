@@ -709,6 +709,18 @@ tools.a11y.gates inventory reports/a11y/axe.json [--tier full]`.
   entry's owner and ticket (a blank `justification` fails too): the owner fixes the defect, or renews the entry with a new `expiry` (at most
   90 days out) in a PR that names the `A11Y-F` finding id (CODEOWNERS: the Accessibility role). A new
   moderate/minor finding above the baseline fails the same way; fix it rather than baselining it.
+- **A11Y-G009** (pa11y-ci found an error the baseline does not list; `gates.py pa11y`, the nightly
+  only, E47-Q04): the second engine (HTML_CodeSniffer), over the inventory's mounted public routes
+  (`gates.py pa11y-config` writes `reports/a11y/pa11yci.json`; a guarded route needs a session, so axe
+  covers it). Open `reports/a11y/pa11y.json` in the `a11y-sweep-reports` artifact: the message gives the
+  URL, the code and the selector. Where axe and pa11y disagree, triage in the finding register; a
+  `pa11y_entries` baseline entry needs the same fields as any other, and no rule is disabled
+  repo-wide. Absent or empty output, a configured URL with no result, or a page pa11y-ci could not
+  load (its `[{"message": ...}]` entry, no `type` or `code`) is `A11Y-INFRA` (exit 3), never a pass.
+  pa11y and pa11y-ci are LGPL-3.0-only dev-time CLIs accepted in `security/accepted-risks.yaml` until
+  2027-03-25: past that date the licence gate fails with `CI-SEC-004` until the entry is renewed.
+  The job sets `PUPPETEER_SKIP_DOWNLOAD` and `puppeteer: false` in `allowBuilds`; pa11y drives
+  Playwright's Chromium.
 - **Report redaction** (`python -m tools.a11y.redact reports/a11y`): after the gates have read the
   reports, a step rewrites them so the artifact holds no credential-shaped value (the `.gitleaks.toml`
   shapes: Bybit key, secret and signature fields, `cvs_`/`cvr_`/`cvi_` tokens, recovery codes, TOTP

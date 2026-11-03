@@ -170,3 +170,24 @@ def test_cli_directory_mode_and_stdin_filter(
     monkeypatch.setattr(sys, "stdin", io.StringIO(f"A11Y-G001 node=#u value {EMAIL}\n"))
     assert redact.main(["-"]) == 0
     assert EMAIL not in capsys.readouterr().out
+
+
+def test_pa11y_output_context_and_message_are_redacted(tmp_path: Path) -> None:
+    out = {
+        "results": {
+            "http://127.0.0.1:4173/login": [
+                {
+                    "code": "WCAG2AA.Principle3.Guideline3_3.3_3_2.H44",
+                    "type": "error",
+                    "message": f"Label missing for {EMAIL}",
+                    "context": f'<input aria-label="API key" value="{KEY}"><input name="otp" value="{TOTP}">',
+                    "selector": "#api",
+                }
+            ]
+        }
+    }
+    (tmp_path / "pa11y.json").write_text(json.dumps(out), encoding="utf-8")
+    assert redact.main([str(tmp_path)]) == 0
+    body = (tmp_path / "pa11y.json").read_text(encoding="utf-8")
+    _gone(body, EMAIL, KEY, TOTP)
+    assert "WCAG2AA.Principle3" in body and "#api" in body

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E47-Q04: the screen inventory behind gate A11Y-G008 and the Lighthouse plan.
+"""E47-Q04: the screen inventory behind gate A11Y-G008, the pa11y-ci config and the Lighthouse plan.
 
 Inputs (read only, stdlib only):
   docs/plan/a11y/findings.json    one row per SCR-001..159 with its `coverage`
@@ -242,6 +242,34 @@ def describe(rows: list[Row], pr_scanned: frozenset[str], tier: str) -> str:
         f"{sum(1 for r in routed if not r.routes)} of them hosted), {c['pending']} pending "
         f"({len({r.ticket for r in rows if r.status == 'pending'})} tickets), {c['reserved']} reserved"
     )
+
+
+def pa11y_config(rows: list[Row], manifest: dict[str, Route], base_url: str, chrome: str | None) -> dict:
+    """pa11y-ci config driven from the inventory: the mounted, public routes.
+
+    A guarded route visited bare is bounced to /login (#3470), so it is left to axe's session entry.
+    """
+    seen: dict[str, str] = {}
+    for r in rows:
+        if r.status != "mounted":
+            continue
+        for rt in r.required_routes:
+            route = manifest[rt]
+            if route.public:
+                seen.setdefault(rt, route.visit_path)
+    launch: dict = {"args": ["--no-sandbox", "--disable-dev-shm-usage"]}
+    if chrome:
+        launch["executablePath"] = chrome
+    return {
+        "defaults": {
+            "standard": "WCAG2AA",
+            "timeout": 30000,
+            "wait": 500,
+            "chromeLaunchConfig": launch,
+            "ignore": [],
+        },
+        "urls": [{"url": f"{base_url.rstrip('/')}{p}", "_route": rt} for rt, p in sorted(seen.items())],
+    }
 
 
 def lighthouse_plan(rows: list[Row], manifest: dict[str, Route]) -> dict:
