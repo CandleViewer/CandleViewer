@@ -22,7 +22,8 @@ Only the composition root sees ingestion, bars, auth/audit and the ws package to
   account grants from the store at every `auth` and every re-evaluation. It fails closed to the
   deny-all snapshot and never raises.
 * **Events** (E09 / kill switch): `WsEvents` is the one entry point producers call:
-  `grants_changed`, `user_disabled`, `account_revoked` (E27-S04), `kill_switch_changed`.
+  `grants_changed`, `user_disabled`, `account_revoked` (E27-S04), `replay_session_ended`
+  (#2811, the replay sessions' `on_ended`), `kill_switch_changed`.
 * **Rule readers** (#3488): `rule_frame_visible` reads a WS principal as `/rules` reads a session;
   it is the `viewer` a `rules` publish must name (23 §15.6).
 * **Trade groups** (E28-T05 #909): `trade_groups_topic`, its viewer `trade_group_frame_visible`
@@ -787,6 +788,14 @@ class WsEvents:
         the account disabled (`account_disabled`): its subscriptions narrow or end on every
         socket (`ConnectionRegistry.account_revoked`)."""
         return await self.registry.account_revoked(account_id, reason)
+
+    async def replay_session_ended(self, session_id: str, user_id: str, reason: str) -> None:
+        """`ReplaySessionService(on_ended=...)` (#2811, 23 §11): the replay session was destroyed
+        (`reason` `client` or `idle_reclaim`, the same frames for both), so its subscriptions on
+        the owner's sockets end with `replay_session_ended`
+        (`ConnectionRegistry.replay_session_ended`). The service bounds the call and logs a
+        failure; it never fails the destroy."""
+        await self.registry.replay_session_ended(session_id, uuid.UUID(user_id))
 
     async def kill_switch_changed(
         self, *, engaged: bool, scope: str = "global", **detail: Any
