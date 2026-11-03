@@ -99,8 +99,10 @@
   pointer-events: none;
 }
 
+/* Hover at rest takes the button family's hover fill (label-on-fill.json `secondary`): color.surface.hover equals
+   the rest fill, color.neutral.subtle, in dark and high contrast, so it would show no change there. */
 .cv-tag[data-variant="toggle"]:hover:not([aria-pressed="true"]) {
-  background: var(--color-surface-hover);
+  background: var(--color-action-secondary-hover);
   color: var(--color-text-primary);
 }
 

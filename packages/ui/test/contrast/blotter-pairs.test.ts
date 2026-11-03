@@ -105,7 +105,7 @@ describe("the blotter components' contrast pairs (E29-D04 §5)", () => {
  */
 const ATOMS: readonly Pair[] = [
   ["color.text.secondary", "color.neutral.subtle", 4.5],
-  ["color.text.primary", "color.surface.hover", 4.5],
+  ["color.text.primary", "color.action.secondary.hover", 4.5],
   ["color.text.primary", "color.action.selected", 4.5],
   ["color.border.selected", "color.action.selected", 3],
   ...["color.surface.app", "color.surface.canvas", "color.surface.raised"].map((bg): Pair => [
@@ -125,6 +125,18 @@ describe("the Fills tab and SCR-078 atoms' contrast pairs (E29-S04)", () => {
       expect(Math.floor(ratio * 1000) / 1000, `${fg} on ${bg}`).toBeGreaterThanOrEqual(bar);
     }
   });
+
+  it.each(["dark", "light", "high-contrast"])(
+    "%s: hover moves a resting toggle's fill visibly (1.54:1 dark and high contrast, 1.35:1 light)",
+    (name) => {
+      const theme = themes[name] as Theme;
+      const ratio = math.contrastRatio(
+        hexOf(theme, "color.action.secondary.hover"),
+        hexOf(theme, "color.neutral.subtle"),
+      );
+      expect(ratio).toBeGreaterThanOrEqual(1.3);
+    },
+  );
 
   it.each(["dark", "light", "high-contrast"])(
     "%s: a pressed toggle's fill alone is within 1.2:1 of the rest fill, so its ring carries the state",
