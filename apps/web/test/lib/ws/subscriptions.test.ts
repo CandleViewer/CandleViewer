@@ -1126,7 +1126,7 @@ describe("resync budget (7.5)", () => {
     });
   });
 
-  it("a released stream takes the gateway's resync window with it, unless a twin of the ch is left", () => {
+  it("a released stream keeps the resync window of its ch: a consumer that returns finds the same gateway window", () => {
     const { registry, host, handle } = live();
     const twin = registry.consume(spec(), RS);
     const base = gaps(registry, 5);
@@ -1135,14 +1135,26 @@ describe("resync budget (7.5)", () => {
     registry.onData(snap(base), 1);
     registry.onData(delta(base + 2), 1); // a sixth resync of the ch inside the minute: it waits
     expect(host.resync).toHaveBeenCalledTimes(5);
-    again.release(); // and a waiting resync does not outlive its stream
-    twin.release(); // now no stream of the ch is left: the next subscription has a new window
+    again.release(); // a waiting resync does not outlive its stream
+    twin.release(); // the last stream of the ch is gone, the window is not: the unsub may not have gone out
     registry.consume(spec());
     registry.onData(snap(1), 1);
     registry.onData(delta(3), 1);
+    expect(host.resync).toHaveBeenCalledTimes(5); // still deferred, never a sixth the gateway would refuse
+    vi.advanceTimersByTime(60_999);
+    expect(host.resync).toHaveBeenCalledTimes(5);
+    vi.advanceTimersByTime(1);
     expect(host.resync).toHaveBeenCalledTimes(6);
-    vi.advanceTimersByTime(120_000);
-    expect(host.resync).toHaveBeenCalledTimes(6);
+  });
+
+  it("a returning consumer cannot over-spend the window after the last one is released", () => {
+    const { registry, host, handle } = live();
+    gaps(registry, 5);
+    handle.release();
+    registry.consume(spec()); // before the unsub is flushed
+    registry.onData(snap(1), 1);
+    registry.onData(delta(3), 1);
+    expect(host.resync).toHaveBeenCalledTimes(5);
   });
 });
 

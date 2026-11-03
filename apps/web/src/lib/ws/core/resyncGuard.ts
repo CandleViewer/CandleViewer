@@ -27,12 +27,21 @@ export interface ResyncGuard {
   request(ch: string, stream: string, send: () => void): "sent" | "deferred";
   /** The stream recovered by itself (a `snap` arrived) or is gone: drops its waiting request alone, keeps the budget. */
   cancel(ch: string, stream: string): void;
-  /** The subscription is gone, and with it the gateway's window for it: drops every request waiting for `ch`. */
+  /**
+   * No stream of `ch` is left to want a resync: drops every request waiting for it, and keeps the budget.
+   * The `unsub` may not have gone out (or may be coalesced with a `sub`), so a consumer that returns finds
+   * the same gateway subscription, whose window is not reset. The stamps are evicted once all are older than
+   * the window (swept on every `request` and `forget`, for every `ch`), so a released `ch` costs memory only for a window.
+   */
   forget(ch: string): void;
+  /** The server ended the subscription: its window is gone, a new one starts empty. Drops the requests and the budget of `ch`. */
+  end(ch: string): void;
   /** A new connection or a stopped engine: nothing is owed and nothing waits. */
   reset(): void;
   /** Streams with a request waiting. */
   readonly waiting: number;
+  /** Channels whose stamps are still held. Read-only, for tests of the eviction. */
+  readonly size: number;
 }
 
 /** The streams of one `ch` that wait for its budget, oldest first, and the one timer that wakes them. */
@@ -64,6 +73,13 @@ export function createResyncGuard(options: ResyncGuardOptions = {}): ResyncGuard
     return 0;
   }
 
+  /** Deletes the stamps of every `ch` that has none inside the window: bounded by the channels held, each at most RESYNC_LIMIT stamps. */
+  function sweep(at: number): void {
+    for (const [ch, held] of stamps) {
+      if (held.every((stamp) => at - stamp >= horizon)) stamps.delete(ch);
+    }
+  }
+
   function drop(ch: string, queue: Queue): void {
     clearTimer(queue.timer);
     queues.delete(ch);
@@ -90,6 +106,7 @@ export function createResyncGuard(options: ResyncGuardOptions = {}): ResyncGuard
 
   return {
     request(ch, stream, send) {
+      sweep(now());
       const queue = queues.get(ch);
       if (queue !== undefined) {
         // Budget is spent, or earlier requests are owed first: this one waits its turn, behind them.
@@ -114,6 +131,11 @@ export function createResyncGuard(options: ResyncGuardOptions = {}): ResyncGuard
       if (queue.entries.length === 0) drop(ch, queue);
     },
     forget(ch) {
+      sweep(now());
+      const queue = queues.get(ch);
+      if (queue !== undefined) drop(ch, queue);
+    },
+    end(ch) {
       const queue = queues.get(ch);
       if (queue !== undefined) drop(ch, queue);
       stamps.delete(ch);
@@ -122,6 +144,9 @@ export function createResyncGuard(options: ResyncGuardOptions = {}): ResyncGuard
       for (const queue of queues.values()) clearTimer(queue.timer);
       queues.clear();
       stamps.clear();
+    },
+    get size() {
+      return stamps.size;
     },
     get waiting() {
       let waiting = 0;
