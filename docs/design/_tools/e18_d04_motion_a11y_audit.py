@@ -6,18 +6,23 @@ public text, G-UNTOUCHED, the runner and the mutation harness) live in `spec_aud
 file keeps only E18-D04's rows. It reads, AS TEXT at the pinned base, the plan and design texts
 the spec cites, the ticket JSON and the token JSON, and, from the working tree, the spec and its
 figure. The only repo code it runs is `relative_luminance()` of
-`docs/research/_tools/cvd_simulate.py`, loaded by path. Three simulations are its own: the
-marker hold (section 3), the fill hold (section 4) and the LOD sweep over `LOD_PROFILE_M0`
-(section 5); each written number in those tables is re-derived here.
+`docs/research/_tools/cvd_simulate.py`, loaded by path. Four simulations are its own: the
+marker hold (section 3), the fill hold (section 4), the LOD sweep over `LOD_PROFILE_M0`
+(section 5) and the one polite region's arbitration (section 7.3); each written number in those
+tables is re-derived here. Windows are counted in whole frames, so float spacing never adds an
+event to a 1 000 ms window.
 
 Gates: G-CITE, G-PINS, G-VERSION, G-AC, G-BQ, G-TOKENS, G-MOTION (AC 1), G-HOLD, G-FLASH,
 G-LOD (AC 3), G-LIVE (AC 2), G-KEYS, G-STOPS, G-FIGURE, G-SURVIVE, G-PARITY, G-ROUTE, G-T2,
-G-ENV, G-NOCLOSE, G-PUBLIC, G-UNTOUCHED and G-MUTLIST (section 13.3 equals this tool's list).
-The BQ list is comment 6609418330 on #498; its defaults are built and the ruling is pending
-(G-BQ), so nothing is hash-pinned yet: the ruling fold adds the pins inside this file.
+G-WCAG, G-ENV, G-NOCLOSE, G-PUBLIC, G-UNTOUCHED and G-MUTLIST (section 13.3 equals this
+tool's list).
+The BQ list is comment 6609418330 on #498, RULED by comment 6609843435 (G-BQ). Pins: each BQ
+bullet's sha256[:16] in RULED_PINS below, no separate pins file; `--repin-ruled` is the only
+writer. The shared helper is never carried by this pack: it reaches `main` with its carrier, and a
+local copy for a gate run is allowed only untracked and byte-identical (G-UNTOUCHED).
 
 Usage (from the repo root):
-  python3 -I docs/design/_tools/e18_d04_motion_a11y_audit.py --check | --self-test
+  python3 -I docs/design/_tools/e18_d04_motion_a11y_audit.py --check | --self-test | --repin-ruled
   python3 -I docs/design/_tools/e18_d04_motion_a11y_audit.py --figure   (writes figure A)
 Exit 0 = no FAIL; 1 = at least one FAIL.
 """
@@ -25,6 +30,7 @@ Exit 0 = no FAIL; 1 = at least one FAIL.
 from __future__ import annotations
 
 import functools
+import hashlib
 import itertools
 import json
 import math
@@ -37,17 +43,37 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "b81479ab0"  # origin/main when the pack was written; every cite is read here
-D03_HEAD = "72c20eafd"  # #497's text head the review reads, cited by section only
-BQ_LIST = "6609418330"  # the BQ list on #498 (defaults built, ruling pending)
+BASE = "b81479ab0"  # origin/main at the ruling fold; every cite is read here
+D03_HEAD = "c2c1c5d50"  # #497's text head (its ruling folded), cited by section only
+BQ_LIST = "6609418330"  # the BQ list on #498
+RULING = "6609843435"  # the orchestrator's ruling of record on it
+AGREE = frozenset({0, 1, 2, 4, 5, 6, 7, 8, 9})  # BQ-3 is ruled in the comment's own words
 BQ_COUNT = 10
 
 SPEC_REL = "docs/design/E18/E18-D04.md"
 FIG_REL = "docs/design/E18/img/E18-D04-figA-focus-order.svg"
 TOOL_REL = "docs/design/_tools/e18_d04_motion_a11y_audit.py"
 LIB_REL = "docs/design/_tools/spec_audit_lib.py"
-OWN = (SPEC_REL, FIG_REL, TOOL_REL, LIB_REL)
+LIB_SHA256 = "62b56d6446b218cd300a9e2591e47b84f20962a6c33a58ebe9b8c2fbc83f48fd"
+ATTR_REL = ".gitattributes"
+ATTR_BUDGET = (3, 0)  # BQ-1: figure A marked linguist-generated, so it leaves the count
+OWN = (SPEC_REL, FIG_REL, TOOL_REL)
 BACKLOG_REL = "docs/plan/backlog/E18.json"
+# G-BQ: sha256[:16] of each RULED BQ bullet; `--repin-ruled` rewrites the block, nothing else.
+PINS_OPEN = 'RULED_PINS = """\n'
+PINS_CLOSE = '"""  # end of the ruled pins'
+RULED_PINS = """
+BQ-0 656b2f7993e3ce88
+BQ-1 37bb65e61a776208
+BQ-2 8628daec3fc1217f
+BQ-3 ffa6e4d67de5f0e7
+BQ-4 685bf013faf265d7
+BQ-5 13f5b6e3335c4f56
+BQ-6 c06f414a5e4dfc02
+BQ-7 6e4e4b4fb23ba8d6
+BQ-8 249ac9f6dd6e606d
+BQ-9 efc2a0cdfefe5548
+"""  # end of the ruled pins
 
 PLAN = {
     "05": "docs/plan/05-accessibility-standard.md",
@@ -117,6 +143,7 @@ PINS: tuple[L.KeyCite, ...] = (
 
 # ---------- the numbers this tool re-derives ------------------------------------------------------
 FRAME_MS = 1000 / 60
+WINDOW_FR = 60  # 1 000 ms in whole frames
 HOLD_MS = 200  # the marker hold (section 3), PROPOSED into E08-D11's motion.hold.* group
 FR6_CROSSINGS = 2  # E47-D08 FR-6, reused for the forming column's fills (section 4)
 FR7_FLASHES = 3  # E47-D08 FR-7, the gate: fail at >= 3 flashes in any 1 s window
@@ -132,6 +159,25 @@ SWEEPS = (("down", 20.0, 2.0), ("up", 2.0, 20.0))
 JITTERS = (0.0, 0.07, 0.10)
 GATED_JITTERS = (0.0, 0.07)
 B2_MAX = 6
+# Section 7.3's one polite region, in frames at 60 Hz.
+KEY_LIVE_FR = 30  # E06-D03's repeatWindow, 500 ms: a key repeat is live this long after a key
+AUTO_GAP_FR = 120  # `05`:185's 1 update / 2 s, shared by LR-3, LR-4 and LR-5
+TIER_SETTLE_FR = 30  # LR-5 speaks only once the tier has held 500 ms
+AUTO_ROWS = ("LR-3", "LR-4", "LR-5")
+WCAG_SC = (
+    "1.3.1",
+    "1.4.1",
+    "1.4.10",
+    "1.4.11",
+    "2.1.1",
+    "2.2.2",
+    "2.3.1",
+    "2.4.3",
+    "2.4.7",
+    "2.4.11",
+    "2.5.8",
+    "4.1.3",
+)
 THEMES = tuple(L.THEME_PARTS)
 FILLS = (
     "color.surface.canvas",
@@ -216,9 +262,15 @@ def worst_pair(name: str) -> tuple[str, str, float, float]:
     return best
 
 
-def window_max(times: list[float]) -> int:
-    """The most events in any half-open 1 000 ms window ending on an event."""
-    return max((sum(1 for x in times if t - 1000 < x <= t) for t in times), default=0)
+def fno(ms: float) -> int:
+    """A time in ms as its whole frame number at 60 Hz."""
+    return round(ms / FRAME_MS)
+
+
+def window_max(times: list[float], span: int = WINDOW_FR) -> int:
+    """The most events in any half-open window of `span` frames ending on an event."""
+    idx = [fno(x) for x in times]
+    return max((sum(1 for y in idx if f - span < y <= f) for f in idx), default=0)
 
 
 def frames(secs: float = 10.0) -> list[float]:
@@ -228,12 +280,12 @@ def frames(secs: float = 10.0) -> list[float]:
 def hold_changes(in_hz: int, hold_ms: float) -> list[float]:
     """Section 3: a marker whose wanted state toggles at `in_hz`; a change is admitted only
     `hold_ms` after the last admitted one, the latest wanted state winning at the hold's end."""
-    shown, last = 0, -1e9
+    shown, last = 0, -(10**9)
     out: list[float] = []
     for now in frames():
         want = int(now // (1000 / in_hz)) % 2
-        if want != shown and now - last >= hold_ms:
-            shown, last = want, now
+        if want != shown and fno(now) - last >= fno(hold_ms):
+            shown, last = want, fno(now)
             out.append(now)
     return out
 
@@ -248,7 +300,7 @@ def fill_changes(in_hz: int, cap: int | None) -> list[float]:
         want = int(now // period) % 2
         if want == shown:
             continue
-        if cap is not None and sum(1 for x in out if now - 1000 < x <= now) >= cap:
+        if cap is not None and sum(1 for x in out if fno(now) - WINDOW_FR < fno(x)) >= cap:
             continue
         shown = want
         out.append(now)
@@ -289,6 +341,63 @@ def lod_sweep(h0: float, h1: float, jitter: float) -> tuple[int, int, int]:
     return crossed, changes(tiers), changes(levels)
 
 
+def live_sim(shared: bool) -> tuple[int, int, int, int]:
+    """Section 7.3 over 20 s at 60 Hz, then 5 s quiet: 1 s bars with the cursor on the forming
+    bar (LR-3), a new stack every 300 ms (LR-4), a tier that flips every 150 ms for 3 s and then
+    settles (LR-5), and a held key repeating at 30 Hz for 2 s (LR-1). `shared` False is each
+    row's own cadence only; True is the one coalescer: latest wins per row, the user's key wins,
+    one automatic utterance per 2 s, LR-5 only on a settled tier. Returns (the most automatic
+    utterances in any 2 s, those inside a live key repeat, LR-5 utterances while the tier
+    wobbles, rows left unsaid at the end)."""
+    busy, quiet = 1200, 300
+    wobble = range(300, 480)
+    keys = set(range(600, 720, 2))
+    tier, spoken_tier, tier_at = 0, 0, -(10**9)
+    pending: dict[str, int] = {}
+    last_key, last_auto, last_stack = -(10**9), -(10**9), -(10**9)
+    said: list[tuple[int, str]] = []
+    for f in range(busy + quiet):
+        if f < busy and f > 0 and f % 60 == 0:
+            pending["LR-3"] = f
+        if f < busy and f % 18 == 0:
+            pending["LR-4"] = f
+        if f in wobble and (f - wobble.start) % 9 == 0:
+            tier, tier_at = 1 - tier, f
+            pending["LR-5"] = f
+        if f == 900:
+            tier, tier_at = 1 - tier, f
+            pending["LR-5"] = f
+        if f in keys:
+            last_key = f
+        if not shared:
+            for row in sorted(pending):
+                if row == "LR-4" and f - last_stack < AUTO_GAP_FR:
+                    continue
+                if row == "LR-4":
+                    last_stack = f
+                said.append((f, row))
+                del pending[row]
+            continue
+        if f - last_key < KEY_LIVE_FR or f - last_auto < AUTO_GAP_FR:
+            continue
+        ready = [r for r in pending if r != "LR-5" or f - tier_at >= TIER_SETTLE_FR]
+        if not ready:
+            continue
+        row = min(ready, key=lambda r: pending[r])
+        del pending[row]
+        if row == "LR-5":
+            if tier == spoken_tier:
+                continue
+            spoken_tier = tier
+        said.append((f, row))
+        last_auto = f
+    auto = [f for f, _ in said]
+    worst = max((sum(1 for y in auto if f - 2 * WINDOW_FR < y <= f) for f in auto), default=0)
+    in_key = sum(1 for f in auto if any(0 <= f - k < KEY_LIVE_FR for k in keys))
+    in_wobble = sum(1 for f, r in said if r == "LR-5" and f in wobble)
+    return worst, in_key, in_wobble, len(pending)
+
+
 # ---------- spec helpers --------------------------------------------------------------------------
 def rows(block: str) -> list[list[str]]:
     return L.table_rows(block)
@@ -323,7 +432,7 @@ def g_pins(t: L.Tree) -> list[str]:
 
 def g_version(t: L.Tree) -> list[str]:
     spec, v = t.text("spec"), sec(t, "### 13.1 Version line")
-    miss = [n for n in (BASE, D03_HEAD, "re-pinned", "#497") if n not in v]
+    miss = [n for n in (BASE, D03_HEAD, "re-pinned", "#497", "--repin-ruled") if n not in v]
     if f"Base `origin/main` `{BASE}`" not in spec:
         miss.append("the Inputs line's base")
     if f"`{D03_HEAD}`" not in spec or "if #497 merges as is" not in spec:
@@ -345,22 +454,25 @@ def g_ac(t: L.Tree) -> list[str]:
 
 
 def g_bq(t: L.Tree) -> list[str]:
+    spec = t.text("spec")
     bad = L.check_ruling(
-        t.text("spec"),
+        spec,
         heading_line=(
-            f"## The questions BQ-0 … BQ-{BQ_COUNT - 1} — defaults built; ruling pending "
-            f"(comment {BQ_LIST})"
+            f"## The questions BQ-0 … BQ-{BQ_COUNT - 1} — RULED (comment {RULING}, "
+            f"on the BQ list {BQ_LIST})"
         ),
         list_ref=f"comment {BQ_LIST} on #498",
         count=BQ_COUNT,
-        verdict=lambda _n: "**PENDING** (ORCH-default built)",
-        need=("Built:",),
-        forbid=("RULED",),
+        verdict=lambda n: "**RULED: AGREE.**" if n in AGREE else "**RULED.**",
+        need=("Applied:",),
+        forbid=("PENDING", "ORCH-default"),
     )
+    if f"comment {RULING}" not in L.section(spec, L.BQ_HEADING):
+        bad.append("the ruling id")
     walk = sec(t, "## 12. Owner walkthrough")
-    if f"comment {BQ_LIST}" not in walk or "ruling pending" not in walk:
+    if f"comment {BQ_LIST}) is RULED (comment {RULING})" not in walk:
         bad.append("the walkthrough's BQ item")
-    return bad
+    return bad + L.check_hash_pins(spec, RULED_PINS)
 
 
 def g_tokens(t: L.Tree) -> list[str]:
@@ -520,7 +632,32 @@ def g_live(t: L.Tree) -> list[str]:
         bad.append("the new-stack row's cadence or master toggle")
     if "signed artefact" not in block or "E18-S11 #741" not in block or "E18-Q04" not in block:
         bad.append("the consumers")
+    for r in said:
+        own = " ".join(r)
+        auto = r[0] in AUTO_ROWS
+        if auto and "silenced by the master toggle" not in own:
+            bad.append(f"{r[0]} escapes the master toggle")
+        if not auto and "kept under the master toggle" not in own:
+            bad.append(f"{r[0]} does not say the master toggle keeps it")
+        if len(r) < 5 or not re.search(r'"[^"]+"', r[4]):
+            bad.append(f"{r[0]} has no exact string")
+    want = live_rows()
+    got_sim = [r[:5] for r in rows(block.partition("**Arbitration")[2])]
+    if got_sim != want:
+        bad.append(f"the arbitration table differs from the tool: {want}")
+    if want[-1][1:] != ["1", "0", "0", "0"]:
+        bad.append("the shared coalescer breaks the cadence")
+    for need in ("user's key wins", "Settings → Accessibility", "one monotonic clock"):
+        if need not in block:
+            bad.append(f"lacks {need!r}")
     return bad
+
+
+def live_rows() -> list[list[str]]:
+    out = []
+    for name, shared in (("each row's own cadence", False), ("one shared coalescer", True)):
+        out.append([name, *(str(x) for x in live_sim(shared))])
+    return out
 
 
 def g_keys(t: L.Tree) -> list[str]:
@@ -641,6 +778,16 @@ def g_t2(t: L.Tree) -> list[str]:
     return L.t2_markers(bullet(spec, "R-9")) + L.no_disabled_tokens(spec)
 
 
+def g_wcag(t: L.Tree) -> list[str]:
+    got = rows(sec(t, "### 7.8 WCAG 2.2 AA trace"))
+    have = [r[0].split(" ")[0] for r in got]
+    bad = [f"no row for {sc}" for sc in WCAG_SC if sc not in have]
+    for r in got:
+        if len(r) < 3 or "§" not in r[1] or not r[2]:
+            bad.append(f"{r[0] if r else '?'} has no section or verdict")
+    return bad
+
+
 def g_env(t: L.Tree) -> list[str]:
     r10 = bullet(t.text("spec"), "R-10")
     need = ("C-2.11", "hard constraint", "public market data", "no environment")
@@ -661,8 +808,19 @@ def g_public(t: L.Tree) -> list[str]:
     )
 
 
+def lib_state() -> tuple[bool, bool]:
+    """(byte-identical to the carrier, tracked by this branch while its merge-base lacks it)."""
+    p = ROOT / LIB_REL
+    same = p.exists() and hashlib.sha256(p.read_bytes()).hexdigest() == LIB_SHA256
+    tracked = bool(repo().git("ls-files", "--", LIB_REL).strip())
+    return same, tracked and repo().show(repo().diff_base(BASE), LIB_REL) is None
+
+
 def g_untouched(t: L.Tree) -> list[str]:
-    return L.untouched(t.changed, OWN, (), {}, t.numstat)
+    same, carried = lib_state()
+    changed = [p for p in t.changed if p != LIB_REL or not same or carried]
+    bad = L.untouched(changed, OWN, (), {ATTR_REL: ATTR_BUDGET}, t.numstat)
+    return bad + ([f"{LIB_REL} carried by this pack"] if carried else [])
 
 
 def g_mutlist(t: L.Tree) -> list[str]:
@@ -672,8 +830,8 @@ def g_mutlist(t: L.Tree) -> list[str]:
 # fmt: off
 GATES = tuple(L.Gate("G-" + f.__name__[2:].upper(), f) for f in (
     g_cite, g_pins, g_version, g_ac, g_bq, g_tokens, g_motion, g_hold, g_flash, g_lod, g_live,
-    g_keys, g_stops, g_figure, g_survive, g_parity, g_route, g_t2, g_env, g_noclose, g_public,
-    g_untouched, g_mutlist,
+    g_keys, g_stops, g_figure, g_survive, g_parity, g_route, g_t2, g_wcag, g_env, g_noclose,
+    g_public, g_untouched, g_mutlist,
 ))
 # fmt: on
 
@@ -697,11 +855,10 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "if #497 merges as is", "once #497 merges"),
     _M("M-4", "G-AC", "a scenario name reworded", "spec",
        'AC "LOD switching does not flicker"', 'AC "LOD switching does not flash"'),
-    _M("M-5", "G-BQ", "a bullet claims a ruling", "spec",
-       "**PENDING** (ORCH-default built). Built: the flicker",
-       "**RULED** (ORCH-default built). Built: the flicker"),
+    _M("M-5", "G-BQ", "the heading drops the ruling", "spec",
+       "— RULED (comment 6609843435, on the BQ list", "— defaults built (comment 6609843435, on"),
     _M("M-6", "G-TOKENS", "an unshipped motion token", "spec",
-       "`motion.easing.decelerate` (the ticket's", "`motion.easing.easeout` (the ticket's"),
+       r"(\| C-1 [^\n]*?)`motion\.easing\.decelerate`", r"\1`motion.easing.easeout`", regex=True),
     _M("M-7", "G-MOTION", "a reduce cell left as the default", "spec",
        r"(\| M-03 [^\n]*?\| )instant( +\|)", r"\1same as default\2", regex=True),
     _M("M-8", "G-MOTION", "a marker bounces", "spec",
@@ -745,6 +902,15 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "docs/plan/15-component-catalogue.md"),
     _M("M-28", "G-MUTLIST", "the list drifts", "spec",
        "| M-28 | G-MUTLIST   | the list drifts", "| M-28 | G-MUTLIST   | the list moved"),
+    _M("M-29", "G-LIVE", "bar close escapes the master toggle", "spec",
+       r"(\| LR-3 [^\n]*?)silenced by the master toggle", r"\1spoken always", regex=True),
+    _M("M-30", "G-LIVE", "the arbitration table drifts", "spec",
+       r"(\| one shared coalescer +\| )1", r"\g<1>2", regex=True),
+    _M("M-31", "G-WCAG", "a criterion row loses its section", "spec",
+       r"(\| 2\.4\.11 [^|]*\| )[^|]*§[^|]*\|", r"\1the drawer |", regex=True),
+    _M("M-32", "G-BQ", "a ruled bullet edited without a re-pin", "spec",
+       "the PR title a conventional commit (§14).", "the PR title a commit (§14)."),
+    _M("M-33", "G-UNTOUCHED", "the attributes line grows", "@numstat:.gitattributes", "", "4 0"),
 )
 # fmt: on
 
@@ -759,6 +925,7 @@ def read_tree() -> L.Tree:
     return L.Tree(
         files={"spec": read(SPEC_REL), "figure": read(FIG_REL)},
         changed=repo().changed_paths(base),
+        numstat={ATTR_REL: repo().numstat(base, ATTR_REL)},
     )
 
 
@@ -779,8 +946,18 @@ def write_figure() -> int:
     return 0
 
 
+def repin() -> int:
+    lines = L.bq_hash_pins(read(SPEC_REL))
+    tool = read(TOOL_REL)
+    a = tool.index(PINS_OPEN) + len(PINS_OPEN)
+    b = tool.index(PINS_CLOSE, a)
+    L.write_pins(ROOT / TOOL_REL, tool[:a] + "\n".join(lines) + "\n" + tool[b:])
+    print(f"pinned {len(lines)} BQ lines")
+    return 0
+
+
 def main(argv: list[str]) -> int:
-    modes = {"check": check, "self-test": self_test, "figure": write_figure}
+    modes = {"check": check, "self-test": self_test, "figure": write_figure, "repin-ruled": repin}
     return L.cli(argv, modes, __doc__)
 
 
