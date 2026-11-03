@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 import pytest
-from hypothesis import given
+from hypothesis import example, given
 from hypothesis import strategies as st
 
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -485,7 +485,15 @@ def _pair(result: dict[str, Any]) -> list[str]:
     return [ch.split(".", 1)[0], code]
 
 
+#: `orders.admin`, a kept refusal (`forbidden`) on its own, and `ticker.BTCUSDT`, a success.
+_FORBIDDEN, _OK = _POOL.index("orders.admin"), _POOL.index("ticker.BTCUSDT")
+
+
 @given(st.lists(st.sampled_from(range(len(_POOL))), min_size=1, max_size=_CAP + 10))
+@example(picks=[_FORBIDDEN] * _CAP)  # at the cap: one record counting every entry (#3211)
+@example(picks=[_FORBIDDEN] * (_CAP + 1))  # one past it: refused whole, no record
+@example(picks=[_FORBIDDEN] * (_CAP + 10))  # well past it
+@example(picks=[_FORBIDDEN] * MAX_DENIALS_LISTED + [_OK, _FORBIDDEN, _FORBIDDEN])  # listed + more
 def test_one_frame_writes_at_most_one_denial_record_and_it_agrees_with_the_results(
     picks: list[int],
 ) -> None:
