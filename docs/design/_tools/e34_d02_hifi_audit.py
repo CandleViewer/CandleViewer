@@ -70,7 +70,7 @@ CONTRAST_PATH = ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
 BORROWED = {"verify_tokens": TOKENS / "tests" / "verify_tokens.py", "contrast_check": CONTRAST_PATH}  # fmt: skip
 PATHS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md", "11": "docs/plan/11-user-stories.md",
-    "14": "docs/plan/14-screens-catalogue.md", "17": "docs/plan/17-ux-diagrams.md", "15": "docs/plan/15-component-catalogue.md",
+    "14": "docs/plan/14-screens-catalogue.md", "17": "docs/plan/17-ux-diagrams.md", "15": "docs/plan/15-component-catalogue.md", "16": "docs/plan/16-design-system-brief.md",
     "20": "docs/plan/20-architecture.md", "22": "docs/plan/22-api-openapi.yaml",
     "23": "docs/plan/23-ws-protocol.md", "24": "docs/plan/24-internal-schemas.md",
     "28": "docs/plan/28-statechart-catalogue.md",
@@ -559,6 +559,9 @@ def g_recovery(t: Texts) -> list[str]:
     return bad
 
 
+PAT = r"queued → sent[^\n]*(overlay|opacity|motion\.)"
+
+
 def g_ruled(t: Texts) -> list[str]:
     """OQ-1 carried, never decided; the Manager scope; no Send for a Viewer."""
     bad = []
@@ -585,6 +588,8 @@ def g_ruled(t: Texts) -> list[str]:
             bad.append(f"{r[0]}: an unserved state or action is not stamped as not served yet")
     if not all(w in row(t, "S061-08")[4] for w in ("at preview only", "never at Send")):
         bad.append("S061-08: the minimum is not offered at preview only (BQ-8)")
+    if "a cut" not in row(t, "S061-12")[3] or re.search(PAT, t.spec):
+        bad.append("S061-12: queued → sent is not a cut (`16`:259)")
     for i, ln in enumerate(t.spec.split("\n"), 1):
         if OWN_COMPONENT.search(ln) and not ln.startswith("| R-"):
             bad.append(f"spec:{i} defines a status component of SCR-061's own")
@@ -812,6 +817,7 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-T2", "coin Send's rate-limit reason", sub('T2 "Rate limited — your request is held." (`ratelimit.held`', 'T2 "held: rate budget" (`ratelimit.held`')),
     ("G-RECOVERY", "let a frozen Manager close with no OD-11 split", sub("the Owner's enabled, a Manager's \"Frozen — the owner closes or releases\" until E39-S03 rules (C-5)", "every role enabled")),
     ("G-RULED", "drop the checking-outcome stamp", sub('stamped "not served yet" (G-3)', "(G-3)")),
+    ("G-RULED", "animate queued → sent", sub("each change a cut (`16`:259)", "each over `motion.duration.fast`")),
     ("G-RULED", "offer the minimum at Send", sub("offered at preview only, never at Send;", "offered at preview and at Send;")),
     ("G-RULED", "define a row-status cell of SCR-061's own", sub(OWN_CELL, "SCR-061 defines its own status cell.")),
     ("G-RULED", "define a second status component, no CMP id", sub("No summary counts legs in the client (§1 item 10).", "SendRowStatus, a status component, is defined here.")),
