@@ -25,8 +25,10 @@ export interface HostSurface {
 }
 
 /**
- * Mounts a canvas sized to the container (CSS px times the device pixel ratio) and, after it,
- * the visually hidden DOM mirror root that keyboard focus lands in (05 §6.1).
+ * Mounts a canvas sized to the container (CSS px times the device pixel ratio) inside a clip
+ * wrapper and, after the wrapper, the visually hidden DOM mirror root that keyboard focus lands
+ * in (05 §6.1). The wrapper (BQ-150) is laid out at 100% of the container and hides overflow, so
+ * a backing store padded by the growth steps (BQ-149) never spills out of the container.
  */
 export function mountSurface(container: HTMLElement): HostSurface {
   const doc = container.ownerDocument;
@@ -58,7 +60,14 @@ export function mountSurface(container: HTMLElement): HostSurface {
   mirrorRoot.style.overflow = "hidden";
   mirrorRoot.style.clipPath = "inset(50%)";
 
-  container.appendChild(canvas);
+  const clip = doc.createElement("div");
+  clip.setAttribute("data-cv-canvas-clip", "");
+  clip.style.position = "relative";
+  clip.style.width = "100%";
+  clip.style.height = "100%";
+  clip.style.overflow = "hidden";
+  clip.appendChild(canvas);
+  container.appendChild(clip);
   container.appendChild(mirrorRoot);
 
   let mounted = true;
@@ -71,7 +80,7 @@ export function mountSurface(container: HTMLElement): HostSurface {
       const next = makeCanvas();
       if (mounted) {
         canvas.remove();
-        container.insertBefore(next, mirrorRoot);
+        clip.appendChild(next);
       }
       canvas = next;
       return next;
@@ -80,6 +89,7 @@ export function mountSurface(container: HTMLElement): HostSurface {
       if (!mounted) return;
       mounted = false;
       canvas.remove();
+      clip.remove();
       mirrorRoot.remove();
     },
   };

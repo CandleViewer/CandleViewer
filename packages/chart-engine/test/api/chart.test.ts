@@ -11,7 +11,7 @@ import type {
   OverlayPlugin,
   ThemeTokens,
 } from "../../src/index.js";
-import { asHtml, fakeContainer, type FakeElement } from "./fake-dom.js";
+import { asHtml, canvasIn, fakeContainer, type FakeElement } from "./fake-dom.js";
 
 const theme: ThemeTokens = {
   palette: "default",
@@ -31,7 +31,7 @@ const nextFrame = (): void => {
 };
 
 const canvasOf = (c: FakeElement): FakeElement => {
-  const canvas = c.children.find((el) => el.tagName === "CANVAS");
+  const canvas = canvasIn(c);
   if (canvas === undefined) throw new Error("no canvas mounted");
   return canvas;
 };
@@ -75,7 +75,7 @@ describe("Scenario: A chart mounts and reports frame stats through the stub", ()
   it("releases the probe's WebGL2 context once it has answered", () => {
     const chart = mount();
     expect(chart.getStats().renderProfile).toBe("full");
-    const probe = container.ownerDocument.created[3]; // after the canvas, mirror and help
+    const probe = container.ownerDocument.created[4]; // after canvas, clip, mirror and help
     expect(probe?.tagName).toBe("CANVAS");
     expect(probe?.webgl2?.lost).toBe(true);
     chart.dispose();
@@ -85,11 +85,11 @@ describe("Scenario: A chart mounts and reports frame stats through the stub", ()
     container.ownerDocument.webgl2Available = false;
     const chart = mount();
     const probesBefore = container.ownerDocument.created.length;
-    expect(probesBefore).toBe(3); // the canvas, the mirror root and its help; no probe yet
+    expect(probesBefore).toBe(4); // the canvas, its clip, the mirror root and its help
     expect(chart.getStats().renderProfile).toBe("degraded-2d");
-    expect(container.ownerDocument.created.length).toBe(4);
+    expect(container.ownerDocument.created.length).toBe(5);
     chart.getStats();
-    expect(container.ownerDocument.created.length).toBe(4); // probed once
+    expect(container.ownerDocument.created.length).toBe(5); // probed once
     chart.dispose();
   });
 

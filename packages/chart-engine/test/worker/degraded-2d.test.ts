@@ -27,7 +27,7 @@ import {
   type RunMode,
 } from "../../src/worker/protocol.js";
 import { createRenderRuntime, type RenderRuntime } from "../../src/worker/runtime.js";
-import { asHtml, fakeContainer, FakeDocument } from "../api/fake-dom.js";
+import { asHtml, canvasIn, fakeContainer, FakeDocument } from "../api/fake-dom.js";
 import { FakeCtx2D } from "../canvas2d/fake-ctx2d.js";
 import { FakeGl, FULL, ROOMY } from "../gl/fake-gl.js";
 import { fakeEnv, FakeWorker } from "./fake-worker.js";
@@ -267,7 +267,7 @@ describe("F-13: an export is refused, never stale, while parked or failed (BQ-92
     const theme = { palette: "default", convention: "standard", colors: {} } as const;
     const chart = createChart({ container: asHtml(container), theme });
     frame();
-    const canvas = container.children.find((el) => el.tagName === "CANVAS");
+    const canvas = canvasIn(container);
     canvas?.webgl2?.loseContext();
     canvas?.dispatch("webglcontextlost", { preventDefault: () => undefined });
     const shot = chart.takeScreenshot();

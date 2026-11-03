@@ -209,6 +209,8 @@ The profile rule (E11-S02, package README BQ-50); each `reduced` limit adds one 
 
 _Shipped (E11-S10 PR 1, package README BQ-142 to BQ-157): DPR is folded into the pane uniforms once (no `u_dpr`); `u_viewport` is the backing store on both axes; the backing store is the device-pixel-content-box (else `round(css * dpr)`) and the canvas CSS box `backing / dpr`; hairlines are `max(1, floor(dpr))` device px, snapped by `src/viewport/pixels.ts`; the heatmap cap is `layerDpr(dpr, 2)` for E21; a 0×0 container suspends its chart._
 
+_Shipped (E11-S10 PR 2, package README BQ-149, BQ-150, BQ-154, C-44): the backing store grows in 128-device-px steps per axis and never shrinks mid-drag; 10 resize-free frames, a DPR change or an export trim it to the exact size, which the runtime draws in the store's top-left sub-rect (viewport + scissor, 2D clip). No offscreen framebuffer exists yet, so the policy applies to the default canvas, held in a container-sized clip wrapper._
+
 ### 3.5 Viewport and transform math
 
 State: `{ timeStart, timeEnd }` (µs, float64) and per-pane `{ priceLow, priceHigh }` plus a scale mode. _Shipped (E11-S03, `src/viewport/`): bar space is authoritative, so the state is `{ leftIndex, barSpacing }` and `timeStart/timeEnd` are derived through the index→time map; prices are float64 ticks from `priceOrigin`; the GPU gets int `u_indexBase`/`u_tickBase` and relative float coefficients only (package README BQ-65–BQ-83)._
@@ -442,6 +444,8 @@ Shipped by E11-S10 PR 1 (package README BQ-147, BQ-148 and BQ-153), additive: `r
 Shipped by E12-S06 PR 1 (`24` §19.75; package README "Candle series"), additive: `command { k: "addSeries", series, kind: "candles" | "bars", pane? }` and `command { k: "removeSeries", series }`; `data` gains `series?` (a `bars` batch for that series' `BarStore`) and `ack` echoes it, so the host's two-in-flight rule and conflation are per series; the `bars` buffer is `time` f64, `open` / `high` / `low` / `close` i32 ticks and `volume` f32, then an optional seventh 1-byte `flags` column (bits `gap_before`, forming, partial, amended; bits 4–7 refused), with the params `[priceOrigin, tickSize]` re-checked against the int32 tick window (F-01). A refused batch (F-01 decode, F-02 bar relations) posts a recoverable `ENGINE_DECODE_ERROR` and is still acked.
 
 Shipped by E12-S06 PR 2 (package README "OHLC bars, gap seams, bar picks and `dataState`"), additive: `dataState { state: "empty" | "ready" }` is posted when the main series' visible range empties or fills (edge-triggered; the first frame always posts) and becomes §8's `ChartEvents.dataState`; while empty the engine hides the background layer (no grid) and the app draws SCR-047. `command { k: "setSeriesOptions" }` reads `isTimeAligned` (§8 `CandleOptions.isTimeAligned?`, default true): false never draws the gap seam. `pick` may answer `kind: "bar"` with `objectId: "series.<id>"` (§3.9).
+
+Shipped by E11-S10 PR 2 (package README BQ-149), additive: `resize` gains optional `backingWidth` and `backingHeight`, the padded backing store in device px (safe integers, at least `round(size * dpr)`); the chart draws into its exact top-left sub-rect, and `frame.backingStorePx` reports the padded store.
 
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 

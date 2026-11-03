@@ -120,6 +120,9 @@ describe("Scenario: A malformed message cannot kill the worker (validation)", ()
     ["a negative-width resize", { ...valid[1], width: -1 }, "malformed resize"],
     ["a NaN-height resize", { ...valid[1], height: Number.NaN }, "malformed resize"],
     ["a zero-dpr resize", { ...valid[1], dpr: 0 }, "malformed resize"],
+    // BQ-149: a padded store is whole device px, never below round(size * dpr).
+    ["a store below the exact size", { ...valid[1], backingWidth: 9 }, "malformed resize"],
+    ["a fractional store", { ...valid[1], backingHeight: 138.5 }, "malformed resize"],
     ["a bad sync", { t: "sync", groupId: "g", timeRange: [1], crosshair: null }, "malformed sync"],
     ["an unknown command", { t: "command", id: 1, cmd: { k: "eval" } }, "malformed command"],
     [

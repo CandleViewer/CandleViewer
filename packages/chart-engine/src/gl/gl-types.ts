@@ -77,6 +77,10 @@ export interface GL2Like {
     ...a: [number, number, number, number, number, number, number, number, ArrayBufferView]
   ): void;
   viewport(x: number, y: number, width: number, height: number): void;
+  // The padded store's sub-rect (E11-S10, BQ-149).
+  enable(cap: number): void;
+  disable(cap: number): void;
+  scissor(x: number, y: number, width: number, height: number): void;
   clearColor(r: number, g: number, b: number, a: number): void;
   clear(mask: number): void;
   drawArraysInstanced(mode: number, first: number, count: number, instances: number): void;
@@ -114,4 +118,5 @@ export const GL = {
   INT: 0x1404,
   TRIANGLE_STRIP: 0x0005,
   COLOR_BUFFER_BIT: 0x4000,
+  SCISSOR_TEST: 0x0c11,
 } as const;
