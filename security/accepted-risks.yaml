@@ -287,10 +287,11 @@ entries:
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/188"
   # E47-Q04 (#1315, BQ-07): pa11y-ci and pa11y are LGPL-3.0-only, a dev-time CLI run in the a11y
   # nightly (second engine), never linked into or shipped with CandleViewer. Accepted by the
-  # main-orchestrator's 13:18Z 2026-11-03 ruling on #1315 BQ-07 (it restores pa11y with these entries
-  # expiring at the GA cut), on the BQ-07 ruling comment
-  # https://github.com/CandleViewer/CandleViewer/issues/1315#issuecomment-6602876121 and under the
-  # owner's delegation; approver is the owner's account, as the register requires.
+  # main-orchestrator's BQ-07 ruling under the owner's delegation
+  # (https://github.com/CandleViewer/CandleViewer/issues/1315#issuecomment-6602876121, 11:42Z
+  # 2026-11-03); the expiry is tightened to the GA cut (2027-03-25), as the register test requires;
+  # the coordinator confirmed it on 2026-11-03. The approver is the owner's account, as the
+  # register requires.
   - id: "license:pa11y-ci@5.0.0"
     tool: license-scan
     severity: LOW
