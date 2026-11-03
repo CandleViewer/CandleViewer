@@ -501,17 +501,27 @@ async def test_without_a_code_the_resolve_is_a_challenge_that_changes_nothing() 
 
 async def test_a_grant_that_lapsed_is_challenged_again() -> None:
     """Expired: a one-shot grant lives `SINGLE_USE_WINDOW`; once it lapses the request is a
-    first one again."""
+    first one again. The Owner's session row stays as it was, not revoked, downgraded or
+    rotated: the new challenge, noted on it and live alone, is all that changes."""
     r = await _rig()
     r.service.states[ACCOUNT] = "stale_lockout"
     challenge = r.post(RESOLVE.format(ACCOUNT), json=BODY).json()
     r.w.clock.now += timedelta(seconds=30)
     assert r.w.step_up(challenge_id=challenge["challenge_id"]).status_code == 200
     r.w.clock.now += SINGLE_USE_WINDOW + timedelta(seconds=1)
+    sid = str(r.w.sessions["tok"].id)
+    before = r.w.rows.sessions[sid]  # the Owner's row as the session store holds it
     lapsed = r.post(RESOLVE.format(ACCOUNT), json=BODY)
     body = _problem(lapsed, 403, "step_up_required", operation="resolveReconciliation")
     assert body["challenge_id"] != challenge["challenge_id"]
     assert r.service.told == [] and r.service.states[ACCOUNT] == "stale_lockout"
+    after, noted = r.w.rows.sessions[sid], {"step_up_elevations"}
+    same = after.model_dump(exclude=noted) == before.model_dump(exclude=noted)
+    assert same, "the lapsed grant's challenge changed the Owner's session row"  # prints no row
+    assert after.revoked_at is None and after.readonly_until is None
+    assert after.step_up_failures == 0 and sid not in r.w.rows.rotation_next  # no successor
+    live = [key for key, until in after.step_up_elevations.items() if until > r.w.clock.now]
+    assert len(live) == 1 and live[0].startswith(f"pending:accounts:{body['challenge_id']}:")
 
 
 async def test_a_step_up_of_another_class_never_admits_the_resolve() -> None:
