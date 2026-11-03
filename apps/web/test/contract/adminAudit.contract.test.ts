@@ -1,22 +1,30 @@
 /**
  * C-6.2 consumer contract (E42-S04, #1135): the audit log's read layer reads the examples
- * `docs/plan/22-api-openapi.yaml` serves for `queryAuditLog` (`orderPlaced`) and
- * `verifyAuditChain` (`ok`, `broken`) through the generated `packages/protocol` types, each vetted
- * as served, and asks for the contract's paths. The filters' names and the page size are
- * `queryAuditLog`'s parameters, and the `orderPlaced` example lands in the page model.
+ * `docs/plan/22-api-openapi.yaml` serves for `queryAuditLog` (`orderPlaced`), `verifyAuditChain`
+ * (`ok`, `broken`) and `listIncidents` (`grouped`) through the generated `packages/protocol` types,
+ * each vetted as served, and asks for the contract's paths. The filters' names and the page size
+ * are `queryAuditLog`'s parameters, and the `orderPlaced` and verify examples land in the page and
+ * integrity models.
  */
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type { generated } from "@candleviewer/protocol";
 import {
   AUDIT_PATHS,
   vetAuditPage,
+  vetIncidentPage,
   vetVerifyResult,
   type AuditEntry,
   type AuditQuery,
+  type Incident,
   type VerifyResult,
 } from "../../src/features/admin/audit/auditReads";
 import { FILTER_NAMES, PAGE_LIMIT } from "../../src/features/admin/audit/auditFilters";
 import { createAuditPageStore, pagerOf } from "../../src/features/admin/audit/auditPageStore";
+import {
+  bannerModel,
+  createIntegrityStore,
+  footerModel,
+} from "../../src/features/admin/audit/integrity";
 import { example, pathBlock, specText } from "../features/admin/audit/specExamples";
 
 type Schemas = generated.rest.components["schemas"];
@@ -25,6 +33,7 @@ type Ops = generated.rest.operations;
 describe("audit log consumer contract (C-6.2): the read layer", () => {
   it("test_contract_types_are_the_generated_ones", () => {
     expectTypeOf<AuditEntry>().toEqualTypeOf<Schemas["AuditEntry"]>();
+    expectTypeOf<Incident>().toEqualTypeOf<Schemas["Incident"]>();
     expectTypeOf<AuditQuery>().toEqualTypeOf<
       NonNullable<Ops["queryAuditLog"]["parameters"]["query"]>
     >();
@@ -42,8 +51,10 @@ describe("audit log consumer contract (C-6.2): the read layer", () => {
     };
     op("/admin/audit", "get", "queryAuditLog");
     op("/admin/audit/verify", "post", "verifyAuditChain");
+    op("/admin/incidents", "get", "listIncidents");
     expect(AUDIT_PATHS.query).toBe("/api/v1/admin/audit");
     expect(AUDIT_PATHS.verify).toBe("/api/v1/admin/audit/verify");
+    expect(AUDIT_PATHS.incidents).toBe("/api/v1/admin/incidents");
   });
 
   it("test_contract_orderPlaced_example_vets_as_served", () => {
@@ -62,6 +73,11 @@ describe("audit log consumer contract (C-6.2): the read layer", () => {
   it.each(["ok", "broken"])("test_contract_verify_%s_example_vets_as_served", (name) => {
     const raw = example("/admin/audit/verify", name);
     expect(vetVerifyResult(raw)).toEqual(raw);
+  });
+
+  it("test_contract_incidents_grouped_example_vets_as_served", () => {
+    const raw = example("/admin/incidents", "grouped");
+    expect(vetIncidentPage(raw)).toEqual(raw);
   });
 });
 
@@ -90,7 +106,7 @@ function queryParameters(): Map<string, string> {
   return out;
 }
 
-describe("audit log consumer contract (C-6.2): the filters and the page", () => {
+describe("audit log consumer contract (C-6.2): the filters, the page and the integrity", () => {
   it("test_contract_query_parameters_are_the_filter_names_plus_cursor_and_limit", () => {
     const names = [...queryParameters().keys()];
     expect(names.slice(0, 2)).toEqual(["cursor", "limit"]);
@@ -121,6 +137,56 @@ describe("audit log consumer contract (C-6.2): the filters and the page", () => 
     const state = store.getState();
     expect(state).toMatchObject({ phase: "ok", rows: body.items, newCount: 0 });
     expect(pagerOf(state)).toEqual({ atNewest: true, atOldest: false, page: 1 });
+    expect(footerModel(auditIntegrityAt(), body, { view: "raw" }).line?.key).toBe(
+      "tamper.page_passed",
+    );
+    release();
+  });
+
+  it("test_contract_verify_examples_land_in_the_integrity_model", async () => {
+    let next: unknown = null;
+    const store = createIntegrityStore({
+      now: () => 0,
+      setTimeout: () => 0,
+      clearTimeout: () => undefined,
+      document: null,
+      readIncidents: async () => ({ kind: "failed", reason: "network" }),
+      verify: async () => {
+        const body = vetVerifyResult(next);
+        return body === null ? { kind: "failed", reason: "unreadable" } : { kind: "ok", body };
+      },
+    });
+    const settle = async (): Promise<void> => {
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    };
+    // held, as SCR-135 holds it: a run's break waits for its incident read (A-1135P2-09)
+    const release = store.hold();
+    next = example("/admin/audit/verify", "ok");
+    store.runCheck();
+    await settle();
+    expect(store.getState().passes).toEqual([
+      { fromId: 87120442, toId: 88120441, checkedAt: "2026-09-14T10:37:00Z" },
+    ]);
+    next = example("/admin/audit/verify", "broken");
+    store.runCheck();
+    await settle();
+    expect(bannerModel(store.getState())).toMatchObject({
+      voice: "break:41207",
+      title: "Tamper check FAILED at entry 41,207 — treat this as a security incident",
+      facts: "Found at 10:37:05 UTC on 2026-09-14 in a check of entries 1–1,000,000.",
+    });
     release();
   });
 });
+
+/** A fresh integrity state with nothing found, for the footer's page lines. */
+function auditIntegrityAt(): ReturnType<ReturnType<typeof createIntegrityStore>["getState"]> {
+  return createIntegrityStore({
+    now: () => 0,
+    setTimeout: () => 0,
+    clearTimeout: () => undefined,
+    document: null,
+    readIncidents: async () => ({ kind: "failed", reason: "network" }),
+    verify: async () => ({ kind: "unknown" }),
+  }).getState();
+}

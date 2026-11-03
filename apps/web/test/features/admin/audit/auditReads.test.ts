@@ -1,7 +1,7 @@
 /**
- * E42-S04 (#1135): the audit log's read layer (E42-D04 §4, §7; the plan's §3). The list read and
- * the tamper check go through `apiFetch`, typed from `packages/protocol`, and settle as one of
- * four answers: `ok` (the body vetted, an unknown enum or a missing field
+ * E42-S04 (#1135): the audit log's read layer (E42-D04 §4, §7; the plan's §3). The list read, the
+ * tamper check and the incident read go through `apiFetch`, typed from `packages/protocol`, and
+ * settle as one of four answers: `ok` (the body vetted, an unknown enum or a missing field
  * unreadable), `refused` (the status, the problem's code, `Retry-After`, the Ref and the field
  * errors), `unknown` (a write that got no answer) or `failed` (a read that got none, or an answer
  * it could not read). List reads stop at 6 s (BQ-11, PROPOSED), above the server's 4 s stop; the
@@ -12,14 +12,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AUDIT_CADENCE,
   AUDIT_READ_TIMEOUT_MS,
+  INCIDENT_LIMIT,
   VERIFY_TIMEOUT_MS,
   forbiddenMeaning,
   jobPollDelay,
+  listIncidents,
   queryAuditLog,
   queryString,
   retryAfterSeconds,
   verifyAuditChain,
   vetAuditPage,
+  vetIncidentPage,
   vetVerifyResult,
   type AuditAnswer,
   type AuditRefusal,
@@ -31,6 +34,7 @@ import {
   T0,
   entry,
   hangingFetch,
+  incident,
   json,
   pageBody,
   problem,
@@ -320,5 +324,35 @@ describe("verifyAuditChain", () => {
     expect(vetVerifyResult({ ...BROKEN, entries_checked: -1 })).toBeNull();
     expect(vetVerifyResult({ ...BROKEN, first_bad_id: "41207" })).toBeNull();
     expect(vetVerifyResult({ ...BROKEN, checked_at: "later" })).toBeNull();
+  });
+});
+
+describe("listIncidents", () => {
+  it("test_listIncidents_reads_one_page_of_every_status_and_vets_it", async () => {
+    // PROPOSED (D04 §7): one read of the newest 100 by `last_seen_at`, never one per status, as
+    // each read writes an `admin.area_entered` row
+    expect(INCIDENT_LIMIT).toBe(100);
+    const body = { items: [incident()], meta: { next_cursor: null, has_more: false, count: 1 } };
+    const calls = stubFetch(() => json(200, body));
+    expect(await listIncidents()).toEqual({ kind: "ok", body });
+    const url = new URL(calls[0]?.url ?? "", "http://x");
+    expect(url.pathname).toBe("/api/v1/admin/incidents");
+    expect(url.searchParams.get("limit")).toBe(String(INCIDENT_LIMIT));
+    expect(url.searchParams.has("status")).toBe(false);
+  });
+
+  it("test_vetIncidentPage_unknown_status_or_missing_time_is_unreadable", () => {
+    const meta = { next_cursor: null, has_more: false, count: 1 };
+    expect(vetIncidentPage({ items: [incident({ status: "closed" as "open" })], meta })).toBeNull();
+    expect(
+      vetIncidentPage({ items: [{ ...incident(), first_seen_at: undefined }], meta }),
+    ).toBeNull();
+    expect(vetIncidentPage({ items: [incident({ title: "t".repeat(201) })], meta })).toBeNull();
+    expect(vetIncidentPage({ items: [incident()], meta })?.items).toEqual([incident()]);
+  });
+
+  it("test_listIncidents_501_is_refused_not_built", async () => {
+    stubFetch(() => problem(501, "not_implemented"));
+    expect(refusal(await listIncidents())).toMatchObject({ status: 501, code: "not_implemented" });
   });
 });

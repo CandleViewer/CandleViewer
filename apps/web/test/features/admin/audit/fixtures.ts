@@ -11,9 +11,11 @@ type Schemas = generated.rest.components["schemas"];
 type Ops = generated.rest.operations;
 export type Entry = Schemas["AuditEntry"];
 export type Verify = Ops["verifyAuditChain"]["responses"][200]["content"]["application/json"];
+export type IncidentRow = Schemas["Incident"];
 
 export const OWNER_ID = "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001";
 export const ALEX_ID = "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002";
+export const INCIDENT_ID = "1a000000-0000-4000-8000-000000000007";
 export const REF = "urn:cv:req:0193f2bb-9c11-7a3d-88f1-0d2e3f4a5b6c";
 /** The worked example's clock: 2026-10-22 14:02:11 UTC. */
 export const T0 = Date.UTC(2026, 9, 22, 14, 2, 11);
@@ -91,6 +93,26 @@ export const BROKEN: Verify = verifyBody({
   first_bad_id: 1_204_118,
   last_hash: hex("4"),
 });
+
+export function incident(over: Partial<IncidentRow> = {}): IncidentRow {
+  return {
+    id: INCIDENT_ID,
+    component: "db",
+    severity: "critical",
+    status: "open",
+    title: "audit chain break at id <n>",
+    detail: "audit chain break at id 1204118",
+    occurrences: 1,
+    first_seen_at: "2026-10-22T14:05:07Z",
+    last_seen_at: "2026-10-22T14:05:07Z",
+    acknowledged_by: null,
+    acknowledged_at: null,
+    resolved_at: null,
+    runbook_ref: null,
+    signature: "5f0c2d9e4b7a1c3e",
+    ...over,
+  };
+}
 
 /** A JSON answer. */
 export const json = (
