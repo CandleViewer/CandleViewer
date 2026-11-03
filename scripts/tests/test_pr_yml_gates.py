@@ -477,12 +477,21 @@ def _scan_run(
 def test_secret_scan_reads_the_prs_commits_with_the_security_lanes_scanners() -> None:
     step, checkout = _scan(), JOBS["gates"]["steps"][0]
     assert checkout["with"] == {"fetch-depth": 0, "persist-credentials": False}
-    # The scanner versions of the security lane's gitleaks-history job, pinned by digest here.
-    lane = json.dumps(_load("_job-security.yml")["jobs"]["gitleaks-history"])  # #5697
+    # The security lane's scanners, pinned by the same digest here: both gitleaks jobs (#5697)
+    # run pr.yml's GITLEAKS_IMAGE, and gitleaks-history its TRUFFLEHOG_IMAGE.
     for name in ("GITLEAKS_IMAGE", "TRUFFLEHOG_IMAGE"):
-        image, digest = step["env"][name].split("@")
-        assert image in lane and re.fullmatch(r"sha256:[0-9a-f]{64}", digest), name
-    assert step["env"]["TRUFFLEHOG_IMAGE"] in lane
+        assert re.fullmatch(r"[^@]+@sha256:[0-9a-f]{64}", step["env"][name]), name
+    lane = _load("_job-security.yml")["jobs"]
+    for job in ("gitleaks", "gitleaks-history"):
+        assert lane[job]["env"] == {"GITLEAKS_IMAGE": step["env"]["GITLEAKS_IMAGE"]}, job
+        runs = [s["run"] for s in lane[job]["steps"] if "docker run" in s.get("run", "")]
+        # Per docker-run line, not per step: every container comes from a pinned variable,
+        # and no step names an image literally (a pinned trufflehog beside an unpinned
+        # gitleaks in one step would otherwise pass).
+        lines = [ln for r in runs for ln in r.splitlines() if "docker run" in ln]
+        assert lines and all('"$GITLEAKS_IMAGE"' in ln or '"$TH"' in ln for ln in lines), job
+        assert not any("zricethezav/" in r for r in runs), job
+    assert step["env"]["TRUFFLEHOG_IMAGE"] in json.dumps(lane["gitleaks-history"])
     # The range commitlint reads, from the event and through env only; on a merge group, the
     # group's own commit (#3433); on a merge train, train_base..train_head (#3783).
     event = "${{ github.event.pull_request.%s.sha || github.event.merge_group.%s_sha"

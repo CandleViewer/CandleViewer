@@ -58,8 +58,9 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 │                                      its 10 min budget (CI-A11Y-002..004); and the `vr` job: every
 │                                      story x theme x density against its baseline PNG, 14 shards
 │                                      judged per cell (CI-A11Y-007), on pinned fonts (CI-A11Y-006..008)
-├─ _job-security.yml (js/py/infra/semgrep filters) → codeql, gitleaks, trivy (image filter) and two
-│                                      folded jobs, one step per scan (#3104): semgrep-bandit;
+├─ _job-security.yml (js/py/infra/semgrep filters) → codeql, gitleaks (tree gate) + gitleaks-history
+│                                      (full-history sweep), trivy (image filter) and two folded jobs,
+│                                      one step per scan (#3104): semgrep-bandit;
 │                                      read-only-scans (security-auth, pip-audit, register
 │                                      pins, npm-audit, license-scan)   (CI-SEC-001..005)
 ├─ _job-coverage.yml (js/py filters) → per-package threshold            (CI-COV-001..004)

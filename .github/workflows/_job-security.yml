@@ -303,10 +303,14 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+    env:
+      # pr.yml's secret-scan pins the same digest (test_pr_yml_gates cross-checks it).
+      GITLEAKS_IMAGE: zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          persist-credentials: false # nothing here pushes or fetches
 
       # gitleaks-action needs `pull-requests: read` (crashes with "Resource not
       # accessible by integration" without it). The gate below reads the pinned
@@ -315,7 +319,7 @@ jobs:
       - name: Run gitleaks (pinned binary, redacted JSON report)
         run: |
           set -euo pipefail
-          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.30.1 \
+          docker run --rm -v "$PWD:/repo" "$GITLEAKS_IMAGE" \
             detect --source=/repo --no-git --config=/repo/.gitleaks.toml --redact -f json -r /repo/gitleaks.json || true
         continue-on-error: true
 
@@ -362,10 +366,14 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    env:
+      # pr.yml's secret-scan pins the same digest (test_pr_yml_gates cross-checks it).
+      GITLEAKS_IMAGE: zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false # nothing here pushes or fetches
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -375,7 +383,7 @@ jobs:
       - name: Full-history gitleaks sweep (git mode, all refs)
         run: |
           set -euo pipefail
-          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.30.1 \
+          docker run --rm -v "$PWD:/repo" "$GITLEAKS_IMAGE" \
             detect --source=/repo --log-opts="--all" --config=/repo/.gitleaks.toml --redact \
             -f json -r /repo/gitleaks-history.json || true
           python -c "import json;print('gitleaks history findings:',len(json.load(open('gitleaks-history.json'))))"

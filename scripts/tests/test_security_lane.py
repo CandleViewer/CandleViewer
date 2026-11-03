@@ -183,6 +183,14 @@ def test_gitleaks_gate_is_shallow_and_only_the_report_only_job_reads_history() -
         assert "check_secrets_hygiene.py logs" in json.dumps(JOBS[job]), job
 
 
+def test_both_gitleaks_checkouts_keep_no_job_token() -> None:
+    # Neither job pushes or fetches after its checkout, so neither persists the job token.
+    for job, depth in (("gitleaks", 1), ("gitleaks-history", 0)):
+        checkout = _steps(job)[0]
+        assert checkout["uses"].startswith("actions/checkout@"), job
+        assert checkout["with"] == {"fetch-depth": depth, "persist-credentials": False}, job
+
+
 def test_register_pins_run_every_test_repo_register_pin_in_read_only_scans() -> None:
     (step,) = [s for s in _steps("read-only-scans") if s.get("id") == "register-pins"]
     assert step["run"] == REGISTER_PINS
