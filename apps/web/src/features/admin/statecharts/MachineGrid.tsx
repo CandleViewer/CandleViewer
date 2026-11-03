@@ -3,11 +3,20 @@
  * `tabindex`, the arrows by cell, Home / End, PgUp / PgDn), each row a live machine as served:
  * machine, kind, environment, state, its hash's first 8 hex with "matches the lock" or "differs",
  * chain trips, the latch ("Latched — chain trips: 2" beside the octagon, else blank), deferred
- * depth ("—", named "not recorded", when the snapshot has none) and the update time in UTC. Rows
- * are drawn in the server's order (kind, key, environment): a latched row is marked, never moved.
- * At 200 % the grid reflows to cards that keep its keys (`reflow="grid"`).
+ * depth ("—", named "not recorded", when the snapshot has none) and the update time in UTC. Enter
+ * on a row, or a press on it, opens its machine (§5.2): the row handles the key, as SCR-045's
+ * `ChartDataTable` does, so no cell holds a control and CMP-049's own keys stay its own. A held
+ * Enter opens once. Rows are drawn in the server's order (kind, key, environment): a latched row is
+ * marked, never moved. At 200 % the grid reflows to cards that keep its keys (`reflow="grid"`).
  */
-import { memo, type CSSProperties, type JSX, type ReactNode } from "react";
+import {
+  memo,
+  useId,
+  type CSSProperties,
+  type JSX,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import {
   ADMIN_COPY,
   EmptyState,
@@ -24,6 +33,7 @@ import type { StatechartMachine } from "./inspectorReads";
 import { kindLabel } from "./kinds";
 
 const SILENT = (): void => undefined;
+const HINT: CSSProperties = { margin: 0, color: "var(--color-text-secondary)" };
 /** A served state name wraps in its cell, never runs into the next one (A-1137-d02). */
 const WRAP: CSSProperties = { whiteSpace: "normal", overflowWrap: "anywhere" };
 
@@ -79,9 +89,18 @@ interface RowProps {
   readonly machine: StatechartMachine;
   readonly grid: TableRowContext;
   readonly today: number;
+  readonly hintId: string;
+  readonly onOpen: (machine: StatechartMachine) => void;
 }
 
-function MachineRow({ machine, grid, today }: RowProps): JSX.Element {
+function MachineRow({ machine, grid, today, hintId, onOpen }: RowProps): JSX.Element {
+  const onKeyDown = (event: KeyboardEvent<HTMLTableRowElement>): void => {
+    if (event.key !== "Enter" || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+      return;
+    }
+    event.preventDefault();
+    if (!event.repeat) onOpen(machine); // a held Enter opens once
+  };
   // A cell's content is one node beside its label, so a stacked card keeps it whole (A-1137-09).
   const cell = (column: number, content: ReactNode, style?: CSSProperties): JSX.Element => (
     <td {...grid.cellProps(column)}>
@@ -90,8 +109,13 @@ function MachineRow({ machine, grid, today }: RowProps): JSX.Element {
     </td>
   );
   return (
-    <tr {...grid.rowProps} data-machine-row={rowIdOf(machine)}>
-      <th {...grid.cellProps(0, { header: true, cut: machine.machine_key })}>
+    <tr
+      {...grid.rowProps}
+      data-machine-row={rowIdOf(machine)}
+      onKeyDown={onKeyDown}
+      onClick={() => onOpen(machine)}
+    >
+      <th {...grid.cellProps(0, { header: true, cut: machine.machine_key, describedBy: hintId })}>
         {grid.label(0)}
         {machine.machine_key}
       </th>
@@ -142,6 +166,8 @@ export interface MachineGridProps {
   readonly empty: GridEmpty;
   /** The start of the answer's UTC day: an update on another day shows its date. */
   readonly today: number;
+  /** Opens a row's machine (the page's query state, §5.2). */
+  readonly onOpen: (machine: StatechartMachine) => void;
 }
 
 function emptyBlock(empty: GridEmpty): JSX.Element {
@@ -159,23 +185,41 @@ export const MachineGrid = memo(function MachineGrid({
   error,
   empty,
   today,
+  onOpen,
 }: MachineGridProps): JSX.Element {
+  const hintId = useId();
+  // The visible cue that a row opens (A-1137-13) and the row headers' description, while rows show.
+  const rows = machines.length > 0 && !loading && error === undefined;
   return (
-    <Table
-      caption={COPY.list.machinesHeading}
-      captionHidden
-      columns={COLUMNS}
-      rows={machines}
-      rowKey={rowIdOf}
-      grid
-      reflow="grid"
-      loading={loading}
-      {...(error === undefined ? {} : { error })}
-      emptyState={emptyBlock(empty)}
-      announce={SILENT}
-      renderRow={(machine, grid) => (
-        <MachineRow key={rowIdOf(machine)} machine={machine} grid={grid} today={today} />
-      )}
-    />
+    <>
+      {rows ? (
+        <p id={hintId} style={HINT}>
+          {COPY.list.openHint}
+        </p>
+      ) : null}
+      <Table
+        caption={COPY.list.machinesHeading}
+        captionHidden
+        columns={COLUMNS}
+        rows={machines}
+        rowKey={rowIdOf}
+        grid
+        reflow="grid"
+        loading={loading}
+        {...(error === undefined ? {} : { error })}
+        emptyState={emptyBlock(empty)}
+        announce={SILENT}
+        renderRow={(machine, grid) => (
+          <MachineRow
+            key={rowIdOf(machine)}
+            machine={machine}
+            grid={grid}
+            today={today}
+            hintId={hintId}
+            onOpen={onOpen}
+          />
+        )}
+      />
+    </>
   );
 });

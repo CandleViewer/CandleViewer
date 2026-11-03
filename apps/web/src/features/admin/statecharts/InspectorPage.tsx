@@ -3,11 +3,12 @@
  * ruled): an owner-only admin page inside CMP-087, reached by its URL (nothing links to it yet).
  * Top to bottom (D05:746-752, board 09): CMP-088's `h1`, its "as of" line and [Re-read]; the kind
  * counters (CMP-049), a line per latched kind that has no rows; the danger banner while any
- * machine is latched; "Latched only" (CMP-004); and the machine grid (CMP-049).
+ * machine is latched; "Latched only" (CMP-004); the machine grid (CMP-049); and the machine view
+ * (§5.2) while the query names one (`?machine=&env=`, so it deep-links and Back closes it).
  *
  * It shows served values only (C-2.19 to C-2.22): every state, count and latch is the server's;
  * nothing is derived but words, and no interpreter is asked anything. Reads run on entry, on
- * [Re-read] and on a Retry, never on a timer (BQ-7). The page owns no live
+ * [Re-read], on a Retry and on opening a machine, never on a timer (BQ-7). The page owns no live
  * region: its lines are said once, politely, through the shell's announcer, behind any other
  * writer's last line; "as of", rows and re-reads are never said, a filter's result and a recovery
  * once each. It measures one render (`cv_admin_statecharts_render_ms`, E42-Q03) and reports
@@ -24,6 +25,7 @@ import {
   type CSSProperties,
   type JSX,
 } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router";
 import {
   ADMIN_COPY,
   Button,
@@ -41,6 +43,7 @@ import { hms, timeOf } from "../overview/tileModels";
 import { AdminDenied } from "../shell/AdminDenied";
 import { INSPECTOR_COPY } from "./copy";
 import {
+  machineRef,
   SEAL_FAILED,
   type MachineList,
   type StatechartKindSummary,
@@ -56,7 +59,8 @@ import {
 } from "./inspectorStore";
 import { isRowless, kindLabel } from "./kinds";
 import { KindCounters } from "./KindCounters";
-import { MachineGrid, type GridEmpty } from "./MachineGrid";
+import { MachineGrid, rowIdOf, type GridEmpty } from "./MachineGrid";
+import { MachineView } from "./MachineView";
 
 const COPY = INSPECTOR_COPY;
 
@@ -73,6 +77,13 @@ export const RENDER_MEASURE = "cv_admin_statecharts_render_ms";
 export const EMPTY_SURFACE = "admin.statecharts";
 /** Every announcer key this page writes starts with this. */
 const KEY = "admin:statecharts:";
+/**
+ * A machine view's history state: `cvInspectorOpened` when the list opened it with an entry of its
+ * own (Back to machines pops it), `cvInspectorFocus` when a row's Enter or press opened it (its
+ * heading takes focus, D05 §13); a deep link carries neither.
+ */
+const OPENED = "cvInspectorOpened";
+const FOCUS = "cvInspectorFocus";
 const DAY_MS = 86_400_000;
 
 /**
@@ -303,6 +314,13 @@ function useRenderBudget(answered: boolean): void {
   }, [answered]);
 }
 
+/** A flag of this history entry's state (`OPENED`, `FOCUS`). */
+const flag = (state: unknown, name: string): boolean =>
+  typeof state === "object" &&
+  state !== null &&
+  // Read as an unknown entry: an entry's state is whatever its writer gave it.
+  (state as Record<string, unknown>)[name] === true;
+
 /**
  * Whether the list's answer is a recovery: a good answer straight after a failed one, from the
  * render that shows it until the phase moves again (a filter's new read, a failure). Derived while
@@ -315,6 +333,16 @@ function useRecovered(phase: ListState["phase"]): boolean {
   const recovered = phase === "ok" && seen.phase === "failed";
   setSeen({ phase, recovered }); // state adjusted while rendering, no effect
   return recovered;
+}
+
+/** Gives focus back to a machine's row: its remembered cell, else its first. */
+function focusRow(grid: HTMLElement | null, id: string): void {
+  const rows = grid?.querySelectorAll<HTMLElement>("tr[data-machine-row]") ?? [];
+  const row = [...rows].find((tr) => tr.dataset["machineRow"] === id);
+  const cell =
+    row?.querySelector<HTMLElement>('[tabindex="0"]') ??
+    row?.querySelector<HTMLElement>("[data-cv-c]");
+  cell?.focus();
 }
 
 /** A latched kind with no rows (B8, B9, B13, B15): its line, never a row (`machine.rowless`). */
@@ -369,9 +397,63 @@ export function InspectorPage({ store = inspector }: InspectorPageProps = {}): J
   useEmptyReport(view);
   useRenderBudget(phase !== "idle");
 
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const opened = flag(location.state, OPENED);
+  const focused = flag(location.state, FOCUS);
+  const machine = machineRef(params.get("machine"), params.get("env"));
+  const key = machine?.key;
+  const env = machine?.env;
+  const grid = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
   const machinesHeading = useRef<HTMLHeadingElement>(null);
   const kindsId = useId();
   const machinesId = useId();
+
+  const open = useCallback(
+    (row: StatechartMachine): void => {
+      if (row.machine_key === key && row.environment === env) {
+        panel.current?.querySelector<HTMLElement>("h2")?.focus(); // already open: back to its heading
+        return;
+      }
+      const search = `?${new URLSearchParams({ machine: row.machine_key, env: row.environment })}`;
+      // From the list, a new entry, so Back closes the view; from another machine, that entry is
+      // replaced, so Back still returns to where the first one came from.
+      if (key === undefined)
+        void navigate({ search }, { state: { [OPENED]: true, [FOCUS]: true } });
+      else void navigate({ search }, { replace: true, state: { [OPENED]: opened, [FOCUS]: true } });
+    },
+    [navigate, key, env, opened],
+  );
+  const back = useCallback((): void => {
+    if (opened) void navigate(-1);
+    else void navigate({ search: "" }, { replace: true }); // a deep link: the list takes its place
+  }, [navigate, opened]);
+  // The focus flag moves focus once (its view's effect ran first): clearing it from the entry keeps
+  // browser Forward and a reload from moving focus again (A-1137-12; a first render moves none).
+  const query = location.search;
+  useEffect(() => {
+    if (focused) void navigate({ search: query }, { replace: true, state: { [OPENED]: opened } });
+  }, [focused, navigate, query, opened]);
+
+  // [Back to machines] or the browser's Back: focus returns to the machine's row, unless it went
+  // somewhere else on purpose.
+  const openRow =
+    key === undefined || env === undefined ? null : rowIdOf({ machine_key: key, environment: env });
+  const lastRow = useRef<string | null>(null);
+  useEffect(() => {
+    if (openRow !== null) {
+      lastRow.current = openRow;
+      return;
+    }
+    const row = lastRow.current;
+    lastRow.current = null;
+    if (row === null) return;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body && active.isConnected) return;
+    focusRow(grid.current, row);
+  }, [openRow]);
 
   // A Retry goes as its read succeeds: focus waits on the section's heading, never on the document,
   // and the recovery is said once (`loaded`; A-1137-02).
@@ -447,13 +529,16 @@ export function InspectorPage({ store = inspector }: InspectorPageProps = {}): J
           {rows === "shown" && list?.data.meta.has_more === true ? (
             <p style={NOTE}>{COPY.list.more}</p>
           ) : null}
-          <MachineGrid
-            machines={rows === "shown" && list !== null ? list.data.items : NO_MACHINES}
-            loading={view.kind === "loading" || rows === "loading"}
-            error={view.kind === "failed" || rows === "failed" ? listError : undefined}
-            empty={empty}
-            today={today}
-          />
+          <div ref={grid}>
+            <MachineGrid
+              machines={rows === "shown" && list !== null ? list.data.items : NO_MACHINES}
+              loading={view.kind === "loading" || rows === "loading"}
+              error={view.kind === "failed" || rows === "failed" ? listError : undefined}
+              empty={empty}
+              today={today}
+              onOpen={open}
+            />
+          </div>
         </section>
       </>
     );
@@ -472,6 +557,11 @@ export function InspectorPage({ store = inspector }: InspectorPageProps = {}): J
           }
         />
         {body}
+        {machine === null ? null : (
+          <div ref={panel}>
+            <MachineView machine={machine} onBack={back} focusOnOpen={focused} store={store} />
+          </div>
+        )}
       </div>
     </ScreenRoot>
   );
