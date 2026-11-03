@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -63,6 +63,8 @@ async function shellAt(path: string, role: Role = "owner", permissions: string[]
     </>,
   );
   await screen.findByRole("heading", { level: 1 });
+  // The heading can paint before the shell's effects run under load; Ctrl+K needs the registration.
+  await waitFor(() => expect(isCommandValid("global.palette")).toBe(true));
   return { router, view };
 }
 
@@ -244,7 +246,6 @@ describe("E10-S05 scenario 4: an action runs through the keymap registry", () =>
 
 describe("E10-S05 scenario 5: a dangerous command routes into its own confirmation", () => {
   it("is tagged confirms with a glyph; Enter closes the palette, then the handler opens its confirm", async () => {
-    const executed = vi.fn();
     // When the handler runs, the palette has closed: its layer is inert and focus has left it.
     const openConfirm = vi.fn(() => {
       const layer = document.querySelector("[data-cv-layer]");
@@ -260,7 +261,6 @@ describe("E10-S05 scenario 5: a dangerous command routes into its own confirmati
     fireEvent.keyDown(input(), { key: "Enter" });
     expect(openConfirm).toHaveBeenCalledTimes(1);
     expect(openConfirm.mock.results[0]?.value).toEqual(["closing", false]);
-    expect(executed).not.toHaveBeenCalled(); // the palette never fires the action itself
     expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
   });
 });
