@@ -5,8 +5,9 @@
 // an external store; the coalescing contract is the same. A live readout only (BQ 1, ruled (6612480577)): ticker
 // snapshots are not stored, so there is no history to draw a series from.
 import { useSyncExternalStore } from "react";
-import type { WsClient } from "../../lib/ws/api";
+import type { TopicHandle, WsClient } from "../../lib/ws/api";
 import type { TopicStatus } from "../../lib/ws/state/types";
+import type { BasisAnalytics } from "./analytics";
 import { parseBasisFrames, type BasisTick } from "./ticker";
 
 /** `23` §14.2 / common `symbol`: a USDT linear perpetual (C-1.3). */
@@ -42,8 +43,22 @@ export const browserBasisClock = (): BasisClock => ({
   wallNow: () => Date.now(),
 });
 
+/**
+ * The source's state (US-DERIV-008 scenario 3): `failed` only when the ticker topic is `revoked`; a
+ * `stale` topic goes through the stale chip (t2), never "Couldn't load" and Retry. Never a blank readout. `last_success_at` is a client view-model
+ * value (BQ 8, ruled (6612480577)): the wall time of the last accepted ticker item, kept across re-renders.
+ */
+export type SourceState =
+  | { readonly state: "ok" }
+  | {
+      readonly state: "failed";
+      readonly status: TopicStatus;
+      readonly lastSuccessAtMs: number | null;
+    };
+
 export interface BasisSnapshot {
   readonly feed: "idle" | TopicStatus;
+  readonly source: SourceState;
   readonly latest: BasisTick | null;
   readonly stale: {
     readonly tier: StaleTier;
@@ -56,18 +71,22 @@ export interface BasisFeedOptions {
   readonly symbol: string;
   readonly paneId: string;
   readonly clock?: BasisClock | undefined;
+  readonly analytics?: BasisAnalytics | undefined;
 }
 
 export interface BasisFeedHandle {
   readonly symbol: string;
   getSnapshot(): BasisSnapshot;
   subscribe(listener: () => void): () => void;
+  /** The retry band's action: drops the subscription and takes a new one; the last values stay shown. */
+  retry(): void;
   /** Releases the subscription and stops the loop. Idempotent. */
   stop(): void;
 }
 
 export const INITIAL_BASIS_SNAPSHOT: BasisSnapshot = {
   feed: "idle",
+  source: { state: "ok" },
   latest: null,
   stale: { tier: "fresh", ageMs: 0, lastTsMs: null },
 };
@@ -80,11 +99,16 @@ export function startBasisFeed(
   if (!BASIS_SYMBOL.test(symbol)) throw new RangeError("basis symbol must be a USDT perpetual");
   const clock = options.clock ?? browserBasisClock();
   const listeners = new Set<() => void>();
-  const handle = client.consume({ ch: `ticker.${symbol}`, paneId, priority: "other" });
+  const subscribe = (): TopicHandle =>
+    client.consume({ ch: `ticker.${symbol}`, paneId, priority: "other" });
+  let handle = subscribe();
+  let lastSuccessAtMs: number | null = null;
+  let shownFailed = false;
+  let pendingStructural = false;
   let snapshot: BasisSnapshot = INITIAL_BASIS_SNAPSHOT;
   let latest: BasisTick | null = null;
-  // the timestamp-ordering baseline: cleared on a reset (a restarted stream may carry older timestamps),
-  // while `latest` stays shown
+  // the timestamp-ordering baseline: cleared on a reset and a new subscription (a restarted stream may
+  // carry older timestamps), while `latest` stays shown
   let baselineTs: number | null = null;
   let version = 0;
   let lastArrival: number | null = null;
@@ -114,26 +138,40 @@ export function startBasisFeed(
       latest = tick;
       baselineTs = tick.tsMs;
       lastArrival = now;
+      lastSuccessAtMs = clock.wallNow();
       version += 1;
     }
     const ageMs = lastArrival === null ? 0 : now - lastArrival;
     const feed = handle.status;
-    // a `stale` topic is the stale chip at t2, the same as a served `stale: true`
+    // a `stale` topic is the stale chip at t2, the same as a served `stale: true` (never a retry state)
     const tier =
       latest === null || lastArrival === null
         ? "fresh"
         : staleTier(ageMs, latest.stale || feed === "stale");
+    const failed = feed === "revoked";
     // a state change publishes at once; a value change at most once a second; the chip's age per second
-    const structural = tier !== shownTier || feed !== shownFeed;
+    const structural =
+      pendingStructural || tier !== shownTier || feed !== shownFeed || failed !== shownFailed;
     const valueDue = version !== shownVersion && now - published >= PUBLISH_INTERVAL_MS;
     const ageDue = tier !== "fresh" && ageSeconds(ageMs) !== shownAge;
     if (structural || valueDue || ageDue) {
+      if (failed && !shownFailed) {
+        options.analytics?.sourceFailed(symbol, feed);
+        options.analytics?.retryShown(symbol);
+      }
+      pendingStructural = false;
+      shownFailed = failed;
       published = now;
       shownVersion = version;
       shownAge = ageSeconds(ageMs);
       shownTier = tier;
       shownFeed = feed;
-      publish({ feed, latest, stale: { tier, ageMs, lastTsMs: latest?.tsMs ?? null } });
+      publish({
+        feed,
+        source: failed ? { state: "failed", status: feed, lastSuccessAtMs } : { state: "ok" },
+        latest,
+        stale: { tier, ageMs, lastTsMs: latest?.tsMs ?? null },
+      });
     }
     frame = clock.raf(onFrame);
   };
@@ -146,6 +184,14 @@ export function startBasisFeed(
     subscribe: (listener) => {
       listeners.add(listener);
       return () => void listeners.delete(listener);
+    },
+    retry: () => {
+      if (stopped) return;
+      options.analytics?.retryClicked(symbol);
+      handle.release();
+      handle = subscribe();
+      baselineTs = null;
+      pendingStructural = true;
     },
     stop: () => {
       if (stopped) return;

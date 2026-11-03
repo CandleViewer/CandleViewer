@@ -37,3 +37,91 @@
 .cv-basis__stale {
   color: var(--color-text-secondary);
 }
+
+.cv-basis__panel {
+  display: flex;
+  flex-direction: column;
+  color: var(--color-text-primary);
+  background: var(--color-surface-canvas);
+  border-block-start: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+}
+
+.cv-basis__legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-xs) var(--space-inset-sm);
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+  background: var(--color-surface-raised);
+}
+
+.cv-basis__title {
+  margin: 0;
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+}
+
+.cv-basis__title:focus-visible {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-hairline) * 1px);
+}
+
+.cv-basis__toggle {
+  margin-inline-start: auto;
+}
+
+.cv-basis__retry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-xs) var(--space-inset-sm);
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+  background: var(--color-surface-raised);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+}
+
+/* No motion in this slice (no transition or animation), so there is nothing for prefers-reduced-motion to
+   reduce; a later fade must sit under `@media (prefers-reduced-motion: no-preference)`. */
+
+/* Forced colours: the band's tokenised border and fill are dropped, so draw the edge in a system colour. */
+@media (forced-colors: active) {
+  .cv-basis__retry {
+    border: 1px solid CanvasText;
+  }
+}
+
+.cv-basis__retry-title {
+  margin: 0;
+}
+
+.cv-basis__ratio-note {
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+}
+
+.cv-basis__table-wrap {
+  background: var(--color-surface-raised);
+  overflow-x: auto;
+}
+
+.cv-basis__table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-basis__table caption {
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+  text-align: start;
+  color: var(--color-text-secondary);
+}
+
+.cv-basis__table th,
+.cv-basis__table td {
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+  text-align: start;
+  border-block-end: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+}
+
+.cv-basis__ratio td {
+  color: var(--color-text-secondary);
+}

@@ -37,5 +37,33 @@ export const NO_BASIS = "no basis for this source";
 /** D03 §10.2 "Stale 7s · last 13:42:05": the chip carries the age, this the last-good time. */
 export const lastGood = (ms: number): string => `last ${utcTime(ms)}`;
 
-/** PROPOSED: the accessible name of the readout's polite region (the source change). */
+/**
+ * PROPOSED: D03 S54-8 `basis-retry` reads "Couldn't load the basis series · Retry" for the optional basis
+ * SERIES sub-pane. This slice is the live readout with no series (BQ 1, 6), so "the basis series" would be
+ * false here; the title says "basis" and the rest (Retry, "Last loaded hh:mm:ss UTC") is S54-8 verbatim.
+ */
+export const RETRY_TITLE = "Couldn't load basis";
+export const RETRY = "Retry";
+export const lastLoaded = (ms: number): string => `Last loaded ${utcTime(ms)}`;
+/** PROPOSED: the band when the source failed before any item arrived (no timestamp is invented). */
+export const NEVER_LOADED = "Nothing loaded yet.";
+
+/** D03 S54-9 `ratio-unavailable`: verbatim; no timestamp, no series (BQ 3, ruled (6612480577): the gap is on #784). */
+export const RATIO_LABEL = "L/S ratio";
+export const RATIO_UNAVAILABLE = "source unavailable";
+export const RATIO_ROW = `${RATIO_LABEL} · ${RATIO_UNAVAILABLE}`;
+
+export const TABLE_SHOW = "Show table";
+export const TABLE_HIDE = "Hide table";
+export const tableCaption = (symbol: string): string => `Basis, ${symbol}, latest values`;
+export const COL_TIME = "Time (UTC)";
+export const COL_MARK = "Mark (USDT)";
+export const COL_INDEX = "Index (USDT)";
+export const COL_BASIS = "Basis (USDT)";
+export const COL_PCT = "Basis %";
+export const COL_SOURCE = "Source";
+export const NO_ROWS = "No basis values yet.";
+
+/** PROPOSED: the accessible names of the two polite regions (the panel's state, the readout's source change). */
+export const STATE_REGION = "Basis state";
 export const SOURCE_REGION = "Basis source change";
