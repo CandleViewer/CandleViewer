@@ -11,7 +11,7 @@ import type * as Announcer from "../../../../src/features/app-shell/announcer";
 import { clearAnnouncements } from "../../../../src/features/app-shell/announcer";
 import { auditIntegrity } from "../../../../src/features/admin/audit/integrity";
 import { resetShellState } from "../../../../src/shell/bootstrap/store";
-import { ALEX_ID, T0, entry } from "./fixtures";
+import { BROKEN, ALEX_ID, T0, entry, json } from "./fixtures";
 import { flush, mountAuditPage, pagesOf, sessionAs } from "./harness";
 
 // The page renders CMP-049's grid, CMP-174 and the shell's announcer from the ui sources: a busy
@@ -365,6 +365,19 @@ describe("stepping and closing (D14, §5)", () => {
     await flush(1_000);
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.activeElement?.closest("tr")).toBe(row(1_204_119));
+    page.unmount();
+  });
+
+  it("test_drawer_record_at_or_after_the_break_is_not_verified", async () => {
+    const page = await mountAuditPage({
+      routes: { audit: pagesOf(ROWS), verify: () => json(200, BROKEN) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Run tamper check" }));
+    await flush();
+    await open(1_204_120);
+    expect(
+      within(drawer()).getByText("Not verified — at or after the break at entry 1,204,118."),
+    ).toBeInTheDocument();
     page.unmount();
   });
 });

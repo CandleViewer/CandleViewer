@@ -37,7 +37,7 @@ test("E42-S01 an owner enters the admin area: the band on each page, no gate and
   };
   await visit("/admin", "Overview", "Overview");
   await visit("/admin/users", "Users and roles", "R-301 — owned by E18");
-  await visit("/admin/audit", "Audit log", "R-360 — owned by E09");
+  await visit("/admin/audit", "Audit log", "Audit log"); // SCR-135 (E42-S04)
   await visit("/admin/security", "Security centre", "Security centre");
   await expect(page.getByText("Security posture checks ship in R4 (E43)")).toBeVisible();
   await expect(page.getByRole("link", { name: "Audit log" })).toHaveAttribute(

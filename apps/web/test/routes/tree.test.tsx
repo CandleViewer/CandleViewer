@@ -112,10 +112,11 @@ describe("route tree x RBAC matrix", () => {
     },
   );
 
-  // The walk mounts every manifest route in turn, so its time grows with the manifest: its own budget.
+  // The walk mounts every manifest route in turn, so its time grows with the manifest: its own budget,
+  // with room for the routes whose cold lazy chunks a busy host transforms first.
   it(
     "every manifest route is reachable by at least one role without crashing",
-    { timeout: 15_000 },
+    { timeout: 60_000 },
     async () => {
       claimsFor("owner");
       for (const entry of ROUTE_MANIFEST) {
@@ -124,7 +125,10 @@ describe("route tree x RBAC matrix", () => {
         const concretePath = entry.path.replace(/:[a-zA-Z]+/g, "x");
         const router = createMemoryRouter(buildRoutes(), { initialEntries: [concretePath] });
         const { unmount } = render(<RouterProvider router={router} />);
-        await waitFor(() => expect(screen.getByRole("main")).toBeInTheDocument());
+        // a lazy route's cold chunk (R-360's included) can take more than the default second
+        await waitFor(() => expect(screen.getByRole("main")).toBeInTheDocument(), {
+          timeout: 5_000,
+        });
         unmount();
       }
     },
@@ -136,8 +140,10 @@ describe("E49-S07 reachability through the real route tree", () => {
   it("mounts SCR-113 HotkeyEditor at /settings/hotkeys", async () => {
     claimsFor("owner");
     renderAt("/settings/hotkeys");
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { name: /hotkeys|keyboard/i })).toBeInTheDocument(),
+    // a cold lazy chunk can take more than the default second on a loaded host
+    await waitFor(
+      () => expect(screen.getByRole("heading", { name: /hotkeys|keyboard/i })).toBeInTheDocument(),
+      { timeout: 5_000 },
     );
   });
 });
@@ -225,7 +231,7 @@ const PAGE_H1: Readonly<Record<string, string>> = {
   "R-300": "Overview", // SCR-120 (E42-S01)
   "R-303": "Invite user",
   "R-354": "Security centre",
-  "R-360": "R-360 — owned by E09",
+  "R-360": "Audit log", // SCR-135 (E42-S04)
 };
 
 /** A session as the bootstrap leaves it: the guards' claims and the shell's `me` and environment. */
@@ -295,7 +301,8 @@ describe("E42-S01: the admin routes inside CMP-087 AdminLayout", () => {
     renderAt("/admin/audit");
     const band = await screen.findByRole("region", { name: "Admin area" }, ROUTE_WAIT);
     expect(band.textContent).toBe("◆ Admin area · Audit log");
-    expect(screen.getByRole("heading", stub)).toBeInTheDocument();
+    // E42-S04: SCR-135 for the owner, inside CMP-087
+    expect(screen.getByRole("heading", { name: "Audit log", level: 1 })).toBeInTheDocument();
   });
 
   it(

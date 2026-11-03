@@ -1,6 +1,6 @@
 /**
- * E42-S04 (#1135): SCR-135 for the Owner at R-360 (E42-D04 §4, D4 to D9, AL-1 to AL-17). The page
- * renders the page store's state and makes no request of its own: every
+ * E42-S04 (#1135): SCR-135 for the Owner at R-360 (E42-D04 §4, D4 to D11, AL-1 to AL-17). The page
+ * renders the page store's and the integrity store's state and makes no request of its own: every
  * call here is the stubbed server's record (no network, C-13.5), and every line said is the shell's
  * announcer's (the page owns no live region; E42-S01's BQ-8). The worked example (§1): the Owner
  * `basiltt`, LIVE, 2026-10-22 "as of 14:02:11".
@@ -9,9 +9,22 @@ import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as Announcer from "../../../../src/features/app-shell/announcer";
 import { clearAnnouncements } from "../../../../src/features/app-shell/announcer";
+import { auditIntegrity } from "../../../../src/features/admin/audit/integrity";
 import { resetShellState } from "../../../../src/shell/bootstrap/store";
-import { OWNER_ID, REF, T0, entries, entry, json, pageBody, problem } from "./fixtures";
-import { AUDIT, flush, mountAuditPage, pagesOf, sessionAs } from "./harness";
+import {
+  BROKEN,
+  OWNER_ID,
+  REF,
+  T0,
+  entries,
+  entry,
+  incident,
+  json,
+  pageBody,
+  problem,
+  verifyBody,
+} from "./fixtures";
+import { AUDIT, INCIDENTS, VERIFY, flush, mountAuditPage, pagesOf, sessionAs } from "./harness";
 
 // The page renders CMP-049's grid, CMP-174 and the shell's announcer from the ui sources: a busy
 // host can take seconds over a mount, as with SCR-120's page tests.
@@ -61,19 +74,24 @@ beforeEach(() => {
   vi.setSystemTime(T0);
   said.length = 0;
   clearAnnouncements();
+  auditIntegrity.reset();
   sessionAs("owner");
 });
 
 afterEach(() => {
+  auditIntegrity.reset();
   resetShellState();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
 describe("SCR-135 on entry (AL-1, AL-2)", () => {
-  it("test_page_entry_reads_page_one_with_a_get_only", async () => {
+  it("test_page_entry_reads_page_one_and_the_incidents_with_gets_only", async () => {
     const page = await mountAuditPage({ routes: { audit: pagesOf(PAGE_1) } });
-    expect(page.sent.map((s) => `${s.method} ${s.url}`)).toEqual([`GET ${AUDIT}?limit=200`]);
+    expect(page.sent.map((s) => `${s.method} ${s.url}`)).toEqual([
+      `GET ${AUDIT}?limit=200`,
+      `GET ${INCIDENTS}?limit=100`,
+    ]);
     page.unmount();
   });
 
@@ -91,7 +109,7 @@ describe("SCR-135 on entry (AL-1, AL-2)", () => {
     waiting.unmount();
   });
 
-  it("test_page_populated_states_the_log_append_only_with_its_marker_and_caption", async () => {
+  it("test_page_populated_states_the_log_append_only_with_its_marker_caption_and_checked_page", async () => {
     const page = await mountAuditPage({ routes: { audit: () => withNext(PAGE_1, "c1") } });
     expect(inPage().getByText("All times UTC · as of 14:02:11")).toBeInTheDocument();
     expect(
@@ -104,6 +122,7 @@ describe("SCR-135 on entry (AL-1, AL-2)", () => {
       "Audit log, newest first. All times UTC. Role at the time is not recorded yet.",
     );
     expect(rowIds()).toEqual([1_204_300, 1_204_299, 1_204_298]);
+    expect(inPage().getByText("Tamper check: this page checked — passed")).toBeInTheDocument();
     // page 1: Newest and Newer are T2 `admin.newest`; Older reads on
     for (const name of ["Newest", "Newer"]) {
       const button = pagerButton(name);
@@ -495,6 +514,98 @@ describe("the withdrawn area (SCR-154 N-2)", () => {
     expect(onWithdrawn.mock.calls).toEqual([[REF]]);
     await flush(120_000);
     expect(page.reads()).toHaveLength(1);
+    page.unmount();
+  });
+});
+
+describe("Run tamper check and the incident (D10, D11, AL-11 to AL-13, §7)", () => {
+  it("test_page_posts_the_check_only_on_press_and_says_its_result_once", async () => {
+    const page = await mountAuditPage({
+      routes: { audit: pagesOf(PAGE_1), verify: () => json(200, verifyBody()) },
+    });
+    expect(page.sent.filter((s) => s.method !== "GET")).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Run tamper check" }));
+    await flush();
+    const posts = page.sent.filter((s) => s.method === "POST");
+    expect(posts.map((s) => [s.url, s.body])).toEqual([[VERIFY, "{}"]]);
+    const passed =
+      "Tamper check: entries 204,119–1,204,118 checked at 14:05 UTC — passed. This covers that range only.";
+    expect(inPage().getByText(passed)).toBeInTheDocument();
+    expect(polite()).toEqual([passed]);
+    expect(
+      inPage().getByText("Recorded in the audit log · admin.audit_verify"),
+    ).toBeInTheDocument();
+    page.unmount();
+  });
+
+  it("test_page_failed_check_raises_the_banner_once_and_reads_the_incidents_at_once", async () => {
+    const title = "Tamper check FAILED at entry 1,204,118 — treat this as a security incident";
+    const page = await mountAuditPage({
+      routes: { audit: pagesOf(PAGE_1), verify: () => json(200, BROKEN) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Run tamper check" }));
+    await flush();
+    expect(screen.getByRole("alert")).toHaveTextContent(title);
+    // the footer says it too, with the octagon, silently: the banner speaks
+    expect(inPage().getAllByText(title)).toHaveLength(2);
+    expect(polite()).toEqual([]);
+    // the orchestrator's Q2 (a): the incidents are read again at once, not in 60 s
+    expect(page.sent.filter((s) => s.url.startsWith(INCIDENTS))).toHaveLength(2);
+    // no Retry, re-run, dismiss or acknowledge in the banner (§7)
+    const banner = document.querySelector<HTMLElement>("[data-tamper-banner]");
+    const names = within(banner as HTMLElement)
+      .getAllByRole("button")
+      .map((b) => b.getAttribute("aria-label") ?? b.textContent ?? "");
+    expect(names).toEqual(["Copy details", "What to do now"]);
+    page.unmount();
+    // a later mount is static: one voice per episode (D11)
+    const again = await mountAuditPage({ routes: { audit: pagesOf(PAGE_1) } });
+    expect(inPage().getAllByText(title).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("alert")).toBeNull();
+    again.unmount();
+  });
+
+  it("test_page_open_incident_says_the_halt_and_acknowledged_the_standing_line", async () => {
+    const page = await mountAuditPage({
+      routes: {
+        audit: pagesOf(PAGE_1),
+        incidents: (n) =>
+          json(200, {
+            items: [incident(n === 0 ? {} : { status: "acknowledged" })],
+            meta: { next_cursor: null, has_more: false, count: 1 },
+          }),
+      },
+    });
+    expect(
+      inPage().getByText(/New orders that open or add to a position are halted/),
+    ).toBeVisible();
+    await flush(60_000);
+    expect(inPage().queryByText(/are halted/)).toBeNull();
+    expect(inPage().getByText(/A break does not stop order entry by itself/)).toBeVisible();
+    page.unmount();
+  });
+});
+
+describe("refusals at the point of action (E09-D09 T4)", () => {
+  it("test_page_view_as_refusal_of_the_check_is_not_sent_at_the_button", async () => {
+    // the session holds no view-as context the client can see: the server's refusal is T4
+    const page = await mountAuditPage({
+      routes: { audit: pagesOf(PAGE_1), verify: () => problem(403, "view_as_read_only") },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Run tamper check" }));
+    await flush();
+    expect(inPage().getByText("Not sent — your access changed.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Audit log" })).toBeInTheDocument();
+    page.unmount();
+  });
+
+  it("test_page_read_only_session_says_inflight_read_only_at_the_button", async () => {
+    const page = await mountAuditPage({
+      routes: { audit: pagesOf(PAGE_1), verify: () => problem(403, "session_read_only") },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Run tamper check" }));
+    await flush();
+    expect(inPage().getByText("Not sent — read-only after three wrong codes.")).toBeInTheDocument();
     page.unmount();
   });
 });
