@@ -16,7 +16,10 @@ checks, each before the next (24 Sec.8.4, steps 1 to 12):
    runtime's own `AnchorService` (SEC-S3D-02): a replay answers the rows as read now, with its
    order's `ETag` as it stands;
 9. `trading.oms_enabled`, which an order whose parsed body says `reduce_only: true` passes;
-10. the switches B1's `SEND` asks too; 11. the body read strictly into the pipeline's request;
+10. the switches B1's `SEND` asks too, with the credential key's latch read between the kill
+    switch and the order-entry gate (`api.order_kek`, #2331, the slot PROPOSED): 403
+    `kek_unavailable`, a `reduce_only` order too; 11. the body read strictly into the pipeline's
+    request;
 12. `submit`, run by the runtime as a task it tracks and shielded from the client's disconnect:
     the task renders the answer and keeps a first `2xx` in the 24 h record itself. A `202` carries
     its order's `ETag` (ruling Q5, `api.order_etag`) where B1's facade gives a version, none in a
@@ -73,6 +76,7 @@ from candleviewer.api.order_admission import (
 )
 from candleviewer.api.order_entry_gate import count_refusal
 from candleviewer.api.order_etag import order_etag
+from candleviewer.api.order_kek import KekLatch, entry_refusal
 from candleviewer.api.order_problems import order_problem, outcome_problem
 from candleviewer.api.refusal_session import SessionsLike
 from candleviewer.audit.errors import AuditError
@@ -100,6 +104,7 @@ from candleviewer.oms.errors import (
     OmsNotReady,
     OrderEntryRefused,
     OrderInvalid,
+    OrderKekUnavailable,
     SessionNotArmed,
     StoreUnavailable,
     TradingDisabled,
@@ -305,11 +310,12 @@ def make_orders_router(
     principals: OrderPrincipals | None, runtime: Callable[[], OrderRuntime | None], *,
     audit: AuditEmitter, records: SubmitAudit, oms_enabled: Callable[[], bool], metrics: Metrics,
     auth: SessionsLike | None = None, replays: IdempotencyCache | None = None,
-    pager: Pager | None = None,
+    pager: Pager | None = None, kek: KekLatch | None = None,
 ) -> APIRouter:  # fmt: skip
     """`POST /orders` (module docstring). No principal source (no identity composed) answers 501,
     as no runtime (the fake backend) does after RBAC. `audit` takes `rbac.denied`, `records` the
-    route's other refusals; `replays` is the 24 h record of first `2xx` answers."""
+    route's other refusals; `replays` is the 24 h record of first `2xx` answers; `kek`, the OMS
+    read-only gate, is the credential key's latch step 10 reads (#2331)."""
     router = APIRouter(tags=["trading"])
     kept = replays if replays is not None else IdempotencyCache()
     paging: Pager = LogPager() if pager is None else pager
@@ -515,7 +521,9 @@ def make_orders_router(
             if not oms_enabled() and body.get("reduce_only") is not True:
                 raise TradingDisabled
             step = "switches"
-            switched = reads.switches.refusal(account_id, env)
+            switched = entry_refusal(kek, reads.switches.refusal(account_id, env))
+            if isinstance(switched, OrderKekUnavailable):
+                step = "kek"
             if switched is not None:
                 raise switched
             step = "body"

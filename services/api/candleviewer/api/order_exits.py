@@ -30,7 +30,10 @@ when step 5 finds every component protective.
    the arm records refuse it: a live account without a token); a cut never needs one (C-2.6);
 7. `Idempotency-Key`; 8. the 24 h record of first `2xx` answers, by principal, operation and key,
    whose fingerprint is the method, the order's path and the body (a cancel has none); an amend's
-   replays its stored `ETag`;
+   replays its stored `ETag`; then, for a risk-increasing amend only, the credential key's latch
+   (`api.order_kek`, #2331, the slot PROPOSED): latched, and with neither live trading nor the
+   kill switch refusing it (the switches read only then), 403 `kek_unavailable`, recorded through
+   `OrderExits.deny` at step `kek`; a cancel and every other amend never read it (C-2.6);
 9. the in-flight guard and 11. the exit service's step (`cancel_admitted`, `amend`), through
    `run_claimed`: it runs as the runtime's tracked task, shielded from the client's disconnect.
    That task renders the answer (`exit_response`) and keeps a `202` in the 24 h record, and the
@@ -101,6 +104,7 @@ from candleviewer.api.order_exits_common import (
     exit_response,
     run_claimed,
 )
+from candleviewer.api.order_kek import KekLatch, kek_refusal
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.api.order_problems import order_problem
 from candleviewer.api.refusal_session import SessionsLike
@@ -111,7 +115,7 @@ from candleviewer.api.view_as_subject import view_as_stamp
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.scopes import ForbiddenError, decide, enforce
 from candleviewer.auth.view_as import ViewAsRequestContext
-from candleviewer.domain.primitives import Environment
+from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.errors import (
     FieldError,
@@ -134,7 +138,7 @@ from candleviewer.oms.exits import (
     protective_amend,
     risk_increasing,
 )
-from candleviewer.oms.ports import FAILED, ArmRecords, StopOffset, SubmitActor
+from candleviewer.oms.ports import FAILED, ArmRecords, StopOffset, SubmitActor, TradingSwitches
 from candleviewer.statechart.plugins import LogPager, Pager
 from candleviewer.storage.repositories.orders import OrderRow, ScopedOrder
 
@@ -189,6 +193,8 @@ class _RouteReads(Protocol):
     def environment(self) -> Environment: ...
     @property
     def arm_records(self) -> ArmRecords: ...
+    @property
+    def switches(self) -> TradingSwitches: ...
     @property
     def versions(self) -> _Versions: ...
 
@@ -275,6 +281,7 @@ def make_order_exits_router(
     replays: IdempotencyCache | None = None, pager: Pager | None = None,
     protective: ProtectiveWrites | None = None,
     view_as_refusals: Callable[[], ViewAsRefusalRecorder | None] | None = None,
+    kek: KekLatch | None = None,
 ) -> APIRouter:  # fmt: skip
     """`DELETE` and `PATCH /orders/{orderId}` (module docstring). No principal source (no identity
     composed) answers 501, as no runtime (the fake backend) does after RBAC. `audit` takes step 2's
@@ -283,9 +290,10 @@ def make_order_exits_router(
     viewer's cancel and amend themselves: a cancel protective whole (C-2.6), an amend by its
     components (step 5), each run as the viewer in the scope `exit_caller` gives
     (`scope_for_target`); `view_as_refusals`, read per request, records a viewer's refused amend,
-    and with none composed that refusal answers `503 audit_unavailable` (C-2.9). Cancel-all is
-    its own router (`api/order_cancel_all.py`), mounted ahead of this one (the orchestrator's
-    ruling of 2026-10-24 19:43Z)."""
+    and with none composed that refusal answers `503 audit_unavailable` (C-2.9). `kek`, the OMS
+    read-only gate, is the credential key's latch a risk-increasing amend reads (#2331).
+    Cancel-all is its own router (`api/order_cancel_all.py`), mounted ahead of this one (the
+    orchestrator's ruling of 2026-10-24 19:43Z)."""
     if protective is not None:
         protective.register(_OPERATION)
         protective.register(_AMEND_OPERATION)
@@ -486,7 +494,8 @@ def make_order_exits_router(
             if viewing is not None and not protective_amend(row, terms):
                 return await viewer_refused(viewing, request)
             step = "arm"
-            if risk_increasing(row, terms):  # step 6, judged on step 4's read
+            increasing = risk_increasing(row, terms)
+            if increasing:  # step 6, judged on step 4's read
                 armed = got.reads.arm_records.check(
                     session_id=got.principal.session_id, environment=got.reads.environment,
                     token=arm_token(request),
@@ -503,6 +512,14 @@ def make_order_exits_router(
             return await audit_refusal(_AMEND, exits, row, caller, step, _refusal(exc))
         if cached is not None:
             return cached
+        if increasing:  # the credential key's latch (#2331), after step 8
+            account, env = AccountId(row.exchange_account_id), got.reads.environment
+            try:
+                refused = kek_refusal(kek, lambda: got.reads.switches.refusal(account, env))
+            except OmsNotReady:  # the serving loop's stall fence, as step 3's
+                return not_ready(_AMEND)
+            if refused is not None:
+                return await audit_refusal(_AMEND, exits, row, caller, "kek", _refusal(refused))
         fields = request.headers.getlist("if-match")  # every field sent, one list (RFC 9110)
         named = ", ".join(fields) if fields else None  # one empty field names no tag: a 412
         expected = expected_seq(named, row.id)

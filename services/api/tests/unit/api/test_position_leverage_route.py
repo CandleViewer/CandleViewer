@@ -166,6 +166,7 @@ class Runtime:
 @dataclass
 class _Route:
     arm_records: Arm
+    switches: Switches
 
 
 @dataclass
@@ -185,6 +186,7 @@ class World:
     no_principals: bool = False
     principals_fail: bool = False
     cache: IdempotencyCache = field(default_factory=IdempotencyCache)
+    kek: Any = None  # the OMS read-only gate as the credential key's latch (#2331)
     port: FakeTradingPort = field(init=False)
     records: Records = field(init=False)
 
@@ -205,7 +207,7 @@ class World:
             ports=lambda env: self.port, switches=self.switches, audit=self.records,
             environment=self.environment,
         ))  # fmt: skip
-        return Runtime(service, _Route(self.arm), self.readiness, self.refuse_run)
+        return Runtime(service, _Route(self.arm, self.switches), self.readiness, self.refuse_run)
 
     def app(self) -> FastAPI:
         reads = OmsReads(ReadStore(self.store), self.environment) if self.reads_composed else None
@@ -215,7 +217,7 @@ class World:
             None if self.no_principals else Principals(fail=self.principals_fail),
             lambda: runtime, reads, audit=self.audit, records=self.records,
             oms_enabled=lambda: self.oms_enabled, metrics=Metrics("demo"), replays=self.cache,
-            limiter=WriteLimiter(rate_per_minute=self.rate, clock=lambda: 0.0),
+            limiter=WriteLimiter(rate_per_minute=self.rate, clock=lambda: 0.0), kek=self.kek,
         ))  # fmt: skip
         return app
 

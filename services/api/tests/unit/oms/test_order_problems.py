@@ -43,6 +43,7 @@ from candleviewer.oms.errors import (
     OmsNotReady,
     OrderEntryRefused,
     OrderInvalid,
+    OrderKekUnavailable,
     OrderLinkIdExhausted,
     OrderMachinesFull,
     OrderNotAmendable,
@@ -106,6 +107,7 @@ _EXPECTED: list[tuple[OmsError, int, str, bool, bool]] = [
         False,
     ),
     (SessionNotArmed(), 403, "session_not_armed", False, False),
+    (OrderKekUnavailable(), 403, "kek_unavailable", False, False),
     (OrderNotFound(), 404, "not_found", False, False),
     (ProfileNotFound(), 404, "not_found", False, False),
     (IdempotencyKeyReuse(), 409, "idempotency_key_reuse", False, False),
@@ -242,6 +244,10 @@ _DETAILS: dict[type[OrderRefused], str] = {
     TradingDisabled: "Order entry is disabled.",
     OrderPlacementRefused: "Order entry is paused: the terminal is read-only.",
     SessionNotArmed: "This session is not armed for live trading.",
+    OrderKekUnavailable: (
+        "Order entry is paused: the credential key is not loaded, so no new exposure is sent "
+        "until the app restarts with it."
+    ),
     OrderNotFound: "No such order.",
     ProfileNotFound: "No such profile.",
     IdempotencyKeyReuse: "The Idempotency-Key was first used with another request.",

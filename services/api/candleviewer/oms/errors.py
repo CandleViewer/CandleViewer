@@ -377,6 +377,17 @@ class OrderEntryRefused(TradingDisabled):
         self.reason: RefusalReason = refusal.reason
 
 
+class OrderKekUnavailable(OrderRefused):
+    """`kek_unavailable` at an order route (#2331; 24 Sec.8.4 step 10): the credential key did not
+    load at boot, so an order that opens or increases exposure is refused before anything is sent.
+    Its `detail` is fixed, never the latch's remediation text (`api.order_kek`)."""
+
+    default_detail = (
+        "Order entry is paused: the credential key is not loaded, so no new exposure is sent "
+        "until the app restarts with it."
+    )
+
+
 class SessionNotArmed(OrderRefused):
     default_detail = "This session is not armed for live trading."
 
@@ -565,6 +576,7 @@ PROBLEMS: Final[Mapping[type[OmsError], Problem]] = MappingProxyType(
         RiskRefused: Problem(403, "risk_limit_breached"),
         TradingDisabled: Problem(403, "trading_disabled"),
         SessionNotArmed: Problem(403, "session_not_armed"),
+        OrderKekUnavailable: Problem(403, "kek_unavailable"),
         OrderNotFound: Problem(404, "not_found"),
         ProfileNotFound: Problem(404, "not_found"),
         IdempotencyKeyReuse: Problem(409, "idempotency_key_reuse"),

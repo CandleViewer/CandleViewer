@@ -26,7 +26,9 @@ view-as context: it is no protective write) the route checks, each before the ne
    is the stored answer, `Idempotency-Replayed: true`, another body under the key 409
    `idempotency_key_reuse`; 10. the in-flight guard: the key's first request still running is 409
    `idempotency_in_flight` with `Retry-After: 1`, a guard holding `MAX_IN_FLIGHT` keys 429
-   `rate_limited`; 11. `trading.oms_enabled`, off: 403 `trading_disabled`;
+   `rate_limited`; 11. `trading.oms_enabled`, off: 403 `trading_disabled`; then the credential
+   key's latch (`api.order_kek`, #2331, the slot PROPOSED): latched, and with neither live trading
+   nor the kill switch refusing the change (the switches read only then), 403 `kek_unavailable`;
 12. the change (`oms.leverage.PositionLeverage`), run by the runtime as a task it tracks and
     shielded from the client's disconnect: the switches, the bounds (422 `validation_failed`), the
     write-ahead record, the venue's call. Its `200` is 22 `Position`: the row as read at step 5,
@@ -68,6 +70,7 @@ from candleviewer.api.order_admission import (
     resolve_principal,
     submit_actor,
 )
+from candleviewer.api.order_kek import KekLatch, kek_refusal
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.api.order_problems import order_problem
 from candleviewer.api.recording_writes import WriteLimiter
@@ -99,7 +102,14 @@ from candleviewer.oms.leverage import (
     LeverageOutOfBounds,
     LeverageRequest,
 )
-from candleviewer.oms.ports import FAILED, ArmRecords, RequestRecord, SubmitActor, SubmitAudit
+from candleviewer.oms.ports import (
+    FAILED,
+    ArmRecords,
+    RequestRecord,
+    SubmitActor,
+    SubmitAudit,
+    TradingSwitches,
+)
 from candleviewer.oms.reads import OmsReads
 from candleviewer.statechart.plugins import LogPager, Pager
 from candleviewer.storage.repositories.positions import PositionRow
@@ -140,6 +150,8 @@ class _Changes(Protocol):
 class _RouteReads(Protocol):
     @property
     def arm_records(self) -> ArmRecords: ...
+    @property
+    def switches(self) -> TradingSwitches: ...
 
 
 class LeverageRuntime(Protocol):
@@ -192,10 +204,11 @@ def make_position_leverage_router(
     reads: OmsReads | None, *, audit: AuditEmitter, records: SubmitAudit,
     oms_enabled: Callable[[], bool], metrics: Metrics, auth: SessionsLike | None = None,
     replays: IdempotencyCache | None = None, limiter: WriteLimiter | None = None,
-    pager: Pager | None = None,
+    pager: Pager | None = None, kek: KekLatch | None = None,
 ) -> APIRouter:  # fmt: skip
     """`PUT /positions/{positionId}/leverage` (module docstring). `audit` takes `rbac.denied`,
-    `records` the change's refusals; `replays` is the 24 h record of first `200` answers."""
+    `records` the change's refusals; `replays` is the 24 h record of first `200` answers; `kek`,
+    the OMS read-only gate, is the credential key's latch step 11 reads (#2331)."""
     router = APIRouter(tags=["positions"])
     kept = replays if replays is not None else IdempotencyCache()
     rate = limiter if limiter is not None else WriteLimiter(rate_per_minute=RATE_PER_MINUTE)
@@ -370,6 +383,11 @@ def make_position_leverage_router(
             step = "flag"
             if not oms_enabled():
                 raise TradingDisabled
+            step = "kek"
+            account, env = AccountId(row.exchange_account_id), reads.environment
+            refused = kek_refusal(kek, lambda: oms.route.switches.refusal(account, env))
+            if refused is not None:
+                raise refused
         except OmsNotReady:
             return not_ready()
         except OmsError as exc:

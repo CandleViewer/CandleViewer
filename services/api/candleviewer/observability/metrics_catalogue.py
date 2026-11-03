@@ -3694,7 +3694,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "store_unavailable, audit_unavailable or internal_error > 0 for 5 min (page)",
         _P,
         "E29",
-        max_series=22,
+        max_series=23,
     ),
     _s(
         "oms_exit_refused_total",

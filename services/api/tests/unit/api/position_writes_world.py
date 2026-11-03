@@ -402,6 +402,7 @@ class World:
     metrics: Metrics = field(default_factory=lambda: Metrics("demo"))
     #: SR-E22-03's `MIN_SIZE_FLOOR` per symbol, as `create_app` hands it to the close route.
     floor: Callable[[str], Decimal | None] | None = None
+    kek: Any = None  # the OMS read-only gate as the credential key's latch (#2331)
     records: Records = field(init=False)
 
     def __post_init__(self) -> None:
@@ -429,7 +430,8 @@ class World:
             source, lambda: runtime, reads, min_size_floor=self.floor, **common
         ))  # fmt: skip
         app.include_router(make_position_reverse_router(
-            source, lambda: runtime, reads, oms_enabled=lambda: self.oms_enabled, **common,
+            source, lambda: runtime, reads, oms_enabled=lambda: self.oms_enabled, kek=self.kek,
+            **common,
         ))  # fmt: skip
         return app
 

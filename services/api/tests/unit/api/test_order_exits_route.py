@@ -198,6 +198,7 @@ class World:
     pages: list[str] = field(default_factory=list)
     viewing: ViewAsRequestContext | None = None
     refusals: ViewAsRefusalRecorder | None = None
+    kek: Any = None  # the OMS read-only gate as the credential key's latch (#2331)
 
     def raise_alert(self, severity: str, summary: str, *, machine_kind: str) -> None:
         self.pages.append(summary)
@@ -207,7 +208,7 @@ class World:
         more = {} if self.refusals is None else {"view_as_refusals": lambda: self.refusals}
         app.include_router(make_order_exits_router(
             self.principals, lambda: self.oms if self.composed else None, audit=self.audit,
-            metrics=self.metrics, replays=self.cache, pager=self, **more,
+            metrics=self.metrics, replays=self.cache, pager=self, kek=self.kek, **more,
         ))  # fmt: skip
         if self.viewing is not None:
             app.middleware("http")(stamped(self.viewing))
