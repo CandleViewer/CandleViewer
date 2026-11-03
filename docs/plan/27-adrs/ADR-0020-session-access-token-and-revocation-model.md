@@ -2,6 +2,7 @@
 
 - Status: **accepted** — ratified 2026-10-29 by main-orchestrator under the owner's delegation, #2701 ledger 2 (comment 6493096777), row 39; the owner may revoke there (spike E09-K01, timeboxed 3 days)
 - Date: 2026-09-25
+- Amended: 2026-10-21, Amendment 1 (#2712); 2026-11-03, Amendment 2 (decision 6 as built, #1085). Each is a dated section at the end, the README's rule 3 path for a refinement, and decision 6 is not edited in place (C-15.1).
 - Deciders: Owner (`@basiltt`) — see `docs/plan/backlog/all-tickets.json` E09-K01 "Agent-delivery adaptations": owner approval substitutes for Architect/Security-engineer countersignature; recorded here as ratified 2026-10-29 under the owner's delegation (see Status), in place of the owner's `approved` comment on issue #134.
 - Consulted: `docs/plan/21-database-schema.md` §3.1.4, `docs/plan/24-internal-schemas.md` §15.1, `docs/plan/23-ws-protocol.md` §4.3/§9.5, `docs/plan/20-architecture.md` §5, `docs/plan/06-performance-and-load-standard.md`, `docs/plan/04-security-program.md`, `docs/plan/11-user-stories.md` US-ONB-004/US-ONB-009
 - Related: ADR-0010 (auth and RBAC — establishes opaque server-side sessions; this ADR refines the access-token/WS layer that ADR-0010 left at "no JWT in localStorage" without specifying the WS first-frame credential), ADR-0016 (statechart runtime — B16 `auth`×`elevation` chart consumes `elevated_until`/`mfa_satisfied_at` from this model)
@@ -148,3 +149,14 @@ BroadcastChannel reaches only same-origin contexts of that browser (tabs, worker
 channel gives no reader outside the origin. The only thing the token client writes to storage is
 the send time of its last refresh (`cv.auth.refresh_sent_at`), kept until an answer shows what
 became of the cookie; never the token.
+
+## Amendment 2 (2026-11-03, #1085: decision 6 as built)
+
+Refines decision 6; does not reverse it. The aggregate `elevated_until` is still derived, never stored. What differs
+is its source and the window. The session row keeps `mfa_satisfied_at`, the login MFA time, and stores each class's
+expiry in a per-class `step_up_elevations` map (`21-database-schema.md` §3.1.4; `auth/step_up.py`).
+`Me.session.elevated_until` is derived from that map: the latest live grace expiry of any class, and `null` when none
+holds (`22-api-openapi.yaml` `getMe`). The window is 5 minutes per grace class, not 15, and
+a no-grace class has none: its grant is single-use, bound to the request it answers, for 60 seconds. Decision 6's
+"(15 min, per `21-database-schema.md`)" is superseded by that reading. ADR-0042 (D8) records the model and holds the map
+of every window.
