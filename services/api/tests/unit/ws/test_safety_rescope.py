@@ -9,14 +9,20 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from fastapi import WebSocket
 
+from candleviewer.admin.flags import default_registry
 from candleviewer.ws import gateway
+from candleviewer.ws.backpressure_config import BackpressureConfig
+from candleviewer.ws.gateway import SYSTEM_HELD_MAX, _Connection
 from candleviewer.ws.metrics import cv_ws_system_frames_withheld_total
+from candleviewer.ws.permissions import ConnectionAuthz
 from tests.unit.ws.test_system_filter import ACC_A, ACC_B
-from tests.unit.ws.test_system_topic_roles import _DEADLINE_S, BASE_MS, _as, _Rig, _system
+from tests.unit.ws.test_system_snap import _SNAP_BODY, _queued
+from tests.unit.ws.test_system_topic_roles import _DEADLINE_S, BASE_MS, KILL, _as, _Rig, _system
 
 _T0 = BASE_MS - 9_000
 #: risk_lockout raised on A (1) and B (2), as the publisher hands it over.
@@ -192,3 +198,82 @@ async def test_an_unknown_safety_class_reaches_no_owner_and_is_counted() -> None
         assert await _system(sock) == []
         assert invalid() == before + 1
         await rig.close()
+
+
+class _Wall:
+    def __init__(self) -> None:
+        self.ms = BASE_MS
+
+    def __call__(self) -> int:
+        return self.ms
+
+
+def _bare(wall: _Wall, accounts: tuple[uuid.UUID, ...] = (ACC_A,)) -> _Connection:
+    """A connection whose frames are queued, the writer not running (`test_system_snap.py`)."""
+    conn = _Connection(
+        cast(WebSocket, None),
+        encoding="cv.v1.json",
+        clock=lambda: 0.0,
+        wall_ms=wall,
+        auth_timeout_s=10.0,
+        flag_visible=default_registry().visible_to,
+        backpressure=BackpressureConfig(),
+    )
+    conn.authz = ConnectionAuthz(_as(uuid.uuid4(), "manager", accounts=accounts))
+    return conn
+
+
+def _safety_sent(conn: _Connection) -> list[dict[str, Any]]:
+    return [f["p"] for f in _queued(conn) if f.get("ch") == "system" and f["t"] == "d"]
+
+
+async def test_a_rescope_is_reconciled_before_any_later_body() -> None:
+    """The principal changes and a body arrives before the change is settled: the state is
+    reconciled under the new principal first, stamped then, and the settle adds nothing."""
+    wall = _Wall()
+    conn = _bare(wall)
+    conn.push_system(_SNAP_BODY, snap=True)
+    conn.push_system(_ON_A_AND_B)
+    assert [p["state"] for p in _safety_sent(conn)] == ["raised"]
+    assert conn.authz is not None
+    conn.authz.principal = _as(uuid.uuid4(), "manager", accounts=())  # not settled yet
+    wall.ms = BASE_MS + 4_321
+    b_moved = _ON_A_AND_B | {
+        "affected_count": 6,
+        "_by_account": _ON_A_AND_B["_by_account"]
+        | {str(ACC_B): {"affected_count": 5, "since_ms": _T0}},
+        "_at_ms": _T0 + 2,
+    }
+    conn.push_system(b_moved)
+    sent = _safety_sent(conn)
+    assert [(p["state"], p["since_ms"]) for p in sent] == [("cleared", BASE_MS + 4_321)]
+    assert conn.safety_edges.principal is conn.authz.principal
+    conn.reconcile_safety()  # the settle
+    assert _safety_sent(conn) == []
+    conn.stop_close_timer()
+
+
+async def test_safety_bodies_before_the_snap_never_displace_a_held_frame() -> None:
+    """Before the snap a `safety` body is not held (the snap states the safety state), so the
+    hold keeps every other frame, in order, and nothing is dropped."""
+
+    def overflowed() -> float:
+        (family,) = cv_ws_system_frames_withheld_total.collect()
+        return sum(
+            s.value
+            for s in family.samples
+            if s.name == "cv_ws_system_frames_withheld_total"
+            and s.labels["reason"] == "held_overflow"
+        )
+
+    before = overflowed()
+    conn = _bare(_Wall(), accounts=(ACC_A, ACC_B))
+    conn.push_system(KILL)
+    for n in range(SYSTEM_HELD_MAX + 5):
+        conn.push_system(_ON_A_AND_B | {"affected_count": 3 + n})
+    conn.push_system(_SNAP_BODY, snap=True)
+    frames = [f for f in _queued(conn) if f.get("ch") == "system"]
+    assert [(f["t"], f["s"]) for f in frames] == [("snap", 1), ("d", 2)]
+    assert frames[1]["p"]["kind"] == "kill_switch"
+    assert overflowed() == before
+    conn.stop_close_timer()

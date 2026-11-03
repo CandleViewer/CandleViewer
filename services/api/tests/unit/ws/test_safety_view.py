@@ -332,7 +332,7 @@ def test_the_snap_seeds_the_edges_so_a_cleared_after_it_is_sent() -> None:
     }
     snap = system_view(raw, MANAGER)
     assert snap is not None
-    edges.seed(raw, snap)
+    edges.seed(raw, snap, MANAGER)
     assert _send(edges, _ON_A_AND_B, MANAGER) is None  # the same count it holds
     assert _send(edges, _CLEARED, MANAGER) is not None
 

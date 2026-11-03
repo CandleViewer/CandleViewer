@@ -231,6 +231,7 @@ from candleviewer.ws.revocation import (
     ws_revoked_total,
 )
 from candleviewer.ws.safety_view import (
+    SAFETY,
     SAFETY_CLASSES,
     SafetyEdges,
     dropped_items,
@@ -989,7 +990,15 @@ class _Connection:
     def _system_views(
         self, body: dict[str, Any], snap: bool
     ) -> list[tuple[str, Mapping[str, Any]]]:
-        """What `push_system` queues of `body`: the cut views, snap first, held deltas after."""
+        """What `push_system` queues of `body`: the cut views, snap first, held deltas after.
+
+        #2302: a `safety` body before the snap is not held: the snap's `safety_classes` states
+        each class as it is then, and `seed` keeps its bodies. After it, a principal the safety
+        state was not last seen under is reconciled first (`reconcile_safety`), so no body is
+        cut under one principal against what was sent under another."""
+        if body.get("kind") == SAFETY and not snap and not self.system_snapped:
+            return []
+        self._reconcile_if_rescoped()
         self.safety_edges.observe(body)  # #2302: a body the fault check accepts, whatever the cut
         view = self._system_view(body)
         if view is None:
@@ -1005,7 +1014,8 @@ class _Connection:
             self.system_held.append(body)
             return []
         if snap:
-            self.safety_edges.seed(body, view)
+            if self.authz is not None:  # a view was cut: it has a principal
+                self.safety_edges.seed(body, view, self.authz.principal)
         elif (sent := self.safety_edges.admit(body, view)) is None:
             return []  # a safety frame this socket must not, or need not, be sent (#2302)
         else:
@@ -1032,9 +1042,17 @@ class _Connection:
         rescoped = self.safety_edges.rescope(
             lambda body: system_view(body, principal, flag_visible=self.flag_visible, now_ms=now),
             now,
+            principal,
         )
         if rescoped:  # nothing to queue is no call: a scope change with no safety state is quiet
             self._queue_system([("d", cut) for cut in rescoped])
+
+    def _reconcile_if_rescoped(self) -> None:
+        """#2302: the principal changed since the safety state was last seen (a swap whose
+        `settle` has not run yet): reconcile now, before anything is cut under it. `settle`'s own
+        call then finds nothing to change."""
+        if self.authz is not None and self.authz.principal is not self.safety_edges.principal:
+            self.reconcile_safety()
 
     def _safety_due(self, key: tuple[str, str]) -> None:
         """§15.9 (#2302): the count-update window of `key` on this socket ended with an update
@@ -1042,6 +1060,7 @@ class _Connection:
         way or the socket has no principal."""
         if self.closing or self.authz is None:
             return
+        self._reconcile_if_rescoped()
         principal, now = self.authz.principal, self.wall_ms()
         sent = self.safety_edges.release(
             key,

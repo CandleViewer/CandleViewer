@@ -163,7 +163,16 @@ class SafetyEdges:
     count update held, and the gateway then sends `release(key, ...)`. Every timer is tracked
     here and cancelled by its key's next transition, a rescope, or `stop` (teardown)."""
 
-    __slots__ = ("_bodies", "_call_later", "_due", "_held", "_sent", "_stopped", "_windows")
+    __slots__ = (
+        "_bodies",
+        "_call_later",
+        "_due",
+        "_held",
+        "_sent",
+        "_stopped",
+        "_windows",
+        "principal",
+    )
 
     def __init__(self, *, call_later: CallLater, due: Callable[[Key], None]) -> None:
         self._bodies: dict[Key, Mapping[str, Any]] = {}
@@ -173,10 +182,18 @@ class SafetyEdges:
         self._call_later = call_later
         self._due = due
         self._stopped = False
+        #: The principal this state was last seen under (`seed`, `rescope`): the gateway sees
+        #: the state anew before it cuts a body under any other.
+        self.principal: PrincipalSnapshot | None = None
 
-    def seed(self, body: Mapping[str, Any], view: Mapping[str, Any]) -> None:
-        """The `system` snap: keep each raised item of `body` as a body, and remember the items
-        `view` (what this connection was sent) shows raised."""
+    def seed(
+        self, body: Mapping[str, Any], view: Mapping[str, Any], principal: PrincipalSnapshot
+    ) -> None:
+        """The `system` snap, cut under `principal`: keep each raised item of `body` as a body,
+        and nothing kept before it, and remember the items `view` (what this connection was
+        sent) shows raised."""
+        self.principal = principal
+        self._bodies.clear()
         for item in _items(body.get(SAFETY_CLASSES)):
             if (key := _key(item)) is not None and item.get("state") == "raised":
                 self._bodies[key] = _as_body(item)
@@ -208,10 +225,14 @@ class SafetyEdges:
         else:
             self._bodies.pop(key, None)
 
-    def rescope(self, view_of: ViewOf, now_ms: int) -> list[Mapping[str, Any]]:
-        """The connection's scope changed: each kept key seen anew under it, in key order, sent
-        at once (a held count update goes with it). A key it now may see raised is sent `raised`;
-        one it no longer may is sent `cleared`, stamped `now_ms`, the change's time."""
+    def rescope(
+        self, view_of: ViewOf, now_ms: int, principal: PrincipalSnapshot | None = None
+    ) -> list[Mapping[str, Any]]:
+        """The connection's scope changed to `principal`'s (`view_of` cuts under it): each kept
+        key seen anew under it, in key order, sent at once (a held count update goes with it). A
+        key it now may see raised is sent `raised`; one it no longer may is sent `cleared`,
+        stamped `now_ms`, the change's time."""
+        self.principal = principal
         out: list[Mapping[str, Any]] = []
         for key in sorted(self._bodies.keys() | self._sent.keys()):
             body = self._bodies.get(key)
