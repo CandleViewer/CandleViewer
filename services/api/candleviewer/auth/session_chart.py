@@ -21,7 +21,9 @@ on its next use.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections import OrderedDict
+from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any, Final, Literal
 
@@ -102,6 +104,16 @@ class SessionChartUnrecorded(SessionChartError):
         self.reason = reason
 
 
+class _Turn:
+    """#5512: one session's observe lock, and how many observes hold or wait on it."""
+
+    __slots__ = ("lock", "users")
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.users = 0
+
+
 class _Refusals:
     """`RefusalRecorder` for the gateway: counts refused sends by reason."""
 
@@ -125,6 +137,10 @@ class SessionChart:
         self._gateway = Gateway(admission=ALWAYS_ADMIT)  # E50-T63: until it adopts the bundle
         self.refusals = _Refusals()
         self._lock = asyncio.Lock()
+        #: #5512: a lock per session that an observe holds or waits on (`_turn`). The last
+        #: observe out removes it, so the map holds only the sessions being observed at that
+        #: moment (C-2.18): a chart dropped, forgotten, evicted or ended leaves no entry behind.
+        self._observing: dict[str, _Turn] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._max = max_charts
 
@@ -138,6 +154,7 @@ class SessionChart:
             self._charts = OrderedDict()
             self._gateway = Gateway(admission=ALWAYS_ADMIT)
             self._lock = asyncio.Lock()
+            self._observing = {}
 
     def interpreter(self, session_id: str) -> Any | None:
         """The live interpreter for *session_id* (tests / supervision)."""
@@ -172,10 +189,12 @@ class SessionChart:
         reaches) and holds the event for good (`deferred`), or a `_MUST_REACH`
         event's receipt is not conclusive (its step changed nothing: the chart
         was already past the state, so the entry that writes the record did
-        not run). A held `STEP_UP_OK` raises in any state (`deferred`). The
-        chart is dropped first, so a held event never runs later and the next
-        use rebuilds the chart from the row. A lock already recorded is not
-        refused, and the reach check reads the chart's state from the receipt."""
+        not run). A held `STEP_UP_OK` raises in any state (`deferred`). Before
+        it raises, the chart is dropped, so the event it holds never runs
+        later and the next use rebuilds the chart from the row. An
+        `IDLE_DEADLINE` comes only from `_observed`, whose observes of a
+        session take turns; a lock already recorded is not refused, and the
+        reach check reads the chart's state from the receipt."""
         replay = bool(payload.get("replay"))
         if not replay:
             request_uuid = current_request_uuid()
@@ -260,14 +279,40 @@ class SessionChart:
         own moment from the row (`idle_locked_at_us`, #4743), never the time of this read: a
         lock by request's `locked_at` (`POST /auth/lock` sends the chart nothing), else the
         idle deadline that fell due; `auth.idle_locked` records it. It goes to any chart not
-        in `idle_locked` (#5512): one that cannot take it raises (`_send`)."""
-        interp = await self._get(record, now)
+        in `idle_locked` (#5512): one that cannot take it raises (`_send`). The observes of a
+        session take turns (`_turn`, #5512): each checks the chart, and sends it the lock, only
+        once the lock sent before it is recorded or refused."""
         sid = str(record.id)
-        if record.is_idle_locked(now=now) and not self.in_state(sid, "idle_locked"):
-            before = b16_session.elevation_view(dict(interp.context))
-            moment = record.locked_at if record.locked_at is not None else record.idle_deadline()
-            await self._send(sid, "IDLE_DEADLINE", before=before, idle_locked_at_us=to_us(moment))
+        async with self._turn(sid):
+            interp = await self._get(record, now)
+            if record.is_idle_locked(now=now) and not self.in_state(sid, "idle_locked"):
+                before = b16_session.elevation_view(dict(interp.context))
+                moment = (
+                    record.locked_at if record.locked_at is not None else record.idle_deadline()
+                )
+                await self._send(
+                    sid, "IDLE_DEADLINE", before=before, idle_locked_at_us=to_us(moment)
+                )
         return interp
+
+    @contextlib.asynccontextmanager
+    async def _turn(self, session_id: str) -> AsyncIterator[None]:
+        """Hold *session_id*'s observe lock (`_observing`) for the body. Bounded (C-2.18): the
+        entry is made by the first observe in and removed by the last one out, however each
+        ends (a cancellation included, which goes on). Nothing that runs under it observes:
+        a build replays the row, and B16's actions write only through the audit sink."""
+        self._bind_loop()
+        turn = self._observing.get(session_id)
+        if turn is None:
+            turn = self._observing[session_id] = _Turn()
+        turn.users += 1
+        try:
+            async with turn.lock:
+                yield
+        finally:
+            turn.users -= 1
+            if not turn.users and self._observing.get(session_id) is turn:
+                del self._observing[session_id]
 
     async def observe(self, record: SessionRecord, now: datetime) -> None:
         """Bring the chart up to the row and send nothing else. `POST /auth/unlock`
