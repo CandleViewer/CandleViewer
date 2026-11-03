@@ -31,6 +31,8 @@ import {
   inspector,
   type InspectorStore,
 } from "../../../../src/features/admin/statecharts/inspectorStore";
+import { ROUTE_MANIFEST } from "../../../../src/routes/manifest";
+import { ROUTE_TITLES } from "../../../../src/routes/titles";
 import { THEME_ANALYTICS_EVENT } from "../../../../src/shell/bootstrap/themeStore";
 import {
   KILL_SWITCH_HASH,
@@ -229,6 +231,19 @@ afterEach(() => {
   vi.restoreAllMocks();
   // A test's own `performance.measure`, whatever its assertions did (the prototype's is restored).
   Reflect.deleteProperty(performance, "measure");
+});
+
+describe("R-357: the route (BQ-1)", () => {
+  it("test_route_r357_is_admin_statecharts_owner_only_and_hidden_as_404", () => {
+    const entry = ROUTE_MANIFEST.find((e) => e.id === "R-357");
+    expect(entry).toEqual({
+      id: "R-357",
+      path: "/admin/statecharts",
+      access: { roles: ["owner"], denyAs: "404" },
+      owner: null,
+    });
+    expect(ROUTE_TITLES["R-357"]).toBe("Statechart inspector");
+  });
 });
 
 describe("the page frame (BQ-1)", () => {

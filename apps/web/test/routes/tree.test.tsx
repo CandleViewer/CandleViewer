@@ -225,6 +225,7 @@ const PAGE_H1: Readonly<Record<string, string>> = {
   "R-300": "Overview", // SCR-120 (E42-S01)
   "R-303": "Invite user",
   "R-354": "Security centre",
+  "R-357": "Statechart inspector", // E42-S08 (BQ-1 as recommended)
   "R-360": "R-360 — owned by E09",
 };
 
@@ -257,7 +258,7 @@ describe("E42-S01: the admin routes inside CMP-087 AdminLayout", () => {
     { timeout: 60_000 },
     async () => {
       sessionFor("owner");
-      expect(ADMIN_ROUTES).toHaveLength(21);
+      expect(ADMIN_ROUTES).toHaveLength(22); // R-357, E42-S08's statechart inspector, included
       for (const entry of ADMIN_ROUTES) {
         const router = createMemoryRouter(buildRoutes(), {
           initialEntries: [concrete(entry.path)],
