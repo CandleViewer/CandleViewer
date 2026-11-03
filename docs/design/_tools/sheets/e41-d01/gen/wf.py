@@ -18,22 +18,27 @@ SCREEN_W = 1200  # a SCR-093 / SCR-095 / SCR-094 frame (kit choice: the 1120 px 
 PAGE_W = SCREEN_W - 2 * k.FRAME_PAD
 DIALOG_W = 560
 CTRL_H = 28
+RING_ALIGN = "inner"  # board 09 sets "outer": it keeps its first draw (not in the 2026-11-03 design read's redraw)
 
 
 def ring(n: Node) -> Node:
-    """The focused state: a 2 px color.text.primary outline (greyscale wireframe ring)."""
+    """The focused state: a 2 px color.text.primary ring (greyscale wireframe), an inner stroke so a clip-on parent
+    never cuts it; a node with no inset gets INSET_XS so the ring clears its content."""
     k.fallback("focus")
     o = dict(n.get("o") or {})
-    o.update({"stroke": k.TEXT_1, "strokeWidth": k.FOCUS_W, "strokeAlign": "outer"})
+    o.update({"stroke": k.TEXT_1, "strokeWidth": k.FOCUS_W, "strokeAlign": RING_ALIGN})
+    if RING_ALIGN == "inner" and not any(x in o for x in ("pad", "padX", "padL", "padR")):
+        o["padX"] = k.INSET_XS
     return dict(n, o=o, name=f"{n['name']} · focused")
 
 
 def btn(label: str, *, primary: bool = False, t2: bool = False, w: int | None = None, glyph: str | None = None) -> Node:
     if primary:
         k.fallback("primary")
-    kids: list[Node | None] = [k.icon("glyph", glyph, k.TEXT_2) if glyph else None,
-                               k.text("label", label, k.BODY_STRONG, k.TEXT_2 if t2 else k.TEXT_1),
-                               k.icon("lock", "locked", k.TEXT_2, k.ICON_SM) if t2 else None]
+    # T2 rendering 2a (E09-D09 §2.2, as the E47-D04 / E08-D09 kits draw it): the CMP-019 lock leads the full label
+    kids: list[Node | None] = [k.icon("lock", "locked", k.TEXT_2, k.ICON_SM) if t2 else None,
+                               k.icon("glyph", glyph, k.TEXT_2) if glyph else None,
+                               k.text("label", label, k.BODY_STRONG, k.TEXT_2 if t2 else k.TEXT_1)]
     o = {"padX": k.BUTTON_PADX, "gap": k.INSET_XS, "radius": k.R_CONTROL, "stroke": k.BORDER if t2 else k.BORDER_STRONG,
          "strokeWidth": k.THICK if primary else k.HAIR, "strokeAlign": "inner", "justify": "center"}
     if t2:
@@ -50,12 +55,20 @@ def link(label: str) -> Node:
                   {}, w=tw, h=20, note="CMP-021 Link (lo-fi: underlined, no link hue)")
 
 
-def select(label: str | None, value: str, w: int, *, open_: bool = False) -> Node:
-    box_ = k.hbox("control", [k.text("value", value, k.BODY, k.TEXT_1, w=w - 44),
-                              k.icon("chevron", "chevron-down", k.TEXT_2)],
+def select(label: str | None, value: str, w: int, *, open_: bool = False, t2: bool = False) -> Node:
+    if t2:  # T2 rendering 2a: the lock leads, the value in the T2 label colour, the reason is the page's CMP-079
+        k.fallback("t2stroke")
+    bare_t2 = t2 and not label
+    box_ = k.hbox(f"dashed · select · {value} · T2" if bare_t2 else "dashed · control" if t2 else "control",
+                  [k.icon("lock", "locked", k.TEXT_2, k.ICON_SM) if t2 else None,
+                   k.text("value", value, k.BODY, k.TEXT_2 if t2 else k.TEXT_1, w=w - 64 if t2 else w - 44),
+                   k.icon("chevron", "chevron-down", k.TEXT_2)],
                   {"padX": k.INSET_SM, "gap": k.INSET_XS, "stroke": k.BORDER_STRONG if open_ else k.BORDER,
                    "strokeWidth": k.HAIR, "strokeAlign": "inner", "radius": k.R_CONTROL, "fill": k.SUNKEN},
-                  w=w, h=CTRL_H)
+                  w=w, h=CTRL_H, note=("CMP-169 TagEditor bulk select, T2: aria-disabled, stays in the Tab order; "
+                                       "described by the CMP-079 reason") if t2 else None)
+    if bare_t2:
+        return box_
     if not label:
         return dict(box_, name=f"select · {value}")
     return k.vbox(f"select · {label}", [k.text("label", label, k.CAPTION, k.TEXT_2), box_], {"gap": k.STACK_XS}, w=w)
@@ -65,8 +78,8 @@ def textfield(label: str, value: str, w: int, *, counter: str | None = None, err
               focused: bool = False, t2: bool = False) -> Node:
     if t2:
         k.fallback("t2stroke")
-    kids0: list[Node | None] = [k.text("value", value, k.BODY, k.TEXT_2 if t2 else k.TEXT_1, w=w - 44 if t2 else w - 24),
-                                k.icon("lock", "locked", k.TEXT_2, k.ICON_SM) if t2 else None]
+    kids0: list[Node | None] = [k.icon("lock", "locked", k.TEXT_2, k.ICON_SM) if t2 else None,  # T2 2a: lock first
+                                k.text("value", value, k.BODY, k.TEXT_2 if t2 else k.TEXT_1, w=w - 44 if t2 else w - 24)]
     f = k.hbox("dashed · control" if t2 else "control", kids0,
                {"padX": k.INSET_SM, "gap": k.INSET_XS, "stroke": k.BORDER if t2 else k.BORDER_STRONG, "strokeWidth": k.THICK if error else k.HAIR,
                 "strokeAlign": "inner", "radius": k.R_CONTROL, "fill": k.SUNKEN}, w=w, h=CTRL_H)
@@ -93,10 +106,10 @@ def scope(env: str) -> Node:
 
 
 def chip(name: str, *, auto: bool = False, removable: bool = False, t2: bool = False) -> Node:
-    kids: list[Node | None] = [k.text("name", name, k.LABEL, k.TEXT_1),
+    kids: list[Node | None] = [k.icon("lock", "locked", k.TEXT_2, k.ICON_SM) if t2 else None,  # T2 2a: lock first
+                               k.text("name", name, k.LABEL, k.TEXT_1),
                                k.text("auto", "auto", k.CAPTION, k.TEXT_2) if auto else None,
-                               k.icon("remove", "close", k.TEXT_2, k.ICON_SM) if removable and not t2 else None,
-                               k.icon("lock", "locked", k.TEXT_2, k.ICON_SM) if t2 else None]
+                               k.icon("remove", "close", k.TEXT_2, k.ICON_SM) if removable and not t2 else None]
     if t2:
         k.fallback("t2stroke")
     return k.hbox(("dashed · " if t2 else "") + f"tag · {name}", kids, {"padX": k.INSET_XS, "gap": k.INSET_XS, "radius": k.R_CONTROL,
@@ -117,12 +130,14 @@ def hidden(label: str, chars: str, w: int) -> Node:
                    "strokeAlign": "inner", "radius": k.R_CONTROL}, w=w, note="board marker: visually hidden text")
 
 
-def marker(words: str, w: int | None = None, *, name: str | None = None) -> Node:
+def marker(words: str, w: int | None = None, *, name: str | None = None, pad_y: bool = False) -> Node:
     k.fallback("marker")
     t = k.text("words", words, k.CAPTION, k.TEXT_1, w=(w - 16) if w else None)
-    return k.hbox(name or f"dashed · marker · {words[:24]}", [t],
-                  {"padX": k.INSET_XS, "stroke": k.TEXT_1, "strokeWidth": k.HAIR, "strokeAlign": "inner",
-                   "radius": k.R_CONTROL}, w=w, h=None if w else 20, note="board marker, not product UI")
+    o = {"padX": k.INSET_XS, "stroke": k.TEXT_1, "strokeWidth": k.HAIR, "strokeAlign": "inner", "radius": k.R_CONTROL}
+    if pad_y:  # board 10's legend strips: the dashes clear the words
+        o["padY"] = k.INSET_XS
+    return k.hbox(name or f"dashed · marker · {words[:24]}", [t], o, w=w, h=None if w else 20,
+                  note="board marker, not product UI")
 
 
 def page(route: str, kids: list[Node | None], w: int = PAGE_W, *, name: str | None = None) -> Node:
@@ -161,7 +176,7 @@ def checkbox(on: bool, *, t2: bool = False) -> list[Node]:
     b = k.hbox("dashed · checkbox" if t2 else "checkbox", [k.icon("tick", "check", k.TEXT_1, k.ICON_SM)] if on else [],
                {"stroke": k.BORDER if t2 else k.BORDER_STRONG, "strokeWidth": k.HAIR, "strokeAlign": "inner", "radius": k.R_CONTROL,
                 "justify": "center", "fill": k.SELECTED if on else None}, w=16, h=16)
-    return [b, k.icon("lock", "locked", k.TEXT_2, k.ICON_SM)] if t2 else [b]
+    return [k.icon("lock", "locked", k.TEXT_2, k.ICON_SM), b] if t2 else [b]  # T2 2a: the lock leads
 
 
 def trade_row(t: k.Trade, *, sel: bool = False, t2: bool = False, extra_tag: str | None = None) -> dict[str, Any]:

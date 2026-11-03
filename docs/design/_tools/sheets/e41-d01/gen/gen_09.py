@@ -11,6 +11,7 @@ import wf  # noqa: E402
 from wf import k  # noqa: E402
 
 NN = 9
+wf.RING_ALIGN = "outer"  # board 09 keeps its drawn ring until a redraw (gen/wf.py RING_ALIGN)
 FW = s096.FRAME_W
 BW = FW - 2 * k.FRAME_PAD
 H = "### SCR-096"

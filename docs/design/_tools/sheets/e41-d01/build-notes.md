@@ -91,3 +91,17 @@ the board and is folded here, so a rebuild reproduces the drawn boards:
 Drawn deviations, recorded in memo §12 and not redrawn: board 10's dashed legend strips are barely taller than their
 text, so the dashes graze the letters; board 05's bar-only band label overlaps the first candle of the gap. The `.md`
 "N shapes" lines count the sheet's nodes; the board's node count adds the icon instances' children.
+
+## Design-read fold (orchestrator's read of #5567, 2026-11-03; boards 03, 04 and 10 to be redrawn)
+
+- T2 rendering 2a (E09-D09 §2.2): `gen/wf.py` draws the CMP-019 lock first in every T2 button, chip, field and row
+  checkbox, as the E47-D04 and E08-D09 kits do. The SCR-093 bulk bar's tag select is T2 (`select(..., t2=True)`: lock
+  first, the value in the T2 label colour, described by the page's CMP-079 reason); its orphan lock is gone.
+- The focus ring is a 2 px inner stroke (`RING_ALIGN`), with INSET_XS added to a node that has no inset, so a clip-on
+  parent never cuts it. Board 09 keeps the outer ring it was drawn with (not in this redraw).
+- Board 10: keyboard row 5 names the row model (CMP-049 grid, the APG grid pattern: one roving tab stop, Up / Down
+  arrows); the viewport notes, step captions and forced-colours lines take `padY` INSET_XS so their dashes clear the
+  words. That moves the frames' bottom 2792 to 2864, so `LIVE_ROOT_H[10]` is the predicted 2995 until the redraw reads
+  it back.
+- Memo L44 (BQ-2) names memo §0, §6, §7 and §12 as the wireframe spec; the memo md5 is re-pinned, so every sidecar's
+  sources line and every sheet's `compactOf.sha256` moved; sheets 01, 02 and 05 to 09 differ only in that md5.

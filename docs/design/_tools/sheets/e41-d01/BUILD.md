@@ -76,7 +76,7 @@ dashes the `dashed · …` strokes (T2 controls, the 200 % viewport outlines, th
 | 07 scr095-states         | 6      | 3120 × 2343 | dark  | 25                |
 | 08 scope-and-cohort      | 3      | 3120 × 1851 | dark  | 28                |
 | 09 scr096-tag-manager    | 7      | 3248 × 2418 | dark  | 34                |
-| 10 keyboard-and-reflow   | 7      | 2608 × 2923 | dark  | 32                |
+| 10 keyboard-and-reflow   | 7      | 2608 × 2995 | dark  | 32                |
 
 Root heights are the live check's read-back (`LIVE_ROOT_H`, build-notes "Live-check fold"). The PNG paths are in the
 memo's §0 rows; the board ids and the theme-gate results in its As built record (§12).

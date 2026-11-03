@@ -41,7 +41,7 @@ The pre-writing BQ list (BQ-0..BQ-16) is posted on #1017 as comment 6563728342; 
 | BQ    | Default built here                                                                                                 | Where             |
 | ----- | ------------------------------------------------------------------------------------------------------------------ | ----------------- |
 | BQ-1  | `Refs #1017` + `Partial:`; AC1 substituted; `Closes #1017` only on the research-boards PR                          | AC trace          |
-| BQ-2  | this memo + `e41-d01-session-protocol.md` + `17` §1.6; the wireframe spec `docs/design/E41/E41-D01.md` with boards | header, §0        |
+| BQ-2  | this memo + `e41-d01-session-protocol.md` + `17` §1.6; the wireframe spec is this memo §0, §6, §7 and §12 (boards) | header, §0, §12   |
 | BQ-3  | 5–8 findings, each → ≥1 WD naming `SCR-0nn/<state>` with one Given/Then check; all four SCRs covered               | §5, §6            |
 | BQ-4  | walkthroughs for P1, P2b, P3; the protocol recruits P1 + P2 only                                                   | §4                |
 | BQ-5  | public documentation only, no third-party image; recordings owner-local, 90 days; fetch not met (Deviation 7)      | §3, §11           |
@@ -257,3 +257,5 @@ Penpot file `E41-D01 boards`, page `E41-D01` · id `cb0c3916-2579-81a4-8008-e2f6
 **Drawn deviations** (legible, recorded, not redrawn): board 10's dashed legend strips are barely taller than their text, so the dashes graze the letters; board 05's bar-only band label "Missing 10:00–10:40 UTC" overlaps the first candle of the gap.
 
 **WD-13's owner cell** (§6) still reads "(not drawn)", drawn verbatim on board 01; board 03 draws SCR-093/viewer-write-disabled and board 04 its SCR-094 inset, and E41-D05 #1205 still checks both on the built screen.
+
+**Redraw in progress (orchestrator's design read, 2026-11-03).** Boards 03, 04 and 10 are being redrawn from the regenerated kit: on 03 and 04 the CMP-019 lock now leads the label on every T2 button, chip and field (rendering 2a, E09-D09 §2.2) and the bulk bar's tag select is drawn T2 (its orphan lock dropped); on 10 the 2 px focus ring is an inner stroke so no clip-on parent cuts it, keyboard row 5 names the row model (CMP-049 grid, the APG grid pattern: one roving tab stop, Up / Down arrows), and the legend strips are padded so their dashes clear the words, which takes board 10's root to 2608 × 2995 (predicted: 2923 + 72, read back on the redraw). Their PNGs, sizes and the §0 cells above still show the first draw until that redraw lands; the legend-strip deviation above goes with it.

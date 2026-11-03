@@ -66,7 +66,7 @@ VALIDATOR, PACKER, MKCALL = TOOLS / "validate_sheet.py", TOOLS / "compact.py", T
 COMPONENTS, TOKENS_FILE = TOOLS / "components.offline.json", TOOLS / "token-sync.json"
 DOCS_BASE = "46e6acd2ddf3835580a801ac9b143d32f4478090"  # the memo's "Read at" base (on main)
 DOCS = {  # key -> (repo-relative path, md5): every read is md5-checked; DOCS_AT_BASE are read at DOCS_BASE
-    "spec": (_MEMO_PATH, "74af17cb6110bdf947e812546d1c3e11"),
+    "spec": (_MEMO_PATH, "b2629298bc1879afa24b935e0d017f5b"),
     "protocol": ("docs/design/research/e41-d01-session-protocol.md", "01433dd72a698bca4453a45f12250544"),
     "journey": ("docs/plan/17-ux-diagrams.md", "0494186310c960cef92f3c614625db44"),
     "cat": ("docs/plan/14-screens-catalogue.md", "1ca288905451c9e5c495a0468c062641"),
@@ -80,7 +80,9 @@ PITCH_X, PITCH_Y = 7000, 5200  # grid: x = ((NN-1) mod 5) * PITCH_X, y = floor((
 MARGIN = 80
 # SHEET-FIX ALL (live check 2026-11-03): each root's h read back on the board as max(annotation end, footer end) + 80
 # once Penpot laid the text out; the kit's estimate (15 % slack, 8 px steps) is the upper bound it must sit under.
-LIVE_ROOT_H = {1: 2615, 2: 1595, 3: 2827, 4: 1356, 5: 2263, 6: 1487, 7: 2343, 8: 1851, 9: 2418, 10: 2923}
+LIVE_ROOT_H = {1: 2615, 2: 1595, 3: 2827, 4: 1356, 5: 2263, 6: 1487, 7: 2343, 8: 1851, 9: 2418, 10: 2995}
+# Board 10's 2995 is 2923 + 72 (the padded legend strips move its frame bottom 2792 -> 2864; the footer still ends
+# 27 px under it): the predicted read-back until the design-read redraw confirms it on the board.
 ANN_W = 400
 ANN_TEXT_W = ANN_W - 32
 SLASH = "∕"  # U+2215 stands for "/" in node names (Penpot splits names on "/")
@@ -158,7 +160,8 @@ def plain(s: str) -> str:
 
 
 # --- registries parsed from the memo (spec), the `17` §1.6 journey, `14` and `21`
-PAGE = re.search(r"Penpot page `([^`]+)`", LINES["spec"][L("Boards on the Penpot page `") - 1]).group(1)  # type: ignore
+# the §0 line always names the page (a miss raises AttributeError at import): Match | None narrowed by hand
+PAGE = re.search(r"Penpot page `([^`]+)`", LINES["spec"][L("Boards on the Penpot page `") - 1]).group(1)  # type: ignore[union-attr]
 FILE_NAME = f"{KEY} boards"
 S0 = L("## 0. Wireframe boards (Penpot)")
 SLUGS = {1: "research-board", 2: "scr093-default", 3: "scr093-states", 4: "scr094-default",

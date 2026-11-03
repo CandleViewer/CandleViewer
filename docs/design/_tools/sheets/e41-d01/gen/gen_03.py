@@ -19,7 +19,8 @@ VIEWER_ACCOUNTS = k.LIVE_ACCOUNTS[:2]
 
 
 def page(kids: list[k.Node | None], **kw: object) -> k.Node:
-    return wf.page("/journal", [s093.header(t2=bool(kw.get("t2"))), s093.filters(**kw.get("filt", {})),  # type: ignore
+    return wf.page("/journal", [s093.header(t2=bool(kw.get("t2"))),  # kw["filt"] is always a dict of filter kwargs
+                                s093.filters(**kw.get("filt", {})),  # type: ignore[arg-type]
                                 *kids])
 
 
@@ -104,9 +105,8 @@ def viewer(fid: str) -> tuple[k.Node, tuple[str, list[str]]]:
                  note="CMP-079 visible reason, key rbac.permission (E09-D09 §3.1)")
     acct = ", ".join(VIEWER_ACCOUNTS)
     bulk = k.hbox("dashed · bulk-tag bar · T2", [
-        k.text("count", "0 selected", k.BODY_STRONG, k.TEXT_2), wf.select(None, "late-entry", 200),
-        wf.btn(k.ui("Apply tag"), t2=True), wf.btn(k.ui("Clear selection"), t2=True),
-        k.icon("lock", "locked", k.TEXT_2, k.ICON_SM)],
+        k.text("count", "0 selected", k.BODY_STRONG, k.TEXT_2), wf.select(None, "late-entry", 200, t2=True),
+        wf.btn(k.ui("Apply tag"), t2=True), wf.btn(k.ui("Clear selection"), t2=True)],
         {"gap": k.INSET_SM, "padX": k.INSET_SM, "fill": k.RAISED, "stroke": k.BORDER, "strokeWidth": k.HAIR,
          "strokeAlign": "inner"}, w=wf.TABLE_W, h=44,
         note="CMP-169 TagEditor bulk mode, T2: visible, lock, aria-disabled (E09-D09 §2.1)")

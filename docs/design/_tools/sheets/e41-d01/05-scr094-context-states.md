@@ -79,7 +79,7 @@ Board 05 of ten (memo §0 L70: SCR-094 context states (loading, bar-only, contex
 
 ## Sources (6)
 
-- spec (memo) docs/design/research/e41-journal-review.md md5 74af17cb6110bdf947e812546d1c3e11 at the boards PR (§0 drawn, §12 As built) (§0 L70)
+- spec (memo) docs/design/research/e41-journal-review.md md5 b2629298bc1879afa24b935e0d017f5b at the boards PR (§0 drawn, §12 As built) (§0 L70)
 - docs/design/research/e41-d01-session-protocol.md md5 01433dd72a698bca4453a45f12250544 (the session protocol: stimuli, §4a prompts)
 - docs/plan/17-ux-diagrams.md md5 0494186310c960cef92f3c614625db44 (`17` §1.6 journey)
 - docs/plan/14-screens-catalogue.md at 46e6acd2d md5 1ca288905451c9e5c495a0468c062641 (`14` SCR-093..096 state words the memo cites)

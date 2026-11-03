@@ -43,7 +43,8 @@ def keyboard(fid: str) -> tuple[k.Node, tuple[str, list[str]]]:
             ("Export (header)", "Tab; Enter opens the confirm", "focus returns here on close"),
             ("filters: environment, range, account, symbol, tag, outcome", "Tab between; Enter / Space opens", ""),
             ("table: sortable column headers", "Tab; Enter sorts", "`14` A11y: sortable headers"),
-            ("table rows", "Tab to the table; Enter opens SCR-094 (a page)", "WD-12"),
+            ("table rows", "Tab to the table (one roving tab stop); Up / Down arrows move between rows; Enter opens "
+             "SCR-094 (a page)", "WD-12; CMP-049 grid, the APG grid pattern"),
             ("row checkbox", "Space toggles the selection", "bulk tag"),
             ("Next page", "Tab; Enter loads the next cursor page", "")]
     for _a, b, _c in rows:
@@ -57,7 +58,7 @@ def keyboard(fid: str) -> tuple[k.Node, tuple[str, list[str]]]:
 
 
 def viewport(kids: list[k.Node | None], note: str) -> k.Node:
-    return k.vbox("viewport · 640 CSS px", [wf.marker(note, VW - 8), *kids],
+    return k.vbox("viewport · 640 CSS px", [wf.marker(note, VW - 8, pad_y=True), *kids],
                   {"gap": k.STACK_SM, "pad": k.INSET_XS, "stroke": k.TEXT_1, "strokeWidth": k.HAIR,
                    "strokeAlign": "inner", "fill": k.SUNKEN}, w=VW)
 
@@ -101,7 +102,7 @@ def reflow_export(fid: str) -> tuple[k.Node, tuple[str, list[str]]]:
 
 
 def forced_lines(items: list[str], w: int) -> k.Node:
-    return k.vbox("dashed · forced-colours mapping (board marker)", [wf.marker(x, w, name=f"dashed · map {i + 1}")
+    return k.vbox("dashed · forced-colours mapping (board marker)", [wf.marker(x, w, name=f"dashed · map {i + 1}", pad_y=True)
                                                                      for i, x in enumerate(items)],
                   {"gap": k.STACK_XS}, w=w)
 
@@ -130,7 +131,7 @@ def forced_export(fid: str) -> tuple[k.Node, tuple[str, list[str]]]:
 
 
 def step(n: int, caption: str, kid: k.Node, w: int) -> k.Node:
-    return k.vbox(f"step {n}", [wf.marker(f"{n}. {caption}", w), kid], {"gap": k.STACK_SM}, w=w)
+    return k.vbox(f"step {n}", [wf.marker(f"{n}. {caption}", w, pad_y=True), kid], {"gap": k.STACK_SM}, w=w)
 
 
 def focus_return(fid: str, which: str) -> tuple[k.Node, tuple[str, list[str]]]:
