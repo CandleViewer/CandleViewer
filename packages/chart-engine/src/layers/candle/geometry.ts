@@ -247,6 +247,8 @@ export function markRect(
 ): void {
   const hair = geom[GEOM.hair] ?? 1;
   if ((kind & BAR_FLAG.forming) !== 0) {
+    // Known limit: an OHLC bar takes the candle's union (a series kind is not an input here), so a
+    // down bar's open / close ticks reach the 1-hairline gap to the ring. Not a one-line fix (D06).
     const dir = (meta >> 4) & MARK.dir;
     // The wick as drawn: `heavy` is its 2-hairline weight (a down bar's; hollow: colour-down).
     const wick = (meta & MARK_HEAVY) !== 0 ? CANDLE_DIR.down : CANDLE_DIR.up;

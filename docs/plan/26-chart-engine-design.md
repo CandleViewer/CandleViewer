@@ -374,7 +374,7 @@ Third-party-shaped but first-party-used: every built-in series is written agains
 | -------------------- | ----------------------------------------- | -------------------------- | ------------ | ------------------------------------------------------ |
 | Grid / sessions      | 2 instanced line sets                     | `line`                     | 2            | Snapped to device pixels                               |
 | Heatmap              | 1–2 quads                                 | `heatmap` (R16F + LUT)     | 2            | Constant cost (§3.8)                                   |
-| Candles              | 1 instanced quad for bodies + 1 for wicks | `candle`                   | 2            | Per-instance: x, openY, closeY, highY, lowY, colourIdx |
+| Candles              | 1 instanced quad for bodies + 1 for wicks | `candle`                   | 2 + 2 cond.  | Per-instance: x, openY, closeY, highY, lowY, colourIdx |
 | Footprint cells      | 1 instanced quad (cell fill)              | `cell`                     | 1            | Colour from delta/imbalance via LUT                    |
 | Footprint text       | instanced glyphs                          | `sdf-text`                 | 1            | §3.7                                                   |
 | Imbalance markers    | instanced quads                           | `cell`                     | shared       | Drawn as cell outline variants                         |
@@ -387,7 +387,7 @@ Third-party-shaped but first-party-used: every built-in series is written agains
 
 Target steady-state: **≤ 18 draw calls per pane**, ≤ 40 for a 3-pane chart.
 
-_Shipped (E12-S06): candles and OHLC bars share the `candle` program and one instance ring per series: an instance is `[open, high, low, close]` i32 ticks plus a meta word (flags | direction), and `u_batch` picks the part per batch. Candles draw the wick and the body, OHLC bars the stem and the open / close ticks (a 10-vertex strip, two quads joined by degenerate bridges): two draws each. Below 5 CSS px an OHLC series draws the candle mark (E12-D06 §3.2). A `gap_before` bar adds a seam hairline at its slot's left edge in `color.candle.wick`, drawn by the same program from a small per-series list of slots: one more draw, only while such a bar is in view and the series is time-aligned (E12-D06 §8)._
+_Shipped (E12-S06): candles and OHLC bars share the `candle` program and one instance ring per series: an instance is `[open, high, low, close]` i32 ticks plus a meta word (flags | direction), and `u_batch` picks the part per batch. Candles draw the wick and the body, OHLC bars the stem and the open / close ticks (a 10-vertex strip, two quads joined by degenerate bridges): two draws each. Below 5 CSS px an OHLC series draws the candle mark (E12-D06 §3.2). A `gap_before` bar adds a seam hairline at its slot's left edge in `color.candle.wick`, drawn by the same program from a small per-series list of slots: one more draw, only while such a bar is in view and the series is time-aligned (E12-D06 §8). Shipped (E12-S10, BQ-1): a forming or corrected bar in view adds one more conditional batch (the marks, part 7 of the same program, after E12-S07's hollow parts 5 / 6: the forming ring and the corrected square, L0 only; under Heikin-Ashi or hollow they follow the drawn candle), so a candle series draws 2 to 4 times and 0 extra while no marked bar is in view (E12-D06 §7.1, §7.3)._
 
 _Known gap (E12-S07, for the autoscale wiring ticket): Heikin-Ashi draws derived candles whose high or low can lie outside the real bars' range, while autoscale fits the real prices. The price extent source must read the displayed ring values (or offer an HA-extremes mode), and `CandleRing.setMode` must bump the source version so autoscale refits on a kind switch._
 
@@ -446,6 +446,8 @@ Shipped by E12-S06 PR 1 (`24` §19.75; package README "Candle series"), additive
 Shipped by E12-S06 PR 2 (package README "OHLC bars, gap seams, bar picks and `dataState`"), additive: `dataState { state: "empty" | "ready" }` is posted when the main series' visible range empties or fills (edge-triggered; the first frame always posts) and becomes §8's `ChartEvents.dataState`; while empty the engine hides the background layer (no grid) and the app draws SCR-047. `command { k: "setSeriesOptions" }` reads `isTimeAligned` (§8 `CandleOptions.isTimeAligned?`, default true): false never draws the gap seam. `pick` may answer `kind: "bar"` with `objectId: "series.<id>"` (§3.9).
 
 Shipped by E11-S10 PR 2 (package README BQ-149), additive: `resize` gains optional `backingWidth` and `backingHeight`, the padded backing store in device px (safe integers, at least `round(size * dpr)`); the chart draws into its exact top-left sub-rect, and `frame.backingStorePx` reports the padded store.
+
+Shipped by E12-S10 (package README "Forming and corrected bars, `barState` and `barStateChanged`"), additive: `barStateChanged { time, forming, amended }` is posted for the main series once per change of a bar's `forming` or `amended` bit (never per tick; an evicted bar posts nothing; `time` is the bar's open time, µs epoch) and becomes §8's `ChartEvents.barStateChanged`; `CandleSeries.barState(index, out)` reads `forming`, `amended` and `stale` without allocating. A forming bar draws a dashed ring and a corrected bar a square above the high, at L0 only, in one conditional extra batch of the `candle` program (§4); no new command. The engine never announces; the countdown, stale chip and announcement are the app's (E12-T06).
 
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 
@@ -629,6 +631,7 @@ export interface ChartEvents {
   visibleRangeNeedsData: { fromTime: number; toTime: number }; // triggers paging
   frameStats: FrameStats;
   dataState: { state: "empty" | "ready" }; // E12-S06 (BQ-9): no bar in view; no grid drawn
+  barStateChanged: { time: number; forming: boolean; amended: boolean }; // E12-S10: main-series bar state change, never per tick
   error: {
     code: string;
     message: string;

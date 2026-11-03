@@ -165,6 +165,7 @@ export interface ChartEvents {
   /**
    * E12-S10 (additive; noted for the E11-T09 #1404 freeze): a main-series bar's state changed:
    * forming started or ended (the confirm), or the corrected mark came or went. Never per tick.
+   * `time` is the bar's open time, in microseconds since the epoch.
    */
   barStateChanged: { time: number; forming: boolean; amended: boolean };
   error: {
