@@ -17,6 +17,7 @@ export function ConnectedLiquidationPane({
   const snapshot = useLiqSnapshot(feed);
   return (
     <LiquidationPane
+      key={`${symbol}|${feedOptions.minNotionalUsd ?? ""}`} // a new feed, a new pane: no held rows survive
       symbol={symbol}
       snapshot={feed === null ? INITIAL_LIQ_SNAPSHOT : snapshot}
       onRetry={() => feed?.retry()}

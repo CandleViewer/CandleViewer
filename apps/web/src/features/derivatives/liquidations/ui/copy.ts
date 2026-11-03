@@ -16,7 +16,11 @@ export const filterLine = (minNotionalUsd: string): string =>
 export const PAUSE = "Pause";
 export const newCount = (n: number): string => `${String(n)} new`;
 /** PROPOSED: the `N new` control's name says what it does (D03 §10.1: `Enter` resumes at the top). */
-export const newCountName = (n: number): string => `${String(n)} new prints, show newest`;
+export const newCountName = (n: number): string =>
+  `${String(n)} new ${n === 1 ? "print" : "prints"}, show newest`;
+/** PROPOSED: the 40-row cut, disclosed (review B M3). */
+export const newestOf = (shown: number, held: number): string =>
+  `Showing the newest ${String(shown)} of ${groupedDecimal(String(held))} prints.`;
 
 /** PROPOSED: the table's caption (the feed is the table, D02 §11). */
 export const tableCaption = (symbol: string): string =>
@@ -52,13 +56,18 @@ export const RETRY_TITLE = "Couldn't load liquidation history";
 /** D02 §15 `liq-coverage-retry` (`api/market_coverage.py`, verbatim): the server's 503. */
 export const COVERAGE_RETRY = "Recording metadata is not available yet; retry shortly.";
 export const RETRY = "Retry";
+/** D04 A-19: the retry control names what it retries. */
+export const RETRY_NAME = "Retry loading Liquidations";
 export const lastLoaded = (ms: number): string => `Last loaded ${utcTime(ms)}`;
 /** PROPOSED (after D02 §9's "Loading OI history…"). */
 export const LOADING = "Loading liquidation history…";
 /** PROPOSED: inside coverage, an empty window says what was recorded, never "no liquidations". */
 export const emptyRecorded = (when: string): string => `No prints recorded since ${when}.`;
-/** PROPOSED: the read stopped at its page bound. */
-export const TRUNCATED = "Not every print in this window loaded.";
+/** PROPOSED: the end of the window the read did not load (review A M3), with its time. */
+export const truncated = (side: "older" | "newer", when: string): string =>
+  side === "older"
+    ? `Older prints not loaded: before ${when}.`
+    : `Newer prints not loaded: after ${when}.`;
 /** PROPOSED: CMP-239's `disconnected` and `stale` words with D03 §10.2's "last" time. */
 export const disconnected = (lastMs: number | null): string =>
   lastMs === null ? "Disconnected" : `Disconnected · last ${utcTime(lastMs)}`;

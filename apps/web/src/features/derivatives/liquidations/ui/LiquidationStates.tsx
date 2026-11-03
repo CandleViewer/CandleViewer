@@ -8,11 +8,15 @@ import type { JSX } from "react";
 import { Button, EmptyState, FreshnessMarker, Skeleton, Tag } from "@candleviewer/ui";
 import type { LiqSnapshot } from "../liquidationFeed";
 import * as copy from "./copy";
-import { coverageTime } from "./format";
+import { coverageTime, utcTime } from "./format";
 
-/** CMP-239 for the topic's own state; liquidation silence never shades (D02 §9). */
+/**
+ * CMP-239 for the topic's own state, its time the topic's last data frame (review B m4); liquidation silence never
+ * shades (D02 §9). PROPOSED: packages/ui's CMP-239 has only `stale`, so `disconnected` is the stale chip with the
+ * word as its label until the DS owner adds the state (G-row in the #780 report).
+ */
 export function FeedStatusChip({ snapshot }: { snapshot: LiqSnapshot }): JSX.Element | null {
-  const last = snapshot.rows[0]?.tsMs ?? null;
+  const last = snapshot.lastFrameAtMs;
   if (snapshot.feed === "resyncing" || snapshot.feed === "revoked") {
     return (
       <FreshnessMarker
@@ -41,10 +45,17 @@ export function HistoryBand({
   if (history.phase === "failed") {
     return (
       <div className="cv-liq-pane__retry">
-        <p role="status" className="cv-liq-pane__retry-title">
+        {/* no status role: the sub-pane keeps one status node (review B m6) */}
+        <p className="cv-liq-pane__retry-title">
           {history.status === 503 ? copy.COVERAGE_RETRY : copy.RETRY_TITLE}
         </p>
-        <Button variant="secondary" size="sm" density="compact" onClick={onRetry}>
+        <Button
+          variant="secondary"
+          size="sm"
+          density="compact"
+          aria-label={copy.RETRY_NAME}
+          onClick={onRetry}
+        >
           {copy.RETRY}
         </Button>
         {history.lastSuccessAtMs === null ? null : (
@@ -63,7 +74,10 @@ export function HistoryBand({
       <p className="cv-liq-pane__caption">{copy.LOADING}</p>
     );
   }
-  return history.truncated ? <p className="cv-liq-pane__caption">{copy.TRUNCATED}</p> : null;
+  const cut = history.truncated;
+  return cut === null ? null : (
+    <p className="cv-liq-pane__caption">{copy.truncated(cut.side, utcTime(cut.atMs))}</p>
+  );
 }
 
 export interface CoverageView {
@@ -75,13 +89,15 @@ export interface CoverageView {
   readonly noCoverage: boolean;
 }
 
-/** Coverage from the read's `meta.coverage`, compared with the requested window (never the oldest row). */
+/**
+ * Coverage from the last read's `meta.coverage` (kept while a retry runs or fails, so the chip never goes), compared
+ * with the requested window, never the oldest row.
+ */
 export function coverageView(symbol: string, snapshot: LiqSnapshot): CoverageView {
-  const { history, window } = snapshot;
-  if (history.phase !== "ready" || window === null) {
+  const { coverage, window } = snapshot;
+  if (coverage === null || window === null) {
     return { node: null, emptyTitle: null, noCoverage: false };
   }
-  const { coverage } = history;
   const when = (ms: number): string => coverageTime(ms, window.toMs);
   const first = coverage.firstAvailableMs;
   if (coverage.noCoverage) {
@@ -110,6 +126,7 @@ export function coverageView(symbol: string, snapshot: LiqSnapshot): CoverageVie
   return {
     node: (
       <div className="cv-liq-pane__partial">
+        {/* PROPOSED: CMP-239 `partial` is not in packages/ui; a neutral CMP-011 Tag until it is (G-row) */}
         <Tag label={copy.sinceChip(when(first))} density="compact" />
         <p className="cv-liq-pane__caption">{copy.partialSentence(when(first))}</p>
       </div>

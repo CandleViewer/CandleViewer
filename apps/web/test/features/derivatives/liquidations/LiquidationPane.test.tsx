@@ -39,6 +39,7 @@ const next = (s: LiqSnapshot): LiqSnapshot => ({
     ...s.rows,
   ],
   newestSeq: s.newestSeq + 1,
+  held: s.held + 1,
 });
 
 describe("LiquidationPane (CMP-186, the feed)", () => {
@@ -87,6 +88,7 @@ describe("LiquidationPane (CMP-186, the feed)", () => {
     // the counter sits in an `aria-live="off"` node with no announcing region around it (D02 §13)
     expect(counter.closest("[aria-live]")?.getAttribute("aria-live")).toBe("off");
     expect(counter.closest("[role='status'], [role='alert'], [role='log']")).toBeNull();
+    expect(screen.getByText("Showing the newest 40 of 1,000 prints.")).toBeTruthy(); // the cut, disclosed
   });
 
   it("states the server-side filter", () => {
@@ -118,6 +120,42 @@ describe("LiquidationPane (CMP-186, the feed)", () => {
     expect(screen.getByRole("button", { name: "Pause" }).getAttribute("aria-pressed")).toBe(
       "false",
     );
+    expect(grid().contains(document.activeElement)).toBe(true); // focus lands on the grid (B M2)
+  });
+
+  it("keeps N new reachable from the table without thawing: table, button, activate, rows", () => {
+    const { rerender } = render(
+      <LiquidationPane symbol="BTCUSDT" onRetry={noop} snapshot={stories.base} />,
+    );
+    const cell = within(grid()).getAllByRole("gridcell")[0];
+    if (cell === undefined) throw new Error("no cell");
+    act(() => cell.focus());
+    rerender(<LiquidationPane symbol="BTCUSDT" onRetry={noop} snapshot={next(stories.base)} />);
+    const fresh = screen.getByRole("button", { name: "1 new print, show newest" });
+    act(() => fresh.focus()); // Shift+Tab from the grid: the control is inside the frozen region
+    expect(bodyRows()).toHaveLength(2);
+    fireEvent.click(fresh);
+    expect(bodyRows()).toHaveLength(3);
+    expect(grid().contains(document.activeElement)).toBe(true);
+  });
+
+  it("never shows another symbol's held rows, and never counts backfill as new", () => {
+    const { rerender } = render(
+      <LiquidationPane symbol="BTCUSDT" onRetry={noop} snapshot={stories.base} defaultPaused />,
+    );
+    const merged = { ...stories.base, newestSeq: 9, mergedSeq: 9, held: 10 };
+    rerender(<LiquidationPane symbol="BTCUSDT" onRetry={noop} snapshot={merged} defaultPaused />);
+    expect(screen.queryByRole("button", { name: /new print/ })).toBeNull();
+    const eth = { ...stories.base, rows: [], newestSeq: -1, held: 0 };
+    rerender(<LiquidationPane symbol="ETHUSDT" onRetry={noop} snapshot={eth} defaultPaused />);
+    const pane = screen.getByRole("region", { name: "Liquidations, ETHUSDT" });
+    expect(within(pane).queryByText("82,751.20")).toBeNull();
+  });
+
+  it("dates a row from another UTC day than the newest", () => {
+    render(stories.DayChange.render());
+    expect(within(grid()).getByText("20 Oct 23:59:58")).toBeTruthy();
+    expect(within(grid()).getByText("09:14:02")).toBeTruthy();
   });
 
   it("holds the view while focus is in the table and resumes when it leaves", () => {
@@ -126,11 +164,11 @@ describe("LiquidationPane (CMP-186, the feed)", () => {
     );
     const cell = within(grid()).getAllByRole("gridcell")[0];
     if (cell === undefined) throw new Error("no cell");
+    // user-event is not a dependency of apps/web; focus() fires the same focusin the grid's Tab stop would
     act(() => cell.focus());
-    fireEvent.focus(cell);
     rerender(<LiquidationPane symbol="BTCUSDT" onRetry={noop} snapshot={next(stories.base)} />);
     expect(bodyRows()).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "1 new prints, show newest" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "1 new print, show newest" })).toBeTruthy();
     fireEvent.blur(cell, { relatedTarget: null });
     expect(bodyRows()).toHaveLength(3);
   });
@@ -155,7 +193,7 @@ describe("LiquidationPane (CMP-186, the feed)", () => {
     if (first === undefined) throw new Error("no cell");
     act(() => first.focus());
     fireEvent.keyDown(first, { key: "ArrowDown" });
-    expect(document.activeElement?.textContent).toBe("10:12:44");
+    expect(document.activeElement?.textContent).toBe("14 Sep 10:12:44"); // another UTC day: dated
   });
 
   it("names the first available time on a partial window, with the no-history sentence", () => {
@@ -210,6 +248,11 @@ describe("LiquidationPane (CMP-186, the feed)", () => {
         onRetry={onRetry}
         snapshot={{
           ...stories.base,
+          // a window from before the first stored print: the partial chip shows
+          window: {
+            fromMs: Date.parse("2026-08-31T00:00:00Z"),
+            toMs: Date.parse("2026-09-14T11:00:00Z"),
+          },
           history: {
             phase: "failed",
             status: 500,
@@ -218,12 +261,12 @@ describe("LiquidationPane (CMP-186, the feed)", () => {
         }}
       />,
     );
-    expect(
-      within(region()).getByText("Couldn't load liquidation history").getAttribute("role"),
-    ).toBe("status");
+    const title = within(region()).getByText("Couldn't load liquidation history");
+    expect(title.closest("[role='status']")).toBeNull(); // one status node per sub-pane (B m6)
     expect(screen.getByText("Last loaded 09:14:02 UTC")).toBeTruthy();
     expect(bodyRows()).toHaveLength(2);
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(region().textContent).toContain("since 1 Sep 00:00 UTC"); // a retry never hides the chip
+    fireEvent.click(screen.getByRole("button", { name: "Retry loading Liquidations" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
     expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Liquidations" }));
   });
@@ -248,15 +291,15 @@ describe("LiquidationPane (CMP-186, the feed)", () => {
 
   it("says a truncated read", () => {
     render(stories.Truncated.render());
-    expect(screen.getByText("Not every print in this window loaded.")).toBeTruthy();
+    expect(screen.getByText("Older prints not loaded: before 10:15:00 UTC.")).toBeTruthy();
   });
 
-  it("names the topic's stale and disconnected states with the last print time", () => {
+  it("names the topic's stale and disconnected states with its last frame time, not the last print's", () => {
     const { unmount } = render(stories.Stale.render());
-    expect(region().textContent).toContain("Stale · last 09:14:02 UTC");
+    expect(region().textContent).toContain("Stale · last 09:14:05 UTC");
     unmount();
     render(stories.Disconnected.render());
-    expect(region().textContent).toContain("Disconnected · last 09:14:02 UTC");
+    expect(region().textContent).toContain("Disconnected · last 09:14:05 UTC");
   });
 
   it.each(

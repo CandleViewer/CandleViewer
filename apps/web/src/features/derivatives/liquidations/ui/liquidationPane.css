@@ -105,3 +105,11 @@
   flex-direction: column;
   align-items: stretch;
 }
+
+.cv-liq-pane__feedbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-xs) var(--space-inset-sm);
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+}

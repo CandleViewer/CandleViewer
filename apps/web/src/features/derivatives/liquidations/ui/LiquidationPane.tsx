@@ -1,12 +1,14 @@
-// E24-S05 (#780): the liquidation feed on SCR-054 (CMP-186's liquidations sub-pane, the feed part). A named
-// region with a heading; the toolbar (the burst counter, the filter line, the topic's CMP-239 chip, the `N new`
-// control, Pause); the read's band and the coverage (slice 2); the feed table; the completeness sentence. The view freezes under Pause, focus in the table or the pointer
-// over it (D02 §6, WCAG 2.2.2) and counts what arrived meanwhile; nothing here is a live region (D02 §13:
-// the counter is `aria-live="off"`; the AN-4 summary is slice 3's).
+// E24-S05 (#780): the liquidation feed on SCR-054 (CMP-186's liquidations sub-pane, the feed part). A named region
+// with a heading; the toolbar (the burst counter, the filter line, the topic's CMP-239 chip, Pause); the read's band
+// and the coverage; the feed region (the `N new` control, the "newest 40 of N" line, the table); the completeness
+// sentence. The view freezes under Pause, focus in the feed region or the pointer over it (D02 §6, WCAG 2.2.2) and
+// counts what arrived meanwhile; the `N new` control sits inside that region, so reaching it never thaws the view.
+// Nothing here is a live region (D02 §13: the counter is `aria-live="off"`); AN-4's cascade summary is the connected
+// pane's, through the shell announcer (PR 4).
 // TODO(#780): the `Liq 1 h · long … · short …` readout (BQ 4, ruled 6612481277: a client sum of the served 1 h
 // buckets, labelled "served buckets") follows outside PR 1's line budget; the counter stands alone until then.
 // TODO(#778): `Pause` is component state; any `liq` display setting joins #778's `deriv` block, never local storage.
-import { useRef, useState, type FocusEvent, type JSX } from "react";
+import { useEffect, useRef, useState, type FocusEvent, type JSX } from "react";
 import { Button, EmptyState } from "@candleviewer/ui";
 import type { LiqSnapshot } from "../liquidationFeed";
 import type { HeldPrint } from "../ring";
@@ -25,6 +27,8 @@ export interface LiquidationPaneProps {
 }
 
 interface Held {
+  /** The feed the rows came from: a symbol or filter change never shows them (review A M1). */
+  readonly identity: string;
   readonly rows: readonly HeldPrint[];
   readonly seq: number;
 }
@@ -39,16 +43,28 @@ export function LiquidationPane({
   const [pointer, setPointer] = useState(false);
   const [focusIn, setFocusIn] = useState(false);
   const [held, setHeld] = useState<Held | null>(null);
+  const feedRef = useRef<HTMLDivElement>(null);
+  const focusGrid = useRef(false);
+  const identity = `${symbol}|${snapshot.minNotionalUsd ?? ""}`;
   const frozen = paused || pointer || focusIn;
+  const now: Held = { identity, rows: snapshot.rows, seq: snapshot.newestSeq };
   // derived during render (React's "storing information from previous renders"): no effect, no extra frame
-  if (frozen && held === null) setHeld({ rows: snapshot.rows, seq: snapshot.newestSeq });
+  if (frozen && (held === null || held.identity !== identity)) setHeld(now);
   if (!frozen && held !== null) setHeld(null);
-  const view = frozen && held !== null ? held : { rows: snapshot.rows, seq: snapshot.newestSeq };
-  const fresh = snapshot.newestSeq - view.seq;
+  const view = frozen && held !== null && held.identity === identity ? held : now;
+  // a backfill merge renumbers the ring: prints up to the merge point are history, never "new" (review A m2)
+  const fresh = snapshot.newestSeq - Math.max(view.seq, snapshot.mergedSeq);
+
+  useEffect(() => {
+    if (!focusGrid.current) return;
+    focusGrid.current = false;
+    feedRef.current?.querySelector<HTMLElement>('[role="grid"] [tabindex="0"]')?.focus();
+  });
 
   const showNewest = (): void => {
     setPaused(false);
-    setHeld({ rows: snapshot.rows, seq: snapshot.newestSeq }); // still frozen by focus: jump to the top
+    setHeld(now); // still frozen by focus: jump to the top
+    focusGrid.current = true; // review B M2: focus lands on the grid, never on a control that goes away
   };
   const onBlur = (e: FocusEvent<HTMLDivElement>): void => {
     if (!(e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget))) {
@@ -63,6 +79,7 @@ export function LiquidationPane({
   const base = baseUnit(symbol);
   const empty = view.rows.length === 0;
   const coverage = coverageView(symbol, snapshot);
+  const cut = snapshot.held > view.rows.length && view.rows.length > 0;
 
   return (
     <section className="cv-liq-pane" aria-label={copy.regionName(symbol)} data-cmp="CMP-186">
@@ -81,17 +98,6 @@ export function LiquidationPane({
         )}
         <FeedStatusChip snapshot={snapshot} />
         <span className="cv-liq-pane__controls">
-          {fresh > 0 ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              density="compact"
-              aria-label={copy.newCountName(fresh)}
-              onClick={showNewest}
-            >
-              {copy.newCount(fresh)}
-            </Button>
-          ) : null}
           <Button
             variant="secondary"
             size="sm"
@@ -107,12 +113,35 @@ export function LiquidationPane({
       {coverage.node}
       {empty && coverage.noCoverage ? null : (
         <div
+          ref={feedRef}
           className="cv-liq-pane__feed"
           onPointerEnter={() => setPointer(true)}
           onPointerLeave={() => setPointer(false)}
           onFocus={() => setFocusIn(true)}
           onBlur={onBlur}
         >
+          {fresh > 0 || cut ? (
+            <div className="cv-liq-pane__feedbar">
+              {fresh > 0 ? (
+                // PROPOSED: CMP-011 `neutral` is a static chip in packages/ui; an activatable chip is a ghost
+                // CMP-001 until the DS owner rules (G-row in the #780 report)
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  density="compact"
+                  aria-label={copy.newCountName(fresh)}
+                  onClick={showNewest}
+                >
+                  {copy.newCount(fresh)}
+                </Button>
+              ) : null}
+              {cut ? (
+                <span className="cv-liq-pane__caption">
+                  {copy.newestOf(view.rows.length, snapshot.held)}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           <LiquidationTable
             symbol={symbol}
             baseUnit={base}

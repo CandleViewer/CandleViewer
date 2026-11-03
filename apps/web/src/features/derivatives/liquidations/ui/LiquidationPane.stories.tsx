@@ -77,7 +77,12 @@ export const base: LiqSnapshot = {
   ratePerSec: 0,
   minNotionalUsd: null,
   window: EXAMPLE_WINDOW,
-  history: { phase: "ready", coverage: EXAMPLE_COVERAGE, truncated: false },
+  history: { phase: "ready", coverage: EXAMPLE_COVERAGE, truncated: null },
+  coverage: EXAMPLE_COVERAGE,
+  held: 2,
+  mergedSeq: -1,
+  /** The topic's last data frame, after the newest print (the stale chip's "last"). */
+  lastFrameAtMs: Date.parse("2026-10-21T09:14:05Z"),
 };
 
 /** D02 §6 / D03 S54-44: recorded from 09:14 UTC, a 24 h window ending 34 min later. */
@@ -93,16 +98,21 @@ const At = (
     symbol="BTCUSDT"
     onRetry={noop}
     {...props}
-    snapshot={{ ...base, ...props.snapshot }}
+    snapshot={withCoverage({ ...base, ...props.snapshot })}
   />
 );
+/** A ready read's coverage is the snapshot's (the feed keeps it so); stories set `coverage: null` for none. */
+const withCoverage = (s: LiqSnapshot): LiqSnapshot =>
+  s.history.phase === "ready" ? { ...s, coverage: s.history.coverage } : s;
 
 /** S54-41: prints with the side word and glyph, size, `p`, notional and cluster. */
 export const Populated = { render: () => <At /> };
 
-/** S54-43: a cascade, the counter "1,240 prints/s" and at most 40 rows in view. */
+/** S54-43: a cascade, the counter "1,240 prints/s", at most 40 rows in view, the cut disclosed. */
 export const Cascade = {
-  render: () => <At snapshot={{ rows: CASCADE_ROWS, newestSeq: 659, ratePerSec: 1_240 }} />,
+  render: () => (
+    <At snapshot={{ rows: CASCADE_ROWS, newestSeq: 659, ratePerSec: 1_240, held: 1_000 }} />
+  ),
 };
 
 /** US-DERIV-006 sc. 2: the server-side filter stated in the pane. */
@@ -113,7 +123,11 @@ export const Paused = { render: () => <At defaultPaused /> };
 
 /** Nothing received and coverage not yet known: never worded as "no liquidations". */
 export const Waiting = {
-  render: () => <At snapshot={{ rows: [], newestSeq: -1, history: { phase: "loading" } }} />,
+  render: () => (
+    <At
+      snapshot={{ rows: [], newestSeq: -1, held: 0, history: { phase: "loading" }, coverage: null }}
+    />
+  ),
 };
 
 /** 360 px: the row's words and units kept (D03 S54-63). */
@@ -130,12 +144,23 @@ export const Narrow = {
 /** S54-70: a fresh pane, the skeleton (no lock, no chip). */
 export const Loading = {
   render: () => (
-    <At snapshot={{ feed: "pending", rows: [], newestSeq: -1, history: { phase: "loading" } }} />
+    <At
+      snapshot={{
+        feed: "pending",
+        rows: [],
+        newestSeq: -1,
+        held: 0,
+        history: { phase: "loading" },
+        coverage: null,
+      }}
+    />
   ),
 };
 
 /** S54-71: live prints drawn while the read runs. */
-export const Backfilling = { render: () => <At snapshot={{ history: { phase: "loading" } }} /> };
+export const Backfilling = {
+  render: () => <At snapshot={{ history: { phase: "loading" }, coverage: null }} />,
+};
 
 /** S54-45 / the ticket's sc. 3: the chip names the first available time; the sentence says why. */
 export const Partial = {
@@ -147,7 +172,7 @@ export const Partial = {
         window: PARTIAL_WINDOW,
         history: {
           phase: "ready",
-          truncated: false,
+          truncated: null,
           coverage: {
             firstAvailableMs: T_FIRST,
             coveredFromMs: T_FIRST,
@@ -171,7 +196,7 @@ export const CascadePartial = {
         window: PARTIAL_WINDOW,
         history: {
           phase: "ready",
-          truncated: false,
+          truncated: null,
           coverage: {
             firstAvailableMs: T_FIRST,
             coveredFromMs: T_FIRST,
@@ -195,7 +220,7 @@ export const NeverRecorded = {
         window: PARTIAL_WINDOW,
         history: {
           phase: "ready",
-          truncated: false,
+          truncated: null,
           coverage: {
             firstAvailableMs: null,
             coveredFromMs: null,
@@ -218,7 +243,7 @@ export const BeforeCoverage = {
         window: { fromMs: T_FIRST - 3 * 3_600_000, toMs: T_FIRST - 3_600_000 },
         history: {
           phase: "ready",
-          truncated: false,
+          truncated: null,
           coverage: {
             firstAvailableMs: T_FIRST,
             coveredFromMs: null,
@@ -249,15 +274,24 @@ export const CoverageRetry = {
         rows: [],
         newestSeq: -1,
         history: { phase: "failed", status: 503, lastSuccessAtMs: null },
+        coverage: null,
       }}
     />
   ),
 };
 
-/** The read stopped at its page bound. */
+/** The read stopped at its page bound: the older end not loaded, with its time. */
 export const Truncated = {
   render: () => (
-    <At snapshot={{ history: { phase: "ready", coverage: EXAMPLE_COVERAGE, truncated: true } }} />
+    <At
+      snapshot={{
+        history: {
+          phase: "ready",
+          coverage: EXAMPLE_COVERAGE,
+          truncated: { side: "older", atMs: Date.parse("2026-09-14T10:15:00Z") },
+        },
+      }}
+    />
   ),
 };
 
@@ -266,3 +300,37 @@ export const Stale = { render: () => <At snapshot={{ feed: "stale" }} /> };
 
 /** S54-75: disconnected, the pane frozen with its last-good time. */
 export const Disconnected = { render: () => <At snapshot={{ feed: "resyncing" }} /> };
+
+/** Long text: a long symbol and 30-digit decimals wrap, never truncate (D03 §9). */
+export const LongText = {
+  render: () => (
+    <At
+      symbol="1000000BABYDOGEUSDT"
+      snapshot={{
+        rows: [
+          {
+            ...EXAMPLE_PRINT,
+            price: "0.000001234567890123",
+            size: "123456789012345678901234567890",
+            notionalUsd: "152415787517146788751.12345",
+            clusterSize: 65_535,
+          },
+        ],
+        newestSeq: 0,
+        held: 1,
+        minNotionalUsd: "123456789012345678901234567890",
+      }}
+    />
+  ),
+};
+
+/** A row from the previous UTC day carries its date (PROPOSED). */
+export const DayChange = {
+  render: () => (
+    <At
+      snapshot={{
+        rows: [DESIGN_ROW, { ...EXAMPLE_PRINT, tsMs: Date.parse("2026-10-20T23:59:58Z") }],
+      }}
+    />
+  ),
+};

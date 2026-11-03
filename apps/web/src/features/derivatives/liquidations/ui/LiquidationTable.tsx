@@ -10,7 +10,7 @@ import { Table, type TableColumn } from "@candleviewer/ui";
 import type { HeldPrint } from "../ring";
 import { SIDE_GLYPHS, SIDE_WORDS } from "../side";
 import * as copy from "./copy";
-import { feedTime, groupedDecimal, notional2 } from "./format";
+import { feedTimeIn, groupedDecimal, notional2 } from "./format";
 
 /** A number drawn with its unit read after it (D02 §11: the unit in each cell's accessible name). */
 const withUnit = (text: string, unit: string): JSX.Element => (
@@ -34,8 +34,9 @@ export function LiquidationTable({
   rows,
   emptyState,
 }: LiquidationTableProps): JSX.Element {
+  const ref = rows[0]?.tsMs ?? 0; // a row from another UTC day than the newest carries its date (PROPOSED)
   const columns: TableColumn<HeldPrint>[] = [
-    { id: "time", header: copy.COL_TIME, minWidthEm: 6, cell: (r) => feedTime(r.tsMs) },
+    { id: "time", header: copy.COL_TIME, minWidthEm: 6, cell: (r) => feedTimeIn(r.tsMs, ref) },
     {
       id: "side",
       header: copy.COL_SIDE,
@@ -72,6 +73,7 @@ export function LiquidationTable({
         r.notionalUsd === null ? copy.NO_NOTIONAL : withUnit(notional2(r.notionalUsd), "USDT"),
     },
     {
+      // D04 F-5 proposes "Cluster (prints)" for the header (A-3, to the D05 copy deck); D02 §11's "×N" until then
       id: "cluster",
       header: copy.COL_CLUSTER,
       align: "end",

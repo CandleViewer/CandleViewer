@@ -11,10 +11,14 @@ export function groupedDecimal(value: string): string {
   return frac === undefined ? groupInt(int) : `${groupInt(int)}.${frac}`;
 }
 
-/** D03 §2 "liquidation notional" in the feed: "202473.6" → "202,473.60". */
+/** D03 §2 "liquidation notional" in the feed: "202473.605" → "202,473.61", exact (half-up on the string, review A M2). */
 export function notional2(value: string): string {
-  const n = Number(value);
-  return Number.isFinite(n) ? groupedDecimal(n.toFixed(2)) : groupedDecimal(value);
+  const m = /^(\d+)(?:\.(\d+))?$/.exec(value);
+  if (m === null) return groupedDecimal(value);
+  const frac = (m[2] ?? "").padEnd(3, "0");
+  const up = (frac[2] ?? "0") >= "5" ? BigInt(1) : BigInt(0);
+  const cents = (BigInt(`${m[1] ?? "0"}${frac.slice(0, 2)}`) + up).toString().padStart(3, "0");
+  return groupedDecimal(`${cents.slice(0, -2)}.${cents.slice(-2)}`);
 }
 
 /** "1,240 prints/s" and its spoken twin. */
@@ -29,6 +33,15 @@ const pad = (n: number): string => String(n).padStart(2, "0");
 export function feedTime(ms: number): string {
   const d = new Date(ms);
   return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+}
+
+const dayOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+
+/** The feed's time cell; "20 Oct 23:59:58" when the row is on another UTC day than `refMs` (PROPOSED). */
+export function feedTimeIn(ms: number, refMs: number): string {
+  if (dayOf(ms) === dayOf(refMs)) return feedTime(ms);
+  const d = new Date(ms);
+  return `${String(d.getUTCDate())} ${MONTHS[d.getUTCMonth()] ?? ""} ${feedTime(ms)}`;
 }
 
 /** "09:14:02 UTC". */
