@@ -29,6 +29,7 @@ import {
   SystemHealthTile,
   Table,
   Tabs,
+  Tag,
   TextInput,
   Toast,
   Toggle,
@@ -89,6 +90,8 @@ const atoms: [string, () => JSX.Element][] = [
     "CMP-010",
     () => <Slider aria-label="Level" value={1} min={0} max={5} step={1} onChange={noop} />,
   ],
+  // E29-S04's toggle chip: a button, itself the root that carries CMP-011.
+  ["CMP-011", () => <Tag variant="toggle" label="Trade" pressed onPressedChange={noop} />],
   [
     "CMP-040",
     () => (

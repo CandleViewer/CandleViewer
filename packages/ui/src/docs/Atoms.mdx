@@ -150,7 +150,7 @@ Arrow keys are not mirrored under `dir="rtl"` (Right / Down is always "next"), a
 | Typing, Enter, Backspace, Delete, paste, cut (with a reason) | Changes nothing; the first one of a focus visit announces the reason once.                                  |
 | Arrows, Home, End, copy (with a reason)                      | Allowed and silent. Tab is never touched; Esc only hides a shown echo, and is untouched when none shows.    |
 
-### Tag (CMP-011; the remove control follows APG Button through CMP-002)
+### Tag (CMP-011; the remove control follows APG Button through CMP-002; `toggle` is an APG toggle button)
 
 | Keys                         | Action                                                                                                                                                           |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -158,14 +158,20 @@ Arrow keys are not mirrored under `dir="rtl"` (Right / Down is always "next"), a
 | Enter, Space (remove)        | Fires `onRemove`. The chip never moves focus: the owning group moves it to the next chip's remove button, else the previous one, else its input; never `<body>`. |
 | Enter, Space (with a reason) | No removal; the remove button stays focusable and its reason is the accessible description.                                                                      |
 | Esc (name or reason echo)    | Hides the remove button's CMP-016 echo ("Remove {label}", then the reason); focus stays. A second Esc reaches the host.                                          |
+| Tab / Shift+Tab (`toggle`)   | Each toggle chip is its own stop, with CMP-039's ring outside it.                                                                                                |
+| Enter, Space (`toggle`)      | Calls `onPressedChange` with the next state; the host flips `pressed`. The name never changes and focus stays.                                                   |
 
-| Element                | Role        | Name                                     | Notes                                                       |
-| ---------------------- | ----------- | ---------------------------------------- | ----------------------------------------------------------- |
-| Chip                   | none (span) | its visible label                        | Status tones carry a fixed glyph plus the word.             |
-| Leading glyph          | none        | none                                     | `aria-hidden`: the word is in the label.                    |
-| Remove (ghost CMP-002) | button      | "Remove {label}", e.g. "Remove Breakout" | Gated removal: `aria-disabled` plus the reason description. |
+| Element                | Role        | Name                                     | Notes                                                                                                        |
+| ---------------------- | ----------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Chip                   | none (span) | its visible label                        | Status tones carry a fixed glyph plus the word.                                                              |
+| Leading glyph          | none        | none                                     | `aria-hidden`: the word is in the label.                                                                     |
+| Remove (ghost CMP-002) | button      | "Remove {label}", e.g. "Remove Breakout" | Gated removal: `aria-disabled` plus the reason description.                                                  |
+| Toggle chip            | button      | its word, e.g. "Trade"                   | `aria-pressed="true"` or `"false"`; pressed also draws a 2 px `color.border.selected` ring, never hue alone. |
 
-Only a neutral label truncates. A status chip never shrinks, so give it room for its whole word.
+Only a neutral label truncates. A status chip never shrinks, so give it room for its whole word. A toggle chip never
+truncates either: its row wraps (E29-D02:299's Type chips), and it is a view choice, never gated or disabled
+(E29-D04 §4.2). It passes the button's other attributes through, so a CMP-016 Tooltip may describe it (e.g. spell out
+an abbreviation) while its name stays its word.
 
 ### Badge (CMP-012, static; the `img` role when a count stands alone)
 

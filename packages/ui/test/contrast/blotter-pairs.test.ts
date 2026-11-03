@@ -97,3 +97,52 @@ describe("the blotter components' contrast pairs (E29-D04 §5)", () => {
     expect(Math.round(ratio * 100) / 100).toBe(3.13);
   });
 });
+
+/**
+ * CMP-011's toggle chip, the Fills tab's Type chips (E29-S04; E29-D04 §2.9): its label at rest, hovered and pressed,
+ * and its pressed ring on the pressed fill and on the toolbar surfaces.
+ */
+const TOGGLE: readonly Pair[] = [
+  ["color.text.secondary", "color.neutral.subtle", 4.5],
+  ["color.text.primary", "color.action.secondary.hover", 4.5],
+  ["color.text.primary", "color.action.selected", 4.5],
+  ["color.border.selected", "color.action.selected", 3],
+  ...["color.surface.app", "color.surface.canvas", "color.surface.raised"].map((bg): Pair => [
+    "color.border.selected",
+    bg,
+    3,
+  ]),
+];
+
+describe("CMP-011's toggle chip contrast pairs (E29-S04)", () => {
+  it.each(["dark", "light", "high-contrast"])("%s: every opaque pair the toggle binds", (name) => {
+    const theme = themes[name] as Theme;
+    for (const [fg, bg, bar] of TOGGLE) {
+      const ratio = math.contrastRatio(hexOf(theme, fg), hexOf(theme, bg));
+      expect(Math.floor(ratio * 1000) / 1000, `${fg} on ${bg}`).toBeGreaterThanOrEqual(bar);
+    }
+  });
+
+  it.each(["dark", "light", "high-contrast"])(
+    "%s: hover moves a resting toggle's fill visibly (1.54:1 dark and high contrast, 1.35:1 light)",
+    (name) => {
+      const theme = themes[name] as Theme;
+      const ratio = math.contrastRatio(
+        hexOf(theme, "color.action.secondary.hover"),
+        hexOf(theme, "color.neutral.subtle"),
+      );
+      expect(ratio).toBeGreaterThanOrEqual(1.3);
+    },
+  );
+
+  it.each(["dark", "light", "high-contrast"])(
+    "%s: a pressed toggle's fill alone is within 1.2:1 of the rest fill, so its ring carries the state",
+    (name) => {
+      const theme = themes[name] as Theme;
+      for (const fill of ["color.action.selected", "color.surface.selected"]) {
+        const ratio = math.contrastRatio(hexOf(theme, fill), hexOf(theme, "color.neutral.subtle"));
+        expect(ratio, fill).toBeLessThan(1.21);
+      }
+    },
+  );
+});
