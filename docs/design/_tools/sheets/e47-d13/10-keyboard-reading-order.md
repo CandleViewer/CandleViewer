@@ -73,7 +73,7 @@ Board 10 of ten (§0 L81: the Tab order and the reading order numbered over the 
 
 ## Sources (1)
 
-- E47-D13.md md5 b8e1bdd1; E47-D13-handoff.md md5 b6857717; 47-conformance-report.md md5 807dc1d0; 47-limitations.json md5 f609cce7; 14-screens-catalogue.md md5 1ca28890 at 4c662fd5b (§0 L81; §H L99)
+- E47-D13.md md5 0cbd55df; E47-D13-handoff.md md5 1da094e2; 47-conformance-report.md md5 807dc1d0; 47-limitations.json md5 f609cce7; 14-screens-catalogue.md md5 1ca28890 at 4c662fd5b (§0 L81; §H L99)
 
 ## Tokens (36)
 

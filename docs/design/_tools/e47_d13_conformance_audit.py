@@ -167,7 +167,7 @@ DRAWN_CELL = re.compile(
     r"drawn: board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
     r"`docs/design/E47/img/E47-D13-(?P<nn>\d\d)-(?P<slug>[a-z0-9-]+)\.png` \(\d+ × \d+\), "
     r"\d+ frames?, [\d,]+ nodes; (?P<gate>dark|light|high-contrast) gate PASS "
-    r"\(own [\d,]+ px, other [\d,]+ px\)(?:; redraw pending \(§16\))?"
+    r"\(own [\d,]+ px, other [\d,]+ px\)"
 )
 # a drawn cell's gate is its row's theme
 GATE_OF = {"dark": "dark", "light": "light", "hc": "high-contrast"}

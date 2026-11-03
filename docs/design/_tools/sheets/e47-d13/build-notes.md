@@ -86,15 +86,15 @@ folded here, so a rebuild reproduces the drawn boards:
 - `text_h` is the measured line height, `ceil(size x line-height x lines)` (13 px at 1.4: 19 px, not 18.2). It grows
   the section, pair, list, template and `actions` boards the live check grew by 1-5 px, and sets the `cut N` strip
   labels to the strip's 12 px.
-- `MEASURED_H`: the checked root heights (998 on 02, 03, 05-08, 10; 1001 on 04; 1029 on 09). Board 01 keeps its
-  estimate: its redraw measures the corrected annotation column.
+- `MEASURED_H`: the checked root heights (998 on 02, 03, 05-08, 10; 1001 on 04; 1029 on 09; 1179 on 01, the redraw's
+  read-back: annotation column end 1099 + 80, the kit's estimate was 1304).
 - `MEASURED_LINK_W`: the link labels' measured widths at type.ui.body (SCR-013 187, SCR-117 194, statement 143); the
   underline and the CMP-039 ring nest around a focused link follow.
 - Board 04's header tags at x 966 / 728 / 446 (`TAG_X_MEASURED`), clear of the h2; board 07's W-14 and CMP-033 tags at
   x 1024 (`TAG_X`), clear of the template box; board 08's entry outlines 379 and 171 px wide, 8 px a side; board 09's
   viewport tag at y 374, above the edge.
-- Board 01: `gen_01.py` no longer cuts the §7.7 line at 400 characters (the drawn board ends "...; co"); board 01 is
-  to be redrawn from this kit.
+- Board 01: `gen_01.py` no longer cuts the §7.7 line at 400 characters (the first drawn board ended "...; co"); board
+  01 was redrawn from this kit and its first redlines annotation carries the whole line.
 
 Recorded, not folded: the text re-sets of 06 and 10 after a tab reload (a drawing step); the kept findings (outside
 the root by design, 08's two overlaps, 09's viewport rule over the first row) and three drawn deviations (09's 320

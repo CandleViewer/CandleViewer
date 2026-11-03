@@ -70,8 +70,8 @@ TOOLS = REPO / "docs" / "design" / "_tools" / "sheets" / "tools"
 VALIDATOR, PACKER, MKCALL = TOOLS / "validate_sheet.py", TOOLS / "compact.py", TOOLS / "mkcall4.py"
 COMPONENTS, TOKENS_FILE = TOOLS / "components.offline.json", TOOLS / "token-sync.json"
 DOCS = {  # key -> (repo-relative path, md5 as read): every read is md5-checked; AT_BASE keys are read at SPEC_BASE
-    "spec": (_SPEC_PATH, "b8e1bdd1112e2b5b735ce7e54daeb3f6"),
-    "handoff": ("docs/design/E47/E47-D13-handoff.md", "b6857717ed931fc34dc02087847c3a9f"),
+    "spec": (_SPEC_PATH, "0cbd55df52e306873f04d033d7a55446"),
+    "handoff": ("docs/design/E47/E47-D13-handoff.md", "1da094e2e8d26b9cda830821319a42d0"),
     "report": ("docs/plan/a11y/47-conformance-report.md", "807dc1d0ddd03165f5ea39a35cdf1cd4"),
     "limits": ("docs/plan/a11y/47-limitations.json", "f609cce782720cf0f7d1f84b7df06e85"),
     "cat": ("docs/plan/14-screens-catalogue.md", "1ca288905451c9e5c495a0468c062641"),
@@ -1501,8 +1501,8 @@ def grid_xy(nn: int) -> tuple[int, int]:
 
 
 # the live check's root heights, measured by the drawing lane (the checked want: footer end + 80, or the annotation
-# column end + 80 on 04 and 09); board 01 keeps its estimate: its redraw measures the corrected annotation column
-MEASURED_H: dict[int, int] = {2: 998, 3: 998, 4: 1001, 5: 998, 6: 998, 7: 998, 8: 998, 9: 1029, 10: 998}
+# column end + 80 on 01, 04 and 09); board 01's is its redraw's read-back (column end 1099 + 80)
+MEASURED_H: dict[int, int] = {1: 1179, 2: 998, 3: 998, 4: 1001, 5: 998, 6: 998, 7: 998, 8: 998, 9: 1029, 10: 998}
 
 
 def board(nn: int, frames: list[Node], ann: Node, *, per_row: int | None = None,

@@ -76,7 +76,7 @@ Board 03 of ten (§0 L74: the CMP-028 status notice above the version line, the 
 
 ## Sources (1)
 
-- E47-D13.md md5 b8e1bdd1; E47-D13-handoff.md md5 b6857717; 47-conformance-report.md md5 807dc1d0; 47-limitations.json md5 f609cce7; 14-screens-catalogue.md md5 1ca28890 at 4c662fd5b (§0 L74; §H L99)
+- E47-D13.md md5 0cbd55df; E47-D13-handoff.md md5 1da094e2; 47-conformance-report.md md5 807dc1d0; 47-limitations.json md5 f609cce7; 14-screens-catalogue.md md5 1ca28890 at 4c662fd5b (§0 L74; §H L99)
 
 ## Tokens (34)
 

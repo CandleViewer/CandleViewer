@@ -2,7 +2,7 @@
 
 File `E47-D13 boards`, page `E47-D13 — Conformance statement`; export `docs/design/E47/img/E47-D13-01-statement-anatomy.png`; sheet `01-statement-anatomy.json` (validated); theme dark.
 
-Board 01 of ten (§0 L72: the whole page inside SettingsLayout: heading order, the eight sections of §7.2, redlines and token callouts). Grid (0, 0); 3280 x 1304 px; "page E47-D13 — Conformance statement · board 01 · r1".
+Board 01 of ten (§0 L72: the whole page inside SettingsLayout: heading order, the eight sections of §7.2, redlines and token callouts). Grid (0, 0); 3280 x 1179 px; "page E47-D13 — Conformance statement · board 01 · r1".
 
 ## Frames
 
@@ -11,13 +11,13 @@ Board 01 of ten (§0 L72: the whole page inside SettingsLayout: heading order, t
 
 ## Validator and size
 
-- `01-statement-anatomy.json: 0 errors, 1 warnings, 43 sections, 66863 bytes` (exit 0)
-- 43 sections, 66863 bytes
+- `01-statement-anatomy.json: 0 errors, 1 warnings, 43 sections, 66856 bytes` (exit 0)
+- 43 sections, 66856 bytes
 
 ## Live checks (5)
 
-- root 'E47-D13 / 01 statement-anatomy' at (0, 0): read back the name exactly after the first section call; size 3280 x 1304
-- after touchTexts + relayout: the annotation column (estimated 1137 px) ends inside the root (h 1304); set the root's h to max(column end, footer end) + 80
+- root 'E47-D13 / 01 statement-anatomy' at (0, 0): read back the name exactly after the first section call; size 3280 x 1179
+- after touchTexts + relayout: the root's h 1179 is the measured max(column end, footer end) + 80 (annotation column estimated 1137 px); read it back
 - frame 'statement∕anatomy · dark': read back 1280 x 800 at (80, 80); clip on, no child spills
 - frame 'statement∕redlines · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills
 - export docs/design/E47/img/E47-D13-01-statement-anatomy.png: every frame is 1280 x 800; record the board id and the PNG size
@@ -70,7 +70,7 @@ Board 01 of ten (§0 L72: the whole page inside SettingsLayout: heading order, t
 
 ## Sources (1)
 
-- E47-D13.md md5 b8e1bdd1; E47-D13-handoff.md md5 b6857717; 47-conformance-report.md md5 807dc1d0; 47-limitations.json md5 f609cce7; 14-screens-catalogue.md md5 1ca28890 at 4c662fd5b (§0 L72; §H L99)
+- E47-D13.md md5 0cbd55df; E47-D13-handoff.md md5 1da094e2; 47-conformance-report.md md5 807dc1d0; 47-limitations.json md5 f609cce7; 14-screens-catalogue.md md5 1ca28890 at 4c662fd5b (§0 L72; §H L99)
 
 ## Tokens (32)
 
