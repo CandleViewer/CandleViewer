@@ -10,3 +10,4 @@ export * from "./candle/palette.js";
 export * from "./candle/series.js";
 export * from "./candle/bars.js";
 export * from "./candle/seams.js";
+export * from "./candle/price-source.js";

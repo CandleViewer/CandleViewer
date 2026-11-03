@@ -1,6 +1,6 @@
 // Autoscale, the log guard and the percent anchor (E11-S05, 26 §3.5, README BQ-116 to BQ-120).
-// Data reaches it through the internal `PriceExtentSource` seam (BarStore-shaped) until E12
-// attaches the store; `SeriesPlugin.priceRange` is the later adapter. `update` runs once per
+// Data reaches it through the internal `PriceExtentSource` seam: each runtime series' store is
+// one since E12-S11 (`SeriesPriceSource`); `SeriesPlugin.priceRange` is the later adapter. `update` runs once per
 // frame before the uniforms are written: it compares a few keys per pane and refits only when
 // one changed (the integer visible range, a source's version, a flag or margin), with no
 // allocation. The guard covers the whole loaded range on every data change (C-31), not the
@@ -53,10 +53,18 @@ export class AutoScaler {
 
   constructor(
     private readonly vp: ChartViewport,
-    /** Each pane's sources; the runtime injects pane 0's (`RuntimeDeps.priceSources`). */
+    /** Each pane's sources: its series' `SeriesPriceSource`s (tests inject pane 0's). */
     private readonly sources: (pane: number) => readonly PriceExtentSource[],
   ) {
     this.keys = new Float64Array(vp.panes.length * KEYS).fill(Number.NaN);
+  }
+
+  /**
+   * E12-S11: a pane's sources were added or removed (their version sum alone could collide), so
+   * every pane re-runs the guard, the anchor and the fit on the next update.
+   */
+  invalidate(): void {
+    this.keys.fill(Number.NaN);
   }
 
   /** Once per frame: true when a window, mode, anchor or log reason changed. */
