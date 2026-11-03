@@ -2,13 +2,13 @@
 
 # Accessibility conformance report (WCAG 2.2 Level A and AA): dry run
 
-**Dry run at `a6ec96762`, not a conformance claim.** Generated from `docs/plan/a11y/findings.json` (blob `55fb95f3a`) and `docs/plan/a11y/47-audit-register.json` (blob `cf3c9912b`) under the honest-claims rule and the evidence-capture contract of `docs/design/E47/E47-D13.md` §3-§4. Generator: `tools/a11y/conformance.py` (E47-T05); the format is frozen by E47-D13 §3-§4.
+**Dry run at `a6ec96762`, not a conformance claim.** Generated from `docs/plan/a11y/findings.json` (blob `bdf3bfa20`) and `docs/plan/a11y/47-audit-register.json` (blob `357f13f3b`) under the honest-claims rule and the evidence-capture contract of `docs/design/E47/E47-D13.md` §3-§4. Generator: `tools/a11y/conformance.py` (E47-T05); the format is frozen by E47-D13 §3-§4.
 
 - Product: CandleViewer, the web app in its desktop shell. Target: WCAG 2.2 Level AA. Shape: VPAT-shaped; nothing is filed.
 - Criteria: 55 rows (Level A 31, Level AA 24). Supports 0, Partially Supports 27, Does Not Support 23, Not Applicable 5.
 - Status in words: Partially conforms.
 - Screens: 149 non-reserved; register evidence audited at `a6ec96762`.
-- Known limitations: 9 rows in `docs/plan/a11y/47-limitations.json`; 5 without a disposition, so sign-off is blocked (A11Y-P-05, A11Y-P-06, A11Y-F-0018, A11Y-F-0023, A11Y-F-0029).
+- Known limitations: 10 rows in `docs/plan/a11y/47-limitations.json`; 6 without a disposition, so sign-off is blocked (A11Y-P-05, A11Y-P-06, A11Y-F-0018, A11Y-F-0023, A11Y-F-0029, A11Y-F-0035).
 
 ## Criteria
 
@@ -30,7 +30,7 @@
 | 1.4.3 Contrast (Minimum)                                   | AA    | Partially Supports | evidence not produced for 122 of 149 screens; not yet produced: contrast, t03; open findings: A11Y-F-0018; open design findings: 4 (E47-D02)                                                                                                                                                                                | t01:automated@a6ec96762 (27 screens: 27 pass, 0 fail)     | high-contrast theme `Ctrl+Shift+H` (SCR-116) |
 | 1.4.4 Resize Text                                          | AA    | Partially Supports | evidence not produced for 149 of 149 screens; not yet produced: pass; open design findings: 1 (E47-D02)                                                                                                                                                                                                                     | t01:deep@a6ec96762 (8 screens: 0 pass, 8 fail)            | in-app text scale `Ctrl+=` (SCR-116)         |
 | 1.4.5 Images of Text                                       | AA    | Does Not Support   | evidence not produced on any screen; not yet produced: pass                                                                                                                                                                                                                                                                 | none produced                                             | report the problem (statement §9)            |
-| 1.4.10 Reflow                                              | AA    | Partially Supports | evidence not produced for 149 of 149 screens; not yet produced: pass; open findings: A11Y-F-0008, A11Y-F-0009, A11Y-F-0016; open design findings: 2 (E47-D02)                                                                                                                                                               | t01:deep@a6ec96762 (8 screens: 0 pass, 8 fail)            | in-app text scale `Ctrl+=` (SCR-116)         |
+| 1.4.10 Reflow                                              | AA    | Partially Supports | evidence not produced for 149 of 149 screens; not yet produced: pass; open findings: A11Y-F-0008, A11Y-F-0009, A11Y-F-0016, A11Y-F-0035; open design findings: 2 (E47-D02)                                                                                                                                                  | t01:deep@a6ec96762 (8 screens: 0 pass, 8 fail)            | in-app text scale `Ctrl+=` (SCR-116)         |
 | 1.4.11 Non-text Contrast                                   | AA    | Partially Supports | evidence not produced for 122 of 149 screens; not yet produced: contrast, t03; open findings: A11Y-F-0023; open design findings: 2 (E47-D02); canvas: met only through the four layers of `05` §6.1–§6.4 (DOM mirror, live regions, table alternative, canvas semantics fallback), never by the canvas itself               | t01:automated@a6ec96762 (27 screens: 27 pass, 0 fail)     | `Alt+T` table view                           |
 | 1.4.12 Text Spacing                                        | AA    | Partially Supports | evidence not produced for 149 of 149 screens; not yet produced: pass                                                                                                                                                                                                                                                        | t01:deep@a6ec96762 (8 screens: 0 pass, 8 fail)            | in-app text scale `Ctrl+=` (SCR-116)         |
 | 1.4.13 Content on Hover or Focus                           | AA    | Does Not Support   | evidence not produced on any screen; not yet produced: pass                                                                                                                                                                                                                                                                 | none produced                                             | report the problem (statement §9)            |
@@ -89,12 +89,13 @@
 | A11Y-F-0023 | A11Y-F-0023                           | 1.4.11   | none: fix ticket E10-S01 #304 closed, finding open | no: blocks sign-off | statement  |
 | A11Y-F-0024 | A11Y-F-0024                           | 1.4.1    | fix-ticket: E17-D02 #325                           | yes                 | statement  |
 | A11Y-F-0029 | A11Y-F-0029                           | 2.4.5    | none: fix ticket E05-S03 #266 closed, finding open | no: blocks sign-off | statement  |
+| A11Y-F-0035 | A11Y-F-0035                           | 1.4.10   | none: fix ticket E10-Q03 #302 closed, finding open | no: blocks sign-off | statement  |
 
 ## Exception register
 
 The accepted-risk rows of `docs/plan/a11y/47-limitations.json`: a complete exception or no exception. A Level A criterion is never an exception; an expiry that passes is re-decided at the next release check, never extended silently.
 
-- Open findings (E47-T01): Level A 5, Level AA 9.
+- Open findings (E47-T01): Level A 5, Level AA 10.
 - Exceptions: 0; nearest expiry: none.
 
 No accepted-risk exceptions are registered.
