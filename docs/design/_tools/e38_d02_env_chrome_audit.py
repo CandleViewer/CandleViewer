@@ -4,7 +4,8 @@ chrome SCR-075 (CMP-074, CMP-075, CMP-139).
 
 Standalone and offline. It reads the spec and the pins file from the working tree, every cited
 file AS TEXT with `git show` at the pinned base (`BASE`), except E38-D01, which is read at #5451's
-approved head (`D01_REF`) until it merges. Colour maths imports, as the merged E10-D03 tool does,
+approved head (`D01_REF`) until it merges, and `14` and `17`, read at `MAIN` (both moved on `main`
+after BASE: `14` by one line at :1226, `17` by 39 at :147; re-pinned by content). Colour maths imports, as the merged E10-D03 tool does,
 `packages/ui/tokens/tests/verify_tokens.py` (the token loader and resolver),
 `docs/design/_tools/contrast_check.py` (`contrast_ratio`) and
 `docs/research/_tools/cvd_simulate.py` (`simulate`, `delta_e76`, `JND_FLOOR`) from the working
@@ -13,7 +14,7 @@ tree, and never re-implements them. Default-deny: a gate that cannot read its in
 Gates (each FAIL led by its name):
   G-STATE     every SCR-074 / SCR-075 state the ticket and `14` name has a §0 frame row;
               §4.3 holds the rows S74-01 ... S74-08 in order, each named as `STATES` names it
-              (`14`:1777's four plus the dialogs' and the gate's), each with a Presentation, a
+              (`14`:1778's four plus the dialogs' and the gate's), each with a Presentation, a
               Focus · announcement and an Audit cell; and every item of the two `14` sign-off
               checklists appears verbatim in §11's map with a frame.
   G-TOKEN     every design token the spec names (`color.*`, `font.*`, `border.*`, `radius.*`,
@@ -35,20 +36,36 @@ Gates (each FAIL led by its name):
               the reason node at mount by `aria-describedby`, CMP-079, the CMP-019 `lock`, the
               hi-fi pins), every T2 row cites it, and A-3 names CMP-079 and the `lock`.
   G-RULED     the rulings' texts hold (comment 6577247518): the demo statement verbatim from
-              `14`:1787 with its em dash (BQ-10); DEMO `font.weight.medium` (BQ-07); the panel
+              `14`:1788 with its em dash (BQ-10); DEMO `font.weight.medium` (BQ-07); the panel
               LIVE `border.thick` rule present and the word never underlined (BQ-08); "LIVE
               since" outside any live region (BQ-11); the typed match exact and case-sensitive
               (BQ-14); to demo a click-confirm only (BQ-16); the audit on the 200 only, in §4.3's
               prose and in S74-05's Audit cell (BQ-24); and the orchestrator's read: the pill a
               button inside the `role="status"` slot, never itself a status, in §3.1 and §9; the
               exports name all three CVD simulations.
-  G-AROW      A-1 … A-9 are all present; every Old text, and A-8's row text, stands exactly once
+  G-AROW      A-1 … A-10 are all present; every Old text, and A-8's row text, stands exactly once
               in its target at the base and on the line the row cites; A-9's anchor is A-6's
-              New text.
+              New text. Applied mode (PR 2): the targets in the working tree read either every
+              A-row pending (each Old once, no New, no inserted line, A-8's row present) or every
+              A-row applied (each New once and its Old gone; A-1 / A-2 the line right after their
+              screen's sign-off checklist, A-3 after CMP-074's Tests line, A-4 after CMP-075's
+              As-built line, A-9 the row right after A-6's row; A-3's and A-10's Old / New swapped;
+              A-8's row gone), never a mix;
+              once §0 is drawn (G-DRAWN), every A-row must be applied.
   G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
               deny word in the spec; no deny word in this tool's text or the pins.
-  G-SCOPE     the diff touches only the spec, this tool and the pins file.
+  G-DRAWN     §0's frame rows are all pending ("to draw (PR 2)", PR 1) or all drawn (PR 2).
+              Drawn: §0 names the page id; every frame row names a board of the board table;
+              each board row's Status is `drawn (r<n>[, light])` with its board id and export,
+              the export's number, slug and theme agree with the row, and on disk the PNG's
+              IHDR width × height and sha256 equal the record; the eight simulations of
+              boards 01 and 03 (greyscale, deuteranopia, protanopia, tritanopia) are listed
+              with their sha256 and equal it on disk; and no other E38-D02-*.png sits in
+              `docs/design/E38/img/`.
+  G-SCOPE     the diff touches only the spec, this tool, the pins file, the E38-D02
+              exports in `docs/design/E38/img/` and the A-rows' five targets (`14`, `15`,
+              `17`, E30-D04, E29-D03).
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e38_d02_env_chrome_audit.py --check
@@ -77,12 +94,36 @@ SPEC_REL = "docs/design/E38/E38-D02.md"
 TOOL_REL = "docs/design/_tools/e38_d02_env_chrome_audit.py"
 PINS_REL = "docs/design/_tools/e38_d02_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
+AROW_KEYS = (
+    "14",
+    "15",
+    "17",
+    "E30D04",
+    "E29D03",
+)  # the A-rows' targets, applied in PR 2
 BASE = "67fe8b5265810d9d7928bdf4b56e4911f16fce54"  # origin/main when written; re-pinned by content
 D01_REF = "4774b2f8cd7b67a1ee934fe88546568f7aa3e34c"  # #5451's approved head; re-pinned at merge
+MAIN = "201e19744e50acb526dd52d540bb7abe6247fb89"  # `main` for `14` / `17`: both moved after BASE
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
 CONTRAST_PATH = ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
 KEYMAP_REL = "apps/web/src/keymap/keymap.json"
+IMG_REL = "docs/design/E38/img"
+IMG = re.compile(r"docs/design/E38/img/E38-D02-\d\d-[a-z0-9-]+\.png")
+PENDING = "to draw (PR 2)"
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+DRAWN = re.compile(
+    rf"drawn \(r\d+(, light)?\): board id `({UUID})`, "
+    r"`docs/design/E38/img/(E38-D02-(\d\d)-([a-z0-9-]+)\.png)` "
+    r"\((\d+) × (\d+), sha256 `([0-9a-f]{64})`\)"
+)
+RENDER = re.compile(
+    r"^- `(E38-D02-(\d\d)-[a-z0-9-]+-(greyscale|deuteranopia|protanopia|tritanopia)\.png)` "
+    r"\(sha256 `([0-9a-f]{64})`\)$",
+    re.MULTILINE,
+)
+SIMULATED = ("01", "03")
+SIMULATIONS = ("greyscale", "deuteranopia", "protanopia", "tritanopia")
 PATHS: dict[str, str] = {
     "04": "docs/plan/04-security-program.md",
     "13": "docs/plan/13-user-flows.md",
@@ -103,7 +144,7 @@ PATHS: dict[str, str] = {
     "E33D03": "docs/design/E33/E33-D03.md",
     "D01": "docs/design/research/E38-paper-parity.md",
 }
-REF_OF = {"D01": D01_REF}
+REF_OF = {"D01": D01_REF, "14": MAIN, "17": MAIN}  # `14` +1 at :1226, `17` +39 at :147
 CITE = re.compile(
     r"`(\d\d|E10D03|E10D04|E30D02|E30D04|E09D09|E15D03|E11D02|E29D03|E32D03|E33D03|D01)`"
     r":(\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)"
@@ -139,7 +180,7 @@ DENY = (
 THEMES = ("dark", "light", "high-contrast")
 FLOOR = {"text": 4.5, "ui": 3.0}
 DEFICIENCIES = ("protanopia", "deuteranopia", "tritanopia")
-# §4.3's state rows, in order: `14`:1777's switching, switched, failed and not permitted, plus
+# §4.3's state rows, in order: `14`:1778's switching, switched, failed and not permitted, plus
 # the idle pill, the two dialogs and the blocked gate
 STATES = (
     "idle",
@@ -177,6 +218,8 @@ class Texts:
     tool: str
     changed: list[str] | None
     memo: dict[str, str | None]
+    files: dict[str, bytes]
+    heads: dict[str, str]
 
 
 def git(*args: str) -> str | None:
@@ -578,11 +621,81 @@ def g_scope(t: Texts) -> list[str]:
     if t.changed is None:
         return ["cannot list the changed paths (git failed)"]
     own = ", ".join(OWN_PATHS)
+    targets = {PATHS[k] for k in AROW_KEYS}
     return [
-        f"{p} is touched; this ticket owns {own}"
+        f"{p} is touched; this ticket owns {own}, the E38-D02 exports and the A-row targets"
         for p in t.changed
-        if p not in OWN_PATHS
+        if p not in OWN_PATHS and p not in targets and not IMG.fullmatch(p)
     ]
+
+
+def png_size(data: bytes) -> tuple[int, int] | None:
+    if data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR" or len(data) < 24:
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def on_disk(t: Texts, name: str, sha: str, size: tuple[int, int] | None = None) -> bool:
+    data = t.files.get(name)
+    if data is None or hashlib.sha256(data).hexdigest() != sha:
+        return False
+    return size is None or png_size(data) == size
+
+
+def g_drawn(t: Texts) -> list[str]:
+    s0 = section(t.spec, "## 0.")
+    frames = [r for r in table_rows(s0, "B") if len(r) == 5 and r[0] != "B"]
+    boards = [
+        r for r in table_rows(s0, "") if len(r) == 5 and re.fullmatch(r"\d\d", r[0])
+    ]
+    if not frames:
+        return ["§0 has no frame rows"]
+    pending = [r for r in frames if r[4] == PENDING]
+    if len(pending) == len(frames) and not boards:
+        return []  # PR 1: nothing drawn yet
+    bad = []
+    if pending:
+        bad.append(f"a mix: {len(pending)} frame rows still {PENDING!r}")
+    if not re.search(rf"page id `{UUID}`", s0):
+        bad.append("drawn, but §0 names no page id")
+    nos = {r[0] for r in boards}
+    for r in frames:
+        m = re.fullmatch(r"drawn, board (\d\d)", r[4])
+        if r[4] != PENDING and (m is None or m[1] not in nos):
+            bad.append(f"{r[0]}: Status {r[4]!r} names no board of the board table")
+    listed: set[str] = set()
+    for r in boards:
+        m = DRAWN.fullmatch(r[4])
+        if m is None:
+            bad.append(f"board {r[0]}: Status is not the drawn form")
+            continue
+        light, name, no, slug = m[1], m[3], m[4], m[5]
+        listed.add(name)
+        if no != r[0] or r[1] != f"`E38-D02 / {no} {slug}`":
+            bad.append(f"board {r[0]}: the export names another board or slug")
+        if bool(light) != (r[2] == "light") or slug.endswith("-light") != (
+            r[2] == "light"
+        ):
+            bad.append(
+                f"board {r[0]}: the theme does not agree with its Status and slug"
+            )
+        if not on_disk(t, name, m[8], (int(m[6]), int(m[7]))):
+            bad.append(f"board {r[0]}: {name} is missing or not its W × H and sha256")
+    renders = RENDER.findall(s0)
+    for name, _, _, sha in renders:
+        listed.add(name)
+        if not on_disk(t, name, sha):
+            bad.append(f"{name} is missing or not its sha256")
+    got = sorted(f"{no}-{k}" for _, no, k, _ in renders)
+    want = sorted(f"{no}-{k}" for no in SIMULATED for k in SIMULATIONS)
+    if got != want:
+        bad.append(
+            f"the simulations listed are {got}, not boards 01 and 03 × {SIMULATIONS}"
+        )
+    stray = sorted(set(t.files) - listed)
+    if stray:
+        bad.append(f"E38-D02 PNGs on disk that §0 does not list: {stray}")
+    return bad
 
 
 DEMO_STATEMENT = (
@@ -670,11 +783,11 @@ def g_t2_keys(t: Texts) -> list[str]:
 
 def g_ruled(t: Texts) -> list[str]:
     bad = []
-    if DEMO_STATEMENT not in at(t, "14").split("\n")[1786]:
-        bad.append("the demo statement is not on `14`:1787 at the base")
+    if DEMO_STATEMENT not in at(t, "14").split("\n")[1787]:
+        bad.append("the demo statement is not on `14`:1788 at its pin")
     n = t.spec.count(f'"{DEMO_STATEMENT}"')
     if n != 1 or "engine - REST" in t.spec:
-        bad.append("BQ-10: the demo statement is not verbatim from `14`:1787")
+        bad.append("BQ-10: the demo statement is not verbatim from `14`:1788")
     for what, must, never in RULED:
         if must not in t.spec:
             bad.append(f"{what}: {must[:50]!r} no longer stands")
@@ -702,8 +815,8 @@ def g_arow(t: Texts) -> list[str]:
     ]
     ids = [re.match(r"- \*\*(A-\d+),", ln) for ln in lines]
     got = [m[1] for m in ids if m]
-    if got != [f"A-{i}" for i in range(1, 10)]:
-        bad.append(f"the A-rows are {got}, not A-1 … A-9")
+    if got != [f"A-{i}" for i in range(1, 11)]:
+        bad.append(f"the A-rows are {got}, not A-1 … A-10")
     news: dict[str, list[str]] = {}
     for ln in lines:
         m = re.match(r"- \*\*(A-\d+),", ln)
@@ -732,14 +845,122 @@ def g_arow(t: Texts) -> list[str]:
     anchor = re.search(r'After "(.+?)" \(A-6', a9)
     if anchor is None or not any(anchor[1] in n for n in news.get("A-6", [])):
         bad.append("A-9: its anchor is not A-6's New text")
+    return bad + g_arow_applied(t, {m[1]: ln for m, ln in zip(ids, lines) if m})
+
+
+def copy_ready(ln: str) -> str:
+    """An insertion row's quoted text, its `\\"` escapes read as the quote they stand for."""
+    i, j = ln.find('): "'), ln.rfind('"')
+    return ln[i + 4 : j].replace('\\"', '"') if 0 <= i < j else ""
+
+
+def cells(ln: str) -> list[str]:
+    return [c.strip() for c in ln.strip().strip("|").split("|")]
+
+
+def after(text: str, head: str, starts: str) -> tuple[str, str] | None:
+    """The line in `head`'s `###` block that starts with `starts`, and the line after it."""
+    ls = text.split("\n")
+    i = next((k for k, ln in enumerate(ls) if ln.startswith(head)), -1)
+    for k in range(i + 1, len(ls) - 1) if i >= 0 else ():
+        if ls[k].startswith("### "):
+            return None
+        if ls[k].startswith(starts):
+            return ls[k], ls[k + 1]
+    return None
+
+
+INSERTS = (  # (A-row, target, block, the line the insertion follows)
+    ("A-1", "14", "### SCR-074 ", "- **Design sign-off acceptance checklist:**"),
+    ("A-2", "14", "### SCR-075 ", "- **Design sign-off acceptance checklist:**"),
+    ("A-3", "15", "### CMP-074 ", "- **Tests**:"),
+    ("A-4", "15", "### CMP-075 ", "- **As built"),
+)
+
+
+def g_arow_applied(t: Texts, rows: dict[str, str]) -> list[str]:
+    bad: list[str] = []
+    state: dict[str, set[str]] = {}
+
+    def mark(aid: str, applied: bool | None, why: str) -> None:
+        state.setdefault(aid, set()).add(
+            "applied" if applied else "pending" if applied is False else "neither"
+        )
+        if applied is None:
+            bad.append(f"{aid}: {why}")
+
+    for aid, key, head, starts in INSERTS:
+        text, ins = t.heads.get(key, ""), copy_ready(rows.get(aid, ""))
+        n, pair = text.count(ins), after(text, head, starts)
+        if not ins or pair is None:
+            mark(
+                aid, None, f"no copy-ready text or no `{starts}` line in {head.strip()}"
+            )
+        elif n == 0:
+            mark(aid, False, "")
+        elif n == 1 and pair[1] == ins:
+            mark(aid, True, "")
+        else:
+            mark(aid, None, f"its line stands {n} times or not right after `{starts}`")
+    for aid in ("A-3", "A-5", "A-6", "A-7", "A-10"):
+        key = "15" if aid == "A-3" else "E29D03" if aid == "A-7" else "E30D04"
+        text = t.heads.get(key, "")
+        for old, new in re.findall(
+            r'Old: "(.+?)"\. New: "(.+?)"(?:\.|$)', rows.get(aid, "")
+        ):
+            o, n = text.count(old), text.count(new)
+            if (o, n) == (1, 0):
+                mark(aid, False, "")
+            elif (o, n) == (0, 1):
+                mark(aid, True, "")
+            else:
+                mark(aid, None, f"{old[:30]!r} stands {o} and its New {n} times")
+    act = re.search(r'Delete the row whose action is "(.+?)"', rows.get("A-8", ""))
+    n8 = t.heads.get("17", "").count(act[1]) if act else -1
+    mark(
+        "A-8",
+        True if n8 == 0 else False if n8 == 1 else None,
+        f"its row stands {n8} times",
+    )
+    m9 = re.search(r'After "(.+?)" \(A-6.*?add the row: "(.+)"\.$', rows.get("A-9", ""))
+    if m9 is None:
+        mark("A-9", None, "no anchor or row text")
+    else:
+        ls = t.heads.get("E30D04", "").split("\n")
+        want = cells(m9[2])
+        hits = [
+            k for k, ln in enumerate(ls) if ln.startswith("|") and cells(ln) == want
+        ]
+        anchor = [k for k, ln in enumerate(ls) if m9[1] in ln]
+        if not hits:
+            mark("A-9", False, "")
+        elif len(hits) == 1 and len(anchor) == 1 and hits[0] == anchor[0] + 1:
+            mark("A-9", True, "")
+        else:
+            mark("A-9", None, "its row stands twice or not right after A-6's row")
+    seen = {a: s for a, s in state.items() if "neither" not in s}
+    mixed = sorted(a for a, s in seen.items() if len(s) > 1)
+    if mixed:
+        bad.append(f"A-rows half applied inside the row: {mixed}")
+    modes = {next(iter(s)) for s in seen.values() if len(s) == 1}
+    if len(modes) > 1:
+        done = sorted(a for a, s in seen.items() if s == {"applied"})
+        bad.append(f"a mix: {done} applied, the other A-rows pending")
+    elif modes == {"pending"} and g_drawn_mode(t):
+        bad.append("§0 is drawn but the A-rows are pending (PR 2 applies them)")
     return bad
+
+
+def g_drawn_mode(t: Texts) -> bool:
+    rows = table_rows(section(t.spec, "## 0."), "B")
+    return any(len(r) == 5 and r[0] != "B" and r[4] != PENDING for r in rows)
 
 
 GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-STATE": g_state, "G-TOKEN": g_token, "G-CONTRAST": g_contrast, "G-CVD": g_cvd,
     "G-HOTKEY": g_hotkey, "G-T2": lambda t: g_t2(t) + g_t2_keys(t),
     "G-RULED": g_ruled, "G-AROW": g_arow, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
-    "G-SCOPE": g_scope,
+    "G-DRAWN": g_drawn, "G-SCOPE": g_scope,
 }  # fmt: skip
 
 
@@ -777,7 +998,17 @@ def load() -> Texts:
         else ""
     )
     tool = (ROOT / TOOL_REL).read_text(encoding="utf-8")
-    return Texts(spec, pins, tool, changed_paths(), {})
+    img = ROOT / IMG_REL
+    files = (
+        {f.name: f.read_bytes() for f in sorted(img.glob("E38-D02-*.png"))}
+        if img.is_dir()
+        else {}
+    )
+    heads = {}
+    for k in AROW_KEYS:
+        f = ROOT / PATHS[k]
+        heads[k] = f.read_text(encoding="utf-8") if f.exists() else ""
+    return Texts(spec, pins, tool, changed_paths(), {}, files, heads)
 
 
 def fill(t: Texts) -> str:
@@ -824,6 +1055,51 @@ def set_cell(row: str, col: int, value: str) -> Callable[[Texts], Texts]:
     return f
 
 
+def with_file(name: str, data: bytes | None) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        files = {k: v for k, v in t.files.items() if k != name}
+        if data is not None:
+            files[name] = data
+        return replace(t, files=files)
+
+    return f
+
+
+def head_sub(key: str, old: str, new: str) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        if t.heads[key].count(old) != 1:
+            raise SystemExit(f"self-test: `{key}` carries {old[:40]!r} not once")
+        return replace(t, heads={**t.heads, key: t.heads[key].replace(old, new)})
+
+    return f
+
+
+def one_pixel_wider(t: Texts) -> Texts:
+    """Board 05's IHDR width plus one; the record's sha256 is moved to match, so only the size is off."""
+    name = "E38-D02-05-scr-075-modal-and-banners.png"
+    data = bytearray(t.files[name])
+    data[16:20] = (int.from_bytes(data[16:20], "big") + 1).to_bytes(4, "big")
+    old = hashlib.sha256(t.files[name]).hexdigest()
+    new = hashlib.sha256(bytes(data)).hexdigest()
+    return replace(
+        t, spec=t.spec.replace(old, new, 1), files={**t.files, name: bytes(data)}
+    )
+
+
+def swap_twins(t: Texts) -> Texts:
+    """Board 01's greyscale and deuteranopia simulations share a size; swapping their bytes keeps it."""
+    a = "E38-D02-01-scr-074-switch-to-live-greyscale.png"
+    b = "E38-D02-01-scr-074-switch-to-live-deuteranopia.png"
+    return replace(t, files={**t.files, a: t.files[b], b: t.files[a]})
+
+
+def swap_boards(t: Texts) -> Texts:
+    """Two dark boards' bytes swapped: both sizes and sha256 then disagree with the record."""
+    a = "E38-D02-04-scr-075-panel-placements.png"
+    b = "E38-D02-06-switch-diagram-and-matrix.png"
+    return replace(t, files={**t.files, a: t.files[b], b: t.files[a]})
+
+
 def drop_row(lead: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
         return replace(
@@ -848,7 +1124,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-T2", "drop the not-permitted reason", set_cell("S74-07", 3, "T2 2a on Switch to LIVE")),
     ("G-T2", "S74-07 given `14`'s string", sub("`rbac.env`, \"Live trading isn't enabled for you.\"", "`rbac.env`, \"The owner hasn't enabled Live for your account.\"")),
     ("G-T2", "S74-07 given the key `rbac.permission`", sub("T2 2a `rbac.env`,", "T2 2a `rbac.permission`,")),
-    ("G-RULED", "the demo statement with a hyphen", sub("matching engine \u2014 REST order entry only, no private WS order entry.\" (`14`:1787)", "matching engine - REST order entry only, no private WS order entry.\" (`14`:1787)")),
+    ("G-RULED", "the demo statement with a hyphen", sub("matching engine \u2014 REST order entry only, no private WS order entry.\" (`14`:1788)", "matching engine - REST order entry only, no private WS order entry.\" (`14`:1788)")),
     ("G-RULED", "DEMO made regular", sub("DEMO `font.weight.medium` on CMP-074", "DEMO `font.weight.regular` on CMP-074")),
     ("G-RULED", "the panel LIVE rule dropped", sub("On panel badges LIVE keeps E15-D03 D-4's `border.thick` rule", "On panel badges LIVE drops E15-D03 D-4's `border.thick` rule")),
     ("G-RULED", "the word underlined", sub("the word itself is never underlined", "the word itself is underlined")),
@@ -861,18 +1137,37 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-AROW", "A-9 dropped", lambda t: replace(t, spec="\n".join(ln for ln in t.spec.split("\n") if not ln.startswith("- **A-9,")))),
     ("G-T2", "draw the typed gate as T2", set_cell("S74-02", 3, "Continue T2 2a until the field equals `LIVE` (form validity)")),
     ("G-HOTKEY", "a KEYMAP command bound to the switch", lambda t: replace(t, memo={**t.memo, f"{BASE}:{KEYMAP_REL}": json.dumps({"commands": [{"id": "session.env_switch", "label": "Switch Demo/Live", "defaultBinding": "Ctrl+Shift+L"}]})})),
-    ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:1767)", "(`14`:1766)")),
+    ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:1768)", "(`14`:1767)")),
     ("G-HYGIENE", "write a closing keyword against #1003", sub("carries the closing line.", "carries the closing line. Closes #1003.")),
     ("G-HYGIENE", "put a deny word into the tool's own text", lambda t: replace(t, tool=t.tool + "\n# " + DENY[6] + "\n")),
-    ("G-SCOPE", "touch `14` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["14"]])),
-    ("G-RULED", "S74-05's Audit cell moved to intent", sub("`session.environment_switched`, high, on the 200 (`14`:1779)", "`session.environment_switched`, high, on press (`14`:1779)")),
+    ("G-SCOPE", "touch `16` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["16"]])),
+    ("G-RULED", "S74-05's Audit cell moved to intent", sub("`session.environment_switched`, high, on the 200 (`14`:1780)", "`session.environment_switched`, high, on press (`14`:1780)")),
     ("G-T2", "the T2 anatomy drops the describedby link", sub("in the DOM at mount and linked by `aria-describedby`", "in the DOM at mount")),
     ("G-T2", "the T2 anatomy drops the hi-fi pins", sub("never `color.text.disabled`, never `opacity.disabled` on the label", "on the label")),
     ("G-T2", "S74-08 stops citing the T2 anatomy", sub("`E33D03`:317; the T2 anatomy below)", "`E33D03`:317)")),
-    ("G-T2", "A-3 drops CMP-079", sub("(S74-07, S74-08) CMP-079 RbacGate wraps the popover's action", "(S74-07, S74-08) the popover's action is gated")),
+    ("G-T2", "A-3 drops CMP-079 (in the spec and as applied)", lambda t: head_sub("15", "(S74-07, S74-08) CMP-079 RbacGate wraps the popover's action", "(S74-07, S74-08) the popover's action is gated")(sub("(S74-07, S74-08) CMP-079 RbacGate wraps the popover's action", "(S74-07, S74-08) the popover's action is gated")(t))),
     ("G-RULED", "the pill made a status again (§3.1)", sub("the pill inside it is a button, CMP-017's anchor", "the pill inside it is a `role=\"status\"` element, CMP-017's anchor")),
     ("G-RULED", "the pill made a status again (§9)", sub("- **The pill:** a button named", "- **The pill:** `role=\"status\"`, named")),
     ("G-RULED", "the exports drop tritanopia", sub("protanopia and tritanopia renders", "protanopia renders")),
+    ("G-DRAWN", "board 05's PNG one pixel wider than its record", one_pixel_wider),
+    ("G-DRAWN", "two same-size simulations of board 01 swap bytes", swap_twins),
+    ("G-DRAWN", "two dark boards swap bytes", swap_boards),
+    ("G-DRAWN", "a simulation missing on disk", with_file("E38-D02-03-scr-075-band-and-signal-tritanopia.png", None)),
+    ("G-DRAWN", "an extra E38-D02 PNG on disk", with_file("E38-D02-09-extra.png", b"\x89PNG\r\n\x1a\n")),
+    ("G-DRAWN", "a frame row back to pending (a mix)", set_cell("B11", 4, PENDING)),
+    ("G-DRAWN", "a frame row names a board not drawn", set_cell("B15", 4, "drawn, board 09")),
+    ("G-DRAWN", "a light twin recorded as dark", set_cell("07", 2, "dark")),
+    ("G-DRAWN", "the page id dropped", lambda t: replace(t, spec=re.sub(rf"page id `{UUID}`", "page id pending", t.spec))),
+    ("G-DRAWN", "a simulation unlisted", drop_row("- `E38-D02-01-scr-074-switch-to-live-protanopia.png`")),
+    ("G-AROW", "A-5's second change reverted at HEAD (half a row)", head_sub("E30D04", "DEMO `font.weight.medium` with an outline dot (E10-D03 §1.2)", "DEMO regular with an outline dot")),
+    ("G-AROW", "A-8's row back in `17` (a mix)", head_sub("17", "| `Ctrl+Shift+K`", "| `Ctrl+Shift+L` | Toggle Demo/Live switch flow (opens M-005, never switches without confirm) | Global |\n| `Ctrl+Shift+K`")),
+    ("G-AROW", "A-1's line moved below a blank line", head_sub("14", "with the reason listed\n- **Hi-fi (E38-D02):**", "with the reason listed\n\n- **Hi-fi (E38-D02):**")),
+    ("G-AROW", "A-4's line inserted twice", lambda t: replace(t, heads={**t.heads, "15": t.heads["15"].replace("the placements per host are E38-D02 §3.2 (PROPOSED).", "the placements per host are E38-D02 §3.2 (PROPOSED).\n- **Hi-fi (E38-D02)**: the same grammar as CMP-074 (2 px border on every host, and LIVE's `border.thick` rule on panel badges; a denser row variant is R-1, PROPOSED to the E10-D03 owner), `role=\"img\"` with a static label; the placements per host are E38-D02 §3.2 (PROPOSED).")})),
+    ("G-AROW", "A-9's row dropped from E30-D04", lambda t: replace(t, heads={**t.heads, "E30D04": "\n".join(ln for ln in t.heads["E30D04"].split("\n") if not ln.startswith("| submit word"))})),
+    ("G-AROW", "A-3 worded off by one character at HEAD", head_sub("15", "the word never underlined.", "the word never underlined")),
+    ("G-AROW", "A-3's A11y swap reverted at HEAD (half a row)", head_sub("15", "a button inside the TopBar environment slot's `role=\"status\"` container, never itself `role=\"status\"` (E38-D02 §3.1), so", "`role=\"status\"` region so")),
+    ("G-AROW", "A-10 reverted at HEAD (a mix)", head_sub("E30D04", "`radius.pill`, a 2 px border on the env pill (`border.thick`, E10-D03 §1.2) and 1 px on CMP-229, CMP-232 and CMP-130; the same grammar", "`radius.pill`, 1 px border; the same grammar")),
+    ("G-AROW", "every A-row reverted while §0 is drawn", lambda t: replace(t, heads={k: show(t, BASE, PATHS[k]) or "" for k in AROW_KEYS})),
 )  # fmt: skip
 
 

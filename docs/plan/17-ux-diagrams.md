@@ -482,7 +482,6 @@ Single global hotkey layer spans all views (cross-cutting requirement from `23-v
 | `R`                               | Jump replay to real-time (exits replay)                                                                                                   | Replay active              |
 | `Ctrl+Shift+F`                    | Global flatten-all (with confirm modal M-006)                                                                                             | Global                     |
 | `Ctrl+Shift+K`                    | Kill switch (Owner only, with confirm modal M-018)                                                                                        | Global                     |
-| `Ctrl+Shift+L`                    | Toggle Demo/Live switch flow (opens M-005, never switches without confirm)                                                                | Global                     |
 | `Ctrl+/`                          | Open hotkey cheat-sheet overlay                                                                                                           | Global                     |
 | `Tab` / `Shift+Tab`               | Standard focus order through all interactive controls, including chart/DOM/graph-editor canvases                                          | Global (a11y requirement)  |
 | `Ctrl+Shift+A`                    | Open Alerts quick-create (M-022)                                                                                                          | Global                     |
