@@ -123,3 +123,123 @@ export async function stubAdminReads(
   );
   return (path, status, body) => answers.set(path, { status, body });
 }
+
+// SCR-135 and SCR-136's calls (E42-S04, #1135), answered at the network layer (C-13.5), after E42-D04
+// §1's worked example: the owner `basiltt`, LIVE, 2026-10-22 "as of 14:02:11", the break at entry
+// 1,204,118. No value is secret-shaped: hashes and keys repeat one character.
+
+const OWNER_ID = "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001";
+
+/** Entry `id` of the worked example, one second apart up to 14:02:11, one field changed. */
+export function auditEntry(
+  id: number,
+  over: Partial<Schemas["AuditEntry"]> = {},
+): Schemas["AuditEntry"] {
+  const at = Date.UTC(2026, 9, 22, 14, 2, 11) - (1_204_300 - id) * 1_000;
+  return {
+    id,
+    ts: new Date(at).toISOString(),
+    actor_user_id: OWNER_ID,
+    actor_username: "basiltt",
+    action: "orders.submit",
+    subject_type: "order",
+    subject_id: "0a000000-0000-4000-8000-000000000001",
+    subject_label: "BTCUSDT",
+    outcome: "success",
+    severity: "info",
+    reason: null,
+    environment: "live",
+    session_id: "5e000000-0000-4000-8000-000000000001",
+    ip: "100.84.12.9",
+    user_agent: null,
+    request_id: "0193f2bb-9c11-7a3d-88f1-0d2e3f4a5b6c",
+    detail: { before: { qty: "0.010" }, after: { qty: "0.020" } },
+    entry_hash: "3".repeat(64),
+    prev_hash: "7".repeat(64),
+    ...over,
+  };
+}
+
+const auditPage = (
+  items: readonly Schemas["AuditEntry"][],
+  next: string | null,
+): { items: Schemas["AuditEntry"][]; chain_verified: boolean; meta: Schemas["PageMeta"] } => ({
+  items: [...items],
+  chain_verified: true,
+  meta: { next_cursor: next, has_more: next !== null, count: items.length },
+});
+
+/** Page 1 (three rows, an Older cursor), page 2 (the end), and a filtered page of one row. */
+export const AUDIT_PAGES = {
+  first: auditPage([auditEntry(1_204_300), auditEntry(1_204_299), auditEntry(1_204_298)], "c1"),
+  second: auditPage([auditEntry(1_204_297), auditEntry(1_204_296)], null),
+  filtered: auditPage([auditEntry(1_204_299, { severity: "error", outcome: "failure" })], null),
+};
+
+const CHAIN_BREAK: Schemas["Incident"] = {
+  id: "1a000000-0000-4000-8000-000000000007",
+  component: "db",
+  severity: "critical",
+  status: "open",
+  title: "audit chain break at id <n>",
+  detail: "audit chain break at id 1204118",
+  occurrences: 1,
+  first_seen_at: "2026-10-22T14:05:07Z",
+  last_seen_at: "2026-10-22T14:05:07Z",
+  acknowledged_by: null,
+  acknowledged_at: null,
+  resolved_at: null,
+  runbook_ref: null,
+  signature: "5f0c2d9e4b7a1c3e",
+};
+
+export interface AuditWire {
+  /** Each `GET /admin/audit` (but the strip's `?limit=3`) as its query string. */
+  readonly reads: string[];
+}
+
+/**
+ * SCR-135's server: the list reads by cursor and filter (`rows`: page 1's size, 3 by default) and
+ * the incidents (`broken`: one open chain break). Registered after `stubAdminReads`, so it answers
+ * first.
+ */
+export async function stubAuditLog(
+  page: Page,
+  options: {
+    readonly broken?: boolean;
+    readonly rows?: number;
+  } = {},
+): Promise<AuditWire> {
+  const first =
+    options.rows === undefined
+      ? AUDIT_PAGES.first
+      : auditPage(
+          Array.from({ length: options.rows }, (_, i) => auditEntry(1_204_300 - i)),
+          "c1",
+        );
+  const wire = { reads: [] as string[] };
+  await page.route(
+    (url) => url.pathname === "/api/v1/admin/audit" && url.search !== "?limit=3",
+    (route) => {
+      const url = new URL(route.request().url());
+      wire.reads.push(url.search);
+      const params = url.searchParams;
+      const filtered = [...params.keys()].some((name) => !["limit", "cursor"].includes(name));
+      const body = filtered
+        ? AUDIT_PAGES.filtered
+        : params.get("cursor") === "c1"
+          ? AUDIT_PAGES.second
+          : first;
+      return route.fulfill(json(body));
+    },
+  );
+  await page.route("**/api/v1/admin/incidents?*", (route) =>
+    route.fulfill(
+      json({
+        items: options.broken === true ? [CHAIN_BREAK] : [],
+        meta: { next_cursor: null, has_more: false, count: options.broken === true ? 1 : 0 },
+      }),
+    ),
+  );
+  return wire;
+}

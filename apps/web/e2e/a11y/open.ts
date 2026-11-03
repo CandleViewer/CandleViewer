@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { stubAdminReads } from "../support/admin";
+import { stubAdminReads, stubAuditLog } from "../support/admin";
 import { stubSession, stubSessionsList } from "../support/api";
 import { REFRESH_INVALID } from "../support/contexts";
 import type { A11yScreen } from "./screens";
@@ -20,6 +20,11 @@ const PACE_SAMPLE = 5;
 const SCREEN_STUBS: Readonly<Record<string, (page: Page) => Promise<void>>> = {
   "R-201": stubSessionsList, // SCR-112 sessions: the table with the current session marked
   "R-300": async (page) => void (await stubAdminReads(page)), // SCR-120: every tile answered
+  // SCR-135 (E42-S04): the strip's reads, then the log's, which answer first
+  "R-360": async (page) => {
+    await stubAdminReads(page);
+    await stubAuditLog(page);
+  },
 };
 
 /**
@@ -59,6 +64,12 @@ export async function openScreen(page: Page, s: A11yScreen): Promise<void> {
   if (s.id === "R-201") {
     const table = page.getByRole("table"); // the list state, not loading
     await expect(table, `${s.id}: its table did not render`).toBeVisible({
+      timeout: STEP_TIMEOUT_MS,
+    });
+  }
+  if (s.id === "R-360") {
+    const rows = page.locator('[data-cmp="CMP-173"][data-variant="row"]'); // page 1 answered
+    await expect(rows.first(), `${s.id}: its rows did not render`).toBeVisible({
       timeout: STEP_TIMEOUT_MS,
     });
   }

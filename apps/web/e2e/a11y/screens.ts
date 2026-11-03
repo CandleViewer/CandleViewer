@@ -27,6 +27,7 @@ const SIGNED_IN = new Map<string, NonNullable<A11yScreen["signedIn"]>>([
   ["R-204", { role: "owner", heading: "R-204 — owned by E11" }],
   ["R-205", { role: "owner", heading: "R-205 — owned by E11" }],
   ["R-300", { role: "owner", heading: "Overview" }], // SCR-120 (E42-S01), its reads stubbed
+  ["R-360", { role: "owner", heading: "Audit log" }], // SCR-135 (E42-S04), its reads stubbed
 ]);
 
 export const FULL = process.env["A11Y_SWEEP"] === "full";
