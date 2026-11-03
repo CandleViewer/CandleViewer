@@ -8,7 +8,7 @@ Standalone and offline, shaped on the merged E10-D03 tool (`e10_d03_shell_audit.
 `docs/research/_tools/cvd_simulate.py` (`simulate`, `delta_e76`; JND 5.0) from the working tree
 and never re-implements them. It reads the spec and the pins file from the working tree and every
 cited file AS TEXT with `git show` at the pinned base (`BASE`), except E38-D01, which is read at
-#5451's approved head (`D01_REF`) until it merges. Default-deny: a gate that cannot read its
+`main`'s merge of #5451 (`D01_REF`). Default-deny: a gate that cannot read its
 input FAILs.
 
 Gates (each FAIL led by its name):
@@ -33,13 +33,31 @@ Gates (each FAIL led by its name):
               §1 item 4 quotes G-T2.1b, G-T2.2 and G-T2.3 verbatim from `DS` at the base
               (`T2_QUOTES`), and §8.1 carries the G-T2.2 label pair (tertiary on raised).
   G-RULED     the account's own name is the typed token (never a fixed word; BQ-07), the
-              protective writes stay enabled (BQ-13, C-2.6), and the S77-01 and OQ-2 rows exist.
+              protective writes stay enabled (BQ-13, C-2.6), and the S77-01 and OQ-2 rows exist;
+              the revoke is rung 2 with the `users` step-up in §4.2 and S122-05 (F-2), the
+              grant's Confirm is enabled at once (F-5, rung 1), and S137-09 stays PROPOSED with
+              C-4 while the C-4 row stands (F-3).
   G-MERGED    only merged owners are cited: E38-D02 or #1003 appears only on a request row or
               the sentence saying so, and the unmerged #1075 is never named.
-  G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins.
+  G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins;
+              each §7 owner quote (`A11Y_QUOTES`) stands in §7 and, as text, on its cited
+              line(s) at the base (`05` by content).
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
               deny word in the spec; no deny word in this tool's text or the pins.
-  G-SCOPE     the diff touches only the spec, this tool and the pins file.
+  G-DRAWN     §0 is pending ("to draw (PR 2)" with no board table, PR 1) or drawn (PR 2).
+              Drawn: §0 names the page id; every frame row's Status reads "drawn, board NN" (or
+              "boards NN and MM") with each NN a row of the board table and the first NN its
+              Board cell's number; each board row's Status is `drawn (r<n>)` with its board id
+              and export, the export's number and slug agree with the row's board name, and on
+              disk the PNG's IHDR width × height and sha256 equal the record; and no other
+              E38-D03-*.png sits in `docs/design/E38/img/`.
+  G-AROW      §9's A-rows, applied in PR 2 (none held): every row ends "**Applied (PR 2)**" with
+              the `14` line it follows at the base; its quoted text stands nowhere in `14` at the
+              base, and in the working tree each quote stands once as the line right after that
+              base line ("after"), or ends that line ("appended", A-3, which also rewords "old"
+              to "new" in it).
+  G-SCOPE     the diff touches only the spec, this tool, the pins file, `14` (the applied A-rows)
+              and the E38-D03 exports in `docs/design/E38/img/`.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e38_d03_honesty_audit.py --check
@@ -66,14 +84,16 @@ ROOT = Path(__file__).resolve().parents[3]
 SPEC_REL = "docs/design/E38/E38-D03.md"
 TOOL_REL = "docs/design/_tools/e38_d03_honesty_audit.py"
 PINS_REL = "docs/design/_tools/e38_d03_ruled_pins.txt"
-OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
+CAT_REL = "docs/plan/14-screens-catalogue.md"
+OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL, CAT_REL)
 BASE = "c327ed438c01c5bab9247890dd00f5dce3717f97"  # origin/main when written; re-pinned by content
-D01_REF = "4774b2f8cd7b67a1ee934fe88546568f7aa3e34c"  # #5451's approved head; re-pinned at merge
+D01_REF = "df806df6a1394fb8a1511841a5ed897b2a6eeaf3"  # main's merge of #5451 (E38-D01)
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
 CONTRAST_PATH = ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
 PATHS: dict[str, str] = {
     "04": "docs/plan/04-security-program.md",
+    "05": "docs/plan/05-accessibility-standard.md",
     "11": "docs/plan/11-user-stories.md",
     "14": "docs/plan/14-screens-catalogue.md",
     "15": "docs/plan/15-component-catalogue.md",
@@ -97,12 +117,8 @@ CITE = re.compile(
 TOKEN_NAME = re.compile(
     r"`((?:color|font|border|radius|type|space|size|motion|opacity)\.[a-z0-9.-]*[a-z0-9])`"
 )
-CLOSING = re.compile(
-    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE
-)
-LOCAL_PATH = re.compile(
-    "/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b"
-)  # assembled
+CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE)
+LOCAL_PATH = re.compile("/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b")  # assembled
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
 URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
 DENY = (
@@ -152,6 +168,20 @@ ACS = ("AC-1", "AC-2", "AC-3", "AC-4", "AC-5")
 FRAME = re.compile(r"`((?:SCR-\d{3}|[a-z-]+)/[a-z0-9-]+)`")
 UNMERGED = re.compile(r"E38-D02|#1003")
 NEVER = re.compile(r"#1075|FillModelDisclosure")
+IMG_REL = "docs/design/E38/img"
+IMG = re.compile(r"docs/design/E38/img/E38-D03-\d\d-[a-z0-9-]+\.png")
+PENDING = "to draw (PR 2)"
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+DRAWN = re.compile(
+    rf"drawn \(r\d+\): board id `{UUID}`, "
+    r"`docs/design/E38/img/(E38-D03-(\d\d)-([a-z0-9-]+)\.png)` "
+    r"\((\d+) × (\d+), sha256 `([0-9a-f]{64})`\)"
+)
+AROW = re.compile(r"^- \*\*(A-\d),.*$", re.MULTILINE)
+APPLIED = re.compile(
+    r" \*\*Applied \(PR 2\)\*\*, (after|appended)[^(]*\(`14`:(\d+)(?:, :(\d+))?\)\.$"
+)
+FRAME_DRAWN = re.compile(r"drawn, boards? (\d\d)(?: and (\d\d))?")
 
 
 @dataclass(frozen=True)
@@ -161,13 +191,13 @@ class Texts:
     tool: str
     changed: list[str] | None
     memo: dict[str, str | None]
+    files: dict[str, bytes]
+    work: str | None
 
 
 def git(*args: str) -> str | None:
     try:
-        r = subprocess.run(
-            ["git", "-C", str(ROOT), *args], capture_output=True, check=False
-        )
+        r = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, check=False)
     except OSError:
         return None
     return r.stdout.decode("utf-8", "surrogateescape") if r.returncode == 0 else None
@@ -300,8 +330,7 @@ def contrast_values(t: Texts, row: list[str]) -> list[str]:
     cc = mod("contrast_check")
     fg, bg = tok(row[1]), tok(row[2])
     return [
-        f"{cc.contrast_ratio(hex_rgb(color(th, fg)), hex_rgb(color(th, bg))):.2f}"
-        for th in THEMES
+        f"{cc.contrast_ratio(hex_rgb(color(th, fg)), hex_rgb(color(th, bg))):.2f}" for th in THEMES
     ]
 
 
@@ -313,11 +342,7 @@ def cvd_values(t: Texts, row: list[str]) -> tuple[str, str]:
     ds = [cv.delta_e76(ha, hb)] + [
         cv.delta_e76(cv.simulate(ha, d), cv.simulate(hb, d)) for d in DEFICIENCIES
     ]
-    under = [
-        n
-        for n, d in zip(("normal", *DEFICIENCIES), ds, strict=True)
-        if d < cv.JND_FLOOR
-    ]
+    under = [n for n, d in zip(("normal", *DEFICIENCIES), ds, strict=True) if d < cv.JND_FLOOR]
     return " / ".join(f"{d:.2f}" for d in ds), (", ".join(under) if under else "none")
 
 
@@ -386,9 +411,7 @@ def g_token(t: Texts) -> list[str]:
     known = known_tokens()
     names = sorted(set(TOKEN_NAME.findall(t.spec)))
     return [
-        f"`{n}` does not resolve in the token JSON at the base"
-        for n in names
-        if n not in known
+        f"`{n}` does not resolve in the token JSON at the base" for n in names if n not in known
     ]
 
 
@@ -445,9 +468,7 @@ def g_hidden(t: Texts) -> list[str]:
     bad = []
     live, alt, b07 = row(t, "S79-07"), row(t, "S79-09"), row(t, "B07")
     if "absent" not in live[3] or "T2" in live[3] or "disabled" in live[3]:
-        bad.append(
-            "S79-07: the LIVE reset must read absent, with no T2 or disabled leg"
-        )
+        bad.append("S79-07: the LIVE reset must read absent, with no T2 or disabled leg")
     if "not even disabled" not in live[2]:
         bad.append("S79-07: the note that it never renders disabled is missing")
     for r in (alt, b07):
@@ -509,9 +530,7 @@ def t2_quotes(t: Texts) -> list[str]:
             bad.append(f"§1 item 4 does not quote {gid} verbatim from `DS`")
     pairs = {(r[1], r[2]) for r in contrast_rows(t) if len(r) > 2}
     if ("`color.text.tertiary`", "`color.surface.raised`") not in pairs:
-        bad.append(
-            "§8.1 has no `color.text.tertiary` on `color.surface.raised` pair (G-T2.2)"
-        )
+        bad.append("§8.1 has no `color.text.tertiary` on `color.surface.raised` pair (G-T2.2)")
     return bad
 
 
@@ -523,18 +542,10 @@ def g_t2(t: Texts) -> list[str]:
         return ["the spec has no state rows"]
     keys = e09_templates(t)
     for r in rows:  # G-T2.1c: every gated control names its rendering
-        if (
-            len(r) >= 4
-            and ("T2" in r[2] or "T2" in r[3])
-            and not RENDERING.search(r[3])
-        ):
-            bad.append(
-                f"{r[0]}: a T2 control with no rendering (2a, 2b or the sentence form)"
-            )
+        if len(r) >= 4 and ("T2" in r[2] or "T2" in r[3]) and not RENDERING.search(r[3]):
+            bad.append(f"{r[0]}: a T2 control with no rendering (2a, 2b or the sentence form)")
     if "CMP-019 `lock`" not in section(t.spec, "## 1."):
-        bad.append(
-            "§1 item 4 does not state the CMP-019 `lock` glyph that leads a T2 label"
-        )
+        bad.append("§1 item 4 does not state the CMP-019 `lock` glyph that leads a T2 label")
     if not re.search(
         r"Until it is acknowledged, live order entry stays T2 `rbac.env` \(G-3\), rendering",
         t.spec,
@@ -548,9 +559,7 @@ def g_t2(t: Texts) -> list[str]:
         if not quote:
             bad.append(f"{r[0]}: a T2 presentation with no quoted reason")
         elif "PROPOSED" not in r[3] and not any(k.match(quote[1]) for k in keys):
-            bad.append(
-                f"{r[0]}: {quote[1]!r} is no E09-D09 key's text and is not PROPOSED"
-            )
+            bad.append(f"{r[0]}: {quote[1]!r} is no E09-D09 key's text and is not PROPOSED")
     return bad
 
 
@@ -566,16 +575,19 @@ def g_ruled(t: Texts) -> list[str]:
         "**Close, cancel, reduce-only and stops stay enabled** (C-2.6): a protective write is never gated."
         not in t.spec
     ):
-        bad.append(
-            "§4.2: the protective writes are not stated as enabled (BQ-13, C-2.6)"
-        )
+        bad.append("§4.2: the protective writes are not stated as enabled (BQ-13, C-2.6)")
     if "close, cancel, reduce-only and stops enabled" not in row(t, "S122-06")[2]:
-        bad.append(
-            "S122-06: the reduce-only frame does not keep the protective writes enabled"
-        )
-    row(
-        t, "S77-01"
-    )  # BQ-18's primary entry: the row must exist (LookupError otherwise)
+        bad.append("S122-06: the reduce-only frame does not keep the protective writes enabled")
+    if "rung 2 with the `users` step-up" not in section(t.spec, "### 4.2"):
+        bad.append("§4.2: the revoke is not rung 2 with the `users` step-up (F-2)")
+    if "the press opens the `users` step-up" not in row(t, "S122-05")[3]:
+        bad.append("S122-05: the revoke's press does not open the `users` step-up (F-2)")
+    if not row(t, "S122-03")[3].startswith("Confirm enabled; the press opens the `users` step-up"):
+        bad.append("S122-03: the grant's Confirm is not enabled at once (F-5, rung 1)")
+    if "PROPOSED — when a view-as session reaches SCR-137 (C-4)" not in row(t, "S137-09")[3]:
+        bad.append("S137-09: the view-as T2 is not stamped PROPOSED with C-4 (F-3)")
+    row(t, "C-4")  # F-3: the C-4 row must stand (LookupError otherwise)
+    row(t, "S77-01")  # BQ-18's primary entry: the row must exist (LookupError otherwise)
     row(t, "OQ-2")  # BQ-05: the section ids asked of the `14` owner
     return bad
 
@@ -590,14 +602,67 @@ def g_merged(t: Texts) -> list[str]:
     return bad
 
 
+# §7's owner quotes: the quote, its owner and the cited line(s) at the base (None: cited by content)
+A11Y_QUOTES: tuple[tuple[str, str, tuple[int, int] | None], ...] = (
+    (
+        (
+            "for every dialog, drawer and fixed-height region, say what reflows at 200 % zoom and"
+            " the in-app text scale, at the design lanes' 1280 × 800 frame"
+        ),
+        "DS",
+        (65, 66),
+    ),
+    ("the reflow behaviour must not lose data, only re-lay-out it", "05", None),
+    (
+        "fills the viewport, its footer stays one sticky row and its body scrolls",
+        "E10D03",
+        (486, 486),
+    ),
+    ("name the `forced-colors` rendering for every colour-only carrier", "DS", (67, 68)),
+    ("badge, strip, chip and tile tones drop and the glyph and word carry", "E42D03", (805, 805)),
+    ("the danger confirm keeps its border", "E42D03", (805, 805)),
+    (
+        "T2 labels and glyphs render in `GrayText` and their reasons in `CanvasText`",
+        "E42D03",
+        (805, 805),
+    ),
+    ("the focus ring is `Highlight`", "E42D03", (805, 805)),
+    (
+        (
+            "initial focus, the Tab order across columns and sticky footers, what `Enter` does in"
+            " a field, where focus returns on close"
+        ),
+        "DS",
+        (69, 71),
+    ),
+    ("return focus to the triggering element on close", "05", None),
+    ("`Enter` in the typed field never confirms", "15", (521, 521)),
+)
+
+
+def a11y_quotes(t: Texts) -> list[str]:
+    """§7.1-§7.3: each owner quote stands in §7 and, as text, on its cited line(s) at the base."""
+    bad = []
+    s7 = norm(section(t.spec, "## 7."))
+    for q, key, lines in A11Y_QUOTES:
+        owner = at(t, key)
+        if lines is not None:
+            owner = "\n".join(owner.split("\n")[lines[0] - 1 : lines[1]])
+        if f'"{q}"' not in s7:
+            bad.append(f"§7 does not quote {q[:40]!r}… verbatim")
+        elif norm(q) not in norm(owner.replace("**", "")):
+            where = f"`{key}`" + (f":{lines[0]}" if lines else "")
+            bad.append(f"§7's quote {q[:40]!r}… is not the text of {where} at the base")
+    return bad
+
+
 def g_cite(t: Texts) -> list[str]:
     hashes, bad = cite_hashes(t)
+    bad += a11y_quotes(t)
     pinned = parse_pins(t.pins)
     for label, h in hashes.items():
         if label not in pinned:
-            bad.append(
-                f"cite {label} is unpinned: verify it by content, then --repin-ruled"
-            )
+            bad.append(f"cite {label} is unpinned: verify it by content, then --repin-ruled")
         elif pinned[label] != h:
             bad.append(f"cite {label}: the line at its base is not the pinned content")
     return bad
@@ -627,16 +692,121 @@ def g_scope(t: Texts) -> list[str]:
         return ["cannot list the changed paths (git failed)"]
     own = ", ".join(OWN_PATHS)
     return [
-        f"{p} is touched; this ticket owns {own}"
+        f"{p} is touched; this ticket owns {own} and the E38-D03 exports"
         for p in t.changed
-        if p not in OWN_PATHS
+        if p not in OWN_PATHS and not IMG.fullmatch(p)
     ]
+
+
+def g_arow(t: Texts) -> list[str]:
+    bad = []
+    rows = AROW.finditer(section(t.spec, "## 9."))
+    base = at(t, "14").split("\n")
+    work = None if t.work is None else t.work.split("\n")
+    if work is None:
+        return ["cannot read `14` in the working tree"]
+    seen = 0
+    for m in rows:
+        seen += 1
+        aid, ln = m[1], m[0]
+        a = APPLIED.search(ln)
+        if a is None:
+            bad.append(f"{aid}: not marked applied (PR 2 applies every A-row)")
+            continue
+        quotes = re.findall(r'"([^"]+)"', ln[: a.start()])
+        nos = [int(n) for n in a.groups()[1:] if n]
+        if a[1] == "appended" and len(quotes) == 3 and len(nos) == 1:
+            bad += reworded(aid, quotes, nos[0], base, work)
+            continue
+        if not quotes or len(quotes) != len(nos):
+            bad.append(f"{aid}: {len(quotes)} quotes for {len(nos)} base lines")
+            continue
+        for q, n in zip(quotes, nos, strict=True):
+            if any(q in x for x in base):
+                bad.append(f"{aid}: its text already stands in `14` at the base")
+            anchor = base[n - 1] if 0 < n <= len(base) else None
+            hits = [i for i, x in enumerate(work) if anchor is not None and x.startswith(anchor)]
+            once = sum(q in x for x in work) == 1
+            if a[1] == "after":
+                ok = once and len(hits) == 1 and work[hits[0] + 1 : hits[0] + 2] == [q]
+            else:
+                ok = once and len(hits) == 1 and work[hits[0]] == f"{anchor} {q}"
+            if not ok:
+                bad.append(f"{aid}: its text does not stand once, {a[1]} `14`:{n} in the tree")
+    if seen != 4:
+        bad.append(f"§9 carries {seen} A-rows, not 4")
+    return bad
+
+
+def reworded(aid: str, quotes: list[str], n: int, base: list[str], work: list[str]) -> list[str]:
+    """An appended A-row that also rewords its base line: "old" reads "new", then the sentence."""
+    old, new, q = quotes
+    anchor = base[n - 1] if 0 < n <= len(base) else ""
+    if anchor.count(old) != 1:
+        return [f"{aid}: {old!r} does not stand once in `14`:{n} at the base"]
+    if any(q in x for x in base):
+        return [f"{aid}: its text already stands in `14` at the base"]
+    want = f"{anchor.replace(old, new)} {q}"
+    if sum(x == want for x in work) != 1 or sum(q in x for x in work) != 1:
+        return [f"{aid}: its text does not stand once, reworded and appended to `14`:{n}"]
+    return []
+
+
+def png_size(data: bytes) -> tuple[int, int] | None:
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def board_problems(t: Texts, boards: list[list[str]]) -> list[str]:
+    bad = []
+    listed: set[str] = set()
+    for r in boards:
+        m = DRAWN.fullmatch(r[5]) if len(r) == 6 else None
+        if m is None:
+            bad.append(f"board {r[0]}: Status is not the drawn form")
+            continue
+        name, no, slug, sha = m[1], m[2], m[3], m[6]
+        listed.add(name)
+        if no != r[0] or r[1] != f"`E38-D03 / {no} {slug}`":
+            bad.append(f"board {r[0]}: the export names another board or slug")
+        data = t.files.get(name)
+        size = (int(m[4]), int(m[5]))
+        if data is None or hashlib.sha256(data).hexdigest() != sha or png_size(data) != size:
+            bad.append(f"board {r[0]}: {name} is missing or not its W × H and sha256")
+    stray = sorted(set(t.files) - listed)
+    if stray:
+        bad.append(f"E38-D03 PNGs on disk that §0 does not list: {stray}")
+    return bad
+
+
+def g_drawn(t: Texts) -> list[str]:
+    zero = section(t.spec, "## 0.")
+    head = zero.strip().split("\n", 1)[0]
+    frames = [r for r in table_rows(zero, "B") if re.fullmatch(r"B\d\d", r[0])]
+    boards = table_rows(zero, "0")
+    if not frames:
+        return ["§0 lists no frames"]
+    if PENDING in head and not boards:
+        return []  # PR 1: nothing drawn yet
+    bad = []
+    if PENDING in head:
+        bad.append(f"a mix: §0's heading still reads {PENDING!r}")
+    if not re.search(rf"page id `{UUID}`", zero):
+        bad.append("drawn, but §0 names no page id")
+    nos = {r[0] for r in boards}
+    for r in frames:
+        m = FRAME_DRAWN.fullmatch(r[3]) if len(r) == 4 else None
+        drawn = [n for n in (m.groups() if m else ()) if n]
+        if not drawn or any(n not in nos for n in drawn) or int(drawn[0]) != int(r[2][:1] or 0):
+            bad.append(f"{r[0]}: names no drawn board of the board table")
+    return bad + board_problems(t, boards)
 
 
 GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-STATE": g_state, "G-TOKEN": g_token, "G-CONTRAST": g_contrast, "G-CVD": g_cvd,
     "G-HIDDEN": g_hidden, "G-T2": g_t2, "G-RULED": g_ruled, "G-MERGED": g_merged, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
-    "G-SCOPE": g_scope,
+    "G-DRAWN": g_drawn, "G-AROW": g_arow, "G-SCOPE": g_scope,
 }  # fmt: skip
 
 
@@ -668,13 +838,15 @@ def changed_paths() -> list[str] | None:
 
 def load() -> Texts:
     spec = (ROOT / SPEC_REL).read_text(encoding="utf-8")
-    pins = (
-        (ROOT / PINS_REL).read_text(encoding="utf-8")
-        if (ROOT / PINS_REL).exists()
-        else ""
-    )
+    pins = (ROOT / PINS_REL).read_text(encoding="utf-8") if (ROOT / PINS_REL).exists() else ""
     tool = (ROOT / TOOL_REL).read_text(encoding="utf-8")
-    return Texts(spec, pins, tool, changed_paths(), {})
+    img = ROOT / IMG_REL
+    files = (
+        {f.name: f.read_bytes() for f in sorted(img.glob("E38-D03-*.png"))} if img.is_dir() else {}
+    )
+    cat = ROOT / CAT_REL
+    work = cat.read_text(encoding="utf-8") if cat.exists() else None
+    return Texts(spec, pins, tool, changed_paths(), {}, files, work)
 
 
 def fill(t: Texts) -> str:
@@ -695,9 +867,7 @@ def fill(t: Texts) -> str:
 def sub(old: str, new: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
         if t.spec.count(old) != 1:
-            raise SystemExit(
-                f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times"
-            )
+            raise SystemExit(f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times")
         return replace(t, spec=t.spec.replace(old, new))
 
     return f
@@ -725,6 +895,53 @@ def drop_row(lead: str) -> Callable[[Texts], Texts]:
     return f
 
 
+def with_file(name: str, data: bytes | None) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        files = {k: v for k, v in t.files.items() if k != name}
+        if data is not None:
+            files[name] = data
+        return replace(t, files=files)
+
+    return f
+
+
+def work_sub(old: str, new: str) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        if t.work is None or t.work.count(old) != 1:
+            raise SystemExit(f"self-test: `14` does not carry {old[:50]!r} once")
+        return replace(t, work=t.work.replace(old, new))
+
+    return f
+
+
+A2_SCR137 = "\n- **Hi-fi (E38-D03):** the environment parity report (freshness, candidates)"
+B04_PNG = "E38-D03-04-scr-137-paper-fidelity.png"
+B02_PNG = "E38-D03-02-scr-122-live-eligibility.png"
+
+
+def one_pixel_wider(t: Texts) -> Texts:
+    """Board 04's IHDR width plus one; the record's sha256 moves to match, so only the size is off."""
+    data = bytearray(t.files[B04_PNG])
+    data[16:20] = (int.from_bytes(data[16:20], "big") + 1).to_bytes(4, "big")
+    old = hashlib.sha256(t.files[B04_PNG]).hexdigest()
+    new = hashlib.sha256(bytes(data)).hexdigest()
+    return replace(t, spec=t.spec.replace(old, new, 1), files={**t.files, B04_PNG: bytes(data)})
+
+
+def one_byte_off(t: Texts) -> Texts:
+    """Board 02's last byte changed: its size stands, its sha256 does not."""
+    data = bytearray(t.files[B02_PNG])
+    data[-1] ^= 0x01
+    return replace(t, files={**t.files, B02_PNG: bytes(data)})
+
+
+def swap_boards(t: Texts) -> Texts:
+    """Boards 01 and 03 swap bytes: both sizes and sha256 then disagree with the record."""
+    a = "E38-D03-01-scr-079-paper-reset.png"
+    b = "E38-D03-03-scr-137-parity-report.png"
+    return replace(t, files={**t.files, a: t.files[b], b: t.files[a]})
+
+
 MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-STATE", "drop the fidelity-breach frame row", drop_row("| B19 ")),
     ("G-STATE", "drop the AC-4 mapping", drop_row("| AC-4 ")),
@@ -735,7 +952,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-HIDDEN", "draw the LIVE reset disabled", set_cell("S79-07", 3, "T2 \"Paper reset isn't available in a LIVE session.\" (PROPOSED); rendering 2a")),
     ("G-HIDDEN", "adopt the T2 alternative silently", sub("**not adopted**", "**the default**")),
     ("G-T2", "drop the reduce-only reason", set_cell("S122-06", 3, "T2")),
-    ("G-T2", "retype a key's text", set_cell("S137-09", 3, 'T2 "Read only while viewing someone."')),
+    ("G-T2", "retype a key's text", sub('"You can view this account, not trade it."', '"You may only view this account."')),
     ("G-T2", "drop a control's rendering", set_cell("S122-02", 3, 'T2 "This is a demo account." (a PROPOSED key, E42-D03\'s)')),
     ("G-T2", "drop the lock from §1 item 4", sub("led by the CMP-019 `lock` glyph", "led by its glyph")),
     ("G-T2", "let a T2 control leave the Tab order (G-T2.1b)", sub("never the `disabled` attribute — it stays in the Tab order", "or the `disabled` attribute")),
@@ -746,12 +963,37 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-RULED", "gate the protective writes", sub("**Close, cancel, reduce-only and stops stay enabled** (C-2.6): a protective write is never gated.", "**Close, cancel, reduce-only and stops are T2** (C-2.6).")),
     ("G-RULED", "drop the S77-01 row", drop_row("| S77-01 ")),
     ("G-RULED", "drop the OQ-2 row", drop_row("| OQ-2 ")),
+    ("G-RULED", "drop the C-4 row", drop_row("| C-4 ")),
+    ("G-RULED", "drop S137-09's PROPOSED stamp", sub("; PROPOSED — when a view-as session reaches SCR-137 (C-4)", "")),
+    ("G-RULED", "drop the revoke's step-up from §4.2", sub("rung 2 with the `users` step-up, `E42D03`:698", "rung 2, `E42D03`:698")),
+    ("G-RULED", "drop the step-up from S122-05", sub("the press opens the `users` step-up; focus Cancel", "focus Cancel")),
+    ("G-RULED", "make the grant wait for the step-up", sub("Confirm enabled; the press opens the `users` step-up", "Confirm enabled after step-up")),
     ("G-MERGED", "cite the unmerged E38-D02", sub("It is a request row to E38-D02 (R-1), not drawn here.", "It is drawn by E38-D02 §3.4.")),
     ("G-MERGED", "name #1075's offer", sub("The values are illustrative, and the defect ids are fixtures.", "The values are illustrative (#1075).")),
     ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:43)", "(`14`:44)")),
+    ("G-CITE", "drop one character from a §7 owner quote", sub('"the danger confirm keeps its border"', '"the danger confirm keeps its borde"')),
     ("G-HYGIENE", "write a closing keyword against #1074", sub("carries the closing line.", "carries the closing line. Closes #1074.")),
     ("G-HYGIENE", "put a deny word into the tool's own text", lambda t: replace(t, tool=t.tool + "\n# " + DENY[6] + "\n")),
-    ("G-SCOPE", "touch `14` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["14"]])),
+    ("G-DRAWN", "board 04's PNG one pixel wider than its record", one_pixel_wider),
+    ("G-DRAWN", "board 02's PNG one byte off its sha256", one_byte_off),
+    ("G-DRAWN", "boards 01 and 03 swap bytes", swap_boards),
+    ("G-DRAWN", "a board's PNG missing on disk", with_file("E38-D03-05-scr-079-paper-reset-light.png", None)),
+    ("G-DRAWN", "an extra E38-D03 PNG on disk", with_file("E38-D03-06-extra.png", b"\x89PNG\r\n\x1a\n")),
+    ("G-DRAWN", "§0's heading back to pending (a mix)", sub("## 0. The frames (Penpot) — drawn", "## 0. The frames (Penpot) — to draw (PR 2)")),
+    ("G-DRAWN", "a frame row names a board not drawn", set_cell("B19", 3, "drawn, board 06")),
+    ("G-DRAWN", "a frame row on another board than its Board cell", set_cell("B13", 3, "drawn, board 02")),
+    ("G-DRAWN", "a frame row back to pending", set_cell("B08", 3, PENDING)),
+    ("G-DRAWN", "a board row's name off its export's slug", sub("`E38-D03 / 02 scr-122-live-eligibility`", "`E38-D03 / 02 scr-122-live-access`")),
+    ("G-DRAWN", "the page id dropped", lambda t: replace(t, spec=re.sub(rf"page id `{UUID}`", "page id pending", t.spec))),
+    ("G-DRAWN", "board 05's row dropped (its PNG then unlisted)", drop_row("| 05 ")),
+    ("G-AROW", "A-1's line dropped from `14`", work_sub("\n- **Hi-fi (E38-D03):** the paper reset", "\n- **Hi-fi:** the paper reset")),
+    ("G-AROW", "A-4's line moved one line down", work_sub("\n- **Parity link (E38-D03):**", "\n\n- **Parity link (E38-D03):**")),
+    ("G-AROW", "A-3's sentence dropped from item 5", work_sub(" a paper-only control has no object", " a control has no object")),
+    ("G-AROW", "item 5 still says one mandatory exception", work_sub("with two exceptions. The first, mandatory:", "with one mandatory exception:")),
+    ("G-AROW", "A-2's SCR-137 line standing twice", work_sub(A2_SCR137, A2_SCR137 + " x" + A2_SCR137)),
+    ("G-AROW", "A-2 no longer marked applied", sub(" **Applied (PR 2)**, after each entry's last line (`14`:2593, :2857).", "")),
+    ("G-SCOPE", "touch `15` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["15"]])),
+    ("G-SCOPE", "another ticket's export in the diff", lambda t: replace(t, changed=[*OWN_PATHS, "docs/design/E38/img/E38-D04-01-x.png"])),
 )  # fmt: skip
 
 
@@ -759,9 +1001,7 @@ def selftest() -> tuple[bool, list[str]]:
     base = replace(load(), changed=list(OWN_PATHS))
     before = base.spec
     found = audit(base)
-    out = [f"self-test: baseline {len(found)} FAIL"] + [
-        f"  baseline {g}: {m}" for g, m in found
-    ]
+    out = [f"self-test: baseline {len(found)} FAIL"] + [f"  baseline {g}: {m}" for g, m in found]
     ok = not found
     for i, (gate, what, fn) in enumerate(MUTATIONS, 1):
         gates = sorted({g for g, _ in audit(fn(base))})
