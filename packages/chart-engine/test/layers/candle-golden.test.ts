@@ -3,6 +3,7 @@
 // rows as letters) and pins it as text; every real golden case is an `it.todo` that becomes a row
 // on #391 (the G-16 precedent): candles and OHLC × spacings × dark / light × doji / zero-range / gap.
 // E12-S07: hollow candles (the four marks of D06 §4.2) and Heikin-Ashi rows, the same way.
+// E12-S10 adds the forming ring and the corrected square (E12-D06 §7.1 / §7.3).
 import { describe, expect, it } from "vitest";
 import { Canvas2DBackend } from "../../src/canvas2d/backend.js";
 import { BarSeries, CandleRing, CandleSeries, PALETTE } from "../../src/layers/index.js";
@@ -37,7 +38,16 @@ const FOUR = [
   [15, 17, 9, 11],
 ];
 
-function raster(shape: "candles" | "bars" | "hollow", rows = MIXED, ha = false): string[] {
+/**
+ * The four hosts: the two bar parts, the seam, the marks. `flags` per bar (by default a gap before
+ * MIXED's zero-range bar).
+ */
+function raster(
+  shape: "candles" | "bars" | "hollow",
+  rows = MIXED,
+  ha = false,
+  flags = [0, 0, 0, rows === MIXED ? 1 : 0],
+): string[] {
   const store = new BarStore({ initialCapacity: 8 });
   const ring = new CandleRing();
   const c = shape === "bars" ? new BarSeries(ring) : new CandleSeries(ring, shape);
@@ -51,7 +61,7 @@ function raster(shape: "candles" | "bars" | "hollow", rows = MIXED, ha = false):
       low: col(2),
       close: col(3),
       volume: new Float32Array(4).fill(1),
-      flags: Uint8Array.of(0, 0, 0, rows === MIXED ? 1 : 0),
+      flags: Uint8Array.from(flags),
       priceOrigin: 0,
       tickSize: 1,
     }),
@@ -71,15 +81,15 @@ function raster(shape: "candles" | "bars" | "hollow", rows = MIXED, ha = false):
   c.frame(vp.barSpacing, 1, 0, 3);
   const ctx = new FakeCtx2D();
   const be = new Canvas2DBackend(ctx);
-  const ids = ["a", "b", "seam"];
+  const ids = ["a", "b", "seam", "marks"];
   ids.forEach((id, i) => be.attach(id, c.sources[i] ?? ring));
   be.setPaneUniforms(() => block);
   be.setBatchUniforms((b) => c.blocks[ids.indexOf(b.nodeId)] ?? null);
   const list = ids.map((nodeId, i) => {
-    const count = i === 2 ? c.seams.capacity : ring.capacity;
+    const count = i === 2 ? c.seams.capacity : i === 3 ? c.marks.capacity : ring.capacity;
     return { nodeId, program: PROGRAM.candle, texture: 0, first: 0, count, layer: 0, seq: i };
   });
-  be.submit(list as RetainedBatch[], 3, W, H);
+  be.submit(list as RetainedBatch[], 4, W, H);
   // A cell is the palette row it was filled with, later paths on top: U up, D down, t the up
   // tint, | neutral (wick, doji, zero-range, seam), . nothing.
   const letter = (style: string): string => {
@@ -178,6 +188,81 @@ describe("CPU stand-in raster, E12-S07: hollow candles and Heikin-Ashi", () => {
   });
 });
 
+describe("CPU stand-in raster: the forming ring and the corrected square (E12-S10)", () => {
+  it("candles: a corrected down bar's square; the forming doji's dashed ring", () => {
+    // The square: 3 × 3 above the down bar's high (row 4), 2 rows clear; its top row is off the
+    // canvas. The ring: 1 px, 1 px clear of the doji's wick and body union, dashed 2 / 2.
+    expect(raster("candles", MIXED, false, [0, 8, 2, 0])).toEqual([
+      "..............|||.......................",
+      "..............|||.......................",
+      "........................................",
+      "........................................",
+      "...............||.......................",
+      "...............||...||..||..||..........",
+      ".....|.........||...|.........|.........",
+      ".....|.........||........|....|.........",
+      "..UUUUUUU...DDDDDDD......|..............",
+      "..UtttttU...DDDDDDD.|....|..............",
+      "..UtttttU...DDDDDDD.|....|....|.........",
+      "..UtttttU...DDDDDDD...|||||||.|.|||||||.",
+      "..UtttttU...DDDDDDD...|||||||...|||||||.",
+      "..UtttttU......||...|....|..............",
+      "..UtttttU...........|....|....|.........",
+      "..UUUUUUU................|....|.........",
+      ".....|...................|..............",
+      ".....|..............|...................",
+      "......................||..||..|.........",
+      "........................................",
+      "........................................",
+      "........................................",
+    ]);
+  });
+
+  it("Heikin-Ashi hollow (E12-S07): the marks place on the drawn HA candle", () => {
+    // The square sits 2 rows above bar 2's HA high (its 2-px colour-down wick); the forming ring
+    // clears bar 3's HA wick and body by one row and column (its right side is off the canvas).
+    // Every other pixel is the unmarked `raster("hollow", FOUR, true)`'s (asserted below): the
+    // marks only add wick-coloured pixels and never alter the bar.
+    const marked = raster("hollow", FOUR, true, [0, 0, 8, 2]);
+    const plain = raster("hollow", FOUR, true);
+    const added: string[] = [];
+    marked.forEach((row, y) =>
+      [...row].forEach((ch, x) => {
+        if (ch !== plain[y]?.[x]) added.push(`${x},${y}:${plain[y]?.[x]}>${ch}`);
+      }),
+    );
+    expect(added.length).toBeGreaterThan(0);
+    expect(
+      added.every((d) => d.endsWith(".>|")),
+      added.join(" "),
+    ).toBe(true);
+    expect(marked).toEqual([
+      "........................................",
+      "........................................",
+      "........................................",
+      "..............................||..||..||",
+      "...............|........|||...|.........",
+      "...............|........|||........|....",
+      ".....|.........|........|||........|....",
+      ".....|.........|..............|....|....",
+      ".....|......UUUUUUU...........|....|....",
+      ".....|......U..|..U......||.....UUUUUUU.",
+      ".....|......U..|..U...DDDDDDD...U..|..U.",
+      "..UUUUUUU...UUUUUUU...DDDDDDD.|.UUUUUUU.",
+      "..UUUUUUU......|......DDDDDDD.|....|....",
+      ".....|.........|......DDDDDDD...........",
+      ".....|...................||...||..||..||",
+      ".....|...................||.............",
+      ".....|...................||.............",
+      ".....|...................||.............",
+      ".........................||.............",
+      "........................................",
+      "........................................",
+      "........................................",
+    ]);
+  });
+});
+
 describe("goldens on the SwiftShader harness (E11-T08 #391 rows; BQ-5)", () => {
   for (const kind of ["hollow candles", "Heikin-Ashi candles", "Heikin-Ashi hollow"]) {
     for (const spacing of [2, 3, 12, 48]) {
@@ -189,7 +274,7 @@ describe("goldens on the SwiftShader harness (E11-T08 #391 rows; BQ-5)", () => {
   for (const shape of ["candles", "OHLC bars"]) {
     for (const spacing of [3, 5, 12, 48]) {
       for (const theme of ["dark", "light"]) {
-        for (const c of ["doji", "zero-range", "gap seam"]) {
+        for (const c of ["doji", "zero-range", "gap seam", "forming ring", "corrected square"]) {
           it.todo(`${shape} at ${spacing} px, ${theme} theme: ${c} (golden, ≤ 0.1 % pixel diff)`);
         }
       }

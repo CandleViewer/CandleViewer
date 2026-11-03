@@ -158,7 +158,7 @@ export class CandleSeriesBench {
     this.next += 60e6;
     live.time[0] = this.next;
     ring.sync(store, store.append(live, true));
-    for (const h of this.series.hosts) this.graph.markData(h.id);
+    this.dirty();
     this.frame(t);
   }
 
@@ -174,6 +174,22 @@ export class CandleSeriesBench {
     this.series.setKind(shape, ha, this.store);
     for (const h of this.series.hosts) this.graph.markData(h.id);
     this.frame(t);
+  }
+
+  /** E12-S10: one live tick, `bar` merged into the last bar (equal time), then the frame. */
+  tick(t: number, bar: BarBatch): void {
+    this.ring.sync(this.store, this.store.append(bar, true));
+    this.dirty();
+    this.frame(t);
+  }
+
+  /** The runtime's `storeBars`: only the hosts `dirtyHosts` names are re-collected. */
+  private dirty(): void {
+    const hs = this.series.hosts;
+    const mask = this.series.dirtyHosts();
+    for (let p = 0; p < hs.length; p += 1) {
+      if ((mask & (1 << p)) !== 0) this.graph.markData((hs[p] as { id: string }).id);
+    }
   }
 
   /** Objects made past warm-up: batches, GL objects, ring arrays. Must stay 0. */

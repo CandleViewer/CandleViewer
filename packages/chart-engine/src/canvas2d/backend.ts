@@ -164,7 +164,7 @@ export class Canvas2DBackend implements RenderBackend {
       if (b.program === PROGRAM.candle) {
         const blk = this.own === null ? null : this.own(b);
         this.frameBatches[i] = blk;
-        if (blk !== null && blk.instances === 0) continue; // the seam, no gap in view (BQ-8)
+        if (blk !== null && blk.instances === 0) continue; // no gap / mark in view (BQ-8, S10)
         if (blk === null || block === null) trace.skipped += 1;
         else this.candles(blk, slot.ints, i);
         if (trace.enabled) {
@@ -193,13 +193,13 @@ export class Canvas2DBackend implements RenderBackend {
    * the palette rows' buckets (`partColor`, the shader's choice). A ref is `at * 2 + sub`: an up
    * body's tint is `sub` 1 in the tint bucket, after its outline's; a hollow body (E12-S07) is
    * `sub` 1 alone, its outline without the interior; the OHLC ticks are the open (0) and close
-   * (1) quads. The seam reads its own `[0, instances)` entries.
+   * (1) quads. The seam and the marks (E12-S10) read their own `[0, instances)`.
    */
   private candles(blk: BatchUniforms, ints: Int32Array, i: number): void {
     const part = blk.ints[0] ?? 0; // scalar locals: no per-frame array
     const head = blk.ints[1] ?? 0;
     const mask = blk.ints[2] ?? 0;
-    const seam = part === CANDLE_PART.seam;
+    const seam = part === CANDLE_PART.seam || part === CANDLE_PART.marks; // their own entries
     const n = seam ? (blk.instances ?? 0) : (blk.ints[3] ?? 0);
     const pal = blk.palette;
     for (let j = 0; j < n; j += 1) {
