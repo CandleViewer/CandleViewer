@@ -58,9 +58,9 @@ function block(spacing: number, dpr: number, left = 0, lo = 0, hi = 100): PaneUn
   return b;
 }
 
-const geomOf = (spacing: number, dpr: number): Float32Array => {
+const geomOf = (spacing: number, dpr: number, right = 0, bottom = 0): Float32Array => {
   const g = new Float32Array(RIBBON_GEOM_FLOATS);
-  ribbonGeometry(spacing, dpr, g);
+  ribbonGeometry(spacing, dpr, g, right, bottom);
   return g;
 };
 
@@ -138,7 +138,18 @@ describe("ribbon geometry (D06 §2, §3.2, §5.5)", () => {
     expect([q[0], q[2], q[5]! - q[1]!]).toEqual([0, 800, 2]);
     expect(Number.isInteger(q[1])).toBe(true);
     ribbonQuad(RIBBON_PART.fill, 4, 10, 40, 60, 0, 0, b.floats, b.ints[0] ?? 0, 0, g, q);
-    expect([q[5], q[7]]).toEqual([400, 400]); // u_viewport.y: the pane scissor clips it
+    expect([q[5], q[7]]).toEqual([400, 400]); // no plot rect set: u_viewport.y
+  });
+
+  it("the plot rect clips the base line's right end and the area's bottom edge", () => {
+    const b = block(12, 2); // the canvas is 800 x 400 device px; the plot 300 x 150 CSS px
+    const g = geomOf(12, 2, 300, 150);
+    expect([g[RIBBON_GEOM.plotRight], g[RIBBON_GEOM.plotBottom]]).toEqual([600, 300]);
+    const q = new Float64Array(8);
+    ribbonQuad(RIBBON_PART.base, 0, 10, 0, 0, 0, 40, b.floats, b.ints[0] ?? 0, 0, g, q);
+    expect([q[0], q[2]]).toEqual([0, 600]); // short of the gutter (reverting it gives 800)
+    ribbonQuad(RIBBON_PART.fill, 4, 10, 40, 60, 0, 0, b.floats, b.ints[0] ?? 0, 0, g, q);
+    expect([q[5], q[7]]).toEqual([300, 300]); // the time axis stays clear (reverting: 400)
   });
 });
 
@@ -180,7 +191,11 @@ function shaderCorner(
   }
   if (part === 6) {
     const h = fr(g[3] ?? 1);
-    return [fr(cx * vw!), fr(Math.floor(fr(fr(yOf(base) - fr(h * 0.5)) + 0.5)) + fr(cy * h))];
+    const pr = fr(g[RIBBON_GEOM.plotRight] ?? 0);
+    return [
+      fr(cx * (pr > 0 ? pr : vw!)),
+      fr(Math.floor(fr(fr(yOf(base) - fr(h * 0.5)) + 0.5)) + fr(cy * h)),
+    ];
   }
   const y0 = yOf(c0);
   const x1 = xOf(i + 1);
@@ -195,7 +210,8 @@ function shaderCorner(
       fr(fr(y0 + fr(fr(y1 - y0) * cx)) + fr(fr(vx / len) * w)),
     ];
   }
-  const yb = part === 3 ? vh! : yOf(base);
+  const pb = fr(g[RIBBON_GEOM.plotBottom] ?? 0);
+  const yb = part === 3 ? (pb > 0 ? pb : vh!) : yOf(base);
   const s = part === 5 ? -1 : 1;
   const in0 = part === 3 || fr(yb - y0) * s >= 0;
   const in1 = part === 3 || fr(yb - y1) * s >= 0;
@@ -222,7 +238,7 @@ describe("property: the twin is the shader's arithmetic (float32 stand-in, pans 
         -20 + rng() * 40,
         80 + rng() * 60,
       );
-      const g = geomOf(spacing, dpr);
+      const g = rng() < 0.5 ? geomOf(spacing, dpr) : geomOf(spacing, dpr, 300, 90);
       const i = Math.floor(rng() * 380);
       const [c0, c1, base] = [0, 0, 0].map(() => Math.floor(rng() * 140) - 10) as number[];
       for (let part = 0; part <= 6; part += 1) {

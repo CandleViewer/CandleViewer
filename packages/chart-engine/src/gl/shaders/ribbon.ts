@@ -7,7 +7,7 @@
 // too. `u_batch` = (part, head, mask, n), part as `RIBBON_PART`: 0 stroke, 1 join, 2 last disc,
 // 3 area fill, 4 / 5 the baseline fills above / below B, 6 B's hairline. `u_base`: B (the last
 // close for the disc). `u_geom[0]` = (stroke, join r, disc r, hairline) device px, `u_geom[1]`
-// = (dpr, L2, -, spacing). `u_palette` = line, area, above, below, base. Ints are subtracted
+// = (dpr, L2, plot right, spacing), `u_geom[2].x` the plot bottom (0: the canvas's). `u_palette` = line, area, above, below, base. Ints are subtracted
 // before any float (BQ-75); y is the candle's `yOf`. Mirrors `src/layers/ribbon/geometry.ts`.
 /**
  * The ring as the shader's `layout(location)` ints: a_ohlc at 0 and a_meta at 1 (this slot),
@@ -50,7 +50,7 @@ uniform int u_tickBase;
 uniform vec4 u_k;
 uniform vec2 u_log;
 uniform ivec4 u_batch;
-uniform vec4 u_geom[2];
+uniform vec4 u_geom[3];
 uniform vec4 u_palette[5];
 uniform int u_base;
 out vec4 v_color;
@@ -93,7 +93,7 @@ void main() {
     p = vec2(x0, yOf(part == 2 ? u_base : a_ohlc.w)) + v_local;
   } else if (part == 6) {
     float h = u_geom[0].w;
-    p = vec2(corner.x * u_viewport.x, floor(yOf(u_base) - h * 0.5 + 0.5) + corner.y * h);
+    p = vec2(corner.x * (u_geom[1].z > 0.0 ? u_geom[1].z : u_viewport.x), floor(yOf(u_base) - h * 0.5 + 0.5) + corner.y * h);
   } else {
     float y0 = yOf(a_ohlc.w);
     float x1 = xOf(i + 1);
@@ -105,7 +105,7 @@ void main() {
       p = vec2(x0 + (x1 - x0) * corner.x - d.y * w, y0 + (y1 - y0) * corner.x + d.x * w);
     } else {
       // The fills: corner.y 0 on the line (clamped to its side of B), 1 on the edge it closes to.
-      float yb = part == 3 ? u_viewport.y : yOf(u_base);
+      float yb = part == 3 ? (u_geom[2].x > 0.0 ? u_geom[2].x : u_viewport.y) : yOf(u_base);
       float s = part == 5 ? -1.0 : 1.0;
       bool in0 = part == 3 || (yb - y0) * s >= 0.0;
       bool in1 = part == 3 || (yb - y1) * s >= 0.0;

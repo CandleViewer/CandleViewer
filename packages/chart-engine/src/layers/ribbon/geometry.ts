@@ -25,9 +25,10 @@ export const RIBBON_PART = {
 export const RIBBON_PART_NAMES = ["stroke", "join", "last", "fill", "above", "below", "base"];
 
 /**
- * `u_geom` (two vec4 rows): stroke, join radius, last-disc radius and hairline in device px;
- * then the DPR, the L2 flag (1: x snaps to the device-pixel column), `spare` (unused, 0), spacing
- * (CSS px).
+ * `u_geom` (three vec4 rows): stroke, join radius, last-disc radius and hairline in device px;
+ * then the DPR, the L2 flag (1: x snaps to the device-pixel column), the plot rect's right edge
+ * (device px, 0: none set, the viewport's), spacing (CSS px); a third row: the plot rect's bottom
+ * edge (device px, 0: none set, the viewport's), then three unused.
  */
 export const RIBBON_GEOM = {
   stroke: 0,
@@ -36,10 +37,11 @@ export const RIBBON_GEOM = {
   hair: 3,
   dpr: 4,
   l2: 5,
-  spare: 6,
+  plotRight: 6,
   spacing: 7,
+  plotBottom: 8,
 };
-export const RIBBON_GEOM_FLOATS = 8;
+export const RIBBON_GEOM_FLOATS = 12;
 /** D06 §3.2: a 2 px line, a 3.5 px last-point disc. */
 export const LINE_STROKE_CSS = 2;
 export const LAST_DISC_CSS = 3.5;
@@ -52,7 +54,13 @@ export const DISC_MARGIN = 1;
  * D06 §2: the stroke is a "2 px bar", `2 × floor(dpr)` device px (rule 3), so the round join is
  * a hairline radius; the last disc is 3.5 CSS px × dpr; the base line one hairline.
  */
-export function ribbonGeometry(spacingCss: number, dpr: number, out: Float32Array): void {
+export function ribbonGeometry(
+  spacingCss: number,
+  dpr: number,
+  out: Float32Array,
+  plotRightCss = 0,
+  plotBottomCss = 0,
+): void {
   const s = spacingCss > 0 ? spacingCss : 0;
   const hair = hairlineDevicePx(dpr);
   const d = dpr > 0 ? dpr : 1;
@@ -62,7 +70,8 @@ export function ribbonGeometry(spacingCss: number, dpr: number, out: Float32Arra
   out[RIBBON_GEOM.hair] = hair;
   out[RIBBON_GEOM.dpr] = d;
   out[RIBBON_GEOM.l2] = s < RIBBON_L2_BELOW ? 1 : 0;
-  out[RIBBON_GEOM.spare] = 0;
+  out[RIBBON_GEOM.plotRight] = plotRightCss > 0 ? plotRightCss * d : 0;
+  out[RIBBON_GEOM.plotBottom] = plotBottomCss > 0 ? plotBottomCss * d : 0;
   out[RIBBON_GEOM.spacing] = s;
 }
 
@@ -95,7 +104,8 @@ export function ribbonX(
  * segment into a `gap_before` bar, or a baseline fill with nothing on its side). `c0` / `c1`:
  * bar `index`'s and the next bar's closes; `nextFlags` the next bar's meta word; `base`: B for
  * the baseline parts, the last close for `last` (`u_base`). `n` the bars held. `k`, `indexBase`,
- * `tickBase`: the pane block (k[4], k[5] the viewport, the fill's bottom edge).
+ * `tickBase`: the pane block (k[4], k[5] the viewport: the base line's and the fill's edges when
+ * `geom` holds no plot rect).
  */
 export function ribbonCorner(
   part: number,
@@ -132,7 +142,8 @@ export function ribbonCorner(
   }
   if (part === RIBBON_PART.base) {
     const h = geom[RIBBON_GEOM.hair] ?? 1;
-    out[0] = cx * (k[4] ?? 0); // the pane scissor clips it to the plot (one pane, E11-S09)
+    const right = geom[RIBBON_GEOM.plotRight] ?? 0; // it stops at the plot's right edge, short
+    out[0] = cx * (right > 0 ? right : (k[4] ?? 0)); // of the price gutter; no rect: the canvas
     out[1] = Math.floor(projectRel(k, base - tickBase) - h * 0.5 + 0.5) + cy * h;
     return true;
   }
@@ -149,7 +160,13 @@ export function ribbonCorner(
     return true;
   }
   // The fills: corner y 0 on the line (clamped to its side of B), 1 on the edge it closes to.
-  const yb = part === RIBBON_PART.fill ? (k[5] ?? 0) : projectRel(k, base - tickBase);
+  const bottom = geom[RIBBON_GEOM.plotBottom] ?? 0; // the area closes at the plot's bottom edge
+  const yb =
+    part === RIBBON_PART.fill
+      ? bottom > 0
+        ? bottom
+        : (k[5] ?? 0)
+      : projectRel(k, base - tickBase);
   const s = part === RIBBON_PART.below ? -1 : 1;
   const in0 = part === RIBBON_PART.fill || (yb - y0) * s >= 0;
   const in1 = part === RIBBON_PART.fill || (yb - y1) * s >= 0;

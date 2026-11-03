@@ -28,7 +28,7 @@ const LINE_THEME = { ...THEME, "color.chart.line": "#8b5cf6" };
 const CLOSES = [10, 14, 12, 18, 9, 11, 7, 15, 13, 16];
 const GAP_AT = 6;
 
-function paint(kind: RibbonKind, dpr: number) {
+function paint(kind: RibbonKind, dpr: number, plot?: { right: number; bottom: number }) {
   // maxBars 12 keeps a 16-slot ring: 22 bars appended keep the last 12, across the physical end.
   const store = new BarStore({ maxBars: 12, initialCapacity: 16 });
   const ring = new CandleRing();
@@ -70,7 +70,7 @@ function paint(kind: RibbonKind, dpr: number) {
   block.floats[5] = 100 * dpr;
   expect(r.setTheme(LINE_THEME)).toBeNull();
   r.baseTick = 12; // crossings on both sides
-  r.frame(vp.barSpacing, dpr, 0);
+  r.frame(vp.barSpacing, dpr, 0, plot?.right ?? 0, plot?.bottom ?? 0);
   const ctx = new FakeCtx2D();
   const be = new Canvas2DBackend(ctx);
   const ids = r.blocks.map((_, i) => `h${i}`);
@@ -115,8 +115,17 @@ function polygons(ctx: FakeCtx2D): string[] {
 
 describe("Canvas2D ribbon painter (parity with the geometry twin)", () => {
   for (const kind of ["line", "area", "baseline"] as const) {
-    it.each([1, 1.5, 2])(`${kind}, dpr %f: every instance's polygon and colour`, (dpr) => {
-      const { ring, block, r, ctx, be } = paint(kind, dpr);
+    it.each([
+      [1, false],
+      [1.5, false],
+      [2, false],
+      [1.5, true], // with a plot rect: the base line and the area clip to it, twin and painter alike
+    ])(`${kind}, dpr %f, plot rect %s: every instance's polygon and colour`, (dpr, rect) => {
+      const { ring, block, r, ctx, be } = paint(
+        kind,
+        dpr,
+        rect ? { right: 180, bottom: 70 } : undefined,
+      );
       expect(ring.head + ring.length).toBeGreaterThan(ring.capacity); // wrapped
       const css = (row: number): string => {
         const b = (i: number): number => Math.round((r.palette[row * 4 + i] ?? 0) * 255);
@@ -172,4 +181,27 @@ describe("Canvas2D ribbon painter (parity with the geometry twin)", () => {
       expect(be.trace.draws).toBeLessThanOrEqual(r.blocks.filter((b) => b.instances).length);
     });
   }
+
+  it("a plot rect stops the painted base line and area fill at its right and bottom edges", () => {
+    const dpr = 2;
+    const nums = (poly: string): number[][] =>
+      poly
+        .slice(poly.indexOf(" ", poly.indexOf(")")) + 1)
+        .split(" ")
+        .map((p) => p.split(",").map(Number));
+    const base = paint("baseline", dpr, { right: 180, bottom: 70 });
+    // The base line: the one quad from x 0 that is a hairline tall.
+    const hairs = polygons(base.ctx).filter((p) => {
+      const v = nums(p);
+      const ys = v.map((c) => c[1] ?? 0);
+      return v.some((c) => c[0] === 0) && Math.max(...ys) - Math.min(...ys) <= 2 * dpr;
+    });
+    expect(hairs).toHaveLength(1);
+    const xs = hairs.flatMap((p) => nums(p).map((v) => v[0] ?? 0));
+    expect(Math.max(...xs)).toBeGreaterThan(0);
+    expect(Math.max(...xs)).toBeLessThanOrEqual(180 * dpr); // no ink in the price gutter
+    const area = paint("area", dpr, { right: 180, bottom: 70 });
+    const ys = polygons(area.ctx).flatMap((p) => nums(p).map((v) => v[1] ?? 0));
+    expect(Math.max(...ys)).toBeLessThan(100 * dpr); // reverting: the fill reaches the canvas bottom
+  });
 });

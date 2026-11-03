@@ -78,7 +78,7 @@ export class RibbonSeriesBench {
       submit: () => {
         const vp = this.viewport;
         const first = Math.floor(vp.leftIndex);
-        this.series.frame(vp.barSpacing, vp.dpr, first);
+        this.series.frame(vp.barSpacing, vp.dpr, first, vp.plotWidth, H);
         writePaneUniforms(this.viewport, 0, this.uniforms);
         this.uniforms.floats[4] = W;
         this.uniforms.floats[5] = H;

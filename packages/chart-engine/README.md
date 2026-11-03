@@ -956,15 +956,18 @@ shader):
 - The stroke is a 2 px bar, `2 × floor(dpr)` device px (D06 §2 rule 3), with butt caps. Round
   joins are discs of half the stroke at every vertex. The last-point disc has a radius of
   3.5 CSS px × dpr.
-- The area fill runs from each segment down to the plot's bottom edge, which is `u_viewport.y`:
-  the pane scissor clips it, as for the gap seam, while one pane exists (E11-S09).
+- The area fill runs from each segment down to the plot rect's bottom edge (`u_geom[2].x`, device
+  px, the way the gap seam takes `plotTop` / `plotBottom`); with no plot rect set it runs to
+  `u_viewport.y`. The base line likewise stops at the plot's right edge (`u_geom[1].z`), short of
+  the price gutter. The stroke, the joins and the fills' sides are not clipped to the plot rect.
 - The baseline fills split at base B in the vertex shader. A segment's endpoint on the far side of
   B moves to the exact crossing, so the above and below fills tile the band between the line and
   B. A property test checks that the areas add up and that the crossing lies on the segment and on
   B.
 - The base line is one solid hairline in `color.candle.wick`.
 - B is the first visible bar's close, recomputed in `frame` (a uniform, so a pan uploads nothing),
-  or the user's tick: the series option `baseline`, a safe integer, with `null` restoring the
+  or the user's tick: the series option `baseline`, an integer inside the int32 tick window
+  (`|b| < 2^30`; anything else is ignored, `u_base` being a GLSL int), with `null` restoring the
   default (BQ-9).
 - R-2: a segment into a `gap_before` bar is not drawn, so fills close at the break edges.
 
@@ -981,7 +984,9 @@ opaque tints over `color.surface.canvas` resolved at theme load. The area tint i
 line. The baseline tints are 22 % of up (above) and 22 % of down (below), swapped only by the
 inverted convention. The base line stays `color.candle.wick` (R-6). Tokens resolve per kind (D06
 §3.2's Ink column): a line needs only `color.chart.line`, an area adds the canvas, a baseline adds
-up, down and the wick; the palette is re-resolved on every kind change and activation. BQ-7: a theme
+up, down, the wick and the canvas. D06 §3.2's Baseline Ink cell omits that canvas, although the
+baseline tints are opaque tints over it: PROPOSED, pending the E12-D06 owner's ruling (the L2
+vertex above is open the same way). The palette is re-resolved on every kind change and activation. BQ-7: a theme
 without a needed token posts `ENGINE_THEME_TOKEN_MISSING` and hides only the line family. Candles
 keep drawing, and the candles' `u_palette` is unchanged. A family hidden behind the other is not
 themed (no refusal for what is not drawing) until it is shown again.

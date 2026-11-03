@@ -179,11 +179,12 @@ export class RibbonSeries implements HostedPlugin {
 
   /**
    * Per frame, before submission: the geometry and every block, in place. B is the user's tick
-   * or the close of the first visible bar (`first`, clamped to the bars held); the last disc
+   * or the close of the first visible bar (`first`, clamped to the bars held); the base line and
+   * the area fill stop at the plot rect's right and bottom edges (CSS px); the last disc
    * reads the last close. A host the kind does not use draws nothing (`instances` 0).
    */
-  frame(spacingCss: number, dpr: number, first = 0): void {
-    ribbonGeometry(spacingCss, dpr, this.geom);
+  frame(spacingCss: number, dpr: number, first = 0, plotRight = 0, plotBottom = 0): void {
+    ribbonGeometry(spacingCss, dpr, this.geom, plotRight, plotBottom); // CSS px; 0: the canvas
     const r = this.ring;
     const head = r.head;
     const mask = r.capacity - 1;

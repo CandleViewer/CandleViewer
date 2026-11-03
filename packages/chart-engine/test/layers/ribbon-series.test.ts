@@ -53,6 +53,17 @@ function setup(flags = new Uint8Array(CLOSES.length), dpr = 1) {
   return { store, ring, vp, b };
 }
 
+describe("RibbonSeries plot rect", () => {
+  it("frame writes the plot rect's right and bottom edges (device px); 0 leaves the canvas", () => {
+    const { ring } = setup();
+    const r = new RibbonSeries(ring, "baseline");
+    r.frame(33, 2, 0, 300, 150);
+    expect([r.geom[RIBBON_GEOM.plotRight], r.geom[RIBBON_GEOM.plotBottom]]).toEqual([600, 300]);
+    r.frame(33, 2, 0);
+    expect([r.geom[RIBBON_GEOM.plotRight], r.geom[RIBBON_GEOM.plotBottom]]).toEqual([0, 0]);
+  });
+});
+
 describe("RibbonSeries blocks per kind", () => {
   it.each([
     ["line", [0, 0, 0, -1, -1, 1], [0, 0, 0, 0, 1, 2]],

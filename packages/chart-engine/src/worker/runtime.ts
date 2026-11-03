@@ -63,6 +63,7 @@ import {
   screenToTime,
   writePaneUniforms,
 } from "../viewport/index.js";
+import { INT32_TICKS } from "../viewport/transform.js";
 import {
   BACKGROUND_TOKEN,
   DecodeError,
@@ -945,9 +946,12 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         };
         const aligned = opts.isTimeAligned;
         if (s !== undefined && typeof aligned === "boolean") s.candle.timeAligned = aligned;
-        // E12-S07 PR B (BQ-9): the baseline's user base B, a tick; null restores the default.
+        // E12-S07 PR B (BQ-9): the baseline's user base B, a tick inside the int32 tick window (`u_base` is a GLSL int); else ignored; null restores the default.
         const b = opts.baseline;
-        if (s !== undefined && (b === null || Number.isSafeInteger(b))) {
+        if (
+          s !== undefined &&
+          (b === null || (Number.isSafeInteger(b) && Math.abs(b as number) < INT32_TICKS))
+        ) {
           s.baseTick = b as number | null;
           if (s.ribbon !== null) s.ribbon.baseTick = s.baseTick;
         }
@@ -1172,7 +1176,14 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       }
       const rs = inst.ribbons;
       for (let r = 0; r < rs.length; r += 1) {
-        (rs[r] as RibbonSeries).frame(vp.barSpacing, inst.dpr, first); // B, u_batch
+        // B, u_batch; the base line and the area stop at the plot rect (CSS px)
+        (rs[r] as RibbonSeries).frame(
+          vp.barSpacing,
+          inst.dpr,
+          first,
+          vp.plotWidth,
+          plot.plotTop + plot.plotHeight,
+        );
       }
       const f = backend.submit(inst.builder.drawList, inst.builder.drawCount, width, height);
       // The R1 budget closes on the first complete frame after a restore (BQ-49).

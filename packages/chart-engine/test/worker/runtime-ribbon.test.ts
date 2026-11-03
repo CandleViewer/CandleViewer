@@ -11,6 +11,7 @@ import {
   ENGINE_SERIES_INCOMPATIBLE,
   type FromWorker,
 } from "../../src/worker/protocol.js";
+import { RIBBON_GEOM } from "../../src/layers/index.js";
 import { createRenderRuntime, type RenderRuntime } from "../../src/worker/runtime.js";
 import { FakeGl, FULL, ROOMY } from "../gl/fake-gl.js";
 import { THEME } from "../layers/fixtures.js";
@@ -313,6 +314,21 @@ describe("the line family through the runtime", () => {
     expect(r?.baseTick).toBeNull();
     cmd({ k: "setSeriesOptions", series: 0, options: { baseline: 1.5 } }); // not a tick: ignored
     expect(r?.baseTick).toBeNull();
+    // `u_base` is a GLSL int: a safe integer outside the int32 tick window is refused too.
+    for (const out of [2 ** 31, -(2 ** 31), 2 ** 40, 2 ** 30]) {
+      cmd({ k: "setSeriesOptions", series: 0, options: { baseline: out } });
+      expect(r?.baseTick).toBeNull();
+    }
+    cmd({ k: "setSeriesOptions", series: 0, options: { baseline: 2 ** 30 - 1 } });
+    expect(r?.baseTick).toBe(2 ** 30 - 1);
+  });
+
+  it("the frame hands the ribbon the plot rect: the base line stops short of the gutter", () => {
+    series("baseline");
+    frame();
+    const g = entry().ribbon?.geom;
+    expect(g?.[RIBBON_GEOM.plotRight] ?? 0).toBeGreaterThan(0);
+    expect(g?.[RIBBON_GEOM.plotBottom] ?? 0).toBeGreaterThan(0);
   });
 
   it("removeSeries hides the ribbon's hosts and drops its blocks", () => {

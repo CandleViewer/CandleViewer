@@ -113,7 +113,7 @@ export class ProgramCache {
     const i = block.ints;
     if (b !== undefined && b !== null)
       this.gl.uniform4i(b, i[0] ?? 0, i[1] ?? 0, i[2] ?? 0, i[3] ?? 0);
-    if (g !== undefined && g !== null) this.gl.uniform4fv(g, block.geom); // u_geom[2]: 8 floats
+    if (g !== undefined && g !== null) this.gl.uniform4fv(g, block.geom); // u_geom[3]: 12 floats
     if (p !== undefined && p !== null) this.gl.uniform4fv(p, block.palette);
     if (bs !== undefined && bs !== null) this.gl.uniform1i(bs, block.base ?? 0);
   }
