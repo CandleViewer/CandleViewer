@@ -78,6 +78,32 @@ describe("E10-S01 S10: the nav rail at the reflow breakpoint (A11Y-F-0016)", () 
     expect(frame()).toHaveAttribute("data-rail-mode", "column");
   });
 
+  // E10-Q03 F-6 (SC 1.4.10): driver B measured the rail, `main` and the drawer at 0 px tall at 320 x 256.
+  it("grows past the viewport at the breakpoint instead of squeezing main to no height", async () => {
+    await renderAt("/risk");
+    const shell = (): HTMLElement => {
+      const el = document.querySelector("main")?.parentElement;
+      if (el === null || el === undefined) throw new Error("no shell frame");
+      return el;
+    };
+    const canvas = (): HTMLElement => {
+      const el = document.querySelector<HTMLElement>("[data-shell-canvas]");
+      if (el === null) throw new Error("no canvas");
+      return el;
+    };
+    expect(shell().style.height).toBe("100vh");
+    expect(canvas().style.overflow).toBe("auto");
+    setNarrow(true);
+    expect(shell().style.height).toBe("auto");
+    expect(shell().style.minHeight).toBe("100vh");
+    expect(shell().style.gridTemplateRows).toBe("auto auto minmax(16rem, auto) auto");
+    expect(canvas().style.height).toBe("auto");
+    expect(canvas().style.overflow).toBe("visible"); // the page scrolls, not a 0 px box
+    setNarrow(false);
+    expect(shell().style.height).toBe("100vh");
+    expect(canvas().style.overflow).toBe("auto");
+  });
+
   it("expands as an overlay over main, never a column: the rail's column stays 64 px", async () => {
     await renderAt("/risk");
     setNarrow(true);

@@ -13252,7 +13252,7 @@
       "wcagSc": "1.4.3",
       "level": "AA",
       "severity": "serious",
-      "reproduction": "Environment: apps/web built at the audited sha (base 46e6acd2d plus this PR), `vite preview` on <loopback>, Playwright Chromium headless, API stubbed with apps/web/e2e/support and the WS harness; committed driver docs/plan/a11y/_tools/e10-q03-shell.qa.ts (E10-Q03 #302). Signed-in owner on /journal, press Ctrl+/. Run axe (AXE_GATE_TAGS plus best-practice) in dark and high-contrast.",
+      "reproduction": "Environment: apps/web built at the audited sha (base 46e6acd2d plus PR 1, #5389), `vite preview` on <loopback>, Playwright Chromium headless, API stubbed with apps/web/e2e/support and the WS harness; committed driver docs/plan/a11y/_tools/e10-q03-shell.qa.ts (E10-Q03 #302). Signed-in owner on /journal, press Ctrl+/. Run axe (AXE_GATE_TAGS plus best-practice) in dark and high-contrast.",
       "detection": {
         "source": "automated",
         "tool": "axe-core 4.14 via @axe-core/playwright (e10-q03-shell.qa.ts)",
@@ -13265,8 +13265,8 @@
       "expected": "1.4.3: link text reaches 4.5:1 on color.surface.raised in every theme; the CMP-021 Link atom (color.text.link, always underlined) is used.",
       "priority": "P1",
       "evidence": [
-        "docs/qa/a11y/e10-q03-shell-v0.md#3-findings",
-        "fixed-in: E10-Q03 PR 1 (Refs #302), docs/qa/a11y/e10-q03-shell-v0.md"
+        "docs/qa/a11y/e10-q03-shell-v1.md#3-findings-and-fixes",
+        "fixed-in: E10-Q03 PR 1 (Refs #302), docs/qa/a11y/e10-q03-shell-v1.md"
       ]
     },
     {
@@ -13277,7 +13277,7 @@
       "wcagSc": "1.4.13",
       "level": "AA",
       "severity": "moderate",
-      "reproduction": "Environment: apps/web built at the audited sha (base 46e6acd2d plus this PR), `vite preview` on <loopback>, Playwright Chromium headless, API stubbed with apps/web/e2e/support and the WS harness; committed driver docs/plan/a11y/_tools/e10-q03-shell.qa.ts (E10-Q03 #302). Owner on /journal, collapse the rail, Tab to a rail link. The hint appears only on pointer hover (title attribute).",
+      "reproduction": "Environment: apps/web built at the audited sha (base 46e6acd2d plus PR 1, #5389), `vite preview` on <loopback>, Playwright Chromium headless, API stubbed with apps/web/e2e/support and the WS harness; committed driver docs/plan/a11y/_tools/e10-q03-shell.qa.ts (E10-Q03 #302). Owner on /journal, collapse the rail, Tab to a rail link. The hint appears only on pointer hover (title attribute).",
       "detection": {
         "source": "automated",
         "tool": "the #304 QA ruling 6558083589 (SC 1.4.13 hint must be dismissible, hoverable and persistent), then Playwright (shell-chrome.spec.ts)",
@@ -13290,8 +13290,108 @@
       "expected": "1.4.13: the hint shows on hover and keyboard focus, stays while hovered, and Esc dismisses it with focus kept: the CMP-016 Tooltip in echo mode (aria-hidden, so nothing is read twice).",
       "priority": "P2",
       "evidence": [
-        "docs/qa/a11y/e10-q03-shell-v0.md#3-findings",
-        "fixed-in: E10-Q03 PR 1 (Refs #302), docs/qa/a11y/e10-q03-shell-v0.md"
+        "docs/qa/a11y/e10-q03-shell-v1.md#3-findings-and-fixes",
+        "fixed-in: E10-Q03 PR 1 (Refs #302), docs/qa/a11y/e10-q03-shell-v1.md"
+      ]
+    },
+    {
+      "id": "A11Y-F-0032",
+      "screenId": "SCR-011",
+      "state": "rail expanded and collapsed, keyboard focus",
+      "componentId": "CMP-071",
+      "wcagSc": "2.4.7",
+      "level": "AA",
+      "severity": "moderate",
+      "reproduction": "Environment: apps/web built at the audited sha (E10-Q03 PR 2 branch), `vite preview` on <loopback>, Playwright Chromium headless, API stubbed with apps/web/e2e/support and the WS harness; committed driver docs/plan/a11y/_tools/e10-q03-manual.qa.ts (E10-Q03 #302). Owner on /journal, press Tab from the page start to each NavRail link, read the computed outline.",
+      "detection": {
+        "source": "automated",
+        "tool": "Playwright real-key Tab walk (e10-q03-manual.qa.ts)",
+        "heuristic": false
+      },
+      "owningTicket": "E10-Q03 #302",
+      "status": "fixed",
+      "title": "Rail links showed the browser's default focus ring, not the CMP-039 token ring",
+      "observed": "In all 36 Tab-walk cells every rail link had outline-style auto, 1 px (the browser's own ring), where every other stop had the 2 px solid color.focus.ring. The auto ring is drawn in the browser's colours, so its contrast against the raised surface cannot be claimed from computed styles (the outline-color read 1.1:1 on dark).",
+      "expected": "2.4.7 and the product's CMP-039 contract: every interactive element carries the 2 px solid color.focus.ring (at least 3:1 against the surface behind it); inset where the rail frame clips overflow.",
+      "priority": "P2",
+      "evidence": [
+        "docs/qa/a11y/e10-q03-shell-v1.md#3-findings-and-fixes",
+        "fixed-in: E10-Q03 PR 2, the closing PR of #302, docs/qa/a11y/e10-q03-shell-v1.md"
+      ]
+    },
+    {
+      "id": "A11Y-F-0033",
+      "screenId": "SCR-013",
+      "state": "cheatsheet open, Close focused",
+      "componentId": "CMP-094",
+      "wcagSc": "2.4.7",
+      "level": "AA",
+      "severity": "moderate",
+      "reproduction": "Environment: apps/web built at the audited sha (E10-Q03 PR 2 branch), `vite preview` on <loopback>, Playwright Chromium headless, API stubbed with apps/web/e2e/support and the WS harness; committed driver docs/plan/a11y/_tools/e10-q03-manual.qa.ts (E10-Q03 #302). Owner on /journal, press Ctrl+/ (focus lands on Close), read the computed outline.",
+      "detection": {
+        "source": "automated",
+        "tool": "Playwright real-key Tab walk (e10-q03-manual.qa.ts)",
+        "heuristic": false
+      },
+      "owningTicket": "E10-Q03 #302",
+      "status": "fixed",
+      "title": "The cheatsheet's Close button showed the browser's default focus ring, not the CMP-039 token ring",
+      "observed": "The unstyled native Close button had outline-style auto, 1 px in all 6 overlay-focus cells (3 themes x 2 densities).",
+      "expected": "2.4.7 and the CMP-039 contract: the 2 px solid color.focus.ring on every focusable control of the overlay.",
+      "priority": "P2",
+      "evidence": [
+        "docs/qa/a11y/e10-q03-shell-v1.md#3-findings-and-fixes",
+        "fixed-in: E10-Q03 PR 2, the closing PR of #302, docs/qa/a11y/e10-q03-shell-v1.md"
+      ]
+    },
+    {
+      "id": "A11Y-F-0034",
+      "screenId": "SCR-010",
+      "state": "400 % zoom, 320 x 256 CSS px",
+      "componentId": "CMP-070",
+      "wcagSc": "1.4.10",
+      "level": "AA",
+      "severity": "serious",
+      "reproduction": "Environment: apps/web built at the audited sha (E10-Q03 PR 2 branch), `vite preview` on <loopback>, Playwright Chromium headless, API stubbed with apps/web/e2e/support and the WS harness; committed driver docs/plan/a11y/_tools/e10-q03-manual.qa.ts (E10-Q03 #302). Owner on /journal at a 320 x 256 viewport (400 % on a 1280 x 1024 window): measure the rail, main and the right rail.",
+      "detection": {
+        "source": "automated",
+        "tool": "Playwright reflow measurement (e10-q03-manual.qa.ts)",
+        "heuristic": false
+      },
+      "owningTicket": "E10-Q03 #302",
+      "status": "fixed",
+      "title": "At 320 x 256 the shell body had no height: rail, workspace and drawer were 0 px tall and unreachable",
+      "observed": "The wrapped TopBar (207 px) and the StatusBar (80 px) left the 100vh frame's minmax(0, 1fr) row 0 px: nav 64 x 0, main 207 x 0, aside 33 x 0; the Notifications launcher could not be clicked and the 403 page's main never became visible (step timeouts) in every theme and density.",
+      "expected": "1.4.10: at 320 CSS px wide the content is reachable without two-dimensional scrolling; the frame grows with its content at the reflow breakpoint and the page scrolls vertically.",
+      "priority": "P1",
+      "evidence": [
+        "docs/qa/a11y/e10-q03-shell-v1.md#3-findings-and-fixes",
+        "fixed-in: E10-Q03 PR 2, the closing PR of #302, docs/qa/a11y/e10-q03-shell-v1.md"
+      ]
+    },
+    {
+      "id": "A11Y-F-0035",
+      "screenId": "SCR-010",
+      "state": "shell frame at 1280 x 800",
+      "componentId": "CMP-070",
+      "wcagSc": "1.4.10",
+      "level": "AA",
+      "severity": "minor",
+      "reproduction": "Environment: apps/web built at the audited tree (E10-Q03 PR 2 on base #5389), `vite preview` on <loopback>, Playwright Chromium headless, API stubbed with apps/web/e2e/support and the WS harness; committed spec apps/web/e2e/shell-reflow.spec.ts (E10-Q03 #302). Owner on /journal at 1280 x 800: read documentElement.scrollHeight - clientHeight.",
+      "detection": {
+        "source": "automated",
+        "tool": "Playwright measurement (shell-reflow.spec.ts)",
+        "heuristic": false
+      },
+      "owningTicket": "E10-Q03 #302",
+      "status": "open",
+      "title": "The 100vh shell frame sits inside the browser's default 8 px body margin: the main screen gets a page scrollbar",
+      "observed": "The page overshoots the viewport by 16 px (2 x 8 px) at 1280 x 800: the frame is height 100vh and nothing resets the default body margin (no rule in apps/web/index.html or packages/ui). Best practice and WCAG-adjacent (an unwanted second scroll region beside the canvas's own); not a failure of a stated criterion.",
+      "expected": "The frame fills the viewport with no page-level scroll: `body { margin: 0 }` in the global theme CSS (packages/ui, outside E10-Q03; an app-wide 8 px shift may move VR baselines).",
+      "priority": "P2",
+      "evidence": [
+        "docs/qa/a11y/e10-q03-shell-v1.md#3-findings-and-fixes",
+        "tracked: apps/web/e2e/shell-reflow.spec.ts (strict test.fail pair)"
       ]
     }
   ]

@@ -1,9 +1,9 @@
 ## electron
 
-sha trees apps=2ecb4a57a90a docs/plan/a11y/_tools=436dc9279ba4 (identical to the PR head); states 8; cells 48 (3 themes x 2 densities x 1 motion); axe via inject; disabled rules: none
+sha trees apps=f316c1ddd6a3 docs/plan/a11y/_tools=ef1175fe6eff (identical to the PR head); states 8; cells 48 (3 themes x 2 densities x 1 motion); axe via inject; disabled rules: none
 violations: critical 0, serious 0, moderate 0, minor 0; errored 0; axe incomplete rules color-contrast (in 42 cells)
 negative control: tripped (button-name, color-contrast, empty-heading, heading-order, image-alt, region); tags wcag2a, wcag2aa, wcag21a, wcag21aa, wcag22a, wcag22aa, best-practice
-results.json.gz sha256 11b8295da72e6c6733ced5effd927402897876ddc175820fbc33f6d58b9ed189
+results.json.gz sha256 68b72f5896acdd70062f1d2c603d6c3f1a64e1c46a1d691e8b088c440f7d1744
 
 ```text
 22696f92abb4a2393230bb00b02d3bb2425135dc5be3871164342d7e05bb59e1  states/cheatsheet.json

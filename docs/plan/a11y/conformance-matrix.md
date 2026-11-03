@@ -10,7 +10,7 @@ Generated, do not edit: regenerate with `python3 docs/plan/a11y/_tools/register.
 - States: 812 (145 on reachable screens); 63 covered, 704 unreachable, 45 not run.
 - Deep pass: 12 of 33 listed ids auditable; 8 run.
 - WCAG 2.2 cells (6 per non-reserved row): n/a 109, pass 41, pass (exception) 12, unreachable 732 (unreachable counted apart from n/a).
-- Findings: 30 in all, 14 open (Level A 5, AA 9; P0 0, P1 9, P2 5, P3 0; needs filing go 0); explicit no-findings rows: 5 (no finding recorded in this run's checks; not a conformance claim; 0 of them have second-rater disagreements pending adjudication, record §10.5).
+- Findings: 34 in all, 15 open (Level A 5, AA 10; P0 0, P1 9, P2 6, P3 0; needs filing go 0); explicit no-findings rows: 5 (no finding recorded in this run's checks; not a conformance claim; 0 of them have second-rater disagreements pending adjudication, record §10.5).
 - Patterns: A11Y-P-01 (2), A11Y-P-02 (4), A11Y-P-03 (1), A11Y-P-04 (3), A11Y-P-05 (2), A11Y-P-06 (3), A11Y-P-07 (1).
 - Screen reader: the sign-off passes are E47-T04's; this sweep records proxies only.
 
@@ -18,7 +18,7 @@ Generated, do not edit: regenerate with `python3 docs/plan/a11y/_tools/register.
 
 | Band         | Area                                       | Reachable | Rows | Open findings |
 | ------------ | ------------------------------------------ | --------- | ---- | ------------- |
-| SCR-001..019 | Auth, app shell, global chrome, onboarding | 14        | 19   | 11            |
+| SCR-001..019 | Auth, app shell, global chrome, onboarding | 14        | 19   | 12            |
 | SCR-020..029 | Workspaces, dockable panel system, layouts | 0         | 10   | 0             |
 | SCR-030..049 | Charting                                   | 0         | 20   | 0             |
 | SCR-050..059 | Order flow                                 | 0         | 10   | 0             |
@@ -46,7 +46,7 @@ Automated `pass (0 violations; N unresolved)`: axe found no violation, but N col
 | SCR-007 | (reserved)                                        | reserved: no screen             | 0 / 0          | n/a                                | n/a                   | reserved    | reserved    | reserved         | reserved    | reserved         | reserved    | n/a            | E47-T04 | 0 / 0           | unassigned     |
 | SCR-008 | (reserved)                                        | reserved: no screen             | 0 / 0          | n/a                                | n/a                   | reserved    | reserved    | reserved         | reserved    | reserved         | reserved    | n/a            | E47-T04 | 0 / 0           | unassigned     |
 | SCR-009 | (reserved)                                        | reserved: no screen             | 0 / 0          | n/a                                | n/a                   | reserved    | reserved    | reserved         | reserved    | reserved         | reserved    | n/a            | E47-T04 | 0 / 0           | unassigned     |
-| SCR-010 | App shell (global chrome)                         | partial                         | 2 / 6          | pass (0 violations; 3 unresolved)  | pass (traversal only) | pass        | n/a         | pass             | n/a         | n/a              | n/a         | n/a            | E47-T04 | 0 / 1           | E10-S01 #304   |
+| SCR-010 | App shell (global chrome)                         | partial                         | 2 / 6          | pass (0 violations; 3 unresolved)  | pass (traversal only) | pass        | n/a         | pass             | n/a         | n/a              | n/a         | n/a            | E47-T04 | 0 / 2           | E10-S01 #304   |
 | SCR-011 | Navigation rail (expanded) & workspace switcher   | covered                         | 1 / 4          | pass                               | pass (traversal only) | pass        | n/a         | pass             | n/a         | n/a              | n/a         | n/a            | E47-T04 | 0 / 0           | E10-S01 #304   |
 | SCR-012 | Command palette                                   | unreachable: not built          | 0 / 4          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | 0 / 0           | E05-S03 #266   |
 | SCR-013 | Hotkey cheatsheet overlay                         | covered                         | 1 / 3          | pass (0 violations; 2 unresolved)  | pass (traversal only) | pass        | n/a         | pass (exception) | n/a         | n/a              | n/a         | n/a            | E47-T04 | 0 / 0           | E39-S05 #1012  |
