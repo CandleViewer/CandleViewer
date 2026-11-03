@@ -3,6 +3,7 @@
 - File: `E47-D13 boards` (file id withheld)
 - Page: `{"name": "E47-D13 — Conformance statement", "id": "516c334d-ac02-80a1-8008-e3192595e5dd"}`
 - Drawn under the dark theme. 02 and 10 were exported under light and 04 under high contrast; the rest under dark. The theme was set back to dark after the twins (probe on 05: `canvas.fill` #11151a). The high-contrast set has no canvas override, so 04's theme was confirmed on a `color.text.primary` text instead: fill #f6f8fa (`palette.neutral.1000`, the hc value; dark is #e8eaed).
+- Board 01 was redrawn on the corrected kit at transport `73c6a3c37` (the full §7.7 line in the first `statement∕redlines · dark` annotation, which the first run drew cut mid-word). The old board 01 was removed first and only the new one is on the page; the row and the 01 SHEET-FIX lines below are the redraw's.
 - Every board meets these:
   - `lc.count` = `lintd.shapes` + 1;
   - lint `unmeasured` 0 and `unbound` 0;
@@ -16,7 +17,6 @@
 - Text that did not paint after a tab reload: boards 06 and 10 were the first boards after the two reloads. In each, the selected nav item 'Help & about' came out blank in the first export. That frame's texts were re-set to their own characters and the board was exported again. Every other PNG was looked at in full; no other blank or wrongly sized text was found.
 - Tags that covered UI content were moved to free space at the same y on 04 and 07. On 09 there was no free space at that y, so the viewport tag moved 30 px up (SHEET-FIX).
 - Kept as drawn, for the kit owner:
-  - 01 annotation `statement∕redlines · dark`: its first item ends mid-word ("… type.ui.caption (the version line); co"). The raw sheet and the packed sheet both carry that truncated text, so it was drawn as given.
   - 09 `reflow∕320 · dark`: the four strip labels ('CSS y 0-800' and the rest) sit at the strip bottoms over the strips' last, clipped lines. No strip has free space at that y.
   - 09 `reflow∕200 · dark`: the 'viewport edge' rule at CSS y 400 crosses the first row of the limitations table. That is the sheet's marker; only its tag was moved.
   - 06: the three column tags sit in the gaps between table rows. They touch the row fills but no glyphs.
@@ -25,7 +25,7 @@
 
 | NN  | Board id                             | Nodes | Lint (overflow / outside / unmeasured / overlap / unbound) | PNG                                                       | Size      | Bytes  | Gate                                                                     |
 | --- | ------------------------------------ | ----- | ---------------------------------------------------------- | --------------------------------------------------------- | --------- | ------ | ------------------------------------------------------------------------ |
-| 01  | 516c334d-ac02-80a1-8008-e319259f24c0 | 336   | 0 / 5 / 0 / 0 / 0                                          | docs/design/E47/img/E47-D13-01-statement-anatomy.png      | 3280x1179 | 530932 | PASS E47-D13-01-statement-anatomy.png theme=dark own=7982 other=43       |
+| 01  | 338d0e73-2a2c-805f-8008-e360054eb07b | 336   | 0 / 5 / 0 / 0 / 0                                          | docs/design/E47/img/E47-D13-01-statement-anatomy.png      | 3280x1179 | 531955 | PASS E47-D13-01-statement-anatomy.png theme=dark own=7886 other=43       |
 | 02  | 516c334d-ac02-80a1-8008-e31abd12de35 | 165   | 0 / 1 / 0 / 0 / 0                                          | docs/design/E47/img/E47-D13-02-statement-top.png          | 1920x998  | 310727 | PASS E47-D13-02-statement-top.png theme=light own=4790 other=118         |
 | 03  | 516c334d-ac02-80a1-8008-e31bca31018c | 405   | 0 / 3 / 0 / 0 / 0                                          | docs/design/E47/img/E47-D13-03-stale-notice.png           | 4640x998  | 497439 | PASS E47-D13-03-stale-notice.png theme=dark own=11990 other=52           |
 | 04  | 516c334d-ac02-80a1-8008-e31cb2bcafa3 | 298   | 0 / 2 / 0 / 0 / 0                                          | docs/design/E47/img/E47-D13-04-known-limitations.png      | 3280x1001 | 545237 | PASS E47-D13-04-known-limitations.png theme=hc own=8478 other=0          |
@@ -38,12 +38,11 @@
 
 Nodes = `lc.count`. Lint is the post-step `lintd` of the root (`lintd.shapes` = nodes - 1).
 
-SHEET-FIX E47-D13 01 root height 1272 -> 1179 (checked want: annotation column end 1099 + 80; the 1272 was the kit's estimate)
-SHEET-FIX E47-D13 01 section boards '2 · target + scope' 41 -> 42 and '4 · supported' 50 -> 51 (both frames) and 'template · W-14' 87 -> 89 grown to their texts' measured end: the last text ran 1-2 px past its clipping section (lint text-overflow, lc3.cutN 7 -> 0)
-SHEET-FIX E47-D13 01 the three 'cut N · … px not shown' strip labels set to the strip's 12 px height (fixed; 11 px type, was 14 px auto-height, 1 px past the strip top and bottom)
+SHEET-FIX E47-D13 01 root height 1304 -> 1179 (checked want: annotation column end 1099 + 80; the 1304 was the corrected kit's estimate)
+SHEET-FIX E47-D13 01 the three 'cut N · … px not shown' strip labels set to the strip's 12 px height (fixed; 11 px type, was 14 px auto-height, 1 px past the strip top and bottom; lint text-overflow 3 -> 0, lc3.cutN 3 -> 0)
 SHEET-FIX E47-D13 01 'link · SCR-013' underline 206 -> 187 px, the label's measured width (it ran 19 px past ')')
-SHEET-FIX E47-D13 02 root height 1000 -> 998 (checked want: footer end 918 + 80); section boards '2 · target + scope' 41 -> 42 and '4 · supported' 50 -> 51 grown to their texts, as on 01
-SHEET-FIX E47-D13 03 root height 1000 -> 998 (checked want: footer end 918 + 80); section boards '2 · target + scope' 41 -> 42 and '4 · supported' 50 -> 51 grown to their texts in all three frames, as on 01
+SHEET-FIX E47-D13 02 root height 1000 -> 998 (checked want: footer end 918 + 80); section boards '2 · target + scope' 41 -> 42 and '4 · supported' 50 -> 51 grown to their texts (the last text ran 1 px past its clipping section)
+SHEET-FIX E47-D13 03 root height 1000 -> 998 (checked want: footer end 918 + 80); section boards '2 · target + scope' 41 -> 42 and '4 · supported' 50 -> 51 grown to their texts in all three frames, as on 02
 SHEET-FIX E47-D13 04 root height 1056 -> 1001 (checked want: annotation column end 921 + 80)
 SHEET-FIX E47-D13 04 in 'limitations∕table · hc' the three header tags moved right at the same y (x 359 -> 446, 679 -> 728, 919 -> 966), because 'tag · the words first, the criterion number after (R-7)' covered the h2 'Known limitations'
 SHEET-FIX E47-D13 05 root height 1000 -> 998 (checked want: footer end 918 + 80)
@@ -60,6 +59,6 @@ SHEET-FIX E47-D13 09 in 'reflow∕320 · dark' 'alternative 4' 86 -> 87, its 'li
 SHEET-FIX E47-D13 09 link underlines set to their labels' measured widths ('link · SCR-013' 206 -> 187 px, 'link · SCR-117' 235 -> 194 px, both frames that show them)
 SHEET-FIX E47-D13 09 in 'reflow∕200 · dark' 'tag · viewport' moved from y 404 to y 374 (x kept), just above the viewport edge in the empty band under the table header, because below the edge it covered the first row's text in two columns; the strip has no free space at y 404
 SHEET-FIX E47-D13 10 root height 1072 -> 998 (checked want: footer end 918 + 80)
-SHEET-FIX E47-D13 10 'template · W-14' 87 -> 89 (both frames), '2 · target + scope' 41 -> 42, '4 · supported' 50 -> 51 grown to their texts, and the five 'cut N · … px not shown' strip labels set to the strip's 12 px height, as on 01 (lc3.cutN 7 -> 0)
+SHEET-FIX E47-D13 10 'template · W-14' 87 -> 89 (both frames), '2 · target + scope' 41 -> 42, '4 · supported' 50 -> 51 grown to their texts, and the five 'cut N · … px not shown' strip labels set to the strip's 12 px height, as on 01 and 02 (lc3.cutN 7 -> 0)
 SHEET-FIX E47-D13 10 link underlines set to their labels' measured widths ('link · SCR-013' 206 -> 187 px, 'link · SCR-117' 235 -> 194 px)
 SHEET-FIX E47-D13 10 frame 'keyboard∕tab-order · light' texts re-set to their own characters (geometry and token binds unchanged), because the nav item 'Help & about' did not paint in the first export (the first board after a tab reload)
