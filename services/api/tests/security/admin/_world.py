@@ -23,8 +23,9 @@ shared clock (a TOTP step and, stale, the grant's lapse), so it first reserves t
 (`reserve`): if a session would stop serving the state within it, every actor signs in again and
 the state is entered again (`settle`). No cell meets a session that another cell's exchange aged.
 Time is all `reserve` renews: a session that something other than the clock changed (revoked,
-locked, read-only, viewing as, struck, or elevated other than its state says) is refused first,
-naming its actor, so the cells after the route that changed it still meet the change.
+locked, read-only, viewing as, struck, holding an elevation its state does not (stale) or lacking
+a window its state holds (fresh)) is refused first, naming its actor, so the cells after the route
+that changed it still meet the change.
 
 The audit stand-in refuses an unregistered action as `AuditWriter.emit` does, so every asserted
 record is one production could write.
