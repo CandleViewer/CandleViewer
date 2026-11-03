@@ -2,7 +2,7 @@
 
 File `E47-D13 boards`, page `E47-D13 — Conformance statement`; export `docs/design/E47/img/E47-D13-01-statement-anatomy.png`; sheet `01-statement-anatomy.json` (validated); theme dark.
 
-Board 01 of ten (§0 L72: the whole page inside SettingsLayout: heading order, the eight sections of §7.2, redlines and token callouts). Grid (0, 0); 3280 x 1272 px; "page E47-D13 — Conformance statement · board 01 · r1".
+Board 01 of ten (§0 L72: the whole page inside SettingsLayout: heading order, the eight sections of §7.2, redlines and token callouts). Grid (0, 0); 3280 x 1304 px; "page E47-D13 — Conformance statement · board 01 · r1".
 
 ## Frames
 
@@ -11,13 +11,13 @@ Board 01 of ten (§0 L72: the whole page inside SettingsLayout: heading order, t
 
 ## Validator and size
 
-- `01-statement-anatomy.json: 0 errors, 1 warnings, 43 sections, 66813 bytes` (exit 0)
-- 43 sections, 66813 bytes
+- `01-statement-anatomy.json: 0 errors, 1 warnings, 43 sections, 66864 bytes` (exit 0)
+- 43 sections, 66864 bytes
 
 ## Live checks (5)
 
-- root 'E47-D13 / 01 statement-anatomy' at (0, 0): read back the name exactly after the first section call; size 3280 x 1272
-- after touchTexts + relayout: the annotation column (estimated 1110 px) ends inside the root (h 1272); set the root's h to max(column end, footer end) + 80
+- root 'E47-D13 / 01 statement-anatomy' at (0, 0): read back the name exactly after the first section call; size 3280 x 1304
+- after touchTexts + relayout: the annotation column (estimated 1137 px) ends inside the root (h 1304); set the root's h to max(column end, footer end) + 80
 - frame 'statement∕anatomy · dark': read back 1280 x 800 at (80, 80); clip on, no child spills
 - frame 'statement∕redlines · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills
 - export docs/design/E47/img/E47-D13-01-statement-anatomy.png: every frame is 1280 x 800; record the board id and the PNG size

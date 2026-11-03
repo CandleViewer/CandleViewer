@@ -72,3 +72,7 @@ live, and why>` line per live fix (or `SHEET-FIX none`). `out/` stays local (nev
   as a `SHEET-FIX` line.
 - After a tab reload, the first texts drawn may not paint in the first export. Look at each PNG, and re-set any
   blank texts (then re-export that board).
+
+## Corrections
+
+- board 01 corrected 2026-11-03: redraw 01 only

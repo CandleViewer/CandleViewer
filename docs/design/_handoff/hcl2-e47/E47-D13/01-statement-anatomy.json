@@ -2,7 +2,7 @@
  "board": {
   "name": "E47-D13 / 01 statement-anatomy",
   "w": 3280,
-  "h": 1272,
+  "h": 1304,
   "x": 0,
   "y": 0,
   "o": {
@@ -631,7 +631,7 @@
             "w": 960,
             "x": 24,
             "y": 87,
-            "h": 41
+            "h": 42
            },
            {
             "t": "text",
@@ -642,7 +642,7 @@
             "w": 720,
             "note": "type.ui.caption (§7.7); text, not a control",
             "x": 24,
-            "y": 140
+            "y": 141
            },
            {
             "t": "board",
@@ -673,8 +673,8 @@
             ],
             "w": 960,
             "x": 24,
-            "y": 178,
-            "h": 50
+            "y": 179,
+            "h": 51
            },
            {
             "t": "board",
@@ -800,12 +800,12 @@
             ],
             "w": 960,
             "x": 24,
-            "y": 252,
+            "y": 254,
             "h": 697
            }
           ],
           "w": 1008,
-          "h": 3515,
+          "h": 3520,
           "note": "route /accessibility; one main, one h1; a lazy chunk (§7.1)",
           "x": 0,
           "y": -16
@@ -818,7 +818,7 @@
        },
        {
         "t": "board",
-        "name": "cut 1 · 649 px not shown",
+        "name": "cut 1 · 651 px not shown",
         "o": {
          "dir": "row",
          "align": "center",
@@ -830,7 +830,7 @@
          {
           "t": "text",
           "name": "label",
-          "chars": "649 px of the page not shown",
+          "chars": "651 px of the page not shown",
           "typo": "type.ui.caption",
           "color": "color.text.inverse"
          }
@@ -843,7 +843,7 @@
        },
        {
         "t": "board",
-        "name": "band 2 · page y 965-1066",
+        "name": "band 2 · page y 967-1068",
         "o": {
          "fill": "color.surface.app",
          "clip": true
@@ -987,15 +987,15 @@
             "w": 960,
             "note": "a list; the two links are the section's only Tab stops",
             "x": 24,
-            "y": 973,
+            "y": 975,
             "h": 230
            }
           ],
           "w": 1008,
-          "h": 3515,
+          "h": 3520,
           "note": "route /accessibility; one main, one h1; a lazy chunk (§7.1)",
           "x": 0,
-          "y": -965
+          "y": -967
          }
         ],
         "w": 1008,
@@ -1037,7 +1037,7 @@
    "into": "statement∕anatomy · dark/body/main · CMP-086 content/page · condensed",
    "node": {
     "t": "board",
-    "name": "band 3 · page y 1219-1316",
+    "name": "band 3 · page y 1221-1318",
     "o": {
      "fill": "color.surface.app",
      "clip": true
@@ -1265,15 +1265,15 @@
         ],
         "w": 960,
         "x": 24,
-        "y": 1227,
+        "y": 1229,
         "h": 2045
        }
       ],
       "w": 1008,
-      "h": 3515,
+      "h": 3520,
       "note": "route /accessibility; one main, one h1; a lazy chunk (§7.1)",
       "x": 0,
-      "y": -1219
+      "y": -1221
      }
     ],
     "w": 1008,
@@ -1314,7 +1314,7 @@
    "into": "statement∕anatomy · dark/body/main · CMP-086 content/page · condensed",
    "node": {
     "t": "board",
-    "name": "band 4 · page y 3288-3458",
+    "name": "band 4 · page y 3290-3460",
     "o": {
      "fill": "color.surface.app",
      "clip": true
@@ -1387,7 +1387,7 @@
           ],
           "w": 720,
           "note": "selectable static text with real line breaks; nothing personal (§9)",
-          "h": 87
+          "h": 89
          },
          {
           "t": "board",
@@ -1438,15 +1438,15 @@
         ],
         "w": 960,
         "x": 24,
-        "y": 3296,
-        "h": 157
+        "y": 3298,
+        "h": 160
        }
       ],
       "w": 1008,
-      "h": 3515,
+      "h": 3520,
       "note": "route /accessibility; one main, one h1; a lazy chunk (§7.1)",
       "x": 0,
-      "y": -3288
+      "y": -3290
      }
     ],
     "w": 1008,
@@ -1643,7 +1643,7 @@
     "w": 20,
     "h": 20,
     "x": 274,
-    "y": 172,
+    "y": 173,
     "abs": true,
     "note": "annotation marker (not product UI)"
    }
@@ -1671,7 +1671,7 @@
     ],
     "h": 16,
     "x": 1097,
-    "y": 174,
+    "y": 175,
     "abs": true,
     "note": "annotation tag (not product UI)"
    }
@@ -1700,7 +1700,7 @@
     "w": 20,
     "h": 20,
     "x": 274,
-    "y": 210,
+    "y": 211,
     "abs": true,
     "note": "annotation marker (not product UI)"
    }
@@ -1728,7 +1728,7 @@
     ],
     "h": 16,
     "x": 1036,
-    "y": 212,
+    "y": 213,
     "abs": true,
     "note": "annotation tag (not product UI)"
    }
@@ -1757,7 +1757,7 @@
     "w": 20,
     "h": 20,
     "x": 274,
-    "y": 284,
+    "y": 286,
     "abs": true,
     "note": "annotation marker (not product UI)"
    }
@@ -1785,7 +1785,7 @@
     ],
     "h": 16,
     "x": 1036,
-    "y": 286,
+    "y": 288,
     "abs": true,
     "note": "annotation tag (not product UI)"
    }
@@ -2499,7 +2499,7 @@
        "fill": "color.surface.app"
       },
       "w": 1008,
-      "h": 3515,
+      "h": 3520,
       "note": "route /accessibility; one main, one h1; a lazy chunk (§7.1)",
       "x": 0,
       "y": 0,
@@ -2566,7 +2566,7 @@
         "w": 960,
         "x": 24,
         "y": 87,
-        "h": 41
+        "h": 42
        },
        {
         "t": "text",
@@ -2577,7 +2577,7 @@
         "w": 720,
         "note": "type.ui.caption (§7.7); text, not a control",
         "x": 24,
-        "y": 140
+        "y": 141
        },
        {
         "t": "board",
@@ -2608,8 +2608,8 @@
         ],
         "w": 960,
         "x": 24,
-        "y": 178,
-        "h": 50
+        "y": 179,
+        "h": 51
        },
        {
         "t": "board",
@@ -2621,7 +2621,7 @@
         },
         "w": 960,
         "x": 24,
-        "y": 252,
+        "y": 254,
         "h": 697,
         "kids": [
          {
@@ -3354,7 +3354,7 @@
      "fill": "color.status.info.default"
     },
     "x": 816,
-    "y": 202,
+    "y": 203,
     "abs": true
    }
   },
@@ -3381,7 +3381,7 @@
     ],
     "h": 16,
     "x": 822,
-    "y": 206,
+    "y": 207,
     "abs": true,
     "note": "annotation tag (not product UI)"
    }
@@ -3508,7 +3508,7 @@
     ],
     "h": 16,
     "x": 931,
-    "y": 188,
+    "y": 189,
     "abs": true,
     "note": "annotation tag (not product UI)"
    }
@@ -3536,7 +3536,7 @@
     ],
     "h": 16,
     "x": 1116,
-    "y": 228,
+    "y": 229,
     "abs": true,
     "note": "annotation tag (not product UI)"
    }
@@ -3564,7 +3564,7 @@
     ],
     "h": 16,
     "x": 857,
-    "y": 302,
+    "y": 304,
     "abs": true,
     "note": "annotation tag (not product UI)"
    }
@@ -3592,7 +3592,7 @@
     ],
     "h": 16,
     "x": 518,
-    "y": 302,
+    "y": 304,
     "abs": true,
     "note": "annotation tag (not product UI)"
    }
@@ -3788,7 +3788,7 @@
        {
         "t": "text",
         "name": "value-1",
-        "chars": "§7.2 L206: top to bottom, one h1 and an h2 per section from item 4; the eight sections at page y (estimated, page 3515 px tall): 1 h1 · status (page y 24); 2 target + scope (page y 87); 3 version line (page y 140); 4 h2 · What is supported (page y 178); 5 h2 · Known limitations (page y 252); 6 h2 · Alternatives (page y 973); 7 h2 · All criteria (page y 1227); 8 h2 · Report an accessibility problem (page y 3296); then the CMP-207 footer at y 3477",
+        "chars": "§7.2 L206: top to bottom, one h1 and an h2 per section from item 4; the eight sections at page y (estimated, page 3520 px tall): 1 h1 · status (page y 24); 2 target + scope (page y 87); 3 version line (page y 141); 4 h2 · What is supported (page y 179); 5 h2 · Known limitations (page y 254); 6 h2 · Alternatives (page y 975); 7 h2 · All criteria (page y 1229); 8 h2 · Report an accessibility problem (page y 3298); then the CMP-207 footer at y 3482",
         "typo": "type.ui.caption",
         "color": "color.text.primary",
         "w": 368
@@ -3856,7 +3856,7 @@
        {
         "t": "text",
         "name": "value-1",
-        "chars": "§7.7 L244: CMP-086 SettingsLayout · CMP-021 Link · CMP-028 Callout tone=\"info\" (role=\"status\") for the stale and version-unknown notices · CMP-049 Table (static) · CMP-033 CopyButton · CMP-015 skeleton and CMP-027 error with Retry · CMP-085 SkipLink · CMP-207 BuildFooter (the running version, 15:2696). Text type.ui.heading-lg (h1), type.ui.heading-md (h2), type.ui.body, type.ui.caption (the version line); co",
+        "chars": "§7.7 L244: CMP-086 SettingsLayout · CMP-021 Link · CMP-028 Callout tone=\"info\" (role=\"status\") for the stale and version-unknown notices · CMP-049 Table (static) · CMP-033 CopyButton · CMP-015 skeleton and CMP-027 error with Retry · CMP-085 SkipLink · CMP-207 BuildFooter (the running version, 15:2696). Text type.ui.heading-lg (h1), type.ui.heading-md (h2), type.ui.body, type.ui.caption (the version line); colours as §7.6. No new component; no new token.",
         "typo": "type.ui.caption",
         "color": "color.text.primary",
         "w": 368
@@ -4022,8 +4022,8 @@
    "color.surface.canvas"
   ],
   "live_checks": [
-   "root 'E47-D13 / 01 statement-anatomy' at (0, 0): read back the name exactly after the first section call; size 3280 x 1272",
-   "after touchTexts + relayout: the annotation column (estimated 1110 px) ends inside the root (h 1272); set the root's h to max(column end, footer end) + 80",
+   "root 'E47-D13 / 01 statement-anatomy' at (0, 0): read back the name exactly after the first section call; size 3280 x 1304",
+   "after touchTexts + relayout: the annotation column (estimated 1137 px) ends inside the root (h 1304); set the root's h to max(column end, footer end) + 80",
    "frame 'statement∕anatomy · dark': read back 1280 x 800 at (80, 80); clip on, no child spills",
    "frame 'statement∕redlines · dark': read back 1280 x 800 at (1440, 80); clip on, no child spills",
    "export docs/design/E47/img/E47-D13-01-statement-anatomy.png: every frame is 1280 x 800; record the board id and the PNG size"
