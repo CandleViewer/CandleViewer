@@ -414,12 +414,12 @@ reading CRLF line endings as LF (#3454).
 
 ### Release / changelog (docs/plan/07-release-and-prr.md §3, §4)
 
-| Task                                                                        | Command                                                                                                                                                                           |
-| --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Preview the Unreleased section (writes nothing)                             | `python tools/ci/update_changelog.py --since-last-tag --preview`                                                                                                                  |
-| Sync Unreleased for a sync PR (`--limit` spans every PR since the last tag) | `gh pr list --state merged --limit 10000 --json number,labels > /tmp/pr-labels.json && python tools/ci/update_changelog.py --since-last-tag --pr-labels-json /tmp/pr-labels.json` |
-| Prepare a release-prep PR's `CHANGELOG.md` + `version.txt`                  | `git fetch origin --tags && python tools/ci/prepare_release.py --rev origin/main`                                                                                                 |
-| Verify a release candidate (no API or remote checks)                        | `git fetch origin --tags && python tools/ci/prepare_release.py --verify --rev <sha>`                                                                                              |
+| Task                                                                        | Command                                                                                                                                                                                                      |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Preview the Unreleased section (writes nothing)                             | `python tools/ci/update_changelog.py --since-last-tag --preview`                                                                                                                                             |
+| Sync Unreleased for a sync PR (`--limit` spans every PR since the last tag) | `gh pr list --state merged --limit 10000 --json number,labels > /tmp/pr-labels.json && python tools/ci/update_changelog.py --since-last-tag --pr-labels-json /tmp/pr-labels.json`                            |
+| Prepare a release-prep PR's `CHANGELOG.md` + `version.txt`                  | `git fetch origin --tags && gh pr list --state merged --limit 10000 --json number,labels > /tmp/pr-labels.json && python tools/ci/prepare_release.py --rev origin/main --pr-labels-json /tmp/pr-labels.json` |
+| Verify a release candidate (no API or remote checks)                        | `git fetch origin --tags && python tools/ci/prepare_release.py --verify --rev <sha>`                                                                                                                         |
 
 ### Merge (delivery orchestrator only, C-10.1; `docs/plan/01-sdlc-and-branching.md` §7)
 

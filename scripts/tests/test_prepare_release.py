@@ -245,6 +245,15 @@ def test_verify_candidate_changing_a_file_outside_the_allow_list_fails(repo: _Re
     assert any("outside the prep allow-list: README.md" in e for e in _verify(repo, sha))
 
 
+def test_verify_allow_list_error_names_a_path_containing_a_space(repo: _Repo) -> None:
+    repo.commit("feat(chart-engine): a pane (#1)")
+    repo.prepare()
+    repo.write("read me.md", "drive-by\n")
+    repo.git("add", "-A")
+    sha = repo.commit("chore(infra-devops): prepare release 0.1.0 (#2)")
+    assert any("outside the prep allow-list: read me.md" in e for e in _verify(repo, sha))
+
+
 def test_verify_candidate_whose_tag_exists_elsewhere_fails(repo: _Repo) -> None:
     feat = repo.commit("feat(chart-engine): a pane (#1)")
     sha, _ = repo.merge_prep()
@@ -360,12 +369,29 @@ def test_classify_sync_merge_is_not_a_candidate(
     assert capsys.readouterr().out.strip() == "candidate="
 
 
-def test_classify_version_txt_change_without_the_title_is_a_candidate(repo: _Repo) -> None:
-    before = repo.git("rev-parse", "HEAD")
-    repo.write(pr.VERSION_FILE, "0.0.1\n")
+def test_classify_version_txt_change_without_the_title_is_a_candidate_and_fails_verify(
+    repo: _Repo,
+) -> None:
+    before = repo.commit("feat(chart-engine): a pane (#1)")
+    assert repo.prepare() == "0.1.0"
     repo.git("add", "-A")
     sha = repo.commit("fix(infra-devops): a mis-titled prep (#2)")
     assert pr.classify(repo.dir, sha, before) == [(sha, None)]
+    expected = (
+        "CI-REL-005: subject 'fix(infra-devops): a mis-titled prep (#2)' is not "
+        "'chore(infra-devops): prepare release 0.1.0'"
+    )
+    assert expected in _verify(repo, sha)
+
+
+def test_classify_ignores_a_changed_file_whose_name_contains_version_txt(repo: _Repo) -> None:
+    before = repo.git("rev-parse", "HEAD")
+    (repo.path / "docs").mkdir()
+    repo.write("docs/a version.txt", "notes\n")
+    repo.git("add", "-A")
+    sha = repo.commit("docs(docs): a note (#2)")
+    assert pr.changed_files(repo.dir, sha) == {"docs/a version.txt"}
+    assert pr.classify(repo.dir, sha, before) == []
 
 
 def test_classify_push_without_before_looks_at_the_head_only(
