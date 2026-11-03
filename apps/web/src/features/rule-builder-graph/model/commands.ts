@@ -151,7 +151,7 @@ const BLANK_LAYOUT: GraphLayout = Object.freeze({
 
 /**
  * A loaded graph ready to edit, nothing selected: its stored layout normalised (`layout.ts`), every
- * node placed (`placement.ts`), and only the presentation keys the client owns kept (SR-E37-03).
+ * node placed (`placement.ts`), and only the layout keys the client owns kept (SR-E37-03, #1073).
  */
 export function editorStateOf(graph: GraphModel, layout: GraphLayout = BLANK_LAYOUT): EditorState {
   const { positions, collapsed, comments } = placeNodes(graph, normaliseLayout(graph, layout));

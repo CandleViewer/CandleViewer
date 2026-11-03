@@ -291,7 +291,7 @@ describe("adding a node", () => {
   });
 });
 
-describe("a stored layout at load, and the points a command brings (SR-E37-03, SR-E37-04)", () => {
+describe("a stored layout at load, and the points a command brings (SR-E37-03 and -04, #1073)", () => {
   it("places a node stored at null or a string, and clamps one stored at ±1e19 or ±2^61", () => {
     const layout = stored({ n1: null, n2: "240,0", n3: { x: 1e19, y: -(2 ** 61) } });
     expect(editorStateOf(SFORM, layout).layout.positions).toEqual({
@@ -301,9 +301,10 @@ describe("a stored layout at load, and the points a command brings (SR-E37-03, S
     });
   });
 
-  it("keeps only the layout keys the client owns: a stored server-owned key is gone", () => {
-    const layout = { ...stored({}, { node_only_constructs: ["sub"] }), mode: "armed" };
-    expect(editorStateOf(SFORM, layout).layout).toEqual(editorStateOf(SFORM).layout);
+  it("keeps the layout keys the client owns and only those: a stored server-owned key is gone", () => {
+    const own = { collapsed: ["n2"], comments: [{ id: "c1", text: "why" }] };
+    const layout = { ...stored({}, { node_only_constructs: ["sub"] }), ...own, mode: "armed" };
+    expect(editorStateOf(SFORM, layout).layout).toEqual({ ...editorStateOf(SFORM).layout, ...own });
   });
 
   it("clamps a moved or dropped point to the canvas bound, and skips one that is no point", () => {
@@ -322,13 +323,12 @@ describe("a stored layout at load, and the points a command brings (SR-E37-03, S
     expect(dropped.state.layout.positions).toEqual({ n1: { x: CANVAS_LIMIT, y: -CANVAS_LIMIT } });
   });
 
-  it("inserts beside an anchor stored at 1e19, read clamped, in a bounded walk", () => {
+  it("inserts beside nodes stored at the bound inside it, where a move or a delete undoes to", () => {
     const isFree = Occupancy.prototype.isFree;
     let calls = 0;
     const spy = vi.spyOn(Occupancy.prototype, "isFree");
     spy.mockImplementation(function (this: Occupancy, at) {
-      calls += 1;
-      if (calls > 100) throw new Error("the walk does not end");
+      if ((calls += 1) > 100) throw new Error("the walk does not end");
       return isFree.call(this, at);
     });
     try {
@@ -337,7 +337,12 @@ describe("a stored layout at load, and the points a command brings (SR-E37-03, S
         { type: "select", nodes: ["n2"], edges: [], mode: "replace" },
         { type: "addNode", node: GATE },
       ]);
-      expect(state.layout.positions["n4"]).toEqual({ x: 240, y: CANVAS_LIMIT + GRID });
+      const at = { x: 240, y: CANVAS_LIMIT - GRID }; // one step up from n3: free, inside the bound
+      const move: GraphCommand = { type: "move", moves: [{ id: "n4", position: { x: 0, y: 0 } }] };
+      for (const edit of [move, { type: "delete", nodes: ["n4"], edges: [] } as const]) {
+        const back = undo(dispatch(historyOf(state), edit).history).history.state;
+        expect([state, back].map((s) => s.layout.positions["n4"])).toEqual([at, at]);
+      }
     } finally {
       spy.mockRestore();
     }
