@@ -264,8 +264,12 @@ export const ToggleLongText: Story = {
         chip.getBoundingClientRect().right -
         Number.parseFloat(style.paddingRight) -
         Number.parseFloat(style.borderRightWidth);
-      const word = chip.querySelector(".cv-tag__label")?.getBoundingClientRect().right;
-      await expect(word).toBeLessThanOrEqual(edge + 0.5);
+      const label = chip.querySelector(".cv-tag__label");
+      await expect(label?.getBoundingClientRect().right).toBeLessThanOrEqual(edge + 0.5);
+      // And the word is not cut: a truncating label shrinks its own box to the edge, so only its text overflows.
+      await expect(label?.scrollWidth).toBeLessThanOrEqual(
+        label?.clientWidth ?? Number.NEGATIVE_INFINITY,
+      );
     }
     // The row wraps instead.
     const rows = new Set(chips.map((chip) => chip.getBoundingClientRect().top));
