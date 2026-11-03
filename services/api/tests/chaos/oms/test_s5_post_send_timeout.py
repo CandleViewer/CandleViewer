@@ -3,9 +3,9 @@ E29-T06's pass): the venue takes the create and its answer is lost (the `place` 
 timeout, 24 Sec.8.6 "Order creates"). The order waits `unknown` (S1, INV-B1-e), nothing is sent
 again, and the account's next periodic pass, within one 30 s cycle, binds it by the full match to
 the venue's truth: the order resting (24 Sec.8.5 step 3a), or filled meanwhile with its fill
-withheld from the stream (step 3b, its fill and its position with the native stop adopted). The
-venue counted one create, and the oracle finds the book equal to the venue. On virtual time, the
-venue derived in-test: derived, not evidence (E29-K01, #843)."""
+withheld from the stream (step 3b, its fill and its position with the native stop adopted). B1
+pages the `unknown` order at once, the venue counted one create, and the oracle finds the book equal
+to the venue. On virtual time, the venue derived in-test: derived, not evidence (E29-K01, #843)."""
 
 from __future__ import annotations
 
@@ -46,6 +46,8 @@ async def test_s5_a_lost_ack_is_resolved_by_the_next_pass_and_never_sent_again(
         order_id = await lost_ack(world, filled=filled)
         row = await world.row(order_id)
         assert (row.lifecycle_state, row.exchange_order_id) == ("unknown", None)
+        # B1's page, at once (the runbook's "Which alert"); the failure shows what was paged
+        assert world.paged("order_unknown"), world.pager.calls
         assert world.sample(UNKNOWN) == 1
         assert world.exchange.creates() == {row.order_link_id: 1}
         corrections = world.sample(CORRECTIONS, kind=listed)
@@ -56,6 +58,7 @@ async def test_s5_a_lost_ack_is_resolved_by_the_next_pass_and_never_sent_again(
         took = await world.until(resolved, within_s=2 * INTERVAL_S)
         print(f"s5 ({listed}): unknown resolved in {took:.1f} s of virtual time")  # -rA shows it
         assert took <= INTERVAL_S  # within one reconciliation cycle (#1148, Performance notes)
+        assert took <= 30.0  # the ticket's own figure, whatever the constant is changed to
         venue = await world.exchange.order(row.order_link_id)
         row = await world.row(order_id)
         state = "filled" if filled else "submitted"

@@ -1,10 +1,10 @@
 """C-13.6 #4, its nearest row (E29-Q04 #1148; E29-T04's S1 path, E29-T06's pass; 24 Sec.8.5 step
 3b, 28 B1's `second_consecutive_miss`): the create times out after it left, and the venue never
-took it (the `place` door). The order waits `unknown`; the first periodic pass finds it nowhere,
-open or in history, and records the miss; the second, one cycle later, rejects it with
-`UNRESOLVED_AFTER_RECONCILE`, counted `abandoned`. One create reached the venue, which holds
-nothing, and the oracle finds the book equal to the venue. On virtual time, the venue derived
-in-test: derived, not evidence (E29-K01, #843)."""
+took it (the `place` door). The order waits `unknown`, paged at once by B1; the first periodic
+pass finds it nowhere, open or in history, and records the miss; the second, one cycle later,
+rejects it with `UNRESOLVED_AFTER_RECONCILE`, counted `abandoned`. One create reached the venue,
+which holds nothing, and the oracle finds the book equal to the venue. On virtual time, the venue
+derived in-test: derived, not evidence (E29-K01, #843)."""
 
 from __future__ import annotations
 
@@ -41,6 +41,8 @@ async def test_s6_two_passes_that_find_nothing_reject_it_unresolved_after_reconc
     async with opened() as world:
         order_id = await never_landed(world)
         assert (await world.row(order_id)).lifecycle_state == "unknown"
+        # B1's page, at once (the runbook's "Which alert"); the failure shows what was paged
+        assert world.paged("order_unknown"), world.pager.calls
         assert world.sample(UNKNOWN) == 1
         abandoned = world.sample(CORRECTIONS, kind="abandoned")
         await world.elapse(INTERVAL_S)  # the first pass: one miss, the order kept
@@ -55,6 +57,7 @@ async def test_s6_two_passes_that_find_nothing_reject_it_unresolved_after_reconc
         took = INTERVAL_S + await world.until(rejected, within_s=INTERVAL_S + JITTER_S)
         print(f"s6: rejected {took:.1f} s after the timeout, of virtual time")  # -rA shows it
         assert took <= 2 * INTERVAL_S  # within two reconciliation cycles
+        assert took <= 60.0  # the ticket's own figure, whatever the constant is changed to
         row = await world.row(order_id)
         assert (row.reject_code, await misses(world, order_id)) == (UNRESOLVED_AFTER_RECONCILE, 2)
         assert world.sample(UNKNOWN) == 0

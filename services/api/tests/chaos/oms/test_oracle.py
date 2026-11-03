@@ -1,6 +1,7 @@
 """E29-Q04's oracle (#1148, "The oracle is authoritative"): a book equal to the venue passes, and
 each kind of field the oracle compares fails it once mutated, on either side, each named in the
-one `OracleMismatch` (`_oracle.py`'s list). Plain rows, no runtime."""
+one `OracleMismatch` (`_oracle.py`'s list); and every venue status of its table, under each time in
+force, reads as 24 Sec.8.12 gives it (written out here, not imported). Plain rows, no runtime."""
 
 from __future__ import annotations
 
@@ -17,7 +18,15 @@ from candleviewer.domain.order_link import ext_key
 from candleviewer.exchange.base.models import Execution
 from candleviewer.storage.repositories.executions import ExecutionRow
 from candleviewer.storage.repositories.positions import PositionRow
-from tests.chaos.oms._oracle import Book, OracleMismatch, Truth, check, compare, expected
+from tests.chaos.oms._oracle import (
+    LIFECYCLE,
+    Book,
+    OracleMismatch,
+    Truth,
+    check,
+    compare,
+    expected,
+)
 from tests.unit.oms import reconcile_rig as rr
 
 pytestmark = pytest.mark.chaos
@@ -137,17 +146,44 @@ def test_each_kind_of_mutated_field_fails_it(name: str) -> None:
     assert named in {(d.item.split()[0], d.field) for d in compare(*mutated())}
 
 
+TIFS = ("gtc", "ioc", "fok")
+#: 24 Sec.8.12 ("Stream rows to B1 events", "The end"), written out here and never imported from
+#: the table under test: the B1 state a row holds for an order in each venue status, by time in
+#: force (`gtc`, `ioc`, `fok`). `triggered` is `TRIGGERED`. `new`, `untriggered`, `partially_filled`
+#: and `filled` send no event of their own (a fill moves the order, through `EXEC`): the row rests
+#: `submitted`, or follows its fills. `EXPIRE` exactly for an `ioc` or `fok` order that ended
+#: `cancelled` or `partially_filled_canceled`; `REMOTE_CANCELLED` for every other end, `deactivated`
+#: and a rejection after the acceptance included.
+SECTION_8_12: dict[str, tuple[str, str, str]] = {
+    "new": ("submitted", "submitted", "submitted"),
+    "untriggered": ("submitted", "submitted", "submitted"),
+    "triggered": ("triggered", "triggered", "triggered"),
+    "partially_filled": ("partially_filled", "partially_filled", "partially_filled"),
+    "filled": ("filled", "filled", "filled"),
+    "cancelled": ("cancelled", "expired", "expired"),
+    "partially_filled_canceled": ("cancelled", "expired", "expired"),
+    "deactivated": ("cancelled", "cancelled", "cancelled"),
+    "rejected": ("cancelled", "cancelled", "cancelled"),
+}
+
+
+@pytest.mark.parametrize("tif", TIFS)
+@pytest.mark.parametrize("status", sorted(LIFECYCLE.keys() | SECTION_8_12.keys()))
+def test_a_venue_status_reads_as_24s_table_says(status: str, tif: str) -> None:
+    """Each status of the oracle's table under each time in force; a status only one names fails."""
+    order = ORDER.model_copy(update={"state": status, "time_in_force": tif})
+    assert status in SECTION_8_12, "the oracle's table holds a status 24 Sec.8.12 does not name"
+    assert expected(order) == SECTION_8_12[status][TIFS.index(tif)]
+
+
 @pytest.mark.parametrize(
-    ("state", "tif", "untracked", "lifecycle"),
-    [("untriggered", "gtc", False, "submitted"), ("deactivated", "gtc", False, "cancelled"),
-     ("partially_filled_canceled", "ioc", False, "expired"), ("cancelled", "fok", False, "expired"),
-     ("partially_filled", "gtc", True, "untracked"), ("filled", "gtc", True, "filled")],
-)  # fmt: skip
-def test_a_venue_status_reads_as_24s_table_says(
-    state: str, tif: str, untracked: bool, lifecycle: str
+    ("state", "lifecycle"), [("partially_filled", "untracked"), ("filled", "filled")]
+)
+def test_an_adopted_row_stays_untracked_only_while_its_order_is_open(
+    state: str, lifecycle: str
 ) -> None:
-    order = ORDER.model_copy(update={"state": state, "time_in_force": tif})
-    assert expected(order, untracked=untracked) == lifecycle
+    order = ORDER.model_copy(update={"state": state})
+    assert expected(order, untracked=True) == lifecycle
 
 
 class Checked:

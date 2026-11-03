@@ -13,6 +13,11 @@ world's in-memory order store it adds:
   and `commit` (the next commit), each faulted through the store's own `fail_next` or the fake's
   own `script`, so a failure is reproduced from its scenario's name alone (#1148's design note).
 
+Slice 1 drives `place` (s5, s6), `commit` and the outage switch through the real runtime (the
+scenarios and `test_harness_guards.py`). `send` and `ack` are armed by the B1 state their step
+writes (`_STEPS`) and left as they are: slice 2's scenarios (s7 to s13) are their first use, and
+prove that mapping.
+
 The submit is the pipeline's (`runtime.submission`), as `placeOrder` reaches it. Demo only, no
 socket (`test_harness_guards.py`)."""
 
@@ -272,6 +277,12 @@ class World(rt.World):
             if s.name == name and labels.items() <= s.labels.items()
         )  # fmt: skip
         return sum(found, 0.0)
+
+    def paged(self, alert: str) -> bool:
+        """Whether the pager took a `page` for the order alert `alert`, worded as the notice route
+        words it (`OrderNoticesRouter`): among any others it took, so a scenario names its own."""
+        raised = zip(self.pager.severities, self.pager.calls, strict=True)
+        return ("page", f"order alert {alert}") in raised
 
     async def book(self) -> Book:
         """The account's `orders`, `executions` and open `positions` rows, as the tables hold
