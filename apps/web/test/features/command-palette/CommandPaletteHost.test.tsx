@@ -80,7 +80,7 @@ const pressCtrlK = (): void => {
 const input = (): HTMLElement => screen.getByRole("combobox", { name: "Search commands" });
 const options = (): string[] =>
   screen.getAllByRole("option").map((o) => o.getAttribute("aria-label") ?? "");
-const trigger = (): HTMLElement => screen.getByRole("button", { name: "Search commands Ctrl+K" });
+const trigger = (): HTMLElement => screen.getByRole("button", { name: "Search commands, Ctrl+K" });
 
 /** What the shell's polite region holds now (every region of that politeness, as `top-bar.test.tsx` reads it). */
 const polite = (): string =>

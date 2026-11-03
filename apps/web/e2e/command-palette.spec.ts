@@ -30,7 +30,7 @@ async function shellAt(page: Page, path: string, role: Role, permissions: string
 
 const palette = (page: Page) => page.getByRole("dialog", { name: "Command palette" });
 const input = (page: Page) => page.getByRole("combobox", { name: "Search commands" });
-const trigger = (page: Page) => page.getByRole("button", { name: "Search commands Ctrl+K" });
+const trigger = (page: Page) => page.getByRole("button", { name: "Search commands, Ctrl+K" });
 
 test("Ctrl+K, type, Enter navigates; the palette closes first", async ({ page }) => {
   await shellAt(page, "/journal", "owner");
