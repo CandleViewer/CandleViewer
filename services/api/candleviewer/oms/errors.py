@@ -8,8 +8,10 @@ or a secret (C-12.6).
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Final
 
@@ -260,16 +262,29 @@ RULE_QTY_ROUNDING: Final = "qty_rounding"
 #: `sizing_unavailable`'s `detail` when the symbol's tiers are being fetched (22 `placeOrder`,
 #: #913 S4-S-d): a retry in a moment is sized, unlike a figure that is unavailable.
 DETAIL_TIERS_PENDING: Final = "tiers_pending"
+#: 22 `closePosition` (E29-T07 #915; E29-S03 #978): the rules a close's size breaks, each
+#: `validation_failed` naming its own rule, before anything is sent.
+RULE_POSITION_FLAT: Final = "position_flat"
+RULE_EXCEEDS_POSITION: Final = "exceeds_position"
+RULE_QTY_BELOW_MINIMUM: Final = "qty_below_minimum"
+RULE_DUST_REMAINDER: Final = "dust_remainder"
 
 
 @dataclass(frozen=True, slots=True)
 class FieldError:
     """One `errors[]` item of a refusal (22 `Problem.errors`): the request field, the rule that
-    failed and a fixed sentence, which names no value but the instrument's own limits."""
+    failed and a fixed sentence, which names no value but the instrument's own limits. A rule
+    that checks a size against the instrument also names the symbol, the `limit` it breaks and,
+    for `closePosition`'s size rules (E29-S03), the size `resolved` and the `remaining` one:
+    figures for the problem body alone, which its repr never shows (C-12.6)."""
 
     field: str
     rule: str
     message: str
+    symbol: str | None = None
+    limit: Decimal | None = dataclasses.field(default=None, repr=False)
+    resolved: Decimal | None = dataclasses.field(default=None, repr=False)
+    remaining: Decimal | None = dataclasses.field(default=None, repr=False)
 
 
 class OrderRefused(OmsError):
@@ -289,6 +304,15 @@ class OrderInvalid(OrderRefused):
     field, or an instrument limit that no narrower code names (a price bound, the leverage)."""
 
     default_detail = "The order failed validation."
+
+
+class PositionChanged(OrderInvalid):
+    """A close a close route marked `protective` that the venue's own read of its position, at
+    the size step, does not show reducing it: the position flat, on the other side, or smaller
+    than the close since the route admitted it (E29-S03 #978, BQ-7). Nothing is recorded or
+    sent, and the close is never re-sized: `errors[]` names `position_flat` or
+    `exceeds_position`, which the close routes answer `422` as their step 13 does. Its row is
+    `OrderInvalid`'s, so the pipeline records it `validation_failed`."""
 
 
 class StopUnitUnsupported(OrderInvalid):

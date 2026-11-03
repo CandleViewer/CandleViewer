@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -16,7 +17,13 @@ from jsonschema import Draft202012Validator
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.position_close import CLOSE_ALL_PATH, CLOSE_PATH
 from candleviewer.api.position_reverse import REVERSE_PATH
-from candleviewer.oms.errors import ExchangeRejected, FieldError, OrderInvalid, TradingDisabled
+from candleviewer.oms.errors import (
+    ExchangeRejected,
+    FieldError,
+    OrderInvalid,
+    PositionChanged,
+    TradingDisabled,
+)
 from candleviewer.oms.idempotency import InFlight
 from candleviewer.oms.position_writes import reversal_refs
 from candleviewer.oms.submit import SubmitOutcome
@@ -31,6 +38,7 @@ from tests.unit.api.position_writes_world import (
     headers,
     on,
 )
+from tests.unit.oms.submit_rig import instrument
 
 _SPEC: Any = load_openapi_spec()  # a parsed YAML document, walked untyped
 _KEY = uuid.UUID("9b2f7c1e-4d3a-4f6b-8a0c-5e1d2c3b4a59")
@@ -74,6 +82,17 @@ def _switch_off(world: World) -> None:
     world.route.switches.refusal_of = TradingDisabled()
 
 
+def _dusty(world: World) -> None:
+    """E29-S03: a minimum of 0.150, so 75 % of 0.200 leaves dust."""
+    world.positions.listed["BTCUSDT"] = instrument(min_order_qty=Decimal("0.150"))
+
+
+def _venue_changed(world: World) -> None:
+    """E29-S03 BQ-7: the pipeline's read of the venue showed the position smaller."""
+    shrunk = FieldError("qty", "exceeds_position", "The position is now smaller than the close.")
+    world.pipeline.close = PositionChanged(shrunk.message, errors=(shrunk,))
+
+
 #: (case, method path template, status, world, caller, position, body, header changes)
 _CASES: list[tuple[str, str, int, Callable[[World], None], str, str, Any, dict[str, Any]]] = [
     ("close_ok", CLOSE_PATH, 202, _keep, "owner", ON_A, _FULL, {}),
@@ -88,6 +107,11 @@ _CASES: list[tuple[str, str, int, Callable[[World], None], str, str, Any, dict[s
      {}),
     ("close_body", CLOSE_PATH, 422, _keep, "owner", ON_A, {"order_type": "market"}, {}),
     ("close_flat", CLOSE_PATH, 422, _keep, "owner", FLAT, _FULL, {}),
+    ("close_dust", CLOSE_PATH, 422, _dusty, "owner", ON_A, {"order_type": "market", "pct": "75"},
+     {}),
+    ("close_below_minimum", CLOSE_PATH, 422, _keep, "owner", ON_A,
+     {"order_type": "market", "pct": "0.4"}, {}),
+    ("close_venue_changed", CLOSE_PATH, 422, _venue_changed, "owner", ON_A, _FULL, {}),
     ("close_rate", CLOSE_PATH, 429, World.exhaust, "owner", ON_A, _FULL, {}),
     ("close_send_rate", CLOSE_PATH, 429, _close_rate, "owner", ON_A, _FULL, {}),
     ("close_no_oms", CLOSE_PATH, 501, _set("composed", False), "owner", ON_A, _FULL, {}),

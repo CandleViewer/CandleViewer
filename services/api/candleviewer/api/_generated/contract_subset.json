@@ -2509,6 +2509,14 @@
                 "message": {
                   "type": "string"
                 },
+                "remaining": {
+                  "$ref": "#/components/schemas/Decimal",
+                  "description": "`dust_remainder` only: the size the close would leave open, the stored size less `resolved`.\n"
+                },
+                "resolved": {
+                  "$ref": "#/components/schemas/Decimal",
+                  "description": "`closePosition`'s size rules only (`qty_below_minimum`, `dust_remainder`): the size the close resolved to, floored to the instrument's `qty_step`.\n"
+                },
                 "rule": {
                   "type": "string"
                 },

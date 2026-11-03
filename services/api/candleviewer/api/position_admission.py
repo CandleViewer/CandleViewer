@@ -83,15 +83,25 @@ class PositionCaller[T]:
 
 
 def invalid(*errors: FieldError, status: int = 422) -> JSONResponse:
-    """`validation_failed` with each rule named: 422 for a body, 400 for the path id or the key."""
+    """`validation_failed` with each rule named: 422 for a body, 400 for the path id or the key.
+    An item's optional members (22 `Problem.errors[]`) ride along when the rule set them."""
     detail = errors[0].message if len(errors) == 1 else f"{len(errors)} rules failed."
     body: dict[str, object] = {
         "type": "https://candleviewer.local/errors/validation_failed", "status": status,
         "title": "Request body or parameters failed schema validation", "code": "validation_failed",
-        "detail": detail,
-        "errors": [{"field": e.field, "rule": e.rule, "message": e.message} for e in errors],
+        "detail": detail, "errors": [_item(e) for e in errors],
     }  # fmt: skip
     return JSONResponse(body, status, media_type=_MEDIA)
+
+
+def _item(error: FieldError) -> dict[str, object]:
+    """One `errors[]` item: the field, the rule and the sentence, then each member the rule set,
+    a size every digit and no exponent (22 `Decimal`)."""
+    sizes = {"limit": error.limit, "resolved": error.resolved, "remaining": error.remaining}
+    item: dict[str, object] = {"field": error.field, "rule": error.rule, "message": error.message}
+    if error.symbol is not None:
+        item["symbol"] = error.symbol
+    return item | {name: format(value, "f") for name, value in sizes.items() if value is not None}
 
 
 def rate_limited(wait: int, what: str) -> Response:
