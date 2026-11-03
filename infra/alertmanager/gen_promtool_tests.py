@@ -70,6 +70,11 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         'cv_audit_signing_key_unavailable_state{env="live"}', "1+0x20", "0+0x20", "5m",
         {"env": "live"},
     ),
+    # #2152 (BQ-14): as AuditSigningKeyUnavailable, set at boot and held for the process's life.
+    "AuthKeyringUnavailable": (
+        'cv_auth_keyring_unavailable_state{env="live"}', "1+0x20", "0+0x20", "5m",
+        {"env": "live"},
+    ),
     # #2496: safe, then the hourly re-check finds an unsafe bind; pages with no hold time.
     "NetBindingUnsafe": (
         'net_binding_safe{env="live"}',
@@ -519,6 +524,7 @@ BY_RULE: dict[str, tuple[tuple[str, dict[str, str], tuple[str, ...]], ...]] = {
 _DAILY = 'cv_backup_last_success_age_seconds{env="live",kind="pg_dump"}'
 _CONFIG = 'cv_backup_last_success_age_seconds{env="live",kind="config_bundle"}'
 _BOOT_STEP = 'cv_audit_signing_key_boot_failures_total{{env="live",step="{}"}}'
+_AUTH_STEP = 'cv_auth_keyring_boot_failures_total{env="live",step="rewrap"}'
 # alert -> cases of (series, values, eval_time, fires, labels the alert keeps from its series).
 LABELLED: dict[str, tuple[tuple[str, str, str, bool, dict[str, str]], ...]] = {
     # #889 S6b-2: a failed step fires at the first evaluation after it, by its `step`, and is held
@@ -529,6 +535,13 @@ LABELLED: dict[str, tuple[tuple[str, str, str, bool, dict[str, str]], ...]] = {
         (_BOOT_STEP.format("rewrap"), _RISE, "9h49m", True, {"env": "live", "step": "rewrap"}),
         (_BOOT_STEP.format("rewrap"), _RISE, "9h52m", False, {"env": "live", "step": "rewrap"}),
         (_BOOT_STEP.format("destroy"), _FLAT, "6m", False, {"env": "live", "step": "destroy"}),
+    ),
+    # #2152 (BQ-4): as AuditSigningKeyBootStepFailed, for the keyring's one step.
+    "AuthKeyringBootStepFailed": (
+        (_AUTH_STEP, _RISE, "6m", True, {"env": "live", "step": "rewrap"}),
+        (_AUTH_STEP, _RISE, "9h49m", True, {"env": "live", "step": "rewrap"}),
+        (_AUTH_STEP, _RISE, "9h52m", False, {"env": "live", "step": "rewrap"}),
+        (_AUTH_STEP, _FLAT, "6m", False, {"env": "live", "step": "rewrap"}),
     ),
     # #5174 (NQ-2): a target down for the 3m `for` pages with the target's labels; 2 minutes down,
     # a healthy scrape and a pushgateway-only `up` (the API job gone: `absent` pages, by `job`, once

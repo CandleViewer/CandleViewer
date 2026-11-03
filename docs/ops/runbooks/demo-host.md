@@ -14,22 +14,28 @@ Compose project `cv-demo`, profile `core` (postgres, questdb, api), from three f
 The overlay forwards to `api`, from `infra/compose/.env`, the settings the real backend needs, and
 compose refuses every command while a required one is empty:
 
-| Name in `.env`                                                                                    | On this host                                                                          |
-| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `CV_STORAGE_BACKEND`                                                                              | `real`                                                                                |
-| `CV_EGRESS_IP`                                                                                    | the address the exchange sees from the host (Confidential: E27 threat model §1.2)     |
-| `CV_KEK_FILE`, `CV_KEK_VERSION`                                                                   | `/etc/candleviewer/demo/kek-demo-v1.bin`, `1`                                         |
-| `CV_AUTH_PEPPER`, `CV_AUTH_CSRF_KEY_HEX`, `CV_AUTH_TOTP_KEY_HEX`, `CV_AUTH_RECOVERY_HMAC_KEY_HEX` | the pepper; three different 32-byte keys as hex                                       |
-| `CV_MESH_CIDRS_CSV`                                                                               | must hold `172.28.0.0/24` (cv-internal): the healthcheck and `127.0.0.1` come from it |
-| `CV_ALLOWED_ORIGINS`                                                                              | empty (no browser origin) unless a web client is served                               |
-| `CV_AUDIT_LANE_MAC_SOURCE`                                                                        | `/etc/candleviewer/demo/audit-lane.key`                                               |
-| `CV_PG_OWNER_DSN`                                                                                 | the `cv_owner` DSN, which only the `migrate` one-shot takes                           |
+| Name in `.env`                                          | On this host                                                                          |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `CV_STORAGE_BACKEND`                                    | `real`                                                                                |
+| `CV_EGRESS_IP`                                          | the address the exchange sees from the host (Confidential: E27 threat model §1.2)     |
+| `CV_KEK_FILE`, `CV_KEK_VERSION`                         | `/etc/candleviewer/demo/kek-demo-v1.bin`, `1`                                         |
+| `CV_AUTH_PEPPER`, `CV_AUTH_CSRF_KEY_HEX`                | the pepper; a 32-byte key as hex of its own                                           |
+| `CV_AUTH_TOTP_KEY_HEX`, `CV_AUTH_RECOVERY_HMAC_KEY_HEX` | optional: only for a database enrolled under them, then scrubbed (below)              |
+| `CV_MESH_CIDRS_CSV`                                     | must hold `172.28.0.0/24` (cv-internal): the healthcheck and `127.0.0.1` come from it |
+| `CV_ALLOWED_ORIGINS`                                    | empty (no browser origin) unless a web client is served                               |
+| `CV_AUDIT_LANE_MAC_SOURCE`                              | `/etc/candleviewer/demo/audit-lane.key`                                               |
+| `CV_PG_OWNER_DSN`                                       | the `cv_owner` DSN, which only the `migrate` one-shot takes                           |
 
 - **The KEK** reaches the api only as the `cv_kek` file secret at `/run/secrets/cv_kek`
   (`CV_KEK_SOURCE=file`, `CV_KEK_HANDLE=/run/secrets/cv_kek`): never in `environment:` or `.env`,
   which hold its path and version only (`docs/ops/runbooks/kek-custody.md`). `file` is refused in
   `live`; in `demo` each boot logs the `secrets.kek_file_source` warning, which is expected here.
   `docs/plan/spikes/e27-kek.md` §4 prefers `handle` for demo; this host takes `file` (#3180).
+- **The old auth keys**, `CV_AUTH_TOTP_KEY_HEX` and `CV_AUTH_RECOVERY_HMAC_KEY_HEX`, are optional
+  since #2152. Set both, to the values the database was enrolled under, only when it holds such
+  enrolments: the first boot that finds no auth keyring imports them as the demo keyring. Then
+  scrub both from `.env` and any copy of it, and restart (`kek-custody.md`, "Auth keyring"). On a
+  new database leave both unset: its first boot generates the keyring.
 - **`/data`** is the named volume `cv-demo_cv-api-data`: the cold tier's root `/data/parquet`, which
   the real backend requires and never creates, the recorder WAL (the root and the WAL each their own
   filesystem, step 3a), and admin jobs and audit exports.

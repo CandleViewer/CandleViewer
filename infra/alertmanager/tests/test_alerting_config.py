@@ -101,6 +101,8 @@ def test_required_rules_present() -> None:
         "AuthOwnerBootstrapped",  # #4479 C2 SR-023, a bootstrap Owner grant on record
         "AuditSigningKeyUnavailable",  # #889 ADR-0039 decision 2: export alone, a page
         "AuditSigningKeyBootStepFailed",  # #889 S6a-2's security F1: a step that degraded nothing
+        "AuthKeyringUnavailable",  # #2152 BQ-14: MFA alone answers 503, a page
+        "AuthKeyringBootStepFailed",  # #2152 BQ-4: a re-wrap that degraded nothing, a ticket
     }
     assert required <= names
 
