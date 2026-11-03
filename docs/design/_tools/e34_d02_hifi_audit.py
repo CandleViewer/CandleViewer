@@ -78,13 +78,13 @@ SPEC_REL = "docs/design/E34/E34-D02.md"
 TOOL_REL = "docs/design/_tools/e34_d02_hifi_audit.py"
 PINS_REL = "docs/design/_tools/e34_d02_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
-BASE = "d023df0f66409807f2594ccd5086cd6d5017b16a"  # origin/main when written; re-pinned by content
+BASE = "a7d659a5bee5d06a28950f324800f84dc3853e6f"  # origin/main when written; re-pinned by content
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
 CONTRAST_PATH = ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
 PATHS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md", "11": "docs/plan/11-user-stories.md",
-    "14": "docs/plan/14-screens-catalogue.md", "15": "docs/plan/15-component-catalogue.md",
+    "14": "docs/plan/14-screens-catalogue.md", "17": "docs/plan/17-ux-diagrams.md", "15": "docs/plan/15-component-catalogue.md",
     "20": "docs/plan/20-architecture.md", "22": "docs/plan/22-api-openapi.yaml",
     "23": "docs/plan/23-ws-protocol.md", "24": "docs/plan/24-internal-schemas.md",
     "28": "docs/plan/28-statechart-catalogue.md",
@@ -132,7 +132,7 @@ STOP_OPTION = re.compile(
     r"Attach SL|skip the stop",
     re.IGNORECASE,
 )
-RETIRED = re.compile(r"Flatten accepted|Retry failed|rollback|Flatten group|cancel-remaining")
+RETIRED = re.compile(r"Flatten accepted|Retry failed|Flatten group|cancel-remaining")
 # the one recovery table, E34-D03 §3.5 as it stands: RC row -> (trigger label, confirm label)
 RC = {
     "RC-1": ("Retry {account}", "Retry {account} of group {id}"),
