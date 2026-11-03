@@ -6,7 +6,13 @@ import {
   selectConnectivityState,
   type StateSignals,
 } from "../../../src/features/admin-connectivity/selectState";
-import { STATE_IDS, STATES, toneOf, wordOf } from "../../../src/features/admin-connectivity/states";
+import {
+  STATE_IDS,
+  STATES,
+  toneOf,
+  wordOf,
+  type StateId,
+} from "../../../src/features/admin-connectivity/states";
 
 const ON: StateSignals = { enabled: true, read: "ok", usedPctOfSpendable: 10 };
 const pick = (extra: Partial<StateSignals>): ReturnType<typeof selectConnectivityState> =>
@@ -59,7 +65,7 @@ describe("the state selector: one id per trigger (E08-D13 §5.4)", () => {
   });
 });
 
-describe("the precedence table (PROPOSED, E08-D09 §5.2)", () => {
+describe("the precedence table (order RULED, BQ-07, D09 :278; only S-14 before S-19 is PROPOSED, E08-D09 §5.2)", () => {
   it("S-05 over S-04 over S-03", () => {
     expect(pick({ banned: true, ipHold: true, throttled: true })).toBe("S-05");
     expect(pick({ ipHold: true, throttled: true })).toBe("S-04");
@@ -110,8 +116,18 @@ describe("the register tones (E08-D09 §5.2, §16 RULED BQ-19)", () => {
 
   it("covers every state and never gives a rate or clock state a data-confidence token", () => {
     expect(Object.keys(D09_TONES)).toEqual([...STATE_IDS]);
-    const rateAndClock = ["S-02", "S-03", "S-04", "S-05", "S-08", "S-09", "S-10", "S-11", "S-12"];
-    for (const id of rateAndClock) expect(toneOf(id as "S-02")).toMatch(/^color\.status\./);
+    const rateAndClock: readonly StateId[] = [
+      "S-02",
+      "S-03",
+      "S-04",
+      "S-05",
+      "S-08",
+      "S-09",
+      "S-10",
+      "S-11",
+      "S-12",
+    ];
+    for (const id of rateAndClock) expect(toneOf(id)).toMatch(/^color\.status\./);
   });
 });
 
