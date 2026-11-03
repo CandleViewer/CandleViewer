@@ -282,12 +282,14 @@ _PINNED: dict[str, tuple[str, ...]] = {
         "connection within 2 s, with `reason` `maintenance.enabled` (severity `warning`) or "
         "`maintenance.disabled` (severity `info`) and a role-neutral `message`. This uses the "
         "existing schema; no schema change.",
-        "| All topics except `orders`, `executions` and `system` flag frames. |",
+        # #2302: `safety` transitions join the flag frames outside the throttle (§15.9).
+        "| All topics except `orders`, `executions`, `system` flags, safety transitions. |",
         "| `system` | `feature_flags`: per flag key, last-write-wins, a key is never dropped. "
         "`notice`, `kill_switch`, `shutdown_notice`, `account_notice`: **never coalesced**. | A "
         "flag delta carries only changed keys; notices are events. |",
         # 15.9 per role (SR-188): the snapshot's `health` frame and a flag frame are cut alike.
-        "`degraded_topics`, `kill_switch` and `feature_flags` (each as below) |",
+        "`degraded_topics`, `kill_switch` and `feature_flags` (each as below), `safety_classes` "
+        "(each item cut as a `safety` frame is, below) |",
         "| `feature_flags` | `feature_flags` with only the keys whose registry `visibility` admits "
         "the role, never one that no flag definition names; left out when none remains, and then a "
         "frame of this kind is not sent |",

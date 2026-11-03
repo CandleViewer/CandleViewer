@@ -2519,6 +2519,62 @@ A closed stream is down (rule 13), so each `closed` status also calls `AccountHe
 
 **Its metrics (the orchestrator's Q7 ruling, 2026-10-22, as its ruling of 2026-10-25 amends it).** Three series, each declared in the metrics catalogue with its `max_series` (`20-architecture.md` §12.1), and none labelled by account (`.semgrep/cv-obs-metric-label-allowlist.yml`): `oms_stream_event_lag_seconds{topic}`, a row's lag from its ingest (`PrivateEvent.ts_ingest`, the host's clock, so the venue's clock skew never makes it negative) to its dequeue, the consumer's backlog, by the row's kind; `oms_stream_outcomes_total{stage,outcome}`, what its counting ports count, `stage` `consumer`, `push` or `position` and `outcome` one of that stage's closed `Outcome` set (`oms.stream_consumer`, `oms.stream_push`, `oms.positions`); and `oms_position_reading_owed_age_seconds`, the age of the oldest position reading owed to protection (not handed on, held as dated ahead of the store's clock, or evicted from that hold), 0 while none is. The stream's own health is the adapter's series (§14.2 rule 9) and `cv_account_health_state`, a slow client's close is E17's, a position published past its hold E29-T13's (`oms_ws_position_overtakes_total`), and a missed execution E29-T06's.
 
+### 8.13 Safety summary — the publisher behind `system` `kind: "safety"` (#2302)
+
+_Contract first (C-6.1) for #2302; no publisher yet. The emitters and this publisher land with the tickets that own them: the SL watchdog (#932), B1/B8's `protection.sl_missing` entry, B20's lockout and auto-flatten (#955), the unwind (#1111) and the order-entry halts (SR-036, C-12.7). The per-connection projection the gateway applies (`candleviewer.ws.safety_view`: `frame_view`, `items_view`, `SafetyEdges`) lands with this contract._ The wire frame, its coalescing and the `safety_classes` snapshot are `23-ws-protocol.md` §15.9; this section owns the in-process shape the emitters call, the dwell and the window that coalesce, and the breakdown the gateway cuts per connection.
+
+```python
+# services/api/candleviewer/domain/safety.py  (planned home; types and a port only, no I/O)
+from enum import StrEnum
+from typing import Literal, Protocol
+from pydantic import BaseModel, ConfigDict, Field
+from candleviewer.domain.primitives import AccountId, Environment, TsMs
+
+class SafetyClass(StrEnum):            # closed; == 23 §15.9 `safetyClass`
+    NATIVE_SL_MISSING = "native_sl_missing"      # account-keyed
+    SL_ATTACH_FAILED = "sl_attach_failed"        # account-keyed
+    LIQUIDATION_RISK = "liquidation_risk"        # account-keyed
+    RISK_AUTO_FLATTEN = "risk_auto_flatten"      # account-keyed
+    RISK_LOCKOUT = "risk_lockout"                # account-keyed
+    UNWIND_INCOMPLETE = "unwind_incomplete"      # account-keyed
+    ORDER_ENTRY_HALTED = "order_entry_halted"    # process-global
+
+class AccountCount(BaseModel):         # one account's share; in process only, never serialised
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    affected_count: int = Field(ge=1)
+    since_ms: TsMs
+
+class SafetyTransition(BaseModel):     # one wire frame, less `kind` and `severity`, plus its breakdown
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    safety_class: SafetyClass
+    environment: Environment
+    state: Literal["raised", "cleared"]
+    affected_count: int = Field(ge=0)  # >= 1 when raised, 0 when cleared; every account's
+    since_ms: TsMs
+    at_ms: TsMs                        # the event time; a scoped `cleared` takes it as `since_ms`
+    by_account: dict[AccountId, AccountCount] | None  # account-keyed: required; global: None
+
+class SafetySummary(Protocol):
+    def mark(
+        self, safety_class: SafetyClass, environment: Environment, subject: str,
+        *, account_id: AccountId | None, raised: bool, at_ms: TsMs,
+    ) -> None:
+        """Synchronous and non-blocking: updates the sets and queues the key, never awaits."""
+    def coverage(self) -> tuple[dict[str, object], ...]:
+        """One item per (class, environment) for the `system` snap (23 §15.9 `safety_classes`)."""
+```
+
+1. **Subjects.** An emitter marks one subject raised or cleared, with its environment and, for an account-keyed class, its account (`account_id` is required for those and `None` for `order_entry_halted`; a mismatch raises a `ValueError` that names the class, never the subject). `subject` is an opaque in-process key, one per counted unit, so that two emitters of one class (the #932 watchdog and B8) mark the same subject once: a position is `pos:<exchange_account_id>:<symbol>:<position_idx>` (`native_sl_missing`, `sl_attach_failed`, `liquidation_risk`); an account `acct:<exchange_account_id>` (`risk_auto_flatten`, `risk_lockout`); a trade group `grp:<group_id>` (`unwind_incomplete`, keyed to the account of the group's leg it waits on); a halt cause `halt:clock_drift` or `halt:rate_budget` (`order_entry_halted`). `subject` never appears in a log line, an audit record, a metric label or an exception message, and nothing derived from it but a count reaches a client. A mark that changes nothing (a raised subject raised again) is a no-op.
+2. **Keys.** The publisher keeps, per (`safety_class`, `environment`), the set of raised subjects and, for an account-keyed class, each subject's account (C-2.11: two environments never share a set, a count or an episode).
+3. **Transitions.** A key's set going from empty to non-empty is a `raised` transition, published at once with `since_ms` = that mark's `at_ms`; going to empty is a `cleared` transition with `affected_count` 0. Neither is coalesced.
+4. **Dwell (flapping bound).** A subject's clear takes effect only after a dwell of 1 000 ms; a raise of the same subject inside the dwell cancels it, so the subject never left the set, the episode and its `since_ms` go on, and nothing but a count update can follow. A raise is never delayed. So each key, and each connection's view of it, has at most one `raised`/`cleared` pair per 1 000 ms.
+5. **Count updates (the coalescing owner).** A change of a key's count while it stays non-empty is a count update: `state` `raised`, the episode's `since_ms`, the count at send time. At most one per key per 1 000 ms, a trailing window carrying the latest count; a transition of the key discards the pending update. The gateway never merges `system` frames (23 §8.2).
+6. **Bounded queue (C-2.18).** `mark` updates the sets in place and puts the key on a queue that holds each key at most once (a key already queued is not queued again; the drain reads the key's state as it is then), so it holds at most 21 entries (7 classes × 3 environments) and is bounded at 21: it cannot overflow, and an attempt to queue a 22nd distinct key raises (a defect, never a drop). The drain applies the dwell and the window and hands the result to the gateway.
+7. **Delivery and the per-connection cut (C-12.4).** The composition root binds the publisher to the gateway's `system` topic, as it binds `AccountNotices` (§8.12), so no emitter module imports `ws` (C-3.4). It sends each `SafetyTransition` as one in-process body: the wire fields, `kind: "safety"`, the `severity` 23 §15.9 fixes, and for an account-keyed class `_by_account` (account id → `affected_count`, `since_ms`) and `_at_ms`. The gateway's `safety_view` derives each connection's frame from it: whole for the Owner and for a process-global class; for a Manager or Viewer, the count and earliest since-time over the accounts its `account_scope` lists and its own state. `SafetyEdges`, one per connection, then sends a `cleared` only after that connection's `raised`, never a frame that changes nothing it holds, and keeps each episode's start per connection while its view stays raised. It keeps the last body per (class, environment), at most 21, so that a change of the connection's scope (a grant withdrawn, frozen or added, a role change, an in-place re-`auth`) is applied at once: `raised` for what it newly may see, `cleared` stamped with the change's time for what it no longer may. A Manager or Viewer gets nothing of a body or snapshot item whose class or environment is outside the closed sets (deny by default; an item so dropped is counted `invalid_body`). The publisher may key `_by_account` by `uuid.UUID`, parsed once; text keys are read too. `_by_account` and `_at_ms` are never serialised, to any role. A body without a valid breakdown for an account-keyed class, or with one for a global class, reaches the Owner only and is counted `invalid_body`.
+8. **Coverage.** `coverage()` returns one item per (`safety_class`, `environment`) the process runs: `raised` (with every account's count, `since_ms` and `_by_account`), `clear`, or `unknown`. A key is `unknown` from start-up until its emitter reports the end of its first pass (the watchdog's first scan, the first reconciliation pass, B20's restore, the first clock check). The gateway cuts each item as it cuts a frame.
+9. **Records, never enforces (C-2.21).** The summary is for display only. No order path, risk check or gate reads it; each emitter keeps its own synchronous check and its own detailed alert.
+10. **Restart.** The sets are in memory. After a restart they start empty, every key `unknown`, and each emitter marks its subjects again from its own state, so a `since_ms` after a restart is the restart's episode, not the original one.
+
 ---
 
 ## 9. Trade groups and fan-out
@@ -6793,3 +6849,19 @@ This is the number the orchestrator assigned on 2026-11-03 (02:42Z); it keeps it
 
 - §9.2 gains "Snapshot bound (#3969)", **PROPOSED**: a leg's `profile_snapshot` has its own bound, `PROFILE_SNAPSHOT_MAX_CHARS` = 32,768 (PROPOSED), because the test's maximal `AccountProfile` dumps to 26,337 characters (the two symbol lists alone are 1,000 × (21 + 3) = 24,000; a rung's `r` has no digit cap, and the 6,431 headroom covers a longer one), over the 16,384 of `exchange_payload.MAX_PAYLOAD_CHARS` (PROPOSED as the bound it is set against), which `algo_params` keeps.
 - No migration and no CHECK: `trade_group_legs` carries no size CHECK and the profile's own caps (`SymbolList` 500, `Ladder` 10, `name` 80) stay the one limit on its size. No REST operation, WS frame, chart or `machine_hash` change.
+
+### 19.NN 2026-11-02 — §8.13, 23 §6.2, §8.1, §8.2, §8.4 and §15.9: the `system` safety summary, contract first (E09, #2302)
+
+Provisional: the orchestrator assigns the number; §19.85 is #652's. It sits last, after the highest entry, until it has one.
+
+- E09-D06 rule 1 (the Architect's ruling on #2290): while a screen is idle-locked, safety-critical state still reaches the lock card, as class, count and time only. Contract first (C-6.1); the emitters land with #932, #955, #1111 and the order-entry halt tickets (SR-036, C-12.7).
+- 23 §15.9: `system.kind` gains `safety` (additive: an open enum, §16.5). The frame carries exactly `kind`, `severity`, `safety_class` (closed: `native_sl_missing`, `sl_attach_failed`, `liquidation_risk`, `risk_auto_flatten`, `risk_lockout` and `unwind_incomplete`, account-keyed, and `order_entry_halted`, process-global), `environment` (the `common` enum), `state` (`raised`, `cleared`), `affected_count` (≥ 0; ≥ 1 raised, 0 cleared) and `since_ms`, held to them by `propertyNames`, so by schema no account, symbol, size, user or free text. The safety fields appear on no other kind. The `health` snap gains the optional `safety_classes` coverage list, one item per (class, environment): `raised` (count, since-time), `clear` or `unknown`. The per-role table gains a `safety` row and `safety_classes` in the `health` row; the lock card's consumer rule is stated (seven kinds; only icon, class label, count, since-time and environment badge; no all-clear while a class is `unknown` or the field is absent).
+- 23 §8.1, §8.2, §8.4, §6.2: a transition is never coalesced nor held by the 1 000 ms `system` throttle; a raise is immediate and a clear waits a 1 000 ms dwell, so at most one raised/cleared pair per class and environment per 1 000 ms; count updates are last-write-wins, at most one per 1 000 ms; a `safety` frame is a `system` frame, never dropped by the ladder; the `system` snapshot states each class's coverage.
+- §8.13 (new): `SafetyClass`, the frozen `AccountCount` and `SafetyTransition` (with `environment`, `at_ms` and the in-process `by_account`) and the `SafetySummary` port (`mark`, `coverage`); the subject keys, which never reach a log, audit record, metric label or exception; keys per (class, environment); the transition, dwell and count-window rules (this publisher owns the coalescing); the queue bounded at 21 keys; delivery with `_by_account` and `_at_ms`, never serialised; coverage; the restart rule. It records and never enforces (C-2.21).
+- PROPOSED (#2302), each departing from the issue's text and open to the orchestrator:
+  - H1 (C-12.4): the issue's "`affected_count` (integer >= 0)" is one process-wide count for every client. A scope change is applied to the safety state at once (a `cleared` stamped with the change's time, a `raised` newly visible); a Viewer is counted by its grants as a Manager is, pending a ruling. An account-keyed class is instead counted per connection over its `account_scope`, with its own raised/cleared edges, so a Manager or Viewer with no affected account in scope is sent nothing for it; `order_entry_halted` stays whole for every role. Otherwise a scoped Manager would learn that incidents exist on accounts it may not view, how many and since when, unlike `account_notice` and the kill switch's account list.
+  - H2 (C-2.11): the issue's frame has no environment. Frames, the publisher's sets and the coverage items are keyed by (class, `environment`), and the lock card's DEMO or LIVE badge reads it.
+  - M1: the issue's snapshot is "the current raised set", whose empty list would read as an all-clear before the emitters have looked. It is a coverage list with `unknown`.
+  - M2: the issue's "one frame per raised/cleared transition per class" has no bound on flapping. A clear waits a 1 000 ms dwell.
+  - `severity` is `info` on a `cleared` frame; `order_entry_halted` counts halt causes and is sent beside the unchanged `clock_drift` kind; `liquidation_risk` has no named emitter ticket yet; the subject-key formats and the `candleviewer.domain.safety` home. A process-global frame's environment is checked against the connection's environments once the gateway holds them (`auth_ok` carries no `allowed_environments` today).
+- With them: `candleviewer.ws.safety_view` (the per-connection cut and `SafetyEdges`), wired into `_Connection.push_system`; `system_filter.NEUTRAL_FIELDS` gains the `safety` row and `safety_classes` on `health`; the RBAC matrix (`tests/contract/rbac/matrix.yaml`) gains `safety` (account-keyed: Owner whole, a Manager with the grant its cut, others nothing) and `safety_global` (whole for every role); `packages/protocol` and the generated WS models are regenerated. No REST operation, table, migration, chart or `machine_hash` change.

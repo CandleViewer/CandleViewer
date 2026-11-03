@@ -3438,11 +3438,208 @@
             "scope"
           ],
           "type": "object"
+        },
+        "safetyClass": {
+          "enum": [
+            "native_sl_missing",
+            "sl_attach_failed",
+            "liquidation_risk",
+            "risk_auto_flatten",
+            "risk_lockout",
+            "unwind_incomplete",
+            "order_entry_halted"
+          ]
+        },
+        "safetyCoverage": {
+          "additionalProperties": false,
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "affected_count"
+                  ]
+                },
+                {
+                  "required": [
+                    "since_ms"
+                  ]
+                }
+              ]
+            }
+          },
+          "if": {
+            "properties": {
+              "state": {
+                "const": "raised"
+              }
+            }
+          },
+          "properties": {
+            "affected_count": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "environment": {
+              "$ref": "cv://ws/v1/common.schema.json#/$defs/environment"
+            },
+            "safety_class": {
+              "$ref": "#/$defs/safetyClass"
+            },
+            "since_ms": {
+              "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+            },
+            "state": {
+              "enum": [
+                "raised",
+                "clear",
+                "unknown"
+              ]
+            }
+          },
+          "required": [
+            "safety_class",
+            "environment",
+            "state"
+          ],
+          "then": {
+            "required": [
+              "affected_count",
+              "since_ms"
+            ]
+          },
+          "type": "object"
         }
       },
       "$id": "cv://ws/v1/system.schema.json",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "safety_class"
+                  ]
+                },
+                {
+                  "required": [
+                    "environment"
+                  ]
+                },
+                {
+                  "required": [
+                    "state"
+                  ]
+                },
+                {
+                  "required": [
+                    "affected_count"
+                  ]
+                },
+                {
+                  "required": [
+                    "since_ms"
+                  ]
+                }
+              ]
+            }
+          },
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "safety"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "state": {
+                      "const": "raised"
+                    }
+                  },
+                  "required": [
+                    "state"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "affected_count": {
+                      "minimum": 1
+                    },
+                    "severity": {
+                      "const": "critical"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "state": {
+                      "const": "cleared"
+                    }
+                  },
+                  "required": [
+                    "state"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "affected_count": {
+                      "const": 0
+                    },
+                    "severity": {
+                      "const": "info"
+                    }
+                  }
+                }
+              }
+            ],
+            "propertyNames": {
+              "enum": [
+                "kind",
+                "severity",
+                "safety_class",
+                "environment",
+                "state",
+                "affected_count",
+                "since_ms"
+              ]
+            },
+            "required": [
+              "severity",
+              "safety_class",
+              "environment",
+              "state",
+              "affected_count",
+              "since_ms"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "safety_classes"
+            ]
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "const": "health"
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "actions": {
           "additionalProperties": false,
@@ -3458,6 +3655,10 @@
             }
           },
           "type": "object"
+        },
+        "affected_count": {
+          "minimum": 0,
+          "type": "integer"
         },
         "affected_symbols": {
           "items": {
@@ -3530,6 +3731,9 @@
           },
           "type": "array"
         },
+        "environment": {
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/environment"
+        },
         "exchange": {
           "additionalProperties": false,
           "properties": {
@@ -3601,7 +3805,8 @@
             "degraded_data",
             "clock_drift",
             "notice",
-            "account_notice"
+            "account_notice",
+            "safety"
           ]
         },
         "message": {
@@ -3635,6 +3840,15 @@
           "minimum": 0,
           "type": "integer"
         },
+        "safety_class": {
+          "$ref": "#/$defs/safetyClass"
+        },
+        "safety_classes": {
+          "items": {
+            "$ref": "#/$defs/safetyCoverage"
+          },
+          "type": "array"
+        },
         "severity": {
           "enum": [
             "debug",
@@ -3642,6 +3856,15 @@
             "warning",
             "error",
             "critical"
+          ]
+        },
+        "since_ms": {
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+        },
+        "state": {
+          "enum": [
+            "raised",
+            "cleared"
           ]
         }
       },

@@ -121,7 +121,7 @@ import re
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final, Protocol
@@ -230,6 +230,7 @@ from candleviewer.ws.revocation import (
     user_disabled_bye,
     ws_revoked_total,
 )
+from candleviewer.ws.safety_view import SAFETY_CLASSES, SafetyEdges, dropped_items
 from candleviewer.ws.sequencing import TopicEmitter
 from candleviewer.ws.system_filter import (
     FlagVisible,
@@ -738,6 +739,9 @@ class _Connection:
         self.system_snapped = False
         self.system_held: deque[dict[str, Any]] = deque(maxlen=SYSTEM_HELD_MAX)
         self.system_held_overflowed = False  # one warning a socket; every drop is counted
+        #: §15.9 (#2302): the safety state this socket was last sent per class and environment,
+        #: so it gets a `cleared` only after its own `raised`, and no frame that changes nothing.
+        self.safety_edges = SafetyEdges()
         #: §15.9 (E42-T03): the flag keys a Manager or Viewer may learn; `None`, no key.
         self.flag_visible = flag_visible
         self.auth_failures = 0
@@ -939,7 +943,13 @@ class _Connection:
         if self.lifecycle.authenticated:
             self.push(frame)
 
-    def push_system(self, body: dict[str, Any], *, snap: bool = False) -> None:
+    def push_system(
+        self,
+        body: dict[str, Any],
+        *,
+        snap: bool = False,
+        rescoped: Sequence[Mapping[str, Any]] = (),
+    ) -> None:
         """Queue `body` on `system` as this socket's principal may see it now (SR-188, §15.9):
         whole, its role-neutral fields only, or nothing, and then it takes no `s` (S3). A frame
         left out because of what it is or who the socket is, not its role's cut, is counted by
@@ -949,26 +959,15 @@ class _Connection:
         frames held for it as deltas. Until it is queued, a frame the principal may see is held,
         not queued, so no delta ever precedes the snap. A second snap is ignored; a snap the
         principal may see none of (no role) leaves the socket unsnapped, so a later `auth_ok`
-        may send it."""
-        view = self._system_view(body)
-        if view is None:
-            return
-        if snap and self.system_snapped:
-            return
-        if not snap and not self.system_snapped:  # the snap goes first; this follows it
-            if len(self.system_held) == self.system_held.maxlen:  # the oldest goes; counted
-                cv_ws_system_frames_withheld_total.labels(reason="held_overflow").inc()
-                if not self.system_held_overflowed:
-                    self.system_held_overflowed = True
-                    _log().warning("ws system hold overflow", connection_id=self.connection_id)
-            self.system_held.append(body)
-            return
-        views = [("snap" if snap else "d", view)]
-        if snap:
-            self.system_snapped = True
-            held = list(self.system_held)
-            self.system_held.clear()
-            views += [("d", cut) for item in held if (cut := self._system_view(item)) is not None]
+        may send it.
+
+        #2302 (§15.9): `rescoped` queues, in place of `body`, the safety frames a change of the
+        socket's scope calls for (`reconcile_safety`), each already cut by `system_view` for its
+        principal now."""
+        if rescoped:
+            views: list[tuple[str, Mapping[str, Any]]] = [("d", cut) for cut in rescoped]
+        else:
+            views = self._system_views(body, snap)
         for kind, cut in views:
             self.system_seq += 1  # the snap's is 1: no delta took one before it
             self.push(
@@ -982,6 +981,56 @@ class _Connection:
                 | {"p": cut}
             )
 
+    def _system_views(
+        self, body: dict[str, Any], snap: bool
+    ) -> list[tuple[str, Mapping[str, Any]]]:
+        """What `push_system` queues of `body`: the cut views, snap first, held deltas after."""
+        self.safety_edges.observe(body)  # #2302: every valid safety body, whatever the cut
+        view = self._system_view(body)
+        if view is None:
+            return []
+        if snap and self.system_snapped:
+            return []
+        if not snap and not self.system_snapped:  # the snap goes first; this follows it
+            if len(self.system_held) == self.system_held.maxlen:  # the oldest goes; counted
+                cv_ws_system_frames_withheld_total.labels(reason="held_overflow").inc()
+                if not self.system_held_overflowed:
+                    self.system_held_overflowed = True
+                    _log().warning("ws system hold overflow", connection_id=self.connection_id)
+            self.system_held.append(body)
+            return []
+        if snap:
+            self.safety_edges.seed(body, view)
+        elif (sent := self.safety_edges.admit(body, view)) is None:
+            return []  # a safety frame this socket must not, or need not, be sent (#2302)
+        else:
+            view = sent
+        views: list[tuple[str, Mapping[str, Any]]] = [("snap" if snap else "d", view)]
+        if snap:
+            self.system_snapped = True
+            held = list(self.system_held)
+            self.system_held.clear()
+            for item in held:
+                cut = self._system_view(item)
+                if cut is not None and (cut := self.safety_edges.admit(item, cut)) is not None:
+                    views.append(("d", cut))
+        return views
+
+    def reconcile_safety(self) -> None:
+        """§15.9 (#2302): the socket's scope changed (a grant withdrawn, frozen or added, a role
+        change, an in-place re-`auth`), so its safety state is seen anew at once, without waiting
+        for the publisher: the `raised` it newly may see, and the `cleared`, stamped now, of what
+        it no longer may (`SafetyEdges.rescope`)."""
+        if not self.system_snapped or self.authz is None:
+            return
+        principal = self.authz.principal
+        rescoped = self.safety_edges.rescope(
+            lambda body: system_view(body, principal, flag_visible=self.flag_visible),
+            self.wall_ms(),
+        )
+        if rescoped:  # nothing to queue is no call: a scope change with no safety state is quiet
+            self.push_system({}, rescoped=rescoped)
+
     def _system_view(self, body: dict[str, Any]) -> Mapping[str, Any] | None:
         """The principal's §15.9 view of `body` now, counting a frame withheld for what it is
         or who the socket is (`withheld_reason`), never for its role's cut."""
@@ -989,6 +1038,13 @@ class _Connection:
         view = system_view(body, principal, flag_visible=self.flag_visible)
         if view is None and (reason := withheld_reason(body, principal)) is not None:
             cv_ws_system_frames_withheld_total.labels(reason=reason).inc()
+        elif (
+            view is not None
+            and principal is not None
+            and not principal.is_owner
+            and dropped_items(body.get(SAFETY_CLASSES))
+        ):  # #2302: a snapshot item outside the contract, which a Manager or Viewer never gets
+            cv_ws_system_frames_withheld_total.labels(reason="invalid_body").inc()
         return view
 
     def encode_frame(self, frame: dict[str, Any]) -> str | bytes:
@@ -2013,6 +2069,7 @@ def make_ws_router(
         narrowing re-pended (`subs`, nothing else), built under the new scope (§9.5). One that
         raises is contained to its subscription by the pipeline (§10.1)."""
         conn.pipeline.flush_pending(subs)
+        conn.reconcile_safety()  # §15.9 (#2302): the safety state under the new scope
 
     async def dispatch(conn: _Connection, frame: Any) -> None:
         if isinstance(frame, dict) and "id" in frame and not _is_envelope_id(frame["id"]):

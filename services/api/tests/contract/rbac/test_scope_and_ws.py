@@ -889,6 +889,32 @@ _SYSTEM_SAMPLES: dict[str, dict[str, Any]] = {
         "actions": {"rules_disarmed": 1},
     },
     "notice": {"kind": "notice", "severity": "critical", "reason": "net.binding_check_failed"},
+    # An account-keyed class, as the publisher hands it over: its in-process breakdown names the
+    # actor's account and a foreign one; no role is ever sent `_by_account` or `_at_ms` (#2302).
+    "safety": {
+        "kind": "safety",
+        "severity": "critical",
+        "safety_class": "risk_lockout",
+        "environment": "live",
+        "state": "raised",
+        "affected_count": 3,
+        "since_ms": 1_789_132_262_000,
+        "_by_account": {
+            str(GRANTED): {"affected_count": 1, "since_ms": 1_789_132_265_000},
+            str(FOREIGN): {"affected_count": 2, "since_ms": 1_789_132_262_000},
+        },
+        "_at_ms": 1_789_132_265_000,
+    },
+    # A process-global class: every role receives it whole, as `exchange_state`.
+    "safety_global": {
+        "kind": "safety",
+        "severity": "critical",
+        "safety_class": "order_entry_halted",
+        "environment": "live",
+        "state": "raised",
+        "affected_count": 1,
+        "since_ms": 1_789_132_262_000,
+    },
     "shutdown_notice": {"kind": "shutdown_notice", "reason": "deploy", "closing_in_ms": 5000},
     "unknown": {"kind": "tick"},
 }
@@ -913,10 +939,17 @@ def _neutral(kind: str, actor: str) -> dict[str, Any]:
         }
     if kind == "feature_flags":
         return {"kind": "feature_flags", "feature_flags": _SEEN}
+    if kind == "safety":  # only manager_with_grant holds GRANTED: its count and since-time
+        return _public(_SYSTEM_SAMPLES[kind]) | {"affected_count": 1, "since_ms": 1_789_132_265_000}
     if kind == "account_notice":  # only manager_with_grant holds GRANTED, so only it is sent one
         return _SYSTEM_SAMPLES[kind] | {"exchange_account_ids": [str(GRANTED)]}
     mine = [str(GRANTED)] if actor == "manager_with_grant" else []
     return {"kind": "kill_switch", "kill_switch": _HALT | {"exchange_account_ids": mine}}
+
+
+def _public(body: dict[str, Any]) -> dict[str, Any]:
+    """What reaches a client of a body: never its in-process (`_`-prefixed) keys."""
+    return {key: value for key, value in body.items() if not key.startswith("_")}
 
 
 def _until_mark(ws: Any, hub: Any) -> list[Any]:
@@ -964,7 +997,8 @@ def _until_body(ws: Any, hub: Any, ch: str, wanted: Any) -> list[Any]:
 
 def test_system_kind_matrix_is_total_over_the_contract_kinds() -> None:
     rows = _system_rows()
-    assert set(rows) == {*_KINDS_ENUM, "unknown"} == set(_SYSTEM_SAMPLES)
+    # `safety_global`: the `safety` kind's process-global class, whose row differs (#2302).
+    assert set(rows) == {*_KINDS_ENUM, "unknown", "safety_global"} == set(_SYSTEM_SAMPLES)
     for kind, row in rows.items():
         assert set(row) == set(ACTORS), kind
         assert set(row.values()) <= {"whole", "neutral", "none"}, kind
@@ -978,7 +1012,7 @@ def test_system_kind_matrix_is_total_over_the_contract_kinds() -> None:
 def test_every_system_kind_x_actor_matches_the_matrix(world: World, kind: str, actor: str) -> None:
     expected = _system_rows()[kind][actor]
     sample = _SYSTEM_SAMPLES[kind]
-    want = {"whole": [sample], "neutral": [_neutral(kind, actor)], "none": []}[expected]
+    want = {"whole": [_public(sample)], "neutral": [_neutral(kind, actor)], "none": []}[expected]
     hub = world.app.state.ws_hub
     started = time.perf_counter()
     try:

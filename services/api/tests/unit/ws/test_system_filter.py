@@ -70,6 +70,12 @@ _HEALTH = {
     "clock_offset_ms": 4,
     "degraded_topics": [],
     "exchange": _EXCHANGE,
+    #: The safety coverage of the snap (#2302): no raised account-keyed item, so every role
+    #: receives these items as they are (`test_safety_view.py` covers the cut).
+    "safety_classes": [
+        {"safety_class": "native_sl_missing", "environment": "live", "state": "clear"},
+        {"safety_class": "order_entry_halted", "environment": "demo", "state": "unknown"},
+    ],
 }
 _HALT = {"kind": "kill_switch", "severity": "critical", "message": "Trading halted."}
 _STATE = {"engaged": True, "scope": "accounts", "engaged_at_ms": 1789133000000}
@@ -113,6 +119,17 @@ SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any] | None]] = {
     "clock_drift": _same({"kind": "clock_drift", "severity": "warning", "clock_offset_ms": 900}),
     "notice": _same({"kind": "notice", "severity": "critical", "reason": "net.binding_safe"}),
     "account_notice": (_ACCOUNT | _BOTH, _ACCOUNT | {"exchange_account_ids": [str(ACC_A)]}),
+    "safety": _same(
+        {
+            "kind": "safety",
+            "severity": "critical",
+            "safety_class": "order_entry_halted",  # process-global: whole for every role
+            "environment": "live",
+            "state": "raised",
+            "affected_count": 1,
+            "since_ms": 1_789_132_262_000,
+        }
+    ),
 }
 
 

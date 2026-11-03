@@ -16,7 +16,9 @@ skip the per-role filter (`23-ws-protocol.md` §15.9, S15). Over every module of
 - `push_system` is named, called or passed on, only by `GatewayHub.broadcast_system`,
   `GatewayHub.shutdown`, `run_auth` (the `system` snap, §12.1 #4992, and the notices after the
   first `auth_ok`),
-  `GatewayHub.system_sessions` (E42-T03: it hands each socket's `push_system` to the flag push) and
+  `GatewayHub.system_sessions` (E42-T03: it hands each socket's `push_system` to the flag push),
+  `_Connection.reconcile_safety` (#2302: a change of the socket's scope queues, through
+  `push_system`, the safety frames its new scope calls for, cut by `system_view`) and
   `_send` in `admin/flags/push.py` (E42-T03: `FlagPush.flag_changed` and `notify_maintenance`
   resolve each session's frame, so there is no one body to broadcast; `push_system` still
   filters it, the path B3's review asked for). A new caller of `_send` is an RBAC change too.
@@ -57,6 +59,7 @@ SENDERS = {
     ("ws/gateway.py", "GatewayHub.system_sessions"),
     ("ws/gateway.py", "push_flag_snapshot"),
     ("ws/gateway.py", "run_auth"),
+    ("ws/gateway.py", "_Connection.reconcile_safety"),
     ("admin/flags/push.py", "_send"),
 }
 #: A `sub_ok` result row has no `t` and one of these.
