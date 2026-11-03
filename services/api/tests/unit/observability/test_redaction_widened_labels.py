@@ -164,6 +164,46 @@ def test_an_empty_value_in_quotes_stays_as_it_was(text: str) -> None:
     assert not _flags(text)
 
 
+#: Values the filter leaves as they are, each with doubled quotes and whitespace after them.
+_EMPTY_DOUBLED = ['password="" user=bob', 'token="" n=1', "password='' user=bob", "token='' n=1"]
+
+
+def _lines(values: list[str]) -> list[str]:
+    """The bundle's lines for an event that holds `values`: its JSON and its `repr`."""
+    event = {f"k{i}": value for i, value in enumerate(values)}
+    return [json.dumps(event), repr(event)]
+
+
+@pytest.mark.parametrize("second", _EMPTY_DOUBLED)
+@pytest.mark.parametrize("first", _EMPTY_DOUBLED)
+def test_the_scan_accepts_a_line_that_joins_empty_doubled_quote_values(
+    first: str, second: str
+) -> None:
+    values = [redact_text(first), "x", redact_text(second)]
+
+    assert values == [first, "x", second]
+    for line in _lines(values) + _lines(values[::2]):
+        assert not _flags(line), line
+
+
+def test_the_scan_accepts_each_line_that_joins_values_it_accepts_alone() -> None:
+    # the filter reads a value alone; the bundle's lines join several, and the scan reads a value
+    # in the string that holds it
+    accepted = []
+    for case in _corpus(_PR_TEXTS // 4, _SEED + 2):
+        out = redact_text(case.text)
+        if not _flags(out) and not _flags(json.dumps(out)) and not _flags(repr(out)):
+            accepted.append(out)
+    problems = [
+        line
+        for at in range(0, len(accepted) - 2, 3)
+        for line in _lines(accepted[at : at + 3])
+        if _flags(line)
+    ]
+    assert len(accepted) > _PR_TEXTS // 8
+    assert problems == [], problems[:5]
+
+
 @pytest.mark.parametrize(
     ("text", "shown"),
     [

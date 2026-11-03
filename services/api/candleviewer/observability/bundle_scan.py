@@ -14,8 +14,6 @@ from pathlib import Path
 from typing import Final
 
 from candleviewer.observability.redaction import (
-    _DOUBLED_DQ,
-    _DOUBLED_SQ,
     _JWT_RE,
     _KEY_NAMES,
     _LABEL_SPACE,
@@ -38,17 +36,26 @@ class Finding:
 #: and quotes, each
 #: escaped, doubled or not (`\'`, `\\'`, `''`). The filter reads them as the start of a value or as
 #: its quotes; the scan reads past them, and past whitespace after a doubled quote, as the filter
-#: reads such a value (`_DOUBLED_DQ`, `_DOUBLED_SQ`).
+#: reads such a value (`_DOUBLED_DQ_IN_STRING`, `_DOUBLED_SQ_IN_STRING`).
 #: A doubled quote as the log buffer escapes it (`\'\'`, `\\"\\"`), and whitespace after it, where a
-#: value and a closing one follow on the line, as the filter reads such a value; `{q}` is the quote.
-#: The search reads a run of `\` once, whole, and tests for the closing run only where a run
-#: starts; an opener is read from its start only (the look-behind).
+#: value and a closing one follow in the same string, as the filter reads such a value; `{q}` is the
+#: quote. The buffer escapes `{q}` because it closes the string, so a bare `{q}` ends the search: a
+#: closing run in a later string of the line (a JSON line, an event dict's `repr`) is not this
+#: value's. The search reads a run of `\` once, whole, and tests for the closing run only where a
+#: run starts; an opener is read from its start only (the look-behind).
 _ESCAPED_DOUBLED: Final = (
     r"""(?<![\\{q}])(?:\\++{q}){{2,}}+"""
-    r"""(?=\s*+[^\s"'\\](?:[^\\\n]|\\++{q}?+)*?(?:\\++{q}){{2}})\s*+"""
+    r"""(?=\s*+[^\s"'\\](?:[^\\\n{q}]|\\++{q}?+)*?(?:\\++{q}){{2}})\s*+"""
 )
+#: `_DOUBLED_DQ` and `_DOUBLED_SQ` as the scan reads them in a line that joins several strings (a
+#: JSON line, an event dict's `repr`): the closing run is searched for in the string that holds the
+#: opener, up to a bare quote of the other kind, which the buffer leaves bare only where it closes
+#: that string (an escaped character, `\'`, is read as a pair). The filter reads a value alone.
+_DOUBLED_DQ_IN_STRING: Final = r"""[^\s"',}\]]|[\s']*+[^\s"'](?:[^'\\\n]|\\.)*?\"\""""
+_DOUBLED_SQ_IN_STRING: Final = r"""[^\s"',}\]]|[\s"]*+[^\s"'](?:[^"\\\n]|\\.)*?''"""
 _VALUE_LEAD: Final = (
-    rf"""(?:(?<!")"{{2,}}+(?={_DOUBLED_DQ})[\s']*+|(?<!')'{{2,}}+(?={_DOUBLED_SQ})[\s"]*+"""
+    rf"""(?:(?<!")"{{2,}}+(?={_DOUBLED_DQ_IN_STRING})[\s']*+"""
+    rf"""|(?<!')'{{2,}}+(?={_DOUBLED_SQ_IN_STRING})[\s"]*+"""
     rf"""|{_ESCAPED_DOUBLED.format(q='"')}|{_ESCAPED_DOUBLED.format(q="'")}"""
     rf"""|\\++(?:{_SPACE_ESCAPE}\s*+)?|["'])"""
 )
