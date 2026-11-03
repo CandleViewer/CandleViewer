@@ -13,6 +13,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+from dataclasses import astuple
 from pathlib import Path
 from typing import Any
 
@@ -330,7 +331,7 @@ def test_unresolved_sibling_evidence_reads_not_yet_produced_and_resolves_from_re
         (lambda r: r.update(category="see example.com"), "category"),
         (lambda r: r.update(disclosure="AbCdEfGhIjKlMnOpQrStUvWxYz12"), "disclosure"),
         (lambda r: r.update(disclosure="public"), "disclosure"),
-        (lambda r: r["disposition"].update(ticket="not a ticket"), "fix ticket"),
+        (lambda r: r["disposition"].update(ticket="not a ticket"), "disposition.ticket"),
     ],
 )
 def test_every_rendered_field_is_scanned_and_well_formed(
@@ -427,20 +428,58 @@ def _d13() -> Any:
     return _load("a11y_d13_t", D13_REL)
 
 
-def test_design_audit_shares_the_model_at_its_pins() -> None:
+def _git_blob(blob: str) -> str:
+    out = subprocess.run(
+        ["git", "cat-file", "-p", blob], cwd=ROOT, capture_output=True, text=True, check=True
+    )
+    return out.stdout
+
+
+# The limitations register as the D13 dry run was pinned (a git blob, like D13's other inputs), so a
+# later register edit never breaks the digest. Repin only with D13's own pins: take the new blob
+# (`git hash-object docs/plan/a11y/47-limitations.json`) and the new digest together.
+D13_LIMITS_BLOB = "b36dc3b2aaaa1207f3fd07acd33c5f49792690be"
+
+
+def test_design_audit_model_equals_the_product_model_built_independently() -> None:
     # Not D13's --check: its G-UNTOUCHED gate diffs the whole branch, so it is not a governance test.
     d13 = _d13()
-    limits = (ROOT / conf.LIMITS_REL).read_text(encoding="utf-8")
-    assert d13.C.SC is conf.SC and d13.C.CONTRACT is conf.CONTRACT or d13.C.SC == conf.SC
-    assert d13.model(limits) == d13.C.model(limits, d13.pinned())
+    limits = _git_blob(D13_LIMITS_BLOB)
+    inp = conf.Inputs(
+        findings=json.loads(_git_blob(d13.FINDINGS_BLOB)),
+        register=json.loads(_git_blob(d13.REGISTER_BLOB)),
+        plan14=_git_blob(f"{d13.BASE}:{d13.PLAN['14']}"),
+        findings_blob=d13.FINDINGS_BLOB,
+        register_blob=d13.REGISTER_BLOB,
+    )
+    # Two loads of one file are two classes, so compare the rows as plain data.
+    assert [astuple(r) for r in d13.model(limits)] == [astuple(r) for r in conf.model(limits, inp)]
     assert len(d13.model(limits)) == 55
 
 
 def test_design_audit_dry_run_is_unchanged() -> None:
     d13 = _d13()
-    limits = (ROOT / conf.LIMITS_REL).read_text(encoding="utf-8")
-    digest = hashlib.sha256(d13.render_report(limits).encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(
+        d13.render_report(_git_blob(D13_LIMITS_BLOB)).encode("utf-8")
+    ).hexdigest()
     assert digest == D13_DRY_RUN_SHA256
+
+
+def test_rejected_field_values_never_reach_the_log(tmp_path: Path) -> None:
+    secret = "AbCdEfGhIjKlMnOpQrStUvWxYz12"
+    root = _tree(tmp_path)
+    _edit_limits(root, lambda d: d["limitations"][1]["disposition"].update(ticket=secret))
+    _edit_limits(root, lambda d: d["limitations"][0].update(disclosure=secret))
+    lines, rc = _run(root, "fill")
+    assert rc == 1 and lines
+    assert not any(secret in ln for ln in lines), lines
+
+
+def test_numeric_leaves_are_content_scanned(tmp_path: Path) -> None:
+    root = _tree(tmp_path)
+    _edit_limits(root, lambda d: d["limitations"][1].update(count=1234567))
+    lines, rc = _run(root, "fill")
+    assert rc == 1 and any("G-CONTENT" in ln and "count" in ln for ln in lines), lines
 
 
 # --------------------------------------------------------------------------- the matrix sign-off (BQ-05)

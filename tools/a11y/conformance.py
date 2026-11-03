@@ -624,6 +624,8 @@ def open_level_a(inp: Inputs) -> list[str]:
 def _leaves(value: object, path: str) -> list[tuple[str, str]]:
     if isinstance(value, str):
         return [(path, value)]
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return [(path, str(value))]
     if isinstance(value, dict):
         return [x for k, v in value.items() for x in _leaves(v, f"{path}.{k}" if path else str(k))]
     if isinstance(value, list):
@@ -649,17 +651,20 @@ def content_problems(limits: str, report: str = "") -> list[str]:
 
 
 def field_problems(limits: str) -> list[str]:
-    """Rendered fields that must be well formed (E47-T05; the D13 gates cover them separately)."""
+    """Rendered fields that must be well formed (E47-T05; the D13 gates cover them separately).
+
+    Messages carry the JSON path only, never the rejected value (it may be key-like).
+    """
     bad = []
-    for r in limit_rows(limits):
-        rid = text_of(r.get("id"))
+    for i, r in enumerate(limit_rows(limits)):
+        at = f"limitations[{i}]"
         dd = disposition_of(r)
         if dd.get("kind") == "fix-ticket" and not TICKET_RE.match(text_of(dd.get("ticket"))):
-            bad.append(f"{rid}: fix ticket {text_of(dd.get('ticket'))!r} is not 'Exx-Yzz #n'")
+            bad.append(f"{at}.disposition.ticket is not 'Exx-Yzz #n'")
         if r.get("disclosure") not in ("statement", "internal"):
-            bad.append(f"{rid}: disclosure must be statement or internal")
+            bad.append(f"{at}.disclosure must be statement or internal")
         if not text_of(r.get("category")):
-            bad.append(f"{rid}: category is empty")
+            bad.append(f"{at}.category is empty")
     return bad
 
 
