@@ -79,10 +79,10 @@ Related:
 
 ### Process (§4, §10)
 
-- [ ] One issue → one branch → one PR by default (a bundle under an owner delivery-speed directive: `Closes #N` per ticket, one acceptance table each); description contains `Closes #N` (C-4.6, C-4.7)
+- [ ] One issue → one branch → one PR by default (a bundle under an owner delivery-speed directive: `Closes #N` per ticket, one acceptance table each); description contains `Closes #N`, or a slice's `Refs #N` + `Partial: <reason>` closing nothing (C-4.6, C-4.7)
 - [ ] Branch matches `<type>/<epic-key>-<slug>`; commits are Conventional with an allowed scope (C-4.4, C-4.10)
 - [ ] Branch rebased on `main` (no merge commits); will be **squash**-merged (C-4.12)
-- [ ] Diff ≤ 400 changed LOC, or `large-pr-approved` label with written justification (C-4.8)
+- [ ] Diff ≤ 400 changed LOC, or a "why this can't be split" note plus, above 800 or for a bundle, `large-pr-approved` with the labeller's justification comment; never past the ≈ 1,500 counted-line review ceiling: split before ready (a review rule; CI stays 400 / 800) (C-4.8)
 - [ ] No unrelated changes / no scope creep (C-4.9, C-1.4)
 - [ ] Ticket satisfied DoR before work started (C-11.1); DoD items below are complete (C-11.2)
 - [ ] Feature flag added (default **off**) with a removal ticket, or N/A (C-4.13)
