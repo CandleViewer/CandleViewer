@@ -21,9 +21,9 @@ describe("findHarnessLeaks", () => {
 
 describe("feed codec", () => {
   it("round-trips a fixture through the encoder and the page's decoder", () => {
-    const b = buildFixture("btcusdt-1m-100k");
+    const b = buildFixture("btcusdt-1m-gap");
     const frame = encodeFrame(b);
-    expect(frame.byteLength).toBe(100_000 * 28);
+    expect(frame.byteLength).toBe(2000 * 28);
     const buf = frame.buffer.slice(
       frame.byteOffset,
       frame.byteOffset + frame.byteLength,
@@ -53,5 +53,16 @@ describe("e2e fixtures", () => {
     const k = buildFixture("btcusdt-1m-100k");
     expect(k.time).toHaveLength(100_000);
     expect(k.time.every((t, i) => i === 0 || t - k.time[i - 1]! === 60e6)).toBe(true);
+  });
+
+  it("spike has one outlier wick, gap a 60-minute hole, flat one price, nonpositive crosses zero", () => {
+    const spike = buildFixture("btcusdt-1m-spike");
+    expect(Math.max(...spike.high)).toBe(spike.high[1000]);
+    const gap = buildFixture("btcusdt-1m-gap");
+    expect(gap.time[1000]! - gap.time[999]!).toBe(61 * 60e6);
+    const f = buildFixture("synthetic-flat");
+    expect(new Set([...f.open, ...f.high, ...f.low, ...f.close]).size).toBe(1);
+    const np = buildFixture("synthetic-nonpositive");
+    expect([Math.min(...np.low) < 0, Math.max(...np.high) > 0]).toEqual([true, true]);
   });
 });

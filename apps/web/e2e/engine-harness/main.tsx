@@ -1,10 +1,11 @@
 // E11-Q02 (#444) engine E2E harness: its own Vite entry and build (vite.config.ts), outside `src/`, so the
 // production build never holds it. Public engine surface only (BQ-03); frames arrive over a
-// same-origin WebSocket that the spec fakes with `routeWebSocket`.
+// same-origin WebSocket that the spec fakes with `routeWebSocket`. The chart carries SCR-043's menu.
 import { useEffect, useLayoutEffect, useRef, type JSX } from "react";
 import { createRoot } from "react-dom/client";
 import type { ChartEvents, ChartOptions } from "@candleviewer/chart-engine";
 import { Chart, Pane, useChartApi } from "../../src/chart";
+import { PriceScaleMenu } from "../../src/features/chart-price-scale/PriceScaleMenu";
 import { decodeBarsFrame, type BarsHeader } from "./barsFrame";
 import { RECORDED, record, type EngineEventLog } from "./events";
 
@@ -82,12 +83,16 @@ function Harness(props: {
         <Pane>
           <Feed fixture={props.fixture} events={props.events} />
         </Pane>
+        <PriceScaleMenu />
       </Chart>
     </div>
   );
 }
 
 const params = new URLSearchParams(window.location.search);
+// `?motion=reduce` sets the root attribute the engine reads at mount (16 section 4), as the app's theme does.
+if (params.get("motion") === "reduce")
+  document.documentElement.setAttribute("data-motion", "reduce");
 const events: EngineEventLog = { log: [], seq: 0 };
 window.__engineEvents = events;
 const root = document.getElementById("root");

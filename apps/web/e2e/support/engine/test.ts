@@ -1,15 +1,32 @@
-// E11-Q02 (#444): the engine suite's `test`: a `harness` page object, and every test runs under the
-// shared egress guard (C-13.5): no non-loopback request leaves the page. (The Electron leg adds an
-// `openShell` option in the next slice.)
+// E11-Q02 (#444, BQ-04): one spec set, two runtimes. Electron is the desktop shell, which apps/desktop's
+// playwright.engine.config.ts launches via `launchShell` and hands in as `openShell`, so apps/web
+// imports no other app (C-3.5); an Electron failure shows under its own project (AC4). Every test
+// runs under the shared egress guard (C-13.5).
 import { guardContextEgress } from "@candleviewer/fixtures/e2e";
-import { expect, test as base } from "@playwright/test";
+import { expect, test as base, type Page } from "@playwright/test";
 import { EngineHarness } from "./harness";
 
 export { expect };
 
-export const test = base.extend<{ harness: EngineHarness; egress: undefined }>({
+export interface ShellHandle {
+  readonly page: Page;
+  readonly close: () => Promise<void>;
+}
+export interface EngineOptions {
+  readonly openShell: (() => Promise<ShellHandle>) | undefined;
+}
+
+export const test = base.extend<EngineOptions & { harness: EngineHarness; egress: undefined }>({
+  openShell: [undefined, { option: true }],
+  page: async ({ page, openShell }, use) => {
+    if (openShell === undefined) return use(page);
+    const shell = await openShell(); // its own guard asserts at `close`
+    await use(shell.page);
+    await shell.close();
+  },
   egress: [
-    async ({ context }, use) => {
+    async ({ context, openShell }, use) => {
+      if (openShell !== undefined) return use(undefined);
       const guard = await guardContextEgress(context);
       await use(undefined);
       expect(guard.hits(), "the page sent a request past the loopback interface").toEqual([]);

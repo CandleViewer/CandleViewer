@@ -6,7 +6,13 @@
 // mulberry32 random walk with slow volatility clustering (the shape of the engine bench's generator,
 // written out here rather than imported: the bench is not a declared export of the engine package);
 // the same name and seed give byte-identical output (engine-harness.test.ts hashes it). Prices are integer ticks from `priceOrigin`.
-export const FIXTURE_NAMES = ["btcusdt-1m-100k"] as const;
+export const FIXTURE_NAMES = [
+  "btcusdt-1m-100k",
+  "btcusdt-1m-spike",
+  "btcusdt-1m-gap",
+  "synthetic-flat",
+  "synthetic-nonpositive",
+] as const;
 export type FixtureName = (typeof FIXTURE_NAMES)[number];
 
 export const SEED = 20260928;
@@ -98,5 +104,40 @@ function pack(name: FixtureName, rows: readonly Row[], origin: number, visible: 
 }
 
 export function buildFixture(name: FixtureName): Bars {
-  return pack(name, walk(100_000), ORIGIN, 200);
+  const rows = walk(name === "btcusdt-1m-100k" ? 100_000 : 2000);
+  switch (name) {
+    case "btcusdt-1m-100k":
+      return pack(name, rows, ORIGIN, 200);
+    case "btcusdt-1m-spike": {
+      // One wick ten times the series' range: the autoscale and readout outlier.
+      const bar = rows[1000] as Row;
+      bar.h = bar.o + 10 * (Math.max(...rows.map((r) => r.h)) - Math.min(...rows.map((r) => r.l)));
+      return pack(name, rows, ORIGIN, 200);
+    }
+    case "btcusdt-1m-gap": // sixty missing minutes after bar 1000
+      return pack(
+        name,
+        rows.map((r, i) => (i < 1000 ? r : { ...r, tMs: r.tMs + 60 * BAR_MS })),
+        ORIGIN,
+        200,
+      );
+    case "synthetic-flat": // one price on every bar: a zero range
+      return pack(
+        name,
+        rows.slice(0, 500).map((r) => ({ ...r, o: ORIGIN, h: ORIGIN, l: ORIGIN, c: ORIGIN })),
+        ORIGIN,
+        100,
+      );
+    case "synthetic-nonpositive": {
+      // A walk across zero (origin 0, -500 to about +300 ticks): log must be refused, never drawn.
+      const rng = mulberry32(SEED);
+      let p = -500;
+      const crossing = rows.slice(0, 500).map((r) => {
+        const o = p;
+        p += Math.round((rng() - 0.3) * 8);
+        return { ...r, o, c: p, h: Math.max(o, p) + 2, l: Math.min(o, p) - 2 };
+      });
+      return pack(name, crossing, 0, 100);
+    }
+  }
 }

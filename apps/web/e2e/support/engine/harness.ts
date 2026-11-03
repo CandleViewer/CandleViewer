@@ -12,6 +12,8 @@ export interface Viewport {
   readonly barSpacing: number;
 }
 
+/** The gutters the engine reserves (layout-engine.ts): the price axis on the right, the time axis below. */
+export const GUTTER = { price: 64, time: 24 } as const;
 /** The chart box the harness renders (engine-harness/main.tsx). */
 export const CHART_SIZE = { width: 900, height: 520 } as const;
 const CHART = '[data-testid="engine-harness-chart"]';
@@ -23,7 +25,10 @@ export class EngineHarness {
   ) {}
 
   /** Serves `fixture` from a faked feed (`routeWebSocket`: no socket leaves the page) and waits for it. */
-  async open(fixture: FixtureName, opts: { runMode?: "worker" | "inline" } = {}): Promise<void> {
+  async open(
+    fixture: FixtureName,
+    opts: { runMode?: "worker" | "inline"; motion?: "reduce" } = {},
+  ): Promise<void> {
     const bars = buildFixture(fixture);
     await this.page.routeWebSocket(/\/__engine-feed$/u, (ws) => {
       ws.onMessage(() => {
@@ -31,7 +36,7 @@ export class EngineHarness {
         ws.send(Buffer.from(encodeFrame(bars)));
       });
     });
-    const query = `fixture=${fixture}&runMode=${opts.runMode ?? "worker"}`;
+    const query = `fixture=${fixture}&runMode=${opts.runMode ?? "worker"}${opts.motion ? `&motion=${opts.motion}` : ""}`;
     await this.page.goto(new URL(`/?${query}`, this.baseURL).href);
     await this.page.waitForFunction(() =>
       window.__engineEvents?.log.some((e) => e.type === "fixtureLoaded"),
@@ -93,5 +98,25 @@ export class EngineHarness {
     const b = await this.chart.boundingBox();
     if (b === null) throw new Error("engine harness chart is not laid out");
     return b;
+  }
+
+  /** How many events of `type` the page has recorded. */
+  async count(type: string): Promise<number> {
+    return this.page.evaluate(
+      (t) => window.__engineEvents?.log.filter((e) => e.type === t).length ?? 0,
+      type,
+    );
+  }
+
+  /** A client-space point `dx`/`dy` in from the top-left of the plot, price gutter or time gutter. */
+  async at(
+    region: "plot" | "price" | "time",
+    dx: number,
+    dy: number,
+  ): Promise<{ x: number; y: number }> {
+    const b = await this.box();
+    const left = region === "price" ? CHART_SIZE.width - GUTTER.price : 0;
+    const top = region === "time" ? CHART_SIZE.height - GUTTER.time : 0;
+    return { x: b.x + left + dx, y: b.y + top + dy };
   }
 }
