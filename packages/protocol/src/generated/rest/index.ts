@@ -1491,6 +1491,13 @@ export interface paths {
      *     A name the owner already uses for a live alert answers `409 conflict`. A `422` is
      *     `rule_ir_invalid` (the condition) or `validation_failed`: the body, or a value the
      *     stored alert's own rules refuse (#2748).
+     *     A caller holds at most 200 armed alerts (live and `enabled`, snoozed or not), counted per
+     *     user: a create with `enabled` true (the default) that would arm one more is refused
+     *     `409 conflict` with `errors[].field` `enabled`, `errors[].rule` `limit_reached` and a
+     *     message that names the cap, never a count (example `armedAlertCap`), and nothing is
+     *     written. Only arming is refused: a create with `enabled` false, disabling, snoozing,
+     *     deleting and a write to an alert that is already armed never are. The cap of 200 is
+     *     interim until the Owner ratifies it as a `LIMIT_CAPS` row (#2701).
      */
     post: operations["createAlert"];
     delete?: never;
@@ -1513,7 +1520,10 @@ export interface paths {
     /**
      * Replace an alert
      * @description A name the owner already uses for another live alert answers `409 conflict`. A `422`
-     *     is `rule_ir_invalid` or `validation_failed`, as for `createAlert` (#2748).
+     *     is `rule_ir_invalid` or `validation_failed`, as for `createAlert` (#2748). A replace that
+     *     sets `enabled` true on a disabled alert arms it and is held to the armed-alert cap of
+     *     `createAlert` (`409 conflict`, `errors[].rule` `limit_reached`, example `armedAlertCap`);
+     *     a replace of an alert that is already armed, or one that leaves it disabled, never is.
      */
     put: operations["updateAlert"];
     post?: never;
@@ -1534,7 +1544,14 @@ export interface paths {
       cookie?: never;
     };
     get?: never;
-    /** Enable or disable an alert */
+    /**
+     * Enable or disable an alert
+     * @description `{enabled: true}` on a disabled alert arms it and is held to the armed-alert cap of
+     *     `createAlert`: past 200 armed alerts it is refused `409 conflict` with `errors[].field`
+     *     `enabled`, `errors[].rule` `limit_reached` and a message that names the cap (example
+     *     `armedAlertCap`), and nothing is written. `{enabled: false}` is never refused by the cap,
+     *     and neither is `{enabled: true}` on an alert that is already armed.
+     */
     put: operations["setAlertEnabled"];
     post?: never;
     delete?: never;
@@ -15058,7 +15075,15 @@ export interface operations {
         };
       };
       403: components["responses"]["CsrfTokenInvalid"];
-      409: components["responses"]["Conflict"];
+      /** @description `conflict`: a name the owner already uses for a live alert, or, with `errors[].field` `enabled` and `errors[].rule` `limit_reached`: the write would arm a 201st alert while the caller holds 200 armed alerts. Nothing is written. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -15125,7 +15150,15 @@ export interface operations {
         };
       };
       403: components["responses"]["CsrfTokenInvalid"];
-      409: components["responses"]["Conflict"];
+      /** @description `conflict`: a name the owner already uses for another live alert, or, with `errors[].field` `enabled` and `errors[].rule` `limit_reached`: the write would arm a 201st alert while the caller holds 200 armed alerts. Nothing is written. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       412: components["responses"]["PreconditionFailed"];
       422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
@@ -15202,6 +15235,15 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      /** @description `conflict` with `errors[].field` `enabled` and `errors[].rule` `limit_reached`: the write would arm a 201st alert while the caller holds 200 armed alerts. Nothing is written. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       503: components["responses"]["ServiceUnavailable"];
     };
   };

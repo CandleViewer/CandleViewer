@@ -57,5 +57,7 @@ def test_the_contract_declares_409_and_422_for_alert_writes() -> None:
     paths: Any = load_openapi_spec()["paths"]
     for op in (paths["/alerts"]["post"], paths["/alerts/{alertId}"]["put"]):
         responses = op["responses"]
-        assert responses["409"] == {"$ref": "#/components/responses/Conflict"}
+        # #1864: the 409 is inline since it carries the armed-alert cap's example; still a Problem.
+        conflict = responses["409"]["content"]["application/problem+json"]
+        assert conflict["schema"] == {"$ref": "#/components/schemas/Problem"}
         assert responses["422"] == {"$ref": "#/components/responses/UnprocessableEntity"}

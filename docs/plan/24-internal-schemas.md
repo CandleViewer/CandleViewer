@@ -6793,3 +6793,12 @@ This is the number the orchestrator assigned on 2026-11-03 (02:42Z); it keeps it
 
 - §9.2 gains "Snapshot bound (#3969)", **PROPOSED**: a leg's `profile_snapshot` has its own bound, `PROFILE_SNAPSHOT_MAX_CHARS` = 32,768 (PROPOSED), because the test's maximal `AccountProfile` dumps to 26,337 characters (the two symbol lists alone are 1,000 × (21 + 3) = 24,000; a rung's `r` has no digit cap, and the 6,431 headroom covers a longer one), over the 16,384 of `exchange_payload.MAX_PAYLOAD_CHARS` (PROPOSED as the bound it is set against), which `algo_params` keeps.
 - No migration and no CHECK: `trade_group_legs` carries no size CHECK and the profile's own caps (`SymbolList` 500, `Ladder` 10, `name` 80) stay the one limit on its size. No REST operation, WS frame, chart or `machine_hash` change.
+
+### 19.104 2026-11-03 — 22 `/alerts*`: the armed-alert cap, contract first (E40-T03 follow-up, #1864)
+
+This is the number the orchestrator assigned on 2026-11-03 (08:03Z); it keeps it through its rebases.
+
+- The orchestrator's ruling of record on #1864 (08:03Z), contract first (C-6.1): the per-user armed-alert cap of the E40 threat model (E40-T03, E40-X01) takes the pattern of the stored-rule cap (§19.62), not a new code.
+- 22 `createAlert`, `updateAlert` and `setAlertEnabled` gain `409 conflict` with `errors[].field` `enabled`, `errors[].rule` `limit_reached` and a message that names the cap, never a count (example `armedAlertCap`): a write that would leave the caller with more than 200 armed alerts (live and `enabled`, snoozed or not) is refused and nothing is written. A create arms when `enabled` is true (the default), a replace or `setAlertEnabled` when it turns a disabled alert's `enabled` true. Only arming is refused: disabling, snoozing, deleting and any write to an alert that is already armed never are. The cap is interim until the Owner ratifies it as a `LIMIT_CAPS` row (#2701).
+- The count and the write that it admits run in one transaction under a per-owner advisory lock, as the drawings quota does (#2727), so two writes at 199 never both pass. The write-ahead audit record of the write is unchanged and no action is registered or removed. A refusal is counted by `cv_alert_armed_cap_refused_total` (no labels; `20-architecture.md` §12.1).
+- No new `x-error-codes` entry, schema member or operation, so the `openapi_pending` baselines do not move; no WS, table, column, chart or `machine_hash` change, and no migration.
