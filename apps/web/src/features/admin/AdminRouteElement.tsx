@@ -1,6 +1,5 @@
 import { lazy, Suspense, type JSX } from "react";
 import { ROUTE_MANIFEST } from "../../routes/manifest";
-import { StubRoute } from "../../routes/StubRoute";
 import { useShellSelector } from "../../shell/useShellSelector";
 
 /**
@@ -10,6 +9,13 @@ import { useShellSelector } from "../../shell/useShellSelector";
  * `lazy` runs beside its loader, so a manager's 404 would already have fetched the chunk.
  */
 const AdminArea = lazy(async () => ({ default: (await import("./shell/AdminArea")).AdminArea }));
+/**
+ * R-360 for a Manager: My activity (E42-S04, BQ-8 (a)), SCR-135's own view in the plain shell, its
+ * own chunk, which imports nothing of the admin area or the overview.
+ */
+const MyActivityPage = lazy(async () => ({
+  default: (await import("./audit/MyActivityPage")).MyActivityPage,
+}));
 
 /** `/admin` and every route under it, R-300 to R-360 (`12` §2): the routes CMP-087 frames. */
 const ADMIN_ROUTE_IDS: ReadonlySet<string> = new Set(
@@ -34,13 +40,17 @@ export interface AdminRouteElementProps {
 /**
  * Every admin route's element (E42-S01): the admin area, lazily. The guard has decided access by
  * then; this decides only R-360's frame, from the shell's `me`: CMP-087 for an owner, the plain shell
- * for a manager, who loads no admin code. No fallback of its own (none is designed): the page comes
- * with its band.
+ * for a manager, who loads no admin code: My activity, its own chunk (E42-S04). No fallback of its
+ * own (none is designed): the page comes with its band.
  */
 export function AdminRouteElement({ routeId, owner }: AdminRouteElementProps): JSX.Element {
   const isOwner = useShellSelector((state) => state.me?.role === "owner");
   if (routeId === AUDIT_LOG && !isOwner) {
-    return <StubRoute routeId={routeId} owner={owner ?? "E42"} />;
+    return (
+      <Suspense fallback={null}>
+        <MyActivityPage />
+      </Suspense>
+    );
   }
   return (
     <Suspense fallback={null}>
