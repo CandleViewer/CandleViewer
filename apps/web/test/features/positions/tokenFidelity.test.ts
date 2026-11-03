@@ -12,10 +12,18 @@
  * pass is not a no-op.
  *
  * What passes, as it does under css-contract.ts: a named colour (`red`), `color-mix()` over named colours, a `rem`
- * or `em` length and an upper-case unit (`150MS`, `12PX`). In a component the scan reads a `style` attribute that
- * is, or can evaluate to, an object literal (`{…}`, `on ? {…} : x`, `on && {…}`, `x ?? {…}`); it does not see a
- * style built outside the attribute (a helper, a `useMemo`, a name bound to an object) or an imperative
- * `ref.style.x = …`.
+ * or `em` length and an upper-case px (`12PX`). An upper-case duration (`150MS`) also passes here, though
+ * css-contract.ts does not allow it: `itIsTokenOnlyAndStatic` bans any `transition` or `animation` (lines 55-56). In
+ * a component the scan reads a `style` attribute that is, or can evaluate to, an object literal (`{…}`,
+ * `on ? {…} : x`, `on && {…}`, `x ?? {…}`).
+ *
+ * The guard reads stylesheets and inline style objects, and nothing else, so it does not see: a raw colour or px in
+ * a `.ts` or `.tsx` string literal (`fill="#ff0000"`, `"1px solid #00ff00"`), because `apps/web` has no
+ * `no-raw-design-values` rule (`packages/ui/eslint.config.mjs` applies it to `packages/ui/src` only); a literal
+ * duration or easing held in a custom property the slice declares (`--d: 150ms`, read as
+ * `transition: opacity var(--d)`), because the motion scan reads `transition` and `animation` declarations only,
+ * while colour and px are read over the whole sheet; a style built outside the attribute (a helper, a `useMemo`, a
+ * name bound to an object); or an imperative `ref.style.x = …`. A pass is no proof that none of these is present.
  */
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
@@ -236,7 +244,8 @@ describe("the scanners the guard rests on", () => {
       [],
     ],
     [".a { transition: none; animation-duration: 0.01ms !important; transition-delay: 0s; }", []],
-    // What passes, as under css-contract.ts (the header comment): not an assertion of intent, a pin of today's reading.
+    // What passes (the header comment says where css-contract.ts agrees and where it does not): not an assertion of
+    // intent, a pin of today's reading.
     [
       ".a { color: red; background: color-mix(in srgb, red 50%, white); gap: 1rem; padding: 1em; }",
       [],
