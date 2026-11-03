@@ -255,9 +255,12 @@ export const ToggleLongText: Story = {
     </div>
   ),
   play: async ({ canvasElement }) => {
-    const liquidation = toggleOf(canvasElement, "Liquidation");
-    const label = liquidation.querySelector(".cv-tag__label");
-    await expect(label?.scrollWidth).toBe(label?.clientWidth);
+    const chips = TYPES.map((word) => toggleOf(canvasElement, word));
+    // Nothing overflows a chip: each shows its whole word, neither squeezed nor clipped.
+    for (const chip of chips) await expect(chip.scrollWidth).toBeLessThanOrEqual(chip.clientWidth);
+    // The row wraps instead.
+    const rows = new Set(chips.map((chip) => chip.getBoundingClientRect().top));
+    await expect(rows.size).toBeGreaterThan(1);
   },
 };
 

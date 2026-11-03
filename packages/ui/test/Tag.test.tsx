@@ -155,15 +155,20 @@ describe("Tag (CMP-011)", () => {
   });
 });
 
-/** A host that holds a toggle's state, as the Fills tab holds its Type chips (E29-D02:299: all on by default). */
+/**
+ * A host that holds a toggle's state, as the Fills tab holds its Type chips (E29-D02:299: all on by default, so
+ * `initial` defaults to pressed).
+ */
 function Held({
   label,
   onChange,
+  initial = true,
 }: {
   label: string;
   onChange?: (p: boolean) => void;
+  initial?: boolean;
 }): JSX.Element {
-  const [pressed, setPressed] = useState(true);
+  const [pressed, setPressed] = useState(initial);
   return (
     <Tag
       variant="toggle"
@@ -282,6 +287,18 @@ describe("Tag toggle (CMP-011 `toggle`, E29-S04; E29-D04 §2.9, E29-D02:299)", (
       </div>,
     );
     expect(within(host).getAllByRole("button", { pressed: true })).toHaveLength(5);
+    expect(await seriousViolations(host)).toEqual([]);
+  });
+
+  it("unpressed chips beside pressed ones have no serious or critical axe violation either", async () => {
+    const host = await mount(
+      <div>
+        {["Trade", "ADL", "Liquidation", "Funding", "Settlement"].map((word, index) => (
+          <Held key={word} label={word} initial={index < 2} />
+        ))}
+      </div>,
+    );
+    expect(within(host).getAllByRole("button", { pressed: false })).toHaveLength(3);
     expect(await seriousViolations(host)).toEqual([]);
   });
 });
