@@ -41,9 +41,11 @@ class Finding:
 #: reads such a value (`_DOUBLED_DQ`, `_DOUBLED_SQ`).
 #: A doubled quote as the log buffer escapes it (`\'\'`, `\\"\\"`), and whitespace after it, where a
 #: value and a closing one follow on the line, as the filter reads such a value; `{q}` is the quote.
-#: A run is read from its start only (the look-behinds), so a long run is read once.
+#: The search reads a run of `\` once, whole, and tests for the closing run only where a run
+#: starts; an opener is read from its start only (the look-behind).
 _ESCAPED_DOUBLED: Final = (
-    r"""(?<![\\{q}])(?:\\++{q}){{2,}}+(?=\s*+[^\s"'\\][^\n]*?(?:\\++{q}){{2}})\s*+"""
+    r"""(?<![\\{q}])(?:\\++{q}){{2,}}+"""
+    r"""(?=\s*+[^\s"'\\](?:[^\\\n]|\\++{q}?+)*?(?:\\++{q}){{2}})\s*+"""
 )
 _VALUE_LEAD: Final = (
     rf"""(?:(?<!")"{{2,}}+(?={_DOUBLED_DQ})[\s']*+|(?<!')'{{2,}}+(?={_DOUBLED_SQ})[\s"]*+"""

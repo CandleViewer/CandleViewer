@@ -277,3 +277,24 @@ def test_perf_the_scan_reads_an_adversarial_text_in_linear_time(text: str) -> No
     half, full = best_ms(text[: len(text) // 2]), best_ms(text)
     assert len(text) >= 18000
     assert full < 100.0 and full < 4 * half + 1.0, f"{half:.3f} ms -> {full:.3f} ms"
+
+
+def _best_cpu_ms(probe: str) -> float:
+    best = float("inf")
+    for _ in range(5):
+        start = time.process_time()
+        list(scan_text(probe))
+        best = min(best, (time.process_time() - start) * 1000)
+    return best
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("quote", ['"', "'"], ids=["double", "single"])
+def test_perf_the_scan_reads_escaped_doubled_quotes_before_a_backslash_run_in_linear_time(
+    quote: str,
+) -> None:
+    # #4713: an escaped doubled quote, a value and a long run of `\`, as a JSON or `repr` line
+    # holds one; four times the text takes about four times the CPU time
+    sizes = (20_000, 40_000, 80_000)
+    ms = [_best_cpu_ms(f"password=\\{quote}\\{quote} a" + "\\" * size) for size in sizes]
+    assert ms[2] < 8 * ms[0] + 2.0 and ms[2] < 100.0, ms
