@@ -1,0 +1,8 @@
+[
+  ["E19-D03 local · dark", "color.tpo.letter", "color", "{palette.neutral.700}"],
+  ["E19-D03 local · light", "color.tpo.letter", "color", "{palette.light.neutral.700}"],
+  ["E19-D03 local · hc", "color.tpo.letter", "color", "{palette.neutral.700}"],
+  ["E19-D03 local · dark", "color.tpo.initialbalance", "color", "{palette.cyan.400}"],
+  ["E19-D03 local · light", "color.tpo.initialbalance", "color", "{palette.light.cyan.300}"],
+  ["E19-D03 local · hc", "color.tpo.initialbalance", "color", "{palette.cyan.400}"]
+]

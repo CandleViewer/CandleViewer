@@ -1,0 +1,3 @@
+# local render output (logs, filled JS, TSVs) and the drivers' STOP file: never committed
+*/out/
+*/STOP

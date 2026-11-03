@@ -1,0 +1,6900 @@
+{
+ "board": {
+  "name": "E21-D03 / 05 trading-demo-live",
+  "w": 3280,
+  "h": 1952,
+  "x": 25600,
+  "y": 0,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "SCR-051∕trading-demo",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "frame SCR-051/trading-demo",
+    "x": 80,
+    "y": 108,
+    "kids": [
+     {
+      "t": "board",
+      "name": "SCR-050 header",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.md",
+       "padX": "space.inset.sm",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "BTCUSDT · Heatmap + Ladder",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "board",
+        "name": "depth control",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "depth",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "depth listbox",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.sunken",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "justify": "space-between"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "200",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 64,
+          "h": 32
+         }
+        ],
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "env badge · DEMO",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "fill": "color.surface.raised",
+         "stroke": "color.env.demo",
+         "strokeWidth": "border.thick",
+         "strokeAlign": "inner",
+         "radius": "radius.badge"
+        },
+        "kids": [
+         {
+          "t": "ellipse",
+          "name": "glyph",
+          "w": 8,
+          "h": 8,
+          "o": {
+           "stroke": "color.env.demo",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner"
+          }
+         },
+         {
+          "t": "text",
+          "name": "word",
+          "chars": "DEMO",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 22,
+        "note": "the session environment (R-4), not the feed"
+       },
+       {
+        "t": "text",
+        "name": "view",
+        "chars": "Ladder │ Table",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "icon",
+        "name": "more",
+        "icon": "more-horizontal",
+        "color": "color.text.secondary",
+        "size": "size.icon"
+       }
+      ],
+      "w": 1280,
+      "h": 32,
+      "x": 0,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "column header",
+      "w": 1280,
+      "h": 24,
+      "o": {
+       "fill": "color.surface.canvas"
+      },
+      "x": 0,
+      "y": 32
+     },
+     {
+      "t": "text",
+      "name": "pane label",
+      "chars": "Heatmap (time →)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 8,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Price",
+      "chars": "Price",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 648,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Bid (B)",
+      "chars": "Bid (B)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 744,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Ask (A)",
+      "chars": "Ask (A)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 840,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Prints",
+      "chars": "Prints",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 936,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Cum. depth",
+      "chars": "Cum. depth",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 1016,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Your orders",
+      "chars": "Your orders",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 1120,
+      "y": 37
+     },
+     {
+      "t": "board",
+      "name": "SCR-050 rows 1-8",
+      "kids": [
+       {
+        "t": "rect",
+        "name": "hm · ask 15 · 1-4",
+        "w": 160,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 14 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 24
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 13 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 0,
+        "y": 48
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 11 · 1-8",
+        "w": 320,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 96
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 10 · 1-5",
+        "w": 200,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 120
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 9 · 1-5",
+        "w": 200,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 144
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 8 · 1-4",
+        "w": 160,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 0,
+        "y": 168
+       }
+      ],
+      "w": 1280,
+      "h": 192,
+      "x": 0,
+      "y": 56
+     },
+     {
+      "t": "board",
+      "name": "SCR-050 rows 9-16",
+      "kids": [
+       {
+        "t": "rect",
+        "name": "hm · ask 7 · 1-4",
+        "w": 160,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "text",
+        "name": "td · ask 7 · Your orders",
+        "chars": "Sell 0.100",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 1120,
+        "y": 5
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 6 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 0,
+        "y": 24
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 5 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 48
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 4 · 1-2",
+        "w": 80,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 0,
+        "y": 72
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 4 · 3-6",
+        "w": 160,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 80,
+        "y": 72
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 3 · 1-9",
+        "w": 360,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 0,
+        "y": 96
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 2 · 1-13",
+        "w": 520,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 0,
+        "y": 120
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 1 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 0,
+        "y": 168
+       }
+      ],
+      "w": 1280,
+      "h": 192,
+      "x": 0,
+      "y": 248
+     },
+     {
+      "t": "board",
+      "name": "SCR-050 rows 17-24",
+      "kids": [
+       {
+        "t": "rect",
+        "name": "hm · bid 2 · 1-5",
+        "w": 200,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 3 · 1-3",
+        "w": 120,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 0,
+        "y": 24
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 3 · 4-9",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 120,
+        "y": 24
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 4 · 1-8",
+        "w": 320,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 0,
+        "y": 48
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 5 · 1-3",
+        "w": 120,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 0,
+        "y": 72
+       },
+       {
+        "t": "text",
+        "name": "td · bid 5 · Your orders",
+        "chars": "Buy 0.250",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 1120,
+        "y": 77
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 6 · 1-5",
+        "w": 200,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 0,
+        "y": 96
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 7 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 0,
+        "y": 120
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 8 · 1-10",
+        "w": 400,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 0,
+        "y": 144
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 9 · 1-4",
+        "w": 160,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.3"
+        },
+        "x": 0,
+        "y": 168
+       }
+      ],
+      "w": 1280,
+      "h": 192,
+      "x": 0,
+      "y": 440
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-051∕trading-demo",
+   "node": {
+    "t": "board",
+    "name": "SCR-050 rows 25-31",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "hm · bid 11 · 1-16",
+      "w": 640,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.1"
+      },
+      "x": 0,
+      "y": 24
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 12 · 1-4",
+      "w": 160,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.1"
+      },
+      "x": 0,
+      "y": 48
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 13 · 1-16",
+      "w": 640,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.1"
+      },
+      "x": 0,
+      "y": 72
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 14 · 1-6",
+      "w": 240,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.1"
+      },
+      "x": 0,
+      "y": 96
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 15 · 1-2",
+      "w": 80,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.3"
+      },
+      "x": 0,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 15 · 3-4",
+      "w": 80,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.4"
+      },
+      "x": 80,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 15 · 5-6",
+      "w": 80,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.3"
+      },
+      "x": 160,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 15 · 7-7",
+      "w": 40,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.4"
+      },
+      "x": 240,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 15 · 8-16",
+      "w": 360,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.3"
+      },
+      "x": 280,
+      "y": 120
+     },
+     {
+      "t": "text",
+      "name": "td · bid 15 · Price",
+      "chars": "64,558.8",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 648,
+      "y": 125
+     },
+     {
+      "t": "text",
+      "name": "td · bid 15 · Bid (B)",
+      "chars": "B 2.675",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 744,
+      "y": 125
+     },
+     {
+      "t": "text",
+      "name": "td · bid 15 · Cum. depth",
+      "chars": "15.575",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 1016,
+      "y": 125
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 16 · 1-1",
+      "w": 40,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.2"
+      },
+      "x": 0,
+      "y": 144
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 16 · 2-2",
+      "w": 40,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.3"
+      },
+      "x": 40,
+      "y": 144
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 16 · 3-14",
+      "w": 480,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.2"
+      },
+      "x": 80,
+      "y": 144
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 16 · 15-16",
+      "w": 80,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.1"
+      },
+      "x": 560,
+      "y": 144
+     },
+     {
+      "t": "text",
+      "name": "td · bid 16 · Price",
+      "chars": "64,558.7",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 648,
+      "y": 149
+     },
+     {
+      "t": "text",
+      "name": "td · bid 16 · Bid (B)",
+      "chars": "B 0.724",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 744,
+      "y": 149
+     },
+     {
+      "t": "text",
+      "name": "td · bid 16 · Cum. depth",
+      "chars": "16.299",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 1016,
+      "y": 149
+     }
+    ],
+    "w": 1280,
+    "h": 168,
+    "x": 0,
+    "y": 632
+   }
+  },
+  {
+   "into": "SCR-051∕trading-demo",
+   "node": {
+    "t": "rect",
+    "name": "mark line",
+    "w": 1280,
+    "h": 1,
+    "o": {
+     "fill": "color.text.primary"
+    },
+    "x": 0,
+    "y": 416
+   }
+  },
+  {
+   "into": "SCR-051∕trading-demo",
+   "node": {
+    "t": "rect",
+    "name": "CMP-043 backdrop scrim",
+    "w": 1280,
+    "h": 800,
+    "o": {
+     "opacity": "opacity.scrim",
+     "fill": "color.surface.app"
+    },
+    "x": 0,
+    "y": 0
+   }
+  },
+  {
+   "into": "SCR-051∕trading-demo",
+   "node": {
+    "t": "board",
+    "name": "CMP-043 dialog (lg)",
+    "o": {
+     "fill": "color.surface.overlay",
+     "stroke": "color.border.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner",
+     "radius": "radius.dialog",
+     "clip": true
+    },
+    "w": 960,
+    "h": 720,
+    "x": 160,
+    "y": 40,
+    "note": "CMP-043 size lg, comfortable; color.surface.overlay, space.dialog.padding, 1 px color.border.default",
+    "kids": [
+     {
+      "t": "board",
+      "name": "header",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.dialog.padding",
+       "justify": "space-between"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "title and badge",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "W-1 title",
+          "chars": "Heatmap + Ladder settings",
+          "typo": "type.ui.heading-sm",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "board",
+          "name": "env badge · DEMO",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.raised",
+           "stroke": "color.env.demo",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner",
+           "radius": "radius.badge"
+          },
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "glyph",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "stroke": "color.env.demo",
+             "strokeWidth": "border.thick",
+             "strokeAlign": "inner"
+            }
+           },
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "DEMO",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 22,
+          "note": "the session environment (R-4), not the feed"
+         }
+        ],
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "close button",
+        "o": {
+         "radius": "radius.control"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "glyph",
+          "icon": "close",
+          "color": "color.text.secondary",
+          "size": "size.icon",
+          "x": 4,
+          "y": 4
+         }
+        ],
+        "w": 24,
+        "h": 24,
+        "note": "\"Close\": 24 × 24 (size.target.min); discards unsaved changes at once (§2.1)"
+       }
+      ],
+      "w": 960,
+      "h": 56,
+      "note": "role=\"dialog\", aria-modal=\"true\", named by W-2: \"Heatmap + Ladder settings, BTCUSDT, DEMO\""
+     },
+     {
+      "t": "board",
+      "name": "CMP-042 tablist",
+      "o": {
+       "dir": "row",
+       "align": "end",
+       "padX": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "tab · Depth & scale",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Depth & scale",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "h": 38
+         },
+         {
+          "t": "rect",
+          "name": "rule slot",
+          "w": 111,
+          "h": 2
+         }
+        ],
+        "h": 40,
+        "note": "role=\"tab\""
+       },
+       {
+        "t": "board",
+        "name": "tab · Colour",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Colour",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "h": 38
+         },
+         {
+          "t": "rect",
+          "name": "rule slot",
+          "w": 64,
+          "h": 2
+         }
+        ],
+        "h": 40,
+        "note": "role=\"tab\""
+       },
+       {
+        "t": "board",
+        "name": "tab · Ladder",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Ladder",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "h": 38
+         },
+         {
+          "t": "rect",
+          "name": "rule slot",
+          "w": 64,
+          "h": 2
+         }
+        ],
+        "h": 40,
+        "note": "role=\"tab\""
+       },
+       {
+        "t": "board",
+        "name": "tab · Trading (selected)",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Trading",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 38
+         },
+         {
+          "t": "rect",
+          "name": "selected rule",
+          "w": 71,
+          "h": 2,
+          "o": {
+           "fill": "color.border.selected"
+          }
+         }
+        ],
+        "h": 40,
+        "note": "role=\"tab\", aria-selected=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "tab · Detectors",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Detectors",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "h": 38
+         },
+         {
+          "t": "rect",
+          "name": "rule slot",
+          "w": 84,
+          "h": 2
+         }
+        ],
+        "h": 40,
+        "note": "role=\"tab\""
+       }
+      ],
+      "w": 960,
+      "h": 40,
+      "note": "one Tab stop; arrows move and activate (automatic)",
+      "x": 0,
+      "y": 56
+     },
+     {
+      "t": "rect",
+      "name": "tabs rule",
+      "w": 960,
+      "h": 1,
+      "o": {
+       "fill": "color.border.default"
+      },
+      "x": 0,
+      "y": 96
+     },
+     {
+      "t": "board",
+      "name": "tabpanel · Trading",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "field · Quantity presets",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Quantity presets (BTC)",
+          "typo": "type.ui.label",
+          "color": "color.text.primary",
+          "w": 208
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 preset 1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.sunken",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "justify": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "0.1",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 72,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 preset 2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.sunken",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "justify": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "0.25",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 72,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 preset 3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.sunken",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "justify": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "0.5",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 72,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 preset 4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.sunken",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "justify": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 72,
+          "h": 32
+         }
+        ],
+        "w": 560,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "CMP-005 live confirm",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "box · checked",
+          "o": {
+           "fill": "color.action.primary.default",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "check",
+            "icon": "check",
+            "color": "color.text.on-action",
+            "size": "size.icon.sm",
+            "x": 2,
+            "y": 2
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "LIVE: confirm every market order",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "checkbox, checked"
+       },
+       {
+        "t": "text",
+        "name": "W-19",
+        "chars": "DEMO: market orders send without a confirm",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 560
+       },
+       {
+        "t": "board",
+        "name": "click-trade behaviour (read-only)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Click-trade behaviour",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "text",
+          "name": "W-30",
+          "chars": "Click bid: buy limit · click ask: sell limit · Ctrl+click: market · Shift+click: stop",
+          "typo": "type.ui.body",
+          "color": "color.text.secondary",
+          "w": 560
+         },
+         {
+          "t": "text",
+          "name": "arm",
+          "chars": "Ctrl+Shift+T = arm/disarm one-click",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 560,
+        "h": 72
+       }
+      ],
+      "w": 560,
+      "x": 24,
+      "y": 121,
+      "note": "role=\"tabpanel\"; fields in CMP-065 FormSection blocks",
+      "h": 183
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-051∕trading-demo/CMP-043 dialog (lg)",
+   "node": {
+    "t": "board",
+    "name": "preview column",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-228 tile",
+      "o": {
+       "fill": "color.surface.sunken",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "cells · zero",
+        "w": 272,
+        "h": 180,
+        "o": {
+         "fill": "color.heatmap.zero"
+        },
+        "x": 40,
+        "y": 10
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 1 cols 5-9 · 1",
+        "w": 80,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 104,
+        "y": 82
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 1 cols 11-12 · 1",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 200,
+        "y": 82
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 1 cols 15-16 · 1",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 264,
+        "y": 82
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 2 cols 2-4 · 1",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 56,
+        "y": 64
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 2 cols 5-7 · 2",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 104,
+        "y": 64
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 2 cols 8-14 · 3",
+        "w": 112,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 152,
+        "y": 64
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 2 cols 15-15 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 264,
+        "y": 64
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 2 cols 16-17 · 3",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 280,
+        "y": 64
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 3 cols 1-1 · 1",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 40,
+        "y": 46
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 3 cols 2-8 · 2",
+        "w": 112,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 56,
+        "y": 46
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 3 cols 9-13 · 3",
+        "w": 80,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 168,
+        "y": 46
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 3 cols 14-14 · 4",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 248,
+        "y": 46
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 3 cols 15-17 · 3",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 264,
+        "y": 46
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 1-3 · 4",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 40,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 4-4 · 5",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 88,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 5-6 · 4",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 104,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 7-8 · 5",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 136,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 9-9 · 4",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 168,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 10-10 · 5",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 184,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 11-11 · 4",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 200,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 12-12 · 5",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 216,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 13-13 · 4",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 232,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 14-14 · 5",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 248,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 15-15 · 4",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 264,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 16-17 · 5",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 280,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 5 cols 1-2 · 2",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 40,
+        "y": 10
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 5 cols 3-16 · 3",
+        "w": 224,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 72,
+        "y": 10
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 5 cols 17-17 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 296,
+        "y": 10
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 7-9 · 1",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 136,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 10-10 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 184,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 11-11 · 1",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 200,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 12-14 · 2",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 216,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 15-16 · 3",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.3"
+        },
+        "x": 264,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 17-17 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 296,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 2 cols 1-4 · 1",
+        "w": 64,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 40,
+        "y": 118
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 2 cols 5-17 · 2",
+        "w": 208,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 104,
+        "y": 118
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 3 cols 3-11 · 1",
+        "w": 144,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 72,
+        "y": 136
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 3 cols 12-12 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 216,
+        "y": 136
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 3 cols 13-15 · 1",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 232,
+        "y": 136
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 3 cols 16-16 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 280,
+        "y": 136
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 3 cols 17-17 · 1",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 296,
+        "y": 136
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 1-3 · 2",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 40,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 4-4 · 1",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 88,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 5-5 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 104,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 6-11 · 1",
+        "w": 96,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 120,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 12-15 · 2",
+        "w": 64,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 216,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 16-16 · 1",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 280,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 17-17 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 296,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 5 cols 1-3 · 4",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.4"
+        },
+        "x": 40,
+        "y": 172
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 5 cols 4-4 · 3",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.3"
+        },
+        "x": 88,
+        "y": 172
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 5 cols 5-16 · 4",
+        "w": 192,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.4"
+        },
+        "x": 104,
+        "y": 172
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 5 cols 17-17 · 5",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.5"
+        },
+        "x": 296,
+        "y": 172
+       },
+       {
+        "t": "rect",
+        "name": "mid-price line",
+        "w": 272,
+        "h": 1,
+        "o": {
+         "fill": "color.text.primary"
+        },
+        "x": 40,
+        "y": 100
+       },
+       {
+        "t": "text",
+        "name": "side · Ask",
+        "chars": "Ask",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "x": 8,
+        "y": 76
+       },
+       {
+        "t": "text",
+        "name": "side · Bid",
+        "chars": "Bid",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "x": 8,
+        "y": 110
+       }
+      ],
+      "w": 320,
+      "h": 200,
+      "note": "role=\"img\" (its name in the annotations); static sample frames, never a live subscription"
+     }
+    ],
+    "w": 320,
+    "x": 616,
+    "y": 121,
+    "h": 200
+   }
+  },
+  {
+   "into": "SCR-051∕trading-demo/CMP-043 dialog (lg)",
+   "node": {
+    "t": "rect",
+    "name": "footer rule",
+    "w": 960,
+    "h": 1,
+    "o": {
+     "fill": "color.border.default"
+    },
+    "x": 0,
+    "y": 655
+   }
+  },
+  {
+   "into": "SCR-051∕trading-demo/CMP-043 dialog (lg)",
+   "node": {
+    "t": "board",
+    "name": "footer (sticky)",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "padX": "space.dialog.padding",
+     "padY": "space.inset.md",
+     "justify": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "buttons",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-001 Reset to defaults",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reset to defaults",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 150,
+        "h": 32,
+        "note": "ghost"
+       },
+       {
+        "t": "board",
+        "name": "CMP-001 Reset this tab",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reset this tab",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 128,
+        "h": 32,
+        "note": "ghost"
+       },
+       {
+        "t": "rect",
+        "name": "status node (empty)",
+        "w": 477,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "CMP-001 Cancel",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "gap": "space.inset.sm",
+         "fill": "color.action.secondary.default"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Cancel",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 70,
+        "h": 32,
+        "note": "secondary"
+       },
+       {
+        "t": "board",
+        "name": "CMP-001 Save",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "gap": "space.inset.sm",
+         "fill": "color.action.primary.default"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Save",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.on-action"
+         }
+        ],
+        "w": 55,
+        "h": 32,
+        "note": "primary"
+       }
+      ],
+      "w": 912,
+      "h": 40
+     }
+    ],
+    "w": 960,
+    "h": 64,
+    "x": 0,
+    "y": 656
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "SCR-051∕trading-live",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "frame SCR-051/trading-live",
+    "x": 1440,
+    "y": 108,
+    "kids": [
+     {
+      "t": "board",
+      "name": "SCR-050 header",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.md",
+       "padX": "space.inset.sm",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "BTCUSDT · Heatmap + Ladder",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "board",
+        "name": "depth control",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "depth",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "depth listbox",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.sunken",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "justify": "space-between"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "200",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 64,
+          "h": 32
+         }
+        ],
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "env badge · LIVE",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "fill": "color.surface.raised",
+         "stroke": "color.env.live",
+         "strokeWidth": "border.thick",
+         "strokeAlign": "inner",
+         "radius": "radius.badge"
+        },
+        "kids": [
+         {
+          "t": "ellipse",
+          "name": "glyph",
+          "w": 8,
+          "h": 8,
+          "o": {
+           "fill": "color.env.live"
+          }
+         },
+         {
+          "t": "text",
+          "name": "word",
+          "chars": "LIVE",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 22,
+        "note": "the session environment (R-4), not the feed"
+       },
+       {
+        "t": "text",
+        "name": "view",
+        "chars": "Ladder │ Table",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "icon",
+        "name": "more",
+        "icon": "more-horizontal",
+        "color": "color.text.secondary",
+        "size": "size.icon"
+       }
+      ],
+      "w": 1280,
+      "h": 32,
+      "x": 0,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "column header",
+      "w": 1280,
+      "h": 24,
+      "o": {
+       "fill": "color.surface.canvas"
+      },
+      "x": 0,
+      "y": 32
+     },
+     {
+      "t": "text",
+      "name": "pane label",
+      "chars": "Heatmap (time →)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 8,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Price",
+      "chars": "Price",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 648,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Bid (B)",
+      "chars": "Bid (B)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 744,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Ask (A)",
+      "chars": "Ask (A)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 840,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Prints",
+      "chars": "Prints",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 936,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Cum. depth",
+      "chars": "Cum. depth",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 1016,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Your orders",
+      "chars": "Your orders",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 1120,
+      "y": 37
+     },
+     {
+      "t": "board",
+      "name": "SCR-050 rows 1-8",
+      "kids": [
+       {
+        "t": "rect",
+        "name": "hm · ask 15 · 1-4",
+        "w": 160,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 14 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 24
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 13 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 0,
+        "y": 48
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 11 · 1-8",
+        "w": 320,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 96
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 10 · 1-5",
+        "w": 200,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 120
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 9 · 1-5",
+        "w": 200,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 144
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 8 · 1-4",
+        "w": 160,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 0,
+        "y": 168
+       }
+      ],
+      "w": 1280,
+      "h": 192,
+      "x": 0,
+      "y": 56
+     },
+     {
+      "t": "board",
+      "name": "SCR-050 rows 9-16",
+      "kids": [
+       {
+        "t": "rect",
+        "name": "hm · ask 7 · 1-4",
+        "w": 160,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "text",
+        "name": "td · ask 7 · Your orders",
+        "chars": "Sell 0.100",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 1120,
+        "y": 5
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 6 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 0,
+        "y": 24
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 5 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 48
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 4 · 1-2",
+        "w": 80,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 0,
+        "y": 72
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 4 · 3-6",
+        "w": 160,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 80,
+        "y": 72
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 3 · 1-9",
+        "w": 360,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 0,
+        "y": 96
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 2 · 1-13",
+        "w": 520,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 0,
+        "y": 120
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 1 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 0,
+        "y": 168
+       }
+      ],
+      "w": 1280,
+      "h": 192,
+      "x": 0,
+      "y": 248
+     },
+     {
+      "t": "board",
+      "name": "SCR-050 rows 17-24",
+      "kids": [
+       {
+        "t": "rect",
+        "name": "hm · bid 2 · 1-5",
+        "w": 200,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 3 · 1-3",
+        "w": 120,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 0,
+        "y": 24
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 3 · 4-9",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 120,
+        "y": 24
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 4 · 1-8",
+        "w": 320,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 0,
+        "y": 48
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 5 · 1-3",
+        "w": 120,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 0,
+        "y": 72
+       },
+       {
+        "t": "text",
+        "name": "td · bid 5 · Your orders",
+        "chars": "Buy 0.250",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 1120,
+        "y": 77
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 6 · 1-5",
+        "w": 200,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 0,
+        "y": 96
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 7 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 0,
+        "y": 120
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 8 · 1-10",
+        "w": 400,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 0,
+        "y": 144
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 9 · 1-4",
+        "w": 160,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.3"
+        },
+        "x": 0,
+        "y": 168
+       }
+      ],
+      "w": 1280,
+      "h": 192,
+      "x": 0,
+      "y": 440
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-051∕trading-live",
+   "node": {
+    "t": "board",
+    "name": "SCR-050 rows 25-31",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "hm · bid 11 · 1-16",
+      "w": 640,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.1"
+      },
+      "x": 0,
+      "y": 24
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 12 · 1-4",
+      "w": 160,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.1"
+      },
+      "x": 0,
+      "y": 48
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 13 · 1-16",
+      "w": 640,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.1"
+      },
+      "x": 0,
+      "y": 72
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 14 · 1-6",
+      "w": 240,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.1"
+      },
+      "x": 0,
+      "y": 96
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 15 · 1-2",
+      "w": 80,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.3"
+      },
+      "x": 0,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 15 · 3-4",
+      "w": 80,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.4"
+      },
+      "x": 80,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 15 · 5-6",
+      "w": 80,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.3"
+      },
+      "x": 160,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 15 · 7-7",
+      "w": 40,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.4"
+      },
+      "x": 240,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 15 · 8-16",
+      "w": 360,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.3"
+      },
+      "x": 280,
+      "y": 120
+     },
+     {
+      "t": "text",
+      "name": "td · bid 15 · Price",
+      "chars": "64,558.8",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 648,
+      "y": 125
+     },
+     {
+      "t": "text",
+      "name": "td · bid 15 · Bid (B)",
+      "chars": "B 2.675",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 744,
+      "y": 125
+     },
+     {
+      "t": "text",
+      "name": "td · bid 15 · Cum. depth",
+      "chars": "15.575",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 1016,
+      "y": 125
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 16 · 1-1",
+      "w": 40,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.2"
+      },
+      "x": 0,
+      "y": 144
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 16 · 2-2",
+      "w": 40,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.3"
+      },
+      "x": 40,
+      "y": 144
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 16 · 3-14",
+      "w": 480,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.2"
+      },
+      "x": 80,
+      "y": 144
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 16 · 15-16",
+      "w": 80,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.1"
+      },
+      "x": 560,
+      "y": 144
+     },
+     {
+      "t": "text",
+      "name": "td · bid 16 · Price",
+      "chars": "64,558.7",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 648,
+      "y": 149
+     },
+     {
+      "t": "text",
+      "name": "td · bid 16 · Bid (B)",
+      "chars": "B 0.724",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 744,
+      "y": 149
+     },
+     {
+      "t": "text",
+      "name": "td · bid 16 · Cum. depth",
+      "chars": "16.299",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 1016,
+      "y": 149
+     }
+    ],
+    "w": 1280,
+    "h": 168,
+    "x": 0,
+    "y": 632
+   }
+  },
+  {
+   "into": "SCR-051∕trading-live",
+   "node": {
+    "t": "rect",
+    "name": "mark line",
+    "w": 1280,
+    "h": 1,
+    "o": {
+     "fill": "color.text.primary"
+    },
+    "x": 0,
+    "y": 416
+   }
+  },
+  {
+   "into": "SCR-051∕trading-live",
+   "node": {
+    "t": "rect",
+    "name": "CMP-043 backdrop scrim",
+    "w": 1280,
+    "h": 800,
+    "o": {
+     "opacity": "opacity.scrim",
+     "fill": "color.surface.app"
+    },
+    "x": 0,
+    "y": 0
+   }
+  },
+  {
+   "into": "SCR-051∕trading-live",
+   "node": {
+    "t": "board",
+    "name": "CMP-043 dialog (lg)",
+    "o": {
+     "fill": "color.surface.overlay",
+     "stroke": "color.border.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner",
+     "radius": "radius.dialog",
+     "clip": true
+    },
+    "w": 960,
+    "h": 720,
+    "x": 160,
+    "y": 40,
+    "note": "CMP-043 size lg, comfortable; color.surface.overlay, space.dialog.padding, 1 px color.border.default",
+    "kids": [
+     {
+      "t": "board",
+      "name": "header",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.dialog.padding",
+       "justify": "space-between"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "title and badge",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "W-1 title",
+          "chars": "Heatmap + Ladder settings",
+          "typo": "type.ui.heading-sm",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "board",
+          "name": "env badge · LIVE",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.raised",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner",
+           "radius": "radius.badge"
+          },
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "glyph",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.env.live"
+            }
+           },
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 22,
+          "note": "the session environment (R-4), not the feed"
+         }
+        ],
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "close button",
+        "o": {
+         "radius": "radius.control"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "glyph",
+          "icon": "close",
+          "color": "color.text.secondary",
+          "size": "size.icon",
+          "x": 4,
+          "y": 4
+         }
+        ],
+        "w": 24,
+        "h": 24,
+        "note": "\"Close\": 24 × 24 (size.target.min); discards unsaved changes at once (§2.1)"
+       }
+      ],
+      "w": 960,
+      "h": 56,
+      "note": "role=\"dialog\", aria-modal=\"true\", named by W-2: \"Heatmap + Ladder settings, BTCUSDT, LIVE\""
+     },
+     {
+      "t": "board",
+      "name": "CMP-042 tablist",
+      "o": {
+       "dir": "row",
+       "align": "end",
+       "padX": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "tab · Depth & scale",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Depth & scale",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "h": 38
+         },
+         {
+          "t": "rect",
+          "name": "rule slot",
+          "w": 111,
+          "h": 2
+         }
+        ],
+        "h": 40,
+        "note": "role=\"tab\""
+       },
+       {
+        "t": "board",
+        "name": "tab · Colour",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Colour",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "h": 38
+         },
+         {
+          "t": "rect",
+          "name": "rule slot",
+          "w": 64,
+          "h": 2
+         }
+        ],
+        "h": 40,
+        "note": "role=\"tab\""
+       },
+       {
+        "t": "board",
+        "name": "tab · Ladder",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Ladder",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "h": 38
+         },
+         {
+          "t": "rect",
+          "name": "rule slot",
+          "w": 64,
+          "h": 2
+         }
+        ],
+        "h": 40,
+        "note": "role=\"tab\""
+       },
+       {
+        "t": "board",
+        "name": "tab · Trading (selected)",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Trading",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 38
+         },
+         {
+          "t": "rect",
+          "name": "selected rule",
+          "w": 71,
+          "h": 2,
+          "o": {
+           "fill": "color.border.selected"
+          }
+         }
+        ],
+        "h": 40,
+        "note": "role=\"tab\", aria-selected=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "tab · Detectors",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Detectors",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "h": 38
+         },
+         {
+          "t": "rect",
+          "name": "rule slot",
+          "w": 84,
+          "h": 2
+         }
+        ],
+        "h": 40,
+        "note": "role=\"tab\""
+       }
+      ],
+      "w": 960,
+      "h": 40,
+      "note": "one Tab stop; arrows move and activate (automatic)",
+      "x": 0,
+      "y": 56
+     },
+     {
+      "t": "rect",
+      "name": "tabs rule",
+      "w": 960,
+      "h": 1,
+      "o": {
+       "fill": "color.border.default"
+      },
+      "x": 0,
+      "y": 96
+     },
+     {
+      "t": "board",
+      "name": "tabpanel · Trading",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "field · Quantity presets",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Quantity presets (BTC)",
+          "typo": "type.ui.label",
+          "color": "color.text.primary",
+          "w": 208
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 preset 1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.sunken",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "justify": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "0.1",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 72,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 preset 2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.sunken",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "justify": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "0.25",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 72,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 preset 3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.sunken",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "justify": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "0.5",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 72,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 preset 4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.sunken",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "justify": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 72,
+          "h": 32
+         }
+        ],
+        "w": 560,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "CMP-005 live confirm",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "box · checked",
+          "o": {
+           "fill": "color.action.primary.default",
+           "radius": "radius.control"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "check",
+            "icon": "check",
+            "color": "color.text.on-action",
+            "size": "size.icon.sm",
+            "x": 2,
+            "y": 2
+           }
+          ],
+          "w": 16,
+          "h": 16
+         },
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "LIVE: confirm every market order",
+          "typo": "type.ui.body",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 24,
+        "note": "checkbox, checked"
+       },
+       {
+        "t": "text",
+        "name": "W-19",
+        "chars": "DEMO: market orders send without a confirm",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 560
+       },
+       {
+        "t": "board",
+        "name": "click-trade behaviour (read-only)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Click-trade behaviour",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "text",
+          "name": "W-30",
+          "chars": "Click bid: buy limit · click ask: sell limit · Ctrl+click: market · Shift+click: stop",
+          "typo": "type.ui.body",
+          "color": "color.text.secondary",
+          "w": 560
+         },
+         {
+          "t": "text",
+          "name": "arm",
+          "chars": "Ctrl+Shift+T = arm/disarm one-click",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 560,
+        "h": 72
+       }
+      ],
+      "w": 560,
+      "x": 24,
+      "y": 121,
+      "note": "role=\"tabpanel\"; fields in CMP-065 FormSection blocks",
+      "h": 183
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-051∕trading-live/CMP-043 dialog (lg)",
+   "node": {
+    "t": "board",
+    "name": "preview column",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-228 tile",
+      "o": {
+       "fill": "color.surface.sunken",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "cells · zero",
+        "w": 272,
+        "h": 180,
+        "o": {
+         "fill": "color.heatmap.zero"
+        },
+        "x": 40,
+        "y": 10
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 1 cols 5-9 · 1",
+        "w": 80,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 104,
+        "y": 82
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 1 cols 11-12 · 1",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 200,
+        "y": 82
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 1 cols 15-16 · 1",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 264,
+        "y": 82
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 2 cols 2-4 · 1",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 56,
+        "y": 64
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 2 cols 5-7 · 2",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 104,
+        "y": 64
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 2 cols 8-14 · 3",
+        "w": 112,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 152,
+        "y": 64
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 2 cols 15-15 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 264,
+        "y": 64
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 2 cols 16-17 · 3",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 280,
+        "y": 64
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 3 cols 1-1 · 1",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 40,
+        "y": 46
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 3 cols 2-8 · 2",
+        "w": 112,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 56,
+        "y": 46
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 3 cols 9-13 · 3",
+        "w": 80,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 168,
+        "y": 46
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 3 cols 14-14 · 4",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 248,
+        "y": 46
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 3 cols 15-17 · 3",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 264,
+        "y": 46
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 1-3 · 4",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 40,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 4-4 · 5",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 88,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 5-6 · 4",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 104,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 7-8 · 5",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 136,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 9-9 · 4",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 168,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 10-10 · 5",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 184,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 11-11 · 4",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 200,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 12-12 · 5",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 216,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 13-13 · 4",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 232,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 14-14 · 5",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 248,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 15-15 · 4",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 264,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 16-17 · 5",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 280,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 5 cols 1-2 · 2",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 40,
+        "y": 10
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 5 cols 3-16 · 3",
+        "w": 224,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 72,
+        "y": 10
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 5 cols 17-17 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 296,
+        "y": 10
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 7-9 · 1",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 136,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 10-10 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 184,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 11-11 · 1",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 200,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 12-14 · 2",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 216,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 15-16 · 3",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.3"
+        },
+        "x": 264,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 17-17 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 296,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 2 cols 1-4 · 1",
+        "w": 64,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 40,
+        "y": 118
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 2 cols 5-17 · 2",
+        "w": 208,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 104,
+        "y": 118
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 3 cols 3-11 · 1",
+        "w": 144,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 72,
+        "y": 136
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 3 cols 12-12 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 216,
+        "y": 136
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 3 cols 13-15 · 1",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 232,
+        "y": 136
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 3 cols 16-16 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 280,
+        "y": 136
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 3 cols 17-17 · 1",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 296,
+        "y": 136
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 1-3 · 2",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 40,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 4-4 · 1",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 88,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 5-5 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 104,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 6-11 · 1",
+        "w": 96,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 120,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 12-15 · 2",
+        "w": 64,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 216,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 16-16 · 1",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 280,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 17-17 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 296,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 5 cols 1-3 · 4",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.4"
+        },
+        "x": 40,
+        "y": 172
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 5 cols 4-4 · 3",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.3"
+        },
+        "x": 88,
+        "y": 172
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 5 cols 5-16 · 4",
+        "w": 192,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.4"
+        },
+        "x": 104,
+        "y": 172
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 5 cols 17-17 · 5",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.5"
+        },
+        "x": 296,
+        "y": 172
+       },
+       {
+        "t": "rect",
+        "name": "mid-price line",
+        "w": 272,
+        "h": 1,
+        "o": {
+         "fill": "color.text.primary"
+        },
+        "x": 40,
+        "y": 100
+       },
+       {
+        "t": "text",
+        "name": "side · Ask",
+        "chars": "Ask",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "x": 8,
+        "y": 76
+       },
+       {
+        "t": "text",
+        "name": "side · Bid",
+        "chars": "Bid",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "x": 8,
+        "y": 110
+       }
+      ],
+      "w": 320,
+      "h": 200,
+      "note": "role=\"img\" (its name in the annotations); static sample frames, never a live subscription"
+     }
+    ],
+    "w": 320,
+    "x": 616,
+    "y": 121,
+    "h": 200
+   }
+  },
+  {
+   "into": "SCR-051∕trading-live/CMP-043 dialog (lg)",
+   "node": {
+    "t": "rect",
+    "name": "footer rule",
+    "w": 960,
+    "h": 1,
+    "o": {
+     "fill": "color.border.default"
+    },
+    "x": 0,
+    "y": 655
+   }
+  },
+  {
+   "into": "SCR-051∕trading-live/CMP-043 dialog (lg)",
+   "node": {
+    "t": "board",
+    "name": "footer (sticky)",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "padX": "space.dialog.padding",
+     "padY": "space.inset.md",
+     "justify": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "buttons",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-001 Reset to defaults",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reset to defaults",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 150,
+        "h": 32,
+        "note": "ghost"
+       },
+       {
+        "t": "board",
+        "name": "CMP-001 Reset this tab",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reset this tab",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 128,
+        "h": 32,
+        "note": "ghost"
+       },
+       {
+        "t": "rect",
+        "name": "status node (empty)",
+        "w": 477,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "CMP-001 Cancel",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "gap": "space.inset.sm",
+         "fill": "color.action.secondary.default"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Cancel",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 70,
+        "h": 32,
+        "note": "secondary"
+       },
+       {
+        "t": "board",
+        "name": "CMP-001 Save",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "gap": "space.inset.sm",
+         "fill": "color.action.primary.default"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Save",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.on-action"
+         }
+        ],
+        "w": 55,
+        "h": 32,
+        "note": "primary"
+       }
+      ],
+      "w": 912,
+      "h": 40
+     }
+    ],
+    "w": 960,
+    "h": 64,
+    "x": 0,
+    "y": 656
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "SCR-051∕live-confirm-off",
+    "o": {
+     "fill": "color.surface.app",
+     "clip": true
+    },
+    "w": 1280,
+    "h": 800,
+    "note": "frame SCR-051/live-confirm-off",
+    "x": 80,
+    "y": 1016,
+    "kids": [
+     {
+      "t": "board",
+      "name": "SCR-050 header",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.md",
+       "padX": "space.inset.sm",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "title",
+        "chars": "BTCUSDT · Heatmap + Ladder",
+        "typo": "type.ui.body-strong",
+        "color": "color.text.primary"
+       },
+       {
+        "t": "board",
+        "name": "depth control",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "depth",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         },
+         {
+          "t": "board",
+          "name": "depth listbox",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.sunken",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "justify": "space-between"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "200",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           },
+           {
+            "t": "icon",
+            "name": "chevron",
+            "icon": "chevron-down",
+            "color": "color.text.secondary",
+            "size": "size.icon"
+           }
+          ],
+          "w": 64,
+          "h": 32
+         }
+        ],
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "env badge · LIVE",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs",
+         "padX": "space.inset.sm",
+         "fill": "color.surface.raised",
+         "stroke": "color.env.live",
+         "strokeWidth": "border.thick",
+         "strokeAlign": "inner",
+         "radius": "radius.badge"
+        },
+        "kids": [
+         {
+          "t": "ellipse",
+          "name": "glyph",
+          "w": 8,
+          "h": 8,
+          "o": {
+           "fill": "color.env.live"
+          }
+         },
+         {
+          "t": "text",
+          "name": "word",
+          "chars": "LIVE",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         }
+        ],
+        "h": 22,
+        "note": "the session environment (R-4), not the feed"
+       },
+       {
+        "t": "text",
+        "name": "view",
+        "chars": "Ladder │ Table",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       },
+       {
+        "t": "icon",
+        "name": "more",
+        "icon": "more-horizontal",
+        "color": "color.text.secondary",
+        "size": "size.icon"
+       }
+      ],
+      "w": 1280,
+      "h": 32,
+      "x": 0,
+      "y": 0
+     },
+     {
+      "t": "rect",
+      "name": "column header",
+      "w": 1280,
+      "h": 24,
+      "o": {
+       "fill": "color.surface.canvas"
+      },
+      "x": 0,
+      "y": 32
+     },
+     {
+      "t": "text",
+      "name": "pane label",
+      "chars": "Heatmap (time →)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 8,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Price",
+      "chars": "Price",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 648,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Bid (B)",
+      "chars": "Bid (B)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 744,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Ask (A)",
+      "chars": "Ask (A)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 840,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Prints",
+      "chars": "Prints",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 936,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Cum. depth",
+      "chars": "Cum. depth",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 1016,
+      "y": 37
+     },
+     {
+      "t": "text",
+      "name": "th · Your orders",
+      "chars": "Your orders",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "x": 1120,
+      "y": 37
+     },
+     {
+      "t": "board",
+      "name": "SCR-050 rows 1-8",
+      "kids": [
+       {
+        "t": "rect",
+        "name": "hm · ask 15 · 1-4",
+        "w": 160,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 14 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 24
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 13 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 0,
+        "y": 48
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 11 · 1-8",
+        "w": 320,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 96
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 10 · 1-5",
+        "w": 200,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 120
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 9 · 1-5",
+        "w": 200,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 144
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 8 · 1-4",
+        "w": 160,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 0,
+        "y": 168
+       }
+      ],
+      "w": 1280,
+      "h": 192,
+      "x": 0,
+      "y": 56
+     },
+     {
+      "t": "board",
+      "name": "SCR-050 rows 9-16",
+      "kids": [
+       {
+        "t": "rect",
+        "name": "hm · ask 7 · 1-4",
+        "w": 160,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "text",
+        "name": "td · ask 7 · Your orders",
+        "chars": "Sell 0.100",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 1120,
+        "y": 5
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 6 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 0,
+        "y": 24
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 5 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 0,
+        "y": 48
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 4 · 1-2",
+        "w": 80,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 0,
+        "y": 72
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 4 · 3-6",
+        "w": 160,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 80,
+        "y": 72
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 3 · 1-9",
+        "w": 360,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 0,
+        "y": 96
+       },
+       {
+        "t": "rect",
+        "name": "hm · ask 2 · 1-13",
+        "w": 520,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 0,
+        "y": 120
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 1 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 0,
+        "y": 168
+       }
+      ],
+      "w": 1280,
+      "h": 192,
+      "x": 0,
+      "y": 248
+     },
+     {
+      "t": "board",
+      "name": "SCR-050 rows 17-24",
+      "kids": [
+       {
+        "t": "rect",
+        "name": "hm · bid 2 · 1-5",
+        "w": 200,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 0,
+        "y": 0
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 3 · 1-3",
+        "w": 120,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 0,
+        "y": 24
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 3 · 4-9",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 120,
+        "y": 24
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 4 · 1-8",
+        "w": 320,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 0,
+        "y": 48
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 5 · 1-3",
+        "w": 120,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 0,
+        "y": 72
+       },
+       {
+        "t": "text",
+        "name": "td · bid 5 · Your orders",
+        "chars": "Buy 0.250",
+        "typo": "type.num.sm",
+        "color": "color.text.primary",
+        "x": 1120,
+        "y": 77
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 6 · 1-5",
+        "w": 200,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 0,
+        "y": 96
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 7 · 1-6",
+        "w": 240,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 0,
+        "y": 120
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 8 · 1-10",
+        "w": 400,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 0,
+        "y": 144
+       },
+       {
+        "t": "rect",
+        "name": "hm · bid 9 · 1-4",
+        "w": 160,
+        "h": 24,
+        "o": {
+         "fill": "color.heatmap.bid.3"
+        },
+        "x": 0,
+        "y": 168
+       }
+      ],
+      "w": 1280,
+      "h": 192,
+      "x": 0,
+      "y": 440
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-051∕live-confirm-off",
+   "node": {
+    "t": "board",
+    "name": "SCR-050 rows 25-31",
+    "kids": [
+     {
+      "t": "rect",
+      "name": "hm · bid 11 · 1-16",
+      "w": 640,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.1"
+      },
+      "x": 0,
+      "y": 24
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 12 · 1-4",
+      "w": 160,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.1"
+      },
+      "x": 0,
+      "y": 48
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 13 · 1-16",
+      "w": 640,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.1"
+      },
+      "x": 0,
+      "y": 72
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 14 · 1-6",
+      "w": 240,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.1"
+      },
+      "x": 0,
+      "y": 96
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 15 · 1-2",
+      "w": 80,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.3"
+      },
+      "x": 0,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 15 · 3-4",
+      "w": 80,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.4"
+      },
+      "x": 80,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 15 · 5-6",
+      "w": 80,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.3"
+      },
+      "x": 160,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 15 · 7-7",
+      "w": 40,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.4"
+      },
+      "x": 240,
+      "y": 120
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 15 · 8-16",
+      "w": 360,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.3"
+      },
+      "x": 280,
+      "y": 120
+     },
+     {
+      "t": "text",
+      "name": "td · bid 15 · Price",
+      "chars": "64,558.8",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 648,
+      "y": 125
+     },
+     {
+      "t": "text",
+      "name": "td · bid 15 · Bid (B)",
+      "chars": "B 2.675",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 744,
+      "y": 125
+     },
+     {
+      "t": "text",
+      "name": "td · bid 15 · Cum. depth",
+      "chars": "15.575",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 1016,
+      "y": 125
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 16 · 1-1",
+      "w": 40,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.2"
+      },
+      "x": 0,
+      "y": 144
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 16 · 2-2",
+      "w": 40,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.3"
+      },
+      "x": 40,
+      "y": 144
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 16 · 3-14",
+      "w": 480,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.2"
+      },
+      "x": 80,
+      "y": 144
+     },
+     {
+      "t": "rect",
+      "name": "hm · bid 16 · 15-16",
+      "w": 80,
+      "h": 24,
+      "o": {
+       "fill": "color.heatmap.bid.1"
+      },
+      "x": 560,
+      "y": 144
+     },
+     {
+      "t": "text",
+      "name": "td · bid 16 · Price",
+      "chars": "64,558.7",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 648,
+      "y": 149
+     },
+     {
+      "t": "text",
+      "name": "td · bid 16 · Bid (B)",
+      "chars": "B 0.724",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 744,
+      "y": 149
+     },
+     {
+      "t": "text",
+      "name": "td · bid 16 · Cum. depth",
+      "chars": "16.299",
+      "typo": "type.num.sm",
+      "color": "color.text.primary",
+      "x": 1016,
+      "y": 149
+     }
+    ],
+    "w": 1280,
+    "h": 168,
+    "x": 0,
+    "y": 632
+   }
+  },
+  {
+   "into": "SCR-051∕live-confirm-off",
+   "node": {
+    "t": "rect",
+    "name": "mark line",
+    "w": 1280,
+    "h": 1,
+    "o": {
+     "fill": "color.text.primary"
+    },
+    "x": 0,
+    "y": 416
+   }
+  },
+  {
+   "into": "SCR-051∕live-confirm-off",
+   "node": {
+    "t": "rect",
+    "name": "CMP-043 backdrop scrim",
+    "w": 1280,
+    "h": 800,
+    "o": {
+     "opacity": "opacity.scrim",
+     "fill": "color.surface.app"
+    },
+    "x": 0,
+    "y": 0
+   }
+  },
+  {
+   "into": "SCR-051∕live-confirm-off",
+   "node": {
+    "t": "board",
+    "name": "CMP-043 dialog (lg)",
+    "o": {
+     "fill": "color.surface.overlay",
+     "stroke": "color.border.default",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner",
+     "radius": "radius.dialog",
+     "clip": true
+    },
+    "w": 960,
+    "h": 720,
+    "x": 160,
+    "y": 40,
+    "note": "CMP-043 size lg, comfortable; color.surface.overlay, space.dialog.padding, 1 px color.border.default",
+    "kids": [
+     {
+      "t": "board",
+      "name": "header",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.dialog.padding",
+       "justify": "space-between"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "title and badge",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.md"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "W-1 title",
+          "chars": "Heatmap + Ladder settings",
+          "typo": "type.ui.heading-sm",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "board",
+          "name": "env badge · LIVE",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.raised",
+           "stroke": "color.env.live",
+           "strokeWidth": "border.thick",
+           "strokeAlign": "inner",
+           "radius": "radius.badge"
+          },
+          "kids": [
+           {
+            "t": "ellipse",
+            "name": "glyph",
+            "w": 8,
+            "h": 8,
+            "o": {
+             "fill": "color.env.live"
+            }
+           },
+           {
+            "t": "text",
+            "name": "word",
+            "chars": "LIVE",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 22,
+          "note": "the session environment (R-4), not the feed"
+         }
+        ],
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "close button",
+        "o": {
+         "radius": "radius.control"
+        },
+        "kids": [
+         {
+          "t": "icon",
+          "name": "glyph",
+          "icon": "close",
+          "color": "color.text.secondary",
+          "size": "size.icon",
+          "x": 4,
+          "y": 4
+         }
+        ],
+        "w": 24,
+        "h": 24,
+        "note": "\"Close\": 24 × 24 (size.target.min); discards unsaved changes at once (§2.1)"
+       }
+      ],
+      "w": 960,
+      "h": 56,
+      "note": "role=\"dialog\", aria-modal=\"true\", named by W-2: \"Heatmap + Ladder settings, BTCUSDT, LIVE\""
+     },
+     {
+      "t": "board",
+      "name": "CMP-042 tablist",
+      "o": {
+       "dir": "row",
+       "align": "end",
+       "padX": "space.inset.lg"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "tab · Depth & scale",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Depth & scale",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "h": 38
+         },
+         {
+          "t": "rect",
+          "name": "rule slot",
+          "w": 111,
+          "h": 2
+         }
+        ],
+        "h": 40,
+        "note": "role=\"tab\""
+       },
+       {
+        "t": "board",
+        "name": "tab · Colour",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Colour",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "h": 38
+         },
+         {
+          "t": "rect",
+          "name": "rule slot",
+          "w": 64,
+          "h": 2
+         }
+        ],
+        "h": 40,
+        "note": "role=\"tab\""
+       },
+       {
+        "t": "board",
+        "name": "tab · Ladder",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Ladder",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "h": 38
+         },
+         {
+          "t": "rect",
+          "name": "rule slot",
+          "w": 64,
+          "h": 2
+         }
+        ],
+        "h": 40,
+        "note": "role=\"tab\""
+       },
+       {
+        "t": "board",
+        "name": "tab · Trading (selected)",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Trading",
+            "typo": "type.ui.label",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 38
+         },
+         {
+          "t": "rect",
+          "name": "selected rule",
+          "w": 71,
+          "h": 2,
+          "o": {
+           "fill": "color.border.selected"
+          }
+         }
+        ],
+        "h": 40,
+        "note": "role=\"tab\", aria-selected=\"true\""
+       },
+       {
+        "t": "board",
+        "name": "tab · Detectors",
+        "o": {
+         "dir": "column",
+         "align": "start"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "label",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.md"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Detectors",
+            "typo": "type.ui.label",
+            "color": "color.text.secondary"
+           }
+          ],
+          "h": 38
+         },
+         {
+          "t": "rect",
+          "name": "rule slot",
+          "w": 84,
+          "h": 2
+         }
+        ],
+        "h": 40,
+        "note": "role=\"tab\""
+       }
+      ],
+      "w": 960,
+      "h": 40,
+      "note": "one Tab stop; arrows move and activate (automatic)",
+      "x": 0,
+      "y": 56
+     },
+     {
+      "t": "rect",
+      "name": "tabs rule",
+      "w": 960,
+      "h": 1,
+      "o": {
+       "fill": "color.border.default"
+      },
+      "x": 0,
+      "y": 96
+     },
+     {
+      "t": "board",
+      "name": "tabpanel · Trading",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.md"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "field · Quantity presets",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Quantity presets (BTC)",
+          "typo": "type.ui.label",
+          "color": "color.text.primary",
+          "w": 208
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 preset 1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.sunken",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "justify": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "0.1",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 72,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 preset 2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.sunken",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "justify": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "0.25",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 72,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 preset 3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.sunken",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "justify": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "0.5",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 72,
+          "h": 32
+         },
+         {
+          "t": "board",
+          "name": "CMP-008 preset 4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.xs",
+           "padX": "space.inset.sm",
+           "fill": "color.surface.sunken",
+           "stroke": "color.text.tertiary",
+           "strokeWidth": "border.hairline",
+           "strokeAlign": "inner",
+           "radius": "radius.control",
+           "justify": "start"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "1",
+            "typo": "type.num.base",
+            "color": "color.text.primary"
+           }
+          ],
+          "w": 72,
+          "h": 32
+         }
+        ],
+        "w": 560,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "focus-ring",
+        "o": {
+         "radius": "radius.control",
+         "stroke": "color.focus.ring",
+         "strokeWidth": "border.focus",
+         "strokeAlign": "inner"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "CMP-005 live confirm",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "board",
+            "name": "box",
+            "o": {
+             "stroke": "color.text.tertiary",
+             "strokeWidth": "border.hairline",
+             "strokeAlign": "inner",
+             "radius": "radius.control"
+            },
+            "w": 16,
+            "h": 16
+           },
+           {
+            "t": "text",
+            "name": "label",
+            "chars": "LIVE: confirm every market order",
+            "typo": "type.ui.body",
+            "color": "color.text.primary"
+           }
+          ],
+          "h": 24,
+          "note": "checkbox, unchecked",
+          "x": 4,
+          "y": 4
+         }
+        ],
+        "w": 265,
+        "h": 32,
+        "note": "focus-visible: color.focus.ring 2 px outside the control"
+       },
+       {
+        "t": "board",
+        "name": "CMP-028 warning · W-20",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "pad": "space.inset.md",
+         "fill": "color.status.warning.subtle",
+         "radius": "radius.control"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "line",
+          "o": {
+           "dir": "row",
+           "align": "start",
+           "gap": "space.inset.sm"
+          },
+          "kids": [
+           {
+            "t": "icon",
+            "name": "glyph",
+            "icon": "warning",
+            "color": "color.status.warning.strong",
+            "size": "size.icon"
+           },
+           {
+            "t": "text",
+            "name": "words",
+            "chars": "Market orders on LIVE will send on one press, with no confirm.",
+            "typo": "type.ui.body",
+            "color": "color.text.primary",
+            "w": 508
+           }
+          ],
+          "w": 536,
+          "h": 20
+         }
+        ],
+        "w": 560,
+        "h": 44,
+        "note": "inline under the checkbox, no modal (§6)"
+       },
+       {
+        "t": "text",
+        "name": "W-19",
+        "chars": "DEMO: market orders send without a confirm",
+        "typo": "type.ui.body",
+        "color": "color.text.primary",
+        "w": 560
+       },
+       {
+        "t": "board",
+        "name": "click-trade behaviour (read-only)",
+        "o": {
+         "dir": "column",
+         "align": "start",
+         "gap": "space.stack.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Click-trade behaviour",
+          "typo": "type.ui.label",
+          "color": "color.text.primary"
+         },
+         {
+          "t": "text",
+          "name": "W-30",
+          "chars": "Click bid: buy limit · click ask: sell limit · Ctrl+click: market · Shift+click: stop",
+          "typo": "type.ui.body",
+          "color": "color.text.secondary",
+          "w": 560
+         },
+         {
+          "t": "text",
+          "name": "arm",
+          "chars": "Ctrl+Shift+T = arm/disarm one-click",
+          "typo": "type.ui.caption",
+          "color": "color.text.secondary"
+         }
+        ],
+        "w": 560,
+        "h": 72
+       }
+      ],
+      "w": 560,
+      "x": 24,
+      "y": 121,
+      "note": "role=\"tabpanel\"; fields in CMP-065 FormSection blocks",
+      "h": 247
+     }
+    ]
+   }
+  },
+  {
+   "into": "SCR-051∕live-confirm-off/CMP-043 dialog (lg)",
+   "node": {
+    "t": "board",
+    "name": "preview column",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "CMP-228 tile",
+      "o": {
+       "fill": "color.surface.sunken",
+       "stroke": "color.border.default",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "rect",
+        "name": "cells · zero",
+        "w": 272,
+        "h": 180,
+        "o": {
+         "fill": "color.heatmap.zero"
+        },
+        "x": 40,
+        "y": 10
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 1 cols 5-9 · 1",
+        "w": 80,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 104,
+        "y": 82
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 1 cols 11-12 · 1",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 200,
+        "y": 82
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 1 cols 15-16 · 1",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 264,
+        "y": 82
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 2 cols 2-4 · 1",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 56,
+        "y": 64
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 2 cols 5-7 · 2",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 104,
+        "y": 64
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 2 cols 8-14 · 3",
+        "w": 112,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 152,
+        "y": 64
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 2 cols 15-15 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 264,
+        "y": 64
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 2 cols 16-17 · 3",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 280,
+        "y": 64
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 3 cols 1-1 · 1",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.1"
+        },
+        "x": 40,
+        "y": 46
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 3 cols 2-8 · 2",
+        "w": 112,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 56,
+        "y": 46
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 3 cols 9-13 · 3",
+        "w": 80,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 168,
+        "y": 46
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 3 cols 14-14 · 4",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 248,
+        "y": 46
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 3 cols 15-17 · 3",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 264,
+        "y": 46
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 1-3 · 4",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 40,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 4-4 · 5",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 88,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 5-6 · 4",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 104,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 7-8 · 5",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 136,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 9-9 · 4",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 168,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 10-10 · 5",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 184,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 11-11 · 4",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 200,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 12-12 · 5",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 216,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 13-13 · 4",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 232,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 14-14 · 5",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 248,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 15-15 · 4",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.4"
+        },
+        "x": 264,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 4 cols 16-17 · 5",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.5"
+        },
+        "x": 280,
+        "y": 28
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 5 cols 1-2 · 2",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 40,
+        "y": 10
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 5 cols 3-16 · 3",
+        "w": 224,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.3"
+        },
+        "x": 72,
+        "y": 10
+       },
+       {
+        "t": "rect",
+        "name": "cell · ask band 5 cols 17-17 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.ask.2"
+        },
+        "x": 296,
+        "y": 10
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 7-9 · 1",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 136,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 10-10 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 184,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 11-11 · 1",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 200,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 12-14 · 2",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 216,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 15-16 · 3",
+        "w": 32,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.3"
+        },
+        "x": 264,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 1 cols 17-17 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 296,
+        "y": 100
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 2 cols 1-4 · 1",
+        "w": 64,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 40,
+        "y": 118
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 2 cols 5-17 · 2",
+        "w": 208,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 104,
+        "y": 118
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 3 cols 3-11 · 1",
+        "w": 144,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 72,
+        "y": 136
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 3 cols 12-12 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 216,
+        "y": 136
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 3 cols 13-15 · 1",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 232,
+        "y": 136
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 3 cols 16-16 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 280,
+        "y": 136
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 3 cols 17-17 · 1",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 296,
+        "y": 136
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 1-3 · 2",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 40,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 4-4 · 1",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 88,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 5-5 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 104,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 6-11 · 1",
+        "w": 96,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 120,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 12-15 · 2",
+        "w": 64,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 216,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 16-16 · 1",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.1"
+        },
+        "x": 280,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 4 cols 17-17 · 2",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.2"
+        },
+        "x": 296,
+        "y": 154
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 5 cols 1-3 · 4",
+        "w": 48,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.4"
+        },
+        "x": 40,
+        "y": 172
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 5 cols 4-4 · 3",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.3"
+        },
+        "x": 88,
+        "y": 172
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 5 cols 5-16 · 4",
+        "w": 192,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.4"
+        },
+        "x": 104,
+        "y": 172
+       },
+       {
+        "t": "rect",
+        "name": "cell · bid band 5 cols 17-17 · 5",
+        "w": 16,
+        "h": 18,
+        "o": {
+         "fill": "color.heatmap.bid.5"
+        },
+        "x": 296,
+        "y": 172
+       },
+       {
+        "t": "rect",
+        "name": "mid-price line",
+        "w": 272,
+        "h": 1,
+        "o": {
+         "fill": "color.text.primary"
+        },
+        "x": 40,
+        "y": 100
+       },
+       {
+        "t": "text",
+        "name": "side · Ask",
+        "chars": "Ask",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "x": 8,
+        "y": 76
+       },
+       {
+        "t": "text",
+        "name": "side · Bid",
+        "chars": "Bid",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "x": 8,
+        "y": 110
+       }
+      ],
+      "w": 320,
+      "h": 200,
+      "note": "role=\"img\" (its name in the annotations); static sample frames, never a live subscription"
+     }
+    ],
+    "w": 320,
+    "x": 616,
+    "y": 121,
+    "h": 200
+   }
+  },
+  {
+   "into": "SCR-051∕live-confirm-off/CMP-043 dialog (lg)",
+   "node": {
+    "t": "rect",
+    "name": "footer rule",
+    "w": 960,
+    "h": 1,
+    "o": {
+     "fill": "color.border.default"
+    },
+    "x": 0,
+    "y": 655
+   }
+  },
+  {
+   "into": "SCR-051∕live-confirm-off/CMP-043 dialog (lg)",
+   "node": {
+    "t": "board",
+    "name": "footer (sticky)",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "padX": "space.dialog.padding",
+     "padY": "space.inset.md",
+     "justify": "center"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "buttons",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.sm"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "CMP-001 Reset to defaults",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reset to defaults",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 150,
+        "h": 32,
+        "note": "ghost"
+       },
+       {
+        "t": "board",
+        "name": "CMP-001 Reset this tab",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "gap": "space.inset.sm"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Reset this tab",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 128,
+        "h": 32,
+        "note": "ghost"
+       },
+       {
+        "t": "rect",
+        "name": "status node (empty)",
+        "w": 477,
+        "h": 32
+       },
+       {
+        "t": "board",
+        "name": "CMP-001 Cancel",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "gap": "space.inset.sm",
+         "fill": "color.action.secondary.default"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Cancel",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 70,
+        "h": 32,
+        "note": "secondary"
+       },
+       {
+        "t": "board",
+        "name": "CMP-001 Save",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.button.paddingX",
+         "radius": "radius.control",
+         "justify": "center",
+         "gap": "space.inset.sm",
+         "fill": "color.action.primary.default"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "label",
+          "chars": "Save",
+          "typo": "type.ui.body-strong",
+          "color": "color.text.on-action"
+         }
+        ],
+        "w": 55,
+        "h": 32,
+        "note": "primary"
+       }
+      ],
+      "w": 912,
+      "h": 40
+     }
+    ],
+    "w": 960,
+    "h": 64,
+    "x": 0,
+    "y": 656
+   }
+  },
+  {
+   "into": "SCR-051∕live-confirm-off",
+   "node": {
+    "t": "board",
+    "name": "board marker · announcement",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs",
+     "pad": "space.inset.sm",
+     "fill": "color.surface.canvas",
+     "stroke": "color.border.strong",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner",
+     "radius": "radius.control"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "how",
+      "chars": "announced: polite, once",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary"
+     },
+     {
+      "t": "text",
+      "name": "words",
+      "chars": "Market orders on LIVE will send on one press, with no confirm.",
+      "typo": "type.ui.caption",
+      "color": "color.text.primary",
+      "w": 504
+     }
+    ],
+    "w": 520,
+    "note": "board marker, not product UI",
+    "h": 48,
+    "x": 16,
+    "y": 744
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: SCR-051/trading-demo",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 84
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 02",
+    "chars": "state: SCR-051/trading-live",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 1440,
+    "y": 84
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 03",
+    "chars": "state: SCR-051/live-confirm-off",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 992
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data statement",
+    "chars": "Data: synthetic only — a seeded BTCUSDT book (seed 503): tick 0.10 and qty step 0.001 from the recorded instrument fixture; mark 64,560.2 at t0; 500 levels a side; sizes, walls, stops, the own orders and the viewing-as user \"Manager 01\" are synthetic; cost and clamp figures are a kit model, illustrative, PROPOSED, not a budget. No real account identifier, key or balance. The session environment is drawn DEMO and LIVE as separate frames, each badge read from the session, never the feed (C-2.11); nothing on the board switches the environment.",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 1840,
+    "w": 2640
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E21-D03 / 05 trading-demo-live",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L114: SCR-051/trading-demo, SCR-051/trading-live, SCR-051/live-confirm-off",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Frames: SCR-051/trading-demo, SCR-051/trading-live, SCR-051/live-confirm-off",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Theme: dark + light — this board is token-bound; it renders under dark and is exported twice: dark as docs/design/E21/img/E21-D03-05-trading-demo-live.png, light as docs/design/E21/img/E21-D03-05-trading-demo-live-light.png (the theme is switched at export; §0 L107: 3 light twins of 10 boards)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Frames 1280 × 800 windows; the dialog (CMP-043 lg) at comfortable density over SCR-050 at compact (§0)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "C-2.11: the badge reads the session environment, never the feed; DEMO and LIVE are separate frames",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-6",
+        "chars": "Owner walkthrough item 6 (§18): could the LIVE confirm line be read as applying to DEMO",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "SCR-051/trading-demo",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§10 L309 SCR-051/trading-demo: signal session environment demo; shows badge DEMO; W-18, W-19, presets, W-30; keyboard the badge is in the dialog's name (W-2); announced —; T2 none",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Badge DEMO from the session (R-4), in the dialog's name: \"Heatmap + Ladder settings, BTCUSDT, DEMO\"",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "The two confirm rules are separate lines, never one toggle across environments: W-18 (LIVE, a CMP-005, on by default, T Sec) and W-19 (DEMO, a text line, PROPOSED: C-14, owner E30-D04 / E31); each applies to its own environment only",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-4",
+        "chars": "Quantity presets 0.1 · 0.25 · 0.5 · 1 BTC (`14`:1241); W-30 read-only with Ctrl+Shift+T; prefs only — nothing here places, amends or cancels an order (E21 has no order path)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "SCR-051/trading-live",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§10 L310 SCR-051/trading-live: signal session environment live; shows badge LIVE; the same lines; keyboard as demo; announced —; T2 none",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Badge LIVE from the session (R-4): \"Heatmap + Ladder settings, BTCUSDT, LIVE\"; the same lines as DEMO",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "The environment is switched by SCR-074 / SCR-075 (`14`:81), never here; switching to LIVE takes C-2.11's typed confirm",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-04",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "SCR-051/live-confirm-off",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§10 L311 SCR-051/live-confirm-off: signal W-18 unchecked; shows W-20 in a CMP-028 warning; keyboard focus stays on the checkbox; announced W-20 polite once (R-5); T2 none",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "W-18 unchecked in a LIVE session: W-20 in a CMP-028 warning inline under it, no modal; re-checking removes it; focus stays on the checkbox",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "No step-up to turn it off: PROPOSED, the inline warning only (C-14; owner E30-D04 / E31); no frame shows the warning under a DEMO badge",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E21-D03 · board 05 · r1",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 2800,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E21/img/E21-D03-05-trading-demo-live.png",
+ "notes": {
+  "sources": [
+   "spec docs/design/E21/E21-D03.md md5 4f4755b45b309e4f1b11a728ce58dcda at c7b0d2087 (§0 L114); no hand-off file (BQ-2)",
+   "packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a060c51bd4bd1450307728ddf (BTCUSDT tick 0.10, qty step 0.001)"
+  ],
+  "copy_keys": [
+   "spec L106: \"BTCUSDT\"",
+   "spec L13: \"illustrative, PROPOSED, not a budget\"",
+   "spec L30: \"DEMO\"",
+   "spec L99: \"Reset to defaults\"",
+   "spec L151: \"Reset this tab\"",
+   "spec L140: \"Cancel\"",
+   "spec L5: \"Save\"",
+   "W-18 (§15 L463, PROPOSED): \"LIVE: confirm every market order\"",
+   "W-19 (§15 L464, PROPOSED; E30-D04 / E31 (C-14)): \"DEMO: market orders send without a confirm\"",
+   "spec L175: \"Click-trade behaviour\"",
+   "W-30 (§15 L475, PROPOSED (adapted)): \"Click bid: buy limit · click ask: sell limit · Ctrl+click: market · Shift+click: stop\"",
+   "spec L251: \"Ctrl+Shift+T = arm/disarm one-click\"",
+   "spec L184: \"Ask\"",
+   "spec L184: \"Bid\"",
+   "W-1 (§15 L446, verbatim): \"Heatmap + Ladder settings\"",
+   "W-2 (§15 L447, PROPOSED): \"Heatmap + Ladder settings, BTCUSDT, DEMO\"",
+   "spec L96: \"Depth & scale\"",
+   "spec L98: \"Colour\"",
+   "spec L96: \"Ladder\"",
+   "spec L97: \"Trading\"",
+   "spec L121: \"Detectors\"",
+   "spec L5: \"LIVE\"",
+   "W-2 (§15 L447, PROPOSED): \"Heatmap + Ladder settings, BTCUSDT, LIVE\"",
+   "W-20 (§15 L465, PROPOSED; E30-D04 / E31 (C-14)): \"Market orders on LIVE will send on one press, with no confirm.\""
+  ],
+  "copy_gaps": [
+   "\"depth\": kit label, not E21-D03 copy — E21-D02's header",
+   "\"BTCUSDT · Heatmap + Ladder\": kit label, not E21-D03 copy — E21-D02's panel title",
+   "\"Ladder │ Table\": kit label, not E21-D03 copy — E21-D02's view switch",
+   "\"Heatmap (time →)\": kit label, not E21-D03 copy — E21-D02's pane",
+   "\"Price\": kit label, not E21-D03 copy — E21-D02's ladder column header",
+   "\"Bid (B)\": kit label, not E21-D03 copy — E21-D02's ladder column header",
+   "\"Ask (A)\": kit label, not E21-D03 copy — E21-D02's ladder column header",
+   "\"Prints\": kit label, not E21-D03 copy — E21-D02's ladder column header",
+   "\"Cum. depth\": kit label, not E21-D03 copy — E21-D02's ladder column header",
+   "\"Your orders\": kit label, not E21-D03 copy — E21-D02's ladder column header",
+   "\"Quantity presets (BTC)\": kit label, not E21-D03 copy — §2.2 names the field \"Quantity presets 1–4\"; the unit in the label (T A11y)",
+   "\"announced: polite, once\": kit label, not E21-D03 copy — board-marker label"
+  ],
+  "spec_gaps": [],
+  "fallbacks": [
+   "kit choice: the SCR-050 panel behind the dialog (E21-D02 #440's anatomy) is drawn as context at compact: header, the heatmap pane as run-length cells, the ladder's six columns; its labels are E21-D02's, listed as copy gaps here",
+   "kit choice: the env pill's glyph (E10-D03's) is not in the local icon set; drawn as an 8 px dot in the env colour, outlined for DEMO and filled for LIVE, beside the word (text + glyph, the colour never the only signal)",
+   "opacity.scrim is a Tier-1 primitive (validator WARN): the SCR-050 panel behind the modal dialog is dimmed by a color.surface.app rect at opacity.scrim (CMP-043's backdrop)",
+   "kit choice: CMP-006 radios drawn as 16 px circles (1 px color.text.tertiary rest stroke, E05-D04 F-03), the checked one with an 8 px color.action.primary.default dot; CMP-005 checkboxes as 16 px squares, checked filled color.action.primary.default with the local 'check' glyph in color.text.on-action",
+   "size.icon.sm (12 px) is a Tier-1 primitive (validator WARN)",
+   "kit choice: the CMP-228 tile's sample frame is 17 time columns × 10 price bands (5 a side, each band the sum of tier ÷ 5 levels), equal-bucket runs drawn as one rect; the stops bucket each band's size",
+   "kit choice: board markers (focus-order numbers, announcements, hidden names, illustrative labels, redline callouts) are drawn in a 1 px color.border.strong outline with a 'board marker' caption — not product UI"
+  ],
+  "tokens": [
+   "type.ui.caption",
+   "color.text.secondary",
+   "type.num.base",
+   "color.text.primary",
+   "size.icon",
+   "space.inset.xs",
+   "space.inset.sm",
+   "color.surface.sunken",
+   "color.text.tertiary",
+   "border.hairline",
+   "radius.control",
+   "type.ui.body-strong",
+   "color.env.demo",
+   "border.thick",
+   "type.ui.label",
+   "color.surface.raised",
+   "radius.badge",
+   "space.inset.md",
+   "color.surface.canvas",
+   "color.heatmap.ask.2",
+   "color.heatmap.ask.1",
+   "type.num.sm",
+   "color.heatmap.ask.3",
+   "color.heatmap.ask.4",
+   "color.heatmap.ask.5",
+   "color.heatmap.bid.2",
+   "color.heatmap.bid.3",
+   "color.heatmap.bid.4",
+   "color.heatmap.bid.1",
+   "opacity.scrim",
+   "color.surface.app",
+   "space.button.paddingX",
+   "color.action.secondary.default",
+   "color.text.on-action",
+   "color.action.primary.default",
+   "space.stack.xs",
+   "space.dialog.padding",
+   "size.icon.sm",
+   "type.ui.body",
+   "space.stack.md",
+   "color.heatmap.zero",
+   "color.heatmap.bid.5",
+   "color.border.default",
+   "type.ui.heading-sm",
+   "color.border.selected",
+   "space.inset.lg",
+   "color.surface.overlay",
+   "radius.dialog",
+   "color.env.live",
+   "color.border.strong",
+   "color.focus.ring",
+   "border.focus",
+   "color.status.warning.strong",
+   "color.status.warning.subtle",
+   "space.stack.sm"
+  ],
+  "live_checks": [
+   "light twin: after the dark export, switch to the light theme (wait as the sheets README says) and export the same board as docs/design/E21/img/E21-D03-05-trading-demo-live-light.png",
+   "root 'E21-D03 / 05 trading-demo-live' at (25600, 0): read back the name exactly after the first section call; size 3280 x 1952",
+   "after touchTexts + relayout: the annotation column (estimated 955 px with 15 % slack) ends inside the root (h 1952); raise the root's h to max(annotation end, footer end) + 80 if not",
+   "frame 'SCR-051∕trading-demo': read back 1280 x 800 at (80, 108); clip on, no child spills (raise h in 8 px steps if the lint reports text-overflow)",
+   "frame 'SCR-051∕trading-live': read back 1280 x 800 at (1440, 108); clip on, no child spills (raise h in 8 px steps if the lint reports text-overflow)",
+   "frame 'SCR-051∕live-confirm-off': read back 1280 x 800 at (80, 1016); clip on, no child spills (raise h in 8 px steps if the lint reports text-overflow)",
+   "export docs/design/E21/img/E21-D03-05-trading-demo-live.png: record the board id and the PNG size"
+  ],
+  "deviations": [],
+  "derivations": [
+   "SCR-050 behind: 31 rows at compact around mark 64,560.2 (best bid 64,560.2, best ask 64,560.3); cum. depth from the touch; prints = the drop between the last two columns within 6 levels; own orders Buy 0.250 at 64,559.8, Sell 0.100 at 64,560.9"
+  ],
+  "decisions": []
+ }
+}

@@ -1,0 +1,4946 @@
+{
+ "board": {
+  "name": "E21-D04 / 05 ramps-cvd",
+  "w": 2304,
+  "h": 976,
+  "x": 24000,
+  "y": 0,
+  "o": {
+   "fill": "color.surface.app",
+   "clip": true
+  }
+ },
+ "sections": [
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "Ramps ∕ The four palette sets on the canvas · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas",
+     "clip": true
+    },
+    "w": 752,
+    "h": 760,
+    "note": "specimen frame: Ramps / The four palette sets on the canvas (no library component)",
+    "x": 80,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "board marker · the four palette sets of §5.",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "stroke": "color.border.strong",
+       "strokeWidth": "border.hairline",
+       "strokeAlign": "inner",
+       "radius": "radius.control"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "words",
+        "chars": "the four palette sets of §5.1: stops 1 → 5 left to right; the floor is never a stop (C-9)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       }
+      ],
+      "w": 566,
+      "h": 20,
+      "note": "board marker, not product UI"
+     }
+    ]
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark",
+   "node": {
+    "t": "board",
+    "name": "palette sets",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "set heads",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "h0",
+        "chars": "set",
+        "typo": "type.ui.caption",
+        "color": "color.text.tertiary",
+        "w": 232
+       },
+       {
+        "t": "text",
+        "name": "h1",
+        "chars": "bid stops",
+        "typo": "type.ui.caption",
+        "color": "color.text.tertiary",
+        "w": 136
+       },
+       {
+        "t": "text",
+        "name": "h2",
+        "chars": "ask stops",
+        "typo": "type.ui.caption",
+        "color": "color.text.tertiary",
+        "w": 136
+       }
+      ],
+      "h": 16
+     },
+     {
+      "t": "board",
+      "name": "set 1",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "set name",
+        "chars": "standard, green-bid-red-ask (default)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 232
+       },
+       {
+        "t": "board",
+        "name": "bid stops",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.bid.1",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.bid.1"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.bid.2",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.bid.2"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.bid.3",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.bid.3"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.bid.4",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.bid.4"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.bid.5",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.bid.5"
+          }
+         }
+        ],
+        "w": 136,
+        "h": 16
+       },
+       {
+        "t": "board",
+        "name": "ask stops",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.ask.1",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.ask.1"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.ask.2",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.ask.2"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.ask.3",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.ask.3"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.ask.4",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.ask.4"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.ask.5",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.ask.5"
+          }
+         }
+        ],
+        "w": 136,
+        "h": 16
+       },
+       {
+        "t": "rect",
+        "name": "swatch · color.heatmap.zero",
+        "w": 24,
+        "h": 16,
+        "o": {
+         "fill": "color.heatmap.zero"
+        }
+       },
+       {
+        "t": "text",
+        "name": "floor",
+        "chars": "floor",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       }
+      ],
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "set 2",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "set name",
+        "chars": "standard, red-bid-green-ask",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 232
+       },
+       {
+        "t": "board",
+        "name": "bid stops",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.ask.1",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.ask.1"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.ask.2",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.ask.2"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.ask.3",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.ask.3"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.ask.4",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.ask.4"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.ask.5",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.ask.5"
+          }
+         }
+        ],
+        "w": 136,
+        "h": 16
+       },
+       {
+        "t": "board",
+        "name": "ask stops",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.bid.1",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.bid.1"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.bid.2",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.bid.2"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.bid.3",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.bid.3"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.bid.4",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.bid.4"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.heatmap.bid.5",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.heatmap.bid.5"
+          }
+         }
+        ],
+        "w": 136,
+        "h": 16
+       },
+       {
+        "t": "rect",
+        "name": "swatch · color.heatmap.zero",
+        "w": 24,
+        "h": 16,
+        "o": {
+         "fill": "color.heatmap.zero"
+        }
+       },
+       {
+        "t": "text",
+        "name": "floor",
+        "chars": "floor",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       }
+      ],
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "set 3",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "set name",
+        "chars": "CVD (blue / orange)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 232
+       },
+       {
+        "t": "board",
+        "name": "bid stops",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.bid.1",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.bid.1"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.bid.2",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.bid.2"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.bid.3",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.bid.3"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.bid.4",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.bid.4"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.bid.5",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.bid.5"
+          }
+         }
+        ],
+        "w": 136,
+        "h": 16
+       },
+       {
+        "t": "board",
+        "name": "ask stops",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.ask.1",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.ask.1"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.ask.2",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.ask.2"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.ask.3",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.ask.3"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.ask.4",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.ask.4"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.ask.5",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.ask.5"
+          }
+         }
+        ],
+        "w": 136,
+        "h": 16
+       },
+       {
+        "t": "rect",
+        "name": "swatch · color.heatmap.zero",
+        "w": 24,
+        "h": 16,
+        "o": {
+         "fill": "color.heatmap.zero"
+        }
+       },
+       {
+        "t": "text",
+        "name": "floor",
+        "chars": "floor",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       }
+      ],
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "set 4",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "gap": "space.inset.md"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "set name",
+        "chars": "CVD, inverted",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 232
+       },
+       {
+        "t": "board",
+        "name": "bid stops",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.ask.1",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.ask.1"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.ask.2",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.ask.2"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.ask.3",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.ask.3"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.ask.4",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.ask.4"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.ask.5",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.ask.5"
+          }
+         }
+        ],
+        "w": 136,
+        "h": 16
+       },
+       {
+        "t": "board",
+        "name": "ask stops",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.bid.1",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.bid.1"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.bid.2",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.bid.2"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.bid.3",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.bid.3"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.bid.4",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.bid.4"
+          }
+         },
+         {
+          "t": "rect",
+          "name": "swatch · color.cvd.heatmap.bid.5",
+          "w": 24,
+          "h": 16,
+          "o": {
+           "fill": "color.cvd.heatmap.bid.5"
+          }
+         }
+        ],
+        "w": 136,
+        "h": 16
+       },
+       {
+        "t": "rect",
+        "name": "swatch · color.heatmap.zero",
+        "w": 24,
+        "h": 16,
+        "o": {
+         "fill": "color.heatmap.zero"
+        }
+       },
+       {
+        "t": "text",
+        "name": "floor",
+        "chars": "floor",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary"
+       }
+      ],
+      "h": 24
+     }
+    ],
+    "w": 720
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark",
+   "node": {
+    "t": "board",
+    "name": "stop contrast on color.surface.canvas",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.xs"
+    },
+    "w": 632,
+    "kids": [
+     {
+      "t": "text",
+      "name": "caption",
+      "chars": "Every stop on color.surface.canvas, computed from the shipped token values (§5.2 L249); 20 of 20 ≥ 3:1 in each theme",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 616
+     },
+     {
+      "t": "board",
+      "name": "header row",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "th · token",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "stop",
+          "typo": "type.ui.caption",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "w": 248,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · dark",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "dark",
+          "typo": "type.num.sm",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · light",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "light",
+          "typo": "type.num.sm",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · hc",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "high-contrast",
+          "typo": "type.num.sm",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "w": 120,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "th · floor",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "floor",
+          "typo": "type.num.sm",
+          "color": "color.text.tertiary"
+         }
+        ],
+        "w": 72,
+        "h": 24
+       }
+      ],
+      "w": 632,
+      "h": 24,
+      "note": "column headers, scope=\"col\""
+     }
+    ]
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas",
+   "node": {
+    "t": "board",
+    "name": "rows",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "w": 632,
+    "h": 480,
+    "kids": [
+     {
+      "t": "board",
+      "name": "row · 01",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "token",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "color.heatmap.bid.1",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 248,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "dark",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "3.19",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "light",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "3.34",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "hc",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "3.19",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 120,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "floor",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "3:1",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 72,
+        "h": 24
+       }
+      ],
+      "w": 632,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "row · 02",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "token",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "color.heatmap.bid.2",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 248,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "dark",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "5.00",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "light",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "5.03",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "hc",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "5.00",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 120,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "floor",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "3:1",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 72,
+        "h": 24
+       }
+      ],
+      "w": 632,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "row · 03",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "token",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "color.heatmap.bid.3",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 248,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "dark",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "7.45",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "light",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "6.17",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "hc",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "7.45",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 120,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "floor",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "3:1",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 72,
+        "h": 24
+       }
+      ],
+      "w": 632,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "row · 04",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "token",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "color.heatmap.bid.4",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 248,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "dark",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "8.57",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "light",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "9.73",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "hc",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "8.57",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 120,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "floor",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "3:1",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 72,
+        "h": 24
+       }
+      ],
+      "w": 632,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "row · 05",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "token",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "color.heatmap.bid.5",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 248,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "dark",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "9.96",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "light",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "13.52",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "hc",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "9.96",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 120,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "floor",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "3:1",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 72,
+        "h": 24
+       }
+      ],
+      "w": 632,
+      "h": 24
+     }
+    ]
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 06",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "token",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "color.heatmap.ask.1",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "dark",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3.15",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "light",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "4.08",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "hc",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3.15",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "floor",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3:1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 632,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 07",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "token",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "color.heatmap.ask.2",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "dark",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "4.30",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "light",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "5.43",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "hc",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "4.30",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "floor",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3:1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 632,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 08",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "token",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "color.heatmap.ask.3",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "dark",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "5.64",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "light",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "7.26",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "hc",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "5.64",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "floor",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3:1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 632,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 09",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "token",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "color.heatmap.ask.4",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "dark",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "7.60",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "light",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "9.62",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "hc",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "7.60",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "floor",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3:1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 632,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 10",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "token",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "color.heatmap.ask.5",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "dark",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "10.23",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "light",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "13.56",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "hc",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "10.23",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "floor",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3:1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 632,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 11",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "token",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "color.cvd.heatmap.bid.1",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "dark",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3.86",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "light",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "8.70",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "hc",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3.86",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "floor",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3:1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 632,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 12",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "token",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "color.cvd.heatmap.bid.2",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "dark",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "5.21",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "light",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "6.77",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "hc",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "5.21",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "floor",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3:1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 632,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 13",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "token",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "color.cvd.heatmap.bid.3",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "dark",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "7.00",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "light",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "5.21",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "hc",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "7.00",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "floor",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3:1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 632,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 14",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "token",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "color.cvd.heatmap.bid.4",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "dark",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "9.23",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "light",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "4.11",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "hc",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "9.23",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "floor",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3:1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 632,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 15",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "token",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "color.cvd.heatmap.bid.5",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "dark",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "11.99",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "light",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3.28",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "hc",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "11.99",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "floor",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3:1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 632,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 16",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "token",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "color.cvd.heatmap.ask.1",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "dark",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "4.20",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "light",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "8.94",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "hc",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "4.20",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "floor",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3:1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 632,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 17",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "token",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "color.cvd.heatmap.ask.2",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "dark",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "5.54",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "light",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "7.26",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "hc",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "5.54",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "floor",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3:1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 632,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 18",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "token",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "color.cvd.heatmap.ask.3",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "dark",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "7.40",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "light",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "5.91",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "hc",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "7.40",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "floor",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3:1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 632,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 19",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "token",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "color.cvd.heatmap.ask.4",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "dark",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "9.65",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "light",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "4.84",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "hc",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "9.65",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "floor",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3:1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 632,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ The four palette sets on the canvas · dark/stop contrast on color.surface.canvas/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 20",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "token",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "color.cvd.heatmap.ask.5",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 248,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "dark",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "12.39",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "light",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "4.00",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "hc",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "12.39",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "floor",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "3:1",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 72,
+      "h": 24
+     }
+    ],
+    "w": 632,
+    "h": 24
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "Ramps ∕ Colour vision after simulation · dark",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.md",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas",
+     "clip": true
+    },
+    "w": 832,
+    "h": 280,
+    "note": "specimen frame: Ramps / Colour vision after simulation (no library component)",
+    "x": 912,
+    "y": 80,
+    "kids": [
+     {
+      "t": "board",
+      "name": "ΔE76 table",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "w": 800,
+      "kids": [
+       {
+        "t": "text",
+        "name": "caption",
+        "chars": "ΔE76 after simulation, floor 5.0 (§5.3 L265; docs/research/_tools/cvd_simulate.py)",
+        "typo": "type.ui.caption",
+        "color": "color.text.secondary",
+        "w": 784
+       },
+       {
+        "t": "board",
+        "name": "header row",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "fill": "color.surface.raised"
+        },
+        "kids": [
+         {
+          "t": "board",
+          "name": "th · c0",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Theme",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 120,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · c1",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "start",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Palette",
+            "typo": "type.ui.caption",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 96,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · c2",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Deuteranopia",
+            "typo": "type.num.sm",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 112,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · c3",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Protanopia",
+            "typo": "type.num.sm",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 104,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · c4",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Tritanopia",
+            "typo": "type.num.sm",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 104,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · c5",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Closest step",
+            "typo": "type.num.sm",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 112,
+          "h": 24
+         },
+         {
+          "t": "board",
+          "name": "th · c6",
+          "o": {
+           "dir": "row",
+           "align": "center",
+           "padX": "space.inset.sm",
+           "justify": "end",
+           "gap": "space.inset.xs"
+          },
+          "kids": [
+           {
+            "t": "text",
+            "name": "value",
+            "chars": "Where",
+            "typo": "type.num.sm",
+            "color": "color.text.tertiary"
+           }
+          ],
+          "w": 152,
+          "h": 24
+         }
+        ],
+        "w": 800,
+        "h": 24,
+        "note": "column headers, scope=\"col\""
+       },
+       {
+        "t": "rect",
+        "name": "header rule",
+        "w": 800,
+        "h": 1,
+        "o": {
+         "fill": "color.border.default"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "into": "Ramps ∕ Colour vision after simulation · dark/ΔE76 table",
+   "node": {
+    "t": "board",
+    "name": "rows",
+    "o": {
+     "dir": "column",
+     "align": "start"
+    },
+    "w": 800,
+    "h": 144,
+    "kids": [
+     {
+      "t": "board",
+      "name": "row · 01",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "c0",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "dark",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 120,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "standard",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "1.9",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 112,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c3",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "19.2",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 104,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c4",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "71.8",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 104,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c5",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "6.3",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 112,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c6",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "bid.4/bid.5 trit.",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 152,
+        "h": 24
+       }
+      ],
+      "w": 800,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "row · 02",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "c0",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "dark",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 120,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "cvd",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "62.9",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 112,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c3",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "53.7",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 104,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c4",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "49.6",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 104,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c5",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "7.2",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 112,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c6",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "ask.1/ask.2 deut.",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 152,
+        "h": 24
+       }
+      ],
+      "w": 800,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "row · 03",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.canvas"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "c0",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "light",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 120,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "standard",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "5.0",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 112,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c3",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "9.5",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 104,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c4",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "53.4",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 104,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c5",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "5.3",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 112,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c6",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "bid.2/bid.3 deut.",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 152,
+        "h": 24
+       }
+      ],
+      "w": 800,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "row · 04",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "fill": "color.surface.raised"
+      },
+      "kids": [
+       {
+        "t": "board",
+        "name": "c0",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "light",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 120,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c1",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "start",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "cvd",
+          "typo": "type.ui.caption",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 96,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c2",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "77.1",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 112,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c3",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "66.0",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 104,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c4",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "61.1",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 104,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c5",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "6.1",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 112,
+        "h": 24
+       },
+       {
+        "t": "board",
+        "name": "c6",
+        "o": {
+         "dir": "row",
+         "align": "center",
+         "padX": "space.inset.sm",
+         "justify": "end",
+         "gap": "space.inset.xs"
+        },
+        "kids": [
+         {
+          "t": "text",
+          "name": "value",
+          "chars": "ask.4/ask.5 prot.",
+          "typo": "type.num.sm",
+          "color": "color.text.primary"
+         }
+        ],
+        "w": 152,
+        "h": 24
+       }
+      ],
+      "w": 800,
+      "h": 24
+     }
+    ]
+   }
+  },
+  {
+   "into": "Ramps ∕ Colour vision after simulation · dark/ΔE76 table/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 05",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "c0",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "high-contrast",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "c1",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "standard",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "c2",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "1.9",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 112,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "c3",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "19.2",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 104,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "c4",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "71.8",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 104,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "c5",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "6.3",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 112,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "c6",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "bid.4/bid.5 trit.",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 152,
+      "h": 24
+     }
+    ],
+    "w": 800,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ Colour vision after simulation · dark/ΔE76 table/rows",
+   "node": {
+    "t": "board",
+    "name": "row · 06",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "fill": "color.surface.raised"
+    },
+    "kids": [
+     {
+      "t": "board",
+      "name": "c0",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "high-contrast",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 120,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "c1",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "start",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "cvd",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 96,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "c2",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "62.9",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 112,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "c3",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "53.7",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 104,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "c4",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "49.6",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 104,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "c5",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "7.2",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 112,
+      "h": 24
+     },
+     {
+      "t": "board",
+      "name": "c6",
+      "o": {
+       "dir": "row",
+       "align": "center",
+       "padX": "space.inset.sm",
+       "justify": "end",
+       "gap": "space.inset.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "value",
+        "chars": "ask.1/ask.2 deut.",
+        "typo": "type.num.sm",
+        "color": "color.text.primary"
+       }
+      ],
+      "w": 152,
+      "h": 24
+     }
+    ],
+    "w": 800,
+    "h": 24
+   }
+  },
+  {
+   "into": "Ramps ∕ Colour vision after simulation · dark",
+   "node": {
+    "t": "board",
+    "name": "board marker · greyscale, deuteranopia and ",
+    "o": {
+     "dir": "row",
+     "align": "center",
+     "padX": "space.inset.sm",
+     "stroke": "color.border.strong",
+     "strokeWidth": "border.hairline",
+     "strokeAlign": "inner",
+     "radius": "radius.control"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "words",
+      "chars": "greyscale, deuteranopia and protanopia renders of board 04: docs/design/_tools/cvd_sim.py on its export; tritanopia: the distances above only (the image tool has no tritanopia)",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 784
+     }
+    ],
+    "w": 800,
+    "h": 34,
+    "note": "board marker, not product UI"
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 01",
+    "chars": "state: Ramps / The four palette sets on the canvas · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 80,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "caption 02",
+    "chars": "state: Ramps / Colour vision after simulation · dark",
+    "typo": "type.ui.caption",
+    "color": "color.text.tertiary",
+    "x": 912,
+    "y": 52
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "text",
+    "name": "footer · data statement",
+    "chars": "Data: synthetic only (§0 L63): a seeded BTCUSDT book (seed 504), mark 65,432.0, tick 0.10 and qty step 0.001 from the recorded instrument fixture; accounts Acct A and Acct B are synthetic, every order and the position are props of a DEMO session (R-6, C-2.11); no real account, key or balance",
+    "typo": "type.ui.caption",
+    "color": "color.text.secondary",
+    "x": 80,
+    "y": 864,
+    "w": 1664
+   }
+  },
+  {
+   "into": "",
+   "node": {
+    "t": "board",
+    "name": "annotations",
+    "o": {
+     "dir": "column",
+     "align": "start",
+     "gap": "space.stack.sm",
+     "pad": "space.inset.lg",
+     "fill": "color.surface.canvas"
+    },
+    "kids": [
+     {
+      "t": "text",
+      "name": "title",
+      "chars": "E21-D04 / 05 ramps-cvd",
+      "typo": "type.ui.heading-sm",
+      "color": "color.text.primary",
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-01",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Board",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "§0 L71: the ramps' stops on the canvas; greyscale and the three simulations of board 04",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Frames: 2 (the kit's frame plan for this Draws cell)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-3",
+        "chars": "Theme: dark",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-5",
+        "chars": "Export: docs/design/E21/img/E21-D04-05-ramps-cvd.png",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-02",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Ramps / The four palette sets on the canvas · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Swatches bind the stop tokens; under this board's dark export they show the dark values; the light and high-contrast columns are computed, not drawn (themes are file-wide)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "semantic-hc overrides no heatmap token, so the high-contrast column equals dark (§5.2)",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "board",
+      "name": "block-03",
+      "o": {
+       "dir": "column",
+       "align": "start",
+       "gap": "space.stack.xs"
+      },
+      "kids": [
+       {
+        "t": "text",
+        "name": "label",
+        "chars": "Ramps / Colour vision after simulation · dark",
+        "typo": "type.ui.label",
+        "color": "color.text.secondary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-1",
+        "chars": "Reading (§5.3, heuristic): deuteranopia brings the standard bid / ask stops to 1.9 in dark and high contrast, so side is carried by the column, the letter and the words (R-2), and in the pane by position",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       },
+       {
+        "t": "text",
+        "name": "value-2",
+        "chars": "Exports: E21-D04-04-cmp-113-sets-scale-greyscale.png, -deuteranopia.png, -protanopia.png beside board 04",
+        "typo": "type.ui.caption",
+        "color": "color.text.primary",
+        "w": 368
+       }
+      ],
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "not drawn",
+      "chars": "Not drawn — the text is binding (§0 L78): the light frames outside boards 01, 04 and 06; every Storybook story of §7 beyond the specimen rows above; the reveal's Enter-from-the-pane path (the same region as board 03); CMP-229's other states (E30-D04's); CMP-228's other kinds; CMP-193 (out of scope). Also not drawn (the kit): W-21 … W-23, the cancel results (§4.8 L228–L230), spoken once through the panel's status node (R-5 L100); §0 draws no cancel result.",
+      "typo": "type.ui.caption",
+      "color": "color.text.secondary",
+      "w": 368
+     },
+     {
+      "t": "text",
+      "name": "footer",
+      "chars": "page E21-D04 · board 05 · r2",
+      "typo": "type.ui.caption",
+      "color": "color.text.tertiary",
+      "w": 368
+     }
+    ],
+    "w": 400,
+    "x": 1824,
+    "y": 80
+   }
+  }
+ ],
+ "export": "docs/design/E21/img/E21-D04-05-ramps-cvd.png",
+ "notes": {
+  "not_drawn": [
+   "§0 L78: the light frames outside boards 01, 04 and 06; every Storybook story of §7 beyond the specimen rows above; the reveal's Enter-from-the-pane path (the same region as board 03); CMP-229's other states (E30-D04's); CMP-228's other kinds; CMP-193 (out of scope).",
+   "the kit: W-21 … W-23, the cancel results (§4.8 L228–L230), spoken once through the panel's status node (R-5 L100); §0 draws no cancel result."
+  ],
+  "sources": [
+   "spec E21-D04.md md5 db638a7e and hand-off md5 d2486898 (§0 L71; §1-§8; RULED comment 6580397401)",
+   "packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a (tick size and qty step only)",
+   "tokens: tools/token-sync.json (names bound; values only for the computed figures)"
+  ],
+  "copy_keys": [],
+  "copy_gaps": [
+   "\"floor\", \"bid stops\", \"ask stops\": board labels for §5.1's columns (Bid stops, Ask stops, Floor)",
+   "\"set\": the board label of §5.1's first column",
+   "\"stop\", \"dark\", \"light\", \"high-contrast\": the ratio table's column labels (§5.2's theme names)"
+  ],
+  "readings": [
+   "board 05's 'greyscale and the three simulations of board 04' cannot be painted (cvsheet binds tokens, never simulated hexes): they are cvd_sim.py renders of board 04's export, and the drawn frame carries §5.3's computed table; a tritanopia render has no tool (spec gap)"
+  ],
+  "spec_gaps": [
+   "§0 board 05 asks for three simulations of board 04; cvd_sim.py renders greyscale, deuteranopia and protanopia only: tritanopia is the §5.3 table's figures"
+  ],
+  "fallbacks": [
+   "kit choice: legend and ramp swatches drawn as 24 × 16 rects bound to the stop tokens, outlined 1 px color.border.default only in the forced-colours frames (CanvasText outline, §5.5)",
+   "kit choice: board markers (slot names, key captions, the focus-return path, redline callouts) drawn as caption text in a 1 px color.border.strong outline, never product UI"
+  ],
+  "tokens": [
+   "type.ui.caption",
+   "color.text.primary",
+   "color.heatmap.bid.1",
+   "color.heatmap.bid.2",
+   "color.heatmap.bid.3",
+   "color.heatmap.bid.4",
+   "color.heatmap.bid.5",
+   "space.inset.xs",
+   "color.heatmap.ask.1",
+   "color.heatmap.ask.2",
+   "color.heatmap.ask.3",
+   "color.heatmap.ask.4",
+   "color.heatmap.ask.5",
+   "color.heatmap.zero",
+   "color.text.secondary",
+   "space.inset.md",
+   "color.cvd.heatmap.bid.1",
+   "color.cvd.heatmap.bid.2",
+   "color.cvd.heatmap.bid.3",
+   "color.cvd.heatmap.bid.4",
+   "color.cvd.heatmap.bid.5",
+   "color.cvd.heatmap.ask.1",
+   "color.cvd.heatmap.ask.2",
+   "color.cvd.heatmap.ask.3",
+   "color.cvd.heatmap.ask.4",
+   "color.cvd.heatmap.ask.5",
+   "color.text.tertiary",
+   "space.inset.sm",
+   "type.num.sm",
+   "color.surface.canvas",
+   "color.surface.raised",
+   "space.stack.xs",
+   "color.border.strong",
+   "border.hairline",
+   "radius.control",
+   "space.stack.sm",
+   "space.stack.md",
+   "space.inset.lg",
+   "color.border.default",
+   "type.ui.heading-sm",
+   "type.ui.label"
+  ],
+  "live_checks": [
+   "root 'E21-D04 / 05 ramps-cvd' at (24000, 0): read back the name exactly after the first section call; size 2304 x 976",
+   "after touchTexts + relayout: the annotation column (estimated 520 px) ends inside the root (h 976); raise the root's h to max(annotation end, footer end) + 80 if not (SHEET-FIX: MEASURED_H)",
+   "frame 'Ramps ∕ The four palette sets on the canvas · dark': read back 752 x 760 at (80, 80); clip on, no child spills",
+   "frame 'Ramps ∕ Colour vision after simulation · dark': read back 832 x 280 at (912, 80); clip on, no child spills",
+   "export docs/design/E21/img/E21-D04-05-ramps-cvd.png; record the board id and the PNG size in §0"
+  ],
+  "deviations": [],
+  "derivations": [
+   "ratios: WCAG 2.x relative luminance of the token-sync.json values per theme (dark; light = dark + semantic-light; high-contrast = dark + semantic-hc), rounded half-up to 0.01; the lowest per palette equal §5.2's table: dark color.heatmap.ask.1 3.15, color.cvd.heatmap.bid.1 3.86; light color.heatmap.bid.1 3.34, color.cvd.heatmap.bid.5 3.28; high-contrast color.heatmap.ask.1 3.15, color.cvd.heatmap.bid.1 3.86",
+   "book: BTCUSDT, mark 65,432.0 (W-1's example price, L208), best bid 65,431.9, best ask 65,432.2, 24 levels a side at the fixture's tick 0.10, sizes at its qty step 0.001, seeded 504; trail 12 columns × 1 s to 14:32:10 UTC"
+  ]
+ }
+}
