@@ -3,9 +3,9 @@
 
 Standalone, offline, stdlib only; it executes no repo code and runs under `python3 -I`. It reads,
 AS TEXT at the pinned base (`git show`): the plan texts, the shipped announcer, ambient writer and
-preferences model, the merged design texts the spec cites and the E47 audit catalogue; the in-flight
-siblings (E47-D04, E47-D05, E47-D06, E47-D08, E47-D09) at their pinned PR heads and E47-D03 at its
-merge commit; and,
+preferences model, the merged design texts the spec cites and the E47 audit catalogue; the siblings
+(E47-D04, E47-D05, E47-D06, E47-D08, E47-D09), read at their PR heads and re-pinned to their merge
+commits, and E47-D03 at its merge commit; and,
 from the working tree, the spec `docs/design/E47/E47-D07.md`, its hand-off, the transcripts JSON and
 the pins file. Its form follows the E47-D05 tool (the same modes, anchored values, default-deny pins
 and mutations).
@@ -80,7 +80,16 @@ JSON_REL = "docs/design/E47/E47-D07-transcripts.json"
 TOOL_REL = "docs/design/_tools/e47_d07_announcement_audit.py"
 PIN_REL = "docs/design/_tools/e47_d07_ruled_pins.txt"
 OWN = (SPEC_REL, HAND_REL, JSON_REL, TOOL_REL, PIN_REL)
-OWN_BOARDS = re.compile(r"docs/design/E47/img/E47-D07-\d\d-[a-z0-9-]+\.png")
+# the boards PR: the PNGs, the sheet kit, its MANIFEST lines and its .prettierignore entry
+OWN_BOARDS = re.compile(
+    r"docs/design/E47/img/E47-D07-\d\d-[a-z0-9-]+\.png|\.prettierignore"
+    r"|docs/design/_tools/sheets/(?:e47-d07/[A-Za-z0-9._/-]+|MANIFEST\.sha256)"
+)
+DRAWN_CELL = re.compile(
+    r"drawn: board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
+    r"`docs/design/E47/img/E47-D07-(?P<nn>\d\d)-(?P<slug>[a-z0-9-]+)\.png` \(\d+ × \d+\), "
+    r"\d+ frames?, [\d,]+ nodes; (?P<gate>dark|light) gate PASS \(own [\d,]+ px, other [\d,]+ px\)"
+)
 SPEC_BUDGET = 700
 HAND_BUDGET = 200
 
@@ -96,54 +105,15 @@ class Pin:
     merged: bool  # a merge pin must be on origin/main; an in-flight pin must not be passed
 
 
-# R6: the in-flight siblings at their PR heads, re-pinned to the merge commit at merge.
+# R6: the siblings were read at their PR heads and are re-pinned to their merge commits (each head carries its
+# merge's text: 1ff5d8cb9, 3987edc89, 260bb0caf, 7a9002dbd, e60fe7baa).
 PINS = (
     Pin("D03", "E47-D03", "73fefc62b", "docs/design/E47/E47-D03.md", "", 5392, True),
-    Pin(
-        "D04",
-        "E47-D04",
-        "1ff5d8cb9",
-        "docs/design/E47/E47-D04.md",
-        "design/e47-d04-focus-landmarks",
-        5387,
-        False,
-    ),
-    Pin(
-        "D05",
-        "E47-D05",
-        "3987edc89",
-        "docs/design/E47/E47-D05.md",
-        "design/e47-scr117-a11y-settings",
-        5417,
-        False,
-    ),
-    Pin(
-        "D09",
-        "E47-D09",
-        "260bb0caf",
-        "docs/design/E47/E47-D09.md",
-        "design/e47-keyboard-operability",
-        5418,
-        False,
-    ),
-    Pin(
-        "D06",
-        "E47-D06",
-        "7a9002dbd",
-        "docs/design/E47/E47-D06.md",
-        "design/e47-canvas-a11y",
-        5443,
-        False,
-    ),
-    Pin(
-        "D08",
-        "E47-D08",
-        "e60fe7baa",
-        "docs/design/E47/E47-D08.md",
-        "design/e47-motion-reduced-motion",
-        5444,
-        False,
-    ),
+    Pin("D04", "E47-D04", "48c711e64", "docs/design/E47/E47-D04.md", "", 5387, True),
+    Pin("D05", "E47-D05", "5e4065a44", "docs/design/E47/E47-D05.md", "", 5417, True),
+    Pin("D09", "E47-D09", "1c60258ba", "docs/design/E47/E47-D09.md", "", 5418, True),
+    Pin("D06", "E47-D06", "8e0f5d550", "docs/design/E47/E47-D06.md", "", 5443, True),
+    Pin("D08", "E47-D08", "1c5320c49", "docs/design/E47/E47-D08.md", "", 5444, True),
 )
 PIN = {p.key: p for p in PINS}
 
@@ -863,12 +833,12 @@ def _m(mid: str, what: str, gate: str, doc: str, where: str, old: str, new: str)
 MUTATIONS: tuple[Mutation, ...] = (
     _m(
         "M-1",
-        "mark board 01 drawn in §0",
+        "drop board 01's PNG from its §0 cell",
         "G-BOARDS",
         "spec",
         "## 0.",
-        "| dark  | pending: drawn later in this PR |",
-        "| dark  | drawn |",
+        "`docs/design/E47/img/E47-D07-01-taxonomy-map.png` (1920 × 998)",
+        "(1920 × 998)",
     ),
     _m(
         "M-2",
@@ -1047,8 +1017,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-PIN",
         "spec",
         "",
-        "`3987edc89` (E47-D05, PR #5417)",
-        "`3987edc88` (E47-D05, PR #5417)",
+        "`5e4065a44` (E47-D05, PR #5417)",
+        "`5e4065a43` (E47-D05, PR #5417)",
     ),
     _m(
         "M-22",
@@ -1112,8 +1082,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-MUTLIST",
         "spec",
         "## 14.",
-        "| M-1  | mark board 01 drawn in §0 | G-BOARDS |",
-        "| M-1  | mark board 01 drawn in §0 | G-HEUR |",
+        "| M-1  | drop board 01's PNG from its §0 cell | G-BOARDS |",
+        "| M-1  | drop board 01's PNG from its §0 cell | G-HEUR |",
     ),
     _m(
         "M-31",
@@ -1130,8 +1100,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-PIN",
         "spec",
         "",
-        "`7a9002dbd` (E47-D06, PR #5443)",
-        "`7a9002dbd` (E47-D06, #1305)",
+        "`8e0f5d550` (E47-D06, PR #5443)",
+        "`8e0f5d550` (E47-D06, #1305)",
     ),
     _m(
         "M-33",
@@ -1141,6 +1111,29 @@ MUTATIONS: tuple[Mutation, ...] = (
         "### 3.2",
         "| T-20 ",
         "| T-18 ",
+    ),
+)
+
+
+# Probes: run by --self-test like the mutations, kept out of §14 (a new §14 row would move the lines after it).
+PROBES: tuple[Mutation, ...] = (
+    _m(
+        "P-1",
+        "give board 07 another theme's gate in §0",
+        "G-BOARDS",
+        "spec",
+        "## 0.",
+        "nodes; light gate PASS",
+        "nodes; dark gate PASS",
+    ),
+    _m(
+        "P-2",
+        "touch another ticket's sheet kit",
+        "G-UNTOUCHED",
+        "changed",
+        "",
+        "",
+        "docs/design/_tools/sheets/e47-d08/BUILD.md",
     ),
 )
 
@@ -1646,8 +1639,14 @@ def g_boards(t: Texts) -> list[Finding]:
     if [r[0] for r in rs] != [f"{n:02d}" for n in range(1, len(rs) + 1)]:
         bad.append("the boards are not numbered 01 onward")
     for r in rs:
-        if r[3] not in THEMES or r[4] != PENDING_CELL or not r[2]:
-            bad.append(f"board {r[0]} is not a pending board with a theme and a draw list")
+        drawn = DRAWN_CELL.fullmatch(r[4])
+        name = re.fullmatch(r"`E47-D07 / (\d\d) ([a-z0-9-]+)`", r[1])
+        if r[3] not in THEMES or not r[2] or not (r[4] == PENDING_CELL or drawn):
+            bad.append(f"board {r[0]} is neither pending nor drawn with a theme and a draw list")
+        elif drawn and not (name and (drawn["nn"], drawn["slug"]) == name.groups()):
+            bad.append(f"board {r[0]}'s drawn cell names another board's PNG")
+        elif drawn and drawn["gate"] != r[3]:
+            bad.append(f"board {r[0]}'s drawn cell names another theme's gate")
     if 3 * sum(1 for r in rs if r[3] != "dark") > len(rs):
         bad.append("twins exceed a third")
     if not any(
@@ -1944,7 +1943,7 @@ def self_test() -> int:
         print("FAIL self-test: the baseline is not clean:", *base, sep="\n  ")
         return 1
     bad = 0
-    for m in MUTATIONS:
+    for m in (*MUTATIONS, *PROBES):
         mt = apply_mutation(t, m)
         got = [ln for ln in report(findings(mt, values), quiet=True) if ln.startswith("FAIL")]
         ok = len(got) == 1 and got[0].startswith(f"FAIL {m.gate}:")
@@ -1993,7 +1992,8 @@ def self_test() -> int:
     if hashlib.sha256((after.spec + after.hand + after.json).encode()).hexdigest() != digest:
         print("FAIL self-test: the texts on disk changed")
         return 1
-    print(f"self-test: {len(MUTATIONS) - bad} of {len(MUTATIONS)} ok")
+    n = len(MUTATIONS) + len(PROBES)
+    print(f"self-test: {n - bad} of {n} ok ({len(MUTATIONS)} mutations + {len(PROBES)} probes)")
     return 1 if bad else 0
 
 

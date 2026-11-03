@@ -12,12 +12,12 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 | Copy: one exact template per announced event             | [x] spec §7.2, §7.3                                                  |
 | Throttle model: cadence, latest value, bursts, verbosity | [x] spec §5, §6; the cadence default is D07-Q2                       |
 | Region hygiene                                           | [x] spec §2; the CMP-212 build is D07-G4                             |
-| Focus and persistence                                    | [x] spec §9; board 05 pending                                        |
+| Focus and persistence                                    | [x] spec §9; board 05 drawn (spec §0, §17)                           |
 | Transcripts                                              | [x] the JSON and spec §10; [ ] QA acceptance pending (E47-Q01 #1314) |
 | Variants × states (the panel)                            | [x] spec §8.3                                                        |
 | Keyboard table (the panel)                               | [x] spec §8.3                                                        |
 | Data contract                                            | [ ] NO: D07-G1, D07-G2, D07-G3, D07-G7, D07-G8, D07-G11              |
-| Boards                                                   | [ ] pending, drawn in a later push of this PR (§H)                   |
+| Boards                                                   | [x] drawn: spec §0 (ids, PNGs, theme gates) and §17 (as built)       |
 | NVDA and JAWS evidence                                   | [ ] the session protocol (§I), not run                               |
 | Sign-off                                                 | [ ] owner approval pending (#2701)                                   |
 
@@ -104,7 +104,7 @@ Old is a verbatim fragment of the cited line at `85b6b6c1c` (the tool checks it)
 | QA-8 | mount and unmount ten panels; read the shell pair's containers               | the two containers are the same nodes before and after; no other `aria-live` container carries a taxonomy event                                                                                                                                                                                                                                                                     |
 | QA-9 | replay the fast script (60 s at 10 Hz) under each of the seven §6.4 settings | the field reads inside the stream's minute equal §6.4's column (the steady state, 11<!--=SIM:fast.composites--> composites under Always · Normal); the one flush composite after the stream ends, at 61.271<!--=SIM:fast.flush-at--> s, is asserted apart; the assertive writes are identical in every setting; no composite starts inside twice the previous one's speech estimate |
 
-## §H The board plan (pending; drawn in a later push of this PR)
+## §H The board plan (drawn; spec §0 and §17)
 
 The boards of spec §0, on page `E47-D07 announcements` of the Penpot file `E47-D07 boards`. Data: the seeded synthetic stream (seed 1306), declared synthetic on every board's face.
 
@@ -134,10 +134,10 @@ Setup: Windows, NVDA and JAWS at their default rates and verbosity, the browser 
 
 ## §J Summary for #1306
 
-1. Text-first spec of the live-region layer over the shipped announcer and ambient writer; every difference a G-row; 10<!--=COUNT:boards--> boards pending; default-deny audit tool.
+1. Text-first spec of the live-region layer over the shipped announcer and ambient writer; every difference a G-row; 10<!--=COUNT:boards--> boards drawn (spec §0, §17); default-deny audit tool.
 2. A taxonomy of 55<!--=COUNT:taxonomy--> events in five classes, each with its source, topic, surface, panel class and words; silent rows say where to read the value.
 3. An assertive queue by rank, never throttled, merged or cut; bursts of one entity collapse, distinct events never merge.
 4. Ambient fields as one composite per cadence, latest value, never appended; the tape never narrated, whale prints opt-in, Normal = High until the owner splits them.
 5. Closed words: grammar, slots and a reason map from `24`; no secret is ever spoken; account-scoped.
 6. Three transcripts replayed by the tool as the QA oracle and E47-D05's preview content.
-7. BQ-0 … BQ-16 RULED (comment 6570054100): BQ-2, BQ-7, BQ-8, BQ-9 overridden, the rest accepted; E47-D05 and its upstream, E47-D06 (PR #5443) and E47-D08's handed words pinned at their PR heads; `Refs #1306` + `Partial:` until both blockers merge, then `Closes`, the closing keyword for this ticket.
+7. BQ-0 … BQ-16 RULED (comment 6570054100): BQ-2, BQ-7, BQ-8, BQ-9 overridden, the rest accepted; E47-D05 and its upstream, E47-D06 (PR #5443) and E47-D08's handed words re-pinned from their PR heads to their merge commits; `Refs #1306` + `Partial:` while both blockers (#1304, #1305) are open, then `Closes`, the closing keyword for this ticket.
