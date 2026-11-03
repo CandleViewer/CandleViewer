@@ -6902,9 +6902,9 @@ This is the number the orchestrator assigned on 2026-11-03 (02:42Z); it keeps it
 - §9.2 gains "Snapshot bound (#3969)", **PROPOSED**: a leg's `profile_snapshot` has its own bound, `PROFILE_SNAPSHOT_MAX_CHARS` = 32,768 (PROPOSED), because the test's maximal `AccountProfile` dumps to 26,337 characters (the two symbol lists alone are 1,000 × (21 + 3) = 24,000; a rung's `r` has no digit cap, and the 6,431 headroom covers a longer one), over the 16,384 of `exchange_payload.MAX_PAYLOAD_CHARS` (PROPOSED as the bound it is set against), which `algo_params` keeps.
 - No migration and no CHECK: `trade_group_legs` carries no size CHECK and the profile's own caps (`SymbolList` 500, `Ladder` 10, `name` 80) stay the one limit on its size. No REST operation, WS frame, chart or `machine_hash` change.
 
-### 19.NN 2026-11-03 — §1.7: the per-tool geometry schemas of a drawing (E14-C01, #540)
+### 19.119 2026-11-03 — §1.7: the per-tool geometry schemas of a drawing (E14-C01, #540)
 
-The number is a placeholder: the orchestrator assigns the real one when it rules the ticket (E14-C01, slice 2).
+Number assigned by the orchestrator (#540, comment 6615130246).
 
 - §1.7 records the 25 drawing tools with their point counts, optional geometry keys (`text`, `levels`, `bands`, `extend_left`, `extend_right`) and bounds, taken from the as-built `drawings_models.py` and `22` `DrawingTool` / `DrawingGeometry`, as ADR-0045 Decision 3 requires. `services/api/tests/contract/test_drawing_tool_schemas_contract.py` fails when the tables drift from the code or from `22`.
 - No code, `22`, WS, table, column or migration change.
