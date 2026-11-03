@@ -256,8 +256,17 @@ export const ToggleLongText: Story = {
   ),
   play: async ({ canvasElement }) => {
     const chips = TYPES.map((word) => toggleOf(canvasElement, word));
-    // Nothing overflows a chip: each shows its whole word, neither squeezed nor clipped.
-    for (const chip of chips) await expect(chip.scrollWidth).toBeLessThanOrEqual(chip.clientWidth);
+    for (const chip of chips) {
+      // Each chip holds its whole word: the word ends at its content edge (within half a pixel), never past it.
+      // The chip's scrollWidth would not do: the pressed ring's band reaches the border edge at rest too.
+      const style = getComputedStyle(chip);
+      const edge =
+        chip.getBoundingClientRect().right -
+        Number.parseFloat(style.paddingRight) -
+        Number.parseFloat(style.borderRightWidth);
+      const word = chip.querySelector(".cv-tag__label")?.getBoundingClientRect().right;
+      await expect(word).toBeLessThanOrEqual(edge + 0.5);
+    }
     // The row wraps instead.
     const rows = new Set(chips.map((chip) => chip.getBoundingClientRect().top));
     await expect(rows.size).toBeGreaterThan(1);
