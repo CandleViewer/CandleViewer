@@ -5,9 +5,9 @@ stream of the key's own environment only (`PRIVATE_WS_URLS`, US-ACCT-007, C-2.11
 signed by M2 under `sign_ws_auth` with `expires` at most 10 s ahead (SR-E27-17), read one reply and
 close. It never subscribes (#2877 and #848 own the streaming socket), never retries and never
 falls back to another host; production's connector follows no redirect either, so a 3xx is a
-`transport_error` and the signed `auth` reaches no other host (SR-040a). It trusts certifi's
-bundle only, which httpx's default context loads when `SSL_CERT_FILE` and `SSL_CERT_DIR` are
-unset; it ignores both, the OS store and any proxy. One 5 s bound covers the dial, the signature
+`transport_error` and the signed `auth` reaches no other host (SR-040a). It dials with the adapter's
+TLS context (`tls.py`, as the REST clients do): certifi's bundle only, never `SSL_CERT_FILE`,
+`SSL_CERT_DIR`, the OS store or a key log; no proxy. One 5 s bound covers the dial, the signature
 and the reply; the socket is closed on every path under its own short bound, aborted if the peer
 never finishes the close, and a cancellation propagates. Diagnostic only: it enforces nothing
 (ruling 11 on #836).
@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING, Final, Literal, Protocol
 from urllib.parse import urlsplit
 from uuid import UUID
 
-import httpx
 from websockets.asyncio.client import ClientConnection
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosedError, WebSocketException
@@ -48,6 +47,7 @@ from candleviewer.exchange.base.reconnect import WINDOW_S as BUDGET_WINDOW_S
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
 from candleviewer.exchange.bybit.errors import FrameTooLarge
 from candleviewer.exchange.bybit.signer import BybitSigner
+from candleviewer.exchange.bybit.tls import exchange_tls_context
 
 if TYPE_CHECKING:
     from candleviewer.secrets import SigningCapability
@@ -84,10 +84,10 @@ _SOCKET_LOG.setLevel(logging.INFO)
 
 
 def _probe_tls() -> ssl.SSLContext:
-    """certifi's bundle only, which httpx's default context, the signed REST client's, loads when
-    `SSL_CERT_FILE` and `SSL_CERT_DIR` are unset; this one ignores both. Never the OS store, which
-    may trust a TLS-inspecting gateway's root (C-2.7, C-12.2, defence in depth)."""
-    return httpx.create_ssl_context(verify=True, trust_env=False)
+    """The adapter's TLS context (`tls.py`), from the builder the REST clients take theirs from:
+    certifi's bundle only, never the OS store or a CA file the environment names, and no key log
+    (C-2.7, C-12.2, defence in depth)."""
+    return exchange_tls_context()
 
 
 #: Built once, at import: loading the bundle (a few ms) on every dial would hold the event loop.

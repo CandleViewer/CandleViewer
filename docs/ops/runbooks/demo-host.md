@@ -58,6 +58,14 @@ compose refuses every command while a required one is empty:
   KEK copy waits for collection in root's home.
 - `infra/compose/.env` (to be owned by root, 0600; step 2 checks) holds every name `.env.example`
   lists.
+- **Egress.** The API's REST clients, private streams and trade-archive downloads reach their
+  environment's exchange hosts directly (the public market-data stream is #5498's). They take no
+  proxy from the environment (`HTTPS_PROXY` or `ALL_PROXY`, in either case, whatever sets them, the
+  Docker client's `proxies` setting included), trust the bundled CA set only (never
+  `SSL_CERT_FILE`, `SSL_CERT_DIR` or the OS store) and write no TLS key log (`SSLKEYLOGFILE`).
+  Behind a TLS-inspecting gateway or a mandatory proxy they fail closed, and the key checks report
+  `transport_error`, or `timeout` where the direct route gets no answer: give the host a direct
+  route to those hosts, exempt from inspection, and set `CV_EGRESS_IP` to that route's address.
 
 The pinned sha must hold #4479 (`candleviewer.bootstrap_owner`, step 6) and #4484
 (`POST /exchange-accounts`, step 7). Every command below runs as root from the checkout's root,
@@ -83,7 +91,10 @@ $COMPOSE --profile core build api
 ```
 
 `git rev-parse HEAD` must print the pinned sha. Set `CV_GIT_SHA` in `infra/compose/.env` to it, so
-`GET /admin/health` and `/metrics` report the build.
+`GET /admin/health` and `/metrics` report the build. Check that the image's OpenSSL has no key-log
+reader of its own: `docker run --rm --entrypoint sh cv-demo-api -c 'grep -c SSLKEYLOGFILE
+/usr/lib/*/libssl.so.3'` must print `0`, and exit status 1 is expected (`"$IMAGE@$DIGEST"` for
+`cv-demo-api` on the alternative).
 
 **Alternative, once the package is public: verify the image by digest.** Take the digest of the
 `<version>-<12-digit sha>` tag that `main.yml` pushed for the pinned sha, and verify it with the

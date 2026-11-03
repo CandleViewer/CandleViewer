@@ -494,10 +494,10 @@ def test_production_trusts_certifis_roots_and_no_other() -> None:
 def test_production_keeps_certifis_roots_when_ssl_cert_dir_is_set(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """httpx's default context, the signed REST client's, takes `SSL_CERT_DIR` instead of
-    certifi's bundle when it is set and `SSL_CERT_FILE` is not (a directory's roots load only as
-    a handshake asks, so none show); the probe's, built again under that environment, keeps
-    certifi's. `SSL_CERT_FILE` is on a real socket (`test_key_ws_probe_real_socket.py`)."""
+    """httpx's default context takes `SSL_CERT_DIR` instead of certifi's bundle when it is set and
+    `SSL_CERT_FILE` is not (a directory's roots load only as a handshake asks, so none show); the
+    probe's, built again under that environment, keeps certifi's. `SSL_CERT_FILE` is on a real
+    socket (`test_key_ws_probe_real_socket.py`)."""
     monkeypatch.delenv("SSL_CERT_FILE", raising=False)
     monkeypatch.setenv("SSL_CERT_DIR", str(tmp_path))
     rest_default, probes = httpx.create_ssl_context(), key_ws_probe._probe_tls()

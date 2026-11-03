@@ -14,6 +14,8 @@ dependencies = [
   "sqlalchemy[asyncio]>=2.1",
   "alembic>=1.13",
   "httpx>=0.27",
+  # #3461: the adapter's TLS builder (`exchange/bybit/tls.py`) loads certifi's bundle by its path.
+  "certifi>=2026.10.19",
   "websockets>=17.1",
   "numpy>=1.26",
   "duckdb>=1.0",
