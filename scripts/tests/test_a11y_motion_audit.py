@@ -192,3 +192,45 @@ def test_capture_shorter_than_one_second_is_infra() -> None:
     cap["regions"]["synthetic-1hz"]["luminance"] = ma.synthetic_luminance(1)[:59]
     with pytest.raises(InfraError, match="under 1 s"):
         ma.audit(cap)
+
+
+def _run(safe_scale: float, reduced_scale: float) -> dict:
+    base = {"script_ms": 100.0, "paint_ms": 50.0, "raf_callbacks": 200.0}
+    safe = {k: v * safe_scale for k, v in base.items()} | {"running_animations": 4}
+    reduced = {k: v * reduced_scale for k, v in base.items()} | {"running_animations": 0}
+    return {"safe": safe, "reduced": reduced}
+
+
+def test_derivation_proposes_the_rounded_up_noise_bounded_fraction() -> None:
+    # Reduced runs sit at 0.10, 0.12, 0.14 of the safe run; the safe run varies by about 4 %.
+    runs = [_run(1.00, 0.10), _run(0.96, 0.1152), _run(1.04, 0.1456)]
+    out = ma.derive_fraction(runs)
+    assert out["status"] == "PROPOSED"
+    assert out["proposed"] == 0.2  # mean 0.12 + 2 x 0.02 = 0.16, rounded up to 0.05 steps
+    assert out["proposed"] < min(out["upper"].values()) < 1
+
+
+def test_derivation_proposal_on_an_exact_step_is_not_rounded_further() -> None:
+    out = ma.derive_fraction([_run(1, 0.4), _run(1, 0.45), _run(1, 0.5)])
+    assert out["proposed"] == 0.55  # mean 0.45 + 2 x 0.05 = 0.55 is already a 0.05 step
+
+
+def test_derivation_is_infra_when_the_noise_swamps_the_separation() -> None:
+    noisy = [_run(1.0, 0.3), _run(0.5, 0.15), _run(1.5, 0.45)]  # safe cv is 0.5
+    with pytest.raises(InfraError, match="no separable fraction"):
+        ma.derive_fraction(noisy)
+
+
+def test_derivation_needs_three_runs_with_motion_safe_work() -> None:
+    with pytest.raises(InfraError, match="exactly 3 runs"):
+        ma.derive_fraction([_run(1, 0.1)] * 2)
+    dead = [_run(1, 0.1), _run(1, 0.1), _run(0, 0.0)]
+    with pytest.raises(InfraError, match="zero in a derivation run"):
+        ma.derive_fraction(dead)
+
+
+def test_cli_derive_prints_the_proposal(tmp_path: Path, capsys) -> None:
+    f = tmp_path / "runs.json"
+    f.write_text(json.dumps({"runs": [_run(1, 0.1), _run(1, 0.12), _run(1, 0.14)]}))
+    assert ma.main(["derive", str(f)]) == 0
+    assert json.loads(capsys.readouterr().out)["proposed"] == 0.2

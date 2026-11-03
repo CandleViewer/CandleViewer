@@ -19,6 +19,9 @@ Two checks:
 from __future__ import annotations
 
 import argparse
+import json
+import math
+import statistics
 import sys
 from dataclasses import dataclass
 
@@ -158,6 +161,36 @@ def check_reduced_work(
     return msgs
 
 
+def derive_fraction(runs: list[dict]) -> dict:
+    """Derive REDUCE_WORK_FRACTION from three paired runs ({"safe", "reduced"} profiles each).
+
+    Method (docs/qa/a11y/e47-motion-audit.md s3). Per work key k, r_i = reduced_i / safe_i.
+      lower bound  lo_k = mean(r) + 2 * stdev(r)   the fraction must admit a genuine reduce run.
+      upper bound  hi_k = 1 - 3 * cv(safe)         a run that removes nothing (ratio 1) must fail
+                                                   despite the motion-safe run's own noise.
+    The proposal is max(lo) rounded UP to 0.05; it is infeasible (A11Y-INFRA, the scene is too
+    noisy to separate work from noise) when it exceeds min(hi). A derivation, not an acceptance:
+    the figure stays PROPOSED until QA signs it.
+    """
+    if len(runs) != 3:
+        raise InfraError(f"A11Y-INFRA the derivation needs exactly 3 runs, got {len(runs)}")
+    lo: dict[str, float] = {}
+    hi: dict[str, float] = {}
+    for k in _WORK_KEYS:
+        safe = [float(r["safe"].get(k, 0)) for r in runs]
+        if not all(v > 0 for v in safe):
+            raise InfraError(f"A11Y-INFRA motion-safe {k} is zero in a derivation run")
+        ratios = [float(r["reduced"].get(k, 0)) / b for r, b in zip(runs, safe, strict=True)]
+        lo[k] = statistics.mean(ratios) + 2 * statistics.stdev(ratios)
+        hi[k] = 1 - 3 * statistics.stdev(safe) / statistics.mean(safe)
+    proposed = math.ceil(max(lo.values()) * 20 - 1e-9) / 20
+    if proposed > min(hi.values()):
+        raise InfraError(
+            f"A11Y-INFRA no separable fraction: needs {proposed:g}, noise allows {min(hi.values()):.3f}"
+        )
+    return {"proposed": proposed, "status": "PROPOSED", "lower": lo, "upper": hi}
+
+
 def _emit(msgs: list[str]) -> int:
     print("\n".join(msgs) if msgs else "motion audit: pass")
     return EXIT_VIOLATION if msgs else EXIT_OK
@@ -168,12 +201,16 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("flash").add_argument("capture")
     sub.add_parser("reduce").add_argument("profiles")
+    sub.add_parser("derive").add_argument("runs", help='JSON {"runs": [3 x {safe, reduced}]}')
     args = p.parse_args(argv)
     try:
         if args.cmd == "flash":
             rows, msgs = audit(_load(args.capture))
             print(table(rows))
             return _emit(msgs)
+        if args.cmd == "derive":
+            print(json.dumps(derive_fraction(_load(args.runs).get("runs", [])), indent=2))
+            return EXIT_OK
         prof = _load(args.profiles)
         return _emit(check_reduced_work(prof.get("safe", {}), prof.get("reduced", {})))
     except InfraError as exc:
