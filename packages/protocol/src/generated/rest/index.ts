@@ -6304,9 +6304,10 @@ export interface paths {
      *     the deployment default. `trading.one_click_armed` can only be set through the arming
      *     endpoint — attempting it here returns `validation_failed`.
      *
-     *     `notifications.matrix` refuses a locked cell set false (`risk_channel_locked`, audited
-     *     `notifications.risk_channel_muted` at high severity) and sound as a row's only channel
-     *     (`sound_only_channel`), both `422 validation_failed` with nothing stored (E40-D02 CC-8).
+     *     `notifications.matrix` refuses a locked cell set false (`risk_channel_locked`), `422
+     *     validation_failed` with nothing stored (E40-D02 CC-8); from the preferences slice of #1130
+     *     on, the attempt is also audited `notifications.risk_channel_muted` at high severity, and
+     *     sound as a row's only channel is refused the same way (`sound_only_channel`).
      *     Preferences are the caller's own (`scope: self`): no field names another user.
      *
      *     Self only: any query parameter is refused with `422` (SR-026).
@@ -10147,7 +10148,7 @@ export interface components {
       sound?: boolean;
       toast?: boolean;
     };
-    /** @description The category x channel matrix (E40-D02 CC-8, D-28). One leaf: a patch sends the whole matrix. Refused with `422 validation_failed`, nothing stored, server-side and never behind a flag (C-4.14): a cell the critical-override constant locks (`packages/protocol/notification-overrides.json` `locked_cells`) set false, rule `risk_channel_locked`, the attempt audited `notifications.risk_channel_muted` at high severity; a row whose sound is on with toast and desktop off, rule `sound_only_channel` (D-29; for the Alerts row, toast off). The critical-override kinds themselves have no cell: they are never mutable. */
+    /** @description The category x channel matrix (E40-D02 CC-8, D-28). One leaf: a patch sends the whole matrix. Refused with `422 validation_failed`, nothing stored, server-side and never behind a flag (C-4.14): a cell the critical-override constant locks (`packages/protocol/notification-overrides.json` `locked_cells`) set false, rule `risk_channel_locked`, the attempt audited `notifications.risk_channel_muted` at high severity from the preferences slice of #1130 on; and, from that slice on, a row whose sound is on with toast and desktop off, rule `sound_only_channel` (D-29; for the Alerts row, toast off). The critical-override kinds themselves have no cell: they are never mutable. */
     NotificationMatrix: {
       alerts?: components["schemas"]["NotificationAlertChannelSet"];
       order_rejects?: components["schemas"]["NotificationChannelSet"];
