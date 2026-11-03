@@ -22,7 +22,7 @@ const GRAPH: GraphModel = {
 const stored = (positions: unknown, collapsed: unknown = []): GraphLayout =>
   ({ positions, collapsed, comments: [], extra: {} }) as unknown as GraphLayout;
 
-describe("normalising a stored layout at load (SR-E37-04)", () => {
+describe("normalising a stored layout at load (SR-E37-04, #1073's threat model §9)", () => {
   it.each([
     ["null", null],
     ["a string", "12,40"],

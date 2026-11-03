@@ -7,7 +7,7 @@ import baseConfig from "@candleviewer/config/eslint";
 import { noRestrictedImportsRuleSet } from "@candleviewer/config/no-restricted-imports";
 
 const PURE_GRAPH =
-  "E37-S01: rule-builder-graph's a11y/ and model/ are pure (no React, graph library or DOM).";
+  "E37-S01: rule-builder-graph's a11y/ and model/ are pure (no React, graph library, DOM, timers, clock or console).";
 /**
  * The globals a pure core never reads, by family. The clock, task and log ones are closed as
  * packages/rule-graph closes them: ids and replays stay deterministic.

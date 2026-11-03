@@ -152,6 +152,11 @@ describe("placing the nodes a loaded rule has no position for", () => {
     },
   );
 
+  it("places a node whose stored position is no point, read through positionOf", () => {
+    const raw = { ...BLANK, positions: { n1: null } } as unknown as GraphLayout;
+    expect(placeNodes(S_GRAPH, raw).positions["n1"]).toEqual({ x: 0, y: 0 });
+  });
+
   it("places a node whose id is an object key of the prototype", () => {
     const graph: GraphModel = { envelope: {}, nodes: [node("__proto__", "trigger")], edges: [] };
     const { positions } = placeNodes(graph, BLANK);
@@ -199,5 +204,13 @@ describe("Occupancy", () => {
     ]);
     expect(taken.takeBelow({ x: 0, y: 0 })).toEqual({ x: 0, y: 720 });
     expect(taken.isFree({ x: 0, y: 720 })).toBe(false);
+  });
+
+  it("walks 2n + 1 steps for n points held: a point off the column's grid blocks two", () => {
+    const taken = new Occupancy([
+      { x: 0, y: 120 },
+      { x: 0, y: 600 },
+    ]);
+    expect(taken.takeBelow({ x: 0, y: 0 })).toEqual({ x: 0, y: 960 });
   });
 });

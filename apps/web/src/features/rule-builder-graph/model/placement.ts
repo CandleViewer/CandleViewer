@@ -12,7 +12,7 @@ import type { GraphLayout, GraphModel } from "@candleviewer/rule-graph";
 import { adjacencyFor, adjacencyOf } from "../a11y/graph.js";
 import type { Point } from "../a11y/nudge.js";
 import { traversalOrder } from "../a11y/traversal.js";
-import { pointOf } from "./layout.js";
+import { CANVAS_LIMIT, pointOf } from "./layout.js";
 
 /** The grid step, both axes, in canvas units: a cell holds one node card of any tier. */
 export const GRID = 240;
@@ -56,15 +56,17 @@ export class Occupancy {
   }
 
   /**
-   * The first free point at or below `point`, one grid step at a time; it is taken. A held point
-   * blocks at most two steps of a column, so with n points held one of the first 2n + 1 steps is
-   * free and the walk stops there: it ends even where a step no longer moves the number.
+   * The first free point at or below `point`, one grid step at a time, or at or above it where the
+   * walk down would pass the canvas bound; it is taken. A held point blocks at most two steps of a
+   * column, so with n points held one of the first 2n + 1 steps is free and the walk stops there:
+   * it ends even where a step no longer moves the number. From a point inside the bound it stays
+   * inside while 2n steps fit in the bound (n up to 2,083, past the server's 1,000-node cap).
    */
   takeBelow(point: Point): Point {
+    const steps = 2 * this.held;
+    const step = point.y + steps * GRID <= CANVAS_LIMIT ? GRID : -GRID;
     let at = point;
-    for (let step = 0; step < 2 * this.held && !this.isFree(at); step += 1) {
-      at = { x: at.x, y: at.y + GRID };
-    }
+    for (let k = 0; k < steps && !this.isFree(at); k += 1) at = { x: at.x, y: at.y + step };
     this.add(at);
     return at;
   }

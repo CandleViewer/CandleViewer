@@ -97,7 +97,7 @@ describe("Non-drag insertion works (AC 3, the insertion rule)", () => {
     });
   });
 
-  it("inserts beside an anchor stored far past the canvas bound, read clamped, and stops", () => {
+  it("inserts beside an anchor stored far past the canvas bound, read clamped, up inside it", () => {
     const isFree = Occupancy.prototype.isFree;
     let calls = 0;
     const spy = vi.spyOn(Occupancy.prototype, "isFree").mockImplementation(function (
@@ -116,10 +116,17 @@ describe("Non-drag insertion works (AC 3, the insertion rule)", () => {
       const graph: GraphModel = { envelope: {}, nodes, edges: [] };
       const far = { a: { x: 0, y: 1e19 }, b: { x: 240, y: 1e19 } };
       const plan = planInsert(graph, { ...BLANK, positions: far }, ["a"], ACTION, portOracle);
-      expect(plan.position).toEqual({ x: 240, y: CANVAS_LIMIT + GRID });
+      expect(plan.position).toEqual({ x: 240, y: CANVAS_LIMIT - GRID });
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("inserts in the anchor's column at the canvas bound's right edge, on a free point", () => {
+    const graph: GraphModel = { envelope: {}, nodes: [node("a", "logicGate")], edges: [] };
+    const layout = { ...BLANK, positions: { a: { x: CANVAS_LIMIT, y: 0 } } };
+    const plan = planInsert(graph, layout, ["a"], ACTION, portOracle);
+    expect(plan.position).toEqual({ x: CANVAS_LIMIT, y: GRID });
   });
 
   it("plans without changing the graph it reads", () => {

@@ -1,15 +1,18 @@
 /**
- * A stored layout as the editor reads it (E37-S01; SR-E37-04). A stored `graph_layout` holds
- * whatever its writer sent, so it is normalised once, at load, before any position is read: a
- * position counts only when `x` and `y` are finite numbers, clamped to ±`CANVAS_LIMIT`, and any
- * other entry leaves its node unplaced, so `placeNodes` places it; a `collapsed` entry counts only
- * when it is a string id naming a node. The reducer (PR 4 of 9) checks a move and a palette drop
- * with the same `pointOf`. Pure.
+ * A stored layout as the editor reads it (E37-S01; SR-E37-04 in #1073's E37 threat model, §9). A
+ * stored `graph_layout` holds whatever its writer sent, so it is normalised once, at load, before
+ * any position is read: a position counts only when `x` and `y` are finite numbers, clamped to
+ * ±`CANVAS_LIMIT`, and any other entry leaves its node unplaced, so `placeNodes` places it; a
+ * `collapsed` entry counts only when it is a string id naming a node. The reducer (PR 4 of 9)
+ * checks a move and a palette drop with the same `pointOf`. Pure.
  */
 import type { GraphLayout, GraphModel } from "@candleviewer/rule-graph";
 import type { Point } from "../a11y/nudge.js";
 
-/** The canvas bound, both axes, in canvas units: stored, moved and dropped points clamp to it. */
+/**
+ * The canvas bound, both axes, in canvas units: stored, moved and dropped points clamp to it, and
+ * placement and insertion walk inside it, so every point a layout holds lies within it.
+ */
 export const CANVAS_LIMIT = 1_000_000;
 
 // `+ 0` turns a -0 into 0, so a position is never negative zero.
