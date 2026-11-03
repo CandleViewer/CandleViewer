@@ -44,8 +44,9 @@ _US = 1_000_000
 _AWAIT_STEP = True
 #: B16.7 (C-2.9): the state each of these events must reach. A step that moves
 #: both regions can roll one back while the receipt reads `error=None` (CV-C06),
-#: so the configuration, not the receipt, proves that the region holding the
-#: event's audit action (`auth.idle_locked`, `auth.session_revoked`) committed.
+#: so the configuration, not the receipt's error, proves that the region holding
+#: the event's audit action (`auth.idle_locked`, `auth.session_revoked`) committed.
+#: The reach check reads the chart's state from the receipt (`state_ids`).
 _MUST_REACH: dict[str, str] = {
     "IDLE_DEADLINE": "auth.idle_locked",
     "LOGOUT": "auth.revoked",
@@ -173,7 +174,8 @@ class SessionChart:
         was already past the state, so the entry that writes the record did
         not run). A held `STEP_UP_OK` raises in any state (`deferred`). The
         chart is dropped first, so a held event never runs later and the next
-        use rebuilds the chart from the row."""
+        use rebuilds the chart from the row. A lock already recorded is not
+        refused, and the reach check reads the chart's state from the receipt."""
         replay = bool(payload.get("replay"))
         if not replay:
             request_uuid = current_request_uuid()
@@ -184,6 +186,8 @@ class SessionChart:
         if receipt_is_conclusive(receipt) and receipt.error is not None:
             raise SessionChartError(f"B16 {event}: {type(receipt.error).__name__}")
         must_reach = _MUST_REACH.get(event)
+        # The reach check reads the chart's state from the receipt, as the hold check does.
+        reached = f"session.{must_reach}" in getattr(receipt, "state_ids", ())
         # A replay was recorded when it happened (`_hydrate`), so it is never refused here.
         if event in _MUST_RECORD and not replay:
             # The hold check reads the held chart's state from its receipt. A held `STEP_UP_OK`
@@ -194,9 +198,11 @@ class SessionChart:
                 await self._drop(sid)
                 raise SessionChartUnrecorded(event, "deferred")
             if must_reach is not None and not receipt_is_conclusive(receipt):
+                if must_reach == "auth.idle_locked" and reached:
+                    return  # a lock already recorded is not refused (B16.7)
                 await self._drop(sid)
                 raise SessionChartUnrecorded(event, "unchanged")
-        if must_reach is not None and not self.in_state(sid, must_reach):
+        if must_reach is not None and not reached:
             raise SessionChartError(f"B16 {event}: {must_reach} not reached")
 
     async def _hydrate(self, sid: str, record: SessionRecord, now: datetime) -> None:
