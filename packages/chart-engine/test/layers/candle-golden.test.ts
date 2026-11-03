@@ -221,8 +221,22 @@ describe("CPU stand-in raster: the forming ring and the corrected square (E12-S1
   it("Heikin-Ashi hollow (E12-S07): the marks place on the drawn HA candle", () => {
     // The square sits 2 rows above bar 2's HA high (its 2-px colour-down wick); the forming ring
     // clears bar 3's HA wick and body by one row and column (its right side is off the canvas).
-    // Every other pixel is `raster("hollow", FOUR, true)`'s: the marks never alter the bar.
-    expect(raster("hollow", FOUR, true, [0, 0, 8, 2])).toEqual([
+    // Every other pixel is the unmarked `raster("hollow", FOUR, true)`'s (asserted below): the
+    // marks only add wick-coloured pixels and never alter the bar.
+    const marked = raster("hollow", FOUR, true, [0, 0, 8, 2]);
+    const plain = raster("hollow", FOUR, true);
+    const added: string[] = [];
+    marked.forEach((row, y) =>
+      [...row].forEach((ch, x) => {
+        if (ch !== plain[y]?.[x]) added.push(`${x},${y}:${plain[y]?.[x]}>${ch}`);
+      }),
+    );
+    expect(added.length).toBeGreaterThan(0);
+    expect(
+      added.every((d) => d.endsWith(".>|")),
+      added.join(" "),
+    ).toBe(true);
+    expect(marked).toEqual([
       "........................................",
       "........................................",
       "........................................",

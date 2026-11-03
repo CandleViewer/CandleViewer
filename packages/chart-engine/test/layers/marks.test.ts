@@ -134,6 +134,60 @@ describe("MarkRing", () => {
     expect(wordsOk(marks, store)).toBe(true);
   });
 
+  it("a tick on an unmarked bar does not touch the marks ring", () => {
+    const { store, ring, marks, of } = setup();
+    ring.sync(store, store.replace(flagged(0, 3, [AMENDED, 0, 0])));
+    events(marks);
+    const [ints, words, changes, patched] = [
+      marks.ints,
+      [...marks.ints],
+      marks.changes,
+      marks.patched,
+    ];
+    const live = flagged(2, 1, [0]);
+    for (const close of [1, 3, 4]) {
+      (live.close as Int32Array)[0] = close;
+      ring.sync(store, store.append(live, true));
+    }
+    expect(marks.ints).toBe(ints);
+    expect([...marks.ints]).toEqual(words);
+    expect([marks.changes, marks.patched, of("marks")]).toEqual([
+      changes,
+      patched,
+      [["marks", 0, 1]],
+    ]);
+    expect(events(marks)).toEqual([]);
+  });
+
+  it("a tick on the forming bar refreshes its entries in place: no copy, no event", () => {
+    const { store, ring, marks, of } = setup();
+    ring.sync(store, store.replace(flagged(0, 3, [0, AMENDED, FORMING | AMENDED])));
+    events(marks);
+    const [ints, changes] = [marks.ints, marks.changes];
+    const live = flagged(2, 1, [FORMING | AMENDED]);
+    (live.close as Int32Array)[0] = 3;
+    ring.sync(store, store.append(live, true));
+    expect([marks.ints, marks.changes, of("marks")]).toEqual([ints, changes, [["marks", 0, 3]]]);
+    (live.high as Int32Array)[0] = 9; // a new high: both of bar 2's entries move, one patch
+    ring.sync(store, store.append(live, true));
+    expect([marks.ints, marks.changes, of("marks").at(-1)]).toEqual([
+      ints,
+      changes + 1,
+      ["marks", 1, 3],
+    ]);
+    expect([listed(marks, store), wordsOk(marks, store), events(marks)]).toEqual([
+      ["1:8", "2:2", "2:8"],
+      true,
+      [],
+    ]);
+    (live.flags as Uint8Array)[0] = FORMING; // a bit dropped: the full sync, one event
+    ring.sync(store, store.append(live, true));
+    expect([listed(marks, store), events(marks)]).toEqual([
+      ["1:8", "2:2"],
+      [`${store.indexToTime(2)}:2`],
+    ]);
+  });
+
   it("a sync that touches a mark makes no typed-array view (no subarray)", () => {
     const { store, ring, marks } = setup();
     ring.sync(store, store.replace(flagged(0, 3, [0, 0, FORMING])));
@@ -476,6 +530,16 @@ describe("the marks follow the drawn bar under E12-S07's hollow and Heikin-Ashi"
     const [mine, ring2] = drawn(ring, marks, 0);
     expect(mine).toEqual(ring2);
     expect(mine).not.toEqual(was);
+  });
+
+  it("Heikin-Ashi: a forming tick refreshes the entry from the HA words, with no event", () => {
+    const { c, store, ring, marks } = live([0, 0, 0, FORMING]);
+    c.setKind("candles", true, store);
+    const bar = { ...flagged(3, 1, [FORMING]), close: Int32Array.of(-30), low: Int32Array.of(-30) };
+    ring.sync(store, store.append(bar, true));
+    const [mine, ring2] = drawn(ring, marks, 0);
+    expect(mine).toEqual(ring2);
+    expect(marks.takeEvents()).toBe(0);
   });
 
   it("hollow: `heavy` is the colour-down wick (close < previous close), not the body's dir", () => {
