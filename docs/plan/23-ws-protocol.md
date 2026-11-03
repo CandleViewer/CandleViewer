@@ -4583,7 +4583,7 @@ When E29-T06's rows fire (the orchestrator's ruling of record on #914, BQ-6 and 
 
 - `oms.account_desync` is sent once per pass that applied at least one correction to tracked state, never once per row. A correction is a step sent to an order, a position corrected, or a stop attached or restored. It is `critical` for a pass that found an open position with no exchange-side stop and no recorded stop in force: that pass pages P1, lists the position in its report, and leaves the attach to E32-T02. A pass whose only finding is such a position sends it at `critical` too, though it applied no correction (BQ-9 and BQ-6).
 - `oms.account_stale` is sent once per episode, when the 2-minute window of failed fetches ends and the account's reconciliation job locks (`stale_lockout`), so its order entry is refused with `account_stale`. That once is B19's notice: the standing's untimed broadcast of the same lock comes first (the replay at connect, below).
-- `oms.account_synced` is sent once, on the first clean pass after a desync or stale episode, never on every clean pass. A clean pass applied no correction, left nothing for the Owner and listed no error, so a pass that found such a naked position is never clean. A stale episode ends only by the operator's decision (`resolveReconciliation`), so its `synced` follows the first clean pass after it. A pass the private stream's resync requests (the `reconnect` trigger) opens an episode too (E29-S07, the orchestrator's ruling of 2026-11-03), so its clean pass, or the first clean pass after it, sends `oms.account_synced`, which ends the resync's `oms.account_resyncing`.
+- `oms.account_synced` is sent once, on the first clean pass after a desync or stale episode, never on every clean pass. A clean pass applied no correction, left nothing for the Owner and listed no error, so a pass that found such a naked position is never clean. A stale episode ends only by the operator's decision (`resolveReconciliation`), so its `synced` follows the first clean pass after it. A pass the private stream's resync requests (the `reconnect` trigger) opens an episode too (E29-S07, the orchestrator's ruling of 2026-11-03), so its clean pass, or the first clean pass after it, sends `oms.account_synced`, which ends the resync's `oms.account_resyncing`. A resync whose `reconnect` request finds the account's pass running or backing off gets no pass of its own, so its `oms.account_resyncing` holds until the account's next resync whose pass runs, a desync or lock episode's `synced`, or a restart; a resync during a running `reconnect` pass ends at that pass's `synced`. The stream's first connection and a rejected frame also request a `reconnect` pass, with no `oms.account_resyncing` before it, so `oms.account_synced` may name an account the client holds no state for, and such a frame starts and ends no episode.
 
 **Replay at connect (E29-S07, #1028).** While an account's latest notice of the `oms.` family is
 not `oms.account_synced`, that notice is pushed right after `auth_ok` and the `system` snap (§12.1)
@@ -4601,7 +4601,10 @@ time. Only the lock is read from the standing: every other state of the family i
 the server keeps it in memory, so after a restart a desync or a resync is not replayed until the
 account's next notice. A resync ends as every state of the family does, at `oms.account_synced`,
 which the clean pass the resync requests sends (above): a socket open during the drop is sent it
-live, and a later first authentication replays nothing for the account.
+live, and a later first authentication replays nothing for the account. A resync whose request
+finds the account's pass running or backing off is replayed until that `synced` comes, as the
+`synced` rule above says (its next resync whose pass runs, a desync or lock episode, or a
+restart).
 Each frame names one account, its state keyed by the account
 id, so no state crosses environments (C-2.11). It is cut as every `account_notice` is: the Owner
 receives it whole, a Manager or Viewer only for the accounts its `account_scope` lists, and nothing

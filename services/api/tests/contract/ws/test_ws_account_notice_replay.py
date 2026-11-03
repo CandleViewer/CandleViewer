@@ -123,6 +123,10 @@ def test_24_says_how_a_connecting_client_learns_a_lock_and_a_resync() -> None:
     assert "a connecting client is sent it after `auth_ok` until then (E29-S07)" in doc
     assert "which the resync's clean pass ends (`oms.account_synced`, E29-T06)" in doc
     assert (
+        "a resync whose request finds the pass running or backing off holds until its next resync "
+        "whose pass runs, a desync or lock episode's `synced`, or a restart"
+    ) in doc
+    assert (
         "A lock the standing gains with no notice of its own (a restored one, or one set ahead of "
         "B19's notice) is broadcast at once as `oms.account_stale` with no time, one frame per "
         "account"
@@ -165,6 +169,20 @@ def test_section_15_9_has_a_resyncs_clean_pass_send_synced() -> None:
         "clean pass after it, sends `oms.account_synced`, which ends the resync's "
         "`oms.account_resyncing`."
     ) in section
+    assert (
+        "A resync whose `reconnect` request finds the account's pass running or backing off gets "
+        "no pass of its own, so its `oms.account_resyncing` holds until the account's next resync "
+        "whose pass runs, a desync or lock episode's `synced`, or a restart; a resync during a "
+        "running `reconnect` pass ends at that pass's `synced`."
+    ) in section
+    assert (
+        "The stream's first connection and a rejected frame also request a `reconnect` pass, with "
+        "no `oms.account_resyncing` before it, so `oms.account_synced` may name an account the "
+        "client holds no state for, and such a frame starts and ends no episode."
+    ) in section
+    assert "A resync whose request finds the account's pass running or backing off is replayed" in (
+        section
+    )
 
 
 @pytest.mark.parametrize(
