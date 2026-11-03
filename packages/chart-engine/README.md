@@ -896,8 +896,8 @@ so the VAOs stay and the upload is one sub-range of every bar. The hosts and the
 Heikin-Ashi while the chart holds footprint data; Heikin-Ashi over OHLC bars (D06 §3.3 defines HA
 over candles); and a footprint batch arriving while a series draws Heikin-Ashi (the batch is
 acked, not stored). The inline message is `apps/web` work. The public `SeriesHandle.setKind`
-arrives with the app wiring; until then the worker command is the API (the pane stub sends no
-series commands). Two internal metrics
+arrives with the app wiring; until then the worker command is the API (the pane facade sends no
+kind command; it routes series since E12-S11 PR A1, below). Two internal metrics
 (`runtime.seriesMetrics(id)`) track this. `series_type_switch_duration_ms{target}` measures from
 the switch to the end of its first frame, in `SWITCH_BUCKETS_MS` buckets, with target `hollow`,
 `candles+heikin-ashi` and so on. `series_incompatible_combination_total{combination}` counts
@@ -909,13 +909,51 @@ pan and feed rows at 5k and 100k bars keep 2 draws and the two-bar feed upload. 
 `candle-golden` pins the hollow four marks and an HA raster as CPU stand-in text. The SwiftShader
 rows are `it.todo`s for E11-T08 #391.
 
-Known gap for the autoscale wiring ticket (not fixed here): autoscale fits the real prices, but an
-HA candle can reach above the real high or below the real low (its open is the previous HA
-midpoint). The price extent source must read the displayed ring values (or offer an HA-extremes
-mode), and `CandleRing.setMode` must bump that source's version so autoscale refits on a switch.
+Known gap for the autoscale wiring ticket (closed by E12-S11 PR A1, below): autoscale fit the real
+prices, but an HA candle can reach above the real high or below the real low (its open is the
+previous HA midpoint).
 
 Deviation from the plan (#533 plan §2): the plan put HA in a second `CandleRing`. A backend keeps
 the first source a node is attached to, so a second ring would mean remounting three hosts on every
 switch, and the scene graph cannot remove the old ones. `HaRing` therefore holds only the float64
 state and writes into the series' existing ring; switching back rewrites the real bars from the
 store.
+
+## Series routing and the autoscale wiring (E12-S11 PR A1)
+
+**Routing.** The §8 facade now drives the E12-S06 runtime series. `Pane.addSeries` of a bar kind
+(`candles`, `hollow`, `bars`) posts `command { k: "addSeries", series, kind, pane }` with a
+chart-unique id (minted by the chart, never reused) and the pane's index; the first series on
+pane 0 is the runtime's main series, as before. The handle's `setData`, `append` and
+`prependHistory` post `data` tagged with that id, so each series has its own host lane (two in
+flight, conflation and resync per series). `remove` posts `removeSeries` once; a removed handle
+throws on new data, and removing a pane removes its live series first. Other kinds stay inert
+stubs. The id is internal (`SeriesInternal.seriesId`): §8 is unchanged. The series-less `data`
+path (counts only) is unchanged for callers that bypass the facade.
+
+**Host.** A live series' `addSeries` and last `setSeriesKind` are retained apart from the other
+commands and replayed first on a restarted worker, so the data layer's re-send finds its stores.
+The degraded-2d handoff does not replay them: its runtime keeps the DataModel (BQ-53).
+`removeSeries` forgets the definition and the series' retained options, and drops the batches its
+lane still holds (the in-flight two are acked as usual).
+
+**Autoscale.** Each series is its pane's `PriceExtentSource` through `SeriesPriceSource`
+(`src/layers/candle/price-source.ts`), the main series first, so autoscale and the log guard
+follow real data with nothing injected (`RuntimeDeps.priceSources` stays a test seam that wins
+when given). Decisions:
+
+- The extent and the guard's minimum read the **drawn** instance words, the series'
+  `CandleRing`: the real bars, or the Heikin-Ashi candles while HA is on (26 :390). Autoscale
+  never clips what is on screen. The percent anchor reads the store's **real** close (E12-D06
+  R-4: the axis labels real prices).
+- A series that is not the time map is read by time (its bars spanning the visible ones), and a
+  series in another price frame is converted into the pane's ticks, rounded outward.
+- The runtime bumps the source's version after every applied batch and every kind switch (not
+  `CandleRing.setMode`, which keeps the ring free of autoscale knowledge). Adding or removing a
+  series rebuilds the pane lists and invalidates the autoscaler's keys (`AutoScaler.invalidate`),
+  so a removed series stops contributing on the next frame and a version-sum collision cannot
+  hide the change. With no series left the window holds where it was.
+- The guard's minimum is cached per version: one O(n) pass per data change, as before.
+
+Panes after the first are not laid out yet (BQ-45): a series on a later pane is registered with
+its index and priced on that pane, which the viewport does not draw until E11-S09.
