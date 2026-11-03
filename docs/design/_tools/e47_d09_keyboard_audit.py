@@ -143,7 +143,6 @@ FILE_BASE = {
 UNMERGED_PATHS = (
     *(f"E47-D{n:02d}.md" for n in (1, 3, 5, 6, 7, 8, 10, 11)),
     "E31-D01.md",
-    "E37-D04.md",
 )
 
 RULING_ID = "6566806943"  # the rulings of record on #1308 (2026-11-02 01:20Z)
