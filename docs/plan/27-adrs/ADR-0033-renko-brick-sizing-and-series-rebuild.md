@@ -1,6 +1,6 @@
 # ADR-0033 — Renko brick sizing and series rebuild semantics
 
-- Status: **accepted** (ratified by the owner 2026-10-09; decision record on #1778, item N); Amendment 1
+- Status: **accepted** (ratified by the owner 2026-10-09; decision record on #1778, item N); Addendum 1
   2026-11-03 (as built, E12-K02).
 - Date: 2026-10-07
 - Deciders: Owner (`@basiltt`) — **ratified 2026-10-09** as written (decision record on #1778, 2026-10-09).
@@ -262,10 +262,10 @@ registry, generation swap with reader leases, bounded executor, metrics), the co
 whose gate scope is: production `Decimal` builders, E08 PGWire read path **including cursor release**, reference VPS,
 and cancel p95 <= 250 ms **under load**.
 
-## Amendment 1 — 2026-11-03: rebuild and invalidation as built (E12-K02, #526)
+## Addendum 1 — 2026-11-03: rebuild and invalidation as built (E12-K02, #526)
 
 _Status: records the state of `main` at `c6b53ad9d`; the Decision 2 text above is unchanged and still
-binds E12-S12. E12-S12 (#535) adds Amendment 2 when the rebuild ships. The consumer view is
+binds E12-S12. E12-S12 (#535) adds Addendum 2 when the rebuild ships. The consumer view is
 `docs/plan/36-bar-semantics-reference.md` §5 and §7._
 
 **Built.**

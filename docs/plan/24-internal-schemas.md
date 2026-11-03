@@ -6890,9 +6890,9 @@ The orchestrator assigned this number on 2026-11-03 (ruling of record on #1029, 
 - Beside this section, no contract changes: ADR-0006 Amendment 2 and Validation status, and ADR-0044 (v1 order entry is REST in every environment; the exchange's reject text is code-only to clients and stored redacted; its risks name the E30 and `11-user-stories.md` texts that still show the exchange's message); `20` §3.5, §5 (the planned layout drops `ws_trade.py`), §9, §10.2 and §13.2 (REST in every environment, the shipped interface names, rows for the stream consumer and the exit routes; the live 500 ms figure assumed a WS trade path) and §16; `21` §3.3.4 (automatic adoption only; the `exchange_updated_ts` note); `28` B1.6 (text only); `04` SR-057, SR-058, O8, row 17 and the E29 paragraph's tense; the E29 threat model's §2 (E3b) and §12.3 notes.
 - No migration, REST operation, WS frame, table, column, chart or `machine_hash` change.
 
-### 19.TBD 2026-11-03 — §3, 21 §4.8, 22 `/market/bars`, 23 §6.1 / §14.3: as-built corrections and the bar-semantics reference (E12-K02, #526)
+### 19.111 2026-11-03 — §3, 21 §4.8, 22 `/market/bars`, 23 §6.1 / §14.3: as-built corrections and the bar-semantics reference (E12-K02, #526)
 
-The number is to be assigned by the orchestrator.
+This is the number the orchestrator assigned on 2026-11-03; it keeps it through its rebases.
 
 - New `36-bar-semantics-reference.md`: the per-family bar semantics as built, the consumer guarantees table and the divergence register; §3 here, 23 §14.3 and 21 §4.8 point to it rather than restating it (C-16.5).
 - §3.3: the `(generation, index)` key is landed (#2014, migration 0004), not pending; the builder set runs in production (#2031).
