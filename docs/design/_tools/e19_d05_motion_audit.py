@@ -15,6 +15,9 @@ G-PENPOT, G-RULING, G-RULED, G-NOCLOSE, G-PUBLIC, G-UNTOUCHED and G-MUTLIST (sec
 this tool's list). Pins (G-RULED): each BQ bullet's sha256[:16] in `e19_d05_ruled_pins.txt`;
 `--repin-ruled` is the only writer. The BQ list is comment 6583000168 on #500 and the ruling of
 record comment 6585209632 (G-RULING checks each bullet's verdict and the cross-BQ points).
+PR 3 (the boards): G-BOARDS takes a §0 Status cell that is PENDING or drawn with its own PNG(s) and
+its own themes' gates; G-UNTOUCHED also allows the exports, the sheet kit and its MANIFEST and
+.prettierignore lines; `--self-test` runs three probes of those after section 15.2's list.
 
 Usage (from the repo root):
   python3 -I -B docs/design/_tools/e19_d05_motion_audit.py --check | --self-test | --repin-ruled
@@ -72,6 +75,28 @@ TOOL_REL = "docs/design/_tools/e19_d05_motion_audit.py"
 PIN_REL = "docs/design/_tools/e19_d05_ruled_pins.txt"
 LIB_REL = "docs/design/_tools/spec_audit_lib.py"
 OWN = (SPEC_REL, TOOL_REL, PIN_REL, LIB_REL)
+# PR 3 (the boards): the exports, the sheet kit and its MANIFEST / .prettierignore lines
+OWN_GLOBS = (
+    "docs/design/E19/img/E19-D05-[0-9][0-9]-*.png",
+    "docs/design/_tools/sheets/e19-d05/*",
+    "docs/design/_tools/sheets/MANIFEST.sha256",
+    ".prettierignore",
+)
+_GATE = r"gate PASS \(own [\d,]+ px, other [\d,]+ px\)"
+_PNG = r"`docs/design/E19/img/E19-D05-(?P<{0}>\d\d)-(?P<{1}>[a-z0-9-]+?)(?P<{2}>-dark)?\.png` \(\d+ × \d+\)"
+# a drawn §0 Status cell: the board id, its PNG and size, frames, nodes and its theme's gate; a dark + light twin
+# names its light export (§0's name) and its dark twin export (`-dark.png`), each with its own gate (kit reading R-K2)
+DRAWN_CELL = re.compile(
+    r"drawn: board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, (?:(?P<lt>light) )?"
+    + _PNG.format("nn", "slug", "d1")
+    + r", \d frames?, [\d,]+ nodes; (?P<g1>dark|light) "
+    + _GATE
+    + r"(?:; dark twin "
+    + _PNG.format("nn2", "slug2", "d2")
+    + r", (?P<g2>dark) "
+    + _GATE
+    + r")?"
+)
 LIB_SHA16 = "62b56d6446b218cd"  # the shared helper, byte-identical in #439, #505 and #500's PR 1
 BACKLOG_REL = "docs/plan/backlog/E19.json"
 
@@ -562,9 +587,31 @@ def g_clips(t: L.Tree) -> list[str]:
     return bad + ([] if "clip `poc-jump`" in sec(t, "## Acceptance") else ["AC 4 clip"])
 
 
+def drawn_cell(r: list[str]) -> list[str]:
+    """A drawn §0 cell names its own board's PNG(s) and gates its own themes: dark alone, or a
+    light export under §0's name plus its `-dark.png` twin."""
+    m = DRAWN_CELL.fullmatch(r[4])
+    name = re.fullmatch(r"`E19-D05 / (\d\d) ([a-z0-9-]+)`", r[1])
+    if not m or not name:
+        return [f"board {r[0]}: neither PENDING nor a drawn cell"]
+    twin = "light" in r[3]
+    own = (m["nn"], m["slug"]) == name.groups() and not m["d1"]
+    if twin:
+        own = own and m["lt"] == "light" and m["g1"] == "light" and m["nn2"] is not None
+        own = own and (m["nn2"], m["slug2"]) == name.groups() and m["d2"] == "-dark"
+    else:
+        own = own and m["lt"] is None and m["g1"] == "dark" and m["nn2"] is None
+    return [] if own else [f"board {r[0]}: its drawn cell is not its own PNG and themes"]
+
+
 def g_boards(t: L.Tree) -> list[str]:
     brows = rows(sec(t, "## 0. Status"))
-    bad = L.board_cap(brows, "E19-D05", t.text("spec"))
+    bad: list[str] = []
+    for r in brows:
+        if len(r) > 4 and r[4] != "PENDING":
+            bad += drawn_cell(r)
+    cap = [r[:4] + ["PENDING"] + r[5:] if len(r) > 4 else r for r in brows]
+    bad += L.board_cap(cap, "E19-D05", t.text("spec"))
     twins = {r[0] for r in brows if len(r) > 3 and "light" in r[3]}
     return bad + ([] if twins == TWINS else [f"light twins {sorted(twins)}, not BQ-13's"])
 
@@ -622,7 +669,8 @@ def g_public(t: L.Tree) -> list[str]:
 
 def g_untouched(t: L.Tree) -> list[str]:
     sha = hashlib.sha256(t.text("lib").encode("utf-8")).hexdigest()[:16]
-    return L.untouched(t.changed, OWN) + ([] if sha == LIB_SHA16 else [f"helper is {sha}"])
+    bad = L.untouched(t.changed, OWN, allowed_globs=OWN_GLOBS)
+    return bad + ([] if sha == LIB_SHA16 else [f"helper is {sha}"])
 
 
 def g_mutlist(t: L.Tree) -> list[str]:
@@ -680,7 +728,7 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-12", "G-FLASH", "a written luminance step drifts", "spec", "| 0.228 ", "| 0.128 "),
     _M("M-13", "G-CLIPS", "half the captures", "spec", "24 captures", "12 captures"),
     _M("M-14", "G-BOARDS", "a fourth light twin", "spec",
-       r"(`E19-D05 / 04 live-growth`[^\n]*\| )dark( +\| PENDING)", r"\1light\2", regex=True),
+       r"(`E19-D05 / 04 live-growth`[^\n]*\| )dark( +\| drawn: )", r"\1light\2", regex=True),
     _M("M-15", "G-T2", "the opacity ban dropped", "spec",
        "never `color.text.disabled`, never `opacity.disabled` (G-T2.2)",
        "never `color.text.disabled` (G-T2.2)"),
@@ -736,6 +784,18 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-41", "G-UNTOUCHED", "the shared helper edited", "lib",
        "from __future__", "from  __future__"),
 )
+
+# PR 3: probes of the drawn §0 cells and the boards' own paths (run by --self-test, kept out of
+# section 15.2's list)
+PROBES: tuple[L.Mutation, ...] = (
+    _M("P-1", "G-BOARDS", "board 01's drawn cell loses its PNG", "spec",
+       "`docs/design/E19/img/E19-D05-01-case-table.png` (2768 × 934), ", ""),
+    _M("P-2", "G-BOARDS", "board 02's dark twin gated light", "spec",
+       "E19-D05-02-poc-jump-dark.png` (3536 × 1958), dark gate",
+       "E19-D05-02-poc-jump-dark.png` (3536 × 1958), light gate"),
+    _M("P-3", "G-UNTOUCHED", "another ticket's sheet kit touched", "@changed",
+       "", "docs/design/_tools/sheets/e47-d08/BUILD.md"),
+)
 # fmt: on
 
 
@@ -762,7 +822,8 @@ def check() -> int:
 
 def self_test() -> int:
     disk = [ROOT / rel for rel in OWN]
-    return L.self_test(read_tree(), GATES, MUTATIONS, disk, namespace=globals())
+    rc = L.self_test(read_tree(), GATES, MUTATIONS, disk, namespace=globals())
+    return rc | L.self_test(read_tree(), GATES, PROBES, disk, namespace=globals())
 
 
 def repin() -> int:
