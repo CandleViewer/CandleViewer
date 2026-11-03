@@ -236,6 +236,10 @@ export class MarkRing {
    * entry lies past the store's end, each is refreshed in place from the drawn words; a changed
    * one (a new high, a direction change, an HA or hollow move) patches its slots and counts as a
    * list change, with no event (no bar's bits changed). Otherwise false: the full sync runs.
+   * The two guards are layered, and neither may be loosened alone: `idx >= n` catches an entry
+   * whose slot is now one of the store's spare slots (past its end); the bar-time match is the
+   * backup for a slot reused by another bar (an eviction refilled it), whose entry would
+   * otherwise pass as this bar's.
    */
   private retick(store: BarStore, i: number, n: number, head: number, mask: number): boolean {
     const c = store.columns;
