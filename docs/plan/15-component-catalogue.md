@@ -1108,6 +1108,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: inherits CMP-001.
 - **Storybook**: Default, Exporting.
 - **Tests**: unit, visual, axe.
+- **As built (E29-S04)**: E29-D04 §2.8.9's interim for D04H:265's change request (E29-D03:200, :297; E29-D06:104). `formats` (one or more of `csv` and `pdf`, a repeat drawn once; SCR-078 offers CSV alone) · `onExport(format)` · `loading?` · `density?`. One CMP-001 secondary button per format, named "Export CSV" (E29-D03 `fills.export.button`) or "Export PDF" (PROPOSED), `space.stack.sm` apart in a plain row that wraps; Tab reaches each and `Enter` or `Space` starts it. Running (`loading`): CMP-001's loading state in CMP-038's busy form, `aria-busy` with the label kept and a CMP-014 `sm` arc leading it in the label's colour (CMP-038's `color.action.primary.default` measures 2.58:1 on the secondary fill in dark), a press doing nothing; the button widens by the arc and its gap. Never T2 and never disabled (E29-D04 §2.8.9; E29-D03 §3.7 keeps it enabled offline). No live region and no words of its own: the progress, done and failed lines are the host's footer and CMP-027, and the watermark is the host's file line 1 (E29-D03:200); D04H:265's progress line and watermark stay E05's change request. Storybook: Default, BothFormats, Hover, FocusVisible, Keyboard, Exporting, ExportingReducedMotion, ContrastLight, ContrastHighContrast.
 
 ---
 
