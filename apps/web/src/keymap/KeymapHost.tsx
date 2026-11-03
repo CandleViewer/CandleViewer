@@ -13,7 +13,14 @@ import type { KeymapCommand } from "./keymap";
 import { Cheatsheet } from "./Cheatsheet";
 import { reportHotkey } from "./analytics";
 import { flushAuditOutbox, recordAudit } from "./audit";
-import { appArm, isCommandValid, registerCommand, runCommand, setArmPort } from "./registry";
+import {
+  appArm,
+  appExposureRefusal,
+  isCommandValid,
+  registerCommand,
+  runCommand,
+  setArmPort,
+} from "./registry";
 import { cycleRegion, toggleReducedMotionAnnounced } from "./shellCommands";
 
 /**
@@ -118,6 +125,7 @@ export function KeymapHost(): JSX.Element {
       bindings,
       now: () => Date.now(),
       arm: appArm, // BQ-5: whatever E30 injected, read at each press
+      exposureRefusal: () => appExposureRefusal(), // E29-S07: new exposure's verdict, said once
       isValid: (c: KeymapCommand) => isCommandValid(c.id),
       execute: (c: KeymapCommand, digit?: number) => runCommand(c.id, digit),
       notify: (m) => {
@@ -151,7 +159,7 @@ export function KeymapHost(): JSX.Element {
       );
       // An order entry while the arm reads unarmed is taken too, so its key does nothing else (BQ-5).
       const taken = r.status === "executed" || r.status === "repeat" || r.status === "reserved";
-      if (taken || r.status === "unarmed") e.preventDefault();
+      if (taken || r.status === "unarmed" || r.status === "blocked") e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
