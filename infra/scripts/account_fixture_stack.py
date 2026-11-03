@@ -19,6 +19,11 @@ for the stores that never start. Then, in order: Postgres and QuestDB, the schem
 directory), the api (the base file makes the schema step the api's dependency, so the api's start
 runs that step once more, which changes nothing on a migrated database).
 
+Every command, `up` included, reads the run root (`$XDG_RUNTIME_DIR` when it is set and absolute,
+else `/dev/shm`) with `lstat` before any docker call. It must be a real directory (never a link)
+that is the invoking user's own with no group or other write bit, or that is sticky and owned by
+root or the invoking user: anything else is one fixed line that shows no path, value or uid.
+
 Every command takes the lane from one environment variable, `CV_ACCTFIX_LANE` (1 to 63 of a-z, 0-9
 and `-`, the first not a `-`), and refuses it unset or malformed with exit 2 and one fixed line that
 never shows the value. The overlay labels each service of the project, and each network and volume
@@ -27,18 +32,24 @@ compose creates for it, `cv.lane=<lane>`, and `up` writes the lane into `stack.e
 (`printf "%q"` prints a value on one line, whatever it holds), and refuse, before any compose call,
 a project holding an object that carries another lane's label or none: `down` takes down a project,
 and `restart-api` and `drive` act on one, only when every object of it is this lane's. A project
-with no object listed is not thereby this lane's, so `down`, `restart-api` and `drive` also match
-the run directory's `stack.env` (`names_lane`: a yes or a no, never a value) with the caller's lane
-before anything uses or removes the directory, and refuse one that names another lane or none. A run
-directory with no `stack.env` goes on as before: `down` removes it once nothing of the project is
-left, `restart-api` and `drive` say to bring the project up first. `up` uses and removes no
-existing run directory (it refuses one), so it reads none.
+with no object listed is not thereby this lane's, so `down`, `restart-api` and `drive` also look at
+the run directory before anything uses or removes it and before any docker call. It must be a real
+directory (read with `lstat`, never a link) of the invoking user's own with mode 0700, and its
+`stack.env` a regular file (read with `fstat` on the opened descriptor) of theirs with mode 0600,
+as `up` makes them: anything else is one fixed line that shows no path, value or uid. Then
+`stack.env` is matched (`names_lane`: a yes or a no, never a value) with the caller's lane, and one
+that names another lane or none is refused. A run directory with no `stack.env` goes on as before:
+`down` removes it once nothing of the project is left, `restart-api` and `drive` say to bring the
+project up first. `up` uses and removes no existing run directory (it refuses one), so it reads
+none.
 
 `down` goes by the project name alone (`docker compose -p <project> down -v --remove-orphans`, run
 from an empty directory) and takes no `-f`: compose then reads no compose file and no env file, so
 `down` works with the run directory gone (a reboot), and running it again is how a failed `down` is
 retried. The run directory goes last, once the project's label lists nothing; until then `down`
-keeps it.
+keeps it. It is opened once, without following a link, and must be what `up` makes (the invoking
+user's own, mode 0700): each entry is unlinked through that descriptor, a directory in it is
+refused, and the directory itself is removed last.
 
 It prints the project name, the steps, exit statuses and counts, never a value. Docker runs with
 `PATH`, `HOME` and `DOCKER_*` alone from the caller's environment, so no stray variable of the
@@ -54,6 +65,7 @@ import re
 import secrets
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -91,9 +103,27 @@ PORT_NAMES: Final = (
 #: The seed's gate refuses a database whose name is not `test` or `*_test`.
 DATABASE: Final = "acctfix_test"
 ENV_FILE: Final = "stack.env"
+#: The modes `up` gives the run directory and `stack.env`, and the only ones the commands that read
+#: them accept.
+RUN_DIR_MODE: Final = 0o700
+ENV_FILE_MODE: Final = 0o600
+#: The run root when `$XDG_RUNTIME_DIR` is unset or not absolute.
+SHM_ROOT: Final = Path("/dev/shm")  # noqa: S108 - the tmpfs fallback
 DEFAULT_SCENARIO: Final = "compliant"
 EXIT_REFUSED: Final = 2
 FAILED: Final = "a file, socket or process call failed"
+#: The one line for a run directory or `stack.env` that is not what `up` makes (no path, value or
+#: uid).
+NOT_OWN: Final = (
+    f"the run directory ({RUN_DIR_MODE:04o}) and its stack.env ({ENV_FILE_MODE:04o}) must be the "
+    "invoking user's own: check them by hand"
+)
+#: The one line for a run root that is not usable (no path, value or uid).
+NOT_ROOT: Final = (
+    "the run root ($XDG_RUNTIME_DIR, or /dev/shm when it is unset or not absolute) must be a real "
+    "directory that is the invoking user's own and not writable by group or others, or that is "
+    "sticky and owned by root or the invoking user: check it by hand"
+)
 #: How often `up` draws the free ports again while two of them coincide.
 PORT_DRAWS: Final = 8
 #: What compose demands on every command for the stores and alerts this stack never starts.
@@ -121,12 +151,27 @@ class Refused(Exception):
     """A fixed message, printed as one line; it never holds a value."""
 
 
+def _usable_root(entry: os.stat_result) -> bool:
+    """A run root: a real directory (`entry` is an `lstat`, so a link is none) that is the invoking
+    user's own with no group or other write bit, or that is sticky and owned by root or the
+    invoking user."""
+    own = entry.st_uid == os.getuid() and not entry.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    sticky = entry.st_uid in (0, os.getuid()) and bool(entry.st_mode & stat.S_ISVTX)
+    return stat.S_ISDIR(entry.st_mode) and (own or sticky)
+
+
 def run_root(environ: Mapping[str, str]) -> Path:
-    """`$XDG_RUNTIME_DIR` (the user's own tmpfs) when it is an absolute directory, else /dev/shm."""
+    """The run root: `$XDG_RUNTIME_DIR` when it is set and absolute, else `SHM_ROOT`. It is read
+    with `lstat` and must be a usable one (`_usable_root`), else `Refused`."""
     runtime = environ.get("XDG_RUNTIME_DIR", "")
-    if runtime.startswith("/") and os.path.isdir(runtime):
-        return Path(runtime)
-    return Path("/dev/shm")  # noqa: S108 - the tmpfs fallback; the run directory is a new mkdir
+    root = Path(runtime) if runtime.startswith("/") else SHM_ROOT
+    try:
+        entry = os.lstat(root)
+    except (FileNotFoundError, NotADirectoryError):
+        raise Refused(NOT_ROOT) from None
+    if not _usable_root(entry):
+        raise Refused(NOT_ROOT)
+    return root
 
 
 def checked_project(name: str) -> str:
@@ -156,14 +201,38 @@ def lane_only(found: Mapping[str, Sequence[tuple[str, str]]], lane: str) -> None
                       "it is not this lane's")  # fmt: skip
 
 
+def _own_dir(entry: os.stat_result) -> bool:
+    """The run directory as `up` makes it: a real directory (`entry` is an `lstat`, so a link is
+    none), the invoking user's own, with mode `RUN_DIR_MODE` exactly."""
+    return (
+        stat.S_ISDIR(entry.st_mode)
+        and entry.st_uid == os.getuid()
+        and stat.S_IMODE(entry.st_mode) == RUN_DIR_MODE
+    )
+
+
+def _own_file(entry: os.stat_result) -> bool:
+    """`stack.env` as `up` writes it: a regular file (`entry` is an `fstat` of the opened
+    descriptor), the invoking user's own, with mode `ENV_FILE_MODE` exactly."""
+    return (
+        stat.S_ISREG(entry.st_mode)
+        and entry.st_uid == os.getuid()
+        and stat.S_IMODE(entry.st_mode) == ENV_FILE_MODE
+    )
+
+
 def names_lane(env_file: Path, lane: str) -> bool:
-    """Whether `stack.env` has exactly one `CV_ACCTFIX_LANE=` line, and it names `lane`. Only a
-    yes or a no leaves here: the file is opened without following a link, read up to
-    ENV_READ_BOUND + 1 bytes and matched line by line, and nothing of it is returned, printed or
-    logged. A file longer than ENV_READ_BOUND is not read whole, so it names no lane."""
+    """Whether `stack.env` has exactly one `CV_ACCTFIX_LANE=` line, and it names `lane`. The file is
+    opened without following a link and without waiting on a pipe, and must then be (`fstat` on
+    the descriptor) a regular file of the invoking user's own with mode 0600, else `Refused`. Only
+    a yes or a no leaves otherwise: the file is read up to ENV_READ_BOUND + 1 bytes and matched
+    line by line, and nothing of it is returned, printed or logged. A file longer than
+    ENV_READ_BOUND is not read whole, so it names no lane."""
     prefix = f"{LANE_VARIABLE}=".encode("ascii")
-    descriptor = os.open(env_file, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    descriptor = os.open(env_file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
     try:
+        if not _own_file(os.fstat(descriptor)):
+            raise Refused(NOT_OWN)
         data = os.read(descriptor, ENV_READ_BOUND + 1)
     finally:
         os.close(descriptor)
@@ -237,10 +306,11 @@ def stack_values(
 
 
 def write_env(path: Path, values: Mapping[str, str]) -> None:
-    """A new file of mode 0600: an existing file or link is never replaced or followed."""
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    """A new file of mode 0600 (`ENV_FILE_MODE`, the mode the commands that read it require): an
+    existing file or link is never replaced or followed."""
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, ENV_FILE_MODE)
     with os.fdopen(descriptor, "w", encoding="ascii") as out:
-        os.fchmod(descriptor, 0o600)
+        os.fchmod(descriptor, ENV_FILE_MODE)
         out.write("".join(f"{name}={value}\n" for name, value in values.items()))
 
 
@@ -297,8 +367,8 @@ def up(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
     lane_only(found, args.lane)
     if any(found.values()):
         raise Refused("the project has containers, networks or volumes left: take it down first")
-    os.mkdir(run_dir, 0o700)
-    os.chmod(run_dir, 0o700)  # the umask never loosens or tightens it
+    os.mkdir(run_dir, RUN_DIR_MODE)
+    os.chmod(run_dir, RUN_DIR_MODE)  # the umask never loosens or tightens it
     env_file = run_dir / ENV_FILE
     values = stack_values(project, run_dir, os.getuid(), scenario, args.lane, host_ports)
     write_env(env_file, values)
@@ -346,11 +416,14 @@ def drive(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
 
 def down(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
     """Everything of the project, by its name alone, then the run directory; idempotent. Only a
-    project whose every object carries this lane's label, and whose run directory (when it has a
-    `stack.env`) names this lane: any other is refused, as it stands."""
+    project whose every object carries this lane's label, and whose run directory, when there is
+    one, is what `up` makes (the invoking user's own, its `stack.env`, when it has one, a file of
+    theirs that names this lane): any other is refused, as it stands. The run directory's path
+    is computed once, for the checks and the removal; `_checked_stack_env` notes the bound
+    between them."""
     project = checked_project(args.project)
     run_dir = run_root(environ) / project
-    _checked_stack_env(project, args, environ)  # before anything uses or removes the directory
+    _checked_stack_env(run_dir, args)  # before anything uses or removes the directory
     env = docker_env(environ)
     status = 0
     found = leftovers(project, env)
@@ -370,30 +443,62 @@ def down(args: argparse.Namespace, environ: Mapping[str, str]) -> int:
 
 def remove_run_dir(run_dir: Path) -> str:
     """Unlink the flat run directory `up` made (its owner unlinks root's files in it), and say
-    what happened; anything `up` never makes there is refused and left as it is."""
-    if not os.path.lexists(run_dir):
+    what happened. The directory is opened once, without following a link, and the opened
+    directory must be what `up` makes (`_own_dir`), else `Refused`; it is listed and each entry
+    unlinked through that descriptor, anything `up` never makes in it is refused and left as it
+    is, and the directory itself goes last."""
+    try:
+        descriptor = os.open(run_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
         return "no run directory"
-    if os.path.islink(run_dir) or not os.path.isdir(run_dir):
-        raise Refused("the run directory is not the directory up made: check it by hand")
-    names = sorted(os.listdir(run_dir))  # listed whole first: nothing is unlinked mid-listing
-    if any(os.path.isdir(run_dir / name) and not os.path.islink(run_dir / name) for name in names):
-        raise Refused("the run directory holds a directory, which up never makes: check it by hand")
-    for name in names:
-        os.unlink(run_dir / name)
+    except NotADirectoryError:  # a link, or a file, in its place
+        raise Refused(NOT_OWN) from None
+    try:
+        if not _own_dir(os.fstat(descriptor)):
+            raise Refused(NOT_OWN)
+        # listed whole first: nothing is unlinked mid-listing
+        names = sorted(os.listdir(descriptor))
+        if any(stat.S_ISDIR(os.lstat(name, dir_fd=descriptor).st_mode) for name in names):
+            raise Refused(
+                "the run directory holds a directory, which up never makes: check it by hand"
+            )
+        for name in names:
+            os.unlink(name, dir_fd=descriptor)
+    finally:
+        os.close(descriptor)
     os.rmdir(run_dir)
     return "run directory removed"
 
 
-def _checked_stack_env(
-    project: str, args: argparse.Namespace, environ: Mapping[str, str]
-) -> Path | None:
+def _checked_stack_env(run_dir: Path, args: argparse.Namespace) -> Path | None:
     """The run's env file, or None when the run directory has none (then each command goes on as
-    before). A file that is there must name this lane, whoever made the directory: `up` writes the
-    lane into it, so another lane's name, or none, is not this lane's run, and the project is
-    refused before anything uses or removes the directory."""
-    env_file = run_root(environ) / project / ENV_FILE
-    if not os.path.isfile(env_file):
+    before). What is there must be what `up` makes and this lane's, whoever made it: the run
+    directory (`lstat`) a real directory of the invoking user's own with mode 0700, whether or not
+    it holds a `stack.env`; `stack.env` a regular file of theirs with mode 0600 (`names_lane` reads
+    that off the opened file, and a link or a pipe is neither); and `stack.env` must name this lane
+    (`up` writes it in, so another lane's name, or none, is not this lane's run). Any other is
+    refused with one fixed line before anything uses or removes the directory and before any docker
+    call. `run_dir` is under the run root `run_root` has already accepted.
+
+    The checks and the uses are separate steps. After them `down` removes the directory, compose
+    opens `--env-file` again and reads the sources of the two secret files, and `drive` binds the
+    directory read-only. The bound on all of these rests on the run directory's owner and mode
+    (the invoking user's own, 0700) and on the run root's rule (`run_root`: the invoking user's own
+    with no group or other write bit, or sticky and owned by root or the invoking user). It assumes
+    the run root's ancestors are root's or the invoking user's and are not writable by others."""
+    try:
+        shown = os.lstat(run_dir)
+    except FileNotFoundError:
+        return None  # no run directory: nothing to match
+    if not _own_dir(shown):
+        raise Refused(NOT_OWN)
+    env_file = run_dir / ENV_FILE
+    try:
+        shown = os.lstat(env_file)  # `lstat`: a link is a link, never followed
+    except FileNotFoundError:
         return None
+    if not stat.S_ISREG(shown.st_mode):
+        raise Refused(NOT_OWN)
     if not names_lane(env_file, args.lane):
         raise Refused(
             "the run directory's stack.env names another lane, or none: it is not this lane's"
@@ -406,7 +511,7 @@ def _own_env_file(project: str, args: argparse.Namespace, environ: Mapping[str, 
     directory's `stack.env` names this lane and every object of the project carries its label
     (any other is refused before compose is reached, as `down` refuses it), and the directory is
     there."""
-    env_file = _checked_stack_env(project, args, environ)
+    env_file = _checked_stack_env(run_root(environ) / project, args)
     lane_only(leftovers(project, docker_env(environ)), args.lane)
     if env_file is None:
         raise Refused("the project has no run directory here: bring it up first")
