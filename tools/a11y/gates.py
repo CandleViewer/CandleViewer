@@ -9,7 +9,8 @@ error (A11Y-INFRA). Infra errors are distinct from violations so the documented
 break-glass path never has to disable a gate for a real violation.
 
 Codes: G001 axe regression, G002 Lighthouse below floor, G003 contrast (see
-tools/contrast), G004 keyboard E2E, G005 flash rate, G006 a11y-tree drift, G007 runtime budget.
+tools/contrast), G004 keyboard E2E, G005 flash rate, G006 a11y-tree drift, G007 runtime budget,
+G008 screen inventory (E47-Q04: a mounted screen absent from the axe report).
 """
 
 from __future__ import annotations
@@ -19,10 +20,20 @@ import datetime as dt
 import difflib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
+from tools.a11y import inventory
+
 BLOCKING_IMPACTS = ("serious", "critical")
+TRACKED_IMPACTS = ("moderate", "minor")
+# Sections of axe-baseline.json (BQ-05). Each entry is
+# {fingerprint, finding, justification, owner, ticket, target, expiry}: `entries` holds serious/critical (shrink-only,
+# keyed screen|rule|selector), `minor_entries` moderate/minor (keyed rule|stable selector path),
+BASELINE_SECTIONS = ("entries", "minor_entries")
+MAX_EXPIRY_DAYS = 90  # a suppression is a short loan, not a standing exemption
+ENTRY_FIELDS = ("fingerprint", "finding", "justification", "owner", "ticket", "target", "expiry")
 LIGHTHOUSE_FLOOR = 0.95
 MAX_FLASHES_PER_SECOND = 3
 FLASH_LUMINANCE_DELTA = 0.1  # WCAG 2.3.1 general-flash relative-luminance step
@@ -89,21 +100,135 @@ def check_baseline_entries(baseline: dict) -> list[str]:
 
 def check_baseline_pr_ids(base: dict, head: dict, pr_body: str) -> list[str]:
     """Every baseline entry added/changed vs base must have its finding id named in the PR body."""
-    old = {json.dumps(e, sort_keys=True) for e in base.get("entries", [])}
+    old = {
+        json.dumps(e, sort_keys=True)
+        for sec in BASELINE_SECTIONS
+        for e in base.get(sec, [])
+    }
     return [
         f"A11Y-G001 baseline change {e.get('fingerprint', '?')!r} not justified: "
         f"PR description must name {e.get('finding', '?')}"
-        for e in head.get("entries", [])
+        for sec in BASELINE_SECTIONS
+        for e in head.get(sec, [])
         if json.dumps(e, sort_keys=True) not in old
         and str(e.get("finding", "")) not in pr_body
     ]
 
 
+# --- Moderate/minor tracking, schema and expiry (E47-Q04, BQ-05/06) ----------
+
+_USE_ID_RE = re.compile(r":r[0-9a-z]+:")  # React useId, differs per render
+
+
+def stable_path(target: list | None) -> str:
+    """A selector path that survives re-renders: React useId segments become `:r*:`."""
+    return _USE_ID_RE.sub(":r*:", " ".join(str(t) for t in (target or ["<page>"])))
+
+
+def axe_minor_fingerprints(report: dict) -> dict[str, str]:
+    """Map `rule|stable selector path` -> message for moderate/minor nodes."""
+    out: dict[str, str] = {}
+    screens = report.get("screens")
+    if not isinstance(screens, dict):
+        raise InfraError("A11Y-INFRA axe report has no 'screens' object")
+    for screen, data in screens.items():
+        for v in data.get("violations", []):
+            if v.get("impact") not in TRACKED_IMPACTS:
+                continue
+            for node in v.get("nodes") or [{"target": ["<page>"]}]:
+                sel = stable_path(node.get("target"))
+                out.setdefault(
+                    f"{v['id']}|{sel}",
+                    f"screen={screen} rule={v['id']} impact={v['impact']} node={sel}",
+                )
+    return out
+
+
+def check_axe_minor(report: dict, baseline: dict) -> list[str]:
+    """A11Y-G001 messages for moderate/minor findings above the baseline."""
+    allowed = {e.get("fingerprint") for e in baseline.get("minor_entries", [])}
+    return [
+        f"A11Y-G001 new moderate/minor finding above baseline: {msg}"
+        for key, msg in sorted(axe_minor_fingerprints(report).items())
+        if key not in allowed
+    ]
+
+
+def _today(now: dt.datetime | None) -> dt.date:
+    return (now or dt.datetime.now(dt.timezone.utc)).date()
+
+
+def check_baseline_schema(baseline: dict, now: dt.datetime | None = None) -> list[str]:
+    """Every entry in every section carries the full schema and has not expired (BQ-06), within 90 days.
+
+    An expired entry names its owner and ticket. `expiry` is the last valid day (UTC); `target`
+    is the planned burn-down date and must not be later than the expiry.
+    """
+    today, msgs = _today(now), []
+    for section in BASELINE_SECTIONS:
+        for e in baseline.get(section, []):
+            fp = e.get("fingerprint", "?")
+            missing = [f for f in ENTRY_FIELDS if not str(e.get(f, "")).strip()]
+            if missing:
+                msgs.append(
+                    f"A11Y-G001 {section} entry {fp!r} lacks {', '.join(missing)} "
+                    f"(owner={e.get('owner', '?')} ticket={e.get('ticket', '?')})"
+                )
+                continue
+            try:
+                expiry = dt.date.fromisoformat(str(e["expiry"]))
+                target = dt.date.fromisoformat(str(e["target"]))
+            except ValueError:
+                msgs.append(
+                    f"A11Y-G001 {section} entry {fp!r} has an invalid date "
+                    f"(owner={e['owner']} ticket={e['ticket']}); use YYYY-MM-DD"
+                )
+                continue
+            if section != "entries" and not str(e["finding"]).startswith("A11Y-F"):
+                msgs.append(
+                    f"A11Y-G001 {section} entry {fp!r} lacks a finding id "
+                    f"(owner={e['owner']} ticket={e['ticket']})"
+                )
+            if expiry > today + dt.timedelta(days=MAX_EXPIRY_DAYS):
+                msgs.append(
+                    f"A11Y-G001 {section} entry {fp!r} expires {expiry}, more than "
+                    f"{MAX_EXPIRY_DAYS} days out (owner={e['owner']} ticket={e['ticket']})"
+                )
+            if expiry < today:
+                msgs.append(
+                    f"A11Y-G001 {section} entry {fp!r} expired on {expiry}: "
+                    f"owner={e['owner']} ticket={e['ticket']} must fix it or renew with a new expiry"
+                )
+            elif target > expiry:
+                msgs.append(
+                    f"A11Y-G001 {section} entry {fp!r} target {target} is after its expiry {expiry} "
+                    f"(owner={e['owner']} ticket={e['ticket']})"
+                )
+    return msgs
+
+
+# --- Gate 8: screen inventory (A11Y-G008) ------------------------------------
+
+
+def check_inventory(report: dict, tier: str = "pr") -> list[str]:
+    try:
+        manifest = inventory.load_manifest()
+        rows = inventory.load_rows(manifest=manifest)
+        return inventory.check_inventory(report, rows, inventory.pr_scan_ids(), tier)
+    except inventory.InventoryError as exc:
+        raise InfraError(str(exc)) from exc
+
 # --- Gate 2: Lighthouse ---------------------------------------------------
 
 
 def check_lighthouse(scores: dict, floor: float = LIGHTHOUSE_FLOOR) -> list[str]:
-    """scores: {"<screen>": 0..1 | null}. null/empty = runner failure -> infra."""
+    """scores: {"<screen>": 0..1 | null}. null/empty = runner failure -> infra.
+
+    The collector (E47-Q04) writes {"chromium", "runnerClass", "lighthouse", "scores", "pending"}:
+    a `pending` screen is counted, never failed; the other fields record what produced the scores.
+    """
+    if "scores" in scores:
+        scores = scores["scores"]
     if not scores:
         raise InfraError(
             "A11Y-INFRA Lighthouse produced no scores (runner did not start?)"
@@ -118,6 +243,16 @@ def check_lighthouse(scores: dict, floor: float = LIGHTHOUSE_FLOOR) -> list[str]
         for s, v in sorted(scores.items())
         if v < floor
     ]
+
+
+def lighthouse_line(doc: dict) -> str:
+    """One line recording what produced the scores, so a score change is attributable (BQ-08)."""
+    pending = doc.get("pending") or {}
+    return (
+        f"A11Y-G002 lighthouse {doc.get('lighthouse', '?')} on Chromium {doc.get('chromium', '?')}, "
+        f"runner {doc.get('runnerClass', '?')}: {len(doc.get('scores') or {})} scored, "
+        f"{len(pending)} pending"
+    )
 
 
 # --- Gate 5: flash audit --------------------------------------------------
@@ -269,6 +404,14 @@ def infra_waiver_active(env: dict[str, str], now: dt.datetime | None = None) -> 
     return now < until <= now + dt.timedelta(hours=MAX_WAIVER_HOURS)
 
 
+def _inventory_line(tier: str) -> str:
+    try:
+        rows = inventory.load_rows()
+        return inventory.describe(rows, inventory.pr_scan_ids(), tier)
+    except inventory.InventoryError as exc:
+        raise InfraError(str(exc)) from exc
+
+
 def _emit(msgs: list[str]) -> int:
     for m in msgs:
         print(m)
@@ -297,6 +440,10 @@ def main(argv: list[str] | None = None) -> int:
     b = sub.add_parser("budget")
     b.add_argument("elapsed", type=float)
     b.add_argument("--limit", type=float, required=True)
+    iv = sub.add_parser("inventory")
+    iv.add_argument("report")
+    iv.add_argument("--tier", choices=("pr", "full"), default="pr")
+    sub.add_parser("lighthouse-plan")
     t = sub.add_parser("tree")
     t.add_argument("--snapshots", default="tools/a11y/tree-snapshots")
     t.add_argument("actual")
@@ -306,8 +453,18 @@ def main(argv: list[str] | None = None) -> int:
             baseline = _load(args.baseline)
             return _emit(
                 check_baseline_entries(baseline)
+                + check_baseline_schema(baseline)
                 + check_axe(_load(args.report), baseline)
+                + check_axe_minor(_load(args.report), baseline)
             )
+        if args.cmd == "inventory":
+            report = _load(args.report)
+            print(_inventory_line(args.tier))
+            return _emit(check_inventory(report, args.tier))
+        if args.cmd == "lighthouse-plan":
+            m = inventory.load_manifest()
+            print(json.dumps(inventory.lighthouse_plan(inventory.load_rows(manifest=m), m), indent=2))
+            return EXIT_OK
         if args.cmd == "baseline-pr":
             body = Path(args.body_file).read_text(encoding="utf-8")
             return _emit(
@@ -318,7 +475,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "budget":
             return _emit(check_budget(args.elapsed, args.limit))
         if args.cmd == "lighthouse":
-            return _emit(check_lighthouse(_load(args.scores)))
+            doc = _load(args.scores)
+            if "scores" in doc:
+                print(lighthouse_line(doc))
+            return _emit(check_lighthouse(doc))
         if args.cmd == "flash":
             if args.table:
                 print(flash_table(_load(args.capture)))
@@ -326,7 +486,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "keyboard":
             return _emit(check_keyboard(_load(args.result)))
         return _emit(check_tree(args.snapshots, args.actual))
-    except InfraError as exc:
+    except (InfraError, inventory.InventoryError) as exc:
         print(exc, file=sys.stderr)
         if infra_waiver_active(dict(os.environ)):
             print(
