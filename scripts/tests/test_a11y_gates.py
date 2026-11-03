@@ -289,3 +289,116 @@ def test_flash_window_slides_across_a_wall_second_boundary() -> None:
     for start in (40, 60, 80):
         series[start : start + 6] = [1.0] * 6
     assert gates.count_flashes(series, 60) == 3
+
+
+# --- E47-Q04: moderate/minor baseline, schema, expiry, pa11y, Lighthouse metadata -------------
+
+NOW = dt.datetime(2026, 11, 3, 12, tzinfo=dt.timezone.utc)
+
+
+def _entry(**kw: str) -> dict:
+    base = {
+        "fingerprint": "region|main > div",
+        "finding": "A11Y-F-0007",
+        "owner": "alice",
+        "ticket": "#1400",
+        "target": "2026-12-01",
+        "expiry": "2026-12-15",
+    }
+    return {**base, **kw}
+
+
+def test_moderate_above_baseline_fails_and_baselined_passes() -> None:
+    rep = _report("moderate")
+    msgs = gates.check_axe_minor(rep, {"minor_entries": []})
+    assert len(msgs) == 1 and "color-contrast" in msgs[0] and "#buy" in msgs[0]
+    base = {"minor_entries": [_entry(fingerprint="color-contrast|#buy")]}
+    assert gates.check_axe_minor(rep, base) == []
+    assert gates.check_axe_minor(_report("serious"), {}) == []  # serious is G001 proper
+
+
+def test_minor_key_ignores_react_use_id_segments() -> None:
+    rep = {"screens": {"S": {"violations": [{"id": "label", "impact": "minor", "nodes": [{"target": ["#:r1a:"]}]}]}}}
+    assert "label|#:r*:" in gates.axe_minor_fingerprints(rep)
+    rep["screens"]["S"]["violations"][0]["nodes"][0]["target"] = ["#:r9z:"]
+    assert gates.check_axe_minor(rep, {"minor_entries": [_entry(fingerprint="label|#:r*:")]}) == []
+
+
+def test_expired_suppression_fails_naming_owner_and_ticket() -> None:
+    for section in ("entries", "minor_entries", "pa11y_entries"):
+        msgs = gates.check_baseline_schema({section: [_entry(expiry="2026-11-02")]}, NOW)
+        assert len(msgs) == 1, section
+        assert "expired" in msgs[0] and "owner=alice" in msgs[0] and "ticket=#1400" in msgs[0]
+
+
+def test_baseline_entry_valid_through_its_expiry_day() -> None:
+    assert gates.check_baseline_schema({"entries": [_entry(expiry="2026-11-03", target="2026-11-03")]}, NOW) == []
+
+
+@pytest.mark.parametrize("field", ["owner", "ticket", "target", "expiry"])
+def test_baseline_entry_missing_schema_field_fails(field: str) -> None:
+    msgs = gates.check_baseline_schema({"minor_entries": [_entry(**{field: ""})]}, NOW)
+    assert msgs and field in msgs[0]
+
+
+def test_baseline_entry_bad_date_and_target_after_expiry_fail() -> None:
+    assert "invalid date" in gates.check_baseline_schema({"entries": [_entry(expiry="soon")]}, NOW)[0]
+    assert "after its expiry" in gates.check_baseline_schema(
+        {"entries": [_entry(target="2027-01-01")]}, NOW
+    )[0]
+
+
+def test_baseline_pr_ids_cover_every_section() -> None:
+    head = {"minor_entries": [_entry()], "pa11y_entries": [_entry(fingerprint="x|y")]}
+    assert len(gates.check_baseline_pr_ids({}, head, "no id")) == 2
+    assert not gates.check_baseline_pr_ids({}, head, "A11Y-F-0007")
+
+
+def test_repo_baseline_has_every_section_and_passes_its_own_schema() -> None:
+    base = json.loads((ROOT / "tools/a11y/axe-baseline.json").read_text(encoding="utf-8"))
+    assert base["schemaVersion"] == 2
+    assert all(isinstance(base[s], list) for s in gates.BASELINE_SECTIONS)
+    assert gates.check_baseline_schema(base, NOW) == []
+
+
+def _pa11y(*issues: dict) -> dict:
+    return {"results": {"http://127.0.0.1:4173/login": list(issues)}}
+
+
+def test_pa11y_error_fails_and_notice_or_baselined_passes() -> None:
+    err = {"type": "error", "code": "WCAG2AA.1_4_3", "selector": "#a"}
+    assert "A11Y-G009" in gates.check_pa11y(_pa11y(err), {})[0]
+    assert gates.check_pa11y(_pa11y({**err, "type": "notice"}), {}) == []
+    assert gates.check_pa11y(_pa11y(err), {"pa11y_entries": [_entry(fingerprint="WCAG2AA.1_4_3|#a")]}) == []
+
+
+def test_pa11y_unscannable_page_or_no_results_is_infra() -> None:
+    with pytest.raises(gates.InfraError):
+        gates.check_pa11y({"results": {"http://x/": "Error: net::ERR"}}, {})
+    with pytest.raises(gates.InfraError):
+        gates.check_pa11y({}, {})
+
+
+def test_lighthouse_new_shape_pending_passes_and_low_score_fails() -> None:
+    doc = {
+        "lighthouse": "12.2.1",
+        "chromium": "141.0.0.0",
+        "runnerClass": "github-hosted Ubuntu24 1 X64",
+        "scores": {"SCR-001": 0.98},
+        "pending": {"SCR-030": "pending E11 (epic) #38"},
+    }
+    assert gates.check_lighthouse(doc) == []
+    line = gates.lighthouse_line(doc)
+    assert "141.0.0.0" in line and "github-hosted" in line and "1 pending" in line
+    doc["scores"]["SCR-001"] = 0.9
+    assert "SCR-001" in gates.check_lighthouse(doc)[0]
+    with pytest.raises(gates.InfraError):
+        gates.check_lighthouse({"scores": {}, "pending": {"SCR-030": "x"}})
+
+
+def test_cli_axe_fails_on_expired_entry(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    rep, base = tmp_path / "axe.json", tmp_path / "b.json"
+    rep.write_text(json.dumps({"screens": {}}), encoding="utf-8")
+    base.write_text(json.dumps({"minor_entries": [_entry(expiry="2020-01-01", target="2020-01-01")]}), encoding="utf-8")
+    assert gates.main(["axe", str(rep), "--baseline", str(base)]) == 1
+    assert "owner=alice" in capsys.readouterr().out
