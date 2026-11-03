@@ -132,6 +132,13 @@ const settle = async (ms = 0): Promise<void> => {
   });
 };
 const handle = () => ws.live("executions")[0];
+/** A feed on `heldApi()`'s reads, its directory settled: call 0 is first paint's read. */
+async function startHeld(): Promise<ReturnType<typeof heldApi>> {
+  const api = heldApi();
+  start(api);
+  await settle();
+  return api;
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -292,9 +299,7 @@ describe("REST: at first paint and after each snapshot, never polled (BQ-9)", ()
   });
 
   it("a read superseded by a newer one still applies: the store is a set", async () => {
-    const api = heldApi();
-    start(api);
-    await settle();
+    const api = await startHeld();
     handle()?.push(snap(snapshotBody()));
     await settle(FRAME_MS);
     api.calls[1]?.answer(page([]));
@@ -316,9 +321,7 @@ describe("REST: at first paint and after each snapshot, never polled (BQ-9)", ()
   });
 
   it("an older read that fails after a newer one succeeded leaves readFailed false", async () => {
-    const api = heldApi();
-    start(api);
-    await settle();
+    const api = await startHeld();
     handle()?.push(snap(snapshotBody()));
     await settle(FRAME_MS); // call 0 is first paint's read, which hangs; call 1 the snapshot's
     api.calls[1]?.answer(page(restItems()));
@@ -381,10 +384,8 @@ describe("REST applies 200 fills a frame at most, inside the measure (m5)", () =
   });
 
   it("the queue holds the bound's worth across reads; what is over waits for the next backfill", async () => {
-    const api = heldApi();
+    const api = await startHeld();
     const applyRest = vi.spyOn(store, "applyRest");
-    start(api);
-    await settle();
     handle()?.push(snap({ executions: [] }));
     await settle(FRAME_MS); // call 0 is first paint's read, call 1 the snapshot's
     const perRead = Math.ceil(MAX_QUEUED * 0.6); // two of them are more than the bound
@@ -525,9 +526,7 @@ describe("S-02, Retry, a narrowing and teardown", () => {
   });
 
   it("Retry after a revoke drops the answers of reads issued before it", async () => {
-    const api = heldApi();
-    start(api);
-    await settle();
+    const api = await startHeld();
     handle()?.push(reset("revoked"));
     await settle(FRAME_MS);
     feed?.retry();
@@ -572,9 +571,7 @@ describe("S-02, Retry, a narrowing and teardown", () => {
   });
 
   it("stop aborts a read in flight", async () => {
-    const api = heldApi();
-    start(api);
-    await settle();
+    const api = await startHeld();
     feed?.stop();
     expect(api.calls[0]?.signal?.aborted).toBe(true);
   });
