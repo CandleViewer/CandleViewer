@@ -44,6 +44,12 @@ const accounts = positionsGolden<{ items: ExchangeAccount[] }>(
   "rest_list_exchange_accounts.json",
 ).items;
 const FRAME_MS = 16;
+const many = Array.from({ length: 27 }, (_, i) => ({
+  ...accounts[0],
+  id: `a1000000-0000-4000-8000-${(i + 1).toString().padStart(12, "0")}`,
+  label: `A${i}`,
+})) as ExchangeAccount[];
+const sub2Left = { kind: "ok" as const, items: accounts.filter((a) => a.id !== SUB2) };
 
 function fakeApi(hasMore = false): FillsApi & { queries: unknown[] } {
   const queries: unknown[] = [];
@@ -152,11 +158,6 @@ describe("the subscription", () => {
   });
 
   it("past 25 accounts it names the first 25; the backfill names them too", async () => {
-    const many = Array.from({ length: 27 }, (_, i) => ({
-      ...accounts[0],
-      id: `a1000000-0000-4000-8000-${(i + 1).toString().padStart(12, "0")}`,
-      label: `A${i}`,
-    })) as ExchangeAccount[];
     const api = fakeApi();
     start(api, { accounts: directory(many) });
     await settle();
@@ -169,11 +170,6 @@ describe("the subscription", () => {
   });
 
   it("an account past 25 never shows, though a first-paint read brought its fills", async () => {
-    const many = Array.from({ length: 27 }, (_, i) => ({
-      ...accounts[0],
-      id: `a1000000-0000-4000-8000-${(i + 1).toString().padStart(12, "0")}`,
-      label: `A${i}`,
-    })) as ExchangeAccount[];
     const over = [many[25]?.id, many[26]?.id];
     const api = fakeApi();
     vi.mocked(api.listExecutions).mockResolvedValueOnce(
@@ -286,10 +282,7 @@ describe("REST: at first paint and after each snapshot, never polled (BQ-9)", ()
     await settle();
     handle()?.push(snap(snapshotBody()));
     await settle(BACKFILL_INTERVAL_MS);
-    accountsApi.listExchangeAccounts.mockResolvedValueOnce({
-      kind: "ok",
-      items: accounts.filter((a) => a.id !== SUB2),
-    });
+    accountsApi.listExchangeAccounts.mockResolvedValueOnce(sub2Left);
     handle()?.push(reset("narrowed"));
     await settle(FRAME_MS * 3 + COMMIT_INTERVAL_MS);
     expect(api.queries).toHaveLength(3);
@@ -466,10 +459,7 @@ describe("S-02, Retry, a narrowing and teardown", () => {
     await settle();
     handle()?.push(snap(snapshotBody()));
     await settle(FRAME_MS);
-    accountsApi.listExchangeAccounts.mockResolvedValueOnce({
-      kind: "ok",
-      items: accounts.filter((a) => a.id !== SUB2),
-    });
+    accountsApi.listExchangeAccounts.mockResolvedValueOnce(sub2Left);
     handle()?.push(reset("narrowed"));
     await settle(COMMIT_INTERVAL_MS + FRAME_MS);
     expect(accountsApi.listExchangeAccounts).toHaveBeenCalledTimes(2);
