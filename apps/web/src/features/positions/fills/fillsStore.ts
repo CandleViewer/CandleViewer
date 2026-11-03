@@ -420,7 +420,9 @@ export function createFillsStore(): FillsStore {
       const ids = effective["exchange_account_ids"];
       if (!Array.isArray(ids) || !ids.every(isUuid)) return; // no `sub_ok` yet: nothing narrowed
       const scope = new Set([...ids.map((id) => id.toLowerCase()), ...overCap]);
-      const out = new Set([...heldAccounts(), ...(pending ?? [])].filter((id) => !scope.has(id)));
+      // held fills or not: every account the directory lists is a candidate, as in a narrowed reset
+      const listed = [...heldAccounts(), ...(pending ?? []), ...(directory?.keys() ?? [])];
+      const out = new Set(listed.filter((id) => !scope.has(id)));
       if (out.size === 0) return;
       noteWithdrawn(out);
       dropAccounts(out);
