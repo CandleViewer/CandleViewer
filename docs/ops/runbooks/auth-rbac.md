@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript, and was corrected 2026-10-23 from its cold run (#2494, E09-X04) and from the reviews of #4254 and #300; the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051; the activity paragraph was rewritten 2026-10-27 for #2300's last slice (activity is explicit: extend and unlock only); §4, §10 and the known gaps were updated 2026-10-21 for #3009 (the lane's exit, ADR-0037 Amendment 1); §4's backstop paragraph names the two classifying middleware since 2026-10-22 (#3085 S7); §1, §10 and the known gaps were updated 2026-10-22 for #2914's PR C (the login routes' rows on the lane, ADR-0037 Amendment 2); §4's bootstrap paragraph became the runnable "Bootstrap the first Owner" procedure on 2026-10-25 for #4479 (C2), checked against C2's code and against #3180's compose lines, which shipped in #4522, and its known-gaps row was dropped; on 2026-10-26 (#4494's follow-up) it gained a bullet on the orphaned `invited` user that a run for another email leaves behind. Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript, and was corrected 2026-10-23 from its cold run (#2494, E09-X04) and from the reviews of #4254 and #300; the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051; the activity paragraph was rewritten 2026-10-27 for #2300's last slice (activity is explicit: extend and unlock only); §4, §10 and the known gaps were updated 2026-10-21 for #3009 (the lane's exit, ADR-0037 Amendment 1); §4's backstop paragraph names the two classifying middleware since 2026-10-22 (#3085 S7); §1, §10 and the known gaps were updated 2026-10-22 for #2914's PR C (the login routes' rows on the lane, ADR-0037 Amendment 2); §4's bootstrap paragraph became the runnable "Bootstrap the first Owner" procedure on 2026-10-25 for #4479 (C2), checked against C2's code and against #3180's compose lines, which shipped in #4522, and its known-gaps row was dropped; on 2026-10-26 (#4494's follow-up) it gained a bullet on the orphaned `invited` user that a run for another email leaves behind. §5's background paragraph and its known-gaps row were corrected 2026-11-03 for #2111 and #2966 (E42-T06), which scheduled the verifier. Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -1159,15 +1159,19 @@ the `DELETE` to the `bye`. The dev-stack drill (E09-X04, #2494) is recorded in
 
 ## 5. Audit-chain verification failure
 
-Background: the audit log is append-only and hash-chained. The only verifier today is on demand:
-`POST $API/admin/audit/verify` (`api/audit.py`, `audit/query.py::verify`). **A nightly scheduled
-verifier does not exist** (finding R-5, #2111), so a break is found only when someone runs it.
-There is no alert for it.
+Background: the audit log is append-only and hash-chained. On the real storage backend the API verifies
+the whole chain, genesis to head, 5 minutes after every start and once a day (#2111, #2966;
+`24-internal-schemas.md` §15.4). A break pages (`AuditChainVerificationFailed`), halts new
+position-opening order entry (`04-security-program.md` §8.1), and `AuditVerifyNotPassing` watches the
+job (`07-release-and-prr.md` §9). The Owner can also verify on demand: `POST $API/admin/audit/verify`
+(`api/audit.py`, `audit/query.py::verify`). The Owner's console path and the acknowledgement are in
+[`admin-audit-integrity.md`](admin-audit-integrity.md).
 
-Preconditions: Owner session (`audit/access.py`: `verify` and `export` are Owner only).
+Preconditions: Owner session (`audit/access.py`: `verify` and `export` are Owner only). The verify `POST` also
+sends your session's CSRF token, as §2's preconditions say (`$CSRF`; without it, `403 csrf_token_invalid`).
 
-1. **Confirm, read-only.**
-   `curl -s -X POST "$API/admin/audit/verify" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}'`
+1. **Confirm; it changes no audit row.**
+   `curl -s -X POST "$API/admin/audit/verify" -H "Authorization: Bearer $TOKEN" -H "X-CSRF-Token: $CSRF" -H "Cookie: __Host-cv_csrf=$CSRF" -H 'Content-Type: application/json' -d '{}'`
    (optional `from_id`, `to_id`). Expected `200` with `verified`, `entries_checked`, `first_bad_id`, `checked_at`. `verified: false`
    with a non-null `first_bad_id` is the failure. Run it once more over a range that ends just before
    `first_bad_id` to confirm the earlier chain is intact.
@@ -1778,7 +1782,6 @@ boot's `previous_kid` is gone, and destroy the old secret file.
 | Break-glass drill on staging (SR-023)                                     | #2298          |
 | Owner route to resolve a break-glass event (section 3, step 7)            | E09-S12, #2710 |
 | `PUT /auth/password` not implemented (no revoke-other-sessions on change) | #2110          |
-| Scheduled audit-chain verifier                                            | #2111          |
 | Disable-user drill on staging (SR-029)                                    | #2298          |
 | No B16 record of a lost disable commit's sessions if not read back        | #2710, #3445   |
 | Session rotation on role change and step-up                               | #2101          |
