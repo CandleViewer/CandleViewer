@@ -1,8 +1,13 @@
 // @vitest-environment node
 import type { GraphLayout, GraphModel, GraphNode } from "@candleviewer/rule-graph";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { planInsert } from "../../../src/features/rule-builder-graph/model/insert.js";
-import { placeNodes } from "../../../src/features/rule-builder-graph/model/placement.js";
+import { CANVAS_LIMIT } from "../../../src/features/rule-builder-graph/model/layout.js";
+import {
+  GRID,
+  Occupancy,
+  placeNodes,
+} from "../../../src/features/rule-builder-graph/model/placement.js";
 import { portOracle } from "../../../src/features/rule-builder-graph/model/portOracle.js";
 import { edge, node } from "./fixtures.js";
 
@@ -90,6 +95,31 @@ describe("Non-drag insertion works (AC 3, the insertion rule)", () => {
       position: { x: 0, y: 240 },
       edge: undefined,
     });
+  });
+
+  it("inserts beside an anchor stored far past the canvas bound, read clamped, and stops", () => {
+    const isFree = Occupancy.prototype.isFree;
+    let calls = 0;
+    const spy = vi.spyOn(Occupancy.prototype, "isFree").mockImplementation(function (
+      this: Occupancy,
+      at,
+    ) {
+      calls += 1;
+      if (calls > 100) throw new Error("the walk does not end");
+      return isFree.call(this, at);
+    });
+    try {
+      const nodes = [
+        node("a", "logicGate", { op: "all_of" }),
+        node("b", "logicGate", { op: "any_of" }),
+      ];
+      const graph: GraphModel = { envelope: {}, nodes, edges: [] };
+      const far = { a: { x: 0, y: 1e19 }, b: { x: 240, y: 1e19 } };
+      const plan = planInsert(graph, { ...BLANK, positions: far }, ["a"], ACTION, portOracle);
+      expect(plan.position).toEqual({ x: 240, y: CANVAS_LIMIT + GRID });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("plans without changing the graph it reads", () => {

@@ -13,6 +13,20 @@ const WEB = resolve(import.meta.dirname, "../../..");
 const SLICE = "src/features/rule-builder-graph";
 const PURE = [`${SLICE}/model/__probe.ts`, `${SLICE}/a11y/__probe.ts`];
 const FREE = `${SLICE}/canvas/__probe.tsx`;
+/** The globals a pure core never reads, family by family, written out here, not read from the config. */
+const GLOBAL_FAMILIES: readonly (readonly [string, readonly string[]])[] = [
+  ["page", ["window", "document", "navigator", "location", "self", "globalThis"]],
+  ["storage", ["localStorage", "sessionStorage", "indexedDB"]],
+  ["network", ["fetch", "XMLHttpRequest", "WebSocket"]],
+  [
+    "rendering",
+    ["requestAnimationFrame", "cancelAnimationFrame", "matchMedia", "getComputedStyle"],
+  ],
+  ["observers", ["ResizeObserver", "MutationObserver", "IntersectionObserver"]],
+  ["elements", ["HTMLElement", "Element", "Event", "CustomEvent"]],
+  ["clock", ["setTimeout", "setInterval", "queueMicrotask", "performance"]],
+  ["log", ["console"]],
+];
 
 let eslint: ESLint;
 const lint = async (file: string, code: string) =>
@@ -36,6 +50,7 @@ describe("the rule-graph editor's a11y/ and model/ cores are pure", () => {
   it.each(PURE)("%s: a React, React DOM or graph-library import is an error", async (file) => {
     for (const code of [
       'import { useState } from "react";\nexport const s = useState;\n',
+      'import ReactDOM from "react-dom";\nexport const d = ReactDOM;\n',
       'import { createRoot } from "react-dom/client";\nexport const r = createRoot;\n',
       'import { jsx } from "react/jsx-runtime";\nexport const j = jsx;\n',
       'import { ReactFlow } from "@xyflow/react";\nexport const f = ReactFlow;\n',
@@ -45,14 +60,12 @@ describe("the rule-graph editor's a11y/ and model/ cores are pure", () => {
     }
   });
 
-  it.each(PURE)("%s: a DOM global is an error", async (file) => {
-    for (const code of [
-      "export const w = window.innerWidth;\n",
-      "export const t = document.title;\n",
-      "export const f = fetch;\n",
-      "export const r = requestAnimationFrame;\n",
-    ]) {
-      expect(await errors(file, code), code).toEqual(["no-restricted-globals"]);
+  it.each(PURE)("%s: every impure global, family by family, is an error", async (file) => {
+    for (const [family, names] of GLOBAL_FAMILIES) {
+      for (const name of names) {
+        const found = await errors(file, `export const g = ${name};\n`);
+        expect(found, `${family}: ${name}`).toEqual(["no-restricted-globals"]);
+      }
     }
   });
 

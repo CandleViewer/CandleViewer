@@ -1,6 +1,6 @@
 // @vitest-environment node
 import type { GraphLayout, GraphModel } from "@candleviewer/rule-graph";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   GRID,
   Occupancy,
@@ -169,6 +169,28 @@ describe("Occupancy", () => {
     expect(taken.isFree({ x: 240, y: 0 })).toBe(true);
     expect(taken.isFree({ x: 0, y: -240 })).toBe(true);
   });
+
+  it.each([1e19, -1e19])(
+    "ends its walk down a column even where a step no longer moves %d",
+    (y) => {
+      const isFree = Occupancy.prototype.isFree;
+      let calls = 0;
+      const spy = vi.spyOn(Occupancy.prototype, "isFree").mockImplementation(function (
+        this: Occupancy,
+        at,
+      ) {
+        calls += 1;
+        if (calls > 100) throw new Error("the walk does not end");
+        return isFree.call(this, at);
+      });
+      try {
+        expect(new Occupancy([{ x: 0, y }]).takeBelow({ x: 0, y })).toEqual({ x: 0, y });
+        expect(calls).toBeLessThanOrEqual(3);
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
 
   it("takes the first free point below, one grid step at a time", () => {
     const taken = new Occupancy([

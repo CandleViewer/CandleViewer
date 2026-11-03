@@ -2,11 +2,10 @@
  * Unsaved changes (E37-S01; US-RULE-006 "Unsaved changes"; the navigation guard reads it): the
  * editor is dirty while its graph differs from the graph last saved or loaded. Only the graph
  * counts, its envelope, nodes and edges. A layout change (a move) is cosmetic and never makes the
- * rule dirty (E37-D02 §20 P7: no layout change makes a version or a dirty flag; the server
- * stores no `graph_layout` yet, BQ-13), and neither does a selection: the mark holds neither. The
- * history replays the very node and edge objects an edit removed, so an undo back to the saved
- * graph is clean again; a node made anew with the same content is a change. Pure, and linear in
- * the graph's size.
+ * rule dirty (E37-D02 §20 P7: no layout change makes a version or a dirty flag), and neither does
+ * a selection: the mark holds neither. The undo stack (PR 4 of 9) replays the very node and edge
+ * objects an edit removed, so an undo back to the saved graph is clean again; a node made anew
+ * with the same content is a change. Pure, and linear in the graph's size.
  */
 import type { GraphModel } from "@candleviewer/rule-graph";
 

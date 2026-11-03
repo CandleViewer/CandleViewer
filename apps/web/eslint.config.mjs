@@ -8,32 +8,20 @@ import { noRestrictedImportsRuleSet } from "@candleviewer/config/no-restricted-i
 
 const PURE_GRAPH =
   "E37-S01: rule-builder-graph's a11y/ and model/ are pure (no React, graph library or DOM).";
-/** The page and browser globals a pure core never reads. */
-const DOM_GLOBALS = [
-  "window",
-  "document",
-  "navigator",
-  "location",
-  "localStorage",
-  "sessionStorage",
-  "indexedDB",
-  "fetch",
-  "XMLHttpRequest",
-  "WebSocket",
-  "requestAnimationFrame",
-  "cancelAnimationFrame",
-  "matchMedia",
-  "getComputedStyle",
-  "ResizeObserver",
-  "MutationObserver",
-  "IntersectionObserver",
-  "HTMLElement",
-  "Element",
-  "Event",
-  "CustomEvent",
-  "self",
-  "globalThis",
-];
+/**
+ * The globals a pure core never reads, by family. The clock, task and log ones are closed as
+ * packages/rule-graph closes them: ids and replays stay deterministic.
+ */
+const IMPURE_GLOBALS = {
+  page: ["window", "document", "navigator", "location", "self", "globalThis"],
+  storage: ["localStorage", "sessionStorage", "indexedDB"],
+  network: ["fetch", "XMLHttpRequest", "WebSocket"],
+  rendering: ["requestAnimationFrame", "cancelAnimationFrame", "matchMedia", "getComputedStyle"],
+  observers: ["ResizeObserver", "MutationObserver", "IntersectionObserver"],
+  elements: ["HTMLElement", "Element", "Event", "CustomEvent"],
+  clock: ["setTimeout", "setInterval", "queueMicrotask", "performance"],
+  log: ["console"],
+};
 
 /** @type {import("eslint").Linter.Config[]} */
 export default tseslint.config(
@@ -119,8 +107,8 @@ export default tseslint.config(
     },
   },
   // E37-S01 (BQ-1): the rule editor's keyboard core (E47-S03) and its graph model hold no React,
-  // React DOM or graph-library import and read no DOM global, as packages/rule-graph's own rule
-  // says; the canvas and the screen around them hold those. This rule set replaces the shared one
+  // React DOM or graph-library import and read none of IMPURE_GLOBALS, as packages/rule-graph's
+  // own rule says; the canvas and the screen around them hold those. This rule set replaces the shared one
   // for these files, so the shared paths and patterns (§9 #18's deep-import ban) are merged in.
   {
     files: ["src/features/rule-builder-graph/{a11y,model}/**/*.{ts,tsx,mts,cts}"],
@@ -140,7 +128,9 @@ export default tseslint.config(
       ],
       "no-restricted-globals": [
         "error",
-        ...DOM_GLOBALS.map((name) => ({ name, message: PURE_GRAPH })),
+        ...Object.values(IMPURE_GLOBALS)
+          .flat()
+          .map((name) => ({ name, message: PURE_GRAPH })),
       ],
     },
   },

@@ -1,17 +1,18 @@
 /**
- * Where a node with no stored position goes (E37-S01; BQ-13: the server stores no `graph_layout`
- * yet, so every node of a loaded rule needs one). Deterministic and overlap-free, on the 240-unit
- * grid the editor fixtures use: a node's column is its layer, read in E47-S03's traversal order
- * (`a11y/traversal.ts`, a producer before the node it feeds), so the trigger is leftmost, each
- * condition sits right of every producer that feeds it and an action right of its condition; a
- * loop's closing edge, which the order meets last, is ignored. Its row is the first free one in
- * that column, in the same order. Positions stay a client concern until E37-T02's worker layout
- * replaces this pass, which reads rule-graph's `nodesNeedingLayout` hook as that layout will.
+ * Where a node with no usable stored position goes (E37-S01): a rule authored in the form stores
+ * none, and the load-time normaliser (`layout.ts`) drops a position it cannot use. Deterministic
+ * and overlap-free, on the 240-unit grid the editor fixtures use: a node's column is its layer,
+ * read in E47-S03's traversal order (`a11y/traversal.ts`, a producer before the node it feeds), so
+ * the trigger is leftmost, each condition sits right of every producer that feeds it and an action
+ * right of its condition; a loop's closing edge, which the order meets last, is ignored. Its row
+ * is the first free one in that column, in the same order. E37-T02's worker layout replaces this
+ * pass.
  */
-import { nodesNeedingLayout, type GraphLayout, type GraphModel } from "@candleviewer/rule-graph";
+import type { GraphLayout, GraphModel } from "@candleviewer/rule-graph";
 import { adjacencyFor, adjacencyOf } from "../a11y/graph.js";
 import type { Point } from "../a11y/nudge.js";
 import { traversalOrder } from "../a11y/traversal.js";
+import { pointOf } from "./layout.js";
 
 /** The grid step, both axes, in canvas units: a cell holds one node card of any tier. */
 export const GRID = 240;
@@ -25,6 +26,7 @@ const keyOf = (cx: number, cy: number): string => `${cx},${cy}`;
  */
 export class Occupancy {
   private readonly cells = new Map<string, Point[]>();
+  private held = 0;
 
   constructor(points: Iterable<Point> = []) {
     for (const point of points) this.add(point);
@@ -35,6 +37,7 @@ export class Occupancy {
     const bucket = this.cells.get(key);
     if (bucket === undefined) this.cells.set(key, [point]);
     else bucket.push(point);
+    this.held += 1;
   }
 
   /** Whether a node at `point` would overlap none of the positions held. */
@@ -52,18 +55,24 @@ export class Occupancy {
     return true;
   }
 
-  /** The first free point at or below `point`, one grid step at a time; it is taken. */
+  /**
+   * The first free point at or below `point`, one grid step at a time; it is taken. A held point
+   * blocks at most two steps of a column, so with n points held one of the first 2n + 1 steps is
+   * free and the walk stops there: it ends even where a step no longer moves the number.
+   */
   takeBelow(point: Point): Point {
     let at = point;
-    while (!this.isFree(at)) at = { x: at.x, y: at.y + GRID };
+    for (let step = 0; step < 2 * this.held && !this.isFree(at); step += 1) {
+      at = { x: at.x, y: at.y + GRID };
+    }
     this.add(at);
     return at;
   }
 }
 
-/** The node's stored position, if any (an own key only: ids are user text). */
+/** The node's usable stored position, if any (an own key only: ids are user text). */
 export const positionOf = (layout: GraphLayout, id: string): Point | undefined =>
-  Object.hasOwn(layout.positions, id) ? layout.positions[id] : undefined;
+  Object.hasOwn(layout.positions, id) ? pointOf(layout.positions[id]) : undefined;
 
 /** Each node's column: 0 for the trigger, else one right of its furthest producer (at least 1). */
 function layersOf(graph: Pick<GraphModel, "nodes" | "edges">): ReadonlyMap<string, number> {
@@ -85,9 +94,11 @@ function layersOf(graph: Pick<GraphModel, "nodes" | "edges">): ReadonlyMap<strin
   return layers;
 }
 
-/** `layout` with a position for every node it has none for; the stored positions are kept. */
+/** `layout` with a position for every node it has no usable one for; the others are kept. */
 export function placeNodes(graph: GraphModel, layout: GraphLayout): GraphLayout {
-  const missing = new Set(nodesNeedingLayout(graph, layout));
+  const missing = new Set(
+    graph.nodes.filter((node) => positionOf(layout, node.id) === undefined).map((node) => node.id),
+  );
   if (missing.size === 0) return layout;
   const taken = new Occupancy(
     graph.nodes.flatMap((node) => {
