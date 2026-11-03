@@ -3,11 +3,12 @@
 // published contract leaves an open object. The envelope's fields sit at the top level with the
 // trigger node's data as `trigger`; a condition is typed by its kind and a gate is `boolean`; an
 // edge names its input as `port`; the comments travel in `graph_layout`, which holds only the
-// presentation keys the client owns (positions, collapsed nodes, comments). Structure is not
-// judged here: the server's compile reports every fault by node id. Pure and synchronous.
+// presentation keys the client owns (positions, collapsed nodes, comments). Structure is the
+// server compile's to judge, by node id; the one check here is that every edge the compile model
+// sends feeds a port its node reads (`NODE_PORTS`, as toIr checks). Pure and synchronous.
 import { check } from "../errors.js";
 import type { CommentNode, GraphLayout, GraphModel, GraphNode } from "../model.js";
-import { type NodeKind, portsOf } from "../ports.js";
+import { NODE_PORTS, type NodeKind, portsOf } from "../ports.js";
 import { SLOTS, type Tree, isTree } from "./toGraph.js";
 
 /** A node as the server's graph compiler reads it; an `operand` is an inline metric or value. */
@@ -64,7 +65,8 @@ function ownData(kind: NodeKind, data: GraphNode["data"]): Tree {
  * does not own (`extra`) is not sent. A list's empty item takes the next `in` edge into its node, in
  * edge order, and an inline item becomes an `operand` node of its own; the node's `in` edges are
  * emitted in list order, any edge past the list's empty items after them. Refuses a node of no
- * known kind, a malformed edge and a second trigger, which no compile model can hold.
+ * known kind, a malformed edge, an edge into a node on a port that node does not read and a second
+ * trigger, which no compile model can hold.
  */
 export function toCompileModel(graph: GraphModel, layout: GraphLayout = BLANK): CompileModel {
   check(isTree(layout), SV, "The layout given is not an object.");
@@ -77,16 +79,19 @@ export function toCompileModel(graph: GraphModel, layout: GraphLayout = BLANK): 
   const triggerIds = triggers.map((node) => node.id);
   check(triggers.length <= 1, SV, "A graph has one trigger node.", triggerIds);
   const lists = new Map<string, string[]>(); // a list node's `in` sources, in edge order
+  for (const [id, kind] of kinds) if (LIST_KEY[kind] !== undefined) lists.set(id, []);
   const out: CompileEdge[] = [];
   edges.forEach((edge, i) => {
     const { source, target, targetPort } = (isTree(edge) ? edge : {}) as Partial<Tree>;
     const named = [source, target, targetPort].every((value) => typeof value === "string");
     check(named, SV, `Edge ${i + 1} does not name its two nodes and its input.`);
     const [from, to, port] = [source, target, targetPort] as [string, string, string]; // checked
-    const into = kinds.get(to);
-    const listed = port === "in" && into !== undefined && LIST_KEY[into] !== undefined;
-    if (listed) lists.set(to, [...(lists.get(to) ?? []), from]);
-    else out.push({ from, to, port });
+    const into = kinds.get(to); // an edge into no node goes as it is, for compile to report
+    const reads = into === undefined || Object.hasOwn(NODE_PORTS[into].inputs, port);
+    check(reads, SV, `Edge ${i + 1} feeds ${port}, an input ${to} does not read.`, [from, to]);
+    const list = lists.get(to); // a list node's one input is `in`
+    if (list === undefined) out.push({ from, to, port });
+    else list.push(from);
   });
   const taken = new Set(nodes.map((node) => node.id));
   const fresh = (base: string): string => {
@@ -111,7 +116,7 @@ export function toCompileModel(graph: GraphModel, layout: GraphLayout = BLANK): 
     const items = node.data[key];
     for (const [i, item] of (Array.isArray(items) ? items : []).entries()) {
       if (item === null) {
-        const from = sources.shift(); // an empty item with no edge left stays empty
+        const from = sources.shift(); // an empty item no edge is left for is dropped
         if (from !== undefined) out.push({ from, to: node.id, port: "in" });
         continue;
       }

@@ -15,7 +15,9 @@ and compiles the rule and returns the `ir_hash` that is stored.
 - `toCompileModel(graph, layout?)`: the graph as `POST /rules/{ruleId}/compile` reads it with
   `editor: "graph"` (`rules/compiler/graph.py`): the envelope at the top level with the trigger as
   `trigger`, server node types, `{from, to, port}` edges with each list's `in` edges in list order
-  (an inline operand as an `operand` node), and the comments in `graph_layout`.
+  (an inline operand as an `operand` node). Every edge it sends feeds a port its node reads. Its
+  `graph_layout` sends only the presentation keys the client owns (positions, collapsed nodes and
+  comments); the stored layout's other keys are not sent.
 - `canonicalise(ir)`, `hash(ir)` and `compareWithServer(clientHash, serverHash)`: the server's
   canonical bytes and their sha256 (`rules/ir/canonical.py`), for display only (see below).
 - `PORT_TYPES`, `PORT_COMPAT`, `canConnect`, `NODE_PORTS`, `portsOf` and `portTypeOfMetric`: the

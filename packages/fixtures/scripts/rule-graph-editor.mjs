@@ -3,7 +3,8 @@
 // C graph (a long `all_of` of comparisons, nested to the IR's 32-child bound) and the 200-node
 // benchmark graph (about 260 edges: shared comparisons feed a second gate). Each is `{model,
 // layout}`, a rule-graph GraphModel and GraphLayout: ids n1…, positions on the 240-unit grid,
-// version 3, every timestamp 13:42:10 UTC. Seeded (mulberry32): no wall clock, no random id.
+// version 3, every timestamp 13:42:10 UTC (epoch microseconds). Seeded (mulberry32): no wall
+// clock, no random id.
 // `node scripts/rule-graph-editor.mjs` writes them; test/rule-graph-editor.test.mjs fails on drift.
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -17,13 +18,16 @@ export const EDITOR_DIR = join(
 );
 /** The grid step, both axes, in canvas units. */
 export const GRID = 240;
-/** 13:42:10 UTC on 2026-10-24 (E37-D02's base date), in milliseconds. */
-export const SAVED_AT = Date.UTC(2026, 9, 24, 13, 42, 10);
+/** 13:42:10 UTC on 2026-10-24 (E37-D02's base date) in epoch microseconds, the IR's `TsUs`. */
+export const SAVED_AT = Date.UTC(2026, 9, 24, 13, 42, 10) * 1000;
 const MAX_CHILDREN = 32; // the IR's BooleanNode bound (rules/ir/rule-ir.json)
 const METRICS = ["price", "atr", "rsi", "vwap", "cvd", "spread_bps"];
 const ACTIONS = [
   { type: "modify_stop_loss", params: { mode: "atr", value: 2, only_tighten: true } },
-  { type: "send_notification", params: { channel: "ui" } },
+  {
+    type: "send_notification",
+    params: { channel: "ui", severity: "info", template: "Rule fired" },
+  },
   { type: "flatten_position", params: {} },
 ];
 

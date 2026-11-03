@@ -215,6 +215,13 @@ describe("toCompileModel: the shape compile reads", () => {
     expect(back["actions"]).toEqual(IR.actions);
   });
 
+  it("keeps its own graph_layout, nodes and edges over an envelope that holds them", () => {
+    const envelope = { name: "x", graph_layout: { zoom: 2 }, nodes: ["n"], edges: ["e"] };
+    const model = toCompileModel({ ...GRAPH, envelope }, LAYOUT);
+    expect(model["graph_layout"]).toEqual(MODEL["graph_layout"]);
+    expect([model.nodes, model.edges]).toEqual([MODEL.nodes, MODEL.edges]);
+  });
+
   it("sends an empty layout by default, the comments still in it", () => {
     expect(toCompileModel(GRAPH)["graph_layout"]).toEqual({
       positions: {},
@@ -262,6 +269,16 @@ describe("toCompileModel: the editing graph as it stands", () => {
   it("passes edges it cannot place through as they are, for compile to report", () => {
     const model = toCompileModel(graphOf([cmp("a")], [link("e1", "a", "gone", "in")]));
     expect(model.edges).toEqual([edge("a", "gone", "in")]);
+  });
+
+  it("refuses an edge on a port its node does not read: every edge sent feeds a read port", () => {
+    const stray = graphOf([gate(), cmp("a")], [link("e1", "a", "g", "left")]);
+    expect(thrown(() => toCompileModel(stray))).toMatchObject({
+      code: "SCHEMA_VIOLATION",
+      nodeIds: ["a", "g"],
+    });
+    const intoComparison = graphOf([cmp("a"), cmp("b")], [link("e1", "a", "b", "in")]);
+    expect(thrown(() => toCompileModel(intoComparison))?.code).toBe("SCHEMA_VIOLATION");
   });
 
   it("sends no trigger when the graph has none, and refuses a second one", () => {

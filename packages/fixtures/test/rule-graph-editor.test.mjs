@@ -61,7 +61,7 @@ describe("every rule-graph editor fixture", () => {
       }
       expect(model.envelope.version).toBe(3);
       expect([model.envelope.created_at, model.envelope.updated_at]).toEqual([SAVED_AT, SAVED_AT]);
-      expect(new Date(SAVED_AT).toISOString()).toBe("2026-10-24T13:42:10.000Z");
+      expect(new Date(SAVED_AT / 1000).toISOString()).toBe("2026-10-24T13:42:10.000Z");
     },
   );
 });
