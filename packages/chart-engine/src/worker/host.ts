@@ -384,6 +384,9 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   let link = linkOrInline(o.realm, o.runMode, o.env);
   let theme = o.theme;
   const retained = new Map<string, Command>();
+  // E12-S11: each live series' `addSeries` and last `setSeriesKind`, replayed before `retained`
+  // on a restarted worker only (the degraded-2d handoff's runtime keeps its DataModel, BQ-53).
+  const models = new Map<string, Command>();
   let disposed = false;
   let restoring = false;
   let flushQueued = false;
@@ -409,7 +412,7 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   /** The motion mode every `init` carries, a restart's included (not a retained command). */
   let reduce = o.reducedMotion === true;
 
-  const init = (): void => {
+  const init = (fresh = true): void => {
     const canvas = o.canvas();
     const dpr = size?.dpr ?? o.dpr;
     const config = { bench: o.bench, syncGroup: o.syncGroup };
@@ -430,8 +433,24 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
       styleCanvas(canvas, size);
       link.post(size, []);
     }
+    if (fresh) for (const cmd of models.values()) link.post({ t: "command", id, cmd }, []);
     for (const cmd of retained.values()) link.post({ t: "command", id, cmd }, []);
   };
+
+  /** E12-S11: a series' definition kept, or forgotten with its options and its held batches. */
+  function model(cmd: Command): void {
+    if (cmd.k === "addSeries" || cmd.k === "setSeriesKind") {
+      const key = `${cmd.k}:${cmd.series}`;
+      models.delete(key);
+      models.set(key, cmd);
+    } else if (cmd.k === "removeSeries") {
+      for (const k of ["addSeries", "setSeriesKind"]) models.delete(`${k}:${cmd.series}`);
+      retained.delete(`series:${cmd.series}`);
+      const lane = laneOf("bars", cmd.series);
+      queues.delete(lane);
+      resyncAsked.delete(lane);
+    }
+  }
 
   function send(store: StoreId, series: number | undefined, batch: PendingData): void {
     const lane = laneOf(store, series);
@@ -467,7 +486,7 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
         // A canvas that held WebGL2 never yields 2D: a fresh one, re-inited 2D (BQ-53, BQ-58).
         forced = true;
         o.replaceCanvas();
-        init();
+        init(false);
         return;
       }
       if (msg.t === "ready" && restoring) {
@@ -620,6 +639,7 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
       if (disposed) return;
       if (cmd.k === "setTheme") theme = cmd.theme;
       if (cmd.k === "setMotion") reduce = cmd.reduce;
+      model(cmd);
       const key = retainKey(cmd);
       if (key !== null) {
         retained.delete(key);

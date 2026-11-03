@@ -95,6 +95,8 @@ export function createChart(opts: ChartOptions): Chart {
   let density: Density = opts.density ?? CHART_DEFAULTS.density;
   let disposed = false;
   let paneSeq = 0;
+  /** E12-S11: runtime series ids, unique per chart and never reused. */
+  let seriesSeq = 0;
   let renderProfile: FrameStats["renderProfile"] | null = null;
   let lastStats: FrameStats | null = null;
   let lastRange = { from: 0, to: 1 };
@@ -264,7 +266,17 @@ export function createChart(opts: ChartOptions): Chart {
       paneSeq += 1;
       const pane = createPane(`pane-${paneSeq}` as PaneId, paneOpts, {
         assertLive,
-        data: (store, op, layout, buffer) => host.data(store, op, layout, buffer),
+        data: (store, op, layout, buffer, series) => host.data(store, op, layout, buffer, series),
+        addSeries(id, kind): number {
+          const sid = seriesSeq++;
+          // The first series on pane 0 becomes the runtime's main series (its time map).
+          const i = panes.findIndex((p) => p.id === id);
+          host.command({ k: "addSeries", series: sid, kind, pane: Math.max(0, i) });
+          return sid;
+        },
+        removeSeries(series): void {
+          if (!disposed) host.command({ k: "removeSeries", series });
+        },
         scale(id, fields): void {
           const i = panes.findIndex((p) => p.id === id);
           if (i >= 0) host.command({ k: "setPriceScale", pane: i, ...fields });
