@@ -3,62 +3,45 @@
 partial failure as its primary case.
 
 Standalone and offline, shaped on the merged E38-D03 tool (`e38_d03_honesty_audit.py`): it imports
-`packages/ui/tokens/tests/verify_tokens.py` (the token loader and resolver),
-`docs/design/_tools/contrast_check.py` (`contrast_ratio`) and
-`docs/research/_tools/cvd_simulate.py` (`simulate`, `delta_e76`; JND 5.0) from the working tree
-and never re-implements them. It reads the spec and the pins file from the working tree and every
-cited file AS TEXT with `git show` at the pinned base (`BASE`). Default-deny: a gate that cannot
-read its input FAILs.
+`verify_tokens` (the token loader and resolver), `contrast_check` (`contrast_ratio`) and
+`cvd_simulate` (`simulate`, `delta_e76`; JND 5.0) from the working tree and never re-implements
+them. It reads the spec and the pins from the working tree and every cited file AS TEXT with
+`git show` at the pinned base (`BASE`). Default-deny: a gate that cannot read its input FAILs.
 
 Gates (each FAIL led by its name):
-  G-STATE     every state the catalogue, the ticket's Scope and the assignment name has a §0 frame
-              row; each of the three acceptance criteria (AC-1 … AC-3) maps to frames §0 lists;
-              the cover board opens on `SCR-061/partial-failure` (AC-2); the cover and the ready
-              frame have light and comfortable twins (BQ-10).
-  G-TOKEN     every design token the spec names (`color.*`, `font.*`, `border.*`, `radius.*`,
-              `type.*`, `space.*`, `size.*`, `motion.*`, `opacity.*`) is in a merged set.
-  G-CONTRAST  every §8.1 row is recomputed per theme (dark, light, high-contrast as
-              `verify_tokens` merges them) with `contrast_check.contrast_ratio` and equals the
-              spec to two decimals; a `text` row is at least 4.5:1 and a `ui` row at least 3:1
-              in every theme; the verdict cell matches its role and figures.
-  G-CVD       every §8.2 row's normal / protanopia / deuteranopia / tritanopia ΔE76 equals the
-              spec to two decimals, and its JND column names the simulations under 5.0.
-  G-T2        every S061 state row whose Presentation quotes a T2 reason names its rendering
-              (2a, 2b or the sentence form; G-T2.1c), and the reason is an E09-D09 key's text or
-              a registered state string of E30-D02, E30-D03's `ratelimit.held` or OD-11's reason
-              at the base (its `{slot}` filled) unless the cell marks it PROPOSED; no coined
-              "held: rate budget" reason (G-T2.4). §1 item 7 names CMP-079 and the CMP-019 `lock`, and quotes
-              G-T2.1b, G-T2.2 and G-T2.3 verbatim from `DS` at the base (`T2_QUOTES`); §8.1
-              carries the G-T2.2 label pair (tertiary on raised).
-  G-SAFETY    C-2.6: §1 states that no control turns the native stop off; no state row offers
-              a stop as an option or leaves the SL cell empty or blank; the CMP-158 sentence and
-              the never-empty SL cell are stated; every leg row of the B01 sketch carries its SL,
-              and every accepted one its protection word.
-  G-RECOVERY  §4.2 is the shared recovery table (RC-1 … RC-6: labels, confirms, never armed,
-              available in every state, the cited tone); the B01 sketch and the rows use the
-              labels in their scoped form; the retired words appear only on A- and C-rows; no
-              row withholds a protective action, and the stop-pending, unknown, offline,
-              lockout and view-as rows keep Unwind, Retry unwind and Cancel working orders
-              enabled; the `frozen` rows split per OD-11 (Cancel passes; Owner / Manager).
-  G-RULED     OQ-1 is carried, not decided (the confirm names the whole position and what the
-              group added); the Manager scope is stated (C-12.4); the Viewer's frame has no Send;
-              §3.1 consumes E34-D03's LegStatusCell and defines no status component; no client
-              "N of M" count; the unserved rows are stamped; the minimum is a preview-only offer.
-  G-COPY      every §11 row is verbatim with a cite whose line holds its fixed words, PROPOSED
-              with an owner, or a request row to E34-D03's keys.
-  G-D01       the unmerged E34-D01 (#936) and E34-D03 (#997), and any CMP id `15` lacks at the
-              base, appear only on request rows or in a sentence naming a request row, never as a
-              cite or by path.
-  G-CITE      every cite in range and on a non-blank line at its base, and equal to the pins.
-  G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
-              deny word in the spec; no deny word in this tool's text or the pins.
+  G-STATE     a §0 frame row for every state the catalogue, the Scope and the assignment name;
+              AC-1 … AC-3 map to listed frames; the cover opens on `SCR-061/partial-failure`
+              (AC-2); the cover and the ready frame have light and comfortable twins (BQ-10).
+  G-TOKEN     every token the spec names (`color.*`, `type.*`, `space.*`, …) is in a merged set.
+  G-CONTRAST  §8.1 recomputed per theme to two decimals; `text` ≥ 4.5:1, `ui` ≥ 3:1; verdicts.
+  G-CVD       §8.2's four ΔE76 figures to two decimals, and the simulations under the JND named.
+  G-T2        a T2 state row names its rendering (2a, 2b, the sentence form) and quotes an E09-D09
+              key, an E30-D02 registered state, `ratelimit.held` or OD-11's reason unless
+              PROPOSED; no coined "held: rate budget"; §1 item 7 names CMP-079 and the `lock` and
+              quotes G-T2.1b, G-T2.2 and G-T2.3 whole from `DS`; §8.1 measures the label pair.
+  G-SAFETY    C-2.6: no control turns the native stop off; no row offers the stop or blanks the
+              SL; the CMP-158 sentence and the never-empty SL cell; every B01 sketch leg has its
+              SL and every accepted one its protection word; Cancel working orders never cancels
+              a stop (a fixed literal).
+  G-RECOVERY  §4.2 is the shared table (RC-1 … RC-6: labels, confirms, RC-1 armed on LIVE as a
+              fixed literal, RC-2 … RC-5 never armed and in every state, the cited tone); the
+              sketch and rows use the scoped labels; retired words only on A- and C-rows; no row
+              withholds a protective action; the threat rows keep them; `frozen` splits per OD-11.
+  G-RULED     OQ-1 carried, not decided; the Manager scope (C-12.4); no Send for a Viewer; §3.1
+              consumes LegStatusCell and defines none; no client "N of M" count; the unserved
+              rows stamped; the minimum a preview-only offer.
+  G-COPY      every §11 row verbatim with a cite holding its words, PROPOSED with an owner, or a
+              request row.
+  G-D01       E34-D01 (#936), E34-D03 (#997) and a CMP id `15` lacks only on request rows, never
+              as a cite or by path.
+  G-CITE      every cite in range, on a non-blank line at its base, and equal to the pins.
+  G-HYGIENE   no closing keyword, local path, URL or host, agent name, double brace, tag line or
+              deny word in the spec; no deny word in this tool or the pins.
   G-SCOPE     the diff touches only the spec, this tool and the pins file.
+  G-ID        the shared cell's CMP id (BQ-06 on #997) is never written, in any case.
 
-Usage (from the repo root):
-  python3 -I docs/design/_tools/e34_d02_hifi_audit.py --check
-  python3 -I docs/design/_tools/e34_d02_hifi_audit.py --fill        (writes §8's figures)
-  python3 -I docs/design/_tools/e34_d02_hifi_audit.py --self-test
-  python3 -I docs/design/_tools/e34_d02_hifi_audit.py --repin-ruled (the pins' only writer)
+Usage (from the repo root): python3 -I docs/design/_tools/e34_d02_hifi_audit.py
+  --check | --self-test | --fill (§8's figures) | --repin-ruled (the pins' only writer)
 """
 
 from __future__ import annotations
@@ -84,6 +67,7 @@ BASE = "a7d659a5bee5d06a28950f324800f84dc3853e6f"  # origin/main when written; r
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
 CONTRAST_PATH = ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
+BORROWED = {"verify_tokens": TOKENS / "tests" / "verify_tokens.py", "contrast_check": CONTRAST_PATH}  # fmt: skip
 PATHS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md", "11": "docs/plan/11-user-stories.md",
     "14": "docs/plan/14-screens-catalogue.md", "17": "docs/plan/17-ux-diagrams.md", "15": "docs/plan/15-component-catalogue.md",
@@ -171,6 +155,9 @@ SAFETY_LINE = (
 )
 OWN_CELL = "SCR-061 defines no status component of its own."
 NOTICE = "Every order carries a stop-loss at the exchange. This cannot be turned off."
+KEEPS_STOPS = "Cancel working orders: `cancelTradeGroup` without `flatten_filled`, positions, stops and take-profits kept; it never cancels a stop."  # fmt: skip
+ARM = "on LIVE (a submit)"  # RC-1: a Retry is a new submit, armed on LIVE (R5)
+ID_258 = re.compile(r"(?i)\bcmp-258\b")  # BQ-06 (#997): the shared cell's id is not hard-coded
 
 
 @dataclass(frozen=True)
@@ -219,13 +206,8 @@ _MODS: dict[str, ModuleType] = {}
 
 def mod(name: str) -> ModuleType:
     if name not in _MODS:
-        if name == "verify_tokens":
-            sys.path.insert(0, str(TOKENS / "tests"))
-            _MODS[name] = _load(TOKENS / "tests" / "verify_tokens.py", name)
-        elif name == "contrast_check":
-            _MODS[name] = _load(CONTRAST_PATH, name)
-        else:
-            _MODS[name] = _load(CVD_PATH, name)
+        sys.path.insert(0, str(TOKENS / "tests"))
+        _MODS[name] = _load(BORROWED.get(name, CVD_PATH), name)
     return _MODS[name]
 
 
@@ -257,9 +239,6 @@ def row(t: Texts, lead: str) -> list[str]:
     return rows[0]
 
 
-# ---------------------------------------------------------------------------- tokens
-
-
 _THEMES: dict[str, dict[str, str]] = {}
 
 
@@ -285,19 +264,11 @@ def known_tokens() -> set[str]:
     return names
 
 
-def hex_rgb(h: str) -> tuple[int, int, int]:
-    h = h.lstrip("#")
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-
-
 def color(th: str, name: str) -> str:
     t = theme(th)
     if name not in t:
         raise LookupError(f"`{name}` does not resolve in {th}")
     return t[name][:7]
-
-
-# ---------------------------------------------------------------------------- figures
 
 
 def contrast_rows(t: Texts) -> list[list[str]]:
@@ -317,10 +288,8 @@ def tok(cell: str) -> str:
 
 def contrast_values(r: list[str]) -> list[str]:
     cc = mod("contrast_check")
-    fg, bg = tok(r[1]), tok(r[2])
-    return [
-        f"{cc.contrast_ratio(hex_rgb(color(th, fg)), hex_rgb(color(th, bg))):.2f}" for th in THEMES
-    ]
+    rgb = [[tuple(bytes.fromhex(color(th, tok(r[i]))[1:])) for i in (1, 2)] for th in THEMES]
+    return [f"{cc.contrast_ratio(fg, bg):.2f}" for fg, bg in rgb]
 
 
 def cvd_values(r: list[str]) -> tuple[str, str]:
@@ -340,9 +309,6 @@ def verdict(role: str, values: list[str]) -> str:
     if floor is None:
         return "structure"
     return "pass" if min(map(float, values)) >= floor else "FAIL"
-
-
-# ---------------------------------------------------------------------------- cites
 
 
 def cites(text: str) -> list[tuple[str, int, int]]:
@@ -381,9 +347,6 @@ def parse_pins(text: str) -> dict[str, str]:
         if len(parts) == 2 and not ln.startswith("#"):
             out[parts[0]] = parts[1]
     return out
-
-
-# ---------------------------------------------------------------------------- gates
 
 
 def g_state(t: Texts) -> list[str]:
@@ -479,7 +442,7 @@ T2_REASON = re.compile(r'T2 "([^"]{8,})"')
 T2_QUOTES = (
     ("G-T2.1b", '`aria-disabled="true"`, never the `disabled` attribute — it stays in the Tab order and a menu item stays arrow-reachable'),
     ("G-T2.2", "hi-fi label `color.text.tertiary`, reason `color.text.secondary`; for primary / buy / sell actions the fill becomes `color.surface.raised` with a `color.border.default` hairline; never `color.text.disabled`, never `opacity.disabled` on the label, glyph or reason"),
-    ("G-T2.3", "`Enter`, `Space` or a bound hotkey on a T2 control changes nothing and re-shows the reason inline with one polite announcement"),
+    ("G-T2.3", "`Enter`, `Space` or a bound hotkey on a T2 control changes nothing and re-shows the reason inline with one polite announcement; arrow keys land on a disabled menu item without activating it"),
 )  # fmt: skip
 
 
@@ -534,6 +497,8 @@ def g_safety(t: Texts) -> list[str]:
         bad.append("§2.1 does not carry the CMP-158 sentence verbatim")
     if "The SL cell is **never empty**" not in two:
         bad.append("§2.1 does not state the SL cell is never empty")
+    if KEEPS_STOPS not in section(t.spec, "### 4.2"):
+        bad.append("§4.2: Cancel working orders is not the literal that keeps every stop (C-2.6)")
     legs = [ln for ln in sketch(t).split("\n") if re.match(r"\| (?:Main|sub_\d{3}) ", ln)]
     if len(legs) != 5:
         bad.append(f"§4.1: the B01 sketch draws {len(legs)} leg rows, not 5")
@@ -563,6 +528,8 @@ def g_recovery(t: Texts) -> list[str]:
             r[4] != "never" or "in every state" not in r[5]
         ):
             bad.append(f"{rc}: a protective action is armed or not available in every state")
+    if rows.get("RC-1", [""] * 6)[4] != ARM:
+        bad.append(f"RC-1: Retry's Arm cell is not {ARM!r} (a new submit, R5)")
     if "CMP-001 `danger`" not in four2 or "`15`:522" not in four2:
         bad.append("§4.2 does not state the one Confirm tone with its owner's cite")
     for rx in SKETCH_LABELS:
@@ -701,10 +668,15 @@ def g_scope(t: Texts) -> list[str]:
     return [f"{p} is touched; this ticket owns {own}" for p in t.changed if p not in OWN_PATHS]
 
 
+def g_id(t: Texts) -> list[str]:
+    lines = enumerate(t.spec.split("\n"), 1)
+    return [f"spec:{i} hard-codes the shared cell's CMP id (BQ-06)" for i, ln in lines if ID_258.search(ln)]  # fmt: skip
+
+
 GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-STATE": g_state, "G-TOKEN": g_token, "G-CONTRAST": g_contrast, "G-CVD": g_cvd, "G-T2": g_t2,
     "G-SAFETY": g_safety, "G-RECOVERY": g_recovery, "G-RULED": g_ruled, "G-COPY": g_copy,
-    "G-D01": g_d01, "G-CITE": g_cite, "G-HYGIENE": g_hygiene, "G-SCOPE": g_scope,
+    "G-D01": g_d01, "G-CITE": g_cite, "G-HYGIENE": g_hygiene, "G-SCOPE": g_scope, "G-ID": g_id,
 }  # fmt: skip
 
 
@@ -716,9 +688,6 @@ def audit(t: Texts) -> list[tuple[str, str]]:
         except LookupError as e:
             out.append((g, str(e)))
     return out
-
-
-# ---------------------------------------------------------------------------- load, fill, self-test
 
 
 def changed_paths() -> list[str] | None:
@@ -833,7 +802,12 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-RULED", "drop the Manager scope", sub("**Manager scope (C-12.4).**", "**Scope.**")),
     ("G-RULED", "give the Viewer a Send", sub("rendering the sentence form, CMP-026 with `cta` omitted; no Send", "rendering the sentence form, CMP-026 with `cta` omitted; Send shown")),
     ("G-D01", "lean on E34-D01 outside a request row", sub("**Rows:** `size.row.compact`", "**Rows (E34-D01 P-1):** `size.row.compact`")),
-    ("G-D01", "hard-code the unmerged CMP-258 off a request row", sub("Every word is text in the status cell;", "Every word is text in the CMP-258 status cell;")),
+    ("G-D01", "hard-code an unmerged CMP id off a request row", sub("Every word is text in the status cell;", "Every word is text in the CMP-259 status cell;")),
+    ("G-ID", "hard-code CMP-258 on R-7, a request row", sub("LegStatusCell as its §5.3 defines it (its CMP id at its PR 2)", "CMP-258 LegStatusCell as its §5.3 defines it")),
+    ("G-ID", "write cmp-258 in lower case in §3.1", sub("SCR-061 defines no status component of its own. It draws", "SCR-061 defines no status component of its own. Its cmp-258 cell draws")),
+    ("G-RECOVERY", "let RC-1 go unarmed", set_cell("RC-1", 4, "never")),
+    ("G-SAFETY", "let Cancel working orders cancel the stops", sub("positions, stops and take-profits kept; it never cancels a stop.", "its stops and take-profits cancelled with them.")),
+    ("G-T2", "drop G-T2.3's menu-item clause", sub("; arrow keys land on a disabled menu item without activating it.", ".")),
     ("G-STATE", "drop the ready frame's light twin", drop_row("| B28 ")),
     ("G-T2", "coin Send's rate-limit reason", sub('T2 "Rate limited — your request is held." (`ratelimit.held`', 'T2 "held: rate budget" (`ratelimit.held`')),
     ("G-RECOVERY", "let a frozen Manager close with no OD-11 split", sub("the Owner's enabled, a Manager's \"Frozen — the owner closes or releases\" until E39-S03 rules (C-5)", "every role enabled")),
@@ -877,10 +851,8 @@ def selftest() -> tuple[bool, list[str]]:
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="E34-D02 trade-group ticket hi-fi audit")
     g = ap.add_mutually_exclusive_group()
-    g.add_argument("--check", action="store_true")
-    g.add_argument("--fill", action="store_true")
-    g.add_argument("--self-test", action="store_true")
-    g.add_argument("--repin-ruled", action="store_true")
+    for flag in ("--check", "--fill", "--self-test", "--repin-ruled"):
+        g.add_argument(flag, action="store_true")
     a = ap.parse_args(argv)
     if a.self_test:
         ok, lines = selftest()
@@ -896,8 +868,7 @@ def main(argv: list[str]) -> int:
         if bad:
             print(f"refused: {bad[0]}")
             return 1
-        head = "# E34-D02 cite pins: the cite, a hash of its cited line(s) at its base.\n"
-        head += "# Written by --repin-ruled only.\n"
+        head = "# E34-D02 cite pins: the cite, a hash of its cited line(s) at its base. Written by --repin-ruled only.\n"  # fmt: skip
         body = "".join(f"{k}\t{h}\n" for k, h in hashes.items())
         (ROOT / PINS_REL).write_text(head + body, encoding="utf-8")
         print(f"wrote {PINS_REL} ({len(hashes)} cites)")
