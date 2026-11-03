@@ -24,6 +24,8 @@ const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
   "admin-connectivity":
     "E08-S12 (#5207) PR 1: SCR-147's pure core, flags off; PR 2 mounts it once #5330 and the R-id land",
   alerts: "E40-S01 (#1129): PR 1 ships the data layer; PR 2 mounts SCR-090 at /alerts",
+  basis:
+    "E24-S08 (#783): SCR-054's basis header readout; mounted with the derivatives panel header row (E24-D05)",
   "chart-errors": "E11-S02 (#334): SCR-048 wraps <Chart>, which no screen mounts until SCR-030",
   "chart-price-scale":
     "E11-S05 (#386): SCR-043 is a <Chart> child; no screen mounts one until SCR-030",

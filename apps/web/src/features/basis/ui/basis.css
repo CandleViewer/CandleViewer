@@ -1,0 +1,39 @@
+/*
+ * E24-S08 (#783): the basis header readout's chrome. Tokens only (D03 §3, S54-6). The row sits on
+ * `color.surface.raised`; the value is `type.num.base` tabular on `color.text.primary`, units and the source
+ * line `color.text.secondary`. No motion. The sign is text; colour carries nothing.
+ */
+
+.cv-basis {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-xs) var(--space-inset-md);
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+  color: var(--color-text-primary);
+  background: var(--color-surface-raised);
+}
+
+.cv-basis__rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-inset-xs) var(--space-inset-md);
+  margin: 0;
+}
+
+.cv-basis__num {
+  font: var(--type-num-base-font-weight) var(--type-num-base-font-size) /
+    var(--type-num-base-line-height) var(--type-num-base-font-family);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+
+.cv-basis__qualifier,
+.cv-basis__caption {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.cv-basis__stale {
+  color: var(--color-text-secondary);
+}
