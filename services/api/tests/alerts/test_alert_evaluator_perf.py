@@ -7,8 +7,10 @@ in-memory firing record, so it bounds the condition -> record latency from below
 store's own commit is E40-Q02's gate. The alerts mix four comparison ops, both trigger modes and
 cooldowns, with distinct thresholds, so the evaluator keeps ~500 subscriptions (the worst case of
 the sharing it relies on). The tick stream is a seeded random walk per symbol, one tick per
-second on a fake clock. Memory has no numeric budget in the plan: its peak is reported, not
-asserted. Deselected by default (`-m perf`)."""
+second on a fake clock. The span includes the `alert_fired` log line each firing renders, as in
+production, so the figure errs high. The 1 s bound is the plan's budget and sits far above the
+measured figure; a tighter regression tripwire is E40-Q02's gate. Memory has no numeric budget in
+the plan: its peak is reported, not asserted. Deselected by default (`-m perf`)."""
 
 from __future__ import annotations
 
@@ -41,7 +43,7 @@ def _rows(rng: random.Random) -> list[Row]:
             row(
                 f"a{i:03d}",
                 symbol=f"S{i % SYMBOLS:02d}USDT",
-                condition_ir=ir(op, BASE + rng.randint(-600, 600) + i * 7 % 13),
+                condition_ir=ir(op, BASE + rng.randint(-600, 600) + (i * 7) % 13),
                 trigger_mode="once" if i % 5 == 0 else "every_time",
                 cooldown_seconds=0 if i % 3 else 30,
             )
