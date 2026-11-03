@@ -920,20 +920,51 @@ switch, and the scene graph cannot remove the old ones. `HaRing` therefore holds
 state and writes into the series' existing ring; switching back rewrites the real bars from the
 store.
 
-## Candle LOD marks (E12-S09 PR 1a of 3, #421; pre-stage on E12-S06 / S07)
+## Candle LOD marks (E12-S09 PR 1b of 3, #421; pre-stage on E12-S06 / S07)
 
-The renderer side of the candle tiers (BQ-01), first slice: the L1 mark and the tier plumbing.
-E11-S12 (#418) owns the selector, the ±15 % hysteresis, the decimator, `barsPerColumn` and
-`viewport.lod`; nothing of those is here (AC3 is S12's). The tier rides `u_geom[1].w`
-(`GEOM.tier`, BQ-04), free until now.
+The renderer side of the candle tiers (BQ-01). E11-S12 (#418) owns the selector, the ±15 %
+hysteresis, the decimator, `barsPerColumn` and `viewport.lod`; nothing of those is here (AC3 is
+S12's). The tier rides `u_geom[1].w` (`GEOM.tier`, BQ-04), free until now.
 
 - **L1** (D06 §5.3): every wick is one hairline (weight is no channel); a down body is solid, an
   up body outline-only from 2 device px, else `dash.1-1` (`FILL.dash`: the fragment discards odd
   window rows by `gl_FragCoord.y`, so a pan never crawls). Hollow and OHLC draw the candle mark
   from L1 (D06 §5.5).
-- **Dormant**: `CandleSeries.frame` takes `tier` as its last parameter and it defaults to 0, so
-  nothing changes at L0. Nothing passes a tier until PR 2 (the runtime wiring); the L2 parts 7 /
-  8 and the column entries (PR 1b) stay dormant until then too.
+- **L2** (D06 §5.4, BQ-03): parts 7 `columnWick` (high → low, the neutral tint) and 8
+  `columnSpan` (open → close: down solid, up `dash.1-1`, O = C a hairline dot), one hairline at
+  each entry's device column. The same two instanced draws per pane at every tier.
+- **`ColumnSource`** (BQ-02, `src/layers/candle/columns.ts`) is the structural shape S12's strip
+  must satisfy: `{ ints, stride ≥ 4, count, firstColumn }`, words `[minLow, maxHigh, firstOpen,
+lastClose, …]` per §3.6, an empty column minLow > maxHigh. `ColumnEntries` turns it into
+  instances `[open, high, low, close, column << 4 | dir]` in a buffer preallocated to the device
+  width (grown only by `reserve`); a write changes and patches only the entries that differ, so a
+  tick uploads one entry. Loops are bounded by that width, never by the bar count.
+- **Forming bar** (BQ-05, AC5): the decimator folds `[first, foldEnd(store))`; the forming bar is
+  appended as its own entry at its own column, so it is never folded.
+- **`foldVolumeMax`** (BQ-06): the neutral max volume per column for E12-S08's sub-pane.
+- **`foldDeltaRange`** (BQ-06, ruling 6577189670): the per-column delta min / max beside it, into
+  two more f32 buffers; the fold only, its consumers (E12-S08, PR 2) are not wired here.
+- **`lodDisclosure(lod)`** (BQ-08, root export, additive): "Zoomed out · 1 column = N bars" and
+  the mirror's "N bars per column", N rounded half up; L2 with nothing merged reads the PROPOSED
+  "Zoomed out · high–low only". The chip, its announcements and the readout are PR 2's.
 
-PR 1b adds the L2 column marks, the forming split and `lodDisclosure`; PR 2 (after S12's code
-PR, #533, #5412 and #5307) wires the runtime, the picks, the chip and E11-S13's mirror.
+PR 2 (after S12's code PR, #533, #5412 and #5307): the runtime feeds the effective tier and the
+strip to `CandleSeries.frame`, attaches `ColumnEntries` as the marks' L2 source, picks L2 columns,
+and wires the app's chip and E11-S13's mirror.
+
+Bench: `bench/scenes/candle-lod.ts`, 5k / 50k / 100k × L0 / L1 / L2 on the fake GL, two draws
+and zero allocations per frame. CPU p95 per frame at 100k: L0 / L1 ≈ 0.01 ms, an L2 pan (a full
+one-pass fold, the bench's stand-in for #418's decimator) ≈ 1.1 ms; budgets in
+`candle-lod.perf.test.ts`. No baseline moved. Goldens: CPU stand-in rows for L1, the L2 spike
+column and the forming bar at L2; the SwiftShader rows are `it.todo`s on #391.
+
+### Design deltas (E12-S09)
+
+| Row   | Ticket                                           | Shipped                                                                                                                              |
+| ----- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| G3    | "L1 bodies only"                                 | L1 keeps a hairline wick (`26` §3.6, D06 §5.3)                                                                                       |
+| G3    | FrameStats `lodTier` / `aggregatedBarsPerColumn` | `lodCandles` / `barsPerColumn` (`26` §8); no new SCR-046 field (D06 §6.3)                                                            |
+| G3    | "> 10 % perf regression" gate                    | 5 % (rule 31, ADR-0013 Amendment 7)                                                                                                  |
+| G3    | Renko L2 "by brick index"                        | The §3.6 grid is index space already: a test (AC6), no new code                                                                      |
+| BQ-07 | AC2 "100k zoomed to fit"                         | The 0.05 px clamp shows ≈ 51k bars on 2560 px; the bench scans 100k on a synthetic grid (CPU p95 now; GPU p95 / fps on #449 in PR 2) |
+| BQ-09 | `series_lod_transitions_total{from,to}`          | Not exported: no field-telemetry pipe in `26`; S12 owns the engine counter                                                           |

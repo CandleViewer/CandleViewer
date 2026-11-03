@@ -6,6 +6,7 @@ import type { BatchUniforms } from "../gl/submit.js";
 import {
   CANDLE_PART,
   candleRect,
+  columnRect,
   dashOn,
   FILL,
   fillMode,
@@ -95,8 +96,8 @@ const RECT_OUT = new Float64Array(4);
  * rect inset by a hairline on every side from 3 CSS px wide, else top and bottom only; a hollow
  * body's `sub` 1 is its outline alone (E12-S07, D06 §4.2), the same edges, the interior unpainted.
  * For the OHLC ticks `sub` is the tick (0 open, 1 close). A seam instance names its bar's slot.
- * E12-S09: a `dash.1-1` part (an L1 up body under 2 device px) paints its on rows only, as the
- * shader's discard does.
+ * E12-S09: an L2 column entry (parts 7 / 8) places by `columnRect`; a `dash.1-1` part (an L1 up
+ * body under 2 device px, an L2 up span) paints its on rows only, as the shader's discard does.
  */
 export function paintCandle(ctx: Ctx2DLike, a: PaintArgs): void {
   const b = a.block;
@@ -109,13 +110,18 @@ export function paintCandle(ctx: Ctx2DLike, a: PaintArgs): void {
   const hi = v[at + 1] ?? 0;
   const lo = v[at + 2] ?? 0;
   const c = v[at + 3] ?? 0;
+  const meta = v[at + 4] ?? 0;
   const r = RECT_OUT;
   const k = b.floats;
-  const mark = (v[at + 4] ?? 0) >> 4;
-  const slot = part === CANDLE_PART.seam ? o : at / CANDLE_STRIDE;
-  const i = (slot - (blk.ints[1] ?? 0)) & (blk.ints[2] ?? 0);
-  const sub = part === CANDLE_PART.ticks ? (a.sub ?? 0) : 0;
-  candleRect(part, i, o, hi, lo, c, mark, k, b.ints[0] ?? 0, b.ints[1] ?? 0, blk.geom, r, sub);
+  const column = part >= CANDLE_PART.columnWick;
+  const mark = column ? meta & 3 : meta >> 4;
+  if (column) columnRect(part, meta >> 4, o, hi, lo, c, k, b.ints[1] ?? 0, blk.geom, r);
+  else {
+    const slot = part === CANDLE_PART.seam ? o : at / CANDLE_STRIDE;
+    const i = (slot - (blk.ints[1] ?? 0)) & (blk.ints[2] ?? 0);
+    const sub = part === CANDLE_PART.ticks ? (a.sub ?? 0) : 0;
+    candleRect(part, i, o, hi, lo, c, mark, k, b.ints[0] ?? 0, b.ints[1] ?? 0, blk.geom, r, sub);
+  }
   // Scalar locals throughout: a painter runs per bar, per frame (no array per call).
   let x = r[0] ?? 0;
   let y = r[1] ?? 0;

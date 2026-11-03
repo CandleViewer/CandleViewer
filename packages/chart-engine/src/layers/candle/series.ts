@@ -8,10 +8,12 @@
 // E12-S07: the hollow shape (the same hosts, ring and program; parts 5 / 6 at L0) and `setShape`,
 // which switches candles / hollow / OHLC in place: the parts are the per-frame `u_batch.x`, so a
 // switch rewrites nothing on the GPU but the ring's derived bits (`CandleRing.setMode`).
-// E12-S09 PR 1a (#421): the candle tier (BQ-04): L1 the hairline mark over the ring. The tier
-// defaults to 0 and nothing passes it yet: the runtime feeds it in PR 2, so L1 stays dormant.
+// E12-S09 PR 1 (#421): the candle tier (BQ-04): L1 the hairline mark over the ring; L2 the column
+// parts 7 / 8 over a `ColumnEntries` (BQ-03), still two draws. Attaching the entries as the two
+// hosts' L2 source is the runtime's (PR 2); hit-testing an L2 column is PR 2's too.
 import type { AttributeLayout, BatchUniforms, VertexSource } from "../../scene/gpu-types.js";
 import type { BarStore } from "../../model/BarStore.js";
+import type { ColumnEntries } from "./columns.js";
 import type { SceneGraph } from "../../scene/graph.js";
 import { PROGRAM } from "../../scene/instance-layout.js";
 import { type HostContext, type HostDeps, type HostedPlugin, SeriesHost } from "../host.js";
@@ -187,7 +189,8 @@ export class CandleSeries implements HostedPlugin {
    * bars under 5 CSS px draw the candle mark (D06 §3.2): their two batches switch to the wick and
    * body parts. Hollow candles under 3 CSS px draw the candle's mark (D06 §4.2, §5.5). The seam
    * draws only while a `gap_before` bar lies in logical [first, last]. E12-S09: from `tier` 1
-   * every shape draws the candle mark (D06 §5.5).
+   * every shape draws the candle mark (D06 §5.5); at 2 with `columns`, the two batches draw its
+   * entries as parts 7 / 8 (`u_batch` = (part, 0, -1, count)); without, the L1 mark.
    */
   frame(
     spacingCss: number,
@@ -197,9 +200,11 @@ export class CandleSeries implements HostedPlugin {
     plotTop = 0,
     plotBottom = 0,
     tier = 0,
+    columns: ColumnEntries | null = null,
   ): void {
     candleGeometry(spacingCss, dpr, this.geom, tier);
     const l0 = !(tier >= 1); // candleGeometry's clamp: NaN and below 1 are L0
+    const l2 = tier >= 2 && columns !== null;
     this.geom[GEOM.plotTop] = plotTop * dpr; // the seam stops at the plot rect's edges
     this.geom[GEOM.plotBottom] = plotBottom > 0 ? plotBottom * dpr : 0;
     const r = this.ring;
@@ -211,7 +216,18 @@ export class CandleSeries implements HostedPlugin {
     for (let p = 0; p < this.blocks.length; p += 1) {
       const blk = this.blocks[p] as BatchUniforms;
       const ints = blk.ints;
+      if (p !== SEAM && l2) {
+        const part = p === 0 ? CANDLE_PART.columnWick : CANDLE_PART.columnSpan;
+        ints[0] = part;
+        ints[1] = 0;
+        ints[2] = -1;
+        ints[3] = (columns as ColumnEntries).count;
+        blk.instances = ints[3];
+        blk.vertices = PART_VERTICES[part] ?? 4;
+        continue;
+      }
       if (p !== SEAM) {
+        if (blk.instances !== -1) blk.instances = -1; // back from L2
         const part = ohlc
           ? p === 0
             ? CANDLE_PART.stem
@@ -269,6 +285,7 @@ export class CandleSeries implements HostedPlugin {
     let part = -1;
     for (let b = 0; b < SEAM; b += 1) {
       const p = (this.blocks[b] as BatchUniforms).ints[0] ?? 0;
+      if (p >= CANDLE_PART.columnWick) continue; // an L2 column's pick is PR 2's
       for (let sub = 0; sub < (p === CANDLE_PART.ticks ? 2 : 1); sub += 1) {
         candleRect(p, index, o, hi, lo, c, mark, k, indexBase, tickBase, this.geom, RECT, sub);
         const w = RECT[2] as number;

@@ -22,9 +22,13 @@ export const CANDLE_PART = {
   seam: 4,
   hollowWick: 5,
   hollowBody: 6,
+  /** E12-S09 (BQ-03), L2: per `ColumnEntries` entry the neutral high → low column. */
+  columnWick: 7,
+  /** E12-S09, L2: the first-open → last-close span; down solid, up `dash.1-1`, O = C a dot. */
+  columnSpan: 8,
 } as const;
 /** Strip vertices per instance: 4 for a quad, 10 for the two ticks (BQ-15). */
-export const PART_VERTICES: readonly number[] = [4, 4, 10, 4, 4, 4, 4];
+export const PART_VERTICES: readonly number[] = [4, 4, 10, 4, 4, 4, 4, 4, 4];
 /** D06 §3.2: OHLC ticks are drawn from 5 CSS px; below it the bar draws the candle mark. */
 export const OHLC_TICKS_FROM = 5;
 /** D06 §4.2 / §5.5: the hollow marks are L0's (s ≥ 3 CSS px); below, the candle's L1 / L2 mark. */
@@ -96,6 +100,7 @@ export function partColor(part: number, mark: number): number {
   if (part === CANDLE_PART.wick || part === CANDLE_PART.seam || part === CANDLE_PART.hollowWick) {
     return PALETTE.wick; // R-6: wicks and the seam are neutral
   }
+  if (part === CANDLE_PART.columnWick) return PALETTE.neutral; // D06 §5.4: the neutral tint
   if (part === CANDLE_PART.hollowBody && dir !== CANDLE_DIR.zeroRange) {
     return mark & MARK.colourUp ? PALETTE.up : PALETTE.down;
   }
@@ -114,12 +119,13 @@ export const hollowFill = (part: number, mark: number): boolean =>
 
 /**
  * The shader's `v_outline` for a part of width `w` device px (`FILL`). L0 up body: its outline
- * over the tint. L1 up body (D06 §5.3): outline-only from `L1_OUTLINE_MIN`, else `dash.1-1`.
- * A hollow up / down body (§4.2): outline-only. Else solid.
+ * over the tint. L1 up body (D06 §5.3): outline-only from `L1_OUTLINE_MIN`, else `dash.1-1`. L2 up
+ * span (§5.4): `dash.1-1`. A hollow up / down body (§4.2): outline-only. Else solid.
  */
 export function fillMode(part: number, mark: number, w: number, geom: ArrayLike<number>): number {
   const dir = mark & MARK.dir;
   const outline = fullOutline(w, geom) ? 2 : 1;
+  if (part === CANDLE_PART.columnSpan) return dir === CANDLE_DIR.up ? FILL.dash : FILL.solid;
   if (part === CANDLE_PART.body && dir === CANDLE_DIR.up) {
     if ((geom[GEOM.tier] ?? 0) < 1) return outline;
     return w >= L1_OUTLINE_MIN ? outline + FILL.hollow : FILL.dash;
@@ -135,6 +141,44 @@ export function fillMode(part: number, mark: number, w: number, geom: ArrayLike<
  * the shader's `floor(gl_FragCoord.y)` (y up) is even.
  */
 export const dashOn = (row: number, height: number): boolean => ((height - 1 - row) & 1) === 0;
+
+/**
+ * An L2 column entry (`ColumnStrip`, BQ-03) as [x, y, w, h] in `u_viewport` px: the shader's
+ * parts 7 / 8 in float64. The entry is the device column `column`, its survivors in ticks; both
+ * parts are a hairline wide at x = column. The wick runs high → low; the span open → close, a
+ * hairline-square dot when open = close (D06 §5.4). `k` / `tickBase` as `candleRect`.
+ */
+export function columnRect(
+  part: number,
+  column: number,
+  o: number,
+  h: number,
+  l: number,
+  c: number,
+  k: ArrayLike<number>,
+  tickBase: number,
+  geom: ArrayLike<number>,
+  out: Float64Array,
+): void {
+  const hair = geom[GEOM.hair] ?? 1;
+  let y0: number;
+  let y1: number;
+  if (part === CANDLE_PART.columnWick) {
+    y0 = projectRel(k, l - tickBase);
+    y1 = projectRel(k, h - tickBase);
+  } else if (o === c) {
+    y0 = Math.floor(projectRel(k, o - tickBase) - hair * 0.5 + 0.5);
+    y1 = y0 + hair;
+  } else {
+    y0 = projectRel(k, o - tickBase);
+    y1 = projectRel(k, c - tickBase);
+  }
+  const top = Math.min(y0, y1);
+  out[0] = column;
+  out[1] = top;
+  out[2] = hair;
+  out[3] = Math.max(Math.max(y0, y1), top + hair) - top;
+}
 
 /**
  * Part `part` (`CANDLE_PART`) of bar `index` (logical) as [x, y, w, h] in `u_viewport` px, y

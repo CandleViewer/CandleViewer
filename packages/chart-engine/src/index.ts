@@ -8,6 +8,8 @@
 export { createChart } from "./api/chart.js";
 // E12-S06 (BQ-10, additive): the checked price → tick narrowing the data binding must use (F-01).
 export { toTicks } from "./worker/protocol.js";
+// E12-S09 (#421 BQ-08, additive): the L2 aggregation words for the app's chip and the mirror (AC4).
+export { lodDisclosure } from "./lod-disclosure.js";
 export type {
   BarView,
   BubbleOptions,
