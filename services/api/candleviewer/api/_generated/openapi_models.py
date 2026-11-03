@@ -4069,7 +4069,7 @@ class ClosedPnl(BaseModel):
     fee_pnl: Annotated[
         str | None,
         Field(
-            description="Minus the closing fees and the opening fees' pro-rata share: a fee paid is negative, a rebate positive.",
+            description="Minus the closing fills' fees, their closing share, and the opening fees they take, pro rata by size: a fee paid is negative, a rebate positive.",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
@@ -4101,13 +4101,13 @@ class ClosedPnl(BaseModel):
     provisional: Annotated[
         StrictBool,
         Field(
-            description="True while the venue's record of this close is unread; reading it settles the item in place."
+            description="True while the venue's record of this close is unread; reading it settles the item in place. A record item always carries it; the per-fill stand-in omits it."
         ),
     ] = False
     divergent: Annotated[
         StrictBool,
         Field(
-            description="A settled item whose `local_net_pnl` differs from `closed_pnl` by more than `oms.closed_pnl_tolerance_rel` × |`closed_pnl`|; audited (24 §15.5)."
+            description="A settled item whose `local_net_pnl` differs from `closed_pnl` by more than `oms.closed_pnl_tolerance_rel` × |`closed_pnl`|; audited (24 §15.5). A record item always carries it; the per-fill stand-in omits it."
         ),
     ] = False
     cum_entry_value: Annotated[
@@ -8093,7 +8093,10 @@ class ClosedPnlTotals(BaseModel):
     ]
     by_account: Annotated[
         list[ClosedPnlAccountTotals],
-        Field(description="One entry per account with a counted item, its items' figures alone."),
+        Field(
+            description="One entry per account with a counted item, its items' figures alone, in ascending `exchange_account_id` order; a window read covers at most 25 accounts.",
+            max_length=25,
+        ),
     ]
 
 

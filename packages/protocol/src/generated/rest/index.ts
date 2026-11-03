@@ -3186,15 +3186,16 @@ export interface paths {
     };
     /**
      * Realised PnL per closed position (journal source)
-     * @description Mirrors `GET /v5/position/closed-pnl`: one item per venue closed-PnL record, the
-     *     realised PnL of one closing order (a partial close is a record of its own), composed
-     *     and compared on the server (24-internal-schemas.md §8.13; E29-S06, #981, contract
-     *     first). An item is `provisional` while the venue's record of its close is unread: its
-     *     figures are those the stored closing fills compose, and `net_pnl` is their sum. Reading
-     *     the record settles the item in place, with the same `id`: `net_pnl` is then the venue's
-     *     `closed_pnl`, authoritative, and `divergent` says the server's own `local_net_pnl`
-     *     differs from it by more than `oms.closed_pnl_tolerance_rel` allows. A client shows
-     *     these figures and recomputes none.
+     * @description Mirrors `GET /v5/position/closed-pnl`, kept by the sync of 24-internal-schemas.md
+     *     §8.13, which reads the venue's records as positions close (no nightly backfill), and
+     *     used to seed journal entries: one item per venue closed-PnL record, the realised PnL of
+     *     one closing order (a partial close is a record of its own), composed and compared on
+     *     the server (24 §8.13; E29-S06, #981, contract first). An item is `provisional` while
+     *     the venue's record of its close is unread: its figures are those the stored closing
+     *     fills compose, and `net_pnl` is their sum. Reading the record settles the item in
+     *     place, with the same `id`: `net_pnl` is then the venue's `closed_pnl`, authoritative,
+     *     and `divergent` says the server's own `local_net_pnl` differs from it by more than
+     *     `oms.closed_pnl_tolerance_rel` allows. A client shows these figures and recomputes none.
      *
      *     **The day window.** `window=today` lists the items whose `closed_at` falls in the
      *     trading day that contains the request, `[start, next_start)`, from the configured day
@@ -3205,29 +3206,34 @@ export interface paths {
      *     environment, so a mixed view reads each environment's server and shows each one's
      *     totals, never one sum (E29-D01 D3). A policy that cannot be read is
      *     `503 store_unavailable`, never a UTC-midnight guess; `window` with `from` or `to` is
-     *     `400 validation_failed`.
+     *     `400 validation_failed`, and so is a window read whose accounts, named or granted,
+     *     number more than 25. Without `window`, `from` and `to` bound `closed_at`.
      *
      *     **Order.** With `window`, items are oldest first by `closed_at`, then `id`, so a new
      *     close appends (E29-D02 §5.6). Without it they stay newest first, by `closed_at`, then
-     *     `id`. A cursor continues the read it was issued for, its window included.
+     *     `id`. A cursor continues the read it was issued for, its window included. Settling can
+     *     move an item's `closed_at` from its last fill's time to the venue's `updatedTime`, so an
+     *     item can show on two pages or cross the window's edge: a client keys rows by `id`.
      *
      *     **Filters.** The FilterBar's chips: `exchange_account_ids`, `symbol` and
      *     `trade_group_id` each take several values, which are alternatives, and the kinds,
      *     `side` included, narrow together; the totals take the same filters. An item's trade
-     *     group is that of its closing order's leg, so an item whose closing order has no row, or
-     *     a row with no leg, matches no `trade_group_id`.
+     *     group is its position's, that of its opening orders' leg, else its closing fills', else
+     *     its closing order's (24 §8.13); an item none of them names matches no `trade_group_id`.
      *
      *     **As served until E29-S06's route slice (E29-T07, #915).** The stored fills that carry a
      *     closed PnL, one item per fill, newest first by fill time: `id` is the fill's,
      *     `side` the closed position's (the fill's opposite), `avg_exit_price` the fill's price,
      *     `closed_at` its time, and `closed_pnl` the fill's PnL less its own fee, the closing
-     *     fill's (the venue's figure, which the backfill serves, is net of the opening fees too).
+     *     fill's (the venue's figure, which a record item serves, is net of the opening fees too).
      *     A settlement or funding row, which carries a PnL and closes no size, is not carried, and
      *     a fill recovered by REST holds no closed PnL (the venue's execution list has none), so a
      *     complete listing needs the venue's closed-PnL endpoint. A fill holds no entry price, closed size, entry or exit value,
      *     leverage or opening time, so `avg_entry_price`, `qty`, `cum_entry_value`,
      *     `cum_exit_value`, `leverage` and `opened_at` are absent, never estimated, and so is
-     *     every member E29-S06 adds.
+     *     every member E29-S06 adds. It ignores `window`, `side` and `trade_group_id`, as a list
+     *     ignores a parameter it does not know, refuses a second `symbol`
+     *     (`400 validation_failed`), and bounds the fill's time by `from` and `to`.
      *
      *     An `exchange_account_ids` entry outside the caller's grants, or one that
      *     does not exist, refuses the whole request alike with `403 account_scope_denied`, audited
@@ -8450,7 +8456,7 @@ export interface components {
       cum_entry_value?: components["schemas"]["Decimal"];
       cum_exit_value?: components["schemas"]["Decimal"];
       /**
-       * @description A settled item whose `local_net_pnl` differs from `closed_pnl` by more than `oms.closed_pnl_tolerance_rel` × |`closed_pnl`|; audited (24 §15.5).
+       * @description A settled item whose `local_net_pnl` differs from `closed_pnl` by more than `oms.closed_pnl_tolerance_rel` × |`closed_pnl`|; audited (24 §15.5). A record item always carries it; the per-fill stand-in omits it.
        * @default false
        */
       divergent: boolean;
@@ -8458,7 +8464,7 @@ export interface components {
       exchange_account_id?: string;
       /** @description The closing order's venue id; absent on a record the venue wrote without one. */
       exchange_order_id?: string;
-      /** @description Minus the closing fees and the opening fees' pro-rata share: a fee paid is negative, a rebate positive. */
+      /** @description Minus the closing fills' fees, their closing share, and the opening fees they take, pro rata by size: a fee paid is negative, a rebate positive. */
       fee_pnl?: components["schemas"]["Decimal"];
       /** @description The funding the closed size carried, paid negative; 0 with no settlement in its holding period; absent while pending (E29-K01, #843). */
       funding_pnl?: components["schemas"]["Decimal"];
@@ -8480,7 +8486,7 @@ export interface components {
        */
       opened_at?: string;
       /**
-       * @description True while the venue's record of this close is unread; reading it settles the item in place.
+       * @description True while the venue's record of this close is unread; reading it settles the item in place. A record item always carries it; the per-fill stand-in omits it.
        * @default false
        */
       provisional: boolean;
@@ -8502,7 +8508,7 @@ export interface components {
     };
     /** @description Every item the request's filters select in the window, across all pages, in this server's environment: `net_pnl` sums their `net_pnl`, provisional items included. */
     ClosedPnlTotals: {
-      /** @description One entry per account with a counted item, its items' figures alone. */
+      /** @description One entry per account with a counted item, its items' figures alone, in ascending `exchange_account_id` order; a window read covers at most 25 accounts. */
       by_account: components["schemas"]["ClosedPnlAccountTotals"][];
       count: number;
       net_pnl: components["schemas"]["Decimal"];
@@ -18377,7 +18383,7 @@ export interface operations {
         symbol?: components["schemas"]["Symbol"][];
         /** @description Exclusive end of the time window (RFC 3339 UTC). Defaults to now. */
         to?: components["parameters"]["To"];
-        /** @description Repeatable, at most 32; matched through the closing order's leg. */
+        /** @description Repeatable, at most 32; matched through the item's trade group (above). */
         trade_group_id?: string[];
         /** @description `today`: the configured trading day that contains the request (24 §8.13), oldest first, with `meta.window` and `meta.totals`. Not with `from` or `to`. */
         window?: "today";
