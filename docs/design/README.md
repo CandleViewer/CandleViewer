@@ -81,6 +81,7 @@ the same rule applies to them. Skills: the official `penpot-*` skill set (penpot
   4. For `CMP-*` tickets (and `SCR-*` tickets that change a component contract): the handoff checklist
      `docs/design/<epic>/<ticket>-handoff.md`, per `16-design-system-brief.md` §11.4 / §13.3 item 8.
 - Design sign-off = PR merge of the spec + exports; the Penpot reference goes in the ticket comment.
+- **Board cap:** ten boards per design PR, twins counted, composites allowed (main-orchestrator ruling 2026-10-24 03:11Z, as quoted at `E27/E27-D03.md`:204 and `E08/E08-D07.md`:688); every other sheet is "not drawn — the text is binding; drawn on request".
 - `execute_code` runs arbitrary JS in the plugin sandbox: only mutate the file named in the ticket; never
   delete pages/components you did not create; export before and after large mutations.
 
