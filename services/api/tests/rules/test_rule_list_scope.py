@@ -245,23 +245,31 @@ async def test_reads_by_id_take_the_scoped_point_read() -> None:
     assert (missing.value.status, missing.value.message) == (404, "That version does not exist.")
 
 
-async def test_a_write_on_a_rule_outside_the_scope_records_its_refusal_as_before() -> None:
-    """A write still reads the rule by its id and fails in full with its refusal recorded first
-    (C-2.9, 04 §7.3); only the plain reads narrow in the query."""
+@pytest.mark.parametrize("faulty", [False, True], ids=["scoped", "unscoped"])
+async def test_a_write_on_a_rule_outside_the_scope_records_its_refusal_as_before(
+    faulty: bool,
+) -> None:
+    """A write reads the rule in the caller's scope as the plain reads do (#2626) and fails in full
+    with its refusal recorded first (C-2.9, 04 §7.3), even when a store that lost its predicate
+    returns the row: the re-check drops it and logs its id."""
     audits: list[tuple[str, dict[str, Any]]] = []
 
     async def audit(action: str, payload: dict[str, Any]) -> None:
         audits.append((action, payload))
 
-    store = Recording()
+    store = _Unscoped() if faulty else Recording()
     store.seed(theirs := _rule(_rid(2), OTHER, (A,)))
     m = RulesManager(store, default_registry(), audit=audit)
-    with pytest.raises(RuleError) as refused:
+    with capture_logs() as logs, pytest.raises(RuleError) as refused:
         await m.delete(theirs.id, _actor(MGR, A))
     assert (refused.value.status, refused.value.code) == (404, "not_found")
     refusal = {"rule_id": theirs.id, "op": "delete", "reason": "rule_not_visible", "actor": MGR}
     assert audits == [("rule.scope_refused", refusal)]
-    assert [method for method, _, _ in store.reads] == ["get"]
+    if not faulty:  # `_Unscoped` logs no read
+        point = {"mode": None, "level": None, "after": None, "limit": 1, "only": theirs.id}
+        assert store.reads == [("scoped_page", GrantRead(MGR, frozenset({A})), point)]
+    found = [e["rule_ids"] for e in logs if e["event"] == "rules.scope_mismatch"]
+    assert found == ([[theirs.id]] if faulty else [])
     assert not store._rows[theirs.id].deleted
 
 

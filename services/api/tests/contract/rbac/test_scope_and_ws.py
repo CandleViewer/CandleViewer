@@ -206,14 +206,16 @@ def test_active_version_on_an_unseen_rule_is_the_same_404_as_a_missing_rule_or_v
 ) -> None:
     """#2574, 04 §7.3: on a rule the caller cannot see, its real version, a missing version and a
     missing rule are one indistinguishable 404 (no existence oracle). Visibility is checked before
-    any version lookup or scope pre-check; the denial is audited and nothing changes."""
+    any version lookup or scope pre-check; each denial is audited alike (#2626) and nothing
+    changes."""
     rid, old = _rule_with_old_version(world, _acct(account))
     active = _active_version(world, rid)
     world.audit.records.clear()
     world.scope_events.clear()
+    gone = str(uuid.uuid4())
     real = _activate(world, actor, rid, old)
     no_version = _activate(world, actor, rid, str(uuid.uuid4()))
-    no_rule = _activate(world, actor, str(uuid.uuid4()), old)
+    no_rule = _activate(world, actor, gone, old)
     statuses = (real.status_code, no_version.status_code, no_rule.status_code)
     assert statuses == (404, 404, 404), f"a real foreign version must not answer 403: {statuses}"
     assert real.json() == no_version.json() == no_rule.json(), "the problem bodies must match"
@@ -224,7 +226,8 @@ def test_active_version_on_an_unseen_rule_is_the_same_404_as_a_missing_rule_or_v
         for r in world.audit.records
         if r["action"] == "rule.scope_refused"
     ]
-    assert refused == [(rid, "set_active_version", "rule_not_visible")] * 2, refused
+    asked = (rid, rid, gone)
+    assert refused == [(r, "set_active_version", "rule_not_visible") for r in asked], refused
     assert world.scope_events == [], "an unseen rule never reaches the scope pre-check"
 
 

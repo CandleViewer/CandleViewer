@@ -747,26 +747,28 @@ class RulesManager:
         return bad
 
     async def _visible_row(self, rule_id: str, actor: Actor, op: str | None = None) -> RuleRow:
-        """Row the actor may see. With `op` (a mutation/arm) the row is read by its id and an
-        invisible one is a refusal, audited, since a write fails in full and records why (C-2.9).
-        The plain reads pass no `op` (that is scoping, not a refusal): one point read in the
-        caller's scope (SR-051), `_visible` re-checking the row it returns."""
-        if op is None:
-            return await self._scoped_row(rule_id, actor)
-        row = await self._row(rule_id)
-        if not self._visible(row, actor):
-            await self._refuse_scope(rule_id, op, "rule_not_visible", actor)
-            raise RuleError(404, "not_found", "That rule does not exist.")
-        return row
+        """Row the actor may see, from one point read in the caller's scope (SR-051), `_visible`
+        re-checking the row it returns. With `op` (a mutation/arm) a miss is a refusal, audited
+        ahead of its 404, since a write fails in full and records why (C-2.9): a rule outside the
+        scope, a missing one and a deleted one are one read and one record, so neither the answer,
+        its timing nor the caller's own audit view (SR-067) tells them apart (04 §7.3, #2626). The
+        Owner role reads by id, since no rule is hidden from it: its miss is a missing or deleted
+        rule, a 404 with no record. The plain reads pass no `op`: that is scoping, not a refusal."""
+        if op is not None and actor.is_owner:
+            return await self._row(rule_id)
+        return await self._scoped_row(rule_id, actor, op)
 
-    async def _scoped_row(self, rule_id: str, actor: Actor) -> RuleRow:
-        """The point read of the plain reads by id: the store reads the one id inside the caller's
-        scope; a rule outside it, missing or deleted is the same 404, and no record is written."""
+    async def _scoped_row(self, rule_id: str, actor: Actor, op: str | None = None) -> RuleRow:
+        """The point read by id: the store reads the one id inside the caller's scope; a rule
+        outside it, missing or deleted is the same 404, recorded as a refusal of `op` when a write
+        names one and never on a plain read."""
         got = await self._s.scoped_page(
             read_scope(actor), mode=None, level=None, after=None, limit=1, only=rule_id
         )
         shown = self._rechecked(got, actor)
         if not shown:
+            if op is not None:
+                await self._refuse_scope(rule_id, op, "rule_not_visible", actor)
             raise RuleError(404, "not_found", "That rule does not exist.")
         return shown[0]
 
@@ -782,8 +784,8 @@ class RulesManager:
 
     async def require_visible(self, rule_id: str, actor: Actor, op: str) -> None:
         """The route's look at the stored rule before it weighs what the request itself names: a
-        missing rule and one the actor cannot reach are the same 404, the second audited as a
-        refusal of `op` (C-2.9)."""
+        rule the actor cannot reach, a missing one and a deleted one are the same 404, each audited
+        alike as a refusal of `op` (C-2.9); the Owner role's miss is no refusal (`_visible_row`)."""
         await self._visible_row(rule_id, actor, op)
 
     async def active_scope(self, rule_id: str, actor: Actor, op: str) -> dict[str, Any]:
@@ -1144,8 +1146,8 @@ class RulesManager:
         self, rule_id: str, version_id: str, actor: Actor, op: str
     ) -> dict[str, Any]:
         """`version()` for a mutation: visibility (audited) runs before the version lookup, so on
-        a rule the actor cannot see a real version and a missing rule or version are the same 404
-        (no existence oracle, 04 §7.3)."""
+        a rule the actor cannot see a real version and a missing rule or version are the same 404,
+        recorded alike whether or not the rule exists (no existence oracle, 04 §7.3)."""
         return self._pick_version(await self._visible_row(rule_id, actor, op), version_id)
 
     def _pick_version(self, row: RuleRow, version_id: str) -> dict[str, Any]:
