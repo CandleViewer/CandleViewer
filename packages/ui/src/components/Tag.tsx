@@ -80,7 +80,7 @@ interface StatusTag extends TagBase, NoButtonAttributes {
  * A toggle chip (E29-D04 §2.9, E29-D02:299; D04H:266): a native button whose state is `aria-pressed`, such as the
  * Fills tab's Type chips. Its host holds the state; the label is its name and never changes. A view choice, so it is
  * never gated or disabled (E29-D04:390), and it takes no icon. The button's other attributes pass through, so a
- * CMP-016 Tooltip can describe it ("ADL — auto-deleveraged") without renaming it.
+ * CMP-016 Tooltip can describe it (e.g. spell out an abbreviation) without renaming it.
  */
 interface ToggleTag extends TagBase, ToggleButtonAttributes {
   variant: "toggle";
