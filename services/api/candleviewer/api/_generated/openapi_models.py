@@ -28,6 +28,7 @@ from pydantic import (
     StrictBool,
     StrictFloat,
     Strict,
+    confloat,
     constr,
 )
 
@@ -4369,17 +4370,24 @@ class AlertDeliveryContext(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    trigger_type: str | None = None
-    symbol: str | None = None
+    trigger_type: Annotated[str | None, Field(max_length=1000)] = None
+    symbol: Annotated[str | None, Field(max_length=1000)] = None
     event_ts_ms: Annotated[JsonInt | None, Field(description="Exchange event time")] = None
     evaluated_at_ms: Annotated[JsonInt | None, Field(description="Server evaluation time")] = None
     bar_open_ms: Annotated[JsonInt | None, Field(description="Set by the once-per-bar gate.")] = (
         None
     )
     values: Annotated[
-        dict[str, constr(max_length=1000) | StrictFloat | StrictBool | None] | None,
+        dict[
+            constr(max_length=64),
+            constr(max_length=1000)
+            | confloat(ge=-1.7976931348623157e308, le=1.7976931348623157e308, strict=True)
+            | StrictBool
+            | None,
+        ]
+        | None,
         Field(
-            description="Each metric the condition read, by metric name, as evaluated.",
+            description="Each metric the condition read, by metric name, as evaluated. A number is finite (NaN and the infinities are not JSON and are never served).\n",
             max_length=64,
         ),
     ] = None
@@ -4428,8 +4436,8 @@ class AlertDeliveryContext(BaseModel):
         ),
     ] = None
     disarmed: StrictBool | None = None
-    reason: str | None = None
-    metric: str | None = None
+    reason: Annotated[str | None, Field(max_length=1000)] = None
+    metric: Annotated[str | None, Field(max_length=1000)] = None
     channel_failure: StrictBool | None = None
     failed_delivery_id: Annotated[JsonInt | None, Field(ge=0)] = None
     storm_summary: StrictBool | None = None
@@ -6099,7 +6107,7 @@ class Notification(BaseModel):
     delivery_id: Annotated[
         JsonInt | None,
         Field(
-            description="On an `alert` row, the `AlertDelivery.id` it shows (the id `ackAlertDelivery` and `getAlertDelivery` take; E40-D02 CC-20); null on every other kind.\n"
+            description="On an `alert` row, the `AlertDelivery.id` it shows (the id `ackAlertDelivery` and `getAlertDelivery`, a PROPOSED path, take; E40-D02 CC-20); null on every other kind.\n"
         ),
     ] = None
     source_id: Annotated[
@@ -8118,7 +8126,7 @@ class Notifications(BaseModel):
     muted_symbols: Annotated[
         list[MutedSymbol] | None,
         Field(
-            description="Symbols whose alerts are recorded but silenced (E40-D02 CC-8, D-33; `silenced` `muted_symbol` on the delivery). Each symbol at most once (a duplicate is `422`).\n",
+            description="Symbols whose alerts are recorded but silenced (E40-D02 CC-8, D-33; `silenced` `muted_symbol` on the delivery). Each symbol at most once: a duplicate is refused with `422` from the preferences slice of #1130 on.\n",
             max_length=200,
         ),
     ] = None

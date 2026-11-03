@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
+from pydantic import ValidationError
 
 from candleviewer.api import alert_deliveries
 from candleviewer.api._generated import openapi_models as api
@@ -188,3 +189,26 @@ def test_desktop_outcome_body_states_the_skipped_reason_conditional(
     schema = op["requestBody"]["content"]["application/json"]["schema"]
     errors = list(Draft202012Validator(schema).iter_errors(body))
     assert (not errors) is valid
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        {"trigger_type": "t" * 1001},
+        {"symbol": "S" * 1001},
+        {"reason": "r" * 1001},
+        {"metric": "m" * 1001},
+        {"values": {"k" * 65: "1"}},
+        {"values": {"price": "v" * 1001}},
+        {"values": {"price": float("nan")}},
+        {"values": {"price": float("inf")}},
+        {"values": {f"m{i}": 1 for i in range(65)}},
+    ],
+)
+def test_alert_delivery_context_bounds_are_contract(context: dict[str, Any]) -> None:
+    """#5676 Major 1: every string at most 1,000 characters, `values` keys at most 64, finite
+    numbers only: the generated model refuses each (C-6.2)."""
+    with pytest.raises(ValidationError):
+        api.AlertDeliveryContext.model_validate(context)
+    at_bound = {"trigger_type": "t" * 1000, "values": {"k" * 64: 1.5, "p": "v" * 1000}}
+    api.AlertDeliveryContext.model_validate(at_bound)

@@ -7660,7 +7660,7 @@ export interface components {
       /** @description A firing's title is the alert's name, as it was at fire time (E40-D02 CC-1); a notice's or a storm summary's is the server's own wording. Rows written before CC-1 hold the raw message template here. */
       title?: string;
     };
-    /** @description What the server recorded with the delivery, from a closed allow-list: a key the row holds outside this list is not served. Never `condition_hash` or `gates` (internal to the evaluator). A firing carries the trigger, symbol, times and `values`; a disarm notice `disarmed`, `reason`, `metric`; a failure notice `channel_failure`, `failed_delivery_id`; a storm summary `storm_summary`, `suppressed`, `symbols` and its window; a held firing `suppressed_reason`, and a delivery the dispatcher settled `suppressed` `suppression_reason`; a silenced firing `silenced`. Every key is optional; values are data, never markup. Each value has its declared type (a negative count or a non-finite number is left out), and the answer is bounded (the ticket's Security notes): at most 64 `values`, 100 `symbols`, and every string at most 1,000 characters. */
+    /** @description What the server recorded with the delivery, from a closed allow-list: a key the row holds outside this list is not served. Never `condition_hash` or `gates` (internal to the evaluator). A firing carries the trigger, symbol, times and `values`; a disarm notice `disarmed`, `reason`, `metric`; a failure notice `channel_failure`, `failed_delivery_id`; a storm summary `storm_summary`, `suppressed`, `symbols` and its window; a held firing `suppressed_reason`, and a delivery the dispatcher settled `suppressed` `suppression_reason`; a silenced firing `silenced`. Every key is optional; values are data, never markup. Each value has its declared type (a negative count is left out, a non-finite number is never served), and the answer is bounded (the ticket's Security notes): at most 64 `values`, each named in at most 64 characters, 100 `symbols`, and every string at most 1,000 characters. */
     AlertDeliveryContext: {
       /** @description Set by the once-per-bar gate. */
       bar_open_ms?: number | null;
@@ -7682,14 +7682,14 @@ export interface components {
       symbol?: string | null;
       symbols?: string[];
       trigger_type?: string;
-      /** @description Each metric the condition read, by metric name, as evaluated. */
+      /** @description Each metric the condition read, by metric name, as evaluated. A number is finite (NaN and the infinities are not JSON and are never served). */
       values?: {
         [key: string]: string | number | boolean | null;
       };
       window_end_ms?: number;
       window_start_ms?: number;
     };
-    /** @description `getAlertDelivery`: one delivery and the values it fired on (E40-D02 CC-2). */
+    /** @description `getAlertDelivery` (a PROPOSED path): one delivery and the values it fired on (E40-D02 CC-2). */
     AlertDeliveryDetail: components["schemas"]["AlertDelivery"] & {
       context: components["schemas"]["AlertDeliveryContext"];
     };
@@ -10100,7 +10100,7 @@ export interface components {
       created_at: string;
       /**
        * Format: int64
-       * @description On an `alert` row, the `AlertDelivery.id` it shows (the id `ackAlertDelivery` and `getAlertDelivery` take; E40-D02 CC-20); null on every other kind.
+       * @description On an `alert` row, the `AlertDelivery.id` it shows (the id `ackAlertDelivery` and `getAlertDelivery`, a PROPOSED path, take; E40-D02 CC-20); null on every other kind.
        */
       delivery_id?: number | null;
       /** Format: uuid */
@@ -10131,7 +10131,7 @@ export interface components {
       symbol?: string | null;
       title: string;
     };
-    /** @description The Alerts row; its desktop column is per alert (`AlertInput.channels`, D-11). */
+    /** @description The Alerts row; its desktop column is per alert (`AlertInput.channels`, D-11). An absent or null cell reads as its default, as in `NotificationChannelSet`. */
     NotificationAlertChannelSet: {
       sound?: boolean;
       toast?: boolean;
@@ -10142,13 +10142,13 @@ export interface components {
      */
     NotificationCategory:
       "alerts" | "rule_actions" | "order_rejects" | "risk_events" | "system_health" | "recorder";
-    /** @description One matrix row's optional channels; the Centre column is never a choice (D-28). */
+    /** @description One matrix row's optional channels; the Centre column is never a choice (D-28). An absent cell reads as its default (E40-D02 §6.2); a null cell sent in a patch is not stored, so it too reads as its default. A locked cell reads as on whatever is stored. */
     NotificationChannelSet: {
       desktop?: boolean;
       sound?: boolean;
       toast?: boolean;
     };
-    /** @description The category x channel matrix (E40-D02 CC-8, D-28). One leaf: a patch sends the whole matrix. Refused with `422 validation_failed`, nothing stored, server-side and never behind a flag (C-4.14): a cell the critical-override constant locks (`packages/protocol/notification-overrides.json` `locked_cells`) set false, rule `risk_channel_locked`, the attempt audited `notifications.risk_channel_muted` at high severity from the preferences slice of #1130 on; and, from that slice on, a row whose sound is on with toast and desktop off, rule `sound_only_channel` (D-29; for the Alerts row, toast off). The critical-override kinds themselves have no cell: they are never mutable. */
+    /** @description The category x channel matrix (E40-D02 CC-8, D-28). One leaf: a patch sends the whole matrix. Refused with `422 validation_failed`, nothing stored, server-side and never behind a flag (C-4.14): a cell the critical-override constant locks (`packages/protocol/notification-overrides.json` `locked_cells`) set false, rule `risk_channel_locked`, the attempt audited `notifications.risk_channel_muted` at high severity from the preferences slice of #1130 on; and, from that slice on, a row whose sound is on with toast and desktop off, rule `sound_only_channel` (D-29; for the Alerts row, toast off). The critical-override kinds themselves have no cell: they are never mutable. An absent or null cell, or an absent row, reads as its default (E40-D02 §6.2), and a locked cell reads as on whatever is stored. */
     NotificationMatrix: {
       alerts?: components["schemas"]["NotificationAlertChannelSet"];
       order_rejects?: components["schemas"]["NotificationChannelSet"];
@@ -10157,7 +10157,7 @@ export interface components {
       rule_actions?: components["schemas"]["NotificationChannelSet"];
       system_health?: components["schemas"]["NotificationChannelSet"];
     };
-    /** @description Quiet hours (E40-D02 CC-8, D-30): from `start` to `end`, local times in `tz`, an IANA zone (never an offset, so DST behaves); `end` before `start` crosses midnight. The server evaluates it in that zone; a zone its tz database lacks is `422`. */
+    /** @description Quiet hours (E40-D02 CC-8, D-30): from `start` to `end`, local times in `tz`, an IANA zone (never an offset, so DST behaves); `end` before `start` crosses midnight. The server evaluates it in that zone; from the preferences slice of #1130 on, a zone its tz database lacks is `422`. */
     NotificationQuietHours: {
       enabled: boolean;
       end: string;
@@ -10173,7 +10173,7 @@ export interface components {
       /** @default 70 */
       volume: number;
     };
-    /** @description Each category's tone and volume, synced and typed server-side (E40-D02 CC-8, D-31; the #1130 ruling, BQ-4); the device keeps only playback. */
+    /** @description Each category's tone and volume, synced and typed server-side (E40-D02 CC-8, D-31; the #1130 ruling, BQ-4); the device keeps only playback. An absent category, tone or volume reads as its default (E40-D02 §6.5, §9.1); a null tone sent in a patch is not stored. */
     NotificationSounds: {
       alerts?: components["schemas"]["NotificationSound"];
       order_rejects?: components["schemas"]["NotificationSound"];
@@ -12147,7 +12147,7 @@ export interface components {
         desktop_enabled?: boolean;
         email_enabled?: boolean;
         matrix?: components["schemas"]["NotificationMatrix"];
-        /** @description Symbols whose alerts are recorded but silenced (E40-D02 CC-8, D-33; `silenced` `muted_symbol` on the delivery). Each symbol at most once (a duplicate is `422`). */
+        /** @description Symbols whose alerts are recorded but silenced (E40-D02 CC-8, D-33; `silenced` `muted_symbol` on the delivery). Each symbol at most once: a duplicate is refused with `422` from the preferences slice of #1130 on. */
         muted_symbols?: components["schemas"]["MutedSymbol"][];
         /** @description Typed in place of the earlier free-form object (E40-D02 CC-8, D-30); null = none set. A stored value of the earlier shape is left out of the answer, as any row `Settings` no longer accepts. */
         quiet_hours?: components["schemas"]["NotificationQuietHours"] | null;

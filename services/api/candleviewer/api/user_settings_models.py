@@ -156,8 +156,15 @@ def _no_constant(name: str) -> object:
 
 
 def canonical(leaf: Leaf, value: object) -> object:
-    """`value` as the leaf's generated model writes it; `ValidationError` when it refuses it."""
-    return leaf.model.model_validate({leaf.field: value}).model_dump(mode="json")[leaf.field]
+    """`value` as the leaf's generated model writes it; `ValidationError` when it refuses it.
+    A nested null is dropped (`exclude_none`): an object leaf's absent and null members both read
+    as their default (22 `NotificationMatrix`, E40-D02 CC-8), and a stored `null` member would
+    break 22's own `Settings` schema when served. A leaf whose value is null is a reset, judged
+    before this is called."""
+    dumped = leaf.model.model_validate({leaf.field: value}).model_dump(
+        mode="json", exclude_none=True
+    )
+    return dumped[leaf.field]
 
 
 def _judge_group(group: str, members: dict[str, object], out: dict[str, object]) -> list[Any]:
