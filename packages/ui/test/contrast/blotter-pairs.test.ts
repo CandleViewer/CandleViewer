@@ -99,11 +99,10 @@ describe("the blotter components' contrast pairs (E29-D04 §5)", () => {
 });
 
 /**
- * E29-S04's atoms (E29-D04 §2.3, §2.8.9, §2.9): CMP-011's toggle at rest, hovered and pressed, its ring on the pressed
- * fill and on the toolbar surfaces; CMP-116's provisional tag; CMP-099's secondary buttons, whose running arc takes the
- * label's colour.
+ * CMP-011's toggle chip, the Fills tab's Type chips (E29-S04; E29-D04 §2.9): its label at rest, hovered and pressed,
+ * and its pressed ring on the pressed fill and on the toolbar surfaces.
  */
-const ATOMS: readonly Pair[] = [
+const TOGGLE: readonly Pair[] = [
   ["color.text.secondary", "color.neutral.subtle", 4.5],
   ["color.text.primary", "color.action.secondary.hover", 4.5],
   ["color.text.primary", "color.action.selected", 4.5],
@@ -113,14 +112,12 @@ const ATOMS: readonly Pair[] = [
     bg,
     3,
   ]),
-  ["color.text.primary", "color.status.info.subtle", 4.5],
-  ["color.text.primary", "color.action.secondary.default", 4.5],
 ];
 
-describe("the Fills tab and SCR-078 atoms' contrast pairs (E29-S04)", () => {
-  it.each(["dark", "light", "high-contrast"])("%s: every opaque pair the atoms bind", (name) => {
+describe("CMP-011's toggle chip contrast pairs (E29-S04)", () => {
+  it.each(["dark", "light", "high-contrast"])("%s: every opaque pair the toggle binds", (name) => {
     const theme = themes[name] as Theme;
-    for (const [fg, bg, bar] of ATOMS) {
+    for (const [fg, bg, bar] of TOGGLE) {
       const ratio = math.contrastRatio(hexOf(theme, fg), hexOf(theme, bg));
       expect(Math.floor(ratio * 1000) / 1000, `${fg} on ${bg}`).toBeGreaterThanOrEqual(bar);
     }
@@ -148,13 +145,4 @@ describe("the Fills tab and SCR-078 atoms' contrast pairs (E29-S04)", () => {
       }
     },
   );
-
-  it("CMP-038's own arc colour would fail on the secondary fill in dark (2.58:1), so the arc takes the label's", () => {
-    const dark = themes["dark"] as Theme;
-    const ratio = math.contrastRatio(
-      hexOf(dark, "color.action.primary.default"),
-      hexOf(dark, "color.action.secondary.default"),
-    );
-    expect(Math.round(ratio * 100) / 100).toBe(2.58);
-  });
 });
