@@ -97,12 +97,20 @@ describe("tag.css contract", () => {
     // The ring is the state's own mark: either selected fill sits within 1.2:1 of the rest fill, so without it the
     // pressed chip would differ by hue alone (WCAG 1.4.1, `05` §4.3's distinct border).
     const band = find(normal, '.cv-tag[data-variant="toggle"]::after', "border");
-    expect(band).toContain("border: calc(var(--border-thick) * 1px) solid transparent");
+    expect(band).toContain("border: 0 solid var(--color-border-selected)");
     expect(band).toContain("inset: calc(var(--border-hairline) * -1px)");
     expect(band).toContain("pointer-events: none");
     expect(
-      find(normal, '.cv-tag[data-variant="toggle"][aria-pressed="true"]::after', "border-color"),
-    ).toContain("border-color: var(--color-border-selected)");
+      find(normal, '.cv-tag[data-variant="toggle"][aria-pressed="true"]::after', "border-width"),
+    ).toContain("border-width: calc(var(--border-thick) * 1px)");
+  });
+
+  it("toggle ring: present by its width alone, so forced colours never ring a chip at rest", () => {
+    // Forced colours repaint every border colour, a transparent one too: a resting ring of any width would show.
+    const band = find(normal, '.cv-tag[data-variant="toggle"]::after', "border") ?? "";
+    expect(band).not.toMatch(/transparent|border-width|calc\(var\(--border-thick\)/);
+    expect(find(forced, '.cv-tag[data-variant="toggle"]::after', "border")).toBeUndefined();
+    expect(find(forced, '.cv-tag[data-variant="toggle"]::after', "border-width")).toBeUndefined();
   });
 
   it("forced colours: a pressed toggle is Highlight on HighlightText with a CanvasText ring", () => {

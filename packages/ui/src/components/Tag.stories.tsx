@@ -184,13 +184,17 @@ function TypeChipSet({ words = TYPES }: { words?: readonly string[] }): JSX.Elem
 const toggleOf = (canvas: HTMLElement, word: string): HTMLElement =>
   within(canvas).getByRole("button", { name: word });
 
-/** The pressed ring as the browser paints it: `border.thick` of color.border.selected, or transparent at rest. */
-const ringOf = (chip: HTMLElement): { thick: boolean; transparent: boolean } => {
+/**
+ * The pressed ring as the browser paints it, present by its width alone: `border.thick` of color.border.selected
+ * when pressed, 0 at rest (forced colours repaint a border's colour, never its width).
+ */
+const ringOf = (chip: HTMLElement): { width: string; coloured: boolean } => {
   const after = getComputedStyle(chip, "::after");
   const thick = getComputedStyle(chip).getPropertyValue("--border-thick").trim();
+  const width = after.borderTopWidth;
   return {
-    thick: after.borderTopWidth === `${thick}px`,
-    transparent: after.borderTopColor === "rgba(0, 0, 0, 0)",
+    width: width === `${thick}px` ? "thick" : Number.parseFloat(width) === 0 ? "none" : width,
+    coloured: after.borderTopColor !== "rgba(0, 0, 0, 0)",
   };
 };
 
@@ -200,17 +204,17 @@ export const Toggle: Story = {
   play: async ({ canvasElement }) => {
     const chip = toggleOf(canvasElement, "Trade");
     await expect(chip).toHaveAttribute("aria-pressed", "true");
-    await expect(ringOf(chip)).toEqual({ thick: true, transparent: false });
+    await expect(ringOf(chip)).toEqual({ width: "thick", coloured: true });
   },
 };
 
-/** A toggle chip at rest: the neutral chip's look, `aria-pressed="false"`, no ring. */
+/** A toggle chip at rest: the neutral chip's look, `aria-pressed="false"`, no ring (its width is 0). */
 export const ToggleOff: Story = {
   render: () => <Tag variant="toggle" label="Funding" pressed={false} onPressedChange={fn()} />,
   play: async ({ canvasElement }) => {
     const chip = toggleOf(canvasElement, "Funding");
     await expect(chip).toHaveAttribute("aria-pressed", "false");
-    await expect(ringOf(chip).transparent).toBe(true);
+    await expect(ringOf(chip).width).toBe("none");
   },
 };
 
