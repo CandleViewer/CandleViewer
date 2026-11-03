@@ -139,10 +139,12 @@ jobs:
 
       # Fail-closed (#1335 security lens): each upload runs only when the scrub of what it uploads
       # succeeded. A file the scrubber cannot read (a truncated trace from a killed worker) is
-      # deleted and fails its scrub step, so nothing unscrubbed is ever published.
+      # deleted and fails its scrub step, so nothing unscrubbed is ever published. Each scrub step
+      # is bounded: a scrub that overruns its timeout fails too, so the uploads are skipped.
       - name: Scrub credentials from the JSON report
         id: scrub-results
         if: always()
+        timeout-minutes: 10
         run: |
           mkdir -p "ga-results-web-chromium-$SHARD"
           cp apps/web/playwright-report/results.json "ga-results-web-chromium-$SHARD/" || true
@@ -153,6 +155,7 @@ jobs:
       - name: Scrub credentials from the failure artefacts
         id: scrub
         if: always()
+        timeout-minutes: 10
         run: python3 tools/ga/scrub_artifacts.py apps/web/test-results
 
       - name: Upload the shard's JSON report (the ga-report input)
@@ -255,6 +258,7 @@ jobs:
       - name: Scrub credentials from the JSON report
         id: scrub-results
         if: always()
+        timeout-minutes: 10
         run: |
           mkdir -p ga-results-electron-1
           cp apps/desktop/playwright-report/results.json ga-results-electron-1/ || true
@@ -263,6 +267,7 @@ jobs:
       - name: Scrub credentials from the failure artefacts
         id: scrub
         if: always()
+        timeout-minutes: 10
         run: python3 tools/ga/scrub_artifacts.py apps/desktop/test-results
 
       - name: Upload the lane's JSON report (the ga-report input)
