@@ -118,4 +118,55 @@ export const INSPECTOR_COPY = {
     /** PROPOSED: the name of "—" for an event with no states on one side. */
     none: "none",
   },
+  /** The list page (§5.1): §11's column and control names, `machine.*`, and PROPOSED lines. */
+  list: {
+    /** PROPOSED: the counters' `h2` and caption, and the grid's. */
+    kindsHeading: "Machines by kind",
+    machinesHeading: "Machines",
+    /** §11's toggle. */
+    latchedOnly: "Latched only",
+    /** §11's columns: the counters', and the grid's first (the rest are the facts' words). */
+    columns: {
+      kind: "Kind",
+      environment: "Environment",
+      machines: "Machines",
+      byState: "By state",
+      chainTrips: "Chain trips",
+      latched: "Latched",
+      droppedReceipts: "Dropped receipts",
+      machine: "Machine",
+    },
+    /** PROPOSED, as SCR-120's: a count the metrics source did not give, after a drawn "—". */
+    notReceived: "not received",
+    /** `machine.metrics_unavailable`. */
+    metricsUnavailable: (detail: string): string => `Metrics unavailable — ${detail}`,
+    /** `machine.rowless`; the kind is "{kind} (B{n}) · {ENV}", per kind and environment. */
+    rowless: (kind: string, n: number): string =>
+      `${kind}: ${n} latched — this kind has no public id yet, so it can't be opened or acknowledged here`,
+    /** `machine.latched_effect`. */
+    latchedEffect: "A latched machine refuses order-path commands until its latch is acknowledged.",
+    /** `machine.empty`. */
+    empty: "No machine has a saved snapshot yet.",
+    /** PROPOSED `machine.none_latched`. */
+    noneLatched: "No machine is latched.",
+    /** PROPOSED: no row although kinds run (the kinds without a public id show as counters only). */
+    noRows: "No machine to list.",
+    noRowsRowless: "The kinds running have no public id yet, so they show only in the counters.",
+    /** PROPOSED `machine.more`: `has_more`, until #1135's cursor pager (BQ-9). */
+    more: "Showing the first 200 machines. Turn on Latched only to narrow the list.",
+    /** PROPOSED: the list's read failed (a timeout, the network or a `5xx`). */
+    failed: "The machine list can't be read right now.",
+    /** PROPOSED: a failed read of the list read again, polite once (D05 §13 "recovery"). */
+    loaded: "The machine list loaded.",
+    /**
+     * PROPOSED: a filter's result, polite once per filter (D05 §13 "results"); none latched reads
+     * `machine.none_latched`.
+     */
+    listed: (n: number, latchedOnly: boolean): string =>
+      `${n} ${latchedOnly ? "latched " : ""}${n === 1 ? "machine" : "machines"} listed.`,
+    /** PROPOSED: a `404` or `501` on the list. */
+    notBuilt: "The machine list isn't available on this server.",
+    /** PROPOSED: the grid's visible hint above it, and its first cells' description. */
+    openHint: "Enter opens a machine.",
+  },
 } as const;
