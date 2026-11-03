@@ -712,7 +712,7 @@ async def test_a_chart_drop_that_fails_or_overruns_leaves_the_503_and_is_logged(
     b16_session.set_audit_sink(sink)
     with capture_logs() as logs:
         r = await _change_past_the_bound(c, "put", user, sink, loop_clock, then=overrun)
-    await _chart(c).stop()  # the parked chart, which the stub never dropped
+    await _chart(c).stop()  # the revoke's bounded drop already took the parked chart
 
     assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
     assert roles_of() == frozenset({"manager"})

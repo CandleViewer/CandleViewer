@@ -350,3 +350,30 @@ async def test_a_user_removed_after_the_unlock_committed_is_401_never_a_500(
     assert (r.status_code, r.json()["title"]) == (401, "Unauthorized")
     assert w.audit.writer.actions() == ["auth.session_unlocked"]
     assert not (await w.row(minted)).is_idle_locked(now=w.clock.now)
+
+
+async def test_a_lock_a_stale_chart_cannot_record_is_503_and_the_retry_records_it(
+    w: World, b16_audit: RecordingAuditSink
+) -> None:
+    """#5512 (B16.7): a chart revoked over the live row cannot record the lock. The unlock answers
+    503 with the row still locked and nothing checked or written, the miss is logged, and the
+    chart is dropped, so the retry records the lock (`auth.idle_locked`) and unlocks."""
+    uid = await w.add_user()
+    minted = await w.mint(uid)
+    await w.step_up.chart.record(await w.row(minted), w.clock.now, "REVOKE", reason="admin")
+    w.lock()
+    mark = len(b16_audit.calls)
+    with capture_logs() as logs:
+        r = await _unlock(w, _bearer(minted))
+    assert r.status_code == 503
+    assert (await w.row(minted)).is_idle_locked(now=w.clock.now)
+    assert w.failed_logins(uid) == 0 and w.audit.writer.records == []
+    assert b16_audit.calls[mark:] == []
+    failed = [e for e in logs if e["event"] == "auth.unlock.chart_failed"]
+    assert [(e["b16_event"], e["error"]) for e in failed] == [
+        ("IDLE_DEADLINE", "SessionChartUnrecorded")
+    ]
+    retry = await _unlock(w, _bearer(minted))
+    assert retry.status_code == 200, retry.text
+    assert b16_audit.actions()[mark:] == ["auth.idle_locked"]
+    assert w.audit.writer.actions() == ["auth.session_unlocked"]
