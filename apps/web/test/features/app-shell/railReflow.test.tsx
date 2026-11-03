@@ -96,7 +96,7 @@ describe("E10-S01 S10: the nav rail at the reflow breakpoint (A11Y-F-0016)", () 
     setNarrow(true);
     expect(shell().style.height).toBe("auto");
     expect(shell().style.minHeight).toBe("100vh");
-    expect(shell().style.gridTemplateRows).toBe("auto auto minmax(16rem, auto) auto");
+    expect(shell().style.gridTemplateRows).toBe("auto auto auto minmax(16rem, auto) auto");
     expect(canvas().style.height).toBe("auto");
     expect(canvas().style.overflow).toBe("visible"); // the page scrolls, not a 0 px box
     setNarrow(false);

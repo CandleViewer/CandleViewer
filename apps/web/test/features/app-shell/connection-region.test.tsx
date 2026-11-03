@@ -16,7 +16,8 @@ import {
   ShellConnectionSlot,
 } from "../../../src/features/app-shell/slots";
 import { INITIAL_DEGRADED_FACTS } from "../../../src/features/system-states/degradedIssues";
-import { accessToken } from "../../../src/lib/auth/accessToken";
+import { REFRESH_SENT_KEY, accessToken } from "../../../src/lib/auth/accessToken";
+import { bootViewAs, resetViewAs, startViewAsSync } from "../../../src/lib/auth/viewAsContext";
 import { setActiveClient } from "../../../src/lib/ws/client/activeClient";
 import type { WsClientHandle } from "../../../src/lib/ws/client/createWsClient";
 import { INITIAL_WS_STATE, reduce } from "../../../src/lib/ws/state/reducer";
@@ -25,6 +26,7 @@ import {
   resetShellState,
   setShellState,
   type ConnectionState,
+  type HeldViewAs,
 } from "../../../src/shell/bootstrap/store.js";
 import {
   OFF,
@@ -349,6 +351,100 @@ describe("CMP-077 region: announcements through the shell announcer (§11)", () 
     await settle();
     expect(said.map((p) => p.textContent)).toEqual([text]);
     if (code === 4403) expect(assertive()).not.toHaveTextContent("Cancel and close still work");
+  });
+
+  // E42-S03 (SCR-124 V-8): while a view-as context is held, a 4403 is the server ending or holding
+  // it (`bye` `view_as_expired`), never "Session ended": the banner speaks, the region does not
+  const HELD: HeldViewAs = {
+    kind: "held",
+    targetId: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002",
+    targetName: "alex",
+    startedAtMs: T0 - 1_800_000,
+    expiresAtMs: T0,
+    state: "expired",
+    offsetMs: 0,
+  };
+
+  it("shows nothing and says nothing for a 4403 while a view-as context is held; with none it reads Session ended", async () => {
+    act(() => setShellState({ viewAs: HELD }));
+    const said = mountBoth();
+    SOCKET_FIRST(UP, { kind: "live" });
+    SOCKET_FIRST(fatal(4403), DOWN);
+    await settle();
+    expect(screen.queryByRole("region", { name: "Connection" })).toBeNull();
+    expect(said).toEqual([]);
+    act(() => setShellState({ viewAs: { kind: "none" } }));
+    await settle();
+    expect(region()).toHaveTextContent("Session ended");
+    expect(said.map((p) => p.textContent)).toEqual([
+      "Your access was removed — contact the owner.",
+    ]);
+  });
+
+  it("still shows any other stop while a view-as context is held", async () => {
+    act(() => setShellState({ viewAs: { ...HELD, state: "active" } }));
+    const said = mountBoth();
+    SOCKET_FIRST(UP, { kind: "live" });
+    SOCKET_FIRST(fatal(1002), DOWN);
+    await settle();
+    expect(region()).toHaveTextContent("Offline — retry stopped");
+    expect(said).toHaveLength(1);
+  });
+
+  // A viewer disabled while viewing also gets a 4403 (`bye user_disabled`, `23` §9.6), which the
+  // region mutes: the view-as source's re-read on that close is what surfaces it, as a 401
+  it("leaves a revocation to the source's re-read: a 4403 while held, then its 401, ends in the holder's sign-in", async () => {
+    const assign = vi.fn();
+    const { origin } = window.location;
+    vi.stubGlobal("location", { origin, pathname: "/positions", search: "", assign });
+    const context = {
+      target_user_id: HELD.targetId,
+      target_username: "alex",
+      target_display_name: null,
+      started_at: new Date(T0 - 60_000).toISOString(),
+      expires_at: new Date(T0 + 1_740_000).toISOString(),
+      read_only: true,
+      state: "active",
+    };
+    let reads = 0;
+    // the view-as read's transport: the boot read answers live, the re-read 401 (`23` §9.5)
+    const fetchImpl = vi.fn(async () =>
+      (reads += 1) === 1
+        ? new Response(JSON.stringify(context), { status: 200 })
+        : new Response(JSON.stringify({ status: 401, code: "unauthenticated" }), { status: 401 }),
+    ) as unknown as typeof fetch; // a transport double: only its answers are read
+    // the holder's one renewal on that 401 finds the session gone
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ status: 401, code: "refresh_token_invalid" }), {
+            status: 401,
+          }),
+      ),
+    );
+    accessToken.set({
+      access_token: ["probe", "1", "x".repeat(20)].join("-"),
+      token_type: "Bearer",
+      expires_in: 600,
+    });
+    const stop = startViewAsSync({ fetchImpl, openChannel: () => null, reload: vi.fn() });
+    try {
+      await bootViewAs({ fetchImpl });
+      const said = mountBoth();
+      SOCKET_FIRST(UP, { kind: "live" });
+      SOCKET_FIRST(fatal(4403), DOWN);
+      await vi.waitFor(() => expect(assign).toHaveBeenCalledWith("/login?next=%2Fpositions"));
+      expect(reads).toBe(2);
+      expect(screen.queryByRole("region", { name: "Connection" })).toBeNull();
+      expect(said).toEqual([]);
+    } finally {
+      stop();
+      resetViewAs();
+      accessToken.clear();
+      localStorage.removeItem(REFRESH_SENT_KEY);
+      vi.unstubAllGlobals();
+    }
   });
 
   it("ends the episode for the connection keys only: another writer's message survives", () => {

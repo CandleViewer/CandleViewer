@@ -396,6 +396,36 @@ describe("R-902 /offline: the full-screen takeover", () => {
     expect(takeHandedBack()).toBe(false);
   });
 
+  // E42-S03 V-8: the server back, holding a view-as context it ended (`/me` refused
+  // `view_as_expired`): only a full load boots the held page, whose Exit leads on; the router's
+  // own navigation would land on /login, where nothing ends the hold
+  it("loads the page asked for in full when the server answers with a held view-as context", async () => {
+    divertFromPositions();
+    const replace = vi.fn();
+    const { origin } = window.location;
+    vi.stubGlobal("location", { origin, pathname: OFFLINE_PATH, search: "", hash: "", replace });
+    const context = {
+      target_user_id: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002",
+      target_username: "alex",
+      target_display_name: null,
+      started_at: "2026-09-14T10:00:00Z",
+      expires_at: "2026-09-14T10:30:00Z",
+      read_only: true,
+      state: "expired",
+    };
+    vi.mocked(fetch).mockImplementation(async (url) =>
+      String(url).endsWith("/auth/session/view-as")
+        ? new Response(JSON.stringify(context), { status: 200 })
+        : new Response(JSON.stringify({ status: 403, code: "view_as_expired" }), { status: 403 }),
+    );
+    openOffline();
+    await advance(500); // the first automatic try finds the server
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledExactlyOnceWith("/positions?tab=1"));
+    expect(getShellState().bootstrap).toEqual({ kind: "held" });
+    expect(screen.queryByRole("heading", { name: "Positions" })).toBeNull();
+    expect(takeHandedBack()).toBe(false);
+  });
+
   it("clears its retry timer and its clock when it unmounts", async () => {
     divertFromPositions();
     const view = openOffline();
