@@ -4,10 +4,10 @@ A deep book weighs ⌈rows x publishes a second ÷ the point⌉, rows being the 
 one depth-200 publish changes (`ws/limits.py` `DEEP_BOOK_ROWS_PER_PUBLISH`). This replays the
 recorded BTCUSDT depth-200 capture (`packages/fixtures/bybit/2026-10-05/ws/orderbook_BTCUSDT.jsonl`,
 documented-shape under exception #1778 A: a `u` hole at frame 2700 and a reset at 4000) through the
-book engine and its depth-200 publisher (`book/ws_topic.py`) on a fake clock at the capture's own
-times, counts the levels of every `d` it publishes, and pins the constant as their mean taken up to
-a whole row: the band is (constant - 1, constant]. Nothing is synthesised; depth 500 is the
-extrapolation the constant's note names (no depth-500 capture exists)."""
+book engine and its depth-200 publisher (`book/ws_topic.py`) on a fake clock that steps one window
+per recorded frame, counts the levels of every `d` it publishes, and pins the constant as their mean
+taken up to a whole row: the band is (constant - 1, constant]. Nothing is synthesised; depth 500
+is the extrapolation the constant's note names (no depth-500 capture exists)."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from candleviewer.book.resync import BookEngine
 from candleviewer.book.snapshot_source import BookSnapshotSource
 from candleviewer.book.ws_topic import WINDOW_S, BookTopic
 from candleviewer.bus.bus import Bus
-from candleviewer.exchange.base.models import BookLevel
+from candleviewer.exchange.base.models import BookDelta, BookLevel, BookSnapshot
 from candleviewer.ws.limits import (
     DEEP_BOOK_MEASURED_DEPTH,
     DEEP_BOOK_PUBLISHES_PER_S,
@@ -121,12 +121,12 @@ async def _publishes() -> list[int]:
         bids = [_level(p, q) for p, q in data["b"]]
         asks = [_level(p, q) for p, q in data["a"]]
         if record["type"] == "snapshot":
-            ev: object = snap(data["u"], bids, asks)
+            ev: BookSnapshot | BookDelta = snap(data["u"], bids, asks)
         else:
             ev = delta(data["u"], data["u"] - 1 if prev is None else prev, bids, asks)
         prev = data["u"]
         seen = len(out)
-        await eng.on_event(ev)  # type: ignore[arg-type]
+        await eng.on_event(ev)
         for item in out[seen:]:
             topic.offer(item)
         if hub.sub.snapshot_pending and eng.phase is BookPhase.LIVE:

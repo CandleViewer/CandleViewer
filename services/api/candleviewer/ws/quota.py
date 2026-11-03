@@ -6,7 +6,10 @@ specs. Every value is interim until the Owner ratifies it (`ws/limits.py`).
   (`effective_options`), never from a value the client states, in points of
   `orderflow.heatmap.QUOTA_ROWS_PER_POINT` wire rows a second. A `heatmap.*` one weighs its columns
   at the faster of its effective throttle and its bucket (`column_points`), floored at
-  `MIN_THROTTLE_MS`: a throttle above the bucket still sends one frame per column. A deep `book.*`
+  `MIN_THROTTLE_MS`: a throttle above the bucket still sends one frame per column, and one below it
+  is a margin, not a frame rate. A `structured` one weighs `STRUCTURED_HEATMAP_WEIGHT` times its
+  binary points, G-03's per-row bound ratio; a binary one's window that leaves structured for an
+  incomplete column is one window and keeps the binary weight. A deep `book.*`
   (depth 200 or 500) weighs the measured rows of one depth-200 publish
   (`DEEP_BOOK_ROWS_PER_PUBLISH`), scaled by depth, at its publisher's rate. Every other family
   weighs 0 and is bounded by its own caps; `system` is never charged. `WEIGHTS` names every
@@ -61,6 +64,7 @@ from candleviewer.ws.limits import (
     MIN_THROTTLE_MS,
     QUOTA_POINTS_PER_CONNECTION,
     QUOTA_POINTS_PER_USER,
+    STRUCTURED_HEATMAP_WEIGHT,
 )
 
 if TYPE_CHECKING:
@@ -153,10 +157,15 @@ def _book(topic: ParsedTopic, effective: Mapping[str, Any]) -> Charge:
 
 
 def _heatmap(topic: ParsedTopic, effective: Mapping[str, Any]) -> Charge:
-    """A `heatmap.*`: its columns at the faster of its effective throttle and its bucket."""
+    """A `heatmap.*`: its columns at the faster of its effective throttle and its bucket, the
+    throttle leg a margin (a column is published once, at its close); a `structured` one weighs
+    `STRUCTURED_HEATMAP_WEIGHT` times that. Its spec, the producer's cost, is the same in both."""
     spec = spec_of(topic.symbol or "", effective)
     period = max(MIN_THROTTLE_MS, min(int(effective["throttle_ms"]), spec.time_bucket_ms))
-    return Charge(column_points(spec.depth, period), spec)
+    points = column_points(spec.depth, period)
+    if effective.get("encoding") == "structured":
+        points *= STRUCTURED_HEATMAP_WEIGHT
+    return Charge(points, spec)
 
 
 #: Each family of the catalogue (`topics.FAMILIES`) and its weight, 0 included (`_free`).

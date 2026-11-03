@@ -587,7 +587,7 @@ export function decodeHeatmapColumn(buf: ArrayBufferView): DecodedHeatmapColumn 
     );
   }
   if (priceStep <= 0n) {
-    throw new BinaryFrameError(`heatmap column price_step=${priceStep} is not positive`);
+    throw new BinaryFrameError("heatmap column price_step is not positive");
   }
   const rows: HeatmapRow[] = [];
   for (let i = 0; i < rowCount; i += 1) {

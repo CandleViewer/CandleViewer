@@ -21,10 +21,12 @@ const DIAGNOSTICS = [
   String.raw`footprint cell ${INT} in group ${INT} runs past the buffer \(cell_count=${INT}\)`,
   String.raw`heatmap row ${INT} runs past the buffer \(row_count=${INT}\)`,
   String.raw`heatmap column record_count=${INT}, expected 1`,
+  String.raw`heatmap column row_count=${INT} is above the grid's ${INT} rows`,
   String.raw`invalid (?:book|trade) side byte ${INT} at record ${INT}`,
   String.raw`book snapshot missing its ${INT}-byte xu/xseq trailer`,
   String.raw`bars body is ${INT} bytes, expected ${INT} for record_count=${INT}`,
   "heatmap column body shorter than its fixed prefix",
+  "heatmap column price_step is not positive",
   "binary body is undecodable",
 ];
 

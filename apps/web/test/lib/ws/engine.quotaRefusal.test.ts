@@ -49,7 +49,7 @@ describe("Quota enforced and explained", () => {
     expect(t.gateway.conns.flatMap((conn) => conn.of("unsub"))).toEqual([]);
   });
 
-  it("Quota enforced and explained: the refusal reaches the polite capacity notice", async () => {
+  it("Quota enforced and explained: a refused ctl reaches the polite capacity notice", async () => {
     const errors: [string, string | undefined][] = [];
     const t = engineHarness(undefined, {
       sink: {
@@ -60,12 +60,15 @@ describe("Quota enforced and explained", () => {
     });
     t.engine.consume(spec(BOOK));
     await t.start();
-    t.gateway.refuseCtls(1, LIMIT); // the quota refuses the throttle the hidden pane asks for
-    t.engine.setPane("p1", { visibility: "offscreen", tabHidden: false });
+    t.engine.setPane("p1", { visibility: "offscreen", tabHidden: false }); // a slower throttle
+    await t.advance(CTL_DEBOUNCE_MS + 100);
+    expect(errors).toEqual([]);
+    t.gateway.refuseCtls(1, LIMIT); // the quota refuses the faster throttle of a pane back in view
+    t.engine.setPane("p1", { visibility: "visible", tabHidden: false });
     await t.advance(CTL_DEBOUNCE_MS + 100);
     expect(errors).toEqual([[LIMIT, "budget"]]);
     await t.advance(120_000);
-    expect(t.gateway.latest.of("ctl")).toHaveLength(1); // never re-sent in a loop
+    expect(t.gateway.latest.of("ctl")).toHaveLength(2); // the refused one is never re-sent in a loop
 
     vi.useRealTimers();
     render(createElement(WsErrorHost));

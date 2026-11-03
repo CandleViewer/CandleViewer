@@ -4,7 +4,10 @@ The Gherkin "Quota enforced and explained", AC-HM-10 and AC-HM-11 of the E21 mod
 budget across a user's connections and under view-as (the acting user, §9.6), a refused `sub` that
 takes nothing upstream, a `ctl` past a budget that changes nothing, the chaos scenarios C-13.6 #1,
 #3 and #11 at the quota (a closed socket, a resync, a slow consumer's close), replay subscriptions
-at their weight and HM-I04 (a refusal names nothing of another user's). Each limit is written out as
+at their weight, HM-I04 (a refusal names nothing of another user's), a `ctl` that changes only
+`price_grouping` past the user's distinct specs or a symbol's share, a `ctl` the rebuild budget
+refuses (every charge kept), a revocation (§9.5, §7.5) and a release that raises (the charge given
+back), and a structured heatmap at three times its binary weight. Each limit is written out as
 23 §16.2 states it; every test runs under both subprotocols."""
 
 from __future__ import annotations
@@ -14,7 +17,12 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from typing import Any
 
+import pytest
+
+from candleviewer.auth.generated_permissions import Permission
 from candleviewer.ws.quota import MESSAGES
+from candleviewer.ws.rebuild_budget import topic_key
+from candleviewer.ws.topics import parse_topic
 from tests.contract.ws._harness import Client
 from tests.security.marketdata.conftest import QuotaWorld
 from tests.security.ws._raw import (
@@ -35,6 +43,10 @@ DEEP = {"depth": 500, "time_bucket_ms": 100}  # 80 points; its spec 80 against t
 RS = "bb000000-0000-4000-8000-000000000001"
 SYMBOLS = tuple(f"S{n:02d}USDT" for n in range(40))
 QUOTA = "cv_ws_subscription_quota_rejections_total"
+#: The server's spec-points refusal at its 1 280 points (`orderflow/heatmap.py`), whole.
+SERVER_SPENT = (
+    "The server's heatmap budget of 1280 points is spent; use a slower bucket or a shallower depth."
+)
 
 
 @contextmanager
@@ -100,6 +112,25 @@ def test_quota_enforced_and_explained_a_depth_500_heatmap_past_the_connection_bu
         assert codes(results(c, heatmap(SYMBOLS[1], depth=50, time_bucket_ms=1000))) == [None]
     assert seen["points_connection"]() == 1
     assert world.held(alice) == (0, 0, 0)  # the socket's end gave it all back
+
+
+def test_structured_heatmaps_reach_the_connection_quota_at_a_third_of_the_binary_count(
+    world: QuotaWorld,
+) -> None:
+    """23 §16.2: a structured subscription weighs three times its binary weight. At depth 500 and
+    a 250 ms bucket a connection holds six binary heatmaps and two structured ones; the next of
+    each is refused at the connection's points."""
+    alice = world.login("alice")
+    wide = {"depth": 500, "time_bucket_ms": 250}
+    seen = counted("points_connection")
+    for encoding, fit in (("binary", 6), ("structured", 2)):
+        with socket(world, alice) as c:
+            asked = (heatmap(s, encoding=encoding, **wide) for s in SYMBOLS[: fit + 1])
+            found = results(c, *asked)
+            assert codes(found) == [None] * fit + ["subscription_limit"]
+            assert found[fit]["error"] == refused(MESSAGES["points_connection"])
+            assert world.held(alice)[:2] == (192, fit)
+    assert seen["points_connection"]() == 2
 
 
 def test_quota_per_user_budget_spans_the_users_connections(world: QuotaWorld) -> None:
@@ -200,24 +231,28 @@ def test_ac_hm_11_a_users_distinct_specs_stop_at_eight_and_the_server_budget_hol
     assert seen["heatmap_specs_symbol"]() == 1
 
 
+def fill_server_points(world: QuotaWorld, stack: ExitStack) -> list[Login]:
+    """16 depth-500, 100 ms specs from four users, two sockets each and two specs a socket (320 of
+    each user's 400): the server's 1 280 points, every one admitted. The users, for the caller."""
+    users = [world.login(f"u{n}") for n in range(4)]
+    for n, user in enumerate(users):
+        c1, c2 = (stack.enter_context(socket(world, user)) for _ in range(2))
+        specs = SYMBOLS[4 * n : 4 * n + 4]
+        assert codes(results(c1, *(heatmap(s, **DEEP) for s in specs[:2]))) == [None, None]
+        assert codes(results(c2, *(heatmap(s, **DEEP) for s in specs[2:]))) == [None, None]
+    assert world.heatmap._points == 1280
+    return users
+
+
 def test_the_servers_spec_points_hold_for_every_user_together(world: QuotaWorld) -> None:
     """16 depth-500, 100 ms specs fill the server's 1 280 points; the next is refused naming the
     budget, whoever asks, and a spec held already is shared at no cost."""
-    users = [world.login(f"u{n}") for n in range(4)]
     seen = counted("points_server")
     with ExitStack() as stack:
-        for n, user in enumerate(users):  # four 80-point specs a user (320 of 400), two a socket
-            c1, c2 = (
-                stack.enter_context(socket(world, user)),
-                stack.enter_context(socket(world, user)),
-            )
-            specs = SYMBOLS[4 * n : 4 * n + 4]
-            assert codes(results(c1, *(heatmap(s, **DEEP) for s in specs[:2]))) == [None, None]
-            assert codes(results(c2, *(heatmap(s, **DEEP) for s in specs[2:]))) == [None, None]
-        assert world.heatmap._points == 1280
+        fill_server_points(world, stack)
         late = stack.enter_context(socket(world, world.login("late")))
         over, shared = results(late, heatmap(SYMBOLS[20], **DEEP), heatmap(SYMBOLS[0], **DEEP))
-        assert over["error"]["message"].startswith("The server's heatmap budget of 1280 points")
+        assert over["error"] == refused(SERVER_SPENT)
         assert shared["ok"] and world.heatmap._points == 1280
     assert seen["points_server"]() == 1
 
@@ -265,13 +300,83 @@ def test_a_ctl_past_a_budget_changes_nothing(world: QuotaWorld) -> None:
         assert world.held(alice) == held and dict(world.heatmap._symbols) == specs
         light = f"heatmap.{SYMBOLS[2]}"
         assert codes(results(c, heatmap(SYMBOLS[2], depth=50, time_bucket_ms=1000))) == [None]
+        rebuilds, key = world.authz(alice).rebuilds, topic_key(parse_topic(light), None)
+        drawn = rebuilds.drawn(key)
         respec = ctl(c, light, 2, depth=500, time_bucket_ms=100)  # 80 in place of 2: 242
         assert respec["t"] == "err" and respec["p"]["message"] == MESSAGES["points_connection"]
         assert world.held(alice) == (162, 3, 3)
+        assert rebuilds.drawn(key) == drawn  # §5.4: a `ctl` refused for a quota draws no rebuild
         assert {s.depth for s in world.heatmap._symbols[SYMBOLS[2]].specs} == {50}
         slower = ctl(c, f"heatmap.{SYMBOLS[0]}", 3, throttle_ms=1000)  # a lower weight: applied
         assert slower["t"] == "ctl_ok" and slower["p"]["effective"]["throttle_ms"] == 1000
     assert seen["points_connection"]() == 2
+
+
+def specs_of(world: QuotaWorld, symbol: str) -> set[Any]:
+    """The live specs of `symbol` in the producer, every user's."""
+    return set(world.heatmap._symbols[symbol].specs)
+
+
+def test_a_grouping_ctl_past_a_symbols_share_changes_nothing(world: QuotaWorld) -> None:
+    """§5.4, §16.2: a `ctl` that changes only `price_grouping` (the weight unchanged) and so moves
+    a subscription to a third spec of one symbol, the spec it leaves still held by another of the
+    user's subscriptions, gets `subscription_limit` with the share's fixed message; the producer's
+    specs and the user's ledger are as they were."""
+    alice = world.login("alice")
+    light = {"depth": 50, "time_bucket_ms": 1000}
+    seen = counted("heatmap_specs_user_symbol")
+    with ExitStack() as stack:
+        one, two, three = (stack.enter_context(socket(world, alice)) for _ in range(3))
+        for c, g in ((one, 1), (two, 2), (three, 1)):  # grouping 1 held twice, 2 once: the share
+            assert codes(results(c, heatmap("BTCUSDT", price_grouping=g, **light))) == [None]
+        before = (world.user_held(alice), specs_of(world, "BTCUSDT"))
+        moved = ctl(three, "heatmap.BTCUSDT", 1, price_grouping=5)
+        assert moved["t"] == "err" and moved["p"]["code"] == "subscription_limit"
+        assert moved["p"]["message"] == MESSAGES["heatmap_specs_user_symbol"]
+        assert (world.user_held(alice), specs_of(world, "BTCUSDT")) == before
+    assert seen["heatmap_specs_user_symbol"]() == 1
+
+
+def test_a_grouping_ctl_past_the_users_distinct_specs_changes_nothing(world: QuotaWorld) -> None:
+    """The same through the user's eight distinct specs: a `ctl` of `price_grouping` alone moves a
+    subscription off a spec another of the user's subscriptions holds, to a ninth spec, and gets
+    `subscription_limit` with that limit's fixed message, nothing changed."""
+    alice = world.login("alice")
+    light = {"depth": 50, "time_bucket_ms": 1000}
+    seen = counted("heatmap_specs_user")
+    with ExitStack() as stack:
+        wide, again = (stack.enter_context(socket(world, alice)) for _ in range(2))
+        assert codes(results(wide, *(heatmap(s, **light) for s in SYMBOLS[:8]))) == [None] * 8
+        assert codes(results(again, heatmap(SYMBOLS[0], **light))) == [None]  # spec 0, twice
+        before = (world.user_held(alice), specs_of(world, SYMBOLS[0]))
+        moved = ctl(again, f"heatmap.{SYMBOLS[0]}", 1, price_grouping=2)  # a ninth spec
+        assert moved["t"] == "err" and moved["p"]["code"] == "subscription_limit"
+        assert moved["p"]["message"] == MESSAGES["heatmap_specs_user"]
+        assert (world.user_held(alice), specs_of(world, SYMBOLS[0])) == before
+    assert seen["heatmap_specs_user"]() == 1
+
+
+def test_a_ctl_the_rebuild_budget_refuses_keeps_every_charge(world: QuotaWorld) -> None:
+    """§5.4, §7.5: once identity `ctl`s spend a stream's rebuild budget, a `ctl` that would raise
+    or lower its weight is refused `resync_rate_limited`, and the subscription's, the connection's
+    and the user's points are as they were: the charge moves only with a `ctl` that applies."""
+    alice = world.login("alice")
+    ch = f"heatmap.{SYMBOLS[0]}"
+    with socket(world, alice) as c:
+        assert codes(results(c, heatmap(SYMBOLS[0], depth=200, time_bucket_ms=500))) == [None]
+        for n in range(12):  # identity `ctl`s at one weight, until the stream's budget refuses
+            spent = ctl(c, ch, n, price_grouping=1 + n % 2)
+            if spent["t"] == "err":
+                break
+        assert spent["t"] == "err" and spent["p"]["code"] == "resync_rate_limited"
+        authz = world.authz(alice)
+        (sub,) = (s for s in authz.by_id.values() if s.ch == ch)
+        held = (sub.quota_points, authz.quota.points, world.user_held(alice))
+        assert held[0] == 13
+        for n, bucket in enumerate((100, 1000)):  # 63 points, then 7: up, then down
+            refused_ = ctl(c, ch, 20 + n, time_bucket_ms=bucket)
+            assert refused_["t"] == "err" and refused_["p"]["code"] == "resync_rate_limited"
+            assert (sub.quota_points, authz.quota.points, world.user_held(alice)) == held
 
 
 # -- C-13.6 #1, #3 and #11 -----------------------------------------------------------------------
@@ -325,6 +430,73 @@ def test_a_slow_consumer_close_releases_its_quota(world: QuotaWorld) -> None:
         assert codes(results(again, heatmap(SYMBOLS[0], **HEAVY))) == [None]
 
 
+# -- revocation and a release that raises --------------------------------------------------------
+
+
+def hold_both(world: QuotaWorld, c: Client, login: Login) -> None:
+    """A depth-500 heatmap (80 points) and a depth-500 book (2), held and charged."""
+    assert codes(results(c, heatmap(SYMBOLS[0], **DEEP), f"book.{SYMBOLS[1]}.500")) == [None] * 2
+    assert world.held(login) == (82, 1, 1)
+
+
+def nothing_held(world: QuotaWorld, login: Login) -> bool:
+    """The ledger's empty shape for the user, and no user kept at all (C-2.18)."""
+    return world.user_held(login) == (0, 0, {}) and len(world.registry.services.user_quota) == 0
+
+
+def test_a_marketdata_withdrawal_gives_the_quota_back(world: QuotaWorld) -> None:
+    """§9.5: `marketdata:read` withdrawn, the heatmap and the deep book are revoked
+    `permission_revoked`, and each gives its weight back."""
+    alice = world.login("alice")
+    with socket(world, alice) as c:
+        hold_both(world, c, alice)
+        world.perms = world.perms - {Permission.MARKETDATA_READ}  # read at the next load
+        world.call(world.registry.roles_changed, alice.user_id)
+        ends = [c.next_of_raw("revoked") for _ in range(2)]
+        assert {(f["ch"], f["p"]["reason"]) for f in ends} == {
+            (f"heatmap.{SYMBOLS[0]}", "permission_revoked"),
+            (f"book.{SYMBOLS[1]}.500", "permission_revoked"),
+        }
+        assert nothing_held(world, alice)
+
+
+def test_a_resync_loop_revoke_gives_the_quota_back(world: QuotaWorld) -> None:
+    """§7.5: a stream that asks `resync` past its rebuild budget is revoked `resync_rate_limited`
+    and gives its weight back at once; the deep book keeps its own until the socket ends."""
+    alice = world.login("alice")
+    ch = f"heatmap.{SYMBOLS[0]}"
+    with socket(world, alice) as c:
+        hold_both(world, c, alice)
+        for m in range(12):  # each `resync` answered before the `pong` of the `ping` after it
+            c.send({"t": "resync", "id": f"r{m}", "ch": ch, "p": {"reason": "sequence_gap"}})
+            c.send({"t": "ping", "id": f"p{m}"})
+            seen = []
+            while (frame := c.recv(validate=False))["t"] != "pong":
+                seen.append(frame)
+            ended = [f for f in seen if f["t"] == "revoked" and f["ch"] == ch]
+            if ended:
+                break
+        assert [f["p"]["reason"] for f in ended] == ["resync_rate_limited"]
+        assert world.user_held(alice) == (2, 0, {})
+    assert nothing_held(world, alice)
+
+
+def test_a_release_that_raises_still_gives_the_quota_back(
+    world: QuotaWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2735: the heatmap's release raises inside `release_all` at the socket's end; the rest go
+    on, and the charge, given back before any release, leaves the user holding nothing."""
+    alice = world.login("alice")
+
+    def raising(*_: object) -> None:
+        raise RuntimeError("the heatmap release failed")
+
+    with socket(world, alice) as c:
+        hold_both(world, c, alice)
+        monkeypatch.setattr(world.heatmap, "release", raising)
+    assert nothing_held(world, alice)
+
+
 # -- replay, and HM-I04 --------------------------------------------------------------------------
 
 
@@ -362,17 +534,23 @@ def test_a_refusal_message_names_no_other_users_subscription_or_spec(world: Quot
         found += results(c, heatmap("XRPUSDT", price_grouping=11, **light))
         found += results(c, *(f"book.{s}.500" for s in SYMBOLS[9:14]))  # the fifth: the cap
         frames = [ctl(c, f"heatmap.{SYMBOLS[n]}", n, **HEAVY) for n in range(2)]  # 182, then 340
+    with ExitStack() as stack:  # the server's spec points, spent by four other users' specs
+        others = fill_server_points(world, stack)
+        (spent,) = results(stack.enter_context(socket(world, alice)), heatmap(SYMBOLS[20], **DEEP))
     assert [f["t"] for f in frames] == ["ctl_ok", "err"]
-    errors = [r["error"] for r in found if not r["ok"]] + [frames[1]["p"]]
+    errors = [r["error"] for r in found if not r["ok"]] + [frames[1]["p"], spent["error"]]
     fixed = {
         MESSAGES["heatmap_connection"],
         MESSAGES["points_connection"],
         "At most 4 deep book subscriptions (depth 200 or more) per connection.",
+        SERVER_SPENT,
     }
-    assert len(errors) == 4 and {e["message"] for e in errors} == fixed
+    assert len(errors) == 5 and {e["message"] for e in errors} == fixed
+    assert spent["error"] == refused(SERVER_SPENT)  # the whole text, nothing appended to it
     for e in errors:  # the code, the fixed message and the catalogue's members only
         assert e["code"] == "subscription_limit" and e["retryable"] is True
         assert set(e) <= {"code", "message", "retryable", "close"}, e
     text = json.dumps(errors)
-    for named in (str(bob.user_id), "XRPUSDT", "ADAUSDT", "17", " 7", " 9"):
+    held = [*SYMBOLS[:16], *(str(u.user_id) for u in others)]  # the other users' specs and ids
+    for named in (str(bob.user_id), "XRPUSDT", "ADAUSDT", "17", " 7", " 9", *held):
         assert named not in text
