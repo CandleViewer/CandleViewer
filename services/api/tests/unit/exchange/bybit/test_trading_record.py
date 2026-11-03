@@ -20,6 +20,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from jsonschema import Draft202012Validator
+from pydantic import ValidationError
 
 from candleviewer.api._generated.openapi_models import ExchangeCallRecord
 from candleviewer.api._generated.openapi_models import ExchangeRecordFields as ContractFields
@@ -100,11 +101,16 @@ def test_an_unset_field_is_absent_from_a_dump_never_null() -> None:
     _contract_valid(record)
 
 
-def test_a_dump_with_nulls_is_what_the_published_schema_refuses() -> None:
-    """The trap the sparse dump closes: the generated model takes a null, the schema does not."""
+def test_a_dump_with_nulls_is_refused_by_the_model_and_the_schema() -> None:
+    """The trap the sparse dump closes: a null is refused by the generated model, as by the
+    published schema (#4237), each error a refused null."""
     padded = dict.fromkeys(ExchangeRecordFields.model_fields) | {"category": "linear"}
     payload = {"event_id": 1, "at": "2026-10-21T00:00:00Z", "transport": "rest"}
-    ContractFields.model_validate(padded)
+    with pytest.raises(ValidationError) as refused:
+        ContractFields.model_validate(padded)
+    assert {e["msg"] for e in refused.value.errors()} == {
+        "Value error, null is not allowed: leave the member out"
+    }
     assert not _PUBLISHED.is_valid(payload | {"request_redacted": padded})
 
 

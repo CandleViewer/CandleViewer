@@ -1,12 +1,11 @@
-"""A generated model a request body reaches refuses an explicit `null` for an optional member the
-contract does not let be `null` (#906 slice G2b): left out, the member is `None`; sent as `null`, it
-is a `value_error` whose constant message holds no input. A member the contract lets be `null`
-takes it, and so does every model no request body reaches (ruling 1 of 2026-10-23 00:29Z)."""
+"""A generated REST model refuses an explicit `null` for an optional member the contract does not
+let be `null` (#906 slice G2b for the models a request body reaches, #4237 for every other): left
+out, the member is `None`; sent as `null`, it is a `value_error` whose constant message holds no
+input. A member the contract lets be `null` takes it."""
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,30 +13,36 @@ from pydantic import BaseModel, RootModel, ValidationError
 
 from candleviewer.api._generated import openapi_models as api
 from tests.contract._generated_contract import (
-    REQUEST_MODELS,
-    SPEC,
-    _request_roots,
+    _SCHEMAS,
+    MODELS,
+    REQUEST_ROOTS,
+    RESPONSE_ROOTS,
+    UNPAIRED_ANY,
+    _at,
+    _deref,
     contract_accepts,
     model_accepts,
 )
-from tests.contract.test_generate_protocol_models import _generator
 
 _REFUSED = "Value error, null is not allowed: leave the member out"
 #: How a route reads a body: Python data, raw JSON, or FastAPI's `from_attributes` (spec 1.4).
 _MODES = pytest.mark.parametrize("mode", ["python", "json", "attributes"])
 _PROFILE = {"name": "p", "leverage": "5", "sizing": {"mode": "fixed_qty", "qty": "1"}}
 _KEY = {"api_key": "k" * 8, "api_secret": "s" * 8}
+_GRANT = {"exchange_account_id": "00000000-0000-4000-8000-000000000001", "level": "read"}
+_USER = {"id": _GRANT["exchange_account_id"], "username": "u", "email": "u@x", "roles": []}
+_USER |= {"status": "active"}
 
 
 def _models() -> dict[str, type[BaseModel]]:
     """Every generated model but a `RootModel`, by name, as the module holds it now."""
     found = {n: c for n, c in vars(api).items() if isinstance(c, type) and issubclass(c, BaseModel)}
-    return {n: c for n, c in found.items() if not issubclass(c, RootModel)}
+    return {n: c for n, c in found.items() if not issubclass(c, RootModel) and c is not BaseModel}
 
 
 def _optionals(model: type[BaseModel]) -> dict[str, str]:
-    """A request model's members that default to `None`: name to the pointer of its schema."""
-    return {n: p for n, p in REQUEST_MODELS[model].items() if model.model_fields[n].default is None}
+    """A model's members that default to `None`: name to the pointer of its schema."""
+    return {n: p for n, p in MODELS[model].items() if model.model_fields[n].default is None}
 
 
 def _validate(name: str, body: dict[str, Any], mode: str) -> Any:
@@ -47,16 +52,25 @@ def _validate(name: str, body: dict[str, Any], mode: str) -> Any:
     return model.model_validate(body, from_attributes=mode == "attributes")
 
 
-def test_the_generator_marks_the_models_a_request_body_reaches_and_the_proof_checks_them() -> None:
-    """The generator's own walk (`_request_models`) reaches the models the proof pairs, only they
-    refuse `null` under a name of their own, and the proof reaches through a list (R2-02)."""
-    source = Path(api.__file__).read_text(encoding="utf-8")
-    requested = {model.__name__ for model in REQUEST_MODELS}
-    assert _generator()._request_models(SPEC, source) & _models().keys() == requested
-    assert {n for n, c in _models().items() if f"_{n}__null_refused" in vars(c)} <= requested
-    probed = {(m.__name__, n) for m in REQUEST_MODELS for n in _optionals(m)}
-    assert len(probed) >= 248  # every optional member of a request model, re-measured
-    assert {("CreateApiKeyRequest", "label"), ("TakeProfitLevel", "offset")} <= probed
+def test_the_proof_pairs_every_generated_model_and_probes_each_optional_member() -> None:
+    """Each generated model pairs with a contract schema, and the proof probes every optional
+    member: 248 of the request models (G2b) and 1,109 more that a response reaches (#4237)."""
+    assert sorted(m.__name__ for m in UNPAIRED_ANY) == []
+    assert sorted(set(_models()) - {m.__name__ for m in MODELS}) == []
+    probed = {(m.__name__, n) for m in MODELS for n in _optionals(m)}
+    assert len(probed) >= 1_350
+    refused = {(m, n) for m, n in probed if not model_accepts(getattr(api, m), n, None)}
+    assert len(refused) >= 1_100
+    assert {("AccountAccessGrant", "granted_by"), ("Alert", "message_template")} <= refused
+
+
+def test_each_class_refuses_under_a_name_of_its_own() -> None:
+    """A model refuses `null` only for members of its own or of a class it extends, each under the
+    mangled name of the class that declares them: no class takes `null` back (`_take_null`)."""
+    for name, model in _models().items():
+        own = [k for k in vars(model) if k.endswith("__null_refused")]
+        assert own in ([], [f"_{name}__null_refused"]), name
+    assert not hasattr(api, "_take_null")
 
 
 def test_only_null_is_refused() -> None:
@@ -69,20 +83,21 @@ def test_only_null_is_refused() -> None:
         api._refuse_null(None)
 
 
-def test_a_request_root_without_a_model_holds_no_object() -> None:
-    """R1S-02: both walks start at the request roots codegen made a class of; one it collapsed is
-    safe only while it holds no object, whose models both walks would then miss alike."""
-    for name in sorted(_request_roots()):
+def test_a_root_without_a_model_holds_no_object() -> None:
+    """R1S-02: the walks start at the request and response roots codegen made a class of; one it
+    collapsed is safe only while it holds no object, whose models every walk would then miss
+    alike; read where its `$ref` ends, `additionalProperties` included (R2-02)."""
+    keys = {"properties", "items", "additionalProperties", "allOf", "oneOf", "anyOf"}
+    for name in sorted(REQUEST_ROOTS | RESPONSE_ROOTS):
         found = getattr(api, name, None)
         if not (isinstance(found, type) and issubclass(found, BaseModel)):
-            held = SPEC["components"]["schemas"][name].keys()
-            assert not held & {"properties", "items", "allOf", "oneOf", "anyOf"}, name
+            assert not _at(_deref(_SCHEMAS + name)).keys() & keys, name
 
 
 @pytest.mark.parametrize(
-    "model", [m for m in REQUEST_MODELS if _optionals(m)], ids=lambda model: model.__name__
+    "model", [m for m in MODELS if _optionals(m)], ids=lambda model: model.__name__
 )
-def test_a_request_model_takes_null_for_an_optional_member_exactly_where_the_contract_does(
+def test_a_generated_model_takes_null_for_an_optional_member_exactly_where_the_contract_does(
     model: type[BaseModel],
 ) -> None:
     differing = [
@@ -93,8 +108,9 @@ def test_a_request_model_takes_null_for_an_optional_member_exactly_where_the_con
     assert differing == []
 
 
-#: The members the G2 spec names, and one of the recorded-symbol body mounted since (the order's
-#: is pinned on its route), each with the smallest body its model takes.
+#: The members the G2 spec names, one of the recorded-symbol body mounted since (the order's is
+#: pinned on its route), and four a response reaches (#4237), each with the smallest body its
+#: model takes: `UserWithInvite` refuses `User`'s, which it extends.
 _NULL_REFUSED = [
     ("AccountProfileInput", _PROFILE, "stop_loss"),
     ("AccountProfileInput", _PROFILE, "risk_caps"),  # `attributes`: never an empty caps model
@@ -109,6 +125,10 @@ _NULL_REFUSED = [
     ("SetFeatureFlagRequest", {"value": True}, "expected_updated_at"),
     ("SimulateRuleRequest", {}, "from"),  # the wire name of `from_`
     ("UpdateRecordedSymbolRequest", {}, "pinned"),
+    ("AccountAccessGrant", _GRANT, "granted_by"),
+    ("User", _USER, "created_at"),
+    ("UserWithInvite", _USER, "created_at"),
+    ("ExchangeRecordFields", {}, "side"),
 ]
 
 
@@ -148,15 +168,3 @@ def test_a_member_the_contract_lets_be_null_still_takes_it(
     mode: str, name: str, base: dict[str, Any], member: str, sent: object
 ) -> None:
     assert getattr(_validate(name, {**base, member: sent}, mode), member) == sent
-
-
-def test_a_model_no_request_body_reaches_still_takes_null() -> None:
-    """Ruling 1: a response model keeps taking `null`, also where it extends a request model that
-    refuses it (`Alert` extends `AlertInput`). `Watchlist` extends none (#4706) and answers every
-    member, `columns` included."""
-    requested = {model.__name__ for model in REQUEST_MODELS}
-    models = [c for n, c in _models().items() if n not in requested]
-    probed = [(c, m) for c in models for m, f in c.model_fields.items() if f.default is None]
-    assert (api.Alert, "message_template") in set(probed)
-    assert api.Watchlist.model_fields["columns"].is_required()
-    assert [(c.__name__, m) for c, m in probed if not model_accepts(c, m, None)] == []

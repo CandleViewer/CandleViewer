@@ -321,6 +321,16 @@ def test_partial_removal_needs_ack() -> None:
     assert w.put(_body((_B, "trade")), ack="true").status_code == 200
 
 
+def test_a_kept_grant_whose_granter_is_gone_is_answered_without_granted_by() -> None:
+    """#4237: the 200 leaves `granted_by` out, never `null`, once the granting user is gone (the
+    generated model refuses `null` there), and the answer meets the contract."""
+    r = _World(st._Rel(rows=((_B, True, True),)), positions=0).put(_body((_B, "trade")))
+    gone = {k: v for k, v in _item(_B, "trade", CALLER).items() if k != "granted_by"}
+    assert r.status_code == 200 and r.json() == {"items": [gone]}, r.text
+    schema = _SPEC["paths"][g._CONTRACT]["put"]["responses"]["200"]["content"]["application/json"]
+    assert g._errors(_SPEC, schema["schema"], r.json()) == []
+
+
 @pytest.mark.parametrize(
     "body",
     [

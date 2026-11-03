@@ -453,16 +453,16 @@ async def _read_capped(request: Request) -> bytes | None:
 
 
 def _grant_json(grant: aa.AccessGrant) -> dict[str, Any]:
-    """One `AccountAccessGrant` (`granted_by` left out once its user is gone; no `granted_at`)."""
-    shown = api.AccountAccessGrant.model_validate(
-        {
-            "exchange_account_id": grant.exchange_account_id,
-            "level": grant.level,
-            "account_label": grant.account_label,
-            "environment": grant.environment,
-            "granted_by": grant.granted_by,
-        }
-    )
+    """One `AccountAccessGrant` (`granted_by` left out once its user is gone; no `granted_at`):
+    a `None` is left out before validating, as the model refuses `null` there (#4237)."""
+    held = {
+        "exchange_account_id": grant.exchange_account_id,
+        "level": grant.level,
+        "account_label": grant.account_label,
+        "environment": grant.environment,
+        "granted_by": grant.granted_by,
+    }
+    shown = api.AccountAccessGrant.model_validate({k: v for k, v in held.items() if v is not None})
     return shown.model_dump(mode="json", exclude_none=True)
 
 
