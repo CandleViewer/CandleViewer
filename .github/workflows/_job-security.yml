@@ -529,7 +529,11 @@ jobs:
           set -euo pipefail
           # license-checker does not understand pnpm workspaces ("No packages found").
           # pnpm licenses is workspace-aware and reads the lockfile CI just installed.
-          pnpm licenses list --json --prod > pnpm-licenses.json
+          # Full set (dev included) is judged against the allowlist and its dev_only_exceptions
+          # (E03, #5628); the --prod set is judged again with those exceptions disabled, so a
+          # production-reachable package cannot ride a dev-only exemption.
+          pnpm licenses list --json > pnpm-licenses.json
+          pnpm licenses list --json --prod > pnpm-licenses-prod.json
           # Python licences are read from the uv venv via importlib.metadata
           # (PEP 639 License-Expression first) — pip-licenses 5.x reports UNKNOWN
           # for urllib3/uvicorn/websockets that only carry License-Expression.
@@ -538,6 +542,8 @@ jobs:
             --pnpm-licenses pnpm-licenses.json \
             --out licenses.json
           python tools/ci/security_gate.py --tool license-scan --report licenses.json
+          python tools/ci/collect_licenses.py --pnpm-licenses pnpm-licenses-prod.json --out licenses-prod.json
+          python tools/ci/security_gate.py --tool license-scan --report licenses-prod.json --no-dev-only-exceptions
 
       # `ci-required` judges this job's result (the `security` lane); this keeps it honest per scan.
       - name: Verdict (every scan succeeded or was skipped)
