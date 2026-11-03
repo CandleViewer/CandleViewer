@@ -10,7 +10,9 @@
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.node.json",
         "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
-        "$TURBO_ROOT$/packages/fixtures/golden/rule-ir/hash_vectors.json"
+        "$TURBO_ROOT$/packages/fixtures/golden/rule-ir/hash_vectors.json",
+        "$TURBO_ROOT$/packages/fixtures/golden/rule-graph/compile_models.json",
+        "$TURBO_ROOT$/packages/fixtures/golden/rule-graph/editor/*.json"
       ]
     },
     "test:cov": {
@@ -21,7 +23,9 @@
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.node.json",
         "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
-        "$TURBO_ROOT$/packages/fixtures/golden/rule-ir/hash_vectors.json"
+        "$TURBO_ROOT$/packages/fixtures/golden/rule-ir/hash_vectors.json",
+        "$TURBO_ROOT$/packages/fixtures/golden/rule-graph/compile_models.json",
+        "$TURBO_ROOT$/packages/fixtures/golden/rule-graph/editor/*.json"
       ]
     }
   }
