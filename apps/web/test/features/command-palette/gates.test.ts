@@ -4,6 +4,7 @@ import { commandMeta, type CommandMeta } from "../../../src/keymap/registry";
 import type { MeClaims } from "../../../src/routes/rbac";
 import {
   COMMAND_GATES,
+  FALLBACK_VERB,
   PERMISSION_VERBS,
   gateReason,
   missingGates,
@@ -67,10 +68,17 @@ describe("E10-S05 gates.ts: the T2 reason", () => {
     expect(gateReason(CLOSE, { claims: viewer, viewAs })).toBe("Your role can't change positions.");
   });
 
-  it("refuses a permission with no E09-D09 verb rather than invent one", () => {
-    expect(() => gateReason({ permission: "made:up" }, { claims: viewer, viewAs: null })).toThrow(
-      /no E09-D09 verb/,
+  it("says it generically for a permission with no E09-D09 verb, and never throws", () => {
+    expect(gateReason({ permission: "made:up" }, { claims: viewer, viewAs: null })).toBe(
+      `Your role can't ${FALLBACK_VERB}.`,
     );
+  });
+
+  it("every gate row resolves a verb: its own, or §3.2's for its permission", () => {
+    const rows = [...Object.values(COMMAND_GATES), CLOSE, RELEASE, SUBMIT];
+    for (const gate of rows)
+      if (gate.permission !== undefined)
+        expect(gate.verb ?? PERMISSION_VERBS[gate.permission], gate.permission).toBeDefined();
   });
 
   it("copies §3.2's verbs and renders no admin-domain code", () => {

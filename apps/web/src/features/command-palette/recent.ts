@@ -60,11 +60,12 @@ export function recordRun(
 ): RecentState {
   const prev = readRecent(user, store);
   const recent = [id, ...prev.recent.filter((x) => x !== id)].slice(0, RECENT_LIMIT);
-  const counts = Object.fromEntries(
-    Object.entries({ ...prev.counts, [id]: (prev.counts[id] ?? 0) + 1 })
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, COUNT_LIMIT),
-  );
+  // The id just run is always kept: the cap drops the least used of the others, never this one.
+  const others = Object.entries(prev.counts)
+    .filter(([other]) => other !== id)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, COUNT_LIMIT - 1);
+  const counts = Object.fromEntries([...others, [id, (prev.counts[id] ?? 0) + 1]]);
   const next: RecentState = { recent, counts };
   if (user === null || store === null) return next;
   try {

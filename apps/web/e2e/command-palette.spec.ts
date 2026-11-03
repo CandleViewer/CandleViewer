@@ -99,7 +99,7 @@ test("an owner with admin:read reaches Profile and security and Invite user by n
   await expect(page).toHaveURL(/\/admin\/users\/new$/u); // SCR-123
 });
 
-test("the reduced-motion override makes open and close instant", async ({ page }) => {
+test("prefers-reduced-motion makes open and close instant", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await shellAt(page, "/journal", "viewer");
   await page.keyboard.press("Control+k");

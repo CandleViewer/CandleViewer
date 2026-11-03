@@ -15,6 +15,28 @@ import { THEME_ANALYTICS_EVENT } from "../../../src/shell/bootstrap/themeStore";
 import { closePalette } from "../../../src/features/command-palette/CommandPaletteHost";
 import { missingGates } from "../../../src/features/command-palette/gates";
 import { ADMIN_READ, registerPaletteSource } from "../../../src/features/command-palette/sources";
+import { closeSymbolSearch } from "../../../src/features/symbol-search/searchSession";
+
+// Spies that delegate: SCR-102's close (the palette closes it on opening) and the source subscription (teardown).
+const live = vi.hoisted(() => ({ subscriptions: 0 }));
+vi.mock("../../../src/features/symbol-search/searchSession", async (original) => {
+  const real = await original<typeof import("../../../src/features/symbol-search/searchSession")>();
+  return { ...real, closeSymbolSearch: vi.fn(real.closeSymbolSearch) };
+});
+vi.mock("../../../src/features/command-palette/sources", async (original) => {
+  const real = await original<typeof import("../../../src/features/command-palette/sources")>();
+  return {
+    ...real,
+    subscribePaletteSources: (listener: () => void) => {
+      live.subscriptions += 1;
+      const off = real.subscribePaletteSources(listener);
+      return () => {
+        live.subscriptions -= 1;
+        off();
+      };
+    },
+  };
+});
 
 // E10-S05 (#5236): SCR-012 mounted in the real shell route tree beside the real keymap host, by role and label.
 
@@ -440,4 +462,94 @@ describe("E10-S05 axe: every palette state in three themes", () => {
         expect(await serious(), query).toEqual([]);
       }
     });
+});
+
+describe("E10-S05 lens r1 fold", () => {
+  it("m1 teardown: unmounting unregisters Ctrl+K, drops the source subscription and leaves no dialog", async () => {
+    const { view } = await shellAt("/journal");
+    pressCtrlK();
+    expect(screen.getByRole("dialog", { name: "Command palette" })).toBeVisible();
+    expect(live.subscriptions).toBeGreaterThan(0);
+    view.unmount();
+    expect(isCommandValid("global.palette")).toBe(false);
+    expect(live.subscriptions).toBe(0);
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
+  });
+
+  it("m3 a dangerous row is a choice, not a run: no recency, palette.chosen instead of palette.ran", async () => {
+    offs.push(registerCommand("positions.close", vi.fn()));
+    await shellAt("/journal");
+    const seen: { name: string }[] = [];
+    const on = (e: Event): void => void seen.push((e as CustomEvent<{ name: string }>).detail);
+    window.addEventListener(THEME_ANALYTICS_EVENT, on);
+    pressCtrlK();
+    fireEvent.change(input(), { target: { value: "close selected" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    window.removeEventListener(THEME_ANALYTICS_EVENT, on);
+    expect(seen.map((e) => e.name)).toEqual(["palette.opened", "palette.chosen"]);
+    expect(window.localStorage.getItem("cv.palette-recent.v1:u-1")).toBeNull();
+  });
+
+  it("m4 a command that stopped being valid while the palette closed runs nothing and says so once", async () => {
+    let valid = true;
+    const run = vi.fn();
+    offs.push(registerCommand("positions.close", run, () => valid));
+    offs.push(
+      registerPaletteSource({
+        id: "fixture-m4",
+        group: "Action",
+        rows: () => [
+          {
+            id: "fixture:m4",
+            label: "Fixture close",
+            group: "Action",
+            target: { kind: "command", commandId: "positions.close" },
+          },
+        ],
+      }),
+    );
+    await shellAt("/journal");
+    pressCtrlK();
+    fireEvent.change(input(), { target: { value: "fixture close" } });
+    valid = false; // focus moved to a context where the command no longer applies, before the run step
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(run).not.toHaveBeenCalled();
+    expect(polite()).toBe("Fixture close did not run: it is not available here.");
+    expect(window.localStorage.getItem("cv.palette-recent.v1:u-1")).toBeNull();
+  });
+
+  it("n2 opening the palette closes SCR-102 instead of stacking two dialogs", async () => {
+    await shellAt("/journal");
+    vi.mocked(closeSymbolSearch).mockClear();
+    pressCtrlK();
+    expect(closeSymbolSearch).toHaveBeenCalledTimes(1);
+    pressCtrlK(); // closing the palette does not touch it
+    expect(closeSymbolSearch).toHaveBeenCalledTimes(1);
+  });
+
+  it("a11y m1 opened from body, Esc leaves focus on the main landmark, not on body", async () => {
+    await shellAt("/journal");
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.body).toHaveFocus();
+    pressCtrlK();
+    fireEvent.keyDown(input(), { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
+    expect(screen.getByRole("main")).toHaveFocus();
+  });
+
+  it("a11y m1 opened from body, a non-navigating Action also ends on main; a route leaves it to the shell", async () => {
+    const { router } = await shellAt("/journal");
+    (document.activeElement as HTMLElement | null)?.blur();
+    pressCtrlK();
+    fireEvent.change(input(), { target: { value: "alerts" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    await screen.findByRole("heading", { level: 1, name: /R-190/ });
+    expect(router.state.location.pathname).toBe("/alerts");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+  });
+
+  it("a11y n2 the trigger announces that it opens a dialog", async () => {
+    await shellAt("/journal");
+    expect(trigger()).toHaveAttribute("aria-haspopup", "dialog");
+  });
 });

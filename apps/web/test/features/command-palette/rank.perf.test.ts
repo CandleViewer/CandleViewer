@@ -32,24 +32,33 @@ function sources(n: number): PaletteSource[] {
   });
 }
 
-/** Median of seven runs, after one warm-up. */
-function medianMs(run: () => void): number {
+// Structural, not wall-clock (this file runs under the coverage `unit` project, where an absolute 16 ms is flaky):
+// eight times the rows must cost about eight times the time, from the fastest of several runs. A quadratic build
+// would cost about sixty-four times; the bound is loose enough for coverage instrumentation and a noisy runner.
+// The absolute 2 000-row budget (`14` :368) is for the bench lane, not for this project.
+function fastestMs(run: () => void): number {
   run();
-  const times: number[] = [];
-  for (let i = 0; i < 7; i += 1) {
+  let best = Infinity;
+  for (let i = 0; i < 9; i += 1) {
     const start = performance.now();
     run();
-    times.push(performance.now() - start);
+    best = Math.min(best, performance.now() - start);
   }
-  times.sort((a, b) => a - b);
-  return times[3] ?? Infinity;
+  return best;
 }
 
 describe("E10-S05 rank.ts budget", () => {
-  for (const n of [500, 2000])
-    it(`builds the index of ${String(n)} rows within 16 ms`, () => {
-      const all = sources(n);
-      expect(buildIndex(all, CTX)).toHaveLength(n);
-      expect(medianMs(() => buildIndex(all, CTX))).toBeLessThan(16);
-    });
+  it("builds every row, and the cost grows about linearly with the row count", () => {
+    const small = sources(250);
+    const large = sources(2000);
+    expect(buildIndex(small, CTX)).toHaveLength(250);
+    expect(buildIndex(large, CTX)).toHaveLength(2000);
+    const ratio =
+      fastestMs(() => buildIndex(large, CTX)) /
+      Math.max(
+        fastestMs(() => buildIndex(small, CTX)),
+        0.01,
+      );
+    expect(ratio).toBeLessThan(24);
+  });
 });

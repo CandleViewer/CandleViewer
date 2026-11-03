@@ -8,7 +8,7 @@
  * step-up, or fires a dangerous command: that command's own confirmation does (E30 / E39). It makes no request and
  * writes no audit record (C-2.9 is met by the handlers it reaches, as for a key press).
  */
-import { useEffect, useMemo, useRef, useSyncExternalStore, type JSX } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore, type JSX, type RefObject } from "react";
 import { useNavigate } from "react-router";
 import { CommandPalette, type PaletteCommand, type PaletteSection } from "@candleviewer/ui";
 import { registerCommand } from "../../keymap/KeymapHost";
@@ -18,6 +18,7 @@ import { isCommandValid, runCommand } from "../../keymap/registry";
 import { getMeClaims } from "../../lib/auth/meCache";
 import { useShellSelector } from "../../shell/useShellSelector.js";
 import { announce, forget } from "../app-shell/announcer";
+import { closeSymbolSearch } from "../symbol-search/searchSession";
 import { countText, GROUPS, noResultsText, PALETTE_COPY, refusedText } from "./copy";
 import { reportPalette, type PaletteVia } from "./paletteEvents";
 import { buildIndex, emptyQuerySections } from "./rank";
@@ -47,10 +48,17 @@ const subscribeOpen = (listener: () => void): (() => void) => {
   return () => listeners.delete(listener);
 };
 const getOpenState = (): OpenState => state;
+/** Opened with focus on `body`: the Dialog has nowhere to return it, so the host gives it to `main` (WCAG 2.4.3). */
+let openedFromBody = false;
 
 /** `Ctrl+K` and the trigger: one toggle, so the key closes what the button opened. */
 export function togglePalette(via: PaletteVia): void {
   const next = !state.open;
+  if (next) {
+    closeSymbolSearch(); // one modal at a time: SCR-102 closes (no commit) rather than stacking under SCR-012
+    const active = document.activeElement;
+    openedFromBody = active === null || active === document.body;
+  }
   setOpen(next);
   if (next) reportPalette({ name: "palette.opened", via });
 }
@@ -66,7 +74,11 @@ const queryLength = (): number =>
   document.querySelector<HTMLInputElement>('[data-cmp="CMP-059"] [role="combobox"]')?.value.trim()
     .length ?? 0;
 
-export function CommandPaletteHost(): JSX.Element {
+export function CommandPaletteHost({
+  mainRef,
+}: {
+  readonly mainRef?: RefObject<HTMLElement>;
+}): JSX.Element {
   const { open: shown, epoch } = useSyncExternalStore(subscribeOpen, getOpenState, getOpenState);
   const sources = useSyncExternalStore(subscribePaletteSources, getPaletteSources);
   // The claims change with `/me` (`bootstrap.ts` sets both): a change while open re-filters in place (`14` :85).
@@ -74,15 +86,33 @@ export function CommandPaletteHost(): JSX.Element {
   const navigate = useNavigate();
   /** What to run once the palette has closed and focus has returned (so a next dialog never opens under it). */
   const pending = useRef<(() => void) | null>(null);
+  const navigated = useRef(false);
 
   useEffect(() => registerCommand(PALETTE_COMMAND, () => togglePalette("hotkey")), []);
-  useEffect(() => () => setOpen(false), []);
+  useEffect(
+    () => () => {
+      openedFromBody = false;
+      setOpen(false);
+    },
+    [],
+  );
   useEffect(() => {
     if (shown) return;
     const run = pending.current;
     pending.current = null;
     run?.();
-  }, [shown]);
+    if (!openedFromBody) return;
+    openedFromBody = false;
+    // A route change is followed by the shell's own move to the heading; otherwise, if focus is still nowhere, `main`.
+    // "Nowhere" is body, or still inside the closing palette (a browser blurs the inert layer; jsdom does not).
+    const active = document.activeElement;
+    const nowhere =
+      active === null ||
+      active === document.body ||
+      active.closest('[data-cmp="CMP-059"]') !== null;
+    if (!navigated.current && nowhere) mainRef?.current?.focus();
+    navigated.current = false;
+  }, [shown, mainRef]);
 
   const rows = useMemo(() => {
     void epoch; // rebuilt per opening; the rows stay put while the dialog fades out
@@ -105,11 +135,23 @@ export function CommandPaletteHost(): JSX.Element {
       pending.current = () => {
         const { target } = row;
         if (target.kind === "route") {
+          navigated.current = true;
           void navigate(target.path); // the guard runs there; focus follows the shell's route-change rule
-        } else if (!runCommand(target.commandId)) {
-          // No handler, or an order entry while the arm reads unarmed: nothing ran, and it is said once.
+        } else if (!isCommandValid(target.commandId) || !runCommand(target.commandId)) {
+          // Not valid now (focus moved while closing), no handler, or an order entry while the arm reads unarmed:
+          // nothing ran, and it is said once.
           forget(REFUSED_KEY);
           announce("polite", refusedText(row.label), REFUSED_KEY);
+          return;
+        }
+        if (row.destructive === true) {
+          // Only its own confirmation opened: nothing ran, so it is not recency and not a run (E10-D03 §6).
+          reportPalette({
+            name: "palette.chosen",
+            id: target.kind === "route" ? row.id.slice("route:".length) : target.commandId,
+            group: row.group,
+            query_length: length,
+          });
           return;
         }
         recordRun(keymapUser(), row.id); // ids and counts only, on this device, for this user
@@ -118,7 +160,6 @@ export function CommandPaletteHost(): JSX.Element {
           kind: target.kind,
           id: target.kind === "route" ? row.id.slice("route:".length) : target.commandId,
           group: row.group,
-          dangerous: row.destructive === true,
           query_length: length,
         });
       };

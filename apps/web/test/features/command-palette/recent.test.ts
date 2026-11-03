@@ -70,6 +70,17 @@ describe("E10-S05 recent.ts", () => {
     expect(counts["id-0"]).toBe(2);
   });
 
+  it("keeps the id just run when the counts are full (a new id is never the one dropped)", () => {
+    for (let i = 0; i < COUNT_LIMIT; i += 1) {
+      recordRun("u-1", `id-${String(i)}`, store);
+      recordRun("u-1", `id-${String(i)}`, store); // every stored id has count 2
+    }
+    recordRun("u-1", "brand-new", store);
+    const { counts } = readRecent("u-1", store);
+    expect(Object.keys(counts)).toHaveLength(COUNT_LIMIT);
+    expect(counts["brand-new"]).toBe(1);
+  });
+
   it("survives storage that throws: the run is still returned, nothing is read", () => {
     const broken = {
       getItem: () => {
