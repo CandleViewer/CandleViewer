@@ -71,6 +71,7 @@ export const ROUTE_TITLES: Readonly<Record<string, string>> = {
   "R-354": "Security centre",
   "R-355": "Backups and restore",
   "R-356": "Maintenance mode control",
+  "R-357": "Statechart inspector",
   "R-360": "Audit log",
   "R-900": "Forbidden",
   "R-901": "Not found",

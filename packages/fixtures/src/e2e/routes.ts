@@ -44,7 +44,7 @@ export const ROUTE_EXPECTATIONS: Readonly<Record<string, Expectation>> = {
   "R-310": ADMIN, "R-311": ADMIN, "R-312": ADMIN,
   "R-320": ADMIN, "R-321": ADMIN, "R-322": ADMIN, "R-330": ADMIN, "R-331": ADMIN,
   "R-340": ADMIN, "R-350": ADMIN, "R-351": ADMIN, "R-352": ADMIN, "R-353": ADMIN,
-  "R-354": ADMIN, "R-355": ADMIN, "R-356": ADMIN,
+  "R-354": ADMIN, "R-355": ADMIN, "R-356": ADMIN, "R-357": ADMIN,
   "R-360": OWNER_MANAGER, // under /admin but owner and manager: a viewer gets 403, not 404
   "R-900": every("forbidden"), // R-900 *is* the 403 page
   "R-901": every("not-found"), // R-901 *is* the 404 page
