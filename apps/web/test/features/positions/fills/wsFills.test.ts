@@ -1,20 +1,23 @@
 /**
  * E29-S04 (#979) the feed, on fake timers: the `executions` subscription on the private lane with
  * no throttle, a drain every animation frame and a commit every 200 ms at most (5 Hz, D03 §3.9),
- * the REST backfill at first paint and after each snapshot (two pages of 500 at most, never
- * polled), the marks and their measure, S-02's 5 s budget and Retry, the 25-account cap, a
- * narrowing settled through the directory, and teardown.
+ * a security reset at once, the REST backfill at first paint and after each snapshot or settled
+ * narrowing (two pages of 500 at most, at most one per interval, never polled) applied 200 fills
+ * a frame, a failed read, the marks and their measure, S-02's 5 s budget and Retry, the 25-account
+ * cap, the link, a narrowing settled through the directory, and teardown.
  */
 import { act } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccountsOutcome, ExchangeAccount } from "../../../../src/features/positions/api";
-import type { FillsApi } from "../../../../src/features/positions/fills/api";
+import type { ExecutionsPage, FillsApi, Read } from "../../../../src/features/positions/fills/api";
 import {
   createFillsStore,
   type FillsStore,
 } from "../../../../src/features/positions/fills/fillsStore";
 import {
   APPLY_MEASURE,
+  APPLY_SLICE,
+  BACKFILL_INTERVAL_MS,
   BACKFILL_PAGES,
   COMMIT_INTERVAL_MS,
   FILLS_PANE_ID,
@@ -60,6 +63,38 @@ function fakeApi(hasMore = false): FillsApi & { queries: unknown[] } {
 const directory = (items: ExchangeAccount[] = accounts) => ({
   listExchangeAccounts: vi.fn(async (): Promise<AccountsOutcome> => ({ kind: "ok", items })),
 });
+const page = (items: unknown[], more = false): Read<ExecutionsPage> => ({
+  kind: "ok",
+  value: {
+    items: items as ExecutionsPage["items"],
+    nextCursor: more ? "more" : null,
+    hasMore: more,
+  },
+});
+
+/** Reads the test answers by hand: each call waits until `answer`, or for ever. */
+function heldApi(): FillsApi & {
+  calls: { signal: AbortSignal | undefined; answer: (out: Read<ExecutionsPage>) => void }[];
+} {
+  const calls: { signal: AbortSignal | undefined; answer: (out: Read<ExecutionsPage>) => void }[] =
+    [];
+  return {
+    calls,
+    listExecutions: (_query, _page, signal) =>
+      new Promise((answer) => calls.push({ signal, answer })),
+    getOrder: vi.fn(),
+    getTradeGroup: vi.fn(),
+    getInstrument: vi.fn(),
+  };
+}
+
+/** `n` fills of one account, each its own exec id. */
+const manyFills = (n: number): unknown[] =>
+  Array.from({ length: n }, (_, i) => ({
+    ...restItems()[1],
+    id: `0e000000-0000-4000-8000-${i.toString(16).padStart(12, "0")}`,
+    exec_id: `bulk-${i}`,
+  }));
 
 let ws: FakeClient;
 let store: FillsStore;
@@ -129,6 +164,47 @@ describe("the subscription", () => {
     const last = api.queries.at(-1) as { query: { accountIds?: string[] } };
     expect(last.query.accountIds).toEqual(ids);
   });
+
+  it("an account past 25 never shows, though a first-paint read brought its fills", async () => {
+    const many = Array.from({ length: 27 }, (_, i) => ({
+      ...accounts[0],
+      id: `a1000000-0000-4000-8000-${(i + 1).toString().padStart(12, "0")}`,
+      label: `A${i}`,
+    })) as ExchangeAccount[];
+    const over = [many[25]?.id, many[26]?.id];
+    const api = fakeApi();
+    vi.mocked(api.listExecutions).mockResolvedValueOnce(
+      page(
+        restItems().map((item, n) =>
+          n < 7 ? { ...item, exchange_account_id: over[n % 2] } : item,
+        ),
+      ),
+    );
+    start(api, { accounts: directory(many) });
+    await settle(FRAME_MS + COMMIT_INTERVAL_MS);
+    const shown = new Set(store.getSnapshot().rows.map((r) => r.accountId));
+    expect(shown.size).toBeGreaterThan(0);
+    expect(over.some((id) => id !== undefined && shown.has(id))).toBe(false);
+  });
+
+  it("the store hears the effective options once a sub_ok, never every frame", async () => {
+    const setEffective = vi.spyOn(store, "setEffective");
+    start();
+    await settle();
+    handle()?.setEffective({ exchange_account_ids: [MAIN, SUB1, SUB2] });
+    await settle(FRAME_MS * 10);
+    expect(setEffective).toHaveBeenCalledTimes(1);
+  });
+
+  it("a link that goes offline reads offline", async () => {
+    start();
+    await settle();
+    handle()?.push(snap(snapshotBody()));
+    await settle(FRAME_MS);
+    ws.setLink({ kind: "offline", cause: "offline" });
+    await settle(COMMIT_INTERVAL_MS + FRAME_MS);
+    expect(store.getSnapshot().status).toBe("offline");
+  });
 });
 
 describe("REST: at first paint and after each snapshot, never polled (BQ-9)", () => {
@@ -155,8 +231,128 @@ describe("REST: at first paint and after each snapshot, never polled (BQ-9)", ()
     await settle();
     handle()?.push(snap(snapshotBody()), delta(deltaBody()));
     await settle(COMMIT_INTERVAL_MS + FRAME_MS);
-    expect(store.getSnapshot()).toMatchObject({ status: "live", dedupeHits: 13 });
+    expect(store.getSnapshot().status).toBe("live");
     expect(store.getSnapshot().rows).toHaveLength(14);
+  });
+
+  it("the dedupe counter settles at the 13 fills both sources brought, however many backfills", async () => {
+    start();
+    await settle();
+    handle()?.push(snap(snapshotBody()), delta(deltaBody()));
+    await settle(BACKFILL_INTERVAL_MS);
+    handle()?.push(snap(snapshotBody())); // a re-snapshot, and its backfill
+    await settle(COMMIT_INTERVAL_MS + FRAME_MS);
+    expect(store.getSnapshot().dedupeHits).toBe(13);
+  });
+
+  it("a snapshot's backfill reads at most once an interval; one asked inside reads at its end", async () => {
+    const api = fakeApi();
+    start(api);
+    await settle();
+    handle()?.push(snap(snapshotBody()));
+    await settle(FRAME_MS);
+    expect(api.queries).toHaveLength(2);
+    for (let i = 0; i < 3; i += 1) {
+      handle()?.push(snap(snapshotBody()));
+      await settle(FRAME_MS);
+    }
+    expect(api.queries).toHaveLength(2);
+    await settle(BACKFILL_INTERVAL_MS);
+    expect(api.queries).toHaveLength(3);
+  });
+
+  it("a settled narrowing reads REST again, to bring back who stayed", async () => {
+    const api = fakeApi();
+    const accountsApi = directory();
+    start(api, { accounts: accountsApi });
+    await settle();
+    handle()?.push(snap(snapshotBody()));
+    await settle(BACKFILL_INTERVAL_MS);
+    accountsApi.listExchangeAccounts.mockResolvedValueOnce({
+      kind: "ok",
+      items: accounts.filter((a) => a.id !== SUB2),
+    });
+    handle()?.push(reset("narrowed"));
+    await settle(FRAME_MS * 3 + COMMIT_INTERVAL_MS);
+    expect(api.queries).toHaveLength(3);
+    expect(new Set(store.getSnapshot().rows.map((r) => r.accountId))).toEqual(
+      new Set([MAIN, SUB1]),
+    );
+  });
+
+  it("a read superseded by a newer one still applies: the store is a set", async () => {
+    const api = heldApi();
+    start(api);
+    await settle();
+    handle()?.push(snap(snapshotBody()));
+    await settle(FRAME_MS);
+    api.calls[1]?.answer(page([]));
+    api.calls[0]?.answer(page(restItems()));
+    await settle(FRAME_MS + COMMIT_INTERVAL_MS);
+    const execs = store.getSnapshot().rows.map((r) => r.execId.slice(-4));
+    expect(execs).toContain("0014"); // the ADL fill only the first read held
+  });
+
+  it("a failed read is readFailed; the live rows stay", async () => {
+    const api = fakeApi();
+    vi.mocked(api.listExecutions).mockResolvedValue({ kind: "unavailable" });
+    start(api);
+    await settle();
+    handle()?.push(snap(snapshotBody()));
+    await settle(FRAME_MS + COMMIT_INTERVAL_MS);
+    expect(store.getSnapshot()).toMatchObject({ status: "live", readFailed: true });
+    expect(store.getSnapshot().rows).toHaveLength(12);
+  });
+
+  it("a failed second page keeps the first: its fills apply, and the read is readFailed", async () => {
+    const api = fakeApi();
+    vi.mocked(api.listExecutions)
+      .mockResolvedValueOnce(page(restItems(), true))
+      .mockResolvedValueOnce({ kind: "unavailable" });
+    start(api);
+    await settle(FRAME_MS + COMMIT_INTERVAL_MS);
+    expect(store.getSnapshot()).toMatchObject({ readFailed: true });
+    expect(store.getSnapshot().rows).toHaveLength(14);
+  });
+
+  it("Retry after a failed read reads again, and a live feed is not made again", async () => {
+    const api = fakeApi();
+    vi.mocked(api.listExecutions)
+      .mockResolvedValueOnce({ kind: "unavailable" })
+      .mockResolvedValueOnce({ kind: "unavailable" });
+    start(api);
+    await settle();
+    handle()?.push(snap(snapshotBody()));
+    await settle(FRAME_MS + COMMIT_INTERVAL_MS);
+    const live = handle();
+    feed?.retry();
+    await settle(FRAME_MS + COMMIT_INTERVAL_MS);
+    expect(store.getSnapshot()).toMatchObject({ readFailed: false });
+    expect(store.getSnapshot().rows).toHaveLength(14);
+    expect(live?.released).toBe(false);
+  });
+});
+
+describe("REST applies 200 fills a frame at most, inside the measure (m5)", () => {
+  it("a read of 1,000 fills applies in five frames of 200, each measured", async () => {
+    const api = fakeApi();
+    vi.mocked(api.listExecutions).mockResolvedValueOnce(page(manyFills(1_000)));
+    const applyRest = vi.spyOn(store, "applyRest");
+    start(api);
+    await settle(FRAME_MS * 6);
+    expect(applyRest.mock.calls.map(([items]) => items.length)).toEqual([200, 200, 200, 200, 200]);
+    expect(perf.measure).toHaveBeenCalledTimes(5);
+  });
+
+  it("a frame's WS items count first: a snapshot's 12 leave 188 for REST", async () => {
+    const api = fakeApi();
+    vi.mocked(api.listExecutions).mockResolvedValueOnce(page(manyFills(400)));
+    const applyRest = vi.spyOn(store, "applyRest");
+    start(api);
+    await settle();
+    handle()?.push(snap(snapshotBody()));
+    await settle(FRAME_MS);
+    expect(applyRest.mock.calls.map(([items]) => items.length)).toEqual([APPLY_SLICE - 12]);
   });
 });
 
@@ -234,6 +430,17 @@ describe("S-02, Retry, a narrowing and teardown", () => {
     expect(store.getSnapshot().withdrawn.map((w) => w.label)).toEqual(["Sub-2"]);
   });
 
+  it("a revocation clears the published rows at once, inside the 200 ms window", async () => {
+    start();
+    await settle(COMMIT_INTERVAL_MS * 2);
+    handle()?.push(snap(snapshotBody()));
+    await settle(FRAME_MS);
+    expect(store.getSnapshot().rows.length).toBeGreaterThan(0);
+    handle()?.push(reset("revoked"));
+    await settle(FRAME_MS);
+    expect(store.getSnapshot()).toMatchObject({ status: "revoked", rows: [] });
+  });
+
   it("stop releases the subscription and drains no more", async () => {
     start();
     await settle(FRAME_MS);
@@ -245,5 +452,32 @@ describe("S-02, Retry, a narrowing and teardown", () => {
     await settle(COMMIT_INTERVAL_MS);
     expect(read).not.toHaveBeenCalled();
     expect(store.getSnapshot().status).toBe("idle");
+  });
+
+  it("stop leaves no timer behind: the 5 s budget is cleared", async () => {
+    start();
+    await settle();
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    feed?.stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stop leaves no timer behind: a backfill owed for the interval's end is cleared", async () => {
+    start();
+    await settle();
+    handle()?.push(snap(snapshotBody()));
+    await settle(FRAME_MS);
+    handle()?.push(snap(snapshotBody()));
+    await settle(FRAME_MS);
+    feed?.stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stop aborts a read in flight", async () => {
+    const api = heldApi();
+    start(api);
+    await settle();
+    feed?.stop();
+    expect(api.calls[0]?.signal?.aborted).toBe(true);
   });
 });

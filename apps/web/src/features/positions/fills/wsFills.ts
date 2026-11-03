@@ -6,20 +6,23 @@
  *   most 25 accounts (`23` §13.5), with no `throttle_ms`: `executions` is never throttled or
  *   coalesced (S4), and a client that cannot keep up is closed `4429`.
  * - **Every animation frame** the handle is drained (`read()`, never per arrival, C9) and the store
- *   applies each item in O(1); **every 200 ms** at most it commits, so the list paints at 5 Hz
- *   (D03 §3.9, `14`:1734) while the topic itself stays unthrottled. A frame-paced blotter is not a
- *   hot path (C-2.20).
- * - **Marks:** for a frame that committed, the scheduler's `state.apply` and `paint` marks and a
- *   `performance.measure` named `ws_frame_apply_seconds` with `detail.topic` `"executions"` between
- *   them (milliseconds, as every measure is; G-W2's transport makes it seconds, as the positions
- *   feed's): the apply-to-paint measure BQ-17's 4 ms budget reads.
+ *   applies each item in O(1), then REST's waiting items up to `APPLY_SLICE` in all; **every
+ *   200 ms** at most it commits, so the list paints at 5 Hz (D03 §3.9, `14`:1734) while the topic
+ *   itself stays unthrottled, and a security reset is published in its own frame (SR-E29-11). A
+ *   frame-paced blotter is not a hot path (C-2.20).
+ * - **Marks:** for a frame that applied fills or committed, the scheduler's `state.apply` and
+ *   `paint` marks and a `performance.measure` named `ws_frame_apply_seconds` with `detail.topic`
+ *   `"executions"` between them (milliseconds, as every measure is; G-W2's transport makes it
+ *   seconds, as the positions feed's): the apply-to-paint measure BQ-17's 4 ms budget reads.
  * - **REST** (BQ-9): `listExecutions`, newest first, at most two pages of 500, once at first paint
- *   and once after each `snap` (a reconnect's included): the backfill beyond the snapshot's 100
- *   fills of orders, and the fills of no order, which only REST serves (D03 G20). Never polled.
- *   Past 25 accounts a read names the 25 the subscription does. Only the newest read applies.
+ *   and after each `snap` (a reconnect's included) or settled narrowing, those at most once per
+ *   `BACKFILL_INTERVAL_MS`: the backfill beyond the snapshot's 100 fills of orders, and the fills
+ *   of no order, which only REST serves (D03 G20). Never polled. Past 25 accounts a read names the
+ *   25 the subscription does. Every read that answers applies, a superseded one too (the store is
+ *   a set), and a failed one, or a failed page, is the store's `readFailed`.
  * - **S-02:** no first `snap` within 5 s, or a refused subscription, is "Could not load"; `retry()`
- *   re-subscribes. A narrowing re-reads the directory, as the positions feed does, and the
- *   subscription is made again only when the directory changed.
+ *   re-subscribes, and reads REST again after a failed read. A narrowing re-reads the directory,
+ *   as the positions feed does, and the subscription is made again only when the directory changed.
  */
 import type { ConsumerSpec, TopicHandle, WsClient } from "../../../lib/ws/api";
 import { createFrameScheduler, type FrameMark } from "../../../lib/ws/client/frameScheduler";
@@ -41,6 +44,14 @@ export const APPLY_MEASURE = "ws_frame_apply_seconds";
 export const MARK_PREFIX = "cv.fills.";
 /** The measures kept in the page's timeline at most (C-2.18). */
 export const MAX_MEASURES = 1_000;
+/** The fills one animation frame applies at most: WS items first, then REST's, which wait. */
+export const APPLY_SLICE = 200;
+/**
+ * One backfill after first paint per 10 s at most; one asked inside it reads at its end. A link
+ * that flaps, or a topic re-snapshotted after each missed publish (`23` §6.2.3), would otherwise
+ * read 2 × 500 rows, mostly held, per snapshot; and the snapshot brings the newest 100 at once.
+ */
+export const BACKFILL_INTERVAL_MS = 10_000;
 
 export interface FillsFeedOptions {
   readonly client: Pick<WsClient, "consume" | "getState" | "subscribe">;
@@ -86,9 +97,13 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
   let accountIds: readonly string[] | null = null;
   let handle: TopicHandle | null = null;
   let budget: unknown;
-  let restSeq = 0;
+  const queue: unknown[] = []; // REST items to apply: 1,000 a read, gone in 5 frames (C-2.18)
+  let lastBackfill = Number.NEGATIVE_INFINITY;
+  let owed: unknown; // the timer of a backfill asked inside the interval
+  let effective: Readonly<Record<string, unknown>> | null = null;
   let lastCommit = Number.NEGATIVE_INFINITY;
   let committed = false;
+  let applied = 0;
   let applyStart = 0;
   let measures = 0;
 
@@ -120,17 +135,32 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
     }, SNAPSHOT_BUDGET_MS);
   }
 
-  /** One backfill: newest first, at most two pages; past the cap it names the subscription's 25. */
+  /** One read: newest first, at most two pages; past the cap it names the subscription's 25. */
   function readRest(): void {
-    restSeq += 1;
-    const seq = restSeq;
     const named =
       accountIds !== null && accountIds.length > MAX_ACCOUNT_IDS
         ? { accountIds: accountIds.slice(0, MAX_ACCOUNT_IDS) }
         : {};
     void readExecutions(api, named, BACKFILL_PAGES, abort.signal).then((out) => {
-      if (!stopped && seq === restSeq && out.kind === "ok") store.applyRest(out.value.items);
+      if (stopped) return;
+      store.setReadFailed(out.kind !== "ok" || out.value.failure !== null);
+      if (out.kind === "ok") queue.push(...out.value.items);
     });
+  }
+
+  /** A backfill after first paint, at most one per interval. */
+  function backfill(): void {
+    if (owed !== undefined) return;
+    const wait = lastBackfill + BACKFILL_INTERVAL_MS - now();
+    if (wait > 0) {
+      owed = timers.setTimeout(() => {
+        owed = undefined;
+        backfill();
+      }, wait);
+      return;
+    }
+    lastBackfill = now();
+    readRest();
   }
 
   function loadAccounts(narrowed = false): void {
@@ -151,23 +181,33 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
     });
   }
 
-  /** One animation frame: drain and apply; commit when 200 ms have passed since the last. */
+  /** One animation frame: drain and apply; commit 200 ms after the last, a security reset now. */
   function drain(): void {
     committed = false;
+    applied = 0;
     try {
       if (handle !== null) {
         const frames = handle.read();
-        store.applyFrames(frames);
+        applied = store.applyFrames(frames);
         if (frames.some((f) => f.kind === "snap")) {
           clearBudget();
-          readRest(); // BQ-9: after each snapshot, a reconnect's included
+          backfill(); // BQ-9: after each snapshot, a reconnect's included
         }
-        store.setEffective(handle.effective);
+        if (handle.effective !== effective) {
+          effective = handle.effective; // only a `sub_ok` or a `ctl_ok` makes a new one
+          store.setEffective(effective);
+        }
+      }
+      if (queue.length > 0) {
+        const slice = queue.splice(0, Math.max(0, APPLY_SLICE - applied));
+        store.applyRest(slice);
+        applied += slice.length;
       }
       if (store.takeNarrowed()) loadAccounts(true); // 23 §9.5: the directory says who left
+      if (store.takeSettled()) backfill(); // and REST brings back who stayed
       store.setLink(!isDown(client.getState()));
       const at = now();
-      if (at - lastCommit >= COMMIT_INTERVAL_MS && store.commit()) {
+      if (store.commit(at - lastCommit < COMMIT_INTERVAL_MS)) {
         lastCommit = at;
         committed = true;
       }
@@ -181,7 +221,7 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
       applyStart = atMs;
       return;
     }
-    if (!committed || perf === null || perf === undefined) return;
+    if ((!committed && applied === 0) || perf === null || perf === undefined) return;
     try {
       perf.mark(`${MARK_PREFIX}state.apply`, { startTime: applyStart });
       perf.mark(`${MARK_PREFIX}paint`, { startTime: atMs });
@@ -219,14 +259,19 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
   return {
     retry() {
       if (stopped) return;
+      // Retry acts on what was shown: a failed feed is made again, a failed read read again; a
+      // live feed never is made again, as the frames it has not read yet would be lost
+      const { status, readFailed } = store.getSnapshot();
       store.markRetrying();
+      if (readFailed) readRest();
       if (accountIds === null) loadAccounts();
-      else subscribe(accountIds);
+      else if (status === "snapshot_failed" || status === "revoked") subscribe(accountIds);
     },
     stop() {
       if (stopped) return;
       stopped = true;
       abort.abort();
+      if (owed !== undefined) timers.clearTimeout(owed);
       scheduler.stop();
       release();
       store.setStarted(false);

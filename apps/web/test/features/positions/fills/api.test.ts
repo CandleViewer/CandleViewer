@@ -164,13 +164,25 @@ describe("readExecutions", () => {
     expect(out).toMatchObject({ kind: "ok", value: { complete: false } });
     expect(api.cursors).toEqual([undefined, "c1"]);
     const done = await readExecutions(pagedApi(1), {}, 2);
-    expect(done).toMatchObject({ kind: "ok", value: { complete: true } });
+    expect(done).toMatchObject({ kind: "ok", value: { complete: true, failure: null } });
   });
 
-  it("a failed page is the read's failure", async () => {
+  it("a failed first page is the read's failure", async () => {
     const api = pagedApi(5);
     vi.mocked(api.listExecutions).mockResolvedValueOnce({ kind: "invalid_cursor" });
     expect(await readExecutions(api, {}, 2)).toEqual({ kind: "invalid_cursor" });
+  });
+
+  it("a failed later page keeps the pages before it: not complete, its failure named", async () => {
+    const api = pagedApi(5);
+    const items = [{ is_paper: false, exec_id: "e1" }];
+    vi.mocked(api.listExecutions)
+      .mockResolvedValueOnce({ kind: "ok", value: { items, nextCursor: "c1", hasMore: true } })
+      .mockResolvedValueOnce({ kind: "unavailable" });
+    expect(await readExecutions(api, {}, 3)).toEqual({
+      kind: "ok",
+      value: { items, complete: false, failure: "unavailable" },
+    });
   });
 });
 

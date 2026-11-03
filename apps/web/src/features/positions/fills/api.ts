@@ -34,6 +34,15 @@ export interface ExecutionsPage {
   readonly hasMore: boolean;
 }
 
+/** What `readExecutions` read: a page that failed after the first keeps the pages before it. */
+export interface ExecutionsRead {
+  readonly items: readonly Execution[];
+  /** No page remains. */
+  readonly complete: boolean;
+  /** Why a page after the first failed (`complete` is then false); `null` when none did. */
+  readonly failure: FillsReadFailure | null;
+}
+
 export interface ExecutionsQuery {
   /** At most 25 (`22` `AccountIdsQuery`); omitted, every account the caller may view. */
   readonly accountIds?: readonly string[];
@@ -153,25 +162,26 @@ export const fillsApi: FillsApi = {
 
 /**
  * Up to `maxPages` pages of one query, following `next_cursor` (a bound, so a server that keeps
- * saying `has_more` never loops); `complete` is false when more remain.
+ * saying `has_more` never loops); `complete` is false when more remain, or a later page failed.
  */
 export async function readExecutions(
   api: FillsApi,
   query: ExecutionsQuery,
   maxPages: number,
   signal?: AbortSignal,
-): Promise<Read<{ readonly items: readonly Execution[]; readonly complete: boolean }>> {
+): Promise<Read<ExecutionsRead>> {
   const items: Execution[] = [];
   let cursor: string | undefined;
   for (let n = 0; n < maxPages; n += 1) {
     const page = await api.listExecutions(query, cursor === undefined ? {} : { cursor }, signal);
-    if (page.kind !== "ok") return page;
+    if (page.kind !== "ok")
+      return n === 0 ? page : { kind: "ok", value: { items, complete: false, failure: page.kind } };
     items.push(...page.value.items);
     if (!page.value.hasMore || page.value.nextCursor === null)
-      return { kind: "ok", value: { items, complete: true } };
+      return { kind: "ok", value: { items, complete: true, failure: null } };
     cursor = page.value.nextCursor;
   }
-  return { kind: "ok", value: { items, complete: false } };
+  return { kind: "ok", value: { items, complete: false, failure: null } };
 }
 
 /** Instruments a cache holds at most (C-2.18); past it the oldest is dropped first. */
