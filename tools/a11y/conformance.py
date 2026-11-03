@@ -35,7 +35,7 @@ open Level A findings and expired acceptances are `--release` only (they cannot 
 Usage (repo root):
   python3 tools/a11y/conformance.py --fill
   python3 tools/a11y/conformance.py --check
-  python3 tools/a11y/conformance.py --release [--today YYYY-MM-DD]
+  python3 tools/a11y/conformance.py --release
 Exit 0 = clean; 1 = at least one FAIL line. Stdlib only.
 """
 
@@ -193,6 +193,8 @@ URL_RE = re.compile(
 KEYLIKE_RE = re.compile(r"[A-Za-z0-9+/=_-]{24,}")
 IMAGE_RE = re.compile(r"!\[|<img|\.png\b|\.svg\b", re.IGNORECASE)
 IDLIKE_RE = re.compile(r"\b\d{6,}\b|\bUID\b")
+#: Host, key-like or id strings: the one pattern register.py also reads for a sign-off name.
+LEAK_RE = re.compile("|".join(r.pattern for r in (URL_RE, KEYLIKE_RE, IDLIKE_RE)))
 CONTENT_CHECKS = (
     (URL_RE, "a host"),
     (KEYLIKE_RE, "a key-like string"),
@@ -206,6 +208,7 @@ JARGON_RE = re.compile(
 PLAIN_MAX_WORDS = 30
 TICKET_RE = re.compile(r"^E\d\d-[A-Z]+\d\d #\d+$")
 DATE_RE = re.compile(r"\d{4}-\d\d-\d\d")
+LEVELS = ("A", "AA")  # the limitations register's `level` enum
 
 Finding = tuple[str, str]  # gate, message
 
@@ -519,7 +522,7 @@ def limits_problems(limits: str, inp: Inputs) -> list[str]:
             bad.append(f"{rid}'s level is not {lvl}")
         d = r.get("disposition")
         dd = d if isinstance(d, dict) else {}
-        if dd.get("kind") == "accepted-risk" and r.get("level") == "A":
+        if dd.get("kind") == "accepted-risk" and is_level_a(r.get("level"), r.get("sc")):
             bad.append(f"{rid} accepts a Level A risk")
         if dd.get("kind") not in ("fix-ticket", "accepted-risk", "none"):
             bad.append(f"{rid}'s disposition kind is not one of the three")
@@ -564,7 +567,7 @@ def exception_problems(limits: str) -> list[str]:
                 bad.append(f"{rid}: {sc} is not a WCAG 2.2 A or AA criterion")
             elif SC[sc][0] == "A":
                 bad.append(f"{rid}: Level A criterion {sc} can never be an accepted risk")
-        if r.get("level") == "A":
+        if is_level_a(r.get("level"), sc_list):
             bad.append(f"{rid}: a Level A row can never be an accepted risk")
         surf = r.get("surfaces")
         if not (
@@ -613,7 +616,7 @@ def expired_exceptions(limits: str, today: dt.date) -> list[str]:
 
 def is_level_a(level: object, scs: object = None) -> bool:
     """Level A when any level token is A ('AA / A' too), or any criterion is Level A in `SC`."""
-    if "A" in re.findall(r"[A-Za-z]+", text_of(level)):
+    if "A" in (t.upper() for t in re.findall(r"[A-Za-z]+", text_of(level))):
         return True
     return isinstance(scs, list) and any(SC.get(x, ("", ""))[0] == "A" for x in scs)
 
@@ -621,7 +624,7 @@ def is_level_a(level: object, scs: object = None) -> bool:
 def open_level_a(inp: Inputs) -> list[str]:
     """Every open Level A finding, named (E47-T01 register, then E47-D02 rows not in it)."""
     out = [
-        f"{text_of(f.get('id'))} (SC {text_of(f.get('wcagSc'))}): {text_of(f.get('title'))[:80]}"
+        f"{text_of(f.get('id'))} (SC {text_of(f.get('wcagSc'))})"
         for f in inp.t01_findings()
         if is_level_a(f.get("level"), [f.get("wcagSc")]) and f.get("status") != "fixed"
     ]
@@ -631,7 +634,7 @@ def open_level_a(inp: Inputs) -> list[str]:
             and text_of(f.get("status")).startswith("open")
             and not text_of(f.get("id")).startswith("A11Y-F-")
         ):
-            out.append(f"{text_of(f.get('id'))}: {text_of(f.get('title'))[:80]}")
+            out.append(text_of(f.get("id")))
     return sorted(out)
 
 
@@ -705,6 +708,8 @@ def field_problems(limits: str) -> list[str]:
             bad.append(f"{at}.disclosure must be statement or internal")
         if not text_of(r.get("category")):
             bad.append(f"{at}.category is empty")
+        if r.get("level") not in LEVELS:
+            bad.append(f"{at}.level must be one of {', '.join(LEVELS)}")
     return bad
 
 
@@ -739,10 +744,14 @@ def exception_section(limits: str, inp: Inputs) -> list[str]:
     ex = exception_rows(limits)
     exps = sorted(text_of(disposition_of(r).get("expiry")) for r in ex)
     open_a = sum(
-        1 for f in inp.t01_findings() if f.get("level") == "A" and f.get("status") != "fixed"
+        1
+        for f in inp.t01_findings()
+        if is_level_a(f.get("level"), [f.get("wcagSc")]) and f.get("status") != "fixed"
     )
     open_aa = sum(
-        1 for f in inp.t01_findings() if f.get("level") == "AA" and f.get("status") != "fixed"
+        1
+        for f in inp.t01_findings()
+        if not is_level_a(f.get("level"), [f.get("wcagSc")]) and f.get("status") != "fixed"
     )
     out = [
         "",
@@ -923,7 +932,14 @@ def stale_reason(committed: str, want: str) -> str:
     moved = [f"{k} (blob {have.get(k, '?')} -> {v})" for k, v in now.items() if have.get(k) != v]
     if moved:
         return "the report is stale: " + ", ".join(moved) + " changed; run --fill"
-    return "the report is stale (it differs from the generated one); run --fill"
+    first = next(
+        (i + 1 for i, (a, b) in enumerate(zip(normalise(committed), normalise(want))) if a != b),
+        min(len(normalise(committed)), len(normalise(want))) + 1,
+    )
+    return (
+        f"the report is stale (first difference at line {first}): an unpinned input changed, one of "
+        f"{LIMITS_REL}, {EVIDENCE_REL} or {PLAN14_REL}; run --fill"
+    )
 
 
 # ---------------------------------------------------------------------------- the checks
@@ -988,12 +1004,14 @@ def main(argv: list[str] | None = None) -> int:
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--fill", action="store_true", help="write the report")
     mode.add_argument("--check", action="store_true", help="per PR: schema and staleness")
-    mode.add_argument("--release", action="store_true", help="RC: also Level A and expiry")
-    ap.add_argument("--root", type=Path, default=ROOT, help=argparse.SUPPRESS)
-    ap.add_argument("--today", type=dt.date.fromisoformat, default=None, help="YYYY-MM-DD")
+    mode.add_argument(
+        "--release",
+        action="store_true",
+        help="RC: also Level A and expiry (today is the real date)",
+    )
     args = ap.parse_args(argv)
     m = "fill" if args.fill else "check" if args.check else "release"
-    lines, rc = run(args.root, m, args.today)
+    lines, rc = run(ROOT, m)
     for ln in lines:
         print(ln)
     return rc

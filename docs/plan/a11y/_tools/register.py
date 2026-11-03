@@ -18,6 +18,8 @@ rows normalised), so a Prettier reflow of the committed file by lint-staged is n
 from __future__ import annotations
 
 import argparse
+import datetime as dt
+import importlib.util
 import json
 import re
 import sys
@@ -60,13 +62,33 @@ BANDS = (
 )
 SCREEN_KEYS = ("id", "name", "coverage", "owningTicket", "states", "evidence", "noFindings")
 SIGN_OFF_VERDICTS = ("signed", "declined")
+
+
+def _conformance() -> Any:
+    """tools/a11y/conformance.py, loaded by path: the one home of the host / key / id patterns."""
+    path = Path(__file__).resolve().parents[4] / "tools" / "a11y" / "conformance.py"
+    spec = importlib.util.spec_from_file_location("a11y_conformance_leak", path)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod  # dataclasses read it
+    spec.loader.exec_module(mod)
+    return mod
+
+
 # The sign-off name is published in the matrix: no host, id or key-like string (E47-D13 §6.5).
-SIGN_OFF_LEAK = re.compile(
-    r"https?://|www\.|/home/|localhost|\.local\b|\b[a-z0-9-]+\.(?:com|io|org|net)\b"
-    r"|[A-Za-z0-9+/=_-]{24,}|\b\d{6,}\b|\bUID\b"
-)
+SIGN_OFF_LEAK = _conformance().LEAK_RE
 EVIDENCE_KEYS = ("automated", "keyboard", "deep", "sr")
 FINDING_KEYS = ("id", "screenId", "level", "severity", "owningTicket", "status")
+
+
+def _real_date(value: object) -> bool:
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d\d-\d\d", value):
+        return False
+    try:
+        dt.date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 class RegisterError(Exception):
@@ -120,7 +142,7 @@ def validate(doc: dict[str, Any]) -> list[str]:
             and so.get("verdict") in SIGN_OFF_VERDICTS
             and isinstance(so.get("by"), str)
             and so["by"].strip()
-            and re.fullmatch(r"\d{4}-\d\d-\d\d", str(so.get("date", "")))
+            and _real_date(so.get("date"))
         ):
             errors.append(
                 f"{rid}: signOff needs a verdict ({'/'.join(SIGN_OFF_VERDICTS)}), by, date"
@@ -147,6 +169,16 @@ def validate(doc: dict[str, Any]) -> list[str]:
                 errors.append(f"{f['id']}: unknown screen {scr}")
     if len(fids) != len(set(fids)):
         errors.append("finding ids are not unique")
+    open_on = {
+        scr
+        for f in doc["findings"]
+        if isinstance(f, dict) and f.get("status") in OPEN_STATUSES and "screenId" in f
+        for scr in _screens_of(f)
+    }
+    for row in doc["screens"]:
+        so = row.get("signOff") if isinstance(row, dict) else None
+        if isinstance(so, dict) and so.get("verdict") == "signed" and row.get("id") in open_on:
+            errors.append(f"{row['id']}: signOff 'signed' refused: the screen has an open finding")
     pids = [p.get("id") for p in doc["patterns"] if isinstance(p, dict)]
     if len(pids) != len(set(pids)):
         errors.append("pattern ids are not unique")

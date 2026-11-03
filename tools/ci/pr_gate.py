@@ -138,6 +138,8 @@ ALWAYS = {
     "backlog-schema": "scripts/validate-backlog.py --quiet",
     "backlog-twins": "docs/plan/backlog/_tools/validate.py --check",
     "alert-drill-matrix": "scripts/check_e04_test_plan.py",  # E04-Q01: each alert has a row (#3862)
+    "a11y-conformance": "tools/a11y/conformance.py --check",  # E47-T05
+    "a11y-matrix": "docs/plan/a11y/_tools/register.py --check",  # E47-T05
 }
 ON_FILTER = {  # filter: {gate: script}
     "infra": {

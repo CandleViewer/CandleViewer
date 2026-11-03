@@ -191,6 +191,24 @@ def test_open_level_a_fails_release_naming_the_finding_but_not_check(tmp_path: P
     assert not any("A11Y-F-0002" in ln and "G-LEVEL-A" in ln for ln in lines)  # AA is not Level A
 
 
+def test_release_level_a_lines_carry_ids_only_and_no_flag_sets_today(tmp_path: Path) -> None:
+    root = _tree(tmp_path)
+    _fill(root)
+    lines, _ = _run(root, "release")
+    assert not any("title of" in ln for ln in lines), lines
+    for flag in (["--today", "2020-01-01"], ["--root", str(root)]):
+        with pytest.raises(SystemExit):
+            conf.main(["--release", *flag])
+
+
+def test_stale_message_names_the_candidate_inputs_when_no_blob_moved(tmp_path: Path) -> None:
+    root = _tree(tmp_path)
+    _fill(root)
+    _edit_limits(root, lambda d: d["limitations"][0]["disposition"].update(ticket="E47-S05 #1320"))
+    lines, rc = _run(root, "check")
+    assert rc == 1 and any("G-STALE" in ln and "47-limitations.json" in ln for ln in lines), lines
+
+
 def test_fixed_level_a_passes_release(tmp_path: Path) -> None:
     root = _tree(tmp_path)
     fp = root / f"{A11Y}/findings.json"
@@ -255,6 +273,16 @@ def test_level_a_can_never_be_an_accepted_risk(tmp_path: Path) -> None:
     lines, rc = _run(_tree(tmp_path, rows), "fill")
     assert rc == 1
     assert any("Level A criterion 2.4.3 can never be an accepted risk" in ln for ln in lines), lines
+
+
+@pytest.mark.parametrize("level", ["AA / A", "a", "aa / a", "A, AA"])
+def test_mixed_level_label_on_an_accepted_risk_row_fails_check(tmp_path: Path, level: str) -> None:
+    root = _risk_tree(tmp_path, GOOD_RISK)  # the row's criterion (1.4.3) is Level AA
+    _edit_limits(root, lambda d: d["limitations"][1].update(level=level))
+    lines, rc = _run(root, "check")
+    assert rc == 1, lines
+    assert any("G-EXCEPTION" in ln and "a Level A row can never" in ln for ln in lines), lines
+    assert any("G-SCHEMA" in ln and ".level must be one of" in ln for ln in lines), lines
 
 
 def test_level_a_criterion_on_an_aa_labelled_row_is_still_refused(tmp_path: Path) -> None:
@@ -347,7 +375,7 @@ def test_every_rendered_field_is_scanned_and_well_formed(
 # --------------------------------------------------------------------------- Level A detection
 
 
-@pytest.mark.parametrize("level", ["A", "AA / A", "A / AA", "A, AA"])
+@pytest.mark.parametrize("level", ["A", "AA / A", "A / AA", "A, AA", "a", "aa / a"])
 def test_mixed_level_tokens_count_as_level_a(level: str) -> None:
     assert conf.is_level_a(level)
     assert not conf.is_level_a("AA")
@@ -423,8 +451,7 @@ def _d13() -> Any:
         text=True,
         check=False,
     )
-    if base.returncode != 0:
-        pytest.skip("the E47-D13 base commit is not in this clone")
+    assert base.returncode == 0, "the E47-D13 base commit is not in this clone: fetch full history"
     return _load("a11y_d13_t", D13_REL)
 
 
@@ -466,7 +493,7 @@ def test_design_audit_dry_run_is_unchanged() -> None:
 
 
 def test_rejected_field_values_never_reach_the_log(tmp_path: Path) -> None:
-    secret = "AbCdEfGhIjKlMnOpQrStUvWxYz12"
+    secret = "".join(map(chr, range(65, 91))) + "12"  # a key-like probe built at run time
     root = _tree(tmp_path)
     _edit_limits(root, lambda d: d["limitations"][1]["disposition"].update(ticket=secret))
     _edit_limits(root, lambda d: d["limitations"][0].update(disclosure=secret))
@@ -494,9 +521,49 @@ def test_matrix_sign_off_column_reads_the_register() -> None:
     assert "| Sign-off" in regpy.render(doc)
     assert "not signed off" in regpy.render(doc)
     signed = copy.deepcopy(doc)
-    signed["screens"][0]["signOff"] = {"verdict": "signed", "by": "the Owner", "date": "2026-11-03"}
+    clean = _screen_without_open_findings(doc)
+    signed["screens"][clean]["signOff"] = {
+        "verdict": "signed",
+        "by": "the Owner",
+        "date": "2026-11-03",
+    }
     assert regpy.validate(signed) == []
     assert "signed (the Owner, 2026-11-03)" in regpy.render(signed)
+
+
+def _screen_without_open_findings(doc: dict[str, Any]) -> int:
+    busy = {
+        s
+        for f in doc["findings"]
+        if f["status"] in regpy.OPEN_STATUSES
+        for s in [f["screenId"], *f.get("alsoOn", [])]
+    }
+    return next(i for i, s in enumerate(doc["screens"]) if s["id"] not in busy)
+
+
+def test_matrix_refuses_a_signed_screen_that_has_an_open_finding() -> None:
+    doc = _register_doc()
+    open_f = next(f for f in doc["findings"] if f["status"] in regpy.OPEN_STATUSES)
+    row = next(s for s in doc["screens"] if s["id"] == open_f["screenId"])
+    row["signOff"] = {"verdict": "signed", "by": "the Owner", "date": "2026-11-03"}
+    assert any("open finding" in e for e in regpy.validate(doc))
+    row["signOff"]["verdict"] = "declined"
+    assert regpy.validate(doc) == []
+
+
+@pytest.mark.parametrize("date", ["2026-13-45", "2026-02-30", "0000-00-00"])
+def test_matrix_rejects_an_impossible_sign_off_date(date: str) -> None:
+    bad = _register_doc()
+    bad["screens"][_screen_without_open_findings(bad)]["signOff"] = {
+        "verdict": "signed",
+        "by": "the Owner",
+        "date": date,
+    }
+    assert any("signOff" in e for e in regpy.validate(bad))
+
+
+def test_sign_off_name_check_uses_the_generator_patterns() -> None:
+    assert regpy.SIGN_OFF_LEAK.pattern == conf.LEAK_RE.pattern
 
 
 @pytest.mark.parametrize(
@@ -505,7 +572,7 @@ def test_matrix_sign_off_column_reads_the_register() -> None:
 )
 def test_matrix_rejects_unknown_sign_off_keys_and_leaky_names(extra: dict[str, str]) -> None:
     bad = _register_doc()
-    bad["screens"][0]["signOff"] = {
+    bad["screens"][_screen_without_open_findings(bad)]["signOff"] = {
         "verdict": "signed",
         "by": "the Owner",
         "date": "2026-11-03",

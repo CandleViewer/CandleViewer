@@ -22,10 +22,7 @@
       "plain": "Clicking outside the identity check window moves the keyboard position to the page behind it.",
       "impact": "Keyboard and screen reader users lose their place and may type into the wrong area.",
       "workaround": "Press Escape to close the window, then open it again from the same button.",
-      "disposition": {
-        "kind": "fix-ticket",
-        "ticket": "E47-S05 #1319"
-      },
+      "disposition": { "kind": "fix-ticket", "ticket": "E47-S05 #1319" },
       "disclosure": "statement"
     },
     {
@@ -37,10 +34,7 @@
       "plain": "While signing in, at the two-factor step and after a password change, the keyboard position can jump back to the start of the page.",
       "impact": "Keyboard and screen reader users must find their place again, and nothing is read out.",
       "workaround": "Press Tab once to reach the first field of the new step.",
-      "disposition": {
-        "kind": "fix-ticket",
-        "ticket": "E47-S05 #1319"
-      },
+      "disposition": { "kind": "fix-ticket", "ticket": "E47-S05 #1319" },
       "disclosure": "statement"
     },
     {
@@ -82,10 +76,7 @@
       "plain": "When the connection comes back, the app does not say so.",
       "impact": "Screen reader users hear that the connection dropped but not that it recovered.",
       "workaround": "Check the connection status in the status bar at the bottom of the window.",
-      "disposition": {
-        "kind": "fix-ticket",
-        "ticket": "E29-S07 #1028"
-      },
+      "disposition": { "kind": "fix-ticket", "ticket": "E29-S07 #1028" },
       "disclosure": "statement"
     },
     {
@@ -129,10 +120,7 @@
       "plain": "The data age line changes colour as the data gets older, without changing its words.",
       "impact": "People who cannot tell the colours apart may miss that the data is getting old.",
       "workaround": "Read the age shown in the line, which counts the seconds.",
-      "disposition": {
-        "kind": "fix-ticket",
-        "ticket": "E17-D02 #325"
-      },
+      "disposition": { "kind": "fix-ticket", "ticket": "E17-D02 #325" },
       "disclosure": "statement"
     },
     {
