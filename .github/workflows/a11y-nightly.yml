@@ -74,7 +74,7 @@ jobs:
         run: |
           mkdir -p reports/a11y
           chrome=$(cd apps/web && node --input-type=module -e 'import { chromium } from "@playwright/test"; console.log(chromium.executablePath())')
-          (cd apps/web && exec npx vite preview --port 4173 --host 127.0.0.1) &
+          (cd apps/web && exec npx vite preview --port 4173 --strictPort --host 127.0.0.1) &
           VP=$!
           for _ in $(seq 30); do curl -sf http://127.0.0.1:4173 >/dev/null && break; sleep 2; done
           python -m tools.a11y.gates pa11y-config --chrome "$chrome" > reports/a11y/pa11yci.json

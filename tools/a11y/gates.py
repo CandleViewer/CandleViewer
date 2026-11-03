@@ -223,6 +223,15 @@ def check_inventory(report: dict, tier: str = "pr") -> list[str]:
 # --- Gate 9: pa11y-ci (A11Y-G009) --------------------------------------------
 
 
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _clean(value: object) -> str:
+    """A page-controlled string, safe to print: a control character (a newline above all) becomes `?`,
+    so a `::add-mask::` or `::error::` payload can never start a line the runner reads as a command."""
+    return _CONTROL_RE.sub("?", str(value))
+
+
 def pa11y_fingerprints(results: dict, config: dict | None = None) -> dict[str, str]:
     """pa11y-ci `--json` output: {"results": {url: [issue]}}; only type "error" issues count.
 
@@ -236,19 +245,19 @@ def pa11y_fingerprints(results: dict, config: dict | None = None) -> dict[str, s
     wanted = [u["url"] for u in (config or {}).get("urls", []) if isinstance(u, dict) and "url" in u]
     missing = [u for u in wanted if u not in res]
     if missing:
-        raise InfraError(f"A11Y-INFRA pa11y-ci has no result for: {', '.join(missing)}")
+        raise InfraError(f"A11Y-INFRA pa11y-ci has no result for: {_clean(', '.join(missing))}")
     out: dict[str, str] = {}
     for url, issues in res.items():
         if not isinstance(issues, list):
-            raise InfraError(f"A11Y-INFRA pa11y-ci could not scan {url}: {issues}")
+            raise InfraError(f"A11Y-INFRA pa11y-ci could not scan {_clean(url)}: {_clean(issues)}")
         for i in issues:
             if not isinstance(i, dict) or "type" not in i or "code" not in i:
                 msg = i.get("message", i) if isinstance(i, dict) else i
-                raise InfraError(f"A11Y-INFRA pa11y-ci could not scan {url}: {msg}")
+                raise InfraError(f"A11Y-INFRA pa11y-ci could not scan {_clean(url)}: {_clean(msg)}")
             if i["type"] != "error":
                 continue
-            sel = stable_path([i.get("selector", "<page>")])
-            out[f"{i['code']}|{sel}"] = f"url={url} code={i['code']} node={sel}"
+            code, sel = _clean(i["code"]), _clean(stable_path([i.get("selector", "<page>")]))
+            out[f"{code}|{sel}"] = f"url={_clean(url)} code={code} node={sel}"
     return out
 
 

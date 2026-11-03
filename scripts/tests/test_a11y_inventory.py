@@ -222,3 +222,4 @@ def test_pa11y_config_lists_only_mounted_public_routes_with_the_chrome_path() ->
     assert "R-201" not in urls  # guarded: a bare visit is bounced to /login
     assert cfg["defaults"]["chromeLaunchConfig"]["executablePath"] == "/opt/chrome"
     assert cfg["defaults"]["standard"] == "WCAG2AA"
+    assert cfg["defaults"]["chromeLaunchConfig"]["args"] == ["--disable-dev-shm-usage"]  # sandbox stays on

@@ -257,7 +257,7 @@ def pa11y_config(rows: list[Row], manifest: dict[str, Route], base_url: str, chr
             route = manifest[rt]
             if route.public:
                 seen.setdefault(rt, route.visit_path)
-    launch: dict = {"args": ["--no-sandbox", "--disable-dev-shm-usage"]}
+    launch: dict = {"args": ["--disable-dev-shm-usage"]}
     if chrome:
         launch["executablePath"] = chrome
     return {

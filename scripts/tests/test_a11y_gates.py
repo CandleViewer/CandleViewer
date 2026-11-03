@@ -463,3 +463,15 @@ def test_cli_pa11y_exit_codes(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     assert gates.main(["pa11y", str(ok), *base]) == 0
     assert gates.main(["pa11y", str(bad), *base]) == 1
     assert gates.main(["pa11y", str(tmp_path / "absent.json"), *base]) == 3
+
+
+def test_pa11y_gate_lines_neutralise_control_characters_from_the_page() -> None:
+    payload = "x\n::add-mask::topsecret\r::error::boom\x00"
+    evil = {**ERR, "code": f"C{payload}", "selector": f"#a{payload}"}
+    msgs = gates.check_pa11y(_p11(evil, url=f"{URL}{payload}"), {}, {"urls": []})
+    assert len(msgs) == 1
+    assert not any(c in msgs[0] for c in "\n\r\x00") and "\n::" not in msgs[0]
+    broken = {"results": {URL: [{"message": f"boom{payload}"}]}}
+    with pytest.raises(gates.InfraError) as exc:
+        gates.check_pa11y(broken, {}, CFG)
+    assert "\n" not in str(exc.value) and "\r" not in str(exc.value)
