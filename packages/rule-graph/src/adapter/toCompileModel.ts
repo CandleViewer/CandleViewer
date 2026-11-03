@@ -4,8 +4,8 @@
 // trigger node's data as `trigger`; a condition is typed by its kind and a gate is `boolean`; an
 // edge names its input as `port`; the comments travel in `graph_layout`, which holds only the
 // presentation keys the client owns (positions, collapsed nodes, comments). Structure is the
-// server compile's to judge, by node id; the one check here is that every edge the compile model
-// sends feeds a port its node reads (`NODE_PORTS`, as toIr checks). Pure and synchronous.
+// server compile's to judge, by node id; the one check here is that every edge it sends into a node
+// feeds a port its node reads (`NODE_PORTS`, as toIr checks). Pure and synchronous.
 import { check } from "../errors.js";
 import type { CommentNode, GraphLayout, GraphModel, GraphNode } from "../model.js";
 import { NODE_PORTS, type NodeKind, portsOf } from "../ports.js";
@@ -62,11 +62,11 @@ function ownData(kind: NodeKind, data: GraphNode["data"]): Tree {
 /**
  * The compile model of `graph`, which sends the positions and collapsed nodes of `layout` (by
  * default an empty one) with the graph's comments as its `graph_layout`; a layout key the client
- * does not own (`extra`) is not sent. A list's empty item takes the next `in` edge into its node, in
- * edge order, and an inline item becomes an `operand` node of its own; the node's `in` edges are
- * emitted in list order, any edge past the list's empty items after them. Refuses a node of no
- * known kind, a malformed edge, an edge into a node on a port that node does not read and a second
- * trigger, which no compile model can hold.
+ * does not own (`extra`) is not sent. A list's empty item takes the next `in` edge into its node,
+ * in edge order, and an inline item becomes an `operand` node of its own, its id apart from every
+ * id a node or an edge names; the node's `in` edges are emitted in list order, any edge past the
+ * list's empty items after them. Refuses a node of no known kind, a malformed edge, an edge into a
+ * node on a port that node does not read and a second trigger, which no compile model can hold.
  */
 export function toCompileModel(graph: GraphModel, layout: GraphLayout = BLANK): CompileModel {
   check(isTree(layout), SV, "The layout given is not an object.");
@@ -78,6 +78,7 @@ export function toCompileModel(graph: GraphModel, layout: GraphLayout = BLANK): 
   const triggers = nodes.filter((node) => kinds.get(node.id) === "trigger");
   const triggerIds = triggers.map((node) => node.id);
   check(triggers.length <= 1, SV, "A graph has one trigger node.", triggerIds);
+  const taken = new Set(nodes.map((node) => node.id)); // and every id an edge names, below
   const lists = new Map<string, string[]>(); // a list node's `in` sources, in edge order
   for (const [id, kind] of kinds) if (LIST_KEY[kind] !== undefined) lists.set(id, []);
   const out: CompileEdge[] = [];
@@ -86,14 +87,14 @@ export function toCompileModel(graph: GraphModel, layout: GraphLayout = BLANK): 
     const named = [source, target, targetPort].every((value) => typeof value === "string");
     check(named, SV, `Edge ${i + 1} does not name its two nodes and its input.`);
     const [from, to, port] = [source, target, targetPort] as [string, string, string]; // checked
+    taken.add(from).add(to); // an operand never takes an id an edge names: a dangling edge stays
     const into = kinds.get(to); // an edge into no node goes as it is, for compile to report
     const reads = into === undefined || Object.hasOwn(NODE_PORTS[into].inputs, port);
-    check(reads, SV, `Edge ${i + 1} feeds ${port}, an input ${to} does not read.`, [from, to]);
+    check(reads, SV, `Edge ${i + 1} feeds \`${port}\`, which \`${to}\` does not read.`, [from, to]);
     const list = lists.get(to); // a list node's one input is `in`
     if (list === undefined) out.push({ from, to, port });
     else list.push(from);
   });
-  const taken = new Set(nodes.map((node) => node.id));
   const fresh = (base: string): string => {
     let id = base;
     for (let n = 2; taken.has(id); n += 1) id = `${base}.${n}`;

@@ -32,6 +32,20 @@ describe("the generated rule-graph editor fixtures", () => {
     expect(editorFixtures()).toEqual(editorFixtures());
   });
 
+  it("gives each send_notification the params the action catalogue requires", () => {
+    // services/api/candleviewer/rules/vocabulary/catalogue.py: channel, severity and template.
+    const notes = Object.keys(editorFixtures())
+      .flatMap((name) => read(name).model.nodes)
+      .filter(({ type, data }) => type === "action" && data.type === "send_notification");
+    expect(notes.length).toBeGreaterThan(0);
+    const text = expect.any(String);
+    for (const { id, data } of notes) {
+      expect(data.params, id).toEqual(
+        expect.objectContaining({ channel: text, severity: text, template: text }),
+      );
+    }
+  });
+
   it("sizes the tier fixtures at the tier bounds and the benchmark at 200 nodes and about 260 edges", () => {
     const sizes = Object.fromEntries(
       ["review-60", "tier-b-61", "over-budget-121", "budget-200"].map((name) => {

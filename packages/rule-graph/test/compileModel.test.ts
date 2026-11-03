@@ -271,14 +271,36 @@ describe("toCompileModel: the editing graph as it stands", () => {
     expect(model.edges).toEqual([edge("a", "gone", "in")]);
   });
 
-  it("refuses an edge on a port its node does not read: every edge sent feeds a read port", () => {
-    const stray = graphOf([gate(), cmp("a")], [link("e1", "a", "g", "left")]);
+  it("refuses an edge on a port its node does not read: every edge sent into a node feeds one", () => {
+    const stray = graphOf(
+      [gate(), cmp("a"), cmp("b")],
+      [link("e1", "b", "g", "in"), link("e2", "a", "g", "left")],
+    );
     expect(thrown(() => toCompileModel(stray))).toMatchObject({
       code: "SCHEMA_VIOLATION",
+      message: "Edge 2 feeds `left`, which `g` does not read.",
       nodeIds: ["a", "g"],
     });
-    const intoComparison = graphOf([cmp("a"), cmp("b")], [link("e1", "a", "b", "in")]);
-    expect(thrown(() => toCompileModel(intoComparison))?.code).toBe("SCHEMA_VIOLATION");
+    for (const [to, port] of [
+      ["b", "in"],
+      ["g", "constructor"],
+    ] as const) {
+      const into = graphOf([gate(), cmp("a"), cmp("b")], [link("e1", "a", to, port)]);
+      expect(thrown(() => toCompileModel(into))?.code, port).toBe("SCHEMA_VIOLATION");
+    }
+  });
+
+  it("names an operand apart from every id an edge names: an edge into no node stays dangling", () => {
+    const { vectors } = JSON.parse(readFileSync(VECTORS, "utf8")) as { vectors: Vector[] };
+    const atr = vectors.find((v) => v.name === "corpus/09_atr_trailing_stop") as Vector;
+    const ir = JSON.parse(atr.ir) as RuleIr;
+    const graph = toGraph(ir);
+    const nodes = [...graph.nodes, cmp("cx")];
+    const edges = [...graph.edges, link("ex", "cx", "x2.in.1", "in")];
+    const model = toCompileModel({ ...graph, nodes, edges }, readLayout(ir.graph_layout));
+    expect(model.nodes.some((n) => n.id === "x2.in.1")).toBe(false);
+    expect(ids(model)).toContainEqual(["x2.in.1.2", "operand"]);
+    expect(model.edges).toContainEqual(edge("cx", "x2.in.1", "in"));
   });
 
   it("sends no trigger when the graph has none, and refuses a second one", () => {
