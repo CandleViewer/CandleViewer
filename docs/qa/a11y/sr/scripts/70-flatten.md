@@ -4,7 +4,7 @@
 script_id: FLT
 title: "Rule-engine flatten announcement"
 screens: [SCR-063, SCR-087]
-status: "SURFACE PENDING E29-S01 (positions tab), E35-S09 and E36-S05 (SCR-087 fire history)"
+status: "SURFACE PENDING E29-S01 (positions tab), E35-S09 (SCR-087 fire history) and E35-S03 (rule actions through the OMS, flatten refusal)"
 env: demo
 fixture: "A demo account with one open demo position and an armed simulated rule whose action is flatten; the fixture fires it on cue (E47-Q01 replay)."
 preconditions:
@@ -16,7 +16,7 @@ last_verified_sha: c327ed438c01c5bab9247890dd00f5dce3717f97 # a main sha; parent
 parents:
   - "E29-S01 (SCR-063 positions tab): SURFACE PENDING (unbuilt)"
   - "E35-S09 (SCR-087 fire history): SURFACE PENDING (unbuilt)"
-  - "E36-S05 (rules list, live state): SURFACE PENDING (unbuilt)"
+  - "E35-S03 (rule actions through the OMS under safety limits): SURFACE PENDING (unbuilt)"
   - "#5501 merged (T04 scripts, templates and checklist under docs/qa/a11y/sr/)"
   - "#5419 91e9bde449dc29325efd23e3e1f2fd5a34867351 (open, if merges as is)"
 dry_run: pending
@@ -45,7 +45,7 @@ dry_run: pending
 | FLT-05 | [SCR-063 · SC 4.1.2 2.4.3] Read the position row again                                                    | Record verbatim; the row shows closed or is gone, and the position count the page reports changed; focus lands on a named, sensible control if the row was removed (SURFACE PENDING E29-S01) | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
 | FLT-06 | [SCR-087 · SC 1.3.1 4.1.2] Open SCR-087 (fire history, key per E35-S09; record it) and find the new entry | Record the entry verbatim: rule name, action word (flatten), result and time as text (SURFACE PENDING E35-S09)                                                                               | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
 | FLT-07 | [SCR-087 · SC 2.1.1 2.1.2 1.3.1] Tab through the SCR-087 table to its end and back                        | One tab stop for the grid with arrow keys; every column header is read; record any trap or skipped cell; record it verbatim (SURFACE PENDING E35-S09)                                        | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
-| FLT-08 | [SCR-063 SCR-087 · SC 3.3.1 4.1.3] Trigger a flatten that is refused (fixture cue)                        | Record the refusal verbatim; it is announced once, assertively, and says what to do next (SURFACE PENDING E36-S05)                                                                           | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
+| FLT-08 | [SCR-063 SCR-087 · SC 3.3.1 4.1.3] Trigger a flatten that is refused (fixture cue)                        | Record the refusal verbatim; it is announced once, assertively, and says what to do next (SURFACE PENDING E35-S03)                                                                           | n/a                                                   | 05 §8.2 item 3 | heuristic: true |     | [ ] P / [ ] F |
 
 ## Notes
 

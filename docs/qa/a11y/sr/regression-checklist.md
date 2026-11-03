@@ -71,6 +71,9 @@ The S01 to S03 rows are listed from their ticket scope; the owner or the orchest
   daily screen-reader user, the two-tester calibration on task 3 (`records/_calibration-template.md`), the OWNER FILL pin
   cells, the NVDA "2024.x" wording ruling, and the Accessibility-role sign-off of the summary. The task scripts ORD, FLT,
   LIV and ADA stay `SURFACE PENDING` until their tickets mount.
+- E47-Q02 #1355 closing rows, after the human passes: committing the transcripts under `qa/evidence/e47/sr/<at>-<date>/`;
+  writing the calibration's clarified expected results back into E47-Q01; handing the pass summary to E47-T06 and
+  E47-Q09; and posting it to the release-candidate checklist in `docs/plan/07-release-and-prr.md`.
 - The ticket's "Remediation has landed" is **false today**: E47-S01, S02 and S03 are only partly merged, and E18-S11,
   E21-S01, E21-S02, E36-S02, E37-S01 and E37-S05 are unbuilt, so those scripts stay `SURFACE PENDING`.
 

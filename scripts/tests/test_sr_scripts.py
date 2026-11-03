@@ -281,6 +281,16 @@ def test_every_new_step_cites_a_screen_and_a_wcag_criterion() -> None:
             ), r[0]
 
 
+def test_every_ticket_a_step_cites_is_in_the_script_parents() -> None:
+    for p in NEW_SCRIPTS:
+        text = p.read_text(encoding="utf-8")
+        head = header(text)
+        owned = " ".join([str(head["status"]), *map(str, head["parents"])])
+        for r in steps(text):
+            for ticket in re.findall(r"E\d\d-[A-Z]\d\d", " ".join(r[1:3])):
+                assert ticket in owned, f"{r[0]} cites {ticket}, absent from parents and status"
+
+
 def test_order_script_carries_the_streaming_focus_steal_check_and_its_twin() -> None:
     text = (SR / "scripts" / "60-order-ticket.md").read_text(encoding="utf-8")
     rows = {r[0]: r for r in steps(text)}
