@@ -17,11 +17,14 @@ Gates (each prints `FAIL G-NAME: ...`):
   G-COMP     every CMP id the memo names is a heading in `15` at the base
   G-ADVICE   the copy deck exists; no imperative or evaluative word in it (AC3)
   G-HEUR     no participant count, observation or quote is claimed
-  G-PUBLIC   no host, local path, uuid, workspace name or secret-shaped string; URLs allow-listed
+  G-PUBLIC   no host, local path, uuid, workspace name or secret-shaped string; URLs allow-listed;
+             the only uuids are the registered Penpot page and board ids (PENPOT_IDS)
   G-BQ       the BQ heading is RULED with the ruling comment, the body names the BQ list comment,
              the ruling's terms are folded (Partial memo PR, boards PR closes, interim rulings);
              BQ-1..BQ-16 each have a row
-  G-BOARDS   the boards table exists; at most ten boards, each PENDING or drawn
+  G-BOARDS   the boards table exists; at most ten boards, each PENDING or drawn with its own
+             PNG under docs/design/E41/img/ at the stated size; once all are drawn, the
+             heading and the not-drawn line no longer say PENDING or name the T2 frame
   G-WALK     the owner walkthrough has at most ten items
   G-COMMENT  no HTML comment in the memo or the protocol
   G-17       `17` carries the section 1.6 journey; `14` carries no E41-D01 pointer (an A-row)
@@ -30,8 +33,9 @@ Gates (each prints `FAIL G-NAME: ...`):
              CMP-079 named
   G-A11Y     board 10 carries 200 % reflow, forced colours and focus return for the SCR-096
              modal and the export confirm
-  G-SCOPE    only this PR's files differ from `git merge-base HEAD origin/main`; the ruling keeps
-             `12`, `13`, `14` and `24` unedited (their changes are A-rows)
+  G-SCOPE    only the ticket's files differ from `git merge-base HEAD origin/main` (the text, the
+             board PNGs and the board kit); the ruling keeps `12`, `13`, `14` and `24` unedited
+             (their changes are A-rows)
 
 Usage: python3 -I docs/design/_tools/e41_d01_audit.py --check
        python3 -I docs/design/_tools/e41_d01_audit.py --self-test
@@ -41,6 +45,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+import struct
 import subprocess
 import sys
 from collections.abc import Callable
@@ -54,7 +59,34 @@ PROTOCOL = "docs/design/research/e41-d01-session-protocol.md"
 UX17 = "docs/plan/17-ux-diagrams.md"
 SCR14 = "docs/plan/14-screens-catalogue.md"
 TOOL = "docs/design/_tools/e41_d01_audit.py"
-ALLOWED_CHANGES = {MEMO, PROTOCOL, UX17, TOOL}
+IMG_DIR = "docs/design/E41/img/"
+KIT_DIR = "docs/design/_tools/sheets/e41-d01/"
+ALLOWED_CHANGES = {
+    MEMO,
+    PROTOCOL,
+    UX17,
+    TOOL,
+    ".prettierignore",
+    "docs/design/_tools/sheets/MANIFEST.sha256",
+}
+ALLOWED_PREFIXES = (IMG_DIR + "E41-D01-", KIT_DIR)
+# The Penpot page and the ten boards of section 12 (name + id only, Deviation 2).
+PENPOT_IDS = frozenset(
+    {
+        "cb0c3916-2579-81a4-8008-e2f60b3c06ae",
+        "6c5ca0d4-2cd4-804a-8008-e2f6ce75a34c",
+        "6c5ca0d4-2cd4-804a-8008-e2f7df95a956",
+        "d4f950b6-c925-800a-8008-e34e3c1717b1",
+        "d4f950b6-c925-800a-8008-e351d71008f9",
+        "6c5ca0d4-2cd4-804a-8008-e2fc35a97445",
+        "6c5ca0d4-2cd4-804a-8008-e2fdf3f732e6",
+        "42fa797e-0509-8044-8008-e300e7677b8a",
+        "42fa797e-0509-8044-8008-e302c8ec8d5a",
+        "42fa797e-0509-8044-8008-e304e48455e4",
+        "d4f950b6-c925-800a-8008-e353242530f2",
+    }
+)
+DRAWN_RE = re.compile(r"drawn — `(E41-D01-(\d{2})-[a-z0-9-]+\.png)`, (\d+) × (\d+), \d+ frames?")
 BQ_COMMENT = "6563728342"
 RULING_COMMENT = "6563817618"
 RULING_TERMS = (
@@ -357,6 +389,8 @@ def g_heur(d: Docs) -> list[str]:
 
 def g_public(d: Docs) -> list[str]:
     text = "\n".join((d.memo, d.protocol, section(d.ux17, "1.6 ")))
+    for pid in PENPOT_IDS:
+        text = text.replace(pid, "<penpot id>")
     fails = [f"URL host {h} not allow-listed" for h in URL_RE.findall(text) if h not in URL_HOSTS]
     fails += [f"public-repo pattern /{p}/" for p in PUBLIC_BANNED if re.search(p, text)]
     hexes = set(re.findall(r"\b[0-9a-f]{32,}\b", text)) - {BASE}
@@ -385,11 +419,29 @@ def g_boards(d: Docs) -> list[str]:
     if not boards:
         return ["no Wireframe boards table"]
     fails = [f"{len(boards)} boards; the cap is ten"] if len(boards) > 10 else []
-    return fails + [
-        f"board {r[0]} is neither PENDING nor drawn"
-        for r in boards
-        if r[-1] not in ("PENDING", "drawn")
-    ]
+    for r in boards:
+        if r[-1] == "PENDING":
+            continue
+        m = DRAWN_RE.fullmatch(r[-1])
+        if not m:
+            fails.append(f"board {r[0]} is neither PENDING nor drawn with its PNG")
+            continue
+        name, nn, w, h = m.group(1), m.group(2), int(m.group(3)), int(m.group(4))
+        png = ROOT / IMG_DIR / name
+        if nn != r[0] or not png.is_file():
+            fails.append(f"board {r[0]}: no PNG {IMG_DIR}{name}")
+            continue
+        head = png.read_bytes()[:24]
+        if head[:8] != b"\x89PNG\r\n\x1a\n" or struct.unpack(">II", head[16:24]) != (w, h):
+            fails.append(f"board {r[0]}: {name} is not a {w} × {h} PNG")
+    if boards and all(r[-1] != "PENDING" for r in boards):
+        heading = re.search(r"^## 0\. Wireframe boards.*$", d.memo, re.MULTILINE)
+        nd = re.search(r"^Not drawn — .*$", section(d.memo, "0. Wireframe boards"), re.MULTILINE)
+        if heading and "PENDING" in heading.group(0):
+            fails.append("every board is drawn but the section 0 heading says PENDING")
+        if nd and "viewer-write-disabled" in nd.group(0).split(". ")[0]:
+            fails.append("the not-drawn line still lists SCR-093/viewer-write-disabled")
+    return fails
 
 
 def g_walk(d: Docs) -> list[str]:
@@ -442,7 +494,11 @@ def g_a11y(d: Docs) -> list[str]:
 
 
 def g_scope(d: Docs) -> list[str]:
-    return [f"out-of-scope change: {p}" for p in sorted(set(d.changed) - ALLOWED_CHANGES)]
+    return [
+        f"out-of-scope change: {p}"
+        for p in sorted(set(d.changed) - ALLOWED_CHANGES)
+        if not p.startswith(ALLOWED_PREFIXES)
+    ]
 
 
 GATES: dict[str, Callable[[Docs], list[str]]] = {
@@ -504,6 +560,22 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
     ("G-BQ", "memo", "## 11. Security", "Drawn in a later push of this PR.\n\n## 11. Security"),
     ("G-BOARDS", "memo", "| 10  | keyboard", "| 11  | extra | PENDING |\n| 10  | keyboard"),
     ("G-BOARDS", "memo", "## 0. Wireframe boards", "## 0. Boards"),
+    ("G-BOARDS", "memo", "2080 × 2615, 3 frames", "2080 × 2616, 3 frames"),
+    ("G-BOARDS", "memo", "`E41-D01-02-scr093-default.png`, ", "`E41-D01-02-scr093-defaults.png`, "),
+    ("G-BOARDS", "memo", "(Penpot) — drawn (As built: §12)", "(Penpot) — PENDING"),
+    (
+        "G-BOARDS",
+        "memo",
+        "Not drawn — the text is binding: SCR-093/export-failed",
+        "Not drawn — the text is binding: SCR-093/viewer-write-disabled and SCR-093/export-failed",
+    ),
+    (
+        "G-PUBLIC",
+        "memo",
+        "## 11. Security",
+        "Board `6c5ca0d4-2cd4-804a-8008-e2f6ce75a34d`.\n\n## 11. Security",
+    ),
+    ("G-SCOPE", "changed", "", "docs/design/E41/img/E41-D02-01-x.png"),
     ("G-WALK", "memo", "10. Rule OQ-1", "11. Rule OQ-1"),
     ("G-COMMENT", "protocol", "## 1. Purpose", "<!--\nnote\n-->\n\n## 1. Purpose"),
     ("G-17", "ux17", "### 1.6 Review journey", "### 1.6 Review map"),
