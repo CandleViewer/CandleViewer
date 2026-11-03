@@ -61,7 +61,7 @@ Board 03 of ten (§0 L70: a drawing's anchor nudge and the "Edit values…" fiel
 
 ## Sources (1)
 
-- spec docs/design/E47/E47-D09.md md5 0d47e6c0 (§0 L70); hand-off docs/design/E47/E47-D09-handoff.md md5 3b577b2c (§H L105); registry at 4c662fd5b apps/web/src/keymap/keymap.json md5 eb409e85 and apps/web/src/keymap/reserved-keys.json md5 5683c37f; tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
+- spec docs/design/E47/E47-D09.md md5 d28049e2 (§0 L70); hand-off docs/design/E47/E47-D09-handoff.md md5 a39bbb48 (§H L105); registry at 4c662fd5b apps/web/src/keymap/keymap.json md5 eb409e85 and apps/web/src/keymap/reserved-keys.json md5 5683c37f; tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
 
 ## Tokens (54)
 

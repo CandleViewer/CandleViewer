@@ -79,8 +79,8 @@ _PATHS = {  # alias -> repo-relative path; AT_BASE aliases are read at SPEC_BASE
     "fixture": FIXTURE_REL,
 }
 _MD5 = (  # md5 as read, one per _PATHS entry in its order
-    "0d47e6c0556c1e466c41594684541295",
-    "3b577b2c622cf51e8b20d747da8d1f3b",
+    "d28049e209658a4618d9f6ca997b9c04",
+    "a39bbb48f44b8a90653699faf4c10130",
     "eb409e85f54a119baff80f94a513e3ad",
     "5683c37f66248472e7b7b494063b7b3e",
     "edd9dd2a060c51bd4bd1450307728ddf",

@@ -6,33 +6,33 @@ Components: **CMP-059 CommandPalette** (the binding column, "unbound", the inval
 
 Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
-| Item                     | CMP-059 CommandPalette                    | CMP-094 HotkeyOverlay         | CMP-064 (SCR-113)               | The census paths (§3)                      |
-| ------------------------ | ----------------------------------------- | ----------------------------- | ------------------------------- | ------------------------------------------ |
-| Final Penpot link        | [x] boards 05, 06, 10 drawn (spec §0)     | [x] board 07 drawn (spec §0)  | [x] board 08 drawn (spec §0)    | [x] boards 01–04, 09 drawn (spec §0)       |
-| Variants × states        | [x] spec §8                               | [x] spec §9                   | [x] spec §10 (RL-1 … RL-5)      | [x] spec §2, §3                            |
-| Keyboard table           | [x] CMP-059's, unchanged                  | [x] spec §9 (search)          | [x] RL-1, RL-4                  | [x] spec §2, §4, §7                        |
-| Accessible name and role | [x] CMP-059's                             | [x] CMP-094's                 | [x] CMP-064's                   | [x] spec §2 (select announces)             |
-| Live data                | [x] the count, once per query             | [x] the count, once per query | [x] the row's message           | [x] spec §6 (D5)                           |
-| Motion pair              | [x] none                                  | [x] none                      | [x] none                        | [x] the view follows; reduced motion snaps |
-| Density notes            | [x] E10-D03's                             | [x] E10-D03's                 | [x] none                        | [x] none                                   |
-| Essential exceptions     | [x] none                                  | [x] none                      | [x] none                        | [x] none                                   |
-| Tokens used              | [x] E10-D03 §6.1's                        | [x] E10-D03 §6.2's            | [x] CMP-064's                   | [x] the pending line: §0 board 01          |
-| Data contract            | [ ] NO: D09-G5                            | [x] the registry              | [x] the registry                | [ ] NO: D09-G4, D09-G6                     |
-| Contrast                 | [x] spec §21; dark fails, see D09-A19, §J | [x] drawn, 07-cheatsheet.png  | [x] drawn, 08-hotkey-editor.png | [x] drawn, 01–04 PNGs                      |
-| Storybook                | [x] §D                                    | [x] §D                        | [x] §D                          | [x] §D                                     |
-| Sign-off                 | [ ] owner approval pending                | [ ] owner approval pending    | [ ] owner approval pending      | [ ] owner approval pending                 |
+| Item                     | CMP-059 CommandPalette                    | CMP-094 HotkeyOverlay         | CMP-064 (SCR-113)             | The census paths (§3)                      |
+| ------------------------ | ----------------------------------------- | ----------------------------- | ----------------------------- | ------------------------------------------ |
+| Final Penpot link        | [x] boards 05, 06, 10 drawn (spec §0)     | [x] board 07 drawn (spec §0)  | [x] board 08 drawn (spec §0)  | [x] boards 01–04, 09 drawn (spec §0)       |
+| Variants × states        | [x] spec §8                               | [x] spec §9                   | [x] spec §10 (RL-1 … RL-5)    | [x] spec §2, §3                            |
+| Keyboard table           | [x] CMP-059's, unchanged                  | [x] spec §9 (search)          | [x] RL-1, RL-4                | [x] spec §2, §4, §7                        |
+| Accessible name and role | [x] CMP-059's                             | [x] CMP-094's                 | [x] CMP-064's                 | [x] spec §2 (select announces)             |
+| Live data                | [x] the count, once per query             | [x] the count, once per query | [x] the row's message         | [x] spec §6 (D5)                           |
+| Motion pair              | [x] none                                  | [x] none                      | [x] none                      | [x] the view follows; reduced motion snaps |
+| Density notes            | [x] E10-D03's                             | [x] E10-D03's                 | [x] none                      | [x] none                                   |
+| Essential exceptions     | [x] none                                  | [x] none                      | [x] none                      | [x] none                                   |
+| Tokens used              | [x] E10-D03 §6.1's                        | [x] E10-D03 §6.2's            | [x] CMP-064's                 | [x] the pending line: §0 board 01          |
+| Data contract            | [ ] NO: D09-G5                            | [x] the registry              | [x] the registry              | [ ] NO: D09-G4, D09-G6                     |
+| Contrast                 | [x] spec §21; dark fails, see D09-A19, §J | [x] spec §21: 8.14–15.20 dark | [x] spec §21: 4.76–17.42 dark | [x] spec §21: 8.14+ dark, 7.37+ light      |
+| Storybook                | [x] §D                                    | [x] §D                        | [x] §D                        | [x] §D                                     |
+| Sign-off                 | [ ] owner approval pending                | [ ] owner approval pending    | [ ] owner approval pending    | [ ] owner approval pending                 |
 
 ## §B Who applies what
 
-| A                                        | Target                                           | Applied by                                            |
-| ---------------------------------------- | ------------------------------------------------ | ----------------------------------------------------- |
-| `05` §3.5, `05`:36, `05`:88, `05`:101    | `05`                                             | this PR (BQ-12)                                       |
-| D09-A1 … D09-A4                          | the keymap registry                              | E47-S08 (registry rows; E37-S05 for D09-A4)           |
-| D09-A5, D09-A6                           | `15` CMP-094, CMP-059                            | the `15` owner, at the owner's sign-off PR            |
-| D09-A7, D09-A8, D09-A9, D09-A13, D09-A14 | `14` SCR-012, SCR-013, SCR-113, SCR-040, SCR-021 | the `14` owner, at the owner's sign-off PR            |
-| D09-A10, D09-A15, D09-A17                | the inert notice, the refusal, Reset all         | E47-S08                                               |
-| D09-A18, D09-A19 (PROPOSED)              | E09-D09 §3.1's registered state vocabularies     | E47-S08, with the E09-D09 owner (D09-A19: that owner) |
-| D09-A11, D09-A12, D09-A16                | the palette's sources and events (#5280)         | E10-S05 (#5236)                                       |
+| A                                        | Target                                                                | Applied by                                            |
+| ---------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------- |
+| `05` §3.5, `05`:36, `05`:88, `05`:101    | `05`                                                                  | this PR (BQ-12)                                       |
+| D09-A1 … D09-A4                          | the keymap registry                                                   | E47-S08 (registry rows; E37-S05 for D09-A4)           |
+| D09-A5, D09-A6                           | `15` CMP-094, CMP-059                                                 | the `15` owner, at the owner's sign-off PR            |
+| D09-A7, D09-A8, D09-A9, D09-A13, D09-A14 | `14` SCR-012, SCR-013, SCR-113, SCR-040, SCR-021                      | the `14` owner, at the owner's sign-off PR            |
+| D09-A10, D09-A15, D09-A17                | the inert notice, the refusal, Reset all                              | E47-S08                                               |
+| D09-A18, D09-A19 (PROPOSED)              | A18: E09-D09 §3.1's state vocabularies; A19: E09-D09 T2's visual (§J) | A18: E47-S08, with the E09-D09 owner; A19: that owner |
+| D09-A11, D09-A12, D09-A16                | the palette's sources and events (#5280)                              | E10-S05 (#5236)                                       |
 
 ## §C Copy-ready rows (PROPOSED)
 
