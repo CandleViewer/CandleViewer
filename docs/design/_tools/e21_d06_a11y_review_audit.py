@@ -132,6 +132,7 @@ LR_RATES = ("1 per 2 s", "1 per 5 s", "once", "once per press", "never", "at mos
 LR_SILENT_NEED = ("heatmap column", "book tick", "reveal")
 VERDICTS = (
     "compliant if #503 merges as is",
+    "compliant if #505 merges as is",
     "compliant",
     "at risk",
     "non-compliant",
@@ -139,6 +140,21 @@ VERDICTS = (
     "not yet decidable —",
 )
 SCENARIOS = 3
+# Section 9.3: the carriers' pairs the parents leave unmeasured (F-11, G-06); the env badge's
+# candidates and the amber, marker and accent inks. Measured; a floor miss is a finding, not a FAIL.
+REVIEW_PAIRS: tuple[tuple[str, str, float], ...] = (
+    ("color.text.primary", "color.env.demo", 4.5),
+    ("color.text.primary", "color.env.live", 4.5),
+    ("color.text.on-action", "color.env.demo", 4.5),
+    ("color.text.on-action", "color.env.live", 4.5),
+    ("color.env.demo", "color.surface.canvas", 4.5),
+    ("color.env.live", "color.surface.canvas", 4.5),
+    ("color.status.warning.default", "color.surface.canvas", 4.5),
+    ("color.status.warning.strong", "color.surface.canvas", 4.5),
+    ("color.position.entry", "color.surface.canvas", 3.0),
+    ("color.buy.default", "color.surface.raised", 4.5),
+    ("color.sell.default", "color.surface.raised", 4.5),
+)
 HOLD = "**Hold:** E21-D02 (#440) and E21-D03 (#503) are not signed off while a Blocking row stands"
 F_HEAD_RE = re.compile(
     r"^## 12\. Findings — F (\d+) \(Blocking (\d+) · Major (\d+) · Minor (\d+) · Info (\d+)\)"
@@ -261,6 +277,12 @@ def pair_row(fg: str, bg: str, floor: float) -> list[str]:
         f"{floor:g}",
         *(f"{pair_ratio(n, fg, bg):.2f}" for n in L.THEME_PARTS),
     ]
+
+
+def review_row(fg: str, bg: str, floor: float) -> list[str]:
+    """Section 9.3's row: the measured pair and whether it meets its floor in every theme."""
+    row = pair_row(fg, bg, floor)
+    return [*row, "yes" if min(float(v) for v in row[2:]) >= floor else "no"]
 
 
 # ---------- spec helpers --------------------------------------------------------------------------
@@ -441,6 +463,13 @@ def g_contrast(t: L.Tree) -> list[str]:
             bad.append(f"9.2 {want_pair[0]} below {floor:g}")
     if len(written) != len(parent_pairs()):
         bad.append(f"{len(written)} pair rows for {len(parent_pairs())} pairs")
+    added = {r[0]: r for r in rows(t, "### 9.3")}
+    for q in REVIEW_PAIRS:
+        want_row = review_row(*q)
+        if added.get(want_row[0], [])[:6] != want_row:
+            bad.append(f"9.3 {want_row[0]}: measured {want_row[1:]}")
+    if len(added) != len(REVIEW_PAIRS):
+        bad.append(f"{len(added)} 9.3 rows for {len(REVIEW_PAIRS)} pairs")
     return bad
 
 
@@ -616,12 +645,12 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-16", "G-VERDICT", "a compliant verdict names an F row", "spec",
        r"(\| V-14 \|[^\n]*?\| )at risk — F-03", r"\1compliant — F-03", regex=True),
     _M("M-17", "G-FINDINGS", "the heading count drifts", "spec",
-       "Major 1 · Minor 7 · Info 2)", "Major 1 · Minor 6 · Info 2)"),
+       "Major 2 · Minor 8 · Info 2)", "Major 2 · Minor 7 · Info 2)"),
     _M("M-18", "G-FINDINGS", "a finding loses its story", "spec",
        r"(\| F-02 \|[^\n]*?#504 PR 2 · E21-D07 #576) · E21-S01 #648", r"\1", regex=True),
     _M("M-19", "G-FINDINGS", "the hold sentence dropped", "spec",
        "**Hold:** E21-D02 (#440)", "Hold: E21-D02 (#440)"),
-    _M("M-20", "G-IDS", "a dangling F id", "spec", "(F-01, G-01, G-02)", "(F-11, G-01, G-02)"),
+    _M("M-20", "G-IDS", "a dangling F id", "spec", "(F-01, G-01, G-02)", "(F-31, G-01, G-02)"),
     _M("M-21", "G-HANDOFF", "a decision with no Q05 assertion", "spec",
        "| AD-10; V-09 ", "| V-09        "),
     _M("M-22", "G-WALK", "an eleventh walkthrough item", "spec",
@@ -717,10 +746,14 @@ def fill() -> int:
     ) + "\n".join("| " + " | ".join(stop_row(n)) + " |" for n in L.THEME_PARTS)
     t92 = "| Pair | Floor | dark | light | high-contrast |\n| --- | --- | --- | --- | --- |\n"
     t92 += "\n".join("| " + " | ".join(pair_row(*q)) + " |" for q in parent_pairs())
+    t93 = "| Pair | Floor | dark | light | high-contrast | Meets in all three |\n"
+    t93 += "| --- | --- | --- | --- | --- | --- |\n"
+    t93 += "\n".join("| " + " | ".join(review_row(*q)) + " |" for q in REVIEW_PAIRS)
     text = replace_table(replace_table(text, "### 9.1", t91), "### 9.2", t92)
+    text = replace_table(text, "### 9.3", t93)
     text = replace_table(text, "### 16.3", L.mutation_table(MUTATIONS))
     p.write_text(text, encoding="utf-8", newline="\n")
-    print("sections 9.1, 9.2 and 16.3 written")
+    print("sections 9.1, 9.2, 9.3 and 16.3 written")
     return 0
 
 
