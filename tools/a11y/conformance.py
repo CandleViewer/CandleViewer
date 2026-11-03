@@ -10,7 +10,8 @@ blob-pinned inputs, so both tools share one model.
 
 Modes (BQ-02):
   --fill      write the report (fails generation on a schema, exception or content problem)
-  --check     per PR: schema, exception completeness, content check, and staleness of the report
+  --check     per PR: schema, exception completeness and the Level A entry ban, plain language,
+              content check, and staleness of the report
   --release   RC / GA: everything in --check, plus an open Level A finding (named), an expired
               accepted-risk acceptance (flagged for re-decision) and an unowned limitation
 
@@ -22,6 +23,14 @@ an expiry and a remediation ticket; a Level A criterion is never an exception.
 Sibling evidence (BQ-09): `docs/plan/a11y/47-evidence.json` (optional) holds resolvable records; an
 unresolved reference reads "not yet produced". Content (BQ-10): accessibility gaps only; no hosts,
 ids or key material.
+
+Internal rows (`disclosure: internal`) hold the full text of an exploitable gap; the statement shows
+only their category sentence. They need the E47-X04 (#1389) review before anything is published
+(E47-D13 §6.5). This is a note, not a gate: `--fill` prints it when such rows exist.
+
+Per-PR `--check` runs the schema, staleness, exception completeness, the Level A entry ban (a Level
+A criterion on an accepted-risk row), the plain-language rule (E47-D13 §6.3) and the content check;
+open Level A findings and expired acceptances are `--release` only (they cannot gate every PR).
 
 Usage (repo root):
   python3 tools/a11y/conformance.py --fill
@@ -190,6 +199,11 @@ CONTENT_CHECKS = (
     (IMAGE_RE, "an image"),
     (IDLIKE_RE, "an id"),
 )
+SCNUM_RE = re.compile(r"\b\d\.\d{1,2}\.\d{1,2}\b")
+JARGON_RE = re.compile(
+    r"\b[Aa]ria\b|aria-|\bARIA\b|\bDOM\b|\bWCAG\b|\b[Vv]iewport\b|\bCSS\b|\bpx\b|role=|\bSC\b|\bAT\b"
+)
+PLAIN_MAX_WORDS = 30
 TICKET_RE = re.compile(r"^E\d\d-[A-Z]+\d\d #\d+$")
 DATE_RE = re.compile(r"\d{4}-\d\d-\d\d")
 
@@ -650,6 +664,32 @@ def content_problems(limits: str, report: str = "") -> list[str]:
     return out
 
 
+def plain_problems(limits: str) -> list[str]:
+    """E47-D13 §6.3 (R-7): `plain`, `impact` and `workaround` of a statement row are each one
+    sentence of at most 30 words ending in a full stop, with no criterion number and none of the
+    banned words. Messages carry the path and the rule, never the text."""
+    bad = []
+    for i, r in enumerate(limit_rows(limits)):
+        if r.get("disclosure") != "statement":
+            continue
+        for f in ("plain", "impact", "workaround"):
+            t = text_of(r.get(f))
+            why = ""
+            if SCNUM_RE.search(t):
+                why = "a criterion number"
+            elif JARGON_RE.search(t):
+                why = "a banned word (ARIA, DOM, WCAG, viewport, CSS, px, role=)"
+            elif len(t.split()) > PLAIN_MAX_WORDS:
+                why = f"more than {PLAIN_MAX_WORDS} words"
+            elif t and not t.endswith("."):
+                why = "no closing full stop"
+            elif re.search(r"[.!?]\s+\S", t):
+                why = "more than one sentence"
+            if why:
+                bad.append(f"limitations[{i}].{f}: {why}")
+    return bad
+
+
 def field_problems(limits: str) -> list[str]:
     """Rendered fields that must be well formed (E47-T05; the D13 gates cover them separately).
 
@@ -896,6 +936,7 @@ def generation_problems(limits: str, inp: Inputs, report: str) -> list[Finding]:
         return out
     out += [("G-SCHEMA", m) for m in limits_problems(limits, inp)]
     out += [("G-SCHEMA", m) for m in field_problems(limits)]
+    out += [("G-PLAIN", m) for m in plain_problems(limits)]
     out += [("G-EXCEPTION", m) for m in exception_problems(limits)]
     out += [("G-CONTENT", m) for m in content_problems(limits, report)]
     return out
@@ -914,6 +955,10 @@ def run(root: Path, mode: str, today: dt.date | None = None) -> tuple[list[str],
             return _fmt(findings), 1
         (root / REPORT_REL).write_text(want, encoding="utf-8", newline="\n")
         lines.append(f"conformance: wrote {REPORT_REL}")
+        if any(r.get("disclosure") == "internal" for r in limit_rows(limits)):
+            lines.append(
+                "NOTE: internal rows need the E47-X04 (#1389) review before publication (D13 §6.5)"
+            )
         for m in expired_exceptions(limits, today or _today()):
             lines.append(f"WARN G-EXPIRED: {m}")
         return lines, 0

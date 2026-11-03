@@ -522,3 +522,83 @@ def test_matrix_rejects_a_malformed_sign_off() -> None:
 
 def test_committed_matrix_is_current() -> None:
     assert regpy.main(["--check"]) == 0
+
+
+# --------------------------------------------------------------------------- per-PR Level A ban, plain language
+
+
+def test_level_a_entry_ban_fires_under_per_pr_check_not_only_release(tmp_path: Path) -> None:
+    rows = [
+        _row("A11Y-F-0001", "2.4.3", "A", GOOD_RISK, surfaces=["SCR-001"]),
+        _row("A11Y-F-0002", "1.4.3", "AA", FIX),
+    ]
+    root = _tree(tmp_path, rows)
+    lines, rc = _run(root, "check")
+    assert rc == 1
+    assert any("G-EXCEPTION" in ln and "can never be an accepted risk" in ln for ln in lines), lines
+
+
+def test_open_level_a_findings_are_not_a_per_pr_gate(tmp_path: Path) -> None:
+    root = _tree(tmp_path)
+    _fill(root)
+    assert _run(root, "check")[1] == 0 and _run(root, "release")[1] == 1
+
+
+@pytest.mark.parametrize(
+    ("text", "why"),
+    [
+        ("Focus moves to the page behind it", "full stop"),
+        ("The focus moves. It is lost.", "more than one sentence"),
+        ("Words " * 31 + "end.", "30 words"),
+        ("Fails 2.4.3 on this page.", "criterion number"),
+        ("The ARIA label is missing.", "banned word"),
+        ("The viewport is too small.", "banned word"),
+        ("The role=button is wrong.", "banned word"),
+    ],
+)
+@pytest.mark.parametrize("field", ["plain", "impact", "workaround"])
+def test_plain_language_rule_is_a_generator_check(
+    tmp_path: Path, field: str, text: str, why: str
+) -> None:
+    root = _tree(tmp_path)
+    _edit_limits(root, lambda d: d["limitations"][1].update({field: text}))
+    lines, rc = _run(root, "check")
+    assert rc == 1, lines
+    assert any(f"G-PLAIN: limitations[1].{field}: " in ln and why in ln for ln in lines), lines
+    assert not any(text in ln for ln in lines)
+
+
+def test_plain_language_is_not_applied_to_internal_rows(tmp_path: Path) -> None:
+    root = _tree(tmp_path)
+    _edit_limits(root, lambda d: d["categories"].update(focus="A sentence."))
+    _edit_limits(
+        root,
+        lambda d: d["limitations"][1].update(disclosure="internal", plain="Raw text 2.4.3 ARIA"),
+    )
+    assert not any("G-PLAIN" in ln for ln in _run(root, "check")[0])
+
+
+def test_fill_notes_the_internal_row_review_without_gating(tmp_path: Path) -> None:
+    root = _tree(tmp_path)
+    _edit_limits(root, lambda d: d["limitations"][1].update(disclosure="internal"))
+    lines, rc = _run(root, "fill")
+    assert rc == 0 and any("E47-X04 (#1389)" in ln for ln in lines), lines
+    quiet, _ = _run(_tree(tmp_path / "b"), "fill")
+    assert not any("E47-X04" in ln for ln in quiet)
+
+
+def test_class_map_is_the_one_d13_proposed() -> None:
+    # BQ-08: class-map changes are co-decided with the owner; this pins the proposal as it stands.
+    pinned = {k: (len(v[0]), v[1], v[2]) for k, v in conf.CONTRACT.items()}
+    assert pinned == {
+        "K-AXE": (10, ("automated", "pass"), "report"),
+        "K-CONTRAST": (2, ("automated", "contrast", "t03"), "theme"),
+        "K-KEY": (5, ("keyboard", "pass"), "keys"),
+        "K-W22": (6, ("wcag22", "d12"), "keys"),
+        "K-FLASH": (1, ("flash", "q05"), "motion"),
+        "K-MOTION": (1, ("q05", "pass"), "motion"),
+        "K-MEDIA": (5, ("pass",), "report"),
+        "K-ZOOM": (4, ("deep", "pass"), "scale"),
+        "K-SR": (6, ("pass", "d12"), "verbosity"),
+        "K-MANUAL": (15, ("pass",), "report"),
+    }
