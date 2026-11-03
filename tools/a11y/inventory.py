@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E47-Q04: the screen inventory behind gate A11Y-G008 and the pa11y / Lighthouse plans.
+"""E47-Q04: the screen inventory behind gate A11Y-G008 and the Lighthouse plan.
 
 Inputs (read only, stdlib only):
   docs/plan/a11y/findings.json    one row per SCR-001..159 with its `coverage`
@@ -13,8 +13,11 @@ Row status (BQ-03):
 
 A mounted row reached through a route (`(R-001 -> LoginScreen)` in its coverageReason) must appear in
 the axe report: in tier `pr` when the per-PR collector scans that route, in tier `full` (nightly,
-A11Y_SWEEP=full) always. A mounted row with no route of its own (a host or overlay) is counted as
-`hosted`: it is scanned inside the screen that mounts it.
+A11Y_SWEEP=full) always. A mounted row with no route of its own (an overlay or shell part) is `hosted`: it must name its
+host in `tools/a11y/inventory-hosts.json` (a route `R-nnn` or a screen `SCR-nnn` that has a route),
+and that host must be in the report for the tier. A hosted row with no resolvable host, a route id
+the manifest does not have, an unknown `coverage`, or a pending row with no owning ticket is a
+broken inventory (A11Y-INFRA), never a pass.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FINDINGS = ROOT / "docs/plan/a11y/findings.json"
 MANIFEST = ROOT / "apps/web/src/routes/manifest.ts"
 SCREENS_TS = ROOT / "apps/web/e2e/a11y/screens.ts"
+HOSTS = ROOT / "tools/a11y/inventory-hosts.json"
 
 MOUNTED_COVERAGE = ("covered", "partial")
 ROUTE_MOUNT_RE = re.compile(r"\b(R-\d{3})\s*->")
@@ -79,6 +83,11 @@ class Row:
     status: str  # mounted | pending | reserved
     ticket: str
     routes: tuple[str, ...] = field(default_factory=tuple)
+    hosts: tuple[str, ...] = field(default_factory=tuple)  # resolved route ids of a hosted row
+
+    @property
+    def required_routes(self) -> tuple[str, ...]:
+        return self.routes or self.hosts
 
 
 def load_manifest(path: Path = MANIFEST) -> dict[str, Route]:
@@ -108,28 +117,83 @@ def pr_scan_ids(path: Path = SCREENS_TS) -> frozenset[str]:
     return frozenset(re.findall(r"R-\d{3}", pr.group(1)) + re.findall(r'\["(R-\d{3})"', signed.group(1)))
 
 
-def load_rows(findings: Path = FINDINGS, manifest: dict[str, Route] | None = None) -> list[Row]:
+ANY_ROUTE_RE = re.compile(r"\bR-\d{3}\b")
+OWNERLESS = ("", "unassigned")
+
+
+def _coverage_status(cov: str) -> str | None:
+    if cov in MOUNTED_COVERAGE:
+        return "mounted"
+    if cov.startswith("unreachable:"):
+        return "pending"
+    if cov.startswith("reserved:"):
+        return "reserved"
+    return None
+
+
+def load_hosts(path: Path = HOSTS) -> dict[str, str]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise InventoryError(f"A11Y-INFRA cannot read {path}: {exc}") from exc
+    hosts = data.get("hosts") if isinstance(data, dict) else None
+    if not isinstance(hosts, dict):
+        raise InventoryError(f"A11Y-INFRA {path} has no 'hosts' object")
+    return {str(k): str(v) for k, v in hosts.items()}
+
+
+def load_rows(
+    findings: Path = FINDINGS,
+    manifest: dict[str, Route] | None = None,
+    hosts: dict[str, str] | None = None,
+) -> list[Row]:
     manifest = manifest if manifest is not None else load_manifest()
+    hosts = hosts if hosts is not None else load_hosts()
     try:
         data = json.loads(findings.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise InventoryError(f"A11Y-INFRA cannot read {findings}: {exc}") from exc
     rows: list[Row] = []
     for s in data.get("screens", []):
-        cov = str(s.get("coverage", ""))
-        if cov.startswith("reserved"):
-            status = "reserved"
-        elif cov in MOUNTED_COVERAGE:
-            status = "mounted"
-        else:
-            status = "pending"
-        routes = tuple(
-            dict.fromkeys(r for r in ROUTE_MOUNT_RE.findall(str(s.get("coverageReason", ""))) if r in manifest)
-        )
-        rows.append(Row(str(s["id"]), str(s.get("name", "")), status, str(s.get("owningTicket", "")), routes))
+        sid, cov = str(s.get("id", "?")), str(s.get("coverage", ""))
+        status = _coverage_status(cov)
+        if status is None:
+            raise InventoryError(f"A11Y-INFRA {sid}: unknown coverage {cov!r}")
+        reason = str(s.get("coverageReason", ""))
+        unknown = sorted(set(ANY_ROUTE_RE.findall(reason)) - set(manifest))
+        if unknown:
+            raise InventoryError(
+                f"A11Y-INFRA {sid}: coverageReason names {', '.join(unknown)}, not in the route manifest"
+            )
+        ticket = str(s.get("owningTicket", "")).strip()
+        if status == "pending" and ticket in OWNERLESS:
+            raise InventoryError(f"A11Y-INFRA {sid}: a pending row needs an owningTicket")
+        routes = tuple(dict.fromkeys(ROUTE_MOUNT_RE.findall(reason)))
+        rows.append(Row(sid, str(s.get("name", "")), status, ticket, routes))
     if not rows:
         raise InventoryError(f"A11Y-INFRA {findings} has no screen rows")
-    return rows
+    by_id = {r.id: r for r in rows}
+    out: list[Row] = []
+    for r in rows:
+        if r.status == "mounted" and not r.routes:
+            r = Row(r.id, r.name, r.status, r.ticket, r.routes, _resolve_host(r.id, hosts, manifest, by_id))
+        out.append(r)
+    return out
+
+
+def _resolve_host(
+    sid: str, hosts: dict[str, str], manifest: dict[str, Route], by_id: dict[str, Row]
+) -> tuple[str, ...]:
+    host = hosts.get(sid, "")
+    if host in manifest:
+        return (host,)
+    h = by_id.get(host)
+    if h is not None and h.status == "mounted" and h.routes:
+        return h.routes
+    raise InventoryError(
+        f"A11Y-INFRA {sid}: a hosted screen must name its host in tools/a11y/inventory-hosts.json "
+        f"(a manifest route, or a mounted screen with a route); got {host!r}"
+    )
 
 
 def summary(rows: list[Row]) -> dict[str, int]:
@@ -151,14 +215,16 @@ def check_inventory(
         raise InventoryError("A11Y-INFRA axe report has no 'screens' object")
     msgs: list[str] = []
     for r in rows:
-        if r.status != "mounted" or not r.routes:
+        req = r.required_routes
+        if r.status != "mounted" or not req:
             continue
-        if tier == "pr" and not any(rt in pr_scanned for rt in r.routes):
+        if tier == "pr" and not any(rt in pr_scanned for rt in req):
             continue  # nightly-only: its route is not in the per-PR set
-        if r.id in screens or any(rt in screens for rt in r.routes):
+        if r.id in screens or any(rt in screens for rt in req):
             continue
+        where = "mounted at" if r.routes else "hosted by"
         msgs.append(
-            f"A11Y-G008 screen={r.id} ({r.name}) is mounted at {', '.join(r.routes)} "
+            f"A11Y-G008 screen={r.id} ({r.name}) is {where} {', '.join(req)} "
             f"but absent from the axe report (tier={tier}); add it to apps/web/e2e/a11y/screens.ts"
         )
     return msgs
@@ -166,42 +232,16 @@ def check_inventory(
 
 def describe(rows: list[Row], pr_scanned: frozenset[str], tier: str) -> str:
     c = summary(rows)
-    routed = [r for r in rows if r.status == "mounted" and r.routes]
-    required = [r for r in routed if tier == "full" or any(rt in pr_scanned for rt in r.routes)]
+    routed = [r for r in rows if r.status == "mounted" and r.required_routes]
+    required = [
+        r for r in routed if tier == "full" or any(rt in pr_scanned for rt in r.required_routes)
+    ]
     return (
         f"A11Y-G008 inventory: {c['rows']} screens, {c['mounted']} mounted "
         f"({len(required)} required in tier {tier}, {len(routed) - len(required)} nightly-only, "
-        f"{c['mounted'] - len(routed)} hosted), {c['pending']} pending "
+        f"{sum(1 for r in routed if not r.routes)} of them hosted), {c['pending']} pending "
         f"({len({r.ticket for r in rows if r.status == 'pending'})} tickets), {c['reserved']} reserved"
     )
-
-
-def pa11y_config(rows: list[Row], manifest: dict[str, Route], base_url: str, chrome: str | None) -> dict:
-    """pa11y-ci config driven from the inventory: the mounted, public routes.
-
-    A guarded route visited bare is bounced to /login (#3470), so it is left to axe's session entry.
-    """
-    seen: dict[str, str] = {}
-    for r in rows:
-        if r.status != "mounted":
-            continue
-        for rt in r.routes:
-            route = manifest[rt]
-            if route.public:
-                seen.setdefault(rt, route.visit_path)
-    launch: dict = {"args": ["--no-sandbox", "--disable-dev-shm-usage"]}
-    if chrome:
-        launch["executablePath"] = chrome
-    return {
-        "defaults": {
-            "standard": "WCAG2AA",
-            "timeout": 30000,
-            "wait": 500,
-            "chromeLaunchConfig": launch,
-            "ignore": [],
-        },
-        "urls": [{"url": f"{base_url.rstrip('/')}{p}", "_route": rt} for rt, p in sorted(seen.items())],
-    }
 
 
 def lighthouse_plan(rows: list[Row], manifest: dict[str, Route]) -> dict:

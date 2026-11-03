@@ -1,0 +1,20 @@
+{
+  "$comment": "E47-Q04: a mounted screen with no route of its own is scanned inside its host: a route id R-nnn, or a screen id SCR-nnn that has a route. The gate (A11Y-G008) requires the host in the axe report for the tier; a missing or unresolvable host is A11Y-INFRA.",
+  "hosts": {
+    "SCR-002": "R-001",
+    "SCR-003": "SCR-017",
+    "SCR-005": "R-001",
+    "SCR-006": "R-303",
+    "SCR-010": "R-201",
+    "SCR-011": "R-201",
+    "SCR-013": "R-001",
+    "SCR-014": "R-201",
+    "SCR-015": "R-001",
+    "SCR-018": "SCR-019",
+    "SCR-075": "R-201",
+    "SCR-152": "R-201",
+    "SCR-153": "R-201",
+    "SCR-156": "R-101",
+    "SCR-157": "R-201"
+  }
+}

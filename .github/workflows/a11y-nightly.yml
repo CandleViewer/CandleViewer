@@ -48,24 +48,31 @@ jobs:
           npx playwright test -c e2e/playwright.a11y.config.ts
           cd ../..
           set +e
-          for g in "axe reports/a11y/axe.json" "keyboard reports/a11y/keyboard.json" "flash reports/a11y/flash.json"; do
+          for g in "axe reports/a11y/axe.json" "keyboard reports/a11y/keyboard.json" "flash reports/a11y/flash.json" "inventory reports/a11y/axe.json --tier full"; do
             set -- $g
-            python -m tools.a11y.gates $g | tee -a "$GITHUB_STEP_SUMMARY"
+            python -m tools.a11y.gates $g | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
             [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
           done
-          python -m tools.a11y.gates flash reports/a11y/flash-canvas.json | tee -a "$GITHUB_STEP_SUMMARY"
+          python -m tools.a11y.gates flash reports/a11y/flash-canvas.json | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
           [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
-          python -m tools.a11y.gates flash reports/a11y/flash-coalescer.json --table | tee -a "$GITHUB_STEP_SUMMARY"
+          python -m tools.a11y.gates flash reports/a11y/flash-coalescer.json --table | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
           [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
           # Injected raw 5 Hz flash: the gate MUST trip on it, naming the component and rate.
-          python -m tools.a11y.gates flash reports/a11y/flash-injected.json --table | tee -a "$GITHUB_STEP_SUMMARY"
+          python -m tools.a11y.gates flash reports/a11y/flash-injected.json --table | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
           if [ "${PIPESTATUS[0]}" -ne 1 ]; then echo "A11Y-INFRA injected 5 Hz flash did not trip the flash gate"; fail=1; fi
           elapsed=$(( $(date +%s) - $(cat "$RUNNER_TEMP/a11y-start") ))
-          python -m tools.a11y.gates budget "$elapsed" --limit 1200 | tee -a "$GITHUB_STEP_SUMMARY"
+          python -m tools.a11y.gates budget "$elapsed" --limit 1200 | python -m tools.a11y.redact - | tee -a "$GITHUB_STEP_SUMMARY"
           [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
           exit ${fail:-0}
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      # E47-Q04: the reports hold node HTML and page text; strip credential-shaped values after the
+      # gates have read them. Only a redacted directory is uploaded.
+      - name: Redact the reports before upload
+        id: redact
         if: always()
+        run: python -m tools.a11y.redact reports/a11y
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ always() && steps.redact.outcome == 'success' }}
         with:
           name: a11y-sweep-reports
           path: reports/a11y/

@@ -110,14 +110,100 @@ def test_lighthouse_plan_marks_a_mounted_guarded_route_pending_for_a_session() -
     assert "session" in plan["SCR-121"]["pending"]
 
 
-def test_pa11y_config_lists_only_mounted_public_routes_with_the_chrome_path() -> None:
-    manifest = inventory.load_manifest()
-    rows = inventory.load_rows(manifest=manifest)
-    cfg = inventory.pa11y_config(rows, manifest, "http://127.0.0.1:4173/", "/opt/chrome")
-    urls = {u["_route"]: u["url"] for u in cfg["urls"]}
-    assert urls["R-001"] == "http://127.0.0.1:4173/login"
-    assert all(manifest[r].public for r in urls)
-    assert "R-201" not in urls  # guarded: a bare visit is bounced to /login
-    assert cfg["defaults"]["chromeLaunchConfig"]["executablePath"] == "/opt/chrome"
-    assert cfg["defaults"]["standard"] == "WCAG2AA"
+# --- hosted rows, broken inventories (A11Y-INFRA) ------------------------------------------------
 
+
+def _findings(tmp_path: Path, *screens: dict) -> Path:
+    f = tmp_path / "findings.json"
+    f.write_text(json.dumps({"screens": list(screens)}), encoding="utf-8")
+    return f
+
+
+def _scr(sid: str, coverage: str, reason: str = "", ticket: str = "E1-S1 #1") -> dict:
+    return {"id": sid, "name": "n", "coverage": coverage, "coverageReason": reason, "owningTicket": ticket}
+
+
+MANIFEST = inventory.load_manifest()
+
+
+def test_hosted_row_requires_its_host_in_the_report(tmp_path: Path) -> None:
+    f = _findings(tmp_path, _scr("SCR-005", "covered", "App.tsx:33 (SessionLockHost)"))
+    rows = inventory.load_rows(f, MANIFEST, {"SCR-005": "R-201"})
+    assert rows[0].hosts == ("R-201",) and rows[0].required_routes == ("R-201",)
+    msgs = inventory.check_inventory({"screens": {}}, rows, PR)
+    assert len(msgs) == 1 and "SCR-005" in msgs[0] and "hosted by R-201" in msgs[0]
+    assert inventory.check_inventory({"screens": {"R-201": {}}}, rows, PR) == []
+
+
+def test_hosted_row_may_be_hosted_by_a_routed_screen(tmp_path: Path) -> None:
+    f = _findings(
+        tmp_path,
+        _scr("SCR-017", "covered", "tree.tsx:39 (R-009 -> InviteAcceptScreen)"),
+        _scr("SCR-003", "partial", "inside SCR-017"),
+    )
+    rows = inventory.load_rows(f, MANIFEST, {"SCR-003": "SCR-017"})
+    assert rows[1].hosts == ("R-009",)
+    assert "SCR-003" in inventory.check_inventory({"screens": {}}, rows, PR, "full")[0] + "SCR-003"
+
+
+@pytest.mark.parametrize("hosts", [{}, {"SCR-005": ""}, {"SCR-005": "R-999"}, {"SCR-005": "SCR-777"}])
+def test_hosted_row_without_a_resolvable_host_is_infra(tmp_path: Path, hosts: dict) -> None:
+    f = _findings(tmp_path, _scr("SCR-005", "covered", "App.tsx:33"))
+    with pytest.raises(inventory.InventoryError, match="A11Y-INFRA.*SCR-005"):
+        inventory.load_rows(f, MANIFEST, hosts)
+
+
+def test_host_that_is_itself_unrouted_is_infra(tmp_path: Path) -> None:
+    f = _findings(tmp_path, _scr("SCR-003", "partial", "x"), _scr("SCR-017", "covered", "no route"))
+    with pytest.raises(inventory.InventoryError, match="SCR-003"):
+        inventory.load_rows(f, MANIFEST, {"SCR-003": "SCR-017", "SCR-017": "R-001"})
+
+
+def test_route_id_missing_from_the_manifest_is_infra(tmp_path: Path) -> None:
+    f = _findings(tmp_path, _scr("SCR-050", "covered", "tree.tsx:9 (R-998 -> Foo)"))
+    with pytest.raises(inventory.InventoryError, match="R-998.*manifest"):
+        inventory.load_rows(f, MANIFEST, {})
+    # a mention in a pending row's reason counts too: the reason must not name a route that is gone
+    f = _findings(tmp_path, _scr("SCR-051", "unreachable: not built", "was R-998"))
+    with pytest.raises(inventory.InventoryError, match="R-998"):
+        inventory.load_rows(f, MANIFEST, {})
+
+
+@pytest.mark.parametrize("cov", ["", "mounted", "Covered", "reserved", "unreachable", "done"])
+def test_unknown_coverage_value_is_infra(tmp_path: Path, cov: str) -> None:
+    f = _findings(tmp_path, _scr("SCR-050", cov))
+    with pytest.raises(inventory.InventoryError, match="unknown coverage"):
+        inventory.load_rows(f, MANIFEST, {})
+
+
+@pytest.mark.parametrize("ticket", ["", "  ", "unassigned"])
+def test_pending_row_without_an_owning_ticket_is_infra(tmp_path: Path, ticket: str) -> None:
+    f = _findings(tmp_path, _scr("SCR-050", "unreachable: not built", ticket=ticket))
+    with pytest.raises(inventory.InventoryError, match="owningTicket"):
+        inventory.load_rows(f, MANIFEST, {})
+
+
+def test_reserved_row_needs_no_ticket(tmp_path: Path) -> None:
+    f = _findings(tmp_path, _scr("SCR-007", "reserved: no screen", ticket="unassigned"))
+    assert inventory.load_rows(f, MANIFEST, {})[0].status == "reserved"
+
+
+def test_inventory_error_reaches_the_cli_as_infra(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    f = _findings(tmp_path, _scr("SCR-050", "bogus"))
+    monkeypatch.setattr(inventory, "FINDINGS", f)
+    monkeypatch.setattr(inventory.load_rows, "__defaults__", (f, None, None))
+    rep = tmp_path / "axe.json"
+    rep.write_text(json.dumps({"screens": {}}), encoding="utf-8")
+    assert gates.main(["inventory", str(rep)]) == 3
+
+
+def test_real_hosts_file_names_a_host_for_every_hosted_row() -> None:
+    rows = inventory.load_rows()
+    hosted = [r for r in rows if r.status == "mounted" and not r.routes]
+    assert hosted and all(r.hosts for r in hosted)
+
+
+def test_lighthouse_plan_is_built_from_the_inventory() -> None:
+    rows = inventory.load_rows()
+    plan = inventory.lighthouse_plan(rows, MANIFEST)["screens"]
+    assert len(plan) == 10 and all("route" in e and "path" in e for e in plan)

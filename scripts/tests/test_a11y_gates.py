@@ -291,7 +291,7 @@ def test_flash_window_slides_across_a_wall_second_boundary() -> None:
     assert gates.count_flashes(series, 60) == 3
 
 
-# --- E47-Q04: moderate/minor baseline, schema, expiry, pa11y, Lighthouse metadata -------------
+# --- E47-Q04: moderate/minor baseline, schema, expiry, Lighthouse metadata -------------
 
 NOW = dt.datetime(2026, 11, 3, 12, tzinfo=dt.timezone.utc)
 
@@ -325,7 +325,7 @@ def test_minor_key_ignores_react_use_id_segments() -> None:
 
 
 def test_expired_suppression_fails_naming_owner_and_ticket() -> None:
-    for section in ("entries", "minor_entries", "pa11y_entries"):
+    for section in ("entries", "minor_entries"):
         msgs = gates.check_baseline_schema({section: [_entry(expiry="2026-11-02")]}, NOW)
         assert len(msgs) == 1, section
         assert "expired" in msgs[0] and "owner=alice" in msgs[0] and "ticket=#1400" in msgs[0]
@@ -349,7 +349,7 @@ def test_baseline_entry_bad_date_and_target_after_expiry_fail() -> None:
 
 
 def test_baseline_pr_ids_cover_every_section() -> None:
-    head = {"minor_entries": [_entry()], "pa11y_entries": [_entry(fingerprint="x|y")]}
+    head = {"entries": [_entry(fingerprint="a|b|c")], "minor_entries": [_entry()]}
     assert len(gates.check_baseline_pr_ids({}, head, "no id")) == 2
     assert not gates.check_baseline_pr_ids({}, head, "A11Y-F-0007")
 
@@ -359,24 +359,6 @@ def test_repo_baseline_has_every_section_and_passes_its_own_schema() -> None:
     assert base["schemaVersion"] == 2
     assert all(isinstance(base[s], list) for s in gates.BASELINE_SECTIONS)
     assert gates.check_baseline_schema(base, NOW) == []
-
-
-def _pa11y(*issues: dict) -> dict:
-    return {"results": {"http://127.0.0.1:4173/login": list(issues)}}
-
-
-def test_pa11y_error_fails_and_notice_or_baselined_passes() -> None:
-    err = {"type": "error", "code": "WCAG2AA.1_4_3", "selector": "#a"}
-    assert "A11Y-G009" in gates.check_pa11y(_pa11y(err), {})[0]
-    assert gates.check_pa11y(_pa11y({**err, "type": "notice"}), {}) == []
-    assert gates.check_pa11y(_pa11y(err), {"pa11y_entries": [_entry(fingerprint="WCAG2AA.1_4_3|#a")]}) == []
-
-
-def test_pa11y_unscannable_page_or_no_results_is_infra() -> None:
-    with pytest.raises(gates.InfraError):
-        gates.check_pa11y({"results": {"http://x/": "Error: net::ERR"}}, {})
-    with pytest.raises(gates.InfraError):
-        gates.check_pa11y({}, {})
 
 
 def test_lighthouse_new_shape_pending_passes_and_low_score_fails() -> None:
@@ -402,3 +384,23 @@ def test_cli_axe_fails_on_expired_entry(tmp_path: Path, capsys: pytest.CaptureFi
     base.write_text(json.dumps({"minor_entries": [_entry(expiry="2020-01-01", target="2020-01-01")]}), encoding="utf-8")
     assert gates.main(["axe", str(rep), "--baseline", str(base)]) == 1
     assert "owner=alice" in capsys.readouterr().out
+
+
+def test_baseline_expiry_beyond_the_ninety_day_horizon_fails() -> None:
+    ok = _entry(expiry="2027-02-01", target="2027-01-01")  # 90 days from 2026-11-03
+    assert gates.check_baseline_schema({"minor_entries": [ok]}, NOW) == []
+    far = _entry(expiry="2027-02-02", target="2027-01-01")
+    msgs = gates.check_baseline_schema({"minor_entries": [far]}, NOW)
+    assert len(msgs) == 1 and "90 days" in msgs[0] and "owner=alice" in msgs[0]
+
+
+def test_minor_entry_needs_an_a11y_f_finding_id() -> None:
+    msgs = gates.check_baseline_schema({"minor_entries": [_entry(finding="BUG-7")]}, NOW)
+    assert len(msgs) == 1 and "finding id" in msgs[0]
+
+
+def test_pa11y_is_gone() -> None:
+    assert not hasattr(gates, "check_pa11y")
+    assert gates.BASELINE_SECTIONS == ("entries", "minor_entries")
+    with pytest.raises(SystemExit):
+        gates.main(["pa11y", "x.json"])
