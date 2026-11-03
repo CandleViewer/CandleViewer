@@ -95,6 +95,9 @@ KEY_CITES: tuple[L.KeyCite, ...] = tuple(
         ("05", 162, "profile-histogram bars"),
         ("05", 185, "default 1 update / 2s per field"),
         ("05", 187, "reduce announcements"),
+        ("05", 249, "Ctrl+Shift+M"),
+        ("05", 251, "2.2.2"),
+        ("05", 252, "No content flashes more than 3 times per second"),
         ("05", 205, "**Profile table**"),
         ("05", 229, "load more rows"),
         ("15", 592, "the shared composite-grid pattern"),
@@ -107,6 +110,7 @@ KEY_CITES: tuple[L.KeyCite, ...] = tuple(
         ("D02", 97, "no DEMO / LIVE badge"),
         ("D02", 100, "R-4 Announcements"),
         ("D02", 256, "none (E17's system notice owns it)"),
+        ("D02", 271, "Initial focus: the first radio of Period"),
         ("D02", 273, "focus trapped"),
         ("D02", 339, "MEMO A-6's TPO count"),
         ("D02", 340, "header controls → histogram mirror → legend → table"),
@@ -114,13 +118,19 @@ KEY_CITES: tuple[L.KeyCite, ...] = tuple(
         ("D02", 383, "{level word} {price}: volume {v}, delta {d}"),
         ("D03", 175, "the engine draws from system colours"),
         ("D03", 183, "wrap, never truncate"),
+        ("D03", 285, "Behaviour (1.4.13)"),
         ("D03", 355, "The Levels group"),
         ("D03", 424, "D03-C11"),
+        ("D03", 442, "D03-A3"),
         ("D03", 461, "no tritan matrix"),
+        ("D04", 183, "24 × 24 CSS px"),
         ("D04", 260, "profile range stop"),
         ("D04", 405, "D04-C6"),
+        ("D05", 166, "RenderFlags.animate"),
         ("D05", 170, "The canvas is not recoloured by the OS"),
         ("D05", 172, "wrap or truncate with a"),
+        ("D05", 243, "WCAG 2.2.2"),
+        ("D05", 394, "Combined M-2 + M-4 + M-8"),
         ("D05", 433, '"Final" spoken alone'),
         ("E26-D02", 44, "profile"),
         ("M", 265, "A-6"),
@@ -150,6 +160,10 @@ PAIRS: tuple[tuple[str, str, float], ...] = (
     ("color.tpo.letter", CANVAS, 4.5),
     ("color.tpo.initialbalance", CANVAS, 3.0),
     ("color.tpo.letter", "color.surface.raised", 4.5),
+    ("color.text.tertiary", CANVAS, 3.0),
+    ("color.text.secondary", CANVAS, 3.0),
+    ("color.buy.default", CANVAS, 3.0),
+    ("color.sell.default", CANVAS, 3.0),
     ("color.chart.focus.ring", CANVAS, 3.0),
     ("color.focus.ring", CANVAS, 3.0),
     ("color.focus.ring", "color.surface.raised", 3.0),
@@ -191,6 +205,9 @@ VERDICTS = (
     "not yet decidable —",
 )
 CR_VERDICTS = ("compliant", "compliant if #5517 merges as is", "at risk")
+# Section 10.1 and the motion verdicts: one row per moving D05 section 2 entry.
+MOTION_HEAD = "### 10.1 Motion is never the only carrier"
+MOTION_V = (("2.3.1", "`05`:252", "D05:389"), ("2.2.2", "`05`:251", "D05:243"))
 SCENARIOS = 6
 INBOX = 24
 DECISIONS = 10
@@ -616,6 +633,33 @@ def g_env(t: L.Tree) -> list[str]:
     return bad
 
 
+def d05_moving(d: L.Docs) -> list[str]:
+    block = L.section(doc_text(d, "D05"), "## 2. The motion table")
+    return [f"D05 {r[0]}" for r in L.table_rows(block) if len(r) > 3 and r[3].startswith("yes")]
+
+
+def g_motion(t: L.Tree) -> list[str]:
+    want = d05_moving(docs_of(t))
+    got = rows(t, MOTION_HEAD)
+    bad = [] if want else ["D05 section 2 lists no moving entry"]
+    if [r[0] for r in got] != want:
+        bad.append(f"10.1 rows {[r[0] for r in got]} are not D05's moving entries {want}")
+    for r in got:
+        if len(r) < 5 or not r[2].strip("— ") or not r[3].strip("— "):
+            bad.append(f"{r[0] if r else '?'} carrier or reduce form")
+        elif not r[4].startswith(VERDICTS):
+            bad.append(f"{r[0]} verdict")
+    verdicts = rows(t, "## 11. Clause verdicts")
+    for clause, rule, evidence in MOTION_V:
+        hit = [r for r in verdicts if len(r) > 3 and r[1].startswith(f"{clause} / {rule}")]
+        if len(hit) != 1 or evidence not in hit[0][3]:
+            bad.append(f"no {clause} verdict citing {evidence}")
+    v29 = next((r[1] for r in verdicts if r and r[0] == "V-29"), "")
+    if "`Ctrl+Shift+M`" not in v29:
+        bad.append("V-29 omits the in-app override")
+    return bad
+
+
 def g_walk(t: L.Tree) -> list[str]:
     items = re.findall(r"^(\d+)\. ", sec(t, "### 14.3"), re.MULTILINE)
     n = len(items)
@@ -669,7 +713,7 @@ def g_mutlist(t: L.Tree) -> list[str]:
 # fmt: off
 GATES = tuple(L.Gate("G-" + f.__name__[2:].upper(), f) for f in (
     g_cite, g_keycite, g_version, g_ac, g_inbox, g_decisions, g_table, g_keys, g_t2, g_live,
-    g_colour, g_contrast, g_cvd, g_verdict, g_findings, g_ids, g_handoff, g_env, g_walk,
+    g_colour, g_contrast, g_cvd, g_verdict, g_findings, g_ids, g_handoff, g_env, g_motion, g_walk,
     g_ruling, g_ruled, g_noclose, g_public, g_hygiene, g_helper, g_untouched, g_mutlist,
 ))
 # fmt: on
@@ -729,7 +773,7 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-21", "G-VERDICT", "a compliant verdict names an F row", "spec",
        r"(\| V-02 \|[^\n]*?\| )compliant( +\|)", r"\1compliant — F-10\2", regex=True),
     _M("M-22", "G-FINDINGS", "the heading count drifts", "spec",
-       "Major 2 · Minor 8 · Info 1)", "Major 2 · Minor 7 · Info 1)"),
+       "Major 2 · Minor 8 · Info 2)", "Major 2 · Minor 7 · Info 2)"),
     _M("M-23", "G-FINDINGS", "a finding loses its story", "spec",
        r"(\| F-03 \|[^\n]*?E19-D07 #502) · E19-S01 #638", r"\1", regex=True),
     _M("M-24", "G-FINDINGS", "the hold sentence dropped", "spec",
@@ -762,6 +806,12 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "", "docs/plan/05-accessibility-standard.md"),
     _M("M-38", "G-MUTLIST", "the list drifts", "spec",
        r"\| M-01 +\| G-CITE +\|", "| M-01 | G-AC |", regex=True),
+    _M("M-39", "G-MOTION", "a moving entry loses its static carrier", "spec",
+       r"(\| D05 M-2 +\|[^|\n]*\| )[^|\n]*?( +\|)", r"\1—\2", regex=True),
+    _M("M-40", "G-MOTION", "the flash verdict dropped", "spec",
+       "| 2.3.1 / `05`:252 — nothing flashes", "| `05`:252 — nothing flashes"),
+    _M("M-41", "G-MOTION", "V-29 loses the in-app override", "spec",
+       "reduce, by OS or `Ctrl+Shift+M`, keeps meaning", "reduce, by the OS setting, keeps meaning"),
 )
 # fmt: on
 
