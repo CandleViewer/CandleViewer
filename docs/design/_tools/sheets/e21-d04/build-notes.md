@@ -78,7 +78,7 @@ Every fix line of the live check is folded in, so a rebuild reproduces the drawn
 differences from the sheets as handed over are these (and the sheets' `notes`, which carry the spec pin):
 
 - Root heights: `MEASURED_H`, the checked max(annotation end, footer end) + 80 (01 1512, 02 999, 03 1670, 04 1400,
-  05 958, 06 1195, 07 789, 08 1030, 09 1033, 10 597). Every root came out 2 to 143 px shorter than the kit's estimate:
+  05 958, 06 1195, 07 789, 08 1030, 09 1033, 10 597; board 09 measured 1129 after its redraw with the T2 reason and the panel notice). Every root came out 2 to 143 px shorter than the kit's estimate:
   the annotation columns wrap fewer lines live. The root estimate now takes Inter's advance as 0.51 em
   (`INTER_EM["root"]`; the nodes' own widths keep 0.56, so no drawn geometry moves), which puts the ten estimates
   within -13 … +37 px of the drawn heights, and `board()` refuses a checked height more than `MEASURED_SLACK` (48 px)

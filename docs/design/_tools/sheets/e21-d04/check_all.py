@@ -1,9 +1,10 @@
-"""Scan the ten E21-D04 sheets (raw in CAP_DIR, packed in V4_DIR): validator (with the shared components list),
-mkcall4 count, compactOf (bare name + the raw sheet's sha256), no inst, local icons only, no boolean wrap, no '/' in
-node names, no banned string, no NEVER token, colour binds semantic only, a "state:" caption per frame, table cells
-padded 8 px a side with their text inside (>= 16 px between texts), row / column overflow and sibling overlap by the
-kit's estimates, the spec md5 pin. With --rebuild it first runs every generator twice and requires byte-identical
-raw, md and packed files. Run: python3 -I -B check_all.py [--rebuild]"""
+"""Scan the ten E21-D04 sheets (raw in CAP_DIR, packed in V4_DIR): validator (with the shared components list), mkcall4
+count, compactOf (bare name + the raw sheet's sha256), every T2 control with its reason and the notice (forced colours
+too), no inst, local icons only, no boolean wrap, no '/' in node names, no banned string, no NEVER token, colour binds
+semantic only, a "state:" caption per frame, table cells padded 8 px a side with their text inside (>= 16 px between
+texts), row / column overflow and sibling overlap by the kit's estimates, the spec md5 pin. With --rebuild it first
+runs every generator twice and requires byte-identical raw, md and packed files. Run: python3 -I -B check_all.py
+[--rebuild]"""
 from __future__ import annotations
 
 import hashlib
@@ -66,6 +67,33 @@ def rebuild() -> list[str]:
     return [f"rebuild differs: {f}" for f in diff]
 
 
+def t2_findings(frames: list[dict]) -> list[str]:
+    """G-T2.1c / G-T2.2 / G-T2.5: a frame that draws a T2 control (a T2 item or the LOCKED pill) also draws its
+    reason (W-20) and the panel's notice (the header notice, or the row menu's label that carries its sentence);
+    under forced colours (§5.5's last row) the notice reads CanvasText on Canvas (the stand-ins TEXT_1 on APP)."""
+    bad, w20 = [], k.W("W-20")
+    for f in frames:
+        nodes = [n for _p, n in walk(f)]
+        if not any(n["name"].startswith(("T2 item", "CMP-229 ArmToggle")) for n in nodes):
+            continue
+        notices = [n for n in nodes if n["name"] == "header notice (G-T2.5)" or n["name"].startswith("menu label")]
+        said = [n for n in notices if any(c["t"] == "text" and c["name"] == "reason" and c["chars"] == w20
+                                          for c in n.get("kids") or [])]
+        if not said:
+            bad.append(f"{f['name']}: a T2 control with no notice carrying W-20")
+        menu = any(n["name"].startswith("CMP-041 Menu") for n in nodes)
+        if not menu and not any(n["t"] == "text" and n["name"].startswith("reason (") and n["chars"] == w20
+                                for n in nodes):
+            bad.append(f"{f['name']}: a T2 control with no reason of its own (2a)")
+        if "Forced colours" in f["name"]:
+            for n in said:
+                fill = (n.get("o") or {}).get("fill")
+                ink = {c.get("color") for c in n.get("kids") or [] if c["name"] == "reason"}
+                if n["name"].startswith("header notice") and (fill != k.APP or ink != {k.TEXT_1}):
+                    bad.append(f"{f['name']}: forced notice {fill} / {sorted(ink)}, not CanvasText on Canvas")
+    return bad
+
+
 def main() -> int:
     bad: list[str] = rebuild() if sys.argv[1:] == ["--rebuild"] else []
     total = {"boards": 0, "frames": 0, "shapes": 0}
@@ -92,6 +120,7 @@ def main() -> int:
         want = [k.frame_name(f, nn) for f in k.FRAME_PLAN[nn]]
         frames = [n for n in t["kids"] if n["name"] in want]
         total["frames"] += len(frames)
+        bad.extend(f"{b.sheet}: {x}" for x in t2_findings(frames))
         caps = [n for n in t["kids"] if n["name"].startswith("caption ") and n["chars"].startswith("state: ")]
         if len(caps) != len(frames) or [f["name"] for f in frames] != want:
             bad.append(f"{b.sheet}: {len(frames)} frames, {len(caps)} captions, plan {len(want)}")

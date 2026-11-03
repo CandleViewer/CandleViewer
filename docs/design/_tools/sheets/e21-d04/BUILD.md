@@ -7,16 +7,16 @@ Python 3.12 (stdlib only); nothing here touches the network or Penpot.
 
 ## What is here
 
-| Path                     | What                                                                                                                                                                                                                                                                                       |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `e21d04kit.py`           | The kit: §0's board table, §1.3's R-3, §4.1's template and tokens, §4.8's copy, §5's sets and tables parsed from the pack, the hand-off's Table 1 variants; the seeded synthetic book (seed 504); tokens with per-theme values; the node primitives, the board, write, pack and self-test. |
-| `gen/frames.py`          | The frames: ladder rows and windows, the heatmap pane, the CMP-024 sparkline, the CMP-111 reveal, the CMP-113 legend, the CMP-228 tile, the notice, and one builder per board.                                                                                                             |
-| `gen/gen_NN.py`          | One generator per board.                                                                                                                                                                                                                                                                   |
-| `check_all.py`           | The scan over the ten sheets (with `--rebuild`, every generator twice and byte-identical; validator, pack, `mkcall4.py` count, frame plan and captions, md line 3, banned strings, backticks in drawn text, tokens, icons, row and column fits, cell padding, overlaps).                   |
-| `NN-<slug>.md`           | Each board's sidecar as the kit writes it (line 3 is the render drivers' line: page, export, sheet and theme), its frames, the validator line, the live checks and the notes.                                                                                                              |
-| `v4/NN-<slug>.json`      | The packed sheets. `compactOf.file` is the bare raw-sheet name; `compactOf.sha256` is the raw sheet's, so a rebuild proves itself (below).                                                                                                                                                 |
-| `build-notes.md`         | The authors' notes: sources and pins, the seeded world, the readings taken, and the live-check fold.                                                                                                                                                                                       |
-| `build/` (not committed) | The raw sheets `NN-<slug>.json` with a copy of each `.md` (the set the render drivers read), and `selftest/`. Listed in `.gitignore`.                                                                                                                                                      |
+| Path                     | What                                                                                                                                                                                                                                                                                                           |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `e21d04kit.py`           | The kit: §0's board table, §1.3's R-3, §4.1's template and tokens, §4.8's copy, §5's sets and tables parsed from the pack, the hand-off's Table 1 variants; the seeded synthetic book (seed 504); tokens with per-theme values; the node primitives, the board, write, pack and self-test.                     |
+| `gen/frames.py`          | The frames: ladder rows and windows, the heatmap pane, the CMP-024 sparkline, the CMP-111 reveal, the CMP-113 legend, the CMP-228 tile, the notice, and one builder per board.                                                                                                                                 |
+| `gen/gen_NN.py`          | One generator per board.                                                                                                                                                                                                                                                                                       |
+| `check_all.py`           | The scan over the ten sheets (with `--rebuild`, every generator twice and byte-identical; validator, pack, `mkcall4.py` count, frame plan and captions, every T2 control's reason and notice, md line 3, banned strings, backticks in drawn text, tokens, icons, row and column fits, cell padding, overlaps). |
+| `NN-<slug>.md`           | Each board's sidecar as the kit writes it (line 3 is the render drivers' line: page, export, sheet and theme), its frames, the validator line, the live checks and the notes.                                                                                                                                  |
+| `v4/NN-<slug>.json`      | The packed sheets. `compactOf.file` is the bare raw-sheet name; `compactOf.sha256` is the raw sheet's, so a rebuild proves itself (below).                                                                                                                                                                     |
+| `build-notes.md`         | The authors' notes: sources and pins, the seeded world, the readings taken, and the live-check fold.                                                                                                                                                                                                           |
+| `build/` (not committed) | The raw sheets `NN-<slug>.json` with a copy of each `.md` (the set the render drivers read), and `selftest/`. Listed in `.gitignore`.                                                                                                                                                                          |
 
 The pack is read from this checkout by repo-relative path: `docs/design/E21/E21-D04.md`, its hand-off
 `docs/design/E21/E21-D04-handoff.md` and the recorded instrument fixture
@@ -38,8 +38,9 @@ python3 -X utf8 -I -B check_all.py --rebuild          # "rebuild: 30 files, byte
 ```
 
 Each generator writes `build/NN-<slug>.json` (validator exit 0 or it raises), `NN-<slug>.md` here and in `build/`, and
-`v4/NN-<slug>.json`. A rebuild on an unchanged kit leaves `git status` clean: the generation is deterministic (the
-seeded world, seed 504). To check the packed sheets against the raw ones:
+`v4/NN-<slug>.json`. A rebuild on an unchanged kit leaves `git status` clean on every host: the generation is
+deterministic (the seeded world, seed 504), and the kit writes every file with LF line ends, so the raw sheets, and with
+them each packed sheet's `compactOf.sha256`, are the same bytes on Windows (the repository checks out LF). To check the packed sheets against the raw ones:
 
 ```sh
 for f in v4/*.json; do
@@ -76,8 +77,8 @@ section per call, reload the tab before it, and watch the file's save state, sin
 | 06 cmp-230-states        | 8      | 3424 × 1195 | dark + light                  |
 | 07 cmp-227-cmp-229-usage | 3      | 2956 × 789  | dark                          |
 | 08 cmp-228-heatmap-kind  | 5      | 2920 × 1030 | dark                          |
-| 09 high-contrast-forced  | 6      | 3584 × 1033 | high contrast (exported only) |
+| 09 high-contrast-forced  | 6      | 3584 × 1129 | high contrast (exported only) |
 | 10 token-map-redlines    | 2      | 2480 × 597  | dark                          |
 
-Root heights are the live-checked ones (build-notes "Live-check fold"). Board ids, PNG paths and the theme-gate
+Root heights are the live-checked ones (build-notes "Live-check fold"; board 09's from its redraw). Board ids, PNG paths and the theme-gate
 results are in E21-D04 §0's Status cells and its as-built record (§14).

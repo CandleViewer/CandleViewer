@@ -69,7 +69,7 @@ VALIDATOR, PACKER, MKCALL = TOOLS / "validate_sheet.py", TOOLS / "compact.py", T
 COMPONENTS, TOKENS_FILE = TOOLS / "components.offline.json", TOOLS / "token-sync.json"
 
 DOCS = {  # key -> (repo-relative path, md5 of the as-built text, the boards PR): every read is md5-checked
-    "spec": (_SPEC_REL, "056eae85f78f55346bd851f82c0dd7c7"),
+    "spec": (_SPEC_REL, "f4e8a509f0006eac0f1f597ff7aef9b2"),
     "handoff": ("docs/design/E21/E21-D04-handoff.md", "67fa3748b75d5bc6ec0018afa8f99e4c"),
     "fixture": ("packages/fixtures/bybit/2026-10-05/rest/instruments_before.json", "edd9dd2a060c51bd4bd1450307728ddf"),
 }
@@ -177,7 +177,7 @@ class Board:
     name: str  # "E21-D04 / 01 cmp-108-variants"
     slug: str
     draws: str  # §0's "Draws" cell
-    theme_cell: str  # "dark + light" | "dark"
+    theme_cell: str  # "dark + light" | "dark" | "high contrast" (09)
     line: int
 
     @property
@@ -1013,8 +1013,9 @@ def annotations(nn: int, blocks: Iterable[tuple[str, list[str]]], *, board_lines
     twin = (f"Light twin (§0 'dark + light'; cap ⅓): themes are file-wide and every colour here is a semantic token, "
             f"so the light twin is this board exported again under the light set as {b.export_light}"
             if b.twin else "")
-    hc = (f"Theme: high contrast at export (§0's 'dark' column read with the file-wide theme rule: the hc rows are only "
-          f"true under the high-contrast set; reading 3)" if b.nn == HC_BOARD else f"Theme: {b.theme_cell}")
+    hc = (f"Theme: {b.theme_cell}, the export's set (drawn under dark, exported under the high-contrast set: themes "
+          f"are file-wide and the hc rows are only true under it; reading 3)" if b.nn == HC_BOARD else
+          f"Theme: {b.theme_cell}")
     head = [f"§0 L{b.line}: {b.draws}", f"Frames: {len(FRAME_PLAN[nn])} (the kit's frame plan for this Draws cell)",
             hc, twin, f"Export: {b.export}", *board_lines]
     kids = [text("title", b.name, HEADING_SM, TEXT_1, w=ANN_TEXT_W)]
@@ -1031,7 +1032,7 @@ def annotations(nn: int, blocks: Iterable[tuple[str, list[str]]], *, board_lines
 
 ROW_MAX_W = 3400  # frames are packed left to right into rows no wider than this
 # the drawn roots' heights, each max(annotation end, footer end) + MARGIN as the live check read them (SHEET-FIX)
-MEASURED_H = {1: 1512, 2: 999, 3: 1670, 4: 1400, 5: 958, 6: 1195, 7: 789, 8: 1030, 9: 1033, 10: 597}
+MEASURED_H = {1: 1512, 2: 999, 3: 1670, 4: 1400, 5: 958, 6: 1195, 7: 789, 8: 1030, 9: 1129, 10: 597}
 MEASURED_SLACK = 48  # px: about three caption lines; past it the text has changed since the measure
 
 
@@ -1200,7 +1201,7 @@ def write_sheet(nn: int, frames: list[Node], ann: Node, *, notes: dict[str, Iter
     if bad or banned:
         raise RuntimeError(f"board {nn:02d}: lint {bad[:8]} banned {banned}")
     out = out_dir / (name or b.sheet)
-    out.write_text(json.dumps(sheet, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    out.write_text(json.dumps(sheet, ensure_ascii=False, indent=1) + "\n", encoding="utf-8", newline="\n")
     rc, msg = validate(out)
     if rc != 0:
         errs = [ln for ln in msg.splitlines() if "ERROR" in ln.upper()]
@@ -1239,9 +1240,9 @@ def write_md(nn: int, sheet_path: Path, *, summary: str = "") -> Path:
     if m:
         raise RuntimeError(f"md for board {nn:02d}: banned string {m.group(0)!r}")
     p = sp.parent / (sp.stem + ".md")
-    p.write_text(s, encoding="utf-8")
+    p.write_text(s, encoding="utf-8", newline="\n")
     if sp.parent == CAP_DIR.resolve() and IN_REPO:  # the copy beside the kit (committed)
-        (KIT_DIR / p.name).write_text(s, encoding="utf-8")
+        (KIT_DIR / p.name).write_text(s, encoding="utf-8", newline="\n")
     return p
 
 
@@ -1272,7 +1273,7 @@ def pack_sheet(sheet_path: Path, out_dir: Path = V4_DIR) -> Path:
     abs_field = json.dumps(pf, ensure_ascii=False)
     if raw.count(abs_field) != 1:
         raise RuntimeError(f"{dst.name}: the pack source path occurs {raw.count(abs_field)} times")
-    dst.write_text(raw.replace(abs_field, json.dumps(src.name, ensure_ascii=False)), encoding="utf-8")
+    dst.write_text(raw.replace(abs_field, json.dumps(src.name, ensure_ascii=False)), encoding="utf-8", newline="\n")
     sh = json.loads(dst.read_text(encoding="utf-8"))
     if sh["compactOf"] != {"file": src.name, "sha256": hashlib.sha256(src.read_bytes()).hexdigest()}:
         raise RuntimeError(f"{dst.name}: compactOf {sh['compactOf']!r} is not the bare name and sha256 of {src.name}")

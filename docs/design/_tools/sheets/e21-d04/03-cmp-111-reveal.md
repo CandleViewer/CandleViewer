@@ -89,7 +89,7 @@ Board 03 of ten (§0 L69: CMP-111's reveal: open, empty history, pulled (estimat
 
 ## Sources (3)
 
-- spec E21-D04.md md5 056eae85 and hand-off md5 67fa3748 (§0 L69; §1-§8; RULED comment 6580397401)
+- spec E21-D04.md md5 f4e8a509 and hand-off md5 67fa3748 (§0 L69; §1-§8; RULED comment 6580397401)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a (tick size and qty step only)
 - tokens: tools/token-sync.json (names bound; values only for the computed figures)
 

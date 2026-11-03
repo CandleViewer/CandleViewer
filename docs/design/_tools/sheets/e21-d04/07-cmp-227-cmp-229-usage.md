@@ -71,7 +71,7 @@ Board 07 of ten (§0 L73: CMP-227 inline and marker on the panel; CMP-229 read-o
 
 ## Sources (3)
 
-- spec E21-D04.md md5 056eae85 and hand-off md5 67fa3748 (§0 L73; §1-§8; RULED comment 6580397401)
+- spec E21-D04.md md5 f4e8a509 and hand-off md5 67fa3748 (§0 L73; §1-§8; RULED comment 6580397401)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a (tick size and qty step only)
 - tokens: tools/token-sync.json (names bound; values only for the computed figures)
 

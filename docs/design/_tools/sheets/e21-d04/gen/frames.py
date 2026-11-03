@@ -874,9 +874,16 @@ def f_hc(vid: str, nn: int) -> tuple[Node, list[str]]:
         body: list[Node] = [window(around(p, 2), forced=forced, ring_at=p,
                                    ring_color=k.ACTION_PRIMARY if forced else k.RING),
                             window(around(k.BEST_BID - D), stale=True, forced=forced)]
-        if forced:
-            body.append(t2_item(S("limit"), w=200, forced=True))
+        if forced:  # §5.5's last row: the T2 control keeps its lock and its reason, and the notice stays (G-T2.5)
+            t2 = vbox("T2 control with its reason (2a)", [t2_item(S("limit"), w=200, forced=True),
+                                                          text("reason (aria-hidden here)", W("W-20"), k.CAPTION,
+                                                               k.TEXT_1)], {"gap": k.STACK_XS})
+            body = [notice(forced=True), *body, t2]
         lines = ["Rows: a bid window with the focused row, then a stale window (the word carries it)"]
+        if forced:
+            lines.append(f"T2 (R-3, §5.5): the row menu's limit item in 2a, its lock kept and W-20 under it "
+                         f"(aria-hidden there), described by the panel's one header notice above, {k.W20_REASON} "
+                         "W-20 in CanvasText on Canvas (G-T2.1c, G-T2.2, G-T2.5)")
     elif cmp == "CMP-113":
         body = [legend(0, forced=forced)]
         lines = ["The legend on its solid backing; anchors and words as text"]

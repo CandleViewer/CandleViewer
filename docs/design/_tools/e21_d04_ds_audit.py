@@ -61,8 +61,13 @@ IMG_PREFIX = "docs/design/E21/img/E21-D04-"
 # Penpot page `E21-D04` of the file `E21-D04 boards`
 PAGE_ID = "2373897a-cf76-8072-8008-e3bcb65546a3"
 KIT_PREFIX = "docs/design/_tools/sheets/e21-d04/"  # the sheet kit that drew the boards
-# the kit's lines in the shared manifest and its ignore entry
-KIT_SHARED = ("docs/design/_tools/sheets/MANIFEST.sha256", ".prettierignore")
+# the kit's lines in the shared manifest, its ignore entry, and the shared token snapshot's
+# color.heatmap.bid.3 row (set to the shipped palette.green.550, section 14's deviation 3)
+KIT_SHARED = (
+    "docs/design/_tools/sheets/MANIFEST.sha256",
+    ".prettierignore",
+    "docs/design/_tools/sheets/tools/token-sync.json",
+)
 BACKLOG_REL = "docs/plan/backlog/E21.json"
 CAT15 = "docs/plan/15-component-catalogue.md"
 
@@ -916,8 +921,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-14",
         "G-BOARDS",
         "a fourth light twin",
-        "| dark         | drawn: board id `2373897a-cf76-8072-8008-e3be2ea5fb23`",
-        "| dark + light | drawn: board id `2373897a-cf76-8072-8008-e3be2ea5fb23`",
+        "| dark          | drawn: board id `2373897a-cf76-8072-8008-e3be2ea5fb23`",
+        "| dark + light  | drawn: board id `2373897a-cf76-8072-8008-e3be2ea5fb23`",
     ),
     Mutation("M-15", "G-BQ", "the heading loses its ruling", "— RULED (comment", "— (comment"),
     Mutation(
