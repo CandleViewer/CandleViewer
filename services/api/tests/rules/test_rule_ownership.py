@@ -177,6 +177,32 @@ def test_route_of_a_rule_the_manager_does_not_own_is_the_unseen_404(kind: str, r
     assert owner.c.get(f"/rules/{rid}").json()["mode"] == "disabled"
 
 
+@pytest.mark.parametrize("case", ["never_stored", "deleted"])
+@pytest.mark.parametrize("route", _ROUTES)
+def test_route_of_a_missing_rule_answers_and_records_as_an_unseen_rule(
+    case: str, route: str
+) -> None:
+    """#2626: a rule no store holds, or one the Manager deleted, answers every route as a rule they
+    do not own does: the same 404, with no record on a plain read, and on a write one
+    `rule.scope_refused` naming the id asked for."""
+    owner = _Env()
+    manager = _Env(set(PERMS), owner=False, granted=frozenset({A1}), mgr=owner.mgr, uid="mgr")
+    rid = manager.create(scope=KINDS["fully_granted"])
+    vid = manager.c.get(f"/rules/{rid}/versions").json()["items"][0]["id"]
+    if case == "deleted":
+        assert manager.c.delete(f"/rules/{rid}").status_code == 204
+    else:
+        rid = "00000000-0000-4000-8000-000000002626"
+    method, path, body, op = _ROUTES[route]
+    owner.audits.clear()
+    resp = manager.c.request(
+        method, path.format(rid=rid, vid=vid), json=body(vid), headers={"Idempotency-Key": "k"}
+    )
+    assert (resp.status_code, resp.json()["code"]) == (404, "not_found"), resp.text
+    refused = [(a, p["rule_id"], p["op"], p["reason"]) for a, p in owner.audits]
+    assert refused == ([("rule.scope_refused", rid, op, "rule_not_visible")] if op else [])
+
+
 @pytest.mark.parametrize("shape", ["tight", None, ["a"]], ids=["str", "none", "list"])
 async def test_arm_with_a_stored_scope_that_is_not_a_mapping_is_a_422(shape: Any) -> None:
     """The arming pre-check reads the stored scope without trusting its shape: an unreadable rule
