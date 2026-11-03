@@ -15,10 +15,12 @@ from candleviewer.audit.actions import validate_action
 from candleviewer.rules.manager import Actor
 from candleviewer.rules.vocabulary import default_registry
 from candleviewer.storage.repositories.alerts import (
+    MAX_ARMED_ALERTS,
     AlertConflictError,
     AlertNameTakenError,
     AlertRow,
     Page,
+    armed_breach,
 )
 
 USER_A = "00000000-0000-4000-8000-00000000000a"
@@ -54,6 +56,17 @@ class FakeAlertRepo:
         self.refusal: Exception | None = (
             None  # what every write raises while set, as the store would
         )
+        self.max_armed = MAX_ARMED_ALERTS  # the store's cap (#1864)
+
+    def _hold_cap(self, owner: str, alert_id: str | None, enabled: bool) -> None:
+        """`armed_breach` over this owner's armed alerts, as the store counts them (#1864)."""
+        live = [r for r in self.rows.values() if r.id not in self.deleted]
+        mine = [r for r in live if r.owner_user_id == owner and r.enabled]
+        target_armed = any(r.id == alert_id for r in mine)
+        others = sum(1 for r in mine if r.id != alert_id)
+        refused = armed_breach(others, arming=enabled and not target_armed, limit=self.max_armed)
+        if refused is not None:
+            raise refused
 
     def _now(self) -> datetime:
         self.tick += 1
@@ -73,6 +86,7 @@ class FakeAlertRepo:
             raise self.refusal
         if self._taken(owner_user_id, f["name"]):
             raise AlertNameTakenError(f["name"])
+        self._hold_cap(owner_user_id, None, bool(f.get("enabled", True)))
         now = self._now()
         row = AlertRow(
             id=alert_id or str(uuid.uuid4()),
@@ -120,6 +134,7 @@ class FakeAlertRepo:
             raise self.refusal
         if self._taken(row.owner_user_id, f["name"], skip=alert_id):
             raise AlertNameTakenError(f["name"])
+        self._hold_cap(row.owner_user_id, alert_id, bool(f.get("enabled", True)))
         new = replace(row, updated_at=self._now(), **f)
         self.rows[alert_id] = new
         return new
@@ -134,6 +149,7 @@ class FakeAlertRepo:
         row = await self.get(alert_id)
         if row is None:
             return None
+        self._hold_cap(row.owner_user_id, alert_id, enabled)
         self.rows[alert_id] = replace(row, enabled=enabled, updated_at=self._now())
         return self.rows[alert_id]
 
@@ -168,6 +184,7 @@ class Env:
         self.granted: frozenset[str] = frozenset()  # the caller's account grants
         self.owner = False  # the caller holds the Owner role
         self.compiles: list[str | None] = []
+        self.cap_refusals: list[int] = []  # one entry per `on_cap_refused` call (#1864)
         self.repo_up, self.registry_up = True, True
 
         def resolve(_r: Request) -> Actor | None:
@@ -184,6 +201,7 @@ class Env:
                 self.audit,
                 on_compile=lambda s, reason: self.compiles.append(reason),
                 clock=lambda: NOW,
+                on_cap_refused=lambda: self.cap_refusals.append(1),
             )
         )
         self.c = TestClient(app)

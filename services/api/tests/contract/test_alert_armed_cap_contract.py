@@ -14,6 +14,9 @@ from typing import Any
 
 import pytest
 
+from candleviewer.api.alerts import armed_cap_message
+from candleviewer.storage.repositories.alerts import MAX_ARMED_ALERTS
+from tests.alerts._alert_api_env import PRICE_CROSS, Env
 from tests.contract._admin_support import SPEC, example_cases, text, validate_example
 
 _METHODS = frozenset({"get", "put", "post", "patch", "delete"})
@@ -101,3 +104,45 @@ def test_the_cap_adds_no_error_code() -> None:
     assert [
         c for c in _REGISTRY if re.search(r"alert.*(cap|limit)|armed_alert|alerts_armed", c)
     ] == []
+
+
+# --- provider (#1864 implementation): the router's answers validate against 22 ----------------
+
+_SHAPE = ("type", "title", "status", "code", "detail", "errors")
+
+
+@pytest.fixture(scope="module")
+def at_cap() -> tuple[Env, dict[str, Any]]:
+    """The `/alerts` router over the in-memory store of `tests/alerts/`, the caller at the cap
+    with one disarmed alert of its own. Every request below is refused, so none changes it."""
+    env = Env()
+    parked = env.create(name="parked", enabled=False)
+    for i in range(MAX_ARMED_ALERTS):
+        env.create(name=f"armed-{i}")
+    return env, parked
+
+
+def test_the_code_holds_the_cap_22_states() -> None:
+    assert MAX_ARMED_ALERTS == armed_cap()
+    assert armed_cap_message(MAX_ARMED_ALERTS) == cap_example("createAlert")["detail"]
+
+
+@pytest.mark.parametrize("operation_id", sorted(ARMING))
+def test_the_cap_refusal_validates_against_the_declared_409(
+    at_cap: tuple[Env, dict[str, Any]], operation_id: str
+) -> None:
+    env, parked = at_cap
+    path, method = ARMING[operation_id]
+    body: Any = {
+        "createAlert": PRICE_CROSS | {"name": "one more"},
+        "updateAlert": PRICE_CROSS | {"name": "parked", "enabled": True},
+        "setAlertEnabled": {"enabled": True},
+    }[operation_id]
+    r = env.c.request(method.upper(), path.format(alertId=parked["id"]), json=body)
+    assert r.status_code == 409 and r.headers["content-type"] == _PROBLEM
+    media = _PROBLEM.replace("/", "~1")
+    pointer = f"/paths/{path.replace('/', '~1')}/{method}/responses/409/content/{media}/schema"
+    validate_example(pointer, r.json())
+    got, example = r.json(), cap_example(operation_id)
+    assert {k: got[k] for k in _SHAPE} == {k: example[k] for k in _SHAPE}
+    assert env.repo.rows[parked["id"]].enabled is False

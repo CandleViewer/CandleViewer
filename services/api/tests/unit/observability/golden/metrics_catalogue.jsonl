@@ -95,6 +95,7 @@
 ["cv_account_health_transitions_total", "counter", ["state", "reason"], "live", "E27"]
 ["cv_accounts_rows", "gauge", ["kind"], "live", "E27"]
 ["cv_admin_jobs_lost_on_restart_total", "counter", [], "live", "E42"]
+["cv_alert_armed_cap_refused_total", "counter", [], "live", "E40"]
 ["cv_alert_autodisarmed_total", "counter", ["reason"], "planned", "E40"]
 ["cv_alert_compile_rejected_total", "counter", ["reason"], "planned", "E40"]
 ["cv_alert_compile_seconds", "histogram", [], "planned", "E40"]

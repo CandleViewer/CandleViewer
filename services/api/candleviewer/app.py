@@ -3474,6 +3474,9 @@ def create_app(
         buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.3, 1.0),
     )  # fmt: skip
 
+    # #1864: the armed-alert cap's refusals (catalogue, live; no labels).
+    _alert_armed_cap = metrics_facade.get("cv_alert_armed_cap_refused_total").child()
+
     def _on_alert_compile(seconds: float, reason: str | None) -> None:
         _alert_compile.child().observe(seconds)
         if reason is not None:
@@ -3518,6 +3521,7 @@ def create_app(
             _LazyAuditEmitter(ctx.audit),
             on_compile=_on_alert_compile,
             on_change=ctx.alerts.on_alert_changed,
+            on_cap_refused=_alert_armed_cap.inc,
         )
     )
     if resolved.alerts_webhook_enabled:  # refused whatever the evaluator flag (E40-S03)

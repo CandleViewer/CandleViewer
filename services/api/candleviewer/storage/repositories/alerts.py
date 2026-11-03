@@ -8,7 +8,29 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
+
+#: Armed alerts (live and `enabled`, snoozed or not) one owner may hold: the per-user DoS control
+#: of the E40 threat model (E40-T03, E40-X01; #1864, 24 §19.104). Interim until the Owner ratifies
+#: it as a `LIMIT_CAPS` row (#2701).
+MAX_ARMED_ALERTS: Final = 200
+
+
+class AlertArmedLimitError(Exception):
+    """The write would arm one more alert while the owner holds `limit` armed ones (HTTP 409
+    `conflict`, rule `limit_reached`); nothing was written. Carries the cap, never a count."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"armed-alert cap ({limit}) reached")
+        self.limit = limit
+
+
+def armed_breach(armed: int, *, arming: bool, limit: int) -> AlertArmedLimitError | None:
+    """The refusal for a write that leaves the owner holding `armed` armed alerts besides its own
+    target, or None. Only arming is refused (`arming`: the write turns a disarmed or new alert
+    armed), so a disarm, or a write to an alert that is already armed, passes even over a lowered
+    cap."""
+    return AlertArmedLimitError(limit) if arming and armed >= limit else None
 
 
 class AlertConflictError(Exception):
@@ -55,7 +77,11 @@ class Page[T]:
 
 
 class AlertRepository(Protocol):
-    """What `/alerts` needs from storage. Writes never accept the SECRET webhook columns here."""
+    """What `/alerts` needs from storage. Writes never accept the SECRET webhook columns here.
+
+    `create`, `update` and `set_enabled` raise `AlertArmedLimitError` when the write would arm
+    an alert past the owner's cap (`armed_breach`); the count and the write run atomically.
+    """
 
     async def create(
         self,
