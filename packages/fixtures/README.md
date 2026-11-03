@@ -89,6 +89,13 @@ before commit.
   Date 2026-10-22; no recorded data (symbols and account ids appear only as rule values), no
   credentials. Written and byte-checked by `tests/rules/roundtrip/test_client_hash_vectors.py`;
   regenerate with `CV_REGEN_GOLDEN=1` on that test and review the diff.
+- `golden/rule-graph/vocabulary/` — E37-S02 rule vocabularies, one file per persona (`owner`,
+  `manager`, `no-orders-write`, `unrecorded-solusdt`): what `GET /rules/vocabulary` serves each,
+  built by the server's `build_vocabulary` from the metric registry and the action catalogue, the
+  grants read from the seeded roles; the node-graph editor's model is tested on them. Date
+  2026-11-03; no recorded data (SOLUSDT and BTCUSDT appear only as the symbol scope), no
+  credentials. Written and byte-checked by `tests/contract/test_rule_vocabulary_fixtures.py`;
+  regenerate with `CV_REGEN_GOLDEN=1` on that test and review the diff.
 - `golden/storage/storage_usage_baseline.golden.json` — E07-D02 frozen `StorageUsage` baseline for
   E16 (the 13-field body of `GET /recording/storage`, one sample). Source: the real
   `DiskBudget.sample_once()` on a fake meter, served by the real route as the Owner; date
