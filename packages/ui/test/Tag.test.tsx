@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
+import { useState, type JSX } from "react";
 import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { describe, it } from "vitest";
 import { Tag } from "../src/components/index.js";
 import * as stories from "../src/components/Tag.stories.js";
+import { seriousViolations } from "./axe.js";
 import { mount } from "./theme/mount.js";
 
 const REASON = "Owner only";
@@ -150,6 +152,97 @@ describe("Tag (CMP-011)", () => {
     );
     expect(chip(host).dataset["density"]).toBe("comfortable");
     expect(within(host).getByRole("button").dataset["density"]).toBe("comfortable");
+  });
+});
+
+/** A host that holds a toggle's state, as the Fills tab holds its Type chips (E29-D02:299: all on by default). */
+function Held({
+  label,
+  onChange,
+}: {
+  label: string;
+  onChange?: (p: boolean) => void;
+}): JSX.Element {
+  const [pressed, setPressed] = useState(true);
+  return (
+    <Tag
+      variant="toggle"
+      label={label}
+      pressed={pressed}
+      onPressedChange={(next) => {
+        onChange?.(next);
+        setPressed(next);
+      }}
+    />
+  );
+}
+
+describe("Tag toggle (CMP-011 `toggle`, E29-S04; E29-D04 §2.9, E29-D02:299)", () => {
+  it("is a native button named by its word, its state in aria-pressed, at the control height", async () => {
+    const host = await mount(
+      <Tag variant="toggle" label="Trade" pressed onPressedChange={fn()} density="compact" />,
+    );
+    const button = within(host).getByRole("button", { name: "Trade", pressed: true });
+    expect(button.tagName).toBe("BUTTON");
+    expect(button).toHaveAttribute("type", "button");
+    expect(button).toHaveAttribute("aria-pressed", "true");
+    expect(button).toHaveClass("cv-tag", "cv-control", "cv-focus-ring");
+    expect([button.dataset["cmp"], button.dataset["variant"], button.dataset["density"]]).toEqual([
+      "CMP-011",
+      "toggle",
+      "compact",
+    ]);
+    expect(button.querySelector("svg")).toBeNull();
+  });
+
+  it("an off chip says so in aria-pressed, never through its name", async () => {
+    const host = await mount(
+      <Tag variant="toggle" label="Funding" pressed={false} onPressedChange={fn()} />,
+    );
+    expect(within(host).getByRole("button", { name: "Funding", pressed: false })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("Tab reaches it; Space and Enter flip it through its host; the name never changes", async () => {
+    const onChange = fn();
+    const host = await mount(<Held label="ADL" onChange={onChange} />);
+    await userEvent.tab();
+    const button = within(host).getByRole("button", { name: "ADL" });
+    expect(button).toHaveFocus();
+    await userEvent.keyboard(" ");
+    expect(button).toHaveAttribute("aria-pressed", "false");
+    await userEvent.keyboard("{Enter}");
+    expect(button).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(button);
+    expect(onChange.mock.calls).toEqual([[false], [true], [false]]);
+    expect(button).toHaveAccessibleName("ADL");
+    expect(button).toHaveFocus();
+  });
+
+  it("keeps the toggle a view choice at the type level: no icon, no removal, never gated or disabled", () => {
+    // @ts-expect-error a toggle needs its state and its handler
+    const stateless = <Tag variant="toggle" label="x" />;
+    // @ts-expect-error a toggle takes no icon (E29-D02:299)
+    const withIcon = <Tag variant="toggle" label="x" pressed onPressedChange={fn()} icon="lock" />;
+    // @ts-expect-error a view choice is never gated (E29-D04:390)
+    const gated = (
+      <Tag variant="toggle" label="x" pressed onPressedChange={fn()} disabledReason="r" />
+    );
+    expect([stateless, withIcon, gated]).toHaveLength(3);
+  });
+
+  it("the five Type chips have no serious or critical axe violation", async () => {
+    const host = await mount(
+      <div>
+        {["Trade", "ADL", "Liquidation", "Funding", "Settlement"].map((word) => (
+          <Held key={word} label={word} />
+        ))}
+      </div>,
+    );
+    expect(within(host).getAllByRole("button", { pressed: true })).toHaveLength(5);
+    expect(await seriousViolations(host)).toEqual([]);
   });
 });
 

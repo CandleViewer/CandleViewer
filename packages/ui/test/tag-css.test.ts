@@ -72,4 +72,49 @@ describe("tag.css contract", () => {
     expect(find(forced, ".cv-tag__glyph", "color")).toContain("currentcolor");
     expect(forced).not.toMatch(/forced-color-adjust/);
   });
+
+  it("toggle at rest: the neutral chip's look as a button; hover surface.hover under text.primary", () => {
+    const rest = find(normal, '.cv-tag[data-variant="toggle"]', "border-color");
+    expect(rest).toContain("border-color: var(--color-border-default)");
+    expect(rest).toContain("position: relative");
+    const hover = find(
+      normal,
+      '.cv-tag[data-variant="toggle"]:hover:not([aria-pressed="true"])',
+      "background",
+    );
+    expect(hover).toContain("background: var(--color-surface-hover)");
+    expect(hover).toContain("color: var(--color-text-primary)");
+  });
+
+  it("toggle pressed: the fill is 16:59's action.selected, and a 2px border.selected ring marks the state", () => {
+    const pressed = find(
+      normal,
+      '.cv-tag[data-variant="toggle"][aria-pressed="true"]',
+      "background",
+    );
+    expect(pressed).toContain("background: var(--color-action-selected)");
+    expect(pressed).toContain("color: var(--color-text-primary)");
+    // The ring is the state's own mark: either selected fill sits within 1.2:1 of the rest fill, so without it the
+    // pressed chip would differ by hue alone (WCAG 1.4.1, `05` §4.3's distinct border).
+    const band = find(normal, '.cv-tag[data-variant="toggle"]::after', "border");
+    expect(band).toContain("border: calc(var(--border-thick) * 1px) solid transparent");
+    expect(band).toContain("inset: calc(var(--border-hairline) * -1px)");
+    expect(band).toContain("pointer-events: none");
+    expect(
+      find(normal, '.cv-tag[data-variant="toggle"][aria-pressed="true"]::after', "border-color"),
+    ).toContain("border-color: var(--color-border-selected)");
+  });
+
+  it("forced colours: a pressed toggle is Highlight on HighlightText with a CanvasText ring", () => {
+    const pressed = find(
+      forced,
+      '.cv-tag[data-variant="toggle"][aria-pressed="true"]',
+      "background",
+    );
+    expect(pressed).toContain("background: Highlight");
+    expect(pressed).toContain("color: HighlightText");
+    expect(
+      find(forced, '.cv-tag[data-variant="toggle"][aria-pressed="true"]::after', "border-color"),
+    ).toContain("border-color: CanvasText");
+  });
 });
