@@ -17,6 +17,8 @@ Gap sources (cause, `recording_gaps.cause`):
   process and writes a gap from its `last_event_ts` (or `started_at`) to process start.
 - `backpressure_drop`: written by the StreamWriter itself on the live session this module
   opens (its buffered gaps flush once `open` has run).
+- `maintenance_pause`: `on_maintenance_pause(...)` (#5629): the interval maintenance mode held
+  capture (`recorder.pause`), one gap per stream of every session live during it.
 
 Startup order (#2188): `recover_on_startup()` -> B11 snapshot restore -> the policy adopts its
 env's `recorded_symbols` rows and the open positions -> `reconcile_all()` ->
@@ -180,6 +182,16 @@ class _Live:
 
 
 @dataclass(frozen=True, slots=True)
+class LiveSession:
+    """A live session as `live_sessions()` saw it (#5629: the sessions a hold began over)."""
+
+    symbol: str
+    session_id: str
+    started_us: int
+    streams: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SessionConfig:
     env: str  # no default: a `live` one would let a demo process close the live sessions (#2726)
     ws_endpoint: str = "public"
@@ -241,6 +253,13 @@ class SessionManager:
     def live_session(self, symbol: str) -> str | None:
         live = self._live.get(symbol)
         return None if live is None else live.session_id
+
+    def live_sessions(self) -> tuple[LiveSession, ...]:
+        """Every live session now (no I/O, no await)."""
+        return tuple(
+            LiveSession(symbol, live.session_id, live.started_us, live.streams)
+            for symbol, live in self._live.items()
+        )
 
     # -- bounded store calls -------------------------------------------------------------------
 
@@ -389,6 +408,25 @@ class SessionManager:
                 lo = max(start_us, live.started_us)
                 for s in live.streams:
                     await self._gap(sym, live.session_id, s, lo, end_us, "exchange_outage")
+
+    async def on_maintenance_pause(
+        self, start_us: int, end_us: int, held: Sequence[LiveSession] = ()
+    ) -> None:
+        """The interval maintenance held capture (#5629): one `maintenance_pause` gap per stream of
+        every session live during it, those live when it began (`held`, closed meanwhile or not)
+        and those live now, each from the later of the hold's start and its own. Idempotent: a
+        window already written is not written again (`record_gap`), so a cut call is retried."""
+        async with self._lock:
+            seen: set[str] = set()
+            for live in (*held, *self.live_sessions()):
+                if live.session_id in seen:
+                    continue
+                seen.add(live.session_id)
+                lo = max(start_us, live.started_us)
+                for s in live.streams:
+                    await self._gap(
+                        live.symbol, live.session_id, s, lo, end_us, "maintenance_pause"
+                    )
 
     async def poll_writer(self, writer: WriterSignals) -> None:
         """Consume the StreamWriter's seq-jump windows and event bounds (E16-T03 signals)."""

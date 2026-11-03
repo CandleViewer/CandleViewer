@@ -218,6 +218,8 @@ class MaintenanceController:
                 cancelled = await self._algos.cancel_running_algos("maintenance.enabled")
             logger().info("maintenance_algos_cancelled", count=cancelled)
         keep = bool(await self._service.value(MAINTENANCE_KEEP_RECORDER))
+        if not keep and self._recorder is None:
+            logger().warning("maintenance_recorder_pause_unavailable")
         if not keep and not self._recorder_paused and self._recorder is not None:
             async with asyncio.timeout(self._timeout):
                 await self._recorder.pause("maintenance.enabled")

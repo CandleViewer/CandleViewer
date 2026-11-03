@@ -338,6 +338,25 @@ async def test_without_an_algo_port_the_gap_is_logged_once() -> None:
     assert [e["event"] for e in logs] == ["maintenance_algo_cancel_unavailable"]
 
 
+async def test_without_a_recorder_port_a_pause_that_was_asked_for_is_logged_once() -> None:
+    """#5629: as the algo gap, a `keep_recorder = false` entry with no recorder bound says so."""
+    store = FakeFlagStore()
+    service = FlagService(default_registry(), store, clock=Clock())
+    await store.ensure(service.registry.values())
+    store.rows[MAINTENANCE_KEEP_RECORDER] = replace(
+        store.rows[MAINTENANCE_KEEP_RECORDER], value=False
+    )
+    store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], value=True)
+    controller = MaintenanceController(
+        service, MaintenanceGate(), notify=lambda on: None, audit=FakeAudit(), algos=_Algos()
+    )
+    with capture_logs() as logs:
+        await controller.refresh()
+        await controller.refresh()
+    (logged,) = [e for e in logs if e["event"] == "maintenance_recorder_pause_unavailable"]
+    assert logged["log_level"] == "warning"
+
+
 async def test_the_gate_gauge_is_exported_and_follows_the_gate() -> None:
     assert "cv_maintenance_mode" in EXPORTED_NAMES
     rig = await _Rig().start()

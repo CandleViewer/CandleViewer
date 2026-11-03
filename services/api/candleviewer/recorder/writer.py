@@ -28,6 +28,12 @@ Replay (on startup, on `recover()`, and every `replay_retry_s` while spilling) s
 an external sort into bounded runs, then a k-way merge in `exch_ts` order with duplicate keys
 suppressed. A durable checkpoint advances after each committed batch, so a failed or killed
 replay resumes from it. QuestDB `DEDUP UPSERT KEYS` absorbs the one batch that may be in flight.
+
+Hold (#5629, maintenance with `keep_recorder = false`): `hold()` stops admission process-wide in one
+synchronous step (no row, anchor, counter or delta-sequence update is taken while held, so a hold is
+never a drop and raises no event) and `flush_queued()` writes what was queued before it; the lanes
+keep running. `release()` admits again and forgets the delta sequence, so the first delta after the
+hold is not a seq jump: the held interval is one `maintenance_pause` gap (`recorder.pause`).
 """
 
 from __future__ import annotations
@@ -563,6 +569,8 @@ class StreamWriter:
         self._bounds: dict[str, list[int]] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self._next_counters_at = 0.0
+        #: #5629: True while maintenance holds capture; read on every admission (a plain bool).
+        self._held = False
         self._publish_gauges()
 
     async def open(self) -> None:
@@ -601,6 +609,34 @@ class StreamWriter:
     def note_reconnect(self, symbol: str) -> None:
         self._ctr(symbol).reconnects += 1
 
+    # -- hold (#5629: maintenance mode with `keep_recorder = false`) ---------------------------
+
+    @property
+    def held(self) -> bool:
+        return self._held
+
+    def hold(self) -> bool:
+        """Stop admitting, process-wide, at once (no await). True when this call began the hold;
+        a second call changes nothing."""
+        began, self._held = not self._held, True
+        return began
+
+    def release(self) -> bool:
+        """Admit again. The delta sequence is forgotten, as on a re-add: the deltas missed while
+        held are the hold's gap, not a seq jump. True when this call ended a hold."""
+        ended, self._held = self._held, False
+        if ended:
+            self._last_update_id.clear()
+            self._last_delta_ts.clear()
+        return ended
+
+    async def flush_queued(self) -> None:
+        """Write every lane's queued rows. A spilling lane is left to its pump (its rows go to the
+        WAL). Cancel-safe: a cut flush puts its batch back (`_flush`), and a later call goes on."""
+        for lane in self._lanes.values():
+            while lane.queue and not lane.spilling:
+                await self._flush(lane)
+
     # -- hot path ------------------------------------------------------------------------------
 
     async def on_trade(self, ev: TradeLike) -> None:
@@ -608,7 +644,7 @@ class StreamWriter:
             await self._admit("trades", ev.symbol, trade_records(ev))
 
     async def on_book_delta(self, ev: BookDeltaLike) -> None:
-        if ev.symbol not in self._active:
+        if ev.symbol not in self._active or self._held:
             return
         last = self._last_update_id.get(ev.symbol)
         if last is not None and ev.prev_update_id != last:
@@ -620,7 +656,7 @@ class StreamWriter:
         await self._admit("orderbook_deltas", ev.symbol, delta_records(ev))
 
     async def on_book_snapshot(self, ev: BookSnapshotLike) -> None:
-        if ev.symbol in self._active:
+        if ev.symbol in self._active and not self._held:
             self._last_update_id[ev.symbol] = ev.update_id
             await self._admit("orderbook_snapshots", ev.symbol, snapshot_records(ev))
 
@@ -631,7 +667,7 @@ class StreamWriter:
         deltas need. No data is lost either way, so it is never a gap, a received or dropped
         message or an event bound, and it never moves the delta sequence tracker (the bus may
         still hold deltas older than the book it was read from). Never awaits I/O."""
-        if ev.symbol not in self._active:
+        if ev.symbol not in self._active or self._held:
             return None
         try:
             gated = self._gate.halted() and not self._gate.position_open(ev.symbol)
@@ -664,6 +700,8 @@ class StreamWriter:
 
     async def _admit(self, stream: Stream, symbol: str, records: list[WalRecord]) -> None:
         """Never awaits I/O: the queue or the spill buffer, both drained by the lane's pump."""
+        if self._held:  # a hold takes nothing: its interval is one gap, not drops (#5629)
+            return
         self._ctr(symbol).received += 1
         if not records:
             return
