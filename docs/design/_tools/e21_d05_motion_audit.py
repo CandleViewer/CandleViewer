@@ -38,11 +38,11 @@ import spec_audit_lib as L  # the shared helper sits beside this file
 ROOT = Path(__file__).resolve().parents[3]
 BASE = "95a625b09"  # origin/main at the ruling's fold; every plan cite is read here
 HEADS = {
-    "D02": ("7e1040260", "#5488"),
+    "D02": ("b4fdf44c9", "#5488"),
     "D03": ("c7b0d2087", "#5518"),
-    "D04": ("1a320cde7", "#5519"),
+    "D04": ("a346e9575", "#5519"),
 }
-D08_HEAD = ("e60fe7baa", "#5444")  # E47-D08, design-approved, not merged
+D08_HEAD = ("1c5320c49", "#5444")  # E47-D08, merged; re-pinned to its merge commit
 BQ_LIST = "6582999442"  # the BQ list on #505
 RULING = "6585382345"  # the orchestrator's ruling of record on it
 
@@ -679,7 +679,7 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-4", "G-VERSION", "the version line drops the re-pin", "spec",
        "and re-pinned to the merge commit when", "and kept when"),
     _M("M-5", "G-VERSION", "the E47-D08 head unpinned", "spec",
-       "E47-D08 at #5444's head `e60fe7baa`", "E47-D08 at its PR head"),
+       "E47-D08 at #5444's merge commit `1c5320c49`", "E47-D08 at its PR head"),
     _M("M-6", "G-AC", "a scenario name reworded", "spec",
        'AC "Rescale never flashes"', 'AC "Rescale is smooth"'),
     _M("M-7", "G-FIVE", "the re-centre's reduce twin translates", "spec",
