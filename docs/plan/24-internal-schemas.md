@@ -6787,6 +6787,16 @@ The orchestrator assigned this number on 2026-11-02 (ruling of record on #5331, 
 - Two settings are PROPOSED to this document's owner: `admin_area_coalesce_seconds` (300 s default, 0 = record every request, max 3600) and the 4096-key bound on open windows (the oldest window's summary is written on eviction; a full map records every request).
 - No `22` change, no migration, no new action.
 
+### 19.100 2026-11-03 — 22 `listOrders`: an order looked up by `Idempotency-Key` or `order_link_id`, and the resume reconciliation (E29, #2303)
+
+The orchestrator assigned this number on #2303 (2026-11-03); it is kept through every rebase.
+
+- The Architect's E09-D06 rule 2 (PR #2290): a client whose `placeOrder` answer never arrived (an idle lock, the absolute expiry, a revocation) never resubmits; it reads the outcome. Contract first (C-6.1), in the first of the change's two commits.
+- 22 `listOrders` (`GET /orders`) gains two query parameters, `idempotency_key` (UUIDs) and `order_link_id` (the `Order.order_link_id` pattern), each an exact match, repeated for at most 20 values, its values alternatives; both AND with each other and with every other filter, `open_only` stays `false` so a terminal order is found, and the order and the paging are unchanged. A value outside its type or pattern, or more than 20, is `400 validation_failed` naming the parameter.
+- Scope: `idempotency_key` matches only the caller's own `placeOrder` anchors (`idempotency_anchors` by `created_by`, `operation` and `client_ref`, 21 §3.3.10), and the order it names is then read in the caller's grants, the intersection of the two. A key never sent there, another principal's, one refused before it was recorded, or one whose order is on an account outside the grants is an empty page, never a refusal, so the answer is no oracle for an order's existence (C-12.4). Named `exchange_account_ids` are checked first: one outside the grants is the same `403 account_scope_denied` whatever the key, before any key is read. `order_link_id` matches an order of any origin in the grants. In a view-as context the lookup matches the target's keys, as every read takes the target's scope, and the viewer stays the audit actor.
+- The `/orders` description states the resume reconciliation: `GET /orders?open_only=true` for the working set, plus `GET /orders?idempotency_key=` for every `placeOrder` request whose response was not received; the WS `orders` topic stays the source of truth, REST the backstop (C-2.5).
+- With them: `21-database-schema.md` §13.1 gains rows 53 (the key lookup on `ux_ia_principal_ref`, then `orders` by id in scope) and 54 (`ux_orders_link`). The key stays class P1 (21 §12): the read commit keeps its values out of the access log. No new index, table, column, migration, `x-error-codes` entry, schema, WS frame, chart or `machine_hash`.
+
 ### 19.103 2026-11-03 — §9.2 the snapshot bound of a leg's `profile_snapshot` (E28-T01, #3969)
 
 This is the number the orchestrator assigned on 2026-11-03 (02:42Z); it keeps it through its rebases.
