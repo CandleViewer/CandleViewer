@@ -1596,7 +1596,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "reads",
         (),
         "WS series store tail reads that found a series gapped and left it gapped (its re-read"
-        " interval doubles, up to a cap).",
+        " interval doubles, up to a cap), not a read during which a live restart or swap landed.",
         "sustained = a hole the bar writer never lands; its series backs off to one read per 160 s",
         _L,
         "E12",
