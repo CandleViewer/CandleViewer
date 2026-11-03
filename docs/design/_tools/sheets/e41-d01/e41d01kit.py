@@ -66,7 +66,7 @@ VALIDATOR, PACKER, MKCALL = TOOLS / "validate_sheet.py", TOOLS / "compact.py", T
 COMPONENTS, TOKENS_FILE = TOOLS / "components.offline.json", TOOLS / "token-sync.json"
 DOCS_BASE = "46e6acd2ddf3835580a801ac9b143d32f4478090"  # the memo's "Read at" base (on main)
 DOCS = {  # key -> (repo-relative path, md5): every read is md5-checked; DOCS_AT_BASE are read at DOCS_BASE
-    "spec": (_MEMO_PATH, "b2629298bc1879afa24b935e0d017f5b"),
+    "spec": (_MEMO_PATH, "f8c849aa9a46a3c9416f197d79eca321"),
     "protocol": ("docs/design/research/e41-d01-session-protocol.md", "01433dd72a698bca4453a45f12250544"),
     "journey": ("docs/plan/17-ux-diagrams.md", "0494186310c960cef92f3c614625db44"),
     "cat": ("docs/plan/14-screens-catalogue.md", "1ca288905451c9e5c495a0468c062641"),
@@ -82,7 +82,7 @@ MARGIN = 80
 # once Penpot laid the text out; the kit's estimate (15 % slack, 8 px steps) is the upper bound it must sit under.
 LIVE_ROOT_H = {1: 2615, 2: 1595, 3: 2827, 4: 1356, 5: 2263, 6: 1487, 7: 2343, 8: 1851, 9: 2418, 10: 2995}
 # Board 10's 2995 is 2923 + 72 (the padded legend strips move its frame bottom 2792 -> 2864; the footer still ends
-# 27 px under it): the predicted read-back until the design-read redraw confirms it on the board.
+# 27 px under it): predicted by the design-read fold, read back on the board by the redraw (2026-11-03).
 ANN_W = 400
 ANN_TEXT_W = ANN_W - 32
 SLASH = "∕"  # U+2215 stands for "/" in node names (Penpot splits names on "/")

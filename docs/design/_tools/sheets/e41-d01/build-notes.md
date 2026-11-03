@@ -88,8 +88,8 @@ the board and is folded here, so a rebuild reproduces the drawn boards:
 17. Every root's height is the live read-back, max(annotation end, footer end) + 80: `LIVE_ROOT_H` in the kit, which
     checks it under the kit's own estimate and over the frames' end.
 
-Drawn deviations, recorded in memo §12 and not redrawn: board 10's dashed legend strips are barely taller than their
-text, so the dashes graze the letters; board 05's bar-only band label overlaps the first candle of the gap. The `.md`
+Drawn deviation, recorded in memo §12 and not redrawn: board 05's bar-only band label overlaps the first candle of the
+gap (board 10's legend strips, which grazed their text, are padded since the redraw below). The `.md`
 "N shapes" lines count the sheet's nodes; the board's node count adds the icon instances' children.
 
 ## Design-read fold (orchestrator's read of #5567, 2026-11-03; boards 03, 04 and 10 to be redrawn)
@@ -101,7 +101,18 @@ text, so the dashes graze the letters; board 05's bar-only band label overlaps t
   parent never cuts it. Board 09 keeps the outer ring it was drawn with (not in this redraw).
 - Board 10: keyboard row 5 names the row model (CMP-049 grid, the APG grid pattern: one roving tab stop, Up / Down
   arrows); the viewport notes, step captions and forced-colours lines take `padY` INSET_XS so their dashes clear the
-  words. That moves the frames' bottom 2792 to 2864, so `LIVE_ROOT_H[10]` is the predicted 2995 until the redraw reads
-  it back.
+  words. That moves the frames' bottom 2792 to 2864, so `LIVE_ROOT_H[10]` is 2995, predicted here and read back by the
+  redraw.
 - Memo L44 (BQ-2) names memo §0, §6, §7 and §12 as the wireframe spec; the memo md5 is re-pinned, so every sidecar's
   sources line and every sheet's `compactOf.sha256` moved; sheets 01, 02 and 05 to 09 differ only in that md5.
+
+## Redraw fold (boards 03, 04 and 10 redrawn, 2026-11-03)
+
+Boards 03, 04 and 10 were deleted and drawn again from the regenerated sheets (new board ids in memo §12). Every board's
+node count is its shapes plus the root, every frame clip-on with no spill, lint and the cut check clean, and the roots
+read back at 2827, 1356 and 2995 (board 10's predicted height confirmed). Two SHEET-FIX folds, live and kit:
+
+18. Board 04, the T2 inset: `notes_tags(t2=True)` was COL_W (548 px) inside a 548 px inset with INSET_SM padding, so the
+    note field's right edge was cut 8 px; `gen_04.py` passes `w - 16` (532 px; the value text 488 px).
+19. Board 10, both focus-return frames: the focused dialog heading's title kept the heading's full width inside the
+    ring's INSET_XS `padX` (4 px past it); `wf.dialog()` narrows the title by 2 × INSET_XS (297 -> 289 px).

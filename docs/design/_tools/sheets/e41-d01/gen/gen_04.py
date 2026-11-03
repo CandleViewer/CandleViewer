@@ -30,7 +30,7 @@ def default(fid: str) -> tuple[k.Node, tuple[str, list[str]]]:
                               "editor stay visible with the CMP-019 lock, a dashed color.border.default stroke and the "
                               "reason; they stay in the Tab order with aria-disabled", k.CAPTION, k.TEXT_3,
                w=w - 16),
-        s094.notes_tags(t, t2=True)], {"pad": k.INSET_SM, "gap": k.STACK_SM, "stroke": k.BORDER_SUBTLE,
+        s094.notes_tags(t, t2=True, w=w - 16)], {"pad": k.INSET_SM, "gap": k.STACK_SM, "stroke": k.BORDER_SUBTLE,
                                        "strokeWidth": k.HAIR, "strokeAlign": "inner", "radius": k.R_CONTROL},
         w=w, note="WD-13 T2 inset (E09-D09 §2.1): tag editor and note, viewer role")
     pg["kids"].append(inset)

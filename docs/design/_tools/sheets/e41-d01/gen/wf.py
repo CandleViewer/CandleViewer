@@ -254,7 +254,8 @@ def dialog(title: str, kids: list[Node | None], actions: list[Node], w: int = DI
     inner = w - 2 * k.PX[k.DIALOG_PAD]
     ttl = k.text("title", title, k.HEADING_MD, k.TEXT_1, w=inner - 28)
     if focus_heading:
-        ttl = ring(k.hbox("heading (tabindex -1)", [ttl], {}, w=inner - 28, h=24))
+        ttl = ring(k.hbox("heading (tabindex -1)", [dict(ttl, w=inner - 28 - 2 * k.PX[k.INSET_XS])], {}, w=inner - 28,
+                          h=24))  # the ring's INSET_XS padX narrows the title (SHEET-FIX 10, redraw 2026-11-03)
     head = k.hbox("dialog header", [ttl, k.icon("close", "close", k.TEXT_2)], {"justify": "space-between"}, w=inner,
                   h=24)
     if stacked:  # 200 %: actions stack full width, the primary first

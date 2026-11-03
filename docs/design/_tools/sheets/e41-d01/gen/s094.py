@@ -77,8 +77,7 @@ def siblings(t: k.Trade) -> Any:
                                                                    f"{len(legs)} legs, one row per account")
 
 
-def notes_tags(t: k.Trade, *, removed_auto: bool = False, t2: bool = False) -> Any:
-    w = COL_W
+def notes_tags(t: k.Trade, *, removed_auto: bool = False, t2: bool = False, w: int = COL_W) -> Any:
     note = wf.textfield(k.ui("Note"), "Entered on the breakout retest; stop under the range low.", w, t2=t2)
     tags = [(n, a) for n, a in t.tags if not (removed_auto and a)]
     chip_row = k.hbox("CMP-169 tag editor", [*wf.chips(tags, w, removable=True, t2=t2), wf.btn(k.ui("Add tag"), t2=t2)],

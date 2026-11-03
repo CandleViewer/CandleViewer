@@ -72,7 +72,7 @@ Drawn in the research-boards PR (`Closes #1017`), after this text merged, throug
 | 07  | SCR-095 insufficient-sample, low-bucket, empty, no-match, loading, error                   | drawn — `E41-D01-07-scr095-states.png`, 3120 × 2343, 6 frames         |
 | 08  | environment scope and cohort controls                                                      | drawn — `E41-D01-08-scope-and-cohort.png`, 3120 × 1851, 3 frames      |
 | 09  | SCR-096 default, create, rename, merge, delete, empty, error                               | drawn — `E41-D01-09-scr096-tag-manager.png`, 3248 × 2418, 7 frames    |
-| 10  | keyboard, reading order, 200 % reflow, forced colours, focus return (SCR-096, export)      | drawn — `E41-D01-10-keyboard-and-reflow.png`, 2608 × 2923, 7 frames   |
+| 10  | keyboard, reading order, 200 % reflow, forced colours, focus return (SCR-096, export)      | drawn — `E41-D01-10-keyboard-and-reflow.png`, 2608 × 2995, 7 frames   |
 
 Board 10 is the carrier of three accessibility lines for the SCR-096 tag-manager modal and the SCR-093 export confirm; board 10 draws them and this text binds: **reflow** — at 200 % zoom both reflow to one column with no horizontal scroll and no clipped action; **forced colours** — borders, the focus ring, the scope label and the CMP-019 lock glyph stay visible in system colours, and no state rests on fill alone; **focus return** — focus enters the dialog on its heading, Escape or cancel closes it, and on close, cancel or confirm focus returns to the control that opened it ("Manage tags" or "Export") (`05`:90).
 
@@ -236,14 +236,14 @@ Penpot file `E41-D01 boards`, page `E41-D01` · id `cb0c3916-2579-81a4-8008-e2f6
 | --- | ------------------------------------ | -------------------------------------- | ---------------------------------------------------- | ------ | ------ | --------------- |
 | 01  | `E41-D01 / 01 research-board`        | `6c5ca0d4-2cd4-804a-8008-e2f6ce75a34c` | `E41-D01-01-research-board.png` (2080 × 2615)        | 3      | 540    | PASS            |
 | 02  | `E41-D01 / 02 scr093-default`        | `6c5ca0d4-2cd4-804a-8008-e2f7df95a956` | `E41-D01-02-scr093-default.png` (3120 × 1595)        | 3      | 819    | PASS            |
-| 03  | `E41-D01 / 03 scr093-states`         | `6c5ca0d4-2cd4-804a-8008-e2f9604b339c` | `E41-D01-03-scr093-states.png` (3120 × 2827)         | 7      | 1120   | PASS            |
-| 04  | `E41-D01 / 04 scr094-default`        | `6c5ca0d4-2cd4-804a-8008-e2fb71263a52` | `E41-D01-04-scr094-default.png` (1840 × 1356)        | 1      | 310    | PASS            |
+| 03  | `E41-D01 / 03 scr093-states`         | `d4f950b6-c925-800a-8008-e34e3c1717b1` | `E41-D01-03-scr093-states.png` (3120 × 2827)         | 7      | 1120   | PASS            |
+| 04  | `E41-D01 / 04 scr094-default`        | `d4f950b6-c925-800a-8008-e351d71008f9` | `E41-D01-04-scr094-default.png` (1840 × 1356)        | 1      | 310    | PASS            |
 | 05  | `E41-D01 / 05 scr094-context-states` | `6c5ca0d4-2cd4-804a-8008-e2fc35a97445` | `E41-D01-05-scr094-context-states.png` (3120 × 2263) | 5      | 700    | PASS            |
 | 06  | `E41-D01 / 06 scr095-default`        | `6c5ca0d4-2cd4-804a-8008-e2fdf3f732e6` | `E41-D01-06-scr095-default.png` (3120 × 1487)        | 2      | 1096   | PASS            |
 | 07  | `E41-D01 / 07 scr095-states`         | `42fa797e-0509-8044-8008-e300e7677b8a` | `E41-D01-07-scr095-states.png` (3120 × 2343)         | 6      | 703    | PASS            |
 | 08  | `E41-D01 / 08 scope-and-cohort`      | `42fa797e-0509-8044-8008-e302c8ec8d5a` | `E41-D01-08-scope-and-cohort.png` (3120 × 1851)      | 3      | 771    | PASS            |
 | 09  | `E41-D01 / 09 scr096-tag-manager`    | `42fa797e-0509-8044-8008-e304e48455e4` | `E41-D01-09-scr096-tag-manager.png` (3248 × 2418)    | 7      | 753    | PASS            |
-| 10  | `E41-D01 / 10 keyboard-and-reflow`   | `d4f950b6-c925-800a-8008-e30742317aa1` | `E41-D01-10-keyboard-and-reflow.png` (2608 × 2923)   | 7      | 758    | PASS            |
+| 10  | `E41-D01 / 10 keyboard-and-reflow`   | `d4f950b6-c925-800a-8008-e353242530f2` | `E41-D01-10-keyboard-and-reflow.png` (2608 × 2995)   | 7      | 758    | PASS            |
 
 **Live check.** On every board the node count is the sheet's shapes plus the root; every frame stands at its sheet size and position with clip on and no child spilling; the drawing lint and the cut check are clean after the folds below. The post-step names use U+2215 for `/` and dash the `dashed · ` strokes (board 10's three board-marker containers carry no stroke by design).
 
@@ -252,10 +252,10 @@ Penpot file `E41-D01 boards`, page `E41-D01` · id `cb0c3916-2579-81a4-8008-e2f6
 - Board 05, SCR-094/pruned: the short trade's SL lay above the pane's price range, so its rule and label sat 12 px above the CMP-181 pane; drawn moved down 12 px; the kit now spans the pane's price scale over the SL, entry and exit.
 - Board 06, the table view's breakdown card: the select value "session hour (UTC)" wrapped in a 92 px text; drawn at 168 px (value 124 px); the kit sizes that select from its value.
 - Board 10, both focus-return frames: step 3 ended at 1151 px in a 1120 px sequence; drawn and kit at 1152 px.
-- Every root height is max(annotation end, footer end) + 80, as read back on the board: 2615, 1595, 2827, 1356, 2263, 1487, 2343, 1851, 2418 and 2923 px for boards 01 to 10.
+- Every root height is max(annotation end, footer end) + 80, as read back on the board: 2615, 1595, 2827, 1356, 2263, 1487, 2343, 1851, 2418 and 2995 px for boards 01 to 10.
 
-**Drawn deviations** (legible, recorded, not redrawn): board 10's dashed legend strips are barely taller than their text, so the dashes graze the letters; board 05's bar-only band label "Missing 10:00–10:40 UTC" overlaps the first candle of the gap.
+**Drawn deviations** (legible, recorded, not redrawn): board 05's bar-only band label "Missing 10:00–10:40 UTC" overlaps the first candle of the gap.
 
 **WD-13's owner cell** (§6) still reads "(not drawn)", drawn verbatim on board 01; board 03 draws SCR-093/viewer-write-disabled and board 04 its SCR-094 inset, and E41-D05 #1205 still checks both on the built screen.
 
-**Redraw in progress (orchestrator's design read, 2026-11-03).** Boards 03, 04 and 10 are being redrawn from the regenerated kit: on 03 and 04 the CMP-019 lock now leads the label on every T2 button, chip and field (rendering 2a, E09-D09 §2.2) and the bulk bar's tag select is drawn T2 (its orphan lock dropped); on 10 the 2 px focus ring is an inner stroke so no clip-on parent cuts it, keyboard row 5 names the row model (CMP-049 grid, the APG grid pattern: one roving tab stop, Up / Down arrows), and the legend strips are padded so their dashes clear the words, which takes board 10's root to 2608 × 2995 (predicted: 2923 + 72, read back on the redraw). Their PNGs, sizes and the §0 cells above still show the first draw until that redraw lands; the legend-strip deviation above goes with it.
+**Redrawn after the orchestrator's design read (2026-11-03).** Boards 03, 04 and 10 are redrawn from the regenerated kit (new board ids above): on 03 and 04 the CMP-019 lock leads the label on every T2 button, chip and field (rendering 2a, E09-D09 §2.2) and the bulk bar's tag select is drawn T2 (its orphan lock dropped); on 10 the 2 px focus ring is an inner stroke so no clip-on parent cuts it, keyboard row 5 names the row model (CMP-049 grid, the APG grid pattern: one roving tab stop, Up / Down arrows), and the legend strips are padded so their dashes clear the words, which takes board 10's root to 2608 × 2995 (read back on the board). Two more SHEET-FIX folds, live and kit: board 04's T2 inset draws its note field and tag editor 16 px narrower (532 px) inside the inset's padding, so the field's right edge is no longer cut; board 10's two focused dialog headings narrow their title by the ring's 2 × 4 px padding (289 px). Lint, cut check and the dark theme gate are clean on all three.
