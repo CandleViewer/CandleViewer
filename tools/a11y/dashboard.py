@@ -108,7 +108,7 @@ def render(data: dict, sprints: dict[int, dict], last: int = 4) -> str:
         _table("Open and closed defects by severity", ["Severity", "Open", "Closed"],
                [[s, b["severity"][s]["open"], b["severity"][s]["closed"]] for s in SEVERITIES]),
         "<h2 id=\"screen\">Open defects by screen</h2>",
-        _table("Open defects by screen and severity", ["Screen", "Name", "Open", "Serious", "Moderate", "Minor"],
+        _table("Open defects by screen and severity", ["Screen", "Name", "Open", "Critical or serious", "Moderate", "Minor"],
                [[s, b["names"].get(s, ""), *(sum(v for (st, sv), v in b["screen"][s].items() if st == "open" and (sv in x)) for x in (("critical", "serious", "moderate", "minor"), ("serious", "critical"), ("moderate",), ("minor",)))]
                 for s in screens if any(st == "open" for st, _ in b["screen"][s])]),
         "<h2 id=\"sc\">Open defects by WCAG criterion</h2>",

@@ -18,8 +18,10 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 from tools.a11y import redact
@@ -92,7 +94,11 @@ def load_sprint(path: Path) -> dict:
         doc = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise StoreError(f"cannot read {path}: {exc}") from exc
-    if doc.get("schemaVersion") != SCHEMA_VERSION or not isinstance(doc.get("results"), list):
+    if (
+        not isinstance(doc, dict)
+        or doc.get("schemaVersion") != SCHEMA_VERSION
+        or not isinstance(doc.get("results"), list)
+    ):
         raise StoreError(f"{path}: not a v{SCHEMA_VERSION} sprint file")
     for i, r in enumerate(doc["results"]):
         if errs := validate_result(r):
@@ -138,47 +144,90 @@ def append_results(store: Path, results: list[dict], today: dt.date) -> Path:
     merged.update({key_of(r): r for r in clean})  # type: ignore[arg-type]
     doc["results"] = [merged[k] for k in sorted(merged)]
     store.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _write_atomic(path, json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
     return path
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    """Temp file in the same directory, then os.replace: a reader never sees a half-written sprint."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 # --- Q04 reports -> results ------------------------------------------------------------------
 
 
 def _read(path: Path) -> dict | None:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    """The report as an object, None if the collector wrote none; a malformed one is an error."""
+    if not path.exists():
         return None
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise StoreError(f"cannot read {path}: {exc}") from exc
+    if not isinstance(doc, dict):
+        raise StoreError(f"{path} is not a JSON object")
+    return doc
+
+
+def _num(v: object) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
 def results_from_reports(report_dir: Path, build: str, day: dt.date) -> list[dict]:
-    """The Q04 gate results of one run: axe per screen, Lighthouse per screen, the inventory, keyboard."""
+    """The Q04 gate results of one run: axe per screen, Lighthouse per screen, keyboard.
+
+    A report of the wrong shape, an axe impact outside critical/serious/moderate/minor, or a score that
+    is not a number is a StoreError (A11Y-INFRA), never silently uncounted.
+    """
     base = {"source": "Q04", "tags": ["epic:E47"], "build": build, "recorded": day.isoformat()}
     out: list[dict] = []
     if axe := _read(report_dir / "axe.json"):
-        for screen, data in sorted((axe.get("screens") or {}).items()):
+        screens = axe.get("screens")
+        if not isinstance(screens, dict):
+            raise StoreError("axe.json has no 'screens' object")
+        for screen, data in sorted(screens.items()):
+            viols = data.get("violations", []) if isinstance(data, dict) else None
+            if not isinstance(viols, list) or not all(isinstance(v, dict) for v in viols):
+                raise StoreError(f"axe.json screen {screen}: 'violations' is not a list of objects")
             c = {k: 0 for k in ("critical", "serious", "moderate", "minor")}
-            for v in data.get("violations", []):
-                n = len(v.get("nodes") or [1])
-                if v.get("impact") in c:
-                    c[v["impact"]] += n
+            for v in viols:
+                if v.get("impact") not in c:
+                    raise StoreError(f"axe.json screen {screen}: rule {v.get('id')} has impact {v.get('impact')!r}")
+                nodes = v.get("nodes")
+                c[v["impact"]] += len(nodes) if isinstance(nodes, list) and nodes else 1
             fail = c["critical"] + c["serious"] > 0
             out.append({**base, "kind": "axe", "screen": screen,
                         "outcome": "fail" if fail else "pass", "metrics": c})
     if lh := _read(report_dir / "lighthouse.json"):
         scores = lh.get("scores", lh)
+        pending = lh.get("pending") or {}
+        if not isinstance(scores, dict) or not isinstance(pending, dict):
+            raise StoreError("lighthouse.json 'scores' / 'pending' are not objects")
         for screen, score in sorted(scores.items()):
-            if not isinstance(score, (int, float)):
-                continue
+            if score is None:
+                continue  # a runner failure: the gate reports it as A11Y-INFRA
+            if not _num(score):
+                raise StoreError(f"lighthouse.json screen {screen}: score {score!r} is not a number")
             out.append({**base, "kind": "lighthouse", "screen": screen,
                         "outcome": "pass" if score >= LIGHTHOUSE_FLOOR else "fail",
                         "metrics": {"score": score}})
-        for screen in sorted(lh.get("pending") or {}):
+        for screen in sorted(pending):
             out.append({**base, "kind": "lighthouse", "screen": screen, "outcome": "pending", "metrics": {}})
     if kb := _read(report_dir / "keyboard.json"):
         steps = kb.get("steps") or []
-        bad = sum(1 for s in steps if not s.get("ok")) + int(kb.get("mouseEvents", 0) > 0)
+        if not isinstance(steps, list) or not all(isinstance(x, dict) for x in steps):
+            raise StoreError("keyboard.json 'steps' is not a list of objects")
+        mouse = kb.get("mouseEvents", 0)
+        bad = sum(1 for x in steps if not x.get("ok")) + int(_num(mouse) and mouse > 0)
         out.append({**base, "kind": "keyboard", "screen": "*", "outcome": "fail" if bad else "pass",
                     "metrics": {"steps": len(steps), "failed": bad}})
     return out

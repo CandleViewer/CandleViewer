@@ -119,3 +119,8 @@ def test_cli_writes_the_page_and_a_broken_store_is_infra(tmp_path: Path) -> None
     (tmp_path / "bad").mkdir()
     (tmp_path / "bad" / "sprint-02.json").write_text("{}", encoding="utf-8")
     assert dashboard.main(["--out", str(out), "--store", str(tmp_path / "bad")]) == 3
+
+
+def test_screen_table_labels_the_blocking_column_critical_or_serious() -> None:
+    page = dashboard.render(FINDINGS, {})
+    assert "Critical or serious" in page and ">Serious<" not in page

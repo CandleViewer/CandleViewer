@@ -125,3 +125,76 @@ def test_cli_record_and_missing_reports_is_infra(tmp_path: Path, capsys: pytest.
     _reports(rep)
     assert store.main(["record", str(rep), "--build", BUILD, "--date", today, "--store", str(out)]) == 0
     assert len(store.load_store(out)) == 1
+
+
+def _write(d: Path, name: str, doc: object) -> None:
+    (d / name).write_text(json.dumps(doc), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("name", "doc", "word"),
+    [
+        ("axe.json", [], "not a JSON object"),
+        ("axe.json", {"screens": []}, "screens"),
+        ("axe.json", {"screens": {"R-001": []}}, "violations"),
+        ("axe.json", {"screens": {"R-001": {"violations": ["x"]}}}, "violations"),
+        ("axe.json", {"screens": {"R-001": {"violations": [{"id": "a", "impact": None, "nodes": []}]}}}, "impact"),
+        ("axe.json", {"screens": {"R-001": {"violations": [{"id": "a", "impact": "severe"}]}}}, "impact"),
+        ("lighthouse.json", {"scores": {"SCR-001": True}}, "not a number"),
+        ("lighthouse.json", {"scores": {"SCR-001": "0.9"}}, "not a number"),
+        ("lighthouse.json", {"scores": [1], "pending": {}}, "objects"),
+        ("lighthouse.json", {"scores": {}, "pending": ["SCR-030"]}, "objects"),
+        ("keyboard.json", {"steps": "abc"}, "steps"),
+        ("keyboard.json", {"steps": [1]}, "steps"),
+    ],
+)
+def test_malformed_report_shapes_are_infra_not_a_crash(tmp_path: Path, name: str, doc: object, word: str) -> None:
+    _write(tmp_path, name, doc)
+    with pytest.raises(store.StoreError, match=word):
+        store.results_from_reports(tmp_path, BUILD, DAY)
+    today = dt.date.today().isoformat()
+    assert store.main(["record", str(tmp_path), "--build", BUILD, "--date", today, "--store", str(tmp_path / "s")]) == 3
+
+
+def test_unparseable_report_file_is_infra_and_a_null_score_is_skipped(tmp_path: Path) -> None:
+    (tmp_path / "axe.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(store.StoreError, match="cannot read"):
+        store.results_from_reports(tmp_path, BUILD, DAY)
+    (tmp_path / "axe.json").unlink()
+    _write(tmp_path, "lighthouse.json", {"scores": {"SCR-001": None, "SCR-155": 0.99}})
+    assert [r["screen"] for r in store.results_from_reports(tmp_path, BUILD, DAY)] == ["SCR-155"]
+
+
+def test_top_level_list_sprint_file_is_rejected(tmp_path: Path) -> None:
+    (tmp_path / "sprint-06.json").write_text("[]", encoding="utf-8")
+    with pytest.raises(store.StoreError, match="not a v1 sprint file"):
+        store.load_sprint(tmp_path / "sprint-06.json")
+    with pytest.raises(store.StoreError):
+        store.load_store(tmp_path)
+
+
+def test_write_is_atomic_a_failed_replace_leaves_the_old_file_and_no_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = store.append_results(tmp_path, [_r()], DAY)
+    before = path.read_text(encoding="utf-8")
+
+    def boom(*_: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store.os, "replace", boom)
+    with pytest.raises(OSError):
+        store.append_results(tmp_path, [_r(screen="R-901")], DAY)
+    assert path.read_text(encoding="utf-8") == before
+    assert [p.name for p in tmp_path.iterdir()] == ["sprint-06.json"]  # the temp file is gone
+
+
+def test_write_goes_through_a_temp_file_in_the_same_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[tuple[str, str]] = []
+    real = store.os.replace
+    monkeypatch.setattr(store.os, "replace", lambda a, b: (seen.append((str(a), str(b))), real(a, b))[1])
+    path = store.append_results(tmp_path, [_r()], DAY)
+    (src, dst), = seen
+    assert Path(src).parent == Path(dst).parent == tmp_path and src != dst and dst == str(path)
