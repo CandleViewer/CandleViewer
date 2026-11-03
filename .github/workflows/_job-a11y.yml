@@ -88,7 +88,7 @@ jobs:
           python -m tools.a11y.gates baseline-pr "$RUNNER_TEMP/base-baseline.json" tools/a11y/axe-baseline.json "$RUNNER_TEMP/pr-body.txt"
 
       - name: Gate logic meta-tests (injected defect fails, clean passes)
-        run: pip install pytest && python -m pytest scripts/tests/test_a11y_gates.py -q
+        run: pip install pytest && python -m pytest scripts/tests/test_a11y_gates.py scripts/tests/test_a11y_inventory.py scripts/tests/test_a11y_redact.py scripts/tests/test_a11y_workflow.py -q
 
       - name: Enable pnpm via corepack
         run: corepack enable && corepack prepare pnpm@12.5.1 --activate
@@ -150,19 +150,29 @@ jobs:
           date +%s > "$RUNNER_TEMP/a11y-start"
           npx playwright test -c e2e/playwright.a11y.config.ts
 
-      - name: Collect Lighthouse scores
+      # E47-Q04: the Lighthouse screens and the pa11y-ci URLs come from the screen inventory
+      # (tools/a11y/inventory.py), so a screen that lands is audited with no edit here.
+      - name: Plan the Lighthouse screens from the inventory
+        run: |
+          mkdir -p reports/a11y
+          python -m tools.a11y.gates lighthouse-plan > reports/a11y/lighthouse-plan.json
+
+      - name: Collect Lighthouse scores and pa11y-ci results
         working-directory: apps/web
         run: |
           npx vite preview --port 4173 --host 127.0.0.1 &
           VP=$!
           for _ in $(seq 30); do curl -sf http://127.0.0.1:4173 >/dev/null && break; sleep 2; done
           node e2e/a11y/lighthouse.collect.mjs || true
+          chrome=$(node --input-type=module -e 'import { chromium } from "@playwright/test"; console.log(chromium.executablePath())')
+          (cd ../.. && python -m tools.a11y.gates pa11y-config --chrome "$chrome" > reports/a11y/pa11yci.json \
+            && pnpm exec pa11y-ci --config reports/a11y/pa11yci.json --json > reports/a11y/pa11y.json) || true
           kill $VP
 
       - name: Evaluate gates (absent collector output = infra error, never green)
         run: |
           set +e
-          for g in "axe reports/a11y/axe.json" "lighthouse reports/a11y/lighthouse.json"                    "keyboard reports/a11y/keyboard.json" "flash reports/a11y/flash.json"                    "tree reports/a11y/trees"; do
+          for g in "axe reports/a11y/axe.json" "lighthouse reports/a11y/lighthouse.json"                    "keyboard reports/a11y/keyboard.json" "flash reports/a11y/flash.json"                    "tree reports/a11y/trees"                    "inventory reports/a11y/axe.json" "pa11y reports/a11y/pa11y.json"; do
             set -- $g
             python -m tools.a11y.gates $g | tee -a "$GITHUB_STEP_SUMMARY"
             rc=${PIPESTATUS[0]}
@@ -182,6 +192,12 @@ jobs:
           python -m tools.a11y.gates budget "$elapsed" --limit 720 | tee -a "$GITHUB_STEP_SUMMARY"
           [ "${PIPESTATUS[0]}" -ne 0 ] && fail=1
           exit ${fail:-0}
+
+      # E47-Q04: the reports hold node HTML and page text; strip key-, TOTP- and email-like values
+      # after the gates have read them and before they leave the runner.
+      - name: Redact the reports before upload
+        if: always()
+        run: python -m tools.a11y.redact reports/a11y
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
