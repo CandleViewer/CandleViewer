@@ -237,7 +237,12 @@ class World:
         return 1
 
     async def refused(
-        self, account_id: AccountId, *, error_code: str, exchange_ret_code: int | None
+        self,
+        account_id: AccountId,
+        *,
+        error_code: str,
+        exchange_ret_code: int | None,
+        verdict: bool,
     ) -> None:
         self.trace.append("credential_refused")
 

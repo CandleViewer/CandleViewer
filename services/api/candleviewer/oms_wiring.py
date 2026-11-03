@@ -496,6 +496,32 @@ class KeyStandingReactions(Protocol):
     def credential_rejected(self, account_id: UUID, refusal: Refusal) -> None: ...
 
 
+class CredentialMarks(Protocol):
+    """The durable reaction (24 Sec.8.4 "A refused credential", #4243): the stored-key
+    self-check's `KeySelfCheck.credential_rejected`, called on the serving loop, never awaited."""
+
+    def credential_rejected(
+        self, account_id: UUID, refusal: Refusal, *, exchange_ret_code: int | None
+    ) -> None: ...
+
+
+class ServedMarks:
+    """`CredentialMarks` from the lane: notified to the serving loop, where the self-check runs."""
+
+    def __init__(self, marks: CredentialMarks, serving: Serving) -> None:
+        self._marks, self._serving = marks, serving
+
+    def credential_rejected(
+        self, account_id: UUID, refusal: Refusal, *, exchange_ret_code: int | None
+    ) -> None:
+        self._serving.notify(
+            self._marks.credential_rejected,
+            account_id,
+            refusal,
+            exchange_ret_code=exchange_ret_code,
+        )
+
+
 #: The adapter's key-verdict table (`ExchangeBybitService.key_refusal`): `(reason, code)` when a
 #: signed call's refusal is a verdict about the key, else None.
 KeyRefusalTable = Callable[[ExchangeError], tuple[str, int] | None]
@@ -506,7 +532,11 @@ class CredentialRejectionsBinding:
     through the adapter's key-verdict table to its `Refusal`; one outside it, `10004` among them, or
     none is `UNKNOWN_KEY`, fail closed. The key standing takes it first, in memory, so the account
     admits no order in this process until a recorded pass clears it; then the Owner is paged, the
-    summary naming the account. The durable reaction is #4243.
+    summary naming the account. Then the durable reaction (#4243), when `marks` is bound, for a
+    venue's verdict only (`AUTH_ERROR` with `verdict`, its code one the table maps or none; never
+    a stream's `key_unusable`, a local fault, nor `10004`): the self-check disarms the account and
+    marks its keys, on the serving loop; a mark that raises is logged CRITICAL and the page still
+    goes.
 
     Every report flips the standing (fail closed, C-2.21). Only a report of kind `AUTH_ERROR`
     reads the table, which `OmsCommandPort._venue`, the port's one caller, sends with a return
@@ -518,9 +548,16 @@ class CredentialRejectionsBinding:
         *,
         key_refusal: KeyRefusalTable,
         pager: Pager | None = None,
+        marks: CredentialMarks | None = None,
     ) -> None:
-        self._standings, self._key_refusal = standings, key_refusal
+        self._standings, self._key_refusal, self._marks = standings, key_refusal, marks
         self._pager: Pager = LogPager() if pager is None else pager
+
+    def _mapped(self, exchange_ret_code: int) -> bool:
+        """Whether the adapter's key-verdict table maps the code to a `Refusal`."""
+        refused = AuthError("the exchange refused the key", exchange_ret_code=exchange_ret_code)
+        found = self._key_refusal(refused)
+        return found is not None and found[0] in _REFUSALS
 
     def verdict(self, exchange_ret_code: int | None) -> Refusal:
         """The code's `Refusal`: `UNKNOWN_KEY` for a code the table does not hold, or none."""
@@ -533,7 +570,12 @@ class CredentialRejectionsBinding:
         )
 
     async def refused(
-        self, account_id: AccountId, *, error_code: str, exchange_ret_code: int | None
+        self,
+        account_id: AccountId,
+        *,
+        error_code: str,
+        exchange_ret_code: int | None,
+        verdict: bool,
     ) -> None:
         # Fail closed (ruling Q10): any report flips the standing. Only an `AUTH_ERROR` reads the
         # adapter's table; any other kind, which `_venue` does not report today, is `UNKNOWN_KEY`.
@@ -543,12 +585,29 @@ class CredentialRejectionsBinding:
             else Refusal.UNKNOWN_KEY
         )
         self._standings.credential_rejected(account_id, refusal)  # held before it is logged
+        # durable only for the venue's verdict on the key: an `AUTH_ERROR` whose code the table
+        # maps, or a stream's refusal with none; a code outside it (`10004`, a refused signature)
+        # is held in memory only, as the self-check holds it inconclusive (SR-E27-18)
+        judged = exchange_ret_code is None or self._mapped(exchange_ret_code)
+        durable = verdict and error_code == OmsErrorCode.AUTH_ERROR and judged
+        if self._marks is not None and durable:  # it follows the in-memory reaction (#4243)
+            try:
+                self._marks.credential_rejected(
+                    account_id, refusal, exchange_ret_code=exchange_ret_code
+                )
+            except Exception as exc:  # the standing and the page hold whatever it does
+                _log().critical(
+                    "oms_refusal_mark_failed",
+                    account_id=str(account_id),
+                    failure=type(exc).__name__,
+                )
         _log().critical(
             _PAGE,
             account_id=str(account_id),
             error_code=error_code,
             exchange_ret_code=exchange_ret_code,
             refusal=refusal.value,
+            verdict=verdict,
         )
         summary = f"{_PAGE}: account {account_id}"
         try:
@@ -2407,8 +2466,11 @@ class OmsRuntime:
         kill_switch: KillSwitch | None = None,
         standing: ReconcileStanding | None = None,
         digests: DigestKeep | None = None,
+        marks: CredentialMarks | None = None,
     ) -> None:
         self._settings, self._metrics, self._lanes = settings, metrics, lane
+        #: #4243: the stored-key self-check's durable reaction to a refused credential, or None.
+        self._marks = marks
         #: The B18 port, the composition root's one instance (#2904 G-79), else the interim.
         self._kill_switch = InterimKillSwitch() if kill_switch is None else kill_switch
         #: E29-T06 #914: the reconciliation standing the order-entry gate reads (`account_stale`,
@@ -3202,8 +3264,9 @@ class OmsRuntime:
                 bound_s=bounds.stop_request_s, now=self._now, monotonic=self._monotonic,
                 metrics=metrics, pager=self._pager,
             )  # fmt: skip
+            marks = None if self._marks is None else ServedMarks(self._marks, serving)
             rejections = CredentialRejectionsBinding(
-                standings, key_refusal=self._venue.key_refusal, pager=self._pager
+                standings, key_refusal=self._venue.key_refusal, pager=self._pager, marks=marks
             )
             # E29-T06 #914: a lookup's hand-over goes to `oms_handovers` (24 Sec.8.3 rule 3)
             lookups: OrderHandovers = NoHandoverStore()
@@ -3496,6 +3559,7 @@ def build_oms_runtime(
     kill_switch: KillSwitch | None = None,
     standing: ReconcileStanding | None = None,
     digests: DigestKeep | None = None,
+    marks: CredentialMarks | None = None,
 ) -> OmsRuntime | None:
     """The process's OMS runtime, with no I/O; None on the fake backend, which composes no OMS, so
     `placeOrder` answers `501 not_implemented` there (20 Sec.6.2). Its audit writer is its order
@@ -3507,7 +3571,8 @@ def build_oms_runtime(
     lane's snapshot reads serve (E29-T13); `trade_groups`, the topic it seeds and hands each
     committed group write to (E28-T05); `kill_switch`, the B18 port with the audit-chain break
     halt folded in (#2904), the one instance every reader of the port shares; `digests`, where each
-    reconciliation pass's digest is kept once its record is written (E29-S07)."""
+    reconciliation pass's digest is kept once its record is written (E29-S07); `marks`, the
+    stored-key self-check, a refused credential's durable reaction (#4243)."""
     if settings.storage_backend != "real":
         return None
     return OmsRuntime(
@@ -3517,5 +3582,5 @@ def build_oms_runtime(
         profiles=profiles, persistence=persistence, feed=feed, lane_signing=lane_signing,
         health=health, hub=hub, lane_transport=lane_transport, topics=topics,
         trade_groups=trade_groups, kill_switch=kill_switch, standing=standing,
-        digests=digests,
+        digests=digests, marks=marks,
     )  # fmt: skip

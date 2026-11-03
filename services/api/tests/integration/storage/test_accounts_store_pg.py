@@ -543,6 +543,36 @@ async def test_key_selfcheck_store_is_env_bound_and_writes_only_its_columns(
     )  # fmt: skip
 
 
+async def test_key_selfcheck_keeps_an_error_stored_after_a_check_began(
+    store: SqlAlchemyAccountsStore,
+    creds: SqlAlchemyCredentialStore,
+    rel: SqlAlchemyRelationalRepository,
+    pg_dsn: str,
+) -> None:
+    """#4243 (security L1): a refused credential's mark, stored after a check began, is neither
+    cleared by that check's pass nor overwritten by its error; a check begun after it clears it."""
+    exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
+    acct = await store.create_account(owner, _new(exch))
+    kid = await _seed_key(creds, acct.id)
+    await store.transition_key_status(owner, acct.id, kid, expected="pending", new="active")
+    demo = SqlAlchemyKeySelfCheckStore(rel, env="demo")
+    began, marked = (
+        datetime(2026, 10, 16, 9, tzinfo=UTC),
+        datetime(2026, 10, 16, 9, 0, 1, tzinfo=UTC),
+    )
+    facts = {"fetched_at": began.isoformat(), "uid": "1", "readOnly": 0, "permissions": {}}
+    verified = VerifiedKey(facts, True, False, ("203.0.113.7",), None, began)
+    assert await demo.record_error(kid, code="key_wrong_environment", at=marked) is True
+    assert await demo.record_error(kid, code="rate_limited", at=began) is False  # older: kept
+    assert await demo.record_pass(kid, verified) is True  # its facts land, the mark stays
+    [held] = [t for t in await demo.targets() if t.key_id == kid]
+    assert (held.last_error_code, held.verified_at) == ("key_wrong_environment", began)
+    later = marked + timedelta(seconds=1)
+    assert await demo.record_pass(kid, replace(verified, at=later)) is True
+    [cleared] = [t for t in await demo.targets() if t.key_id == kid]
+    assert (cleared.last_error_code, cleared.verified_at) == (None, later)
+
+
 async def test_key_selfcheck_retire_moves_a_usable_key_once_on_its_environment_only(
     store: SqlAlchemyAccountsStore,
     creds: SqlAlchemyCredentialStore,

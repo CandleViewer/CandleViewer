@@ -306,8 +306,8 @@ async def test_the_job_refuses_a_key_of_another_environment_before_signing() -> 
 
 
 class Meeting(World):
-    """Each `mark_disarm_audited` waits at its own gate, by order of arrival, so a test's mark and
-    a pass's are in flight at once and either can finish first."""
+    """Each `mark_disarm_audited` waits at its own gate, by order of arrival, so a test's mark is
+    held in flight while a pass runs."""
 
     def __init__(self, *rows: SelfCheckTargetRow, **options: Any) -> None:
         super().__init__(*rows, **options)
@@ -322,32 +322,21 @@ class Meeting(World):
         return await super().mark_disarm_audited(disarm, at=at)
 
 
-@pytest.mark.parametrize(
-    ("first", "audited"),
-    [
-        (0, [TESTED, DISABLED, VIOLATION, TESTED, VIOLATION]),
-        (1, [TESTED, DISABLED, TESTED, VIOLATION, VIOLATION]),
-    ],
-    ids=["test-marks-first", "pass-marks-first"],
-)
-async def test_a_test_and_a_pass_marking_one_disarm_at_once_both_finish(
-    first: int, audited: list[str]
-) -> None:
-    """A test runs outside the pass's lock: a pass reads the test's disarm as owed before the test
-    marks it, so both mark it, and the second finds it marked. Neither raises, so the loop goes on
-    and the test answers, its violation record written."""
+async def test_a_pass_skips_a_disarm_record_a_test_is_still_sending_and_both_finish() -> None:
+    """A test runs outside the pass's lock, so a pass can read the test's disarm as owed while
+    the test sends its record. One account's record has one sender at a time (#4243): the pass
+    skips it, so one `account.disabled_by_policy` and one mark; the pass finishes without
+    waiting for it, and the test then answers, its violation record written."""
     w = Meeting(target(), info=facts(permissions=WITHDRAW))
     async with asyncio.timeout(1.0):
         tested = asyncio.create_task(flow_of(w).run(ACCT, KEY, ACTOR))
         await w.arrived[0].wait()  # the test sent its disarm's record; its mark is held
-        passed = asyncio.create_task(w.check.run_once())
-        await w.arrived[1].wait()  # the pass read the disarm as owed: only its mark is retried
-        callers = [tested, passed]
-        for n in (first, 1 - first):
-            w.opened[n].set()
-            await callers[n]
-    assert [e[1] for e in w.of("audit")] == audited  # one `account.disabled_by_policy`
-    assert (w.disarms[ACCT][2], len(w.of("mark")), w.armed[ACCT]) == (NOW, 2, False)
+        await w.check.run_once()  # reads the disarm owed, skips it, and checks the key
+        assert not w.arrived[1].is_set()  # the pass sent no record and marked nothing
+        w.opened[0].set()
+        await tested
+    assert [e[1] for e in w.of("audit")] == [TESTED, DISABLED, TESTED, VIOLATION, VIOLATION]
+    assert (w.disarms[ACCT][2], len(w.of("mark")), w.armed[ACCT]) == (NOW, 1, False)
     assert not tested.result().passed
 
 

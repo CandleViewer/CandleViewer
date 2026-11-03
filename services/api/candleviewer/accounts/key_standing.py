@@ -41,9 +41,11 @@ answers from memory only, synchronously and with no I/O (C-2.21):
   revoked keys end with the reads (C-2.18); `credential_rejected` is unchanged for the other
   keys' passes.
 
-Codes only, never exchange text, a key id or a permission list. The durable section 8.6 reaction
-(the key marked `invalid`, the account disarmed) is the submit pipeline's (#913); a restart forgets
-the fact, and the boot self-check judges the key afresh. A call reads the account's own keys only.
+Codes only, never exchange text, a key id or a permission list. A restart forgets the fact; the
+durable section 8.6 reaction to a report of the submit pipeline or the private-stream consumer
+(the keys marked failed, the account disarmed, #4243) is the self-check's
+(`KeySelfCheck.credential_rejected`): the stored code and disarm answer for it after a restart. A
+call reads the account's own keys only.
 
 Read from the order lane; written on the serving loop (#913 slice 3 L4, 20-architecture.md 6.2).
 `observe`, `credential_rejected`, `hold`, `release` and `revoke` run on the serving loop only (the

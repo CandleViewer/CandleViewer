@@ -301,8 +301,14 @@ class Credentials:
     calls: list[tuple[AccountId, str, int | None]] = field(default_factory=list)
 
     async def refused(
-        self, account_id: AccountId, *, error_code: str, exchange_ret_code: int | None
+        self,
+        account_id: AccountId,
+        *,
+        error_code: str,
+        exchange_ret_code: int | None,
+        verdict: bool,
     ) -> None:
+        assert verdict  # the OMS reports a venue's verdict only (#4243)
         self.calls.append((account_id, error_code, exchange_ret_code))
 
 

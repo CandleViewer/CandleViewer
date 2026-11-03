@@ -341,9 +341,15 @@ class StreamConsumer:
             case "closed":  # the session ends here: nothing after it is read
                 self._health.ws_dropped(account_id)
                 if status.reason in ("auth_refused", "key_unusable"):
+                    # only the venue's refusal is a verdict on the key (#4243): an unusable key
+                    # is a local fault, held in memory and paged, never durably marked
+                    verdict = status.reason == "auth_refused"
                     await self._bounded(
                         self._credentials.refused(
-                            account_id, error_code="AUTH_ERROR", exchange_ret_code=None
+                            account_id,
+                            error_code="AUTH_ERROR",
+                            exchange_ret_code=None,
+                            verdict=verdict,
                         )
                     )
                 elif status.reason == "account_disabled":

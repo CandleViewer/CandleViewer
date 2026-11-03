@@ -292,7 +292,9 @@ async def test_a_refused_credential_flips_the_standing_then_pages(
     binding = CredentialRejectionsBinding(
         standings, key_refusal=ExchangeBybitService.key_refusal, pager=pager
     )
-    await binding.refused(ACCOUNT, error_code=OmsErrorCode.AUTH_ERROR, exchange_ret_code=code)
+    await binding.refused(
+        ACCOUNT, error_code=OmsErrorCode.AUTH_ERROR, exchange_ret_code=code, verdict=True
+    )
     assert standings.rejected == [(ACCOUNT, refusal)]
     page = ("page", f"oms_credential_rejected: account {ACCOUNT}", "order", [(ACCOUNT, refusal)])
     assert pager.pages == [page]  # CR-S3B2-04: the page names the account
@@ -310,7 +312,9 @@ async def test_a_report_of_another_kind_than_auth_error_is_unknown_key_and_pages
     binding = CredentialRejectionsBinding(
         standings, key_refusal=ExchangeBybitService.key_refusal, pager=pager
     )
-    await binding.refused(ACCOUNT, error_code=kind, exchange_ret_code=10005)  # the table's verdict
+    await binding.refused(
+        ACCOUNT, error_code=kind, exchange_ret_code=10005, verdict=True
+    )  # the table's verdict
     assert standings.rejected == [(ACCOUNT, Refusal.UNKNOWN_KEY)]
     page = ("page", f"oms_credential_rejected: account {ACCOUNT}", "order", standings.rejected)
     assert pager.pages == [page]
@@ -323,7 +327,7 @@ async def test_no_code_is_unknown_key_without_asking_the_table() -> None:
     standings = _Standings()
     pager = _Pager(standings)
     binding = CredentialRejectionsBinding(standings, key_refusal=table, pager=pager)
-    await binding.refused(ACCOUNT, error_code="AUTH_ERROR", exchange_ret_code=None)
+    await binding.refused(ACCOUNT, error_code="AUTH_ERROR", exchange_ret_code=None, verdict=True)
     assert standings.rejected == [(ACCOUNT, Refusal.UNKNOWN_KEY)]
     assert [page[:2] for page in pager.pages] == [
         ("page", f"oms_credential_rejected: account {ACCOUNT}")
@@ -337,12 +341,114 @@ async def test_a_pager_fault_is_logged_never_raised_and_the_standing_holds() -> 
         standings, key_refusal=ExchangeBybitService.key_refusal, pager=pager
     )
     with capture_logs() as logs:
-        await binding.refused(ACCOUNT, error_code="AUTH_ERROR", exchange_ret_code=10005)
+        await binding.refused(
+            ACCOUNT, error_code="AUTH_ERROR", exchange_ret_code=10005, verdict=True
+        )
     assert standings.rejected == [(ACCOUNT, Refusal.PERMISSION_DENIED)]  # held before the page
     assert [log["event"] for log in logs] == ["oms_credential_rejected", "oms_pager_failed"]
     failed = logs[-1]
     assert failed["failure"] == "RuntimeError" and str(ACCOUNT) in failed["summary"]
     assert "hung up" not in str(logs)  # the fault's class is logged, never its text
+
+
+class _Marks:
+    """The self-check's durable reaction (#4243), recording what the standing held at the call."""
+
+    def __init__(self, standings: _Standings, error: Exception | None = None) -> None:
+        self.standings, self.error = standings, error
+        self.marked: list[tuple[UUID, Refusal, int | None, list[tuple[UUID, Refusal]]]] = []
+
+    def credential_rejected(
+        self, account_id: UUID, refusal: Refusal, *, exchange_ret_code: int | None
+    ) -> None:
+        self.marked.append((account_id, refusal, exchange_ret_code, list(self.standings.rejected)))
+        if self.error is not None:
+            raise self.error
+
+
+@pytest.mark.parametrize(
+    ("code", "refusal"), [(10010, Refusal.IP_NOT_ALLOWED), (None, Refusal.UNKNOWN_KEY)]
+)
+async def test_a_refused_credential_is_marked_durably_after_the_standing_holds_it(
+    code: int | None, refusal: Refusal
+) -> None:
+    """#4243: the durable reaction follows the in-memory one, with the verdict and the venue's
+    code as they came (none for a stream status), and the page still goes."""
+    standings = _Standings()
+    marks, pager = _Marks(standings), _Pager(standings)
+    binding = CredentialRejectionsBinding(
+        standings, key_refusal=ExchangeBybitService.key_refusal, pager=pager, marks=marks
+    )
+    await binding.refused(ACCOUNT, error_code="AUTH_ERROR", exchange_ret_code=code, verdict=True)
+    assert marks.marked == [(ACCOUNT, refusal, code, [(ACCOUNT, refusal)])]
+    assert len(pager.pages) == 1
+
+
+@pytest.mark.parametrize("code", [10004, 10001, 99999])
+async def test_a_code_the_verdict_table_does_not_map_is_held_and_paged_never_marked(
+    code: int,
+) -> None:
+    """#4243 delta review 1: fail closed in memory only; a refused signature is no verdict."""
+    standings = _Standings()
+    marks, pager = _Marks(standings), _Pager(standings)
+    binding = CredentialRejectionsBinding(
+        standings, key_refusal=ExchangeBybitService.key_refusal, pager=pager, marks=marks
+    )
+    await binding.refused(ACCOUNT, error_code="AUTH_ERROR", exchange_ret_code=code, verdict=True)
+    assert standings.rejected == [(ACCOUNT, Refusal.UNKNOWN_KEY)] and len(pager.pages) == 1
+    assert marks.marked == []
+
+
+async def test_a_key_the_process_could_not_use_is_held_and_paged_never_marked() -> None:
+    """#4243 security M1: a stream's `key_unusable` is a local fault the venue never judged, so it
+    takes the in-memory hold and the page, never the durable reaction."""
+    standings = _Standings()
+    marks, pager = _Marks(standings), _Pager(standings)
+    binding = CredentialRejectionsBinding(
+        standings, key_refusal=ExchangeBybitService.key_refusal, pager=pager, marks=marks
+    )
+    await binding.refused(ACCOUNT, error_code="AUTH_ERROR", exchange_ret_code=None, verdict=False)
+    assert standings.rejected == [(ACCOUNT, Refusal.UNKNOWN_KEY)] and len(pager.pages) == 1
+    assert marks.marked == []
+
+
+async def test_a_report_of_another_kind_is_held_and_paged_never_marked() -> None:
+    standings = _Standings()
+    marks, pager = _Marks(standings), _Pager(standings)
+    binding = CredentialRejectionsBinding(
+        standings, key_refusal=ExchangeBybitService.key_refusal, pager=pager, marks=marks
+    )
+    await binding.refused(ACCOUNT, error_code="RATE_LIMITED", exchange_ret_code=10006, verdict=True)
+    assert standings.rejected == [(ACCOUNT, Refusal.UNKNOWN_KEY)] and marks.marked == []
+
+
+async def test_a_mark_that_raises_is_logged_critical_and_the_standing_and_page_hold() -> None:
+    standings = _Standings()
+    marks, pager = _Marks(standings, RuntimeError("the store hung up")), _Pager(standings)
+    binding = CredentialRejectionsBinding(
+        standings, key_refusal=ExchangeBybitService.key_refusal, pager=pager, marks=marks
+    )
+    with capture_logs() as logs:
+        await binding.refused(
+            ACCOUNT, error_code="AUTH_ERROR", exchange_ret_code=10003, verdict=True
+        )
+    assert standings.rejected == [(ACCOUNT, Refusal.UNKNOWN_KEY)] and len(pager.pages) == 1
+    failed = next(log for log in logs if log["event"] == "oms_refusal_mark_failed")
+    assert failed["log_level"] == "critical" and failed["failure"] == "RuntimeError"
+    assert "hung up" not in str(logs)
+
+
+async def test_the_served_marks_reach_the_self_check_through_the_serving_loops_notice() -> None:
+    """The lane never awaits the self-check: the reaction is notified to the serving loop."""
+    notified: list[tuple[Any, ...]] = []
+    serving = SimpleNamespace(notify=lambda fn, *args, **kw: notified.append((fn, args, kw)))
+    marks = _Marks(_Standings())
+    served = oms_wiring.ServedMarks(marks, cast(Any, serving))
+    served.credential_rejected(ACCOUNT, Refusal.KEY_EXPIRED, exchange_ret_code=33004)
+    assert marks.marked == []  # nothing ran on the lane
+    ((fn, args, kw),) = notified
+    fn(*args, **kw)
+    assert marks.marked == [(ACCOUNT, Refusal.KEY_EXPIRED, 33004, [])]
 
 
 # --- ClockHealthBinding and InstrumentsBinding: not composed or not measured is not ready ---------

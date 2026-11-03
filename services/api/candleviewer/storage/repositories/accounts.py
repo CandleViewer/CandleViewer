@@ -385,11 +385,14 @@ class KeySelfCheckStore(Protocol):
         ...
 
     async def record_pass(self, key_id: UUID, verified: VerifiedKey) -> bool:
-        """The verified columns; clears `last_error_*`, so no rule code outlives a pass."""
+        """The verified columns; clears `last_error_*`, so no rule code outlives a pass, unless
+        that error was stored after the check began (`verified.at`): a refused credential's mark
+        (24 §8.4, #4243) outlives a pass begun before it."""
         ...
 
     async def record_error(self, key_id: UUID, *, code: str, at: datetime) -> bool:
-        """`last_error_code` and `last_error_at` only: the verified columns keep their time."""
+        """`last_error_code` and `last_error_at` only: the verified columns keep their time. An
+        error stored after `at` (the check's start) is kept: `False`, nothing written."""
         ...
 
     async def retire_key(self, key_id: UUID, *, status: RetiredStatus) -> bool:

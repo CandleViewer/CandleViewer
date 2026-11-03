@@ -512,11 +512,19 @@ class GuardedRejections:
         self._credentials, self._pager = credentials, pager
 
     async def refused(
-        self, account_id: AccountId, *, error_code: str, exchange_ret_code: int | None
+        self,
+        account_id: AccountId,
+        *,
+        error_code: str,
+        exchange_ret_code: int | None,
+        verdict: bool,
     ) -> None:
         try:
             await self._credentials.refused(
-                account_id, error_code=error_code, exchange_ret_code=exchange_ret_code
+                account_id,
+                error_code=error_code,
+                exchange_ret_code=exchange_ret_code,
+                verdict=verdict,
             )
         except Exception as exc:
             error = type(exc).__name__
