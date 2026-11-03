@@ -1,0 +1,110 @@
+# E28-D05 pins: KEY|line|words that stand on that line at its pin (gate A).
+# `--repin` keeps every pin still cited and adds the opening words of a new cite.
+05|30|1. Every interactive element (buttons, chart drawing tools,
+05|35|6. No functionality may depend on hover-only or drag-only in
+05|100|3. **Focus is never silently stolen**: a live price update,
+05|101|4. **Modal dialogs** (order confirm, flatten-all confirm, De
+05|103|6. **Visible focus indicator**: WCAG 2.2 SC 2.4.11 (Focus No
+05|104|7. **Target size**: WCAG 2.2 SC 2.5.8 (Target Size, Minimum,
+05|106|9. **Consistent help mechanism**: WCAG 2.2 SC 3.2.6 (Consist
+05|107|10. **Redundant entry**: WCAG 2.2 SC 3.3.7/3.3.8 (Redundant
+05|141|**Rule (non-negotiable, applies everywhere)**: colour is alw
+05|159|1. **Text contrast (WCAG 1.4.3, AA)**: body text and labels
+05|160|2. **Non-text/UI component contrast (WCAG 1.4.11, AA)**: but
+05|165|7. **Text resize (WCAG 1.4.4, AA)**: UI must remain usable w
+05|185|- `aria-live="polite"` region for ambient updates (best bid/
+05|186|- `aria-live="assertive"` (or `role="alert"`) reserved for d
+05|188|- **Region hygiene**: live regions are pre-rendered empty co
+05|282|any task in the script that cannot be completed keyboard+SR-only is a release blocker (P0)
+14|266|- **A11y:** Dialog is `role="alertdialog"` with the sensitiv
+14|1503|- **Interactions:** per-row include/exclude checkbox, per-ro
+14|1506|- **A11y:** the preview is a table with row status in text;
+14|2785|- **Design sign-off acceptance checklist:** [ ] every profil
+14|2805|- **A11y:** grid cells are checkboxes with accessible names
+14|2808|- **Performance:** The matrix is virtualised over accounts x
+15|106|- **Props**: `options: {value,label,description?,disabled?,d
+15|107|- **States**: default, hover (an unselected option's ring ou
+15|210|- **A11y**: appears on hover AND focus, dismissible via `Esc
+15|521|- **A11y**: `variant="hold"` always ships a keyboard-operabl
+15|584|- **A11y**: semantic `<table>` with `scope` on headers even
+15|590|a cell's built-in control (the select box, a sort button, the actions button) takes focus in the cell's place
+15|591|- **As built (E08-S08)**: E08-D07 §5's grid additions. The v
+15|898|- **A11y**: propagates `disabledReason` to the wrapped atom'
+15|1949|- **A11y**: `role="note"`, always visible in both CMP-145 an
+15B|597|not applicable as CMP-079 disabled-with-reason, the reason in text
+15B|3233|- **Variants**: comfortable (32 × 32 cell, the word shown);
+15B|3246|- **States**: ready (a `color.status.success.strong` filled
+DS|14|Terms (this file): a **pre-lens** is the lane's own review o
+DS|28|- **G-T2.1b** (§9.1): `aria-disabled="true"`, never the `dis
+DS|30|- **G-T2.1c** (§2.2, §9.2): the reason node is in the DOM at
+DS|36|CMP-079 RbacGate wraps every §2.1 step-3 control
+DS|39|the icon; the sentence form has no glyph and no button).
+DS|47|- **G-T2.3** (§9.3): `Enter`, `Space` or a bound hotkey on a
+DS|59|T2 is named in every state row and frame that shows a
+DS|61|covers those surfaces.
+DS|65|- **R1 Text resize** (`05` §5 item 7, WCAG 1.4.4): for every
+DS|67|- **R2 Forced colours** (this file): name the `forced-colors
+DS|69|- **R3 Keyboard model** (`05` §3.1 item 1, §3.4 items 2, 4 a
+DS|79|- **R6 Contracts in flight** (this file; `.claude/rules/70-m
+D02|168|| D26 | Keyboard and focus: no new binding; the step-up keep
+D02|354|An "(all)" suffix marks a cell allowed by the flag
+D02|362|- **Bulk.** A column action ("Block SOLUSDT on all accounts"
+D02|432|(`403 risk_limit_breached`, one entry per offending leg): th
+D02|438|- **Stale preview (D12).** When the intent changes after the
+D02|442|- **Send** is drawn as the boundary only: it names the accou
+D02|519|`SCR-061 / previewing`
+D02|527|the greyed table, the CD-10 summary with focus on it
+D02|529|the table greyed after an intent change
+D02|553|- **Focus order** follows reading order per screen: SCR-130
+D02|555|SCR-133 search → filters → the grid (arrow keys move between
+D02|558|- **Dialogs** (step-up, delete confirm, bulk confirm, open-p
+D02|559|(confirms `alertdialog`), Cancel first, focus returns to the
+D02|561|the refused-whole summary take focus (no live region needed)
+D03|144|"Allows all symbols"
+D03|147|nested CMP-028 `tone="warning"` line
+D03|149|- **Delete.** The confirm (CMP-044, `elevation.dialog`) name
+D03|218|- **Second-pass refusal.** Focus moves to the top summary (C
+D03|245|The aggressive card for a LIVE target carries "Demo only — n
+D03|247|- **LIVE acknowledgement (D-7; BQ-08 RULED).** D02 §5.3's fo
+D03|275|Each cell is CMP-005 semantics.
+D03|277|- Space toggles allowed ↔ not allowed.
+D03|278|- "Block on {account}" and "Allow on {account}" sit in the c
+D03|280|- Focus is the 2 px `color.focus.ring` (P17) around the 32 p
+D03|283|- **Unsaved summary.** A sticky footer bar (`color.surface.o
+D03|304|**No session reaches the T2 grid today.**
+D03|308|CMP-079 wraps every cell
+D03|309|led by the CMP-019 `lock` glyph ("Not available")
+D03|310|- **The rendering (G-T2.1c):** rendering **2a**, the one inl
+D03|313|the cell menu, the bulk actions and "Review changes" are T2 the same way
+D03|318|- **Expanded row.** A nested CMP-049 of members: account, "r
+D03|319|- **State unknown.** "state unknown for sub_002" in `color.t
+D03|342|- the ok cell is a word ("ready", "warn", "skipped", "blocke
+D03|343|- **Reason row.** Under a warn, skipped or blocked leg sits
+D03|346|- **Totals and Send.** The totals line in `type.num.sm` ("3
+D03|347|- **Refused whole.** The table takes `opacity.muted` with it
+D03|348|- **Stale.** The same muting, and "Preview again" is the one
+D03|384|- **Variants:** comfortable (32 × 32 cell, the word shown);
+D03|414|- **A11y:** the word "override" is text; the host field's ac
+D03|426|| `row`   | SCR-061 account cell, second line | 48 × 4 px
+D03|431|the same `role="meter"`
+D03|467|CMP-079 disabled-with-reason, with the reason in text
+D03|488|- **Focus:** every interactive element (rows, matrix cells (
+D03|489|- **Targets:** every target is at least `size.target.min` (2
+D03|495|- **Matrix:** the symbol column and both header rows are sti
+D03|496|- **SCR-062 and SCR-061:** at 200 % text, or where the colum
+D03|497|- **125 % zoom:** layouts hold at 1280 × 800 without horizon
+D03B|54|| 05  | `symbol-matrix`             | SCR-133 sticky headers
+D03B|410|- **A11y:** a `gridcell` holding a checkbox named "{account}
+D03B|419|- **States:** ready (a `color.status.success.strong` filled
+E09-D06|47|SCR-006: every dialog frame has **password + code** fields.
+E09-D06|67|- SCR-006: `role="alertdialog"`, accessible description = th
+E47-D04|119|- **R-4 Never the body.** Every operation that disables, rem
+E47-D04|120|- **R-5 Never stolen.** A data event (a price, a fill, a WS
+E47-D04|122|- **R-7 Restore to the invoker.** Every close path of a dial
+E47-D04|285|| A position closes or an order leaves its grid | the next r
+E47-D04|302|| re-auth (SCR-005, SCR-006, SCR-149)
+E47-D09|163|| DE-03 | drag an own-order marker on the ladder to amend
+E27-D05|50|| BQ-4  | severity, verdicts, F rows and AC 6
+E27-D05|54|| BQ-8  | the server-driven focus move (D04 C-4)
+E17-D01|88|| F8  | Silence is read as "fine": desk evidence from E08's
+E17-D01|146|| Stale, T1 ≤ age < T2
