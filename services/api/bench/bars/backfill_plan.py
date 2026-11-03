@@ -24,7 +24,9 @@ from typing import Any
 MIN_US = 60_000_000
 DAY_US = 86_400_000_000
 WINDOW_DAYS = 30
-PAGE_LIMIT = 1_000  # Bybit's page size; the read route caps the same
+# Our self-imposed page cap (the spec allows up to 5 000, this is not a server cap): the
+# 44 pages for 30 days of 1-minute candles assume limit=1 000.
+PAGE_LIMIT = 1_000
 BUDGET_READ_P95_MS = 150.0  # budget #13 (reads)
 PENDING = (
     "simulated upstream 10018 leg: pending (fixture hook; E12-S05 follow-up, no ticket yet)",
@@ -73,6 +75,8 @@ class Check:
 
 
 def _p95(summary: Mapping[str, Any], metric: str) -> float:
+    """p(95) of `metric`. It needs the trend's `count`, which `backfill.js`'s `summaryTrendStats`
+    provides; a legacy export without it raises `ValueError`, never a silent pass."""
     m = summary["metrics"].get(metric)
     m = m.get("values", m) if m is not None else None  # handleSummary nests; --summary-export not
     if m is None or not m.get("count"):
