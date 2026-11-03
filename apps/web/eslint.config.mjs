@@ -91,6 +91,25 @@ export default tseslint.config(
       ],
     },
   },
+  // E11-Q02 (#444, AC1): the keyboard-only specs may not use a pointer API, so a feature that became
+  // pointer-only fails here; support/engine/nav-guard.ts proves it again at run time.
+  {
+    files: ["e2e/specs/e11-chart/nav-only/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "MemberExpression[property.name=/^(mouse|touchscreen)$/]",
+          message: "E11-Q02: nav-only specs dispatch no pointer events (page.mouse / touchscreen).",
+        },
+        {
+          selector:
+            "CallExpression[callee.property.name=/^(click|dblclick|hover|tap|dragTo|wheel)$/]",
+          message: "E11-Q02: nav-only specs dispatch no pointer events; use focus() and keys.",
+        },
+      ],
+    },
+  },
   // E17-T04 S5e-2 (ADR-0005; 50-security): the shared worker's code has no page, so it names none of a page's globals.
   {
     files: ["src/lib/ws/worker/**/*.ts"],

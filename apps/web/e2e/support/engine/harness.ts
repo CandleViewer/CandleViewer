@@ -119,4 +119,9 @@ export class EngineHarness {
     const top = region === "time" ? CHART_SIZE.height - GUTTER.time : 0;
     return { x: b.x + left + dx, y: b.y + top + dy };
   }
+
+  /** Focuses the chart without a pointer (`element.focus()`): its Tab stop is E11-S13's, pending. */
+  async focusChart(): Promise<void> {
+    await this.chart.getByRole("figure", { name: "Engine harness chart" }).focus();
+  }
 }
