@@ -563,6 +563,15 @@ describe("revocation and narrowing (SR-E29-11, E29-D05 F-02)", () => {
     expect(store.getSnapshot().withdrawn).toEqual([]);
   });
 
+  it("a narrowed subscription bars every listed account it omits", () => {
+    const store = started(); // nothing is held yet
+    store.setEffective({ exchange_account_ids: [MAIN, SUB1] });
+    store.applyRest(restItems());
+    store.commit();
+    expect(accountsOf(store)).toEqual(new Set([MAIN, SUB1]));
+    expect(store.getSnapshot().withdrawn.map((w) => w.accountId)).toEqual([SUB2]);
+  });
+
   it("dismissing a withdrawn line keeps the account's fills out of later reads", () => {
     const store = started();
     store.applyFrames([snap(snapshotBody())]);
