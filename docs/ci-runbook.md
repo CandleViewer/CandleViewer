@@ -49,7 +49,7 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 │                                      train only, never on a PR's own run (#3881, see §3); the
 │                                      DB suite in 4 `integration-shard` jobs (#4605)
 ├─ _job-e2e.yml   (e2e filter)       → Playwright web (4 shards), e2e-staging (@demo-rest-only),
-│                                      a11y-axe smoke, e2e-electron on release/* heads
+│                                      a11y-axe smoke, e2e-electron (every call, E10-Q02)
 │                                      (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001)
 ├─ _job-a11y.yml  (e2e filter)       → the a11y lane: tools/a11y/gates.py over axe, keyboard, trees,
 │                                      flash and Lighthouse, plus the contrast-token gate (A11Y-*);
@@ -79,7 +79,7 @@ merge to main (.github/workflows/main.yml)
 merge to main / PRs touching CHANGELOG.md or the changelog tooling (.github/workflows/changelog.yml)
 └─ changelog-preview → tools/ci/update_changelog.py --preview (job summary; never commits)
 
-on demand / release branch (.github/workflows/deploy-staging.yml)
+on demand (.github/workflows/deploy-staging.yml; its release/* push arm is dormant: releases roll forward from main)
 └─ deploy-staging (Environment "staging", required reviewers)          → CI-DEP-001..004, see §8
 
 disabled until a trusted producer exists (.github/workflows/coverage-ratchet.yml, #3508)
@@ -130,9 +130,9 @@ open gap with no decision recorded yet (#3384), not an accepted control.
 
 **Nightly e2e matrix (#3383).** `e2e-nightly.yml` calls `_job-e2e.yml` on `main` daily at 02:53 UTC
 and on demand, for C-9.2's full Playwright matrix: the four `e2e-web` shards, `e2e-staging`,
-`a11y-axe` and `e2e-electron`. `pr.yml` runs `e2e-electron` on `release/*` heads only (a merge group
-names no head, so the queue skips it); the nightly
-sets the lane's `electron` input to `true`. The Electron smoke suite is green since #3393: job
+`a11y-axe` and `e2e-electron`. `_job-e2e.yml` runs `e2e-electron` on every call since E10-Q02, so
+a PR or merge group that trips the `e2e` lane runs it too; the nightly
+still sets the lane's `electron` input to `true` (kept for callers). The Electron smoke suite is green since #3393: job
 117609983250 (`e2e / e2e-electron`) passed in run 39105058132, a proof run whose other jobs were
 cancelled. The nightly is not a required check (C-9.1 is unchanged), but a red one blocks the next
 release (C-9.2): the release checklist needs a green run on the `main` tip being cut
@@ -1291,10 +1291,13 @@ carries a warning annotation titled `regression-guard (non-required)`, and the j
   title): the PR has neither a conventional-commit title nor a parseable
   `Changelog:` footer. Fix the title, or add a footer line matching the
   format documented in `tools/ci/changelog_lib.py`'s docstring.
-- **CI-REL-002** (1.0.0-explicit-declaration guard): the computed next
-  version would cross into `1.0.0` without an explicit, reviewed
-  declaration commit. This is deliberate friction — open the declaration PR
-  named in the gate's error message first.
+- **CI-REL-002** (1.0.0-explicit-declaration guard): while the release line
+  is `0.x.y`, the candidate's `version.txt` is `1.0.0` without the explicit
+  declaration, or is any other version outside `0.x.y` (refused even with
+  it). Pre-1.0 a breaking change bumps MINOR (C-15.5), so no commit reaches
+  `1.0.0` by itself. The declaration is an owner act (C-15.9): the prepare
+  command's `--allow-1-0-0` and the release run's `RELEASE_ALLOW_1_0_0`.
+  This is deliberate friction; never hand-edit `version.txt` to pass it.
 - **CI-REL-003** (release-binary signing parity): the Electron installer
   signing step did not produce a signature matching the image-signing
   parity requirement. Check the cosign keyless step log for an OIDC/identity
@@ -1303,6 +1306,22 @@ carries a warning annotation titled `regression-guard (non-required)`, and the j
   the PRR checklist item on the release-checklist issue is unchecked. This
   is not a bug — do not publish manually; complete the PRR checklist
   (`docs/plan/07-release-and-prr.md` §5) and let the checklist gate lift it.
+
+- **CI-REL-005** (release candidate refused; `tools/ci/prepare_release.py`,
+  `docs/plan/07-release-and-prr.md` §3-§4): classify found more than one
+  release candidate in one push, prepare refused (broken tag history, a
+  bump of none, the Security wording guard), or verify refused the
+  candidate (identity, tag history, version, completeness, provenance).
+  Nothing was created. Read each finding: a commit named as not referenced
+  merged after the prep was cut (the freeze slipped); a `version != expected`
+  line is the same race with a bigger bump. Remedy: fix on `main` if needed,
+  open a new `[Release prep]` issue, run the prepare command (`AGENTS.md`
+  §4) on `main`'s fresh tip and merge the prep PR alone; its merge is a
+  candidate again. A same-version re-prep that was mis-titled does not
+  start the run: dispatch `release.yml` with `candidate=<sha>`. A rogue tag
+  (reachable without its section, or outside `main`'s line) is never
+  removed by the run: escalate to the owner, who removes it by hand, then
+  re-run.
 
 ### CI-DEP-* — dev/staging deploy (`tools/ci/deploy_dev.py`, §8)
 

@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""E03-T11: compute the semver bump for a release cut and enforce the
-1.0.0 guard (CI-REL-002).
+"""E03-T11: compute the semver bump for a commit list (C-15.5: pre-1.0 a
+breaking change bumps MINOR; 1.0.0 only with --allow-1-0-0). A local CLI kept
+for inspection (#3099): the release-prep and release-verification flow is
+`tools/ci/prepare_release.py`, which reuses `release_semver` directly.
 
 Usage:
     python tools/ci/compute_release_bump.py --commits-json commits.json \\
         --current-version version.txt [--allow-1-0-0]
 
 Prints `next_version=<X.Y.Z>` and `bump=<major|minor|patch|none>` to
-stdout (consumed by the workflow via `$GITHUB_OUTPUT`-style parsing) and,
-when a BREAKING CHANGE commit triggered a MAJOR bump, the triggering sha(s).
-Exit codes: 0 ok, 1 1.0.0 guard tripped (CI-REL-002), 2 no version bump needed.
+stdout and, when a BREAKING CHANGE commit is in the list, the triggering
+sha(s). Exit codes: 0 ok, 1 1.0.0 guard tripped (CI-REL-002; not reachable
+from a commit list since C-15.5 keeps breaking changes in 0.x), 2 no version
+bump needed.
 """
 
 from __future__ import annotations
