@@ -17,6 +17,12 @@ real session state, decided by the production `StepUpService`:
 - stale: as fresh, then the clock passes every window (`GRACE_WINDOW`); a no-grace grant passes its
   `SINGLE_USE_WINDOW` before its request is sent again.
 
+A session serves its state for a while only: its access token ends 12 minutes after its mint
+(`ACCESS_TOKEN_TTL`), and a fresh session's windows end too. A no-grace cell's exchange moves the
+shared clock (a TOTP step and, stale, the grant's lapse), so it first reserves that span
+(`reserve`): if a session would stop serving the state within it, every actor signs in again and
+the state is entered again (`settle`). No cell meets a session that another cell's exchange aged.
+
 The audit stand-in refuses an unregistered action as `AuditWriter.emit` does, so every asserted
 record is one production could write.
 """
@@ -26,9 +32,9 @@ from __future__ import annotations
 import base64
 import contextlib
 import uuid
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
@@ -45,9 +51,11 @@ from candleviewer.audit.actions import validate_action
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.metrics import normalise_permission
-from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind
+from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, SessionRecord
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.service import AuthService
+from candleviewer.auth.session_service import access_token_expires_at
+from candleviewer.auth.step_up import GRACE_WINDOW
 from candleviewer.auth.totp import generate_code, time_step_for
 from tests.contract.rbac import rbac_harness as matrix
 from tests.csrf_helpers import csrf_headers
@@ -136,6 +144,7 @@ class Actor:
     session_id: uuid.UUID
     seed: bytes
     headers: dict[str, str]
+    token: str  # the bearer, which reads the session's row back (`AdminWorld.serves_until`)
 
 
 @dataclass
@@ -148,6 +157,7 @@ class AdminWorld:
     spec: dict[str, Any]
     roles: matrix.UserStore
     access: matrix.AccessStore
+    resolver: TokenResolver
     actors: dict[str, Actor] = field(default_factory=dict)
     #: cell id -> what the cell observed, so each test of a cell reads one request.
     observed: dict[str, Any] = field(default_factory=dict)
@@ -155,6 +165,10 @@ class AdminWorld:
     #: guard answers (view-as, CSRF, read-only) leaves nothing here, and a handler runs only
     #: after the router, as `_Gate.seen` shows in `test_view_as_gate.py`.
     reached: list[tuple[str, str]] = field(default_factory=list)
+    #: The elevation state `settle` put the sessions in, and its grace classes: `reserve` enters
+    #: them again for the sessions it signs in.
+    state: str = "none"
+    classes: tuple[str, ...] = ()
 
     def headers(self, actor: str) -> dict[str, str]:
         if actor == UNAUTHENTICATED:  # a well-formed pair bound to no session (#2090)
@@ -222,6 +236,53 @@ class AdminWorld:
                 assert done.status_code == 200, (actor, action_class, done.text)
             self.tick()
 
+    def settle(self, state: str, classes: Iterable[str]) -> None:
+        """Put every session in the elevation state `state` (module docstring), whose grace
+        classes are `classes`, and keep both for `reserve`."""
+        self.state, self.classes = state, tuple(classes)
+        if state != "none":
+            self.elevate(self.classes)
+        if state == "stale":
+            self.tick(GRACE_WINDOW + timedelta(seconds=1))  # past every window
+
+    def serves_until(self) -> datetime:
+        """The first instant a session stops serving the state, read from its row: its access
+        token's end (`access_token_expires_at`), its idle lock, which no request moves (#2300),
+        and in the fresh state each grace window's end."""
+        ends: list[datetime] = []
+        for actor in self.actors.values():
+            row = self._row(actor)
+            ends += [access_token_expires_at(row), row.idle_deadline()]
+            if self.state == "fresh":
+                ends += [row.step_up_elevations.get(c, self.clock.now) for c in self.classes]
+        return min(ends)
+
+    def reserve(self, span: timedelta) -> None:
+        """Before an exchange that moves the clock by up to `span`: if a session would stop
+        serving the state within it, every actor signs in again, one TOTP step on, and `settle`
+        enters the state again, so the exchange ages out no session that a later cell uses."""
+        if self.clock.now + span < self.serves_until():
+            return
+        self.tick()  # a TOTP step that no step-up so far has used
+        for name, actor in self.actors.items():
+            self.actors[name] = self._call(_sign_in, self, name, actor.seed)
+        self.settle(self.state, self.classes)
+        if self.clock.now + span >= self.serves_until():  # a harness error, never an xfail's
+            raise RuntimeError(f"no session serves the {self.state} state for {span}")
+
+    def _row(self, actor: Actor) -> SessionRecord:
+        row = self._call(self.auth.sessions.peek_access_token, actor.token)
+        if row is None:
+            raise RuntimeError(f"{actor.name}'s bearer names no session")
+        return row
+
+    def _call[T](self, fn: Callable[..., Awaitable[T]], *args: object) -> T:
+        """`fn(*args)` on the client's event loop, where the app and the auth service run."""
+        portal = self.client.portal
+        if portal is None:
+            raise RuntimeError("the world's client is closed")
+        return portal.call(fn, *args)
+
 
 def denials(permission: str) -> float:
     """`authz_denied_total{permission}` on the process registry (SR-125); cells assert deltas."""
@@ -246,7 +307,6 @@ class _Reached:
 async def _enrol(
     world: AdminWorld,
     users: FakeUserRepository,
-    resolver: TokenResolver,
     actor: str,
     pw_hash: str,
 ) -> Actor:
@@ -264,11 +324,18 @@ async def _enrol(
     )
     user = make_user(username=actor, email=f"{actor}@example.test", password_hash=pw_hash)
     users.add(user.model_copy(update={"id": uid}))
+    return await _sign_in(world, actor, seed)
+
+
+async def _sign_in(world: AdminWorld, actor: str, seed: bytes) -> Actor:
+    """One minted session of an enrolled actor: its bearer known to the users routers' resolver,
+    and its SR-041 CSRF pair."""
+    uid = matrix.user_id_of(actor)
     minted = await world.auth.sessions.mint(str(uid))
-    resolver.by_token[minted.access_token] = actor
+    world.resolver.by_token[minted.access_token] = actor
     csrf = csrf_headers(world.app.state.csrf_codec, minted.session_id)
     headers = {"Authorization": f"Bearer {minted.access_token}", **csrf}
-    return Actor(actor, uid, uuid.UUID(str(minted.session_id)), seed, headers)
+    return Actor(actor, uid, uuid.UUID(str(minted.session_id)), seed, headers, minted.access_token)
 
 
 @contextlib.contextmanager
@@ -317,10 +384,12 @@ def open_admin_world(mp: pytest.MonkeyPatch) -> Iterator[AdminWorld]:
         portal = client.portal
         assert portal is not None
         portal.call(auth.start, ctx)
-        world = AdminWorld(app, client, auth, clock, audit, spec, roles, access, reached=reached)
+        world = AdminWorld(
+            app, client, auth, clock, audit, spec, roles, access, resolver, reached=reached
+        )
         pw_hash = portal.call(Hasher(pepper=_PEPPER).hash, PW)
         for actor in SIGNED_IN:
-            world.actors[actor] = portal.call(_enrol, world, users, resolver, actor, pw_hash)
+            world.actors[actor] = portal.call(_enrol, world, users, actor, pw_hash)
         try:
             yield world
         finally:
