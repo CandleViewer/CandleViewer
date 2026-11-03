@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
 import type { generated } from "@candleviewer/protocol";
 import { json } from "./api";
@@ -122,4 +125,173 @@ export async function stubAdminReads(
     },
   );
   return (path, status, body) => answers.set(path, { status, body });
+}
+
+// The statechart inspector's reads (E42-S08, R-357): the SC-CHAIN-TRIPS world of
+// `services/api/tests/fixtures/admin/latched_machine.py` (E42-Q01) beside `22`'s `degradedOrder`
+// example (E42-D05:201-202): the demo kill switch, clear; the latched order, triggered with two
+// chain trips and two deferred events; and one latched B8 `position_protection`, which has no
+// public id, so no row. The metrics source timed out, so no dropped receipts count is known. The
+// hashes are the committed `machine_hashes.lock` entries, read at spec time, and the chart is the
+// unit tests' frozen B01 (`test/features/admin/statecharts/frozen/`), so no chart bump moves it.
+
+type Ok<K extends keyof generated.rest.operations> = generated.rest.operations[K] extends {
+  responses: { 200: { content: { "application/json": infer B } } };
+}
+  ? B
+  : never;
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../../..");
+const isRecord = (raw: unknown): raw is Readonly<Record<string, unknown>> =>
+  typeof raw === "object" && raw !== null && !Array.isArray(raw);
+
+/** `kind`'s hash in the committed `machine_hashes.lock`, as it is when the spec runs. */
+function lockHash(kind: string): string {
+  const file = join(ROOT, "services/api/candleviewer/statechart/machines/machine_hashes.lock");
+  const lock: unknown = JSON.parse(readFileSync(file, "utf8"));
+  const machines = isRecord(lock) ? lock["machines"] : undefined;
+  const entry = isRecord(machines) ? machines[kind] : undefined;
+  const hash = isRecord(entry) ? entry["hash"] : undefined;
+  // A sha256, the pattern `22` gives every `machine_hash`, as the unit fixtures' `lockHash` checks.
+  if (typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash)) {
+    throw new Error(`machine_hashes.lock: no hash for ${kind}`);
+  }
+  return hash;
+}
+
+export const LATCHED_KEY = "order:0a000000-0000-4000-8000-0000000000c7";
+export const ORDER_HASH = lockHash("order");
+export const KILL_SWITCH_HASH = lockHash("kill_switch");
+const SNAPSHOT_AT = "2026-10-15T18:00:05Z";
+
+const KILL_SWITCH_ROW: Schemas["StatechartMachine"] = {
+  machine_key: "kill_switch",
+  machine_kind: "kill_switch",
+  environment: "demo",
+  state: "clear",
+  machine_hash: KILL_SWITCH_HASH,
+  lock_matches: true,
+  chain_trips: 0,
+  degraded: false,
+  deferred_depth: 0,
+  updated_at: "2026-10-15T18:00:00Z",
+};
+
+export const LATCHED_ROW: Schemas["StatechartMachine"] = {
+  machine_key: LATCHED_KEY,
+  machine_kind: "order",
+  environment: "demo",
+  state: "triggered",
+  machine_hash: ORDER_HASH,
+  lock_matches: true,
+  chain_trips: 2,
+  degraded: true,
+  deferred_depth: 2,
+  updated_at: "2026-10-15T18:00:02Z",
+};
+
+export const STATECHART_LIST: Ok<"listStatecharts"> = {
+  items: [KILL_SWITCH_ROW, LATCHED_ROW],
+  kinds: [
+    {
+      machine_kind: "kill_switch",
+      environment: "demo",
+      machines: 1,
+      by_state: { clear: 1 },
+      chain_trips: 0,
+      degraded_machines: 0,
+      dropped_receipts: null,
+    },
+    {
+      machine_kind: "order",
+      environment: "demo",
+      machines: 1,
+      by_state: { triggered: 1 },
+      chain_trips: 2,
+      degraded_machines: 1,
+      dropped_receipts: null,
+    },
+    {
+      machine_kind: "position_protection",
+      environment: "demo",
+      machines: 1,
+      by_state: { naked: 1 },
+      chain_trips: 1,
+      degraded_machines: 1,
+      dropped_receipts: null,
+    },
+  ],
+  meta: { next_cursor: null, has_more: false, count: 2 },
+  snapshots: { status: "ok", generated_at: SNAPSHOT_AT },
+  metrics: { status: "error", detail: "metrics timed out after 300 ms", generated_at: SNAPSHOT_AT },
+};
+
+/** The latched order's detail: its snapshot's configuration and three events, newest first. */
+export const LATCHED_DETAIL: Ok<"getStatechart"> = {
+  snapshots: { status: "ok", generated_at: SNAPSHOT_AT },
+  events: { status: "ok", generated_at: SNAPSHOT_AT },
+  machine: LATCHED_ROW,
+  configuration: [
+    "order",
+    "order.lifecycle",
+    "order.lifecycle.triggered",
+    "order.protection",
+    "order.protection.sl_present",
+  ],
+  recent_events: [
+    {
+      event_type: "PRICE_TRIGGERED",
+      phase: "commit",
+      from_states: ["order.lifecycle.submitted", "order.protection.sl_present"],
+      to_states: ["order.lifecycle.triggered", "order.protection.sl_present"],
+      faulted: false,
+      occurred_at: "2026-10-15T18:00:01Z",
+    },
+    {
+      event_type: "FILL",
+      phase: "fault",
+      from_states: ["order.lifecycle.submitted"],
+      to_states: ["order.lifecycle.submitted"],
+      faulted: true,
+      occurred_at: "2026-10-15T17:59:58Z",
+    },
+    {
+      event_type: "SUBMITTED",
+      phase: "ahead",
+      from_states: ["order.lifecycle.submitting"],
+      to_states: [],
+      occurred_at: "2026-10-15T17:59:57Z",
+    },
+  ],
+};
+
+/** The frozen B01 as `exportStatechart` serves it (23 states, 76 pairs), with the lock's hash. */
+export function orderExport(): Schemas["StatechartExport"] {
+  const file = join(ROOT, "apps/web/test/features/admin/statecharts/frozen/B01.order.json");
+  const chart: unknown = JSON.parse(readFileSync(file, "utf8"));
+  if (!isRecord(chart)) throw new Error("the frozen B01 is not a chart");
+  return { machine_kind: "order", machine_hash: ORDER_HASH, stately: chart };
+}
+
+/** The inspector's paths, as the page asks for them: every segment and parameter encoded. */
+export const STATECHART_PATHS = {
+  list: "/api/v1/admin/statecharts?limit=200",
+  latchedOnly: "/api/v1/admin/statecharts?limit=200&degraded=true",
+  detail: `/api/v1/admin/statecharts/${encodeURIComponent(LATCHED_KEY)}?environment=demo`,
+  export: "/api/v1/admin/statecharts/order/export",
+} as const;
+
+/** The inspector's world for `stubAdminReads`: "Latched only" answers the order alone. */
+export function inspectorReads(): Readonly<Record<string, { status: number; body: unknown }>> {
+  const latched = {
+    ...STATECHART_LIST,
+    items: [LATCHED_ROW],
+    meta: { next_cursor: null, has_more: false, count: 1 },
+  };
+  return {
+    [STATECHART_PATHS.list]: { status: 200, body: STATECHART_LIST },
+    [STATECHART_PATHS.latchedOnly]: { status: 200, body: latched },
+    [STATECHART_PATHS.detail]: { status: 200, body: LATCHED_DETAIL },
+    [STATECHART_PATHS.export]: { status: 200, body: orderExport() },
+  };
 }
