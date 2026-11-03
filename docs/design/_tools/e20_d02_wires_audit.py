@@ -46,6 +46,7 @@ KEYED = {
     "E20.json": (BACKLOG_REL, BASE),
     "R32": (".claude/rules/32-design-specs.md", BASE),
     "E47-D04": ("docs/design/E47/E47-D04.md", BASE),
+    "E47-D08": ("docs/design/E47/E47-D08.md", BASE),
     "E47-D09": ("docs/design/E47/E47-D09.md", BASE),
     "E09-D09": ("docs/design/E09/E09-D09.md", BASE),
     "MEMO": (MEMO_REL, MEMO_HEAD),
