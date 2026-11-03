@@ -35,6 +35,7 @@ from candleviewer.statechart.bindings import b14_book
 from candleviewer.statechart.bindings import b19_reconciliation as b19
 from candleviewer.statechart.book_upcasters import (
     B14_FROM_HASH,
+    B14_MAX_BUFFERED_DELTAS,
     B14_TO_HASH,
     upcast_book_v0_to_v1,
 )
@@ -512,6 +513,7 @@ async def test_oc08_chaos_book_engine_overflow_reaches_chart_as_buffer_overflow(
         BUFFER_BOUND
         == b14_book.DEFAULT_MAX_BUFFERED_DELTAS
         == REG.get("book")["context"]["max_buffered_deltas"]
+        == B14_MAX_BUFFERED_DELTAS
     )
     sink = InMemoryMachineEventSink()
     audit = CvAuditPlugin(
