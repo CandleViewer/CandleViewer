@@ -3088,7 +3088,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Storybook**: SmallGraph, LargeGraph, WithErrorNodes. **E37-D03 —** Compact, Comfortable
 - **Tests**: unit, visual, performance (200-node graph).
 
-### CMP-254 NodeListOutline
+### CMP-257 NodeListOutline
 
 - **Tier**: Organism (rule engine) · **Purpose**: **E37-D05 —** the rule's outline on SCR-082, co-equal with CMP-146 and never removed: a "Check when" row, the "Only if (all must be true)" rows nested by gate, the "Then, in order" rows, and the "Graph-only", "Not connected yet" and "Problems" groups; every canvas operation has a twin here (E37-D02 §8, E37-D04 §4). PROPOSED.
 - **Props**: PROPOSED, typed by E37-S05: `rule` · `selection` · `onSelect` · `onConnect(source, sourcePort, target, targetPort)` · `onDisconnect` · `onDelete` · `onRename` · `onInspect` · `onCollapse` · `onMove` · `diagnostics` · `readOnly?`.

@@ -132,7 +132,7 @@ PX = re.compile(r"\b\d+(?:\.\d+)? ?px\b")
 SOFT = re.compile(r"\b(?:undo|just|simply|anytime)\b", re.IGNORECASE)
 COMPONENTS = (
     "CMP-146", "CMP-147", "CMP-148", "CMP-149", "CMP-150", "CMP-151", "CMP-152", "CMP-153",
-    "CMP-157", "CMP-158", "CMP-234", "CMP-235", "CMP-236", "CMP-237", "CMP-238", "CMP-254",
+    "CMP-157", "CMP-158", "CMP-234", "CMP-235", "CMP-236", "CMP-237", "CMP-238", "CMP-257",
 )  # fmt: skip
 SHEET_FIELDS = ("Props", "States", "Tokens", "Name", "Owner story")
 # G-T2.6 (rule 32): FZ-5 is a T2 key, so every component list names both T2 parts
@@ -1391,7 +1391,7 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-SHEET", "A-15's Old text off by one word",
      sub_hand('Old: "the node list in CMP-153 NodeInspectorDrawer"',
               'Old: "the node list in CMP-153 Node InspectorDrawer"')),
-    ("G-SHEET", "CMP-254's Storybook row dropped", drop_hand("CMP-254", "Tab1280")),
+    ("G-SHEET", "CMP-257's Storybook row dropped", drop_hand("CMP-257", "Tab1280")),
     ("G-DECK", "the JSON twin drifts on one text", deck_set("rules.graph.canvas.fit", "text", "Fit")),
     ("G-DECK", "a label cap typed below its kind's",
      row_set("rules.graph.canvas.fit", 4, "8", "max_length", 8)),

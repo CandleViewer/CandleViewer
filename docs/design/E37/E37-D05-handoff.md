@@ -1,6 +1,6 @@
 # E37-D05 — Hand-off (§A–§F; the node-graph editor pack)
 
-Components: **CMP-146** … **CMP-153**, **CMP-236** … **CMP-238**, the SCR-082 variants of **CMP-158**, **CMP-234** and **CMP-235**, and **CMP-254 NodeListOutline** (PROPOSED id), with **CMP-157 MetricPickerCombobox** as a cited owner (BQ-05); **CMP-079 RbacGate** and the **CMP-019 `lock`** are cited for every T2 control (spec §3, G-T2.6). The spec is `E37-D05.md`; this file places it, states the contract, carries the copy-ready A-rows, the Storybook list with fixtures and the test hooks. Status as the spec: Draft, owner approval pending (#2701).
+Components: **CMP-146** … **CMP-153**, **CMP-236** … **CMP-238**, the SCR-082 variants of **CMP-158**, **CMP-234** and **CMP-235**, and **CMP-257 NodeListOutline** (PROPOSED id), with **CMP-157 MetricPickerCombobox** as a cited owner (BQ-05); **CMP-079 RbacGate** and the **CMP-019 `lock`** are cited for every T2 control (spec §3, G-T2.6). The spec is `E37-D05.md`; this file places it, states the contract, carries the copy-ready A-rows, the Storybook list with fixtures and the test hooks. Status as the spec: Draft, owner approval pending (#2701).
 
 ## §A Placement
 
@@ -37,7 +37,7 @@ Where each consuming story reads which part (spec section numbers).
 | CMP-237   | `kind` · `dataType: PortType` · `connected` · `label` · `compatible?` (`15`:3050; A-14)                                                                                           | six types incl. `trigger`                              |
 | CMP-238   | `bounds` · `viewport` · `nodes` · `onNavigate` (`15`:3059; A-15)                                                                                                                  | `aria-hidden`                                          |
 | CMP-157   | `value` · `onChange` · `category?` (`15`:1917; no A-row)                                                                                                                          | cited owner: E36-D03's entry, built by E36-S01         |
-| CMP-254   | PROPOSED (A-16): `rule` · `selection` · `onSelect` · `onConnect` · `onDisconnect` · `onDelete` · `onRename` · `onInspect` · `onCollapse` · `onMove` · `diagnostics` · `readOnly?` | E37-S05 types them                                     |
+| CMP-257   | PROPOSED (A-16): `rule` · `selection` · `onSelect` · `onConnect` · `onDisconnect` · `onDelete` · `onRename` · `onInspect` · `onCollapse` · `onMove` · `diagnostics` · `readOnly?` | E37-S05 types them                                     |
 | CMP-079   | cited, no A-row: `allowed` · `reason` · `form?` · `noticeId?` · `children` (`15`:893)                                                                                             | wraps every T2 role leg (`D02`:131, :151)              |
 | CMP-019   | cited, no A-row: the `lock` glyph, `name` · `size` · `decorative` set to false with its `label` (`15`:241)                                                                        | leads every T2 control's full label (`D02`:131)        |
 
@@ -60,10 +60,10 @@ The `15` rows carry the `E37-D05 —` lead-in (E36-D03's form), then the `14` li
 - **A-13 → `15` CMP-236, Purpose and Props** (D02 §17). Old: "(triggers, metrics, comparators, logic gates, actions, comments)". New: "(Triggers · Conditions · Logic · Actions · Comments — memo R4; condition kinds are sub-rows)". After "`onAddNode(type, position?)`." add: " **E37-D05 —** each entry gains `graphOnly` (the badge in the palette) and `needsNativeStop` (`place_order`)."
 - **A-14 → `15` CMP-237, Purpose and A11y** (D02 §17; D04 A-2). Old: "(boolean, number, price, side, action)". New: "(boolean, number, price, side, action, trigger)". Old: "("Input, boolean, not connected")". New: "("Input port, boolean, not connected"; a boolean output names its role, "condition result" or "boolean value" — E37-D04 A-2)".
 - **A-15 → `15` CMP-238, A11y** (D04 A-18, F-30). Old: "the node list in CMP-153 NodeInspectorDrawer". New: "the node list (`Alt+L`, E37-D02 §8)".
-- **A-16 → `15`, the new entry** (D02 §17; D02-G5; the id re-checked at this PR's closing push, D05-Q1). Before "### CMP-239 FreshnessMarker (E08-D04, data-confidence vocabulary)" add the block below and one blank line.
+- **A-16 → `15`, the new entry** (D02 §17; D02-G5; the id CMP-257 per the ruling on #5522, D05-Q1). Before "### CMP-239 FreshnessMarker (E08-D04, data-confidence vocabulary)" add the block below and one blank line.
 
   ```text
-  ### CMP-254 NodeListOutline
+  ### CMP-257 NodeListOutline
 
   - **Tier**: Organism (rule engine) · **Purpose**: **E37-D05 —** the rule's outline on SCR-082, co-equal with CMP-146 and never removed: a "Check when" row, the "Only if (all must be true)" rows nested by gate, the "Then, in order" rows, and the "Graph-only", "Not connected yet" and "Problems" groups; every canvas operation has a twin here (E37-D02 §8, E37-D04 §4). PROPOSED.
   - **Props**: PROPOSED, typed by E37-S05: `rule` · `selection` · `onSelect` · `onConnect(source, sourcePort, target, targetPort)` · `onDisconnect` · `onDelete` · `onRename` · `onInspect` · `onCollapse` · `onMove` · `diagnostics` · `readOnly?`.
@@ -124,7 +124,7 @@ Every story renders in dark and light at compact density, under the title `RuleE
 | CMP-237           | InputUnconnected · OutputConnected · IncompatibleTarget                                         | `s-form` `n3` `when`; `n2` output; `invalid-connect`                                 | PT-1, PT-5, PT-3                            |
 | CMP-237           | Matrix · Dangling · Focused                                                                     | the six types × the twelve cells; `orphan`; `s-form`                                 | the 36 cells; PT-13; PT-14                  |
 | CMP-238           | SmallGraph · LargeGraph · WithErrorNodes · Compact · Comfortable                                | `s-form`; `budget-200`; `budget-200` with three error nodes                          | M1, M2, M3                                  |
-| CMP-254           | Outline · Tab1280 · GraphOnlyGroup · ProblemsGroup · ConnectPicker · NotConnectedGroup          | `s-graph`; `s-graph` at 1280 × 800; `s-graph`; `orphan`; `invalid-connect`; `orphan` | §3.15's states                              |
+| CMP-257           | Outline · Tab1280 · GraphOnlyGroup · ProblemsGroup · ConnectPicker · NotConnectedGroup          | `s-graph`; `s-graph` at 1280 × 800; `s-graph`; `orphan`; `invalid-connect`; `orphan` | §3.15's states                              |
 | CMP-079           | `15`'s twelve stories (`15`:897), none added                                                    | `s-form-mismatch` (state 3, FZ-5); `s-form` for a Viewer                             | T2: `Save` · `Arm…`; a Viewer (`D02`:151)   |
 | CMP-019 `lock`    | `15`'s FullSet and SizeScale (`15`:244), none added                                             | the `lock` glyph with its `label`                                                    | leads each T2 label (`D02`:131)             |
 
