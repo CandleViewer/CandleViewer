@@ -98,7 +98,7 @@ scheduled (.github/workflows/governance*.yml, cold-cache.yml, a11y-, e2e- and st
                             scheduled run is reported as e2e-nightly's is (CI-A11Y-002..004; below)
 
 push to main touching CHANGELOG.md / version.txt, or dispatch from main (.github/workflows/release.yml)
-└─ classify → verify → e2e (_job-e2e.yml at the candidate) + sbom → tag-draft → build-sign
+└─ classify → verify → e2e (_job-e2e.yml at the candidate) + sbom → tag-draft → build → sign-attach
                                                                           (CI-REL-002..006)
 ```
 
@@ -1300,14 +1300,18 @@ carries a warning annotation titled `regression-guard (non-required)`, and the j
   command's `--allow-1-0-0` and the release run's `RELEASE_ALLOW_1_0_0`.
   This is deliberate friction; never hand-edit `version.txt` to pass it.
 - **CI-REL-003** (release installer missing or unsigned; `release.yml`
-  `build-sign`): electron-builder left no installer in `apps/desktop/release`
-  (its `directories.output`; R0 ships the Linux AppImage only), or the
-  keyless cosign signature did not verify. The verifier identity is
+  `build`, `sign-attach`): electron-builder left no installer in
+  `apps/desktop/release` (its `directories.output`; R0 ships the Linux
+  AppImage only; `build` fails before uploading the `release-installer`
+  artefact), the artefact `sign-attach` downloaded holds none, or the
+  keyless cosign signature did not verify. `build` holds `contents: read`
+  only; `sign-attach` alone holds `id-token: write`, checks out no code and
+  runs no build: it signs what `build` and `sbom` uploaded. The verifier identity is
   `https://github.com/<owner>/<repo>/.github/workflows/release.yml@refs/heads/main`
   with issuer `https://token.actions.githubusercontent.com`: push and
   dispatch runs both run on `main`. Read the `build:installer` and the
   electron-hardening gate logs first (the gate runs on the same dists just
-  before packaging). The tag and the draft already exist. `build-sign`
+  before packaging). The tag and the draft already exist. `build`
   builds from the candidate's own tree, so pick the remedy by where the fix
   lands: a fix to the workflow or its tooling (`release.yml` runs from
   `main`'s tip) or a transient failure, dispatch `release.yml` again with
@@ -1326,8 +1330,10 @@ carries a warning annotation titled `regression-guard (non-required)`, and the j
   `docs/plan/07-release-and-prr.md` §3-§4): classify found more than one
   release candidate in one push, prepare refused (broken tag history, a
   bump of none, the Security wording guard), or verify refused the
-  candidate (identity, tag history, version, completeness, provenance).
-  Nothing was created. Read each finding: a commit named as not referenced
+  candidate (identity, tag history, version, completeness, provenance),
+  or a dispatched candidate is not an ancestor of `origin/main` (`is not an
+  ancestor of origin/main`; checked before classify in every mode, dry run
+  included, so no later job runs on it). Nothing was created. Read each finding: a commit named as not referenced
   merged after the prep was cut (the freeze slipped); a `version != expected`
   line is the same race with a bigger bump. Remedy: fix on `main` if needed,
   open a new `[Release prep]` issue, run the prepare command (`AGENTS.md`
@@ -1348,13 +1354,19 @@ carries a warning annotation titled `regression-guard (non-required)`, and the j
   removed by the run: escalate to the owner, who removes it by hand, then
   re-run.
 - **CI-REL-006** (release SBOM missing, empty or invalid; `release.yml`
-  `sbom`, `tools/ci/validate_sbom.py --artefact`): one of the three SR-133
-  SBOMs (`api`: `services/api`; `web`: the web app's production
-  dependency closure; `desktop`: the desktop app's full build closure,
-  over-inclusive against the AppImage (it lists build tools such as
-  electron-builder); the two
-  apps staged with `pnpm deploy` at the candidate) is absent, not CycloneDX 1.x JSON,
-  or lists no component; the message names the artefact. The job runs
+  `sbom`, `sign-attach`, `tools/ci/validate_sbom.py --artefact`): one of the
+  three SR-133 SBOMs is absent, not CycloneDX 1.x JSON, or lists no
+  component (the message names the artefact), or `sign-attach` found an
+  SBOM or its signature bundle missing. Each SBOM describes exactly one
+  input, all at the candidate: `api` the services/api source tree with its
+  `uv.lock`; `web` the web app's `pnpm deploy --prod` closure (its
+  production dependencies); `desktop` the desktop app's full `pnpm deploy`
+  build closure (a superset of the AppImage's contents: it lists build
+  tools such as electron-builder). None is generated from the AppImage.
+  Each `anchore/sbom-action` step sets `syft-version` (the pinned action's
+  default syft release); bump it with the action pin. `sign-attach` signs
+  each SBOM with keyless cosign and attaches it with its `.sigstore.json`
+  bundle. The job runs
   before anything is created, also in a dry run, so nothing was tagged.
   Read the `anchore/sbom-action` step log for that artefact (a scan path
   with no lockfile yields an empty SBOM). Fix on `main` and re-prep, or,

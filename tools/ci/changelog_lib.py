@@ -15,7 +15,7 @@ entirely by fixture-driven unit tests (stdlib only, no network).
 Error codes referenced by callers (ticket "Technical notes"):
   CI-REL-001 unparseable changelog fragment
   CI-REL-002 1.0.0 guard
-  CI-REL-003 release installer missing or unsigned (release.yml build-sign)
+  CI-REL-003 release installer missing or unsigned (release.yml build, sign-attach)
   CI-REL-004 release checklist incomplete
   CI-REL-005 release candidate refused: classify or verify (tools/ci/prepare_release.py)
   CI-REL-006 release SBOM missing, empty or invalid (release.yml sbom, validate_sbom.py)

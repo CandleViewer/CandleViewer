@@ -1,8 +1,9 @@
 """#3099: `.github/workflows/release.yml`, the release run (07 §4; the #2341 release contract).
 
 Structure: triggers (push to `main` touching CHANGELOG.md or version.txt, and a dispatch from
-`main`), the chain classify -> verify -> e2e + sbom -> tag-draft -> build-sign, least privilege
-per job, a dry run that skips every write job, inputs only through env, the e2e gate checked out
+`main`), the chain classify -> verify -> e2e + sbom -> tag-draft -> build -> sign-attach, least
+privilege per job (only sign-attach may sign; build only reads), a dry run that skips build and
+every write job, inputs only through env, the e2e gate checked out
 at the candidate, concurrency per candidate, and no branch push. Behaviour: the dispatch guards,
 the dry-run decision, the stdout grep into $GITHUB_OUTPUT and the zero-artefact failure run as the
 runner runs them (`bash -e`), with stand-in commands on PATH (no network, no GitHub).
@@ -38,10 +39,16 @@ PERMISSIONS = {
     "e2e": {"contents": "read"},
     "sbom": {"contents": "read"},
     "tag-draft": {"contents": "write", "issues": "write"},
-    "build-sign": {"contents": "write", "id-token": "write"},
+    "build": {"contents": "read"},
+    "sign-attach": {"contents": "write", "id-token": "write"},
 }
-WRITE_JOBS = {"tag-draft", "build-sign"}
+WRITE_JOBS = {"tag-draft", "sign-attach"}
 SBOM_ACTION = "anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c"
+#: The syft release the pinned sbom-action v0.24.3 defaults to; set explicitly on each step.
+SYFT_VERSION = "v1.54.0"
+UPLOAD_ARTIFACT = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+DOWNLOAD_ARTIFACT = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
+SBOM_FILES = ["sbom-api.cdx.json", "sbom-web.cdx.json", "sbom-desktop.cdx.json"]
 
 
 def _steps(job: str) -> list[dict[str, Any]]:
@@ -118,7 +125,8 @@ def test_the_chain_gates_every_write_on_verify_e2e_and_the_sboms() -> None:
     assert _needs("verify") == {"classify"}
     assert _needs("e2e") >= {"verify"} and _needs("sbom") >= {"verify"}
     assert _needs("tag-draft") >= {"verify", "e2e", "sbom"}
-    assert _needs("build-sign") >= {"tag-draft"}
+    assert _needs("build") >= {"classify", "tag-draft"}
+    assert _needs("sign-attach") >= {"build", "tag-draft", "sbom"}
     # The tag job also needs verify's own verdict, not only its success (a dry run passes verify).
     assert "needs.verify.outputs.verified == 'true'" in JOBS["tag-draft"]["if"]
 
@@ -129,6 +137,7 @@ def test_a_dry_run_skips_every_write_job() -> None:
         assert writes == (name in WRITE_JOBS), name
         if writes:
             assert DRY_RUN_OFF in job["if"], name
+    assert DRY_RUN_OFF in JOBS["build"]["if"]  # read-only, but only a real run packages
     # The read-only jobs run in a dry run: verify, the e2e gate and the SBOMs.
     for name in ("verify", "e2e", "sbom"):
         assert "dry_run" not in JOBS[name].get("if", ""), name
@@ -165,14 +174,14 @@ def test_every_e2e_lane_checkout_honours_the_ref_input() -> None:
 
 def test_concurrency_is_per_candidate_and_never_cancels_a_running_release() -> None:
     assert "concurrency" not in DOC
-    for name in ("tag-draft", "build-sign"):
+    for name in ("tag-draft", "sign-attach"):
         group = {"group": f"release-{CANDIDATE}", "cancel-in-progress": False}
         assert JOBS[name]["concurrency"] == group, name
     # Only the two write jobs (never run in a dry run) join the group: a dry run's pending job
     # there would cancel a real run's pending one (pending jobs in a group replace each other).
     assert {name for name, job in JOBS.items() if "concurrency" in job} == {
         "tag-draft",
-        "build-sign",
+        "sign-attach",
     }
 
 
@@ -183,7 +192,7 @@ def test_no_asset_upload_can_replace_a_published_release() -> None:
     assert names.index(_step("tag-draft", "Draft the release")["name"]) < names.index(
         _step("tag-draft", "Attach the SBOMs")["name"]
     )
-    attach = _step("build-sign", "Attach the signed installer")["run"]
+    attach = _step("sign-attach", "Attach the signed installer")["run"]
     check = attach.index("--json isDraft --jq .isDraft")
     assert check < attach.index("gh release upload")
     assert (
@@ -202,9 +211,9 @@ def test_the_run_pushes_no_branch_and_keeps_no_credential() -> None:
 
 
 def test_write_jobs_check_out_the_candidate_or_reverify_it() -> None:
-    # tag-draft re-verifies C with the default (main) checkout's tools; build-sign and sbom build
-    # from C itself.
-    for name in ("sbom", "build-sign"):
+    # tag-draft re-verifies C with the default (main) checkout's tools; build and sbom build
+    # from C itself; sign-attach checks out nothing.
+    for name in ("sbom", "build"):
         (checkout,) = [s for s in _steps(name) if "actions/checkout@" in str(s.get("uses", ""))]
         assert checkout["with"]["ref"] == CANDIDATE, name
     reverify = _step("tag-draft", "Re-verify")
@@ -221,8 +230,8 @@ def test_the_tag_job_drafts_from_the_verified_v_section() -> None:
     assert '--section-out "$RUNNER_TEMP/section.md"' in _step("tag-draft", "Re-verify")["run"]
 
 
-def test_build_sign_gates_the_dists_it_packages_and_signs_from_the_builder_output() -> None:
-    runs = [str(s.get("run", "")) for s in _steps("build-sign")]
+def test_build_gates_the_dists_it_packages_and_signs_from_the_builder_output() -> None:
+    runs = [str(s.get("run", "")) for s in _steps("build")]
 
     def at(text: str) -> int:
         (index,) = [i for i, run in enumerate(runs) if text in run]
@@ -234,17 +243,45 @@ def test_build_sign_gates_the_dists_it_packages_and_signs_from_the_builder_outpu
     assert at('--filter "@candleviewer/web^..." run build') < built < gate < package
     assert package == gate + 1  # the gate scans exactly what is packaged next (#3518)
     assert "--require-runtime" in runs[gate] and "xvfb-run -a" in runs[gate]
-    sign, attach = runs[at("cosign sign-blob")], runs[at("gh release upload")]
-    assert "apps/desktop/release/*.AppImage" in sign and "apps/desktop/dist" not in sign + attach
+    assert "CI-REL-003" in runs[package + 1]  # the builder's output is checked before upload
+    (upload,) = [s for s in _steps("build") if str(s.get("uses", "")).startswith(UPLOAD_ARTIFACT)]
+    assert upload["with"]["name"] == "release-installer"
+    assert upload["with"]["path"] == "apps/desktop/release/*.AppImage"
+    assert upload["with"]["if-no-files-found"] == "error"
+    signed = [str(s.get("run", "")) for s in _steps("sign-attach")]
+    (sign,) = [r for r in signed if "cosign sign-blob" in r]
+    (attach,) = [r for r in signed if "gh release upload" in r]
+    assert "installer/*.AppImage" in sign and "apps/desktop/dist" not in sign + attach
     assert "release.yml@refs/heads/main" in sign and "verify-blob" in sign
     assert "--clobber" in attach
+
+
+def test_only_sign_attach_may_sign_and_build_only_reads() -> None:
+    holders = {n for n, j in JOBS.items() if "id-token" in j.get("permissions", {})}
+    assert holders == {"sign-attach"}
+    assert JOBS["build"]["permissions"] == {"contents": "read"}
+    assert JOBS["sign-attach"]["permissions"] == {"contents": "write", "id-token": "write"}
+
+
+def test_sign_attach_checks_out_no_code_and_runs_no_build() -> None:
+    uses = [str(s["uses"]).split(" ")[0] for s in _steps("sign-attach") if "uses" in s]
+    assert uses == [
+        DOWNLOAD_ARTIFACT,
+        DOWNLOAD_ARTIFACT,
+        "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+    ]
+    for step in _steps("sign-attach"):
+        run = str(step.get("run", ""))
+        assert not re.search(r"\b(pnpm|npm|npx|node|corepack|python|git)\b", run), step.get("name")
+    names = [s["with"]["name"] for s in _steps("sign-attach") if "uses" in s and "with" in s]
+    assert names == ["release-installer", "release-sboms"]
 
 
 def test_the_three_sboms_are_generated_validated_diffed_and_attached() -> None:
     sboms = [s for s in _steps("sbom") if str(s.get("uses", "")).startswith("anchore/")]
     assert [s["uses"].split(" ")[0] for s in sboms] == [SBOM_ACTION] * 3
     outputs = [s["with"]["output-file"] for s in sboms]
-    assert outputs == ["sbom-api.cdx.json", "sbom-web.cdx.json", "sbom-desktop.cdx.json"]
+    assert outputs == SBOM_FILES
     assert all(s["with"]["format"] == "cyclonedx-json" for s in sboms)
     assert all(s["with"]["upload-release-assets"] is False for s in sboms)
     main = (WORKFLOWS / "main.yml").read_text(encoding="utf-8")
@@ -257,6 +294,40 @@ def test_the_three_sboms_are_generated_validated_diffed_and_attached() -> None:
     attach = _step("tag-draft", "Attach the SBOMs")["run"]
     assert "--clobber" in attach and attach.count("sbom-") == 4
     assert "comment --issue" in _step("tag-draft", "Post the SBOM diff")["run"]
+    (upload,) = [s for s in _steps("sbom") if str(s.get("uses", "")).startswith(UPLOAD_ARTIFACT)]
+    assert upload["with"]["name"] == "release-sboms"
+    assert all(f in upload["with"]["path"] for f in SBOM_FILES)
+
+
+def test_each_sbom_step_sets_the_syft_version() -> None:
+    sboms = [s for s in _steps("sbom") if str(s.get("uses", "")).startswith("anchore/")]
+    assert [s["with"].get("syft-version") for s in sboms] == [SYFT_VERSION] * 3
+
+
+def test_the_sbom_inputs_are_stated_in_the_header_and_the_runbook() -> None:
+    header = (WORKFLOWS / "release.yml").read_text(encoding="utf-8").split("\non:", 1)[0]
+    flat = " ".join(header.replace("#", " ").split())
+    assert "services/api source tree, resolved through its uv.lock" in flat
+    assert "`pnpm deploy --prod` closure" in flat and "full `pnpm deploy` build closure" in flat
+    runbook = (ROOT / "docs" / "ci-runbook.md").read_text(encoding="utf-8")
+    recipe = runbook.split("- **CI-REL-006**", 1)[1]
+    recipe = " ".join(re.split(r"\n(?:- \*\*|#)", recipe, maxsplit=1)[0].split())
+    assert "services/api source tree with its `uv.lock`" in recipe
+    assert "`pnpm deploy --prod` closure" in recipe and "full `pnpm deploy` build closure" in recipe
+    assert "syft-version" in recipe
+
+
+def test_no_job_after_classify_runs_without_a_candidate() -> None:
+    # A refused dispatch fails classify and leaves no candidate: e2e, sbom and build need both.
+    status_functions = ("always()", "failure()", "cancelled()", "success() ||")
+    for name in ("verify", "e2e", "sbom", "build"):
+        cond = " ".join(str(JOBS[name]["if"]).split())
+        assert "needs.classify.outputs.candidate != ''" in cond, name
+        assert not any(fn in cond for fn in status_functions), name
+    for name in ("e2e", "sbom", "build"):
+        cond = " ".join(str(JOBS[name]["if"]).split())
+        assert "needs.classify.result == 'success'" in cond, name
+        assert "classify" in _needs(name), name
 
 
 # --- behaviour ------------------------------------------------------------------------------------
@@ -345,10 +416,18 @@ def test_a_dispatch_classifies_the_given_candidate_s_own_change() -> None:
 DISPATCH_FAKE_PYTHON = """import os, sys
 with open(os.environ["ARGV_LOG"], "w", encoding="utf-8") as fh:
     fh.write(" ".join(sys.argv[1:]))
+if os.environ.get("CALL_LOG"):
+    with open(os.environ["CALL_LOG"], "a", encoding="utf-8") as fh:
+        fh.write("python " + " ".join(sys.argv[1:3]) + "\\n")
 print(os.environ["FAKE_OUT"])
 sys.exit(int(os.environ.get("FAKE_RC", "0")))
 """
 DISPATCH_FAKE_GIT = """import os, sys
+if os.environ.get("CALL_LOG"):
+    with open(os.environ["CALL_LOG"], "a", encoding="utf-8") as fh:
+        fh.write("git " + " ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1] == "merge-base":
+    sys.exit(int(os.environ.get("FAKE_ANCESTOR_RC", "0")))
 parent = os.environ.get("FAKE_PARENT", "")
 if parent:
     print(parent)
@@ -398,6 +477,36 @@ def test_dispatch_classifies_a_root_candidate_alone(tmp_path: Path) -> None:
     assert log.read_text(encoding="utf-8") == f"tools/ci/prepare_release.py --classify --rev {SHA}"
 
 
+def test_dispatch_checks_the_candidate_is_on_main_before_classify(tmp_path: Path) -> None:
+    step = _step("classify", "Classify the dispatched candidate")
+    calls = tmp_path / "calls"
+    env = {"REQUESTED": SHA, "FAKE_OUT": f"candidate={SHA}", "ARGV_LOG": str(tmp_path / "argv")}
+    env |= {"FAKE_PARENT": "b" * 40, "CALL_LOG": str(calls)}
+    fakes = {"python": DISPATCH_FAKE_PYTHON, "git": DISPATCH_FAKE_GIT}
+    rc, out, output = _bash(tmp_path, step["run"], env, fakes)
+    assert rc == 0 and output == f"candidate={SHA}\n", out
+    lines = calls.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == f"git merge-base --is-ancestor {SHA} origin/main"
+    assert lines[-1] == "python tools/ci/prepare_release.py --classify"
+
+
+@pytest.mark.parametrize("dry_run", ["true", "false"])
+@pytest.mark.parametrize("ancestor_rc", [1, 128])
+def test_dispatch_refuses_a_candidate_off_main_in_every_mode(
+    tmp_path: Path, dry_run: str, ancestor_rc: int
+) -> None:
+    step = _step("classify", "Classify the dispatched candidate")
+    # The step reads no mode: the refusal is the same in a dry run and a real one.
+    assert set(step["env"]) == {"REQUESTED"} and "DRY_RUN" not in step["run"]
+    log = tmp_path / "argv"
+    env = {"REQUESTED": SHA, "FAKE_OUT": f"candidate={SHA}", "ARGV_LOG": str(log)}
+    env |= {"FAKE_PARENT": "b" * 40, "FAKE_ANCESTOR_RC": str(ancestor_rc), "DRY_RUN": dry_run}
+    fakes = {"python": DISPATCH_FAKE_PYTHON, "git": DISPATCH_FAKE_GIT}
+    rc, out, output = _bash(tmp_path, step["run"], env, fakes)
+    assert rc == 1 and "::error::CI-REL-005" in out and "ancestor of origin/main" in out
+    assert output == "" and not log.exists()  # classify never ran
+
+
 def test_verify_greps_only_the_version_line_into_the_outputs(tmp_path: Path) -> None:
     step = _step("verify", "Verify the candidate")
     noisy = f"::error::CI-REL-005: x%0Aversion=9.9.9\nversion=0.2.0\nverified: {SHA}"
@@ -442,30 +551,65 @@ if sys.argv[1] == "sign-blob":
 """
 
 
-def test_sign_fails_ci_rel_003_when_the_builder_produced_nothing(tmp_path: Path) -> None:
-    step = _step("build-sign", "Sign and verify the installer")
+def _sboms(tmp_path: Path, bundles: bool = False) -> None:
+    (tmp_path / "sboms").mkdir(parents=True)
+    for name in SBOM_FILES:
+        (tmp_path / "sboms" / name).write_text("{}", encoding="utf-8")
+        if bundles:
+            (tmp_path / "sboms" / f"{name}.sigstore.json").write_text("{}", encoding="utf-8")
+
+
+def test_build_fails_ci_rel_003_when_the_builder_produced_nothing(tmp_path: Path) -> None:
+    step = _step("build", "The builder produced the installer")
     (tmp_path / "apps/desktop/release").mkdir(parents=True)
     (tmp_path / "apps/desktop/dist").mkdir(parents=True)
     (tmp_path / "apps/desktop/dist/stray.AppImage").write_text("x", encoding="utf-8")
+    rc, out, _ = _bash(tmp_path, step["run"], {})
+    assert rc == 1 and "::error::CI-REL-003" in out
+    installer = tmp_path / "apps/desktop/release/CandleViewer-0.2.0.AppImage"
+    installer.write_text("x", encoding="utf-8")
+    rc, out, _ = _bash(tmp_path, step["run"], {})
+    assert rc == 0, out
+
+
+def test_sign_fails_ci_rel_003_when_the_artefact_holds_no_installer(tmp_path: Path) -> None:
+    step = _step("sign-attach", "Sign and verify the installer")
+    (tmp_path / "installer").mkdir(parents=True)
+    _sboms(tmp_path)
     log = tmp_path / "cosign.log"
     rc, out, _ = _bash(tmp_path, step["run"], {"COSIGN_LOG": str(log)}, {"cosign": FAKE_COSIGN})
     assert rc == 1 and "::error::CI-REL-003" in out
-    assert not log.exists()  # nothing signed, and the old dist/ glob is not consulted
+    assert not log.exists()  # nothing signed
 
 
-def test_sign_signs_and_verifies_each_installer_with_the_main_identity(tmp_path: Path) -> None:
-    step = _step("build-sign", "Sign and verify the installer")
-    release = tmp_path / "apps/desktop/release"
-    release.mkdir(parents=True)
-    (release / "CandleViewer-0.2.0.AppImage").write_text("x", encoding="utf-8")
+def test_sign_fails_ci_rel_006_when_an_sbom_is_missing(tmp_path: Path) -> None:
+    step = _step("sign-attach", "Sign and verify the installer")
+    (tmp_path / "installer").mkdir(parents=True)
+    (tmp_path / "installer/CandleViewer-0.2.0.AppImage").write_text("x", encoding="utf-8")
+    _sboms(tmp_path)
+    (tmp_path / "sboms" / "sbom-web.cdx.json").unlink()
+    log = tmp_path / "cosign.log"
+    rc, out, _ = _bash(tmp_path, step["run"], {"COSIGN_LOG": str(log)}, {"cosign": FAKE_COSIGN})
+    assert rc == 1 and "::error::CI-REL-006" in out and not log.exists()
+
+
+def test_sign_signs_and_verifies_the_installer_and_each_sbom(tmp_path: Path) -> None:
+    step = _step("sign-attach", "Sign and verify the installer")
+    (tmp_path / "installer").mkdir(parents=True)
+    (tmp_path / "installer/CandleViewer-0.2.0.AppImage").write_text("x", encoding="utf-8")
+    _sboms(tmp_path)
     log = tmp_path / "cosign.log"
     rc, out, _ = _bash(tmp_path, step["run"], {"COSIGN_LOG": str(log)}, {"cosign": FAKE_COSIGN})
     assert rc == 0, out
-    sign, verify = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
-    assert sign[:3] == ["sign-blob", "--yes", "--bundle"]
+    calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
     identity = "https://github.com/owner/repo/.github/workflows/release.yml@refs/heads/main"
-    assert verify[0] == "verify-blob" and identity in verify
-    assert (release / "CandleViewer-0.2.0.AppImage.sigstore.json").exists()
+    signed = ["installer/CandleViewer-0.2.0.AppImage"] + [f"sboms/{n}" for n in SBOM_FILES]
+    assert [c[-1] for c in calls[::2]] == signed and [c[-1] for c in calls[1::2]] == signed
+    for sign, verify in zip(calls[::2], calls[1::2], strict=True):
+        assert sign[:3] == ["sign-blob", "--yes", "--bundle"]
+        assert verify[0] == "verify-blob" and identity in verify
+    for path in signed:
+        assert (tmp_path / f"{path}.sigstore.json").exists()
 
 
 FAKE_GH = """import json, os, sys
@@ -476,10 +620,13 @@ if sys.argv[1:3] == ["release", "view"]:
 """
 
 
-def _attach(tmp_path: Path, is_draft: str, bundle: bool) -> tuple[int, str, list[list[str]]]:
-    step = _step("build-sign", "Attach the signed installer")
-    release = tmp_path / "apps/desktop/release"
+def _attach(
+    tmp_path: Path, is_draft: str, bundle: bool, sbom_bundles: bool = True
+) -> tuple[int, str, list[list[str]]]:
+    step = _step("sign-attach", "Attach the signed installer")
+    release = tmp_path / "installer"
     release.mkdir(parents=True)
+    _sboms(tmp_path, bundles=sbom_bundles)
     (release / "CandleViewer-0.2.0.AppImage").write_text("x", encoding="utf-8")
     if bundle:
         (release / "CandleViewer-0.2.0.AppImage.sigstore.json").write_text("{}", encoding="utf-8")
@@ -500,12 +647,24 @@ def test_attach_uploads_to_a_draft(tmp_path: Path) -> None:
     rc, out, calls = _attach(tmp_path, "true", bundle=True)
     assert rc == 0, out
     (upload,) = [c for c in calls if c[:2] == ["release", "upload"]]
-    assert upload[2] == "v0.2.0" and "--clobber" in upload and len(upload) == 8
+    assert upload[2] == "v0.2.0" and "--clobber" in upload
+    sboms = [f"sboms/{n}{ext}" for n in SBOM_FILES for ext in ("", ".sigstore.json")]
+    assert upload[6:] == [
+        "installer/CandleViewer-0.2.0.AppImage",
+        "installer/CandleViewer-0.2.0.AppImage.sigstore.json",
+        *sboms,
+    ]
+
+
+def test_attach_refuses_an_sbom_without_its_signature_bundle(tmp_path: Path) -> None:
+    rc, out, calls = _attach(tmp_path, "true", bundle=True, sbom_bundles=False)
+    assert rc == 1 and "::error::CI-REL-006" in out
+    assert not [c for c in calls if c[:2] == ["release", "upload"]]
 
 
 @pytest.mark.parametrize("is_draft", ["false", ""])
 def test_attach_never_replaces_a_published_release_s_assets(tmp_path: Path, is_draft: str) -> None:
-    # C-15.7: the owner may publish while build-sign runs; the old shape uploaded with --clobber.
+    # C-15.7: the owner may publish while the release run is still attaching assets.
     rc, out, calls = _attach(tmp_path, is_draft, bundle=True)
     assert rc == 1 and "::error::CI-REL-005: release v0.2.0 is published" in out
     assert [c[:2] for c in calls] == [["release", "view"]]
