@@ -209,3 +209,19 @@ def test_section_15_9_states_the_lock_card_consumer_rule() -> None:
         "only an icon, the class label, the count, the since-time and the environment badge; "
         "every other field is dropped"
     ) in _section()
+
+
+def test_section_8_13_gives_each_account_its_own_episode() -> None:
+    """The per-account since-time the gateway reads is that account's own (24 §8.13 rule 7)."""
+    doc = PROTOCOL_DOC.with_name("24-internal-schemas.md").read_text(encoding="utf-8")
+    text = " ".join(doc.split())
+    section = text.split("### 8.13 Safety summary", 1)[1].split("## 9. Trade groups", 1)[0]
+    assert "An account's `since_ms` is its own episode, never the key's" in section
+    assert "the `at_ms` of the mark that raised it" in section
+
+
+def test_section_15_9_states_the_unknown_residual() -> None:
+    assert (
+        "This is an accepted residual: it fails safe, never as a false all-clear, and only on a "
+        "producer fault."
+    ) in _section()

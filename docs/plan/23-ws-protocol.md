@@ -4790,7 +4790,7 @@ start-up; until then it is `unknown`. A connection whose scoped count of a raise
 class is 0 gets `clear` for it, the same bytes as a class raised nowhere. After start-up an
 account-keyed item is `unknown` to a Manager or Viewer only on the fault path (a raised item
 whose breakdown is missing), so such an `unknown` can tell it that the class is raised somewhere;
-the fault is the producer's, counted, and never shows a count, a time or an account. So a client that connects, reconnects or locks mid-incident shows
+the fault is the producer's, counted, and never shows a count, a time or an account. This is an accepted residual: it fails safe, never as a false all-clear, and only on a producer fault. So a client that connects, reconnects or locks mid-incident shows
 the raised set from its first `system` frame, and knows which classes it cannot vouch for. The
 producer emits exactly one item per (`safety_class`, `environment`); the test of that comes with
 the producer. The field appears only on `kind: "health"` and is sent only on the snap; it is
