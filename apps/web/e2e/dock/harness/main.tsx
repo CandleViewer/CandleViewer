@@ -4,6 +4,7 @@
 import "@candleviewer/ui/tokens.dark.css";
 import "@candleviewer/ui/theme.css";
 import "@candleviewer/ui/components.css";
+import "./harness.css";
 import {
   EMPTY_TREE,
   activateTab,
