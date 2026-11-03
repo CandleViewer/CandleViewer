@@ -2,6 +2,7 @@
   "marker": "perf and not flaky",
   "default_weight": 2.87,
   "weights": {
+    "tests/alerts/test_alert_evaluator_perf.py": 8.75,
     "tests/contract/bybit/test_contract_leakage.py": 0.06,
     "tests/contract/test_account_profile_saves_observed.py": 2.45,
     "tests/contract/test_create_api_key_provider.py": 0.02,
