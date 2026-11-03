@@ -15,10 +15,19 @@ from typing import Any, cast
 
 import pytest
 
-from candleviewer.oms.errors import AccountScopeDenied, LotSizeViolation, RateBudgetExceeded
+from candleviewer.domain.order_entry import OrderEntryRefusal
+from candleviewer.oms.errors import (
+    AccountScopeDenied,
+    LotSizeViolation,
+    OrderEntryRefused,
+    RateBudgetExceeded,
+    TradingDisabled,
+)
 from candleviewer.oms.submit import OrderRequest, SubmitContext, SubmitOutcome
+from candleviewer.oms.validator import OrderPlacementRefused
 from candleviewer.rules.executor.params import FlattenParams, ScaleOutParams, reduce_params
 from candleviewer.rules.executor.ports import PrincipalView
+from candleviewer.rules.executor.results import OMS_DETAIL, READ_ONLY
 from candleviewer.rules.scope import ScopeInstanceRef
 from candleviewer.rules_oms_exits import (
     PreparedExit,
@@ -201,6 +210,8 @@ THREE = (
 UNKNOWN = SubmitOutcome(
     status=202, anchor_id=uuid.UUID(int=0xE1), order_id=uuid.UUID(int=2), lifecycle="unknown"
 )
+#: The order-entry gate's refusal, CandleViewer's own text (`OrderEntryRefusal`).
+GATE = OrderEntryRefusal("maintenance", "Order entry is paused for maintenance.")
 
 
 @pytest.mark.parametrize(
@@ -215,8 +226,11 @@ UNKNOWN = SubmitOutcome(
         (RateBudgetExceeded(retry_after_s=1),
          ("refused", "exchange_rate_limited", "rate_limited"), 2, 2),
         (SubmitCutShort(), ("in_flight", "submit_cut_short", None), 2, 2),
+        (TradingDisabled(), ("refused", "trading_disabled", "kill_switch"), 2, 2),
+        (OrderEntryRefused(GATE), ("refused", "trading_disabled", "order_entry"), 2, 2),
     ],
-    ids=["502", "lot-step", "unknown", "429", "rate-budget", "cut-short"],
+    ids=["502", "lot-step", "unknown", "429", "rate-budget", "cut-short", "kill-switch",
+         "order-entry"],
 )  # fmt: skip
 async def test_every_position_is_tried_and_the_first_close_not_taken_answers(
     second: SubmitOutcome | BaseException, expected: tuple[str, str, str | None], sent: int,
@@ -225,8 +239,9 @@ async def test_every_position_is_tried_and_the_first_close_not_taken_answers(
     """24 §11.5 "Exits": a close that does not take effect ends that position alone, so the
     positions after it are still closed, and the account's answer is the first close that did
     not take effect, its detail counting the positions not closed (never a symbol or an id); a
-    refusal that belongs to the account (`rate_limited`), or a close the runtime's stop cut
-    short, ends the account's action there, the positions after it not sent."""
+    refusal that belongs to the account (`rate_limited`, `kill_switch`, `order_entry`), or a
+    close the runtime's stop cut short, ends the account's action there, the positions after it
+    not sent."""
     orders = Orders([accepted(1), second, accepted(3)])
     exit_ = handler("flatten_all_positions", orders, THREE)
     prepared = exit_.prepare(
@@ -238,6 +253,25 @@ async def test_every_position_is_tried_and_the_first_close_not_taken_answers(
     verb = "was" if missed == 1 else "were"
     assert answer.detail == f"Not done — {missed} of 3 positions {verb} not closed."
     assert "BTCUSDT" not in answer.detail and "ETHUSDT" not in answer.detail
+
+
+@pytest.mark.parametrize(
+    ("raised", "detail"),
+    [(OrderPlacementRefused(reason_code=None, reason_text=None), OMS_DETAIL[READ_ONLY]),
+     (LotSizeViolation(), None)],
+    ids=["read-only", "lot-step"],
+)  # fmt: skip
+async def test_a_lone_position_not_closed_answers_with_its_own_detail(
+    raised: Exception, detail: str | None
+) -> None:
+    """24 §11.5 "Exits": the count of the positions not closed is given only when there was more
+    than one to close; a lone position whose close does not take effect answers with that close's
+    own detail (the read-only gate's sentence, or none), never "1 of 1"."""
+    orders = Orders([raised])
+    exit_ = handler("flatten_position", orders, (stored(qty="0.050"),))
+    prepared = exit_.prepare(exit_request("flatten_position"), cr.ACCOUNT, max_notional_usd=None)
+    answer = await exit_.send(prepared, client_ref=REF)
+    assert (answer.answer, answer.detail, len(orders.sent)) == ("refused", detail, 1)
 
 
 async def test_the_actions_bound_cuts_an_exit_short_and_sends_no_later_close() -> None:
@@ -298,19 +332,25 @@ async def test_a_position_read_refused_for_scope_blocks_as_permission() -> None:
 
 
 async def test_an_exit_with_no_account_symbol_or_position_read_sends_nothing() -> None:
-    """An exit that names no account, a `scale_out` with no instance symbol, and an exit whose
-    position read is not bound each answer without sending: `invalid_params` for the first two,
-    `position_unavailable` for the third."""
+    """An exit that names no account, an exit that needs the instance's symbol on an
+    account-wide instance (a `scale_out`, or a `flatten_position` naming no `symbols`, though
+    positions are held), and an exit whose position read is not bound each answer without
+    sending: `invalid_params` for the first two, `position_unavailable` for the third."""
     orders = Orders()
     exit_ = handler("scale_out", orders)
     params = {"order_type": "market", "qty_pct": "10"}
     none = exit_.prepare(exit_request("scale_out", params), None, max_notional_usd=None)
     assert (await exit_.send(none, client_ref=REF)).error_code == "invalid_params"
-    account_wide = replace(
-        exit_request("scale_out", params), instance=ScopeInstanceRef("*@x", None, cr.ACCOUNT)
-    )
+    wide = ScopeInstanceRef("*@x", None, cr.ACCOUNT)
+    account_wide = replace(exit_request("scale_out", params), instance=wide)
     unnamed = exit_.prepare(account_wide, cr.ACCOUNT, max_notional_usd=None)
     assert (await exit_.send(unnamed, client_ref=REF)).error_code == "invalid_params"
+    flatten = handler("flatten_position", orders, (stored(),))
+    unnamed = flatten.prepare(
+        replace(exit_request("flatten_position"), instance=wide), cr.ACCOUNT,
+        max_notional_usd=None,
+    )  # fmt: skip
+    assert (await flatten.send(unnamed, client_ref=REF)).error_code == "invalid_params"
     unbound = RuleReduceHandler(
         "flatten_position", cast(RuleOrders, orders), Principals(frozenset({cr.ACCOUNT})), None
     )
