@@ -118,6 +118,17 @@ describe("printexportbar.css contract (E29-D04 §2.8.9)", () => {
     expect(bar).toContain("flex-wrap: wrap");
   });
 
+  it("never truncates a label: a button never shrinks, and CMP-001's ellipsis is lifted", () => {
+    expect(find(css.normal, ".cv-print-export-bar > .cv-button", "flex")).toContain("flex: none");
+    const label = find(
+      css.normal,
+      ".cv-print-export-bar > .cv-button > .cv-button__label",
+      "overflow",
+    );
+    expect(label).toContain("overflow: visible");
+    expect(label).toContain("text-overflow: clip");
+  });
+
   it("running keeps the label at full strength and leads it with CMP-014's arc, in flow", () => {
     const busy = '.cv-print-export-bar > .cv-button[aria-busy="true"]:not([data-side])';
     expect(
