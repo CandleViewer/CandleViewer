@@ -325,6 +325,9 @@ def test_long_url_userinfo_passwords_are_redacted() -> None:
 
 
 MB = 1 << 20
+#: The seven shapes added for the last three patterns run at 256 KB: their old cost there was
+#: tens of seconds (55 s for `fill("`), so the signal stays loud, and the margin holds on a loaded host.
+QMB = MB // 4
 
 
 @pytest.mark.parametrize(
@@ -339,13 +342,13 @@ MB = 1 << 20
         "<input " * (MB // 7),
         "https://" * (MB // 8),
         '"name":"' * (MB // 8),
-        "\n" * MB,
-        " \n" * (MB // 2),
-        '"token":[' * (MB // 9),
-        'fill("' * (MB // 6),
-        ("fill(" + "\\" * 8 + '"') * (MB // 14),
-        '["INPUT",{"k":' * (MB // 14),
-        '["TEXTAREA",{"k":"\\"' * (MB // 20),
+        "\n" * QMB,
+        " \n" * (QMB // 2),
+        '"token":[' * (QMB // 9),
+        'fill("' * (QMB // 6),
+        ("fill(" + "\\" * 8 + '"') * (QMB // 14),
+        '["INPUT",{"k":' * (QMB // 14),
+        '["TEXTAREA",{"k":"\\"' * (QMB // 20),
     ],
     ids=[
         "words",
@@ -366,7 +369,7 @@ MB = 1 << 20
         "escaped-attribute-maps",
     ],
 )
-def test_a_megabyte_token_run_scrubs_within_a_generous_wall_budget(run: str) -> None:
+def test_a_large_token_run_scrubs_within_a_generous_wall_budget(run: str) -> None:
     # Unbounded key wrappers and quote depths made these quadratic (minutes per megabyte), and so
     # did a header match crossing blank lines and a fresh scan to the line's (or text's) end for
     # each unclosed `fill("` or credential-key `[`.
