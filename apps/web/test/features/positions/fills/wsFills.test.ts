@@ -4,7 +4,7 @@
  * a security reset at once, the REST backfill at first paint and after each snapshot or settled
  * narrowing (two pages of 500 at most, at most one per interval, never polled) applied 200 fills
  * a frame, a failed read, the marks and their measure, S-02's 5 s budget and Retry, the 25-account
- * cap, the link, a narrowing settled through the directory, Retry after a revoke, and teardown.
+ * cap, the link, a narrowing settled through the directory, a revoke lifted, and teardown.
  */
 import { act } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -538,15 +538,18 @@ describe("S-02, Retry, a narrowing and teardown", () => {
     expect([api.calls[0]?.signal?.aborted, store.getSnapshot().all.length]).toEqual([true, 2]);
   });
 
-  it("Retry after a revoke drops the answers still waiting for a frame", async () => {
+  it.each<[string, boolean]>([
+    ["Retry after a revoke", true],
+    ["a snapshot that lifts a revoke", false],
+  ])("%s drops the answers still waiting for a frame", async (_lift, retry) => {
     const api = await startHeld();
     api.calls[0]?.answer(page(manyFills(2 * APPLY_SLICE)));
     handle()?.push(reset("revoked")); // the frame takes 200 of the 400; 200 wait
     await settle(FRAME_MS);
-    feed?.retry();
-    handle()?.push(snap({ executions: [] })); // the new subscription's snapshot asks the next read
+    if (retry) feed?.retry();
+    handle()?.push(snap({ executions: [] })); // the snapshot asks the next read
     await settle(FRAME_MS);
-    api.calls[1]?.answer(page(restItems().slice(0, 2))); // asked after the Retry: these two apply
+    api.calls[1]?.answer(page(restItems().slice(0, 2))); // asked after the lift: these two apply
     await settle(FRAME_MS + COMMIT_INTERVAL_MS);
     expect(store.getSnapshot().all).toHaveLength(2);
   });
