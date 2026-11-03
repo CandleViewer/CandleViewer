@@ -4,9 +4,10 @@
 Standalone, offline, stdlib only; run it with `python3 -I`. It reads the pack, the copy
 deck and the pins file from the working tree, and every cited file AS TEXT with
 `git show`: the plan docs, E09-D09, E10-D03, E10-D04, the design-spec rules and the
-sprint calendar at the pinned base (`BASE`), and the five unmerged parents at their
-pinned heads (`REF_OF`): the E38-D01 memo at #5451's, E38-D02 at #5494's, E38-D03 at
-#5493's, E38-D04 at #5490's and E38-D05 at #5514's head (#1076, unpinned), each "if it merges as is".
+sprint calendar at the pinned base (`BASE`), and the five parents at their pinned refs
+(`REF_OF`): the E38-D01 memo at #5451's head, E38-D02 at #5494's, E38-D03 at #5493's and
+E38-D04 at #5490's, each "if it merges as is", and E38-D05 (#1076) at #5514's merge,
+merged as `fc1ddb3a5`.
 For the token names it imports `packages/ui/tokens/tests/verify_tokens.py` (the token
 loader) from the working tree and never re-implements it. Default-deny: a gate that
 cannot read its input FAILs.
@@ -23,7 +24,7 @@ One status vocabulary (the orchestrator's ruling on BQ-07, shared with E37): `me
 (verbatim in a merged source at the base), `RULED` (an unmerged parent's text that its
 BQ ruling settled, named in `ruling`), `PROPOSED` (owner approval pending). A safety
 string carries `frozen`, a group id (`FZ-nn`) of the deck's `frozen` table; ids are key
-names only. D05 (#5514) is read at its PR's head and never pinned (BQ-04).
+names only. D05 is pinned at #5514's merge commit, merged as `fc1ddb3a5` (R6).
 
 Gates (each FAIL led by its name):
   G-STATES     every state id of D02's and D03's state tables, every frame name of
@@ -53,12 +54,12 @@ Gates (each FAIL led by its name):
                anchor; no A-row targets a `14` / `15` line a parent's A-row owns (one
                owner per row, C-4.9).
   G-CITE       every cite in range and on a non-blank line at its ref, its content equal
-               to the pins file's hash (D05's cites excepted, and never pinned); the
-               SHA anchors are the pinned refs.
+               to the pins file's hash (D05's included, R6); the SHA anchors are the
+               pinned refs.
   G-HYGIENE    no closing keyword, local path, URL or host, agent name, double-brace
                slot or public-text deny word in the pack, the deck, this tool or the
                pins file; no `://`, hostname or key-like token in any string value of
-               the deck; no unknown anchor.
+               the deck, at any depth (BQ-12); no unknown anchor.
   G-SCOPE      the stage's files are all present, and the diff against
                `git merge-base HEAD origin/main` touches only them.
 
@@ -101,13 +102,12 @@ D01_REF = "4774b2f8cd7b67a1ee934fe88546568f7aa3e34c"  # #5451's head (the memo)
 D02_REF = "292ce7953775deabf4ffde139db2a887be9592e8"  # #5494's head (E38-D02)
 D03_REF = "75c776d82236961a8af1fbafa47d217bb82f6720"  # #5493's design-approved head
 D04_REF = "2c47253340e130e6b88d25ed209fd1666e01418d"  # #5490's head (E38-D04)
-D05_REF = "ae76d1ac9fb3deb57b400e4c015bc50dd3a7c4c4"  # #5514's head (E38-D05), unpinned
-# D05 (#1076) is read at #5514's head and never pinned (BQ-04); re-read if #5514 moves
-UNPINNED = ("D05",)
+D05_REF = "fc1ddb3a5405cec783cc479b97ceb5deaea4a4ee"  # #5514's merge (E38-D05)
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 PATHS: dict[str, str] = {
     "00": "docs/plan/00-planning-brief.md",
     "02": "docs/plan/02-definition-of-ready-done.md",
+    "05": "docs/plan/05-accessibility-standard.md",
     "14": "docs/plan/14-screens-catalogue.md",
     "15": "docs/plan/15-component-catalogue.md",
     "16": "docs/plan/16-design-system-brief.md",
@@ -690,18 +690,23 @@ def g_cite(t: Texts, vals: dict[str, str]) -> list[str]:
     hashes, bad = cite_hashes(t)
     pinned = parse_pins(t.pins)
     for label, h in hashes.items():
-        if label.split(":")[0] in UNPINNED:
-            continue
         if label not in pinned:
             bad.append(f"cite {label} is unpinned: verify it by content, then repin")
         elif pinned[label] != h:
             bad.append(f"cite {label}: the line at its ref is not the pinned content")
-    bad += [
-        f"the pins file pins {label}; {label.split(':')[0]} is read unpinned"
-        for label in pinned
-        if label.split(":")[0] in UNPINNED
-    ]
     return bad + anchor_problems(t, vals, "SHA:")
+
+
+def string_values(node: Any, where: str) -> list[tuple[str, str]]:
+    """Every string value of the deck, at any depth, with its path (BQ-12): `header`,
+    `statuses`, every `strings.*` field, every `frozen.*` field and `ids` member."""
+    if isinstance(node, str):
+        return [(where, node)]
+    if isinstance(node, dict):
+        return [x for k, v in node.items() for x in string_values(v, f"{where}.{k}")]
+    if isinstance(node, list):
+        return [x for i, v in enumerate(node) for x in string_values(v, f"{where}[{i}]")]
+    return []
 
 
 def g_hygiene(t: Texts, vals: dict[str, str]) -> list[str]:
@@ -725,24 +730,17 @@ def g_hygiene(t: Texts, vals: dict[str, str]) -> list[str]:
             if any(d in ln.lower() for d in DENY):
                 bad.append(f"{name}:{i} carries a public-text deny word")
     try:
-        strings = deck_of(t)["strings"]
+        doc: Any = deck_of(t)
     except (LookupError, TypeError):
-        strings = {}  # G-COPY reports it
-    values = (
-        (sid, f, v)
-        for sid, s in strings.items()
-        if isinstance(s, dict)
-        for f, v in s.items()
-        if isinstance(v, str)
-    )
-    for sid, f, v in values:
+        doc = {}  # G-COPY reports it
+    for where, v in string_values(doc, "deck"):
         for rx, what in (
             (SCHEME, "a `://` scheme"),
             (HOSTNAME, "a hostname"),
             (KEY_LIKE, "a key-like token"),
         ):
             if rx.search(v):
-                bad.append(f"deck {sid}.{f} carries {what}")
+                bad.append(f"{where} carries {what}")
     for _, key in ANCHOR.findall(t.spec):
         if key not in vals:
             bad.append(f"an anchor `{key}` the tool does not compute")
@@ -895,6 +893,20 @@ def _rename(old: str, new: str) -> Callable[[dict[str, Any]], None]:
     return f
 
 
+def _header(value: str) -> Callable[[dict[str, Any]], None]:
+    def f(doc: dict[str, Any]) -> None:
+        doc["header"] = value
+
+    return f
+
+
+def _group_note(gid: str, value: str) -> Callable[[dict[str, Any]], None]:
+    def f(doc: dict[str, Any]) -> None:
+        doc["frozen"][gid]["note"] = value
+
+    return f
+
+
 def _note(doc: dict[str, Any]) -> None:
     doc["note"] = "fl" + "ood"
 
@@ -1004,7 +1016,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts], tuple[str, ...]], ...
     (
         "G-COPY",
         "a count typed by hand",
-        sub("Of 148<!--=COPY:total-->", "Of 149<!--=COPY:total-->"),
+        sub("Of 149<!--=COPY:total-->", "Of 150<!--=COPY:total-->"),
         FULL_ONLY,
     ),
     (
@@ -1074,12 +1086,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts], tuple[str, ...]], ...
         ),
         FULL_ONLY,
     ),
-    (
-        "G-CITE",
-        "a D05 cite pinned",
-        lambda t: replace(t, pins=t.pins + "D05:384\t000000000000\n"),
-        FULL_ONLY,
-    ),
+    ("G-CITE", "a `D05` cite one line off", sub("`D05`:63", "`D05`:64"), FULL_ONLY),
     (
         "G-COPY",
         'AC 2\'s "approved: pending (owner)" dropped',
@@ -1110,6 +1117,18 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts], tuple[str, ...]], ...
         "a §3.3 quote that is no deck string",
         sub('Confirm "Reset paper balance"', 'Confirm "Reset balance"'),
         FULL_ONLY,
+    ),
+    (
+        "G-HYGIENE",
+        "a hostname in the deck's header, outside `strings`",
+        deck_edit(_header("see status." + "example" + ".com")),
+        BOTH,
+    ),
+    (
+        "G-HYGIENE",
+        "a key-like token in a frozen group's field, outside `strings`",
+        deck_edit(_group_note("FZ-01", "Q7" * 12)),
+        BOTH,
     ),
 )
 
@@ -1195,9 +1214,9 @@ def main(argv: list[str]) -> int:
             return 1
         head = (
             "# E38-D06 cite pins: the cite, a hash of its cited line(s) at its ref."
-            " Written by --repin-ruled only; D05 is read unpinned.\n"
+            " Written by --repin-ruled only.\n"
         )
-        kept = {k: h for k, h in hashes.items() if k.split(":")[0] not in UNPINNED}
+        kept = hashes
         (ROOT / PINS_REL).write_text(
             head + "".join(f"{k}\t{h}\n" for k, h in kept.items()), encoding="utf-8"
         )
