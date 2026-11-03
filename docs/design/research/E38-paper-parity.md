@@ -1,8 +1,8 @@
 # E38-D01 — UX research: how traders tell demo from live and trust simulated fills
 
-- **Ticket:** E38-D01 (issue #1002) · **Status:** text first, `Partial:` (the memo PR; boards pending): the Penpot
-  research boards land with their exports in a second PR, which completes #1002, as E33-D01 and E35-D01 did (#4046 / #4295,
-  #4070 / #4289). The BQ rulings are of record (issue comment 6572970059). **Owner approval pending** (C-10.1). ·
+- **Ticket:** E38-D01 (issue #1002) · **Status:** text first (the memo PR, `Partial:`), then the boards PR, which completes #1002, as E33-D01
+  and E35-D01 did (#4046 / #4295, #4070 / #4289): the Penpot research boards are drawn on page `E38-D01` (page id
+  `b96edf38-8e58-8006-8008-e246a81cb753`) and exported in that PR (Research boards, below). The BQ rulings are of record (issue comment 6572970059). **Owner approval pending** (C-10.1). ·
   **Method:** heuristic evaluation and persona walkthrough of the locked plan texts, the
   merged E10, E15, E26 and E30 designs and the token JSON (Method note). **No session was run. No participant, quote,
   timing, recall rate or sizing answer exists, and none is invented.** Live-exchange access and real user data are not
@@ -77,9 +77,30 @@ owner's substitute, BQ-04); **open** = an owner run still to come, recorded but 
 | Implications mapped to SCR-074/075/079/099/122/137                                    | §10                                     | done (three surfaces have no catalogue id, SC-7)             |
 | Risks raised into `32`                                                                | §11                                     | proposed, not written (BQ-6)                                 |
 | A keyboard-only switch flow                                                           | §4; protocol Task K                     | heuristic-only; open                                         |
-| DoD: the artefact (Figma → Penpot): the research board                                | the boards PR                           | pending in the boards PR (BQ-08)                             |
+| DoD: the artefact (Figma → Penpot): the research board                                | Research boards (Penpot)                | done: page `E38-D01`, 8 boards, below                        |
 | DoD: every state drawn; the screen's sign-off checklist                               | —                                       | N/A for research (D02–D04 own them)                          |
 | DoD: sign-off by the CDO and the Architect                                            | the owner's approval of the PR (C-10.1) | pending                                                      |
+
+## Research boards (Penpot)
+
+Page `E38-D01` (page id `b96edf38-8e58-8006-8008-e246a81cb753`) in the per-set file `E38-D01 boards`, named by page name and id only. Eight boards, 1600 px wide, drawn on 2026-11-02 by one board script (r1, sha256 `634794b1fb4d52638926b253f69be95a3444e47b6abe7d0c9d85d1b9857d50e3`) in eight calls, bound to nothing: every fill is a token value from `packages/ui/tokens` at the base, with the token name in its plugin data. Each board's footer cites this memo; nothing on a board states a finding, string or number this memo does not. As built: relayout converged (0 moved, 0 overruns, 0 collisions), dedupe kept 8, and a value check of 1 406 fills and strokes found 0 off (dark tokens; board 06's computed CVD values). Board 03 reports one warning: an empty table cell draws no text, as Penpot creates no text for an empty string. The boards-lens fold redrew boards 01, 06, 07 and 08 with board script r2 (sha256 `66c8b61e520fed847425eaa73c715ed52db72902c777023e8224fe8630924272`) from this memo's text after the fold, in five calls (06 in two) with no warning: board 06 now draws all three ST2 treatments in dark and high contrast. Relayout again converged with 0 moved, dedupe kept 8, and the value check read 1 570 fills and strokes with 0 off; boards 02–05 stay r1.
+
+- **Board 01 `where-the-eye-is`:** board id `b96edf38-8e58-8006-8008-e24f423e5509`; RQ1 and RQ2: what is consulted at submit. The shell in LIVE with the band, a panel badge and the submit target, F1's eye-path, the five dock-state insets and a second-monitor DOM (F2), CA-4 on the buy twin and carry (1) on the sell twin (§2, §3; ST1, ST2). `docs/design/E38/img/E38-D01-01-where-the-eye-is.png` (1600 × 1799, sha256 `e7c90680378e7b49b17e41e00e3b4f8f16ae20747636260d5eeca8ddfc6b4ee6`).
+  ![E38-D01 board 01](../E38/img/E38-D01-01-where-the-eye-is.png)
+- **Board 02 `switch-journey`:** board id `b96edf38-8e58-8006-8008-e246c26e47f7`; RQ3: the SCR-074 switch as frames, DEMO → LIVE (typed `LIVE`, the step-up, the banner, CA-1 and CA-3, the first LIVE order confirmed) and LIVE → DEMO (CA-2), with the keyboard lane and where F4's risk sits (§4; ST3). `docs/design/E38/img/E38-D01-02-switch-journey.png` (1600 × 1413, sha256 `7546b295b49d24e0b63e70fa57e4b25d3a075f1994f24c2eb9fb7c28763e9741`).
+  ![E38-D01 board 02](../E38/img/E38-D01-02-switch-journey.png)
+- **Board 03 `two-carriers`:** board id `b96edf38-8e58-8006-8008-e2473d945f0f`; DEMO vs SIMULATED (SC-6, F8): what each word means, where it sits and what it never does, with CA-5. `docs/design/E38/img/E38-D01-03-two-carriers.png` (1600 × 1182, sha256 `9eef513f53552853b11a52ff290b4ec7ea6ca278f212f656504fab481ffde02e`).
+  ![E38-D01 board 03](../E38/img/E38-D01-03-two-carriers.png)
+- **Board 04 `simulated-results-framing`:** board id `b96edf38-8e58-8006-8008-e246d33cd1ed`; RQ4: SCR-099 in two framings, as catalogued and with §5's six rules applied (CA-6), the curve marked illustrative; the live-data simulator results as a labelled card with no screen id (§5; ST4). `docs/design/E38/img/E38-D01-04-simulated-results-framing.png` (1600 × 1312, sha256 `908980d4ad9af08bc6550a1f9c422d6c3834ac6ed645dceb88a77a47082deb81`).
+  ![E38-D01 board 04](../E38/img/E38-D01-04-simulated-results-framing.png)
+- **Board 05 `reset-and-parity`:** board id `b96edf38-8e58-8006-8008-e246db36f1f8`; RQ5 and RQ6: the reset confirm in two framings (CA-7, CA-8), the account drawer's two treatments (SC-8, open), and the parity item's anatomy with its three states and its entry from SCR-077 (CA-9), drawn as content cards (§6, §7; ST5, ST5b, ST6). `docs/design/E38/img/E38-D01-05-reset-and-parity.png` (1600 × 1581, sha256 `01ef542e2a3ab2d86488f32e84493726cf658de77594a47ba571b2ce2dc745b5`).
+  ![E38-D01 board 05](../E38/img/E38-D01-05-reset-and-parity.png)
+- **Board 06 `colour-independence`:** board id `b96edf38-8e58-8006-8008-e24f55acd1c4`; §8's twelve rows as swatch pairs with ΔE76 and contrast, the treatments in greyscale and three CVD simulations, and the three callouts: LIVE = sell = candle.down by design, carry (1) and carry (2) (ST7). `docs/design/E38/img/E38-D01-06-colour-independence.png` (1600 × 2592, sha256 `9d0dd02056852d2587e14d96a7b309cbcbb28e420b8b7e58f47979340a5d3bbe`).
+  ![E38-D01 board 06](../E38/img/E38-D01-06-colour-independence.png)
+- **Board 07 `findings-decision-map`:** board id `b96edf38-8e58-8006-8008-e24f8345c36b`; §9 and §10a: the findings F1–F11 by priority joined to the decision map, the copy annex CA-1–CA-9, the analytics events and the notes for D05. `docs/design/E38/img/E38-D01-07-findings-decision-map.png` (1600 × 2458, sha256 `75b64e5cdbb82d3175c57d54a27b48184fd0d5952cac540669e84eb413524d18`).
+  ![E38-D01 board 07](../E38/img/E38-D01-07-findings-decision-map.png)
+- **Board 08 `source-conflicts`:** board id `b96edf38-8e58-8006-8008-e24f9b1130f7`; §1 and §12: SC-1 … SC-9 with their defaults, OQ-1 … OQ-4 with their owners, and the proposed risks P-1 and P-2. `docs/design/E38/img/E38-D01-08-source-conflicts.png` (1600 × 1656, sha256 `520e66d014d58c3abc4c2dda99e02f6efbd95feef933271ced566e13517a5b61`).
+  ![E38-D01 board 08](../E38/img/E38-D01-08-source-conflicts.png)
 
 ## Method note (agent-delivery adaptation, owner decision 2026-09-25)
 
@@ -102,7 +123,7 @@ session protocol and (3) an owner walkthrough checklist. Every repository claim 
 | SC-2 | struck (BQ-12): SCR-074's "step-up required in both cases" (`14`:1761) means the owner and a grant-enabled manager, not both directions                                                                                | the typed confirm and step-up apply only when switching to live (`22`:14080; `13`:432); to demo is a click-confirm                                                                                                                             |
 | SC-3 | Flow 13 keeps a read-only "Demo positions" section visible in Live (`13`:430); SCR-074 says demo orders stay on demo; C-2.11 separates state and chrome                                                                | no demo rows on a live session's trading surfaces; the switch modal lists what stays on DEMO, and the badge menu states the count in words (that line and its count PROPOSED; D02 places them)                                                 |
 | SC-4 | The environment is per session (SCR-074; `22`:14074), per process (`CV_ENV`, `20`:882), and E10-D03 §3.5 draws "a two-environment owner session" with both pills                                                       | one environment per session, read from the server (SR-179); the two-pill case goes to the E10 and E39 owners (OQ-1)                                                                                                                            |
-| SC-5 | not new (BQ-15): `color.env.live` equals `color.sell.default` in dark by design (E30-D01 F5; E10-D03 §11.2), against `16`:58's "reused nowhere else"                                                                   | cited, not re-found; E30-D04 owns the treatment (H10); no token change                                                                                                                                                                         |
+| SC-5 | not new (BQ-15): `color.env.live` equals `color.sell.default` in dark by design (E30-D01 F5; E10-D03 §11.2), against `16`:58's "reused nowhere else" (the `16` owner, the design-system lane)                          | cited, not re-found; E30-D04 owns the treatment (E10-D03 hand-off H10); no token change                                                                                                                                                        |
 | SC-6 | "Paper": `20`:860 calls demo "the paper/rehearsal environment"; US-PAPER-004 means the local simulator; `24` makes paper an execution mode orthogonal to the environment                                               | DEMO = the Bybit demo environment, on the env badge only; SIMULATED = a fill from the local matcher, its own carrier; "paper" stays in the owner's nouns (US-PAPER-006, SCR-099's title, E38-D03's panel); binding copy is D03 / D04's (BQ-16) |
 | SC-7 | The ticket's ids: SCR-079 is the account drawer, with no reset control; SCR-099 is the replay results drawer; SCR-137 is the security centre, with no parity report                                                    | map by function (§10); the parity report, the reset flow and live-data simulator results have no screen, so D03 and D04 ask the `14` owner for ids (OQ-2)                                                                                      |
 | SC-8 | US-PAPER-006 hides the reset in Live "entirely, not merely disabled"; `14` §0.5 #5: a control inside a visible surface is never hidden, always disabled with a reason, and E09-D09 §2.1 step 3's environment leg is T2 | **open owner conflict for D03** (BQ-18); the protocol tests both treatments (Probe 5b)                                                                                                                                                         |
@@ -123,7 +144,7 @@ session protocol and (3) an owner walkthrough checklist. Every repository claim 
   not to read it.
 - **Confidence:** Med.
 - **Implication:**
-  - The environment must sit inside the submit target: the ticket's submit label and the DOM's trade column header.
+  - The environment must sit inside the submit target: the ticket's submit label and the DOM's trade column header (on the sell fill, §8 hands the label's treatment to E30-D04 and D02).
   - The first LIVE order after a switch always shows the confirm, whatever the preference.
   - US-PAPER-002 already disarms one-click on the switch; extend that to the first order.
 - **Owners:** D02, E38-S04.
@@ -213,7 +234,7 @@ session protocol and (3) an owner walkthrough checklist. Every repository claim 
 
 - **Method:** H1 and H10 over US-PAPER-008 and RSK-014's mitigation (`32`:238).
 - **Evidence:** the report is reference material, read after a surprise, for example a demo-only failure
-  (US-PAPER-008 "Runtime detection").
+  (US-PAPER-008 "Runtime detection"; RR-06, `04`:1940, the demo / live parity gaps it records).
 - **Finding F7:** proactive reading is unlikely. The report is read at the moment of failure, so its entry point must
   be the failure itself: the rejection drawer (SCR-077) links the matching parity item. A bare date for "last
   verified" is trusted only with its source and its method.
@@ -227,7 +248,8 @@ session protocol and (3) an owner walkthrough checklist. Every repository claim 
 ## 8. Colour independence, pre-tested at the base `(computed; High)`
 
 The repository's own tool computed the table below, as E10-D03 §11.2 does: `docs/research/_tools/cvd_simulate.py`
-(`simulate`, `delta_e76`, contrast; JND floor 5.0; reported, never gated), over the token JSON at the base. It
+(`simulate`, `delta_e76`, contrast; JND floor 5.0; reported, never gated), over the token JSON at the base
+(hc = dark + the hc overrides; light = dark + the light overrides). It
 reproduces E10-D03 §11.2's DEMO / LIVE and sell / LIVE rows to the hundredth. Greyscale is E10-D03 §3.3's: the two
 borders sit 3 luma steps apart in dark and hc and 17 in light, while the word stands more than 200 steps from its
 fill.
@@ -252,8 +274,8 @@ fill.
   passes because the word, the weight (DEMO medium, LIVE bold) and the glyph (outline vs filled dot) carry it.
 - **Not a new finding (BQ-15):** `color.env.live` equals `color.sell.default` in dark and light, and
   `color.candle.down` in all three themes (only sell separates in hc). That is recorded by design in E30-D01 F5 and E10-D03 §11.2: the badge sits on the chrome, sell on the ticket,
-  never one beside the other. E30-D04 owns the treatment (H10). No token change is proposed here.
-- **For D02 to keep:** in hc, danger and LIVE fall under the JND for protanopia and deuteranopia (2.56 / 3.83), so a
+  never one beside the other. F1 and CA-4 put the LIVE word inside the submit label, and on the sell fill `color.env.live` equals `color.sell.default` in dark and light, so there the LIVE word sits on the sell red. E30-D04 owns the badge treatment (E10-D03 hand-off H10); E30-D04 and D02 own that label's. No token change is proposed here.
+- **For D02 and E30-D04 (E30-D01 :275, "live ≠ sell ≠ danger"):** in hc, danger and LIVE fall under the JND for protanopia and deuteranopia (2.56 / 3.83), so a
   danger banner must never carry the environment by hue next to a LIVE badge.
 
 ## 9. Findings register (all `(heuristic)`), prioritised
@@ -296,7 +318,7 @@ cites them.
 | CA-1 | SCR-074 to live         | "You're switching this session to LIVE. Orders will reach Bybit with real funds. Type LIVE to continue."    |
 | CA-2 | SCR-074 to demo         | "Switch this session to DEMO? Live orders and positions stay on LIVE and keep their native stops."          |
 | CA-3 | SCR-075 LIVE band       | "LIVE since 14:02 UTC"                                                                                      |
-| CA-4 | ticket submit, LIVE     | "Buy LIVE · 0.5 BTC" (the environment word stays when the label shortens)                                   |
+| CA-4 | ticket submit, LIVE     | "Buy LIVE · 0.5 BTC" (the environment word stays when the label shortens; the sell twin's treatment: §8)    |
 | CA-5 | simulated surfaces      | "SIMULATED · Paper 1" (never on the env badge)                                                              |
 | CA-6 | SCR-099 above the curve | "Simulated with a queue, latency and fee model. Your own size can move a real market; this model does not." |
 | CA-7 | reset confirm           | "This clears 3 open simulated positions and 2 working orders and sets the balance to 10,000 USDT."          |
@@ -336,9 +358,9 @@ count where the switch is abandoned and whether the assumptions are read. No iss
 
 ## 13. References
 
-`CONSTITUTION.md` C-2.11, C-2.12, C-2.13 · `04`:1009 (SR-179), :1940 (RR-06) · `05` §3–§6 · `10` §2–§3, §7 ·
+`CONSTITUTION.md` C-2.11, C-2.12 · `04`:1009 (SR-179), :1940 (RR-06) · `05` §3–§6 · `10` §2–§3, §7 ·
 `11` §21 · `13` §13 · `14` §0.5, SCR-074, SCR-075, SCR-076, SCR-077, SCR-079, SCR-099, SCR-122, SCR-137 · `15` CMP-074,
 CMP-075, CMP-139 · `16`:58 · `20` §7.1–§7.2 · E30-D01 F5 (`e30-order-entry-under-time-pressure.md`) · E10-D03 §11.2 · `docs/research/_tools/cvd_simulate.py` · `22` `setSessionEnvironment` · `24` §1.2, §12 · `30` R3/R4 · `32` RSK-014,
-RSK-071 · E10-D03 §3 · E15-D04 boards 07–08 · E26-D02 D-4, D-10 · E30-D03 · `docs/research/02-tradingview-trading.md`
+RSK-071 · E10-D03 §3 · E15-D04 boards 07–08 · `docs/research/02-tradingview-trading.md`
 §4, `06-bybit-api.md` §2, `09-execution-risk-tools.md` §9, `ux/replay-study-sessions.md` F25 · packages/ui/tokens at
 the base.
