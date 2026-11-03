@@ -6,6 +6,9 @@ name: changelog
 # reviewed PRs (sync command: AGENTS.md §4). Supersedes E03-T11 scenario 1 and the E03-T13
 # bypass note. On a PR it previews the base history against the PR's CHANGELOG.md. Read-only
 # contents, no secrets and no artefact, so no ref guard.
+# #3099/#3098: the merged PRs' labels route security fixes (--pr-labels-json), so the job reads
+# pull requests. It runs only the base ref's committed tools (checked out to `base/`) against the
+# PR's checkout (`pr/`); the token lives only in the `gh pr list` step, which runs no repo code.
 
 on:
   push:
@@ -34,19 +37,38 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      pull-requests: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out the PR (data only; none of its code runs)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          path: pr
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out the base ref's tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: base
           persist-credentials: false
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
 
+      - name: Fetch the merged PRs' labels (no repo code runs here)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh pr list --repo "$GITHUB_REPOSITORY" --state merged --limit 10000
+          --json number,labels > "$RUNNER_TEMP/pr-labels.json"
+
       - name: Preview the Unreleased section (writes nothing)
+        working-directory: pr
         env:
           REV: ${{ github.event.pull_request.base.sha || github.sha }}
         run: >-
-          python tools/ci/update_changelog.py --since-last-tag --rev "$REV"
+          python ../base/tools/ci/update_changelog.py --since-last-tag --rev "$REV"
+          --pr-labels-json "$RUNNER_TEMP/pr-labels.json"
           --preview --summary "$GITHUB_STEP_SUMMARY"
