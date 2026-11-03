@@ -1,5 +1,5 @@
 // E12-Q05 slice 4 (#528): bars backfill REST load, budget #13 (reads p95 < 150 ms).
-// Target is ONLY the loopback fixture backend (127.0.0.1 / localhost; never an exchange host, C-13.5):
+// Target is ONLY the fixture backend on loopback or the compose service `api` (never an exchange host, C-13.5):
 //   k6 run -e BASE_URL=http://127.0.0.1:<port> -e PLAN=plan.json -e SUMMARY=out.json \
 //     tests/load/k6/bars/backfill.js
 // `PLAN` comes from `python -m bench.bars.backfill_plan <end_us> plan.json`: `pages` is a 30-day
@@ -11,9 +11,13 @@ import http from "k6/http";
 import { check, fail } from "k6";
 import { Counter, Trend } from "k6/metrics";
 
-const LOOPBACK = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
+// The E27-Q03 allow-list (accounts/lib/guard.js, bench.bars.guard): loopback or the compose `api`.
+const ALLOWED = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\]|api)(:\d{1,5})?$/i;
+const EXCHANGE = /(^|\.)(bybit|bytick)\.com\.?(:\d+)?(\/|$)/i; // C-13.5
 const BASE = __ENV.BASE_URL || "http://127.0.0.1:8000";
-if (!LOOPBACK.test(BASE)) fail(`refusing non-loopback target ${BASE}`);
+if (EXCHANGE.test(BASE.replace(/^https?:\/\//, ""))) fail("refusing an exchange host (C-13.5)");
+if (!ALLOWED.test(BASE))
+  fail("refusing a target that is not loopback or the compose service `api`");
 const PLAN = JSON.parse(open(__ENV.PLAN));
 const DURATION = __ENV.DURATION || "60s";
 

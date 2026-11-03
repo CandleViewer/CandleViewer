@@ -1,4 +1,4 @@
-"""Bars-only WS fan-out run and its verdict (E12-Q05 slice 4, #528; budget #6, AC4, SR-073).
+"""Bars-only WS fan-out run and its verdict (E12-Q05 slice 4, #528; budget #6 gateway segment).
 
 No new load script: `tests/load/ws/ws_load.js` already runs a bars-only workload through env
 overrides (`FAMILIES=bars`, the W5 `bars-healthy` / `bars-saturated` phases), and
@@ -15,13 +15,20 @@ from dataclasses import dataclass
 CLIENT_LAG_P95_MS = 20.0  # profiles.json thresholds.client_lag_p95_ms
 #: Counters that must be zero in a healthy run (the harness's own names, `lib/measure.js`).
 MUST_BE_ZERO = ("cv_seq_gaps", "cv_unplanned_closes", "cv_errors")
-#: Backend metrics the ticket correlates with that are not in `services/` yet (BQ-07).
-MISSING_METRICS: tuple[tuple[str, str], ...] = (
-    ("ws_client_queue_depth", "no owner ticket yet (BQ-07: one issue to file)"),
-    ("ws_client_disconnect_overflow_total", "no owner ticket yet (BQ-07: one issue to file)"),
-    ("bars_build_duration_seconds", "no owner ticket yet (BQ-07: one issue to file)"),
-    ("bars_rebuild_duration_seconds", "E12-S12 (#535)"),
+#: Catalogue metrics (20-architecture) the harness correlates with. Present means the run may
+#: assert on them; the others are pending their owner. `bar_rebuild_*` belongs to E12-S12.
+CATALOGUE_METRICS: tuple[tuple[str, str], ...] = (
+    ("cv_ws_overflow_total", "pending E17 gateway ladder"),
+    ("cv_ws_conflated_total", "pending E17-T06"),
+    ("cv_ws_queue_frames", "pending E17 gateway"),
+    ("cv_ws_queue_bytes", "pending E17 gateway"),
+    ("bar_build_latency_seconds", "pending E12-S04 emitter"),
+    ("bar_builder_fanout_latency_seconds", "pending E12-S01 emitter"),
+    ("bar_rebuild_duration_seconds", "E12-S12 (#535)"),
 )
+#: Budget #6 is "book update -> outbound frame", backend-internal: this run sees only the
+#: gateway segment, client side.
+BUDGET_6_LABEL = "gateway segment"
 
 
 def env(*, lagging_rtt_ms: int = 0) -> dict[str, str]:
@@ -59,7 +66,7 @@ def judge(counters: Mapping[str, float], client_lag_p95_ms: float) -> list[Check
 
 
 def pending() -> list[str]:
-    rows = [f"{name}: pending, {owner}" for name, owner in MISSING_METRICS]
+    rows = [f"{name}: {owner}" for name, owner in CATALOGUE_METRICS]
     rows.append(
         "slow consumer at 1/10 rate, conflate then disconnect: pending "
         "(true slow reader in lib/client.js, E17-Q03)"

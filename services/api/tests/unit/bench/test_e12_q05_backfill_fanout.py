@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -92,13 +93,28 @@ def test_fanout_judge_flags_loss_errors_and_lag() -> None:
 
 def test_fanout_pending_rows_name_every_missing_metric_and_the_slow_reader() -> None:
     rows = "\n".join(fanout.pending())
-    for name in ("ws_client_queue_depth", "ws_client_disconnect_overflow_total",
-                 "bars_build_duration_seconds", "bars_rebuild_duration_seconds"):  # fmt: skip
+    for name in ("cv_ws_overflow_total", "cv_ws_conflated_total", "cv_ws_queue_frames",
+                 "bar_build_latency_seconds", "bar_builder_fanout_latency_seconds",
+                 "bar_rebuild_duration_seconds"):  # fmt: skip
         assert name in rows
     assert "#535" in rows and "slow consumer" in rows
 
 
-def test_the_k6_script_is_loopback_guarded_and_gates_budget_13() -> None:
+def test_the_k6_script_uses_the_python_allow_list_and_gates_budget_13() -> None:
+    from bench.bars.guard import ALLOWED
+
     src = (REPO / "tests" / "load" / "k6" / "bars" / "backfill.js").read_text(encoding="utf-8")
-    assert "refusing non-loopback target" in src and "127\\.0\\.0\\.1|localhost" in src
-    assert 'backfill_page_ms: ["p(95)<150"]' in src and "bybit" not in src.lower()
+    js = re.search(r"const ALLOWED = /(.+)/i;", src)
+    assert js is not None and js.group(1).replace("\\/", "/") == ALLOWED.pattern
+    assert "refusing a target that is not loopback" in src and "bybit|bytick" in src
+    assert 'backfill_page_ms: ["p(95)<150"]' in src
+
+
+def test_rows_name_an_owner_for_every_pending_item_and_cite_f3() -> None:
+    from bench.bars import rows
+
+    text = rows.render()
+    needles = ("E12-S08 (#534)", "E12-S11 (#451)", "5 %/h", "adr-0033", "AC-01", "AC-05", "AC-06")
+    for needle in (*needles, "test_caps_and_cost.py:338-346"):
+        assert needle in text
+    assert all(r.owner for r in rows.ROWS) and rows.BUDGET_8 in text

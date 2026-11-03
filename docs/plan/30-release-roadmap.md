@@ -318,6 +318,7 @@ Perf gate status (E06-T03, 2026-10-29): the harness is committed and the CI job 
 ### 5.3 Exit criteria
 
 1. **Frame budget met and enforced in CI**: benchmark harness reports p95 ≤16.6 ms with 100k bars + all R1 overlays on reference hardware in Electron; regressions >10% fail the build.
+   - A-row (E12-Q05, #528): the frame-budget regression gate in exit criterion 1 is 5 % (C-9.1 #16, 06 §7.4), not 10 %.
 2. 30 fps floor holds under the worst-case scenario (6-chart layout, all indicators, all drawings) using the documented degradation ladder — no frame drops below 30 fps, and trading-critical overlays are never the thing that gets shed.
 3. WS tick → screen p95 <100 ms measured end-to-end for last-trade and best-bid/ask (budget #3 pre-verified a train early).
 4. All five bar types produce identical results to a reference implementation on a recorded fixture day, byte-for-byte on OHLCV.

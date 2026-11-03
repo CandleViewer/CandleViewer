@@ -819,6 +819,8 @@ Benchmarks live in `packages/chart-engine/bench`, run headless (Playwright + Chr
 
 A regression greater than 10 % against the stored baseline fails the check; baselines are updated only with an explicit reviewer-approved commit that states the cause.
 
+A-row (E12-Q05, #528): the engine frame-time, draw-call and memory gate is 5 % (C-9.1 #16, 06 §7.4), not 10 %; builder throughput is a separate class (warn 10 % / fail 25 %, 06 A-row).
+
 ---
 
 ## 14. Test strategy

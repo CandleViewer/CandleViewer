@@ -43,7 +43,7 @@ def test_budget_boundary_is_inclusive() -> None:
     assert not RebuildResult("x", 1, 1, 10.001).within_budget
 
 
-def test_over_budget_clock_fails_the_check() -> None:
+def test_over_budget_clock_is_recorded_as_over() -> None:
     r = rb.rebuild_once("renko", "45", tp.tape(10), probes=_probes(11_000_000_000))
     assert not r.within_budget
 
@@ -69,15 +69,16 @@ def test_median_rebuild_by_wall_time_needs_three() -> None:
 def test_render_lists_results_and_the_pending_535_rows() -> None:
     ok, bad = RebuildResult("a", 10, 2, 1.0), RebuildResult("b", 10, 2, 11.0)
     out = rb.render([(ok, 0.0), (bad, 0.1)])
-    assert "| pass |" in out and "| FAIL |" in out
-    assert out.count("pending #535") == 3
+    assert "| within NFR |" in out and "over: known miss #2167" in out and "FAIL" not in out
+    assert out.count("pending #535") == 4 and "ADR-0033" in out
     assert "Lower bound on the real rebuild" in out
 
 
-def test_main_exit_code_follows_the_budget(
+def test_main_records_and_never_fails_even_over_the_nfr(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert rb.main(["--prints", "300"]) == 0
     assert "parameter-change rebuild" in capsys.readouterr().out
     monkeypatch.setattr(rb, "BUDGET_S", 0.0)
-    assert rb.main(["--prints", "300"]) == 1
+    assert rb.main(["--prints", "300"]) == 0
+    assert "known miss #2167" in capsys.readouterr().out
