@@ -1,0 +1,559 @@
+{
+  "ticket": "E26-D07",
+  "version": "v1 (ruled; deck slice)",
+  "base": "b81479ab0",
+  "note": "The copy deck of the E26-D07 hand-off pack (docs/design/E26/E26-D07.md section 9). Each string is verbatim on its source line of E26-D02 (docs/design/E26/E26-D02.md) on main; the strings of E26-D03 and E26-D04 are PENDING until those parents have PRs to pin (ruling 6608093192, BQ-2). Each entry's `id` is its copy key. Example values in a string are its slots; `slots` defines each. No string carries a path, a dataset or registry id, an account id or the server's error text (section 9.2). Checked by docs/design/_tools/e26_d07_handoff_check.py (G-DECK, G-LEAK).",
+  "sources": {
+    "D02": "docs/design/E26/E26-D02.md"
+  },
+  "strings": [
+    {
+      "id": "replay.page.no_session",
+      "screen": "SCR-097",
+      "string": "Choose a window to replay",
+      "source": "D02:309",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.page.revived",
+      "screen": "SCR-097",
+      "string": "Session restarted — prepare to continue at 13:38:04",
+      "source": "D02:311",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:38:04": "the last rendered frame's time, hh:mm:ss UTC"
+      }
+    },
+    {
+      "id": "replay.page.preparing",
+      "screen": "SCR-097",
+      "string": "Preparing 13:00–15:00 UTC · reading recorded data · 4 s",
+      "source": "D02:312",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:00–15:00": "the session window, hh:mm–hh:mm UTC",
+        "4": "elapsed seconds, at most once a second"
+      }
+    },
+    {
+      "id": "replay.page.preparing_hint",
+      "screen": "SCR-097",
+      "string": "· a day is usually ready within 10 s",
+      "source": "D02:312",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.page.ready",
+      "screen": "SCR-097",
+      "string": "Replay ready at 13:00:00",
+      "source": "D02:312",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:00:00": "the window start, hh:mm:ss UTC"
+      }
+    },
+    {
+      "id": "replay.page.paused",
+      "screen": "SCR-097",
+      "string": "Paused at 13:38:04",
+      "source": "D02:313",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:38:04": "the last rendered frame's time, hh:mm:ss UTC"
+      }
+    },
+    {
+      "id": "replay.page.stepping",
+      "screen": "SCR-097",
+      "string": "Stepping…",
+      "source": "D02:313",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.page.stepped",
+      "screen": "SCR-097",
+      "string": "Stepped one bar to 13:39:00",
+      "source": "D02:313",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:39:00": "the new bar close, hh:mm:ss UTC"
+      }
+    },
+    {
+      "id": "replay.page.playing",
+      "screen": "SCR-097",
+      "string": "Playing at 4×",
+      "source": "D02:314",
+      "status": "key PROPOSED",
+      "slots": {
+        "4": "the requested speed"
+      }
+    },
+    {
+      "id": "replay.page.playing_spoken",
+      "screen": "SCR-097",
+      "string": "Playing at 4 times",
+      "source": "D02:314",
+      "status": "key PROPOSED",
+      "slots": {
+        "4": "the requested speed"
+      }
+    },
+    {
+      "id": "replay.page.end_of_range",
+      "screen": "SCR-097",
+      "string": "End of range — 15:00:00 UTC",
+      "source": "D02:319",
+      "status": "key PROPOSED",
+      "slots": {
+        "15:00:00": "the window end, hh:mm:ss"
+      }
+    },
+    {
+      "id": "replay.page.expired",
+      "screen": "SCR-097",
+      "string": "Replay session closed — data as of 13:52:04.",
+      "source": "D02:321",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:52:04": "the last rendered frame's time, hh:mm:ss UTC"
+      }
+    },
+    {
+      "id": "replay.page.expired_rule",
+      "screen": "SCR-097",
+      "string": "Sessions close after 2 h without a playback control.",
+      "source": "D02:321",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.page.stopped",
+      "screen": "SCR-097",
+      "string": "Playback stopped at 13:52:04.120.",
+      "source": "D02:322",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:52:04.120": "the last rendered frame's time, hh:mm:ss.mmm UTC"
+      }
+    },
+    {
+      "id": "replay.page.not_found",
+      "screen": "SCR-097",
+      "string": "Replay session not found.",
+      "source": "D02:327",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.seek.seeking",
+      "screen": "SCR-097",
+      "string": "Seeking to 13:52:04…",
+      "source": "D02:291",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:52:04": "the seek target, hh:mm:ss UTC"
+      }
+    },
+    {
+      "id": "replay.seek.rebuilding",
+      "screen": "SCR-097",
+      "string": "Rebuilding the order book from the nearest recorded snapshot · 1.4 s",
+      "source": "D02:292",
+      "status": "key PROPOSED",
+      "slots": {
+        "1.4": "elapsed seconds, at most once a second"
+      }
+    },
+    {
+      "id": "replay.seek.over_budget",
+      "screen": "SCR-097",
+      "string": "Taking longer than the 2 s budget · 2.6 s — cancel to stay at 13:38:04",
+      "source": "D02:293",
+      "status": "key PROPOSED",
+      "slots": {
+        "2.6": "elapsed seconds",
+        "13:38:04": "the last rendered frame's time, hh:mm:ss UTC"
+      }
+    },
+    {
+      "id": "replay.seek.landed",
+      "screen": "SCR-097",
+      "string": "At 13:52:04",
+      "source": "D02:294",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:52:04": "the landed time, hh:mm:ss UTC"
+      }
+    },
+    {
+      "id": "replay.seek.landed_playing",
+      "screen": "SCR-097",
+      "string": "At 13:52:04, playing at 4×",
+      "source": "D02:294",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:52:04": "the landed time",
+        "4": "the requested speed"
+      }
+    },
+    {
+      "id": "replay.seek.cancelled",
+      "screen": "SCR-097",
+      "string": "Seek cancelled — still at 13:38:04. Try again.",
+      "source": "D02:295",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:38:04": "the last rendered frame's time, hh:mm:ss UTC"
+      }
+    },
+    {
+      "id": "replay.gap.stopped",
+      "screen": "SCR-097",
+      "string": "No data 13:52:10–13:55:40 UTC — recording was interrupted (connection lost).",
+      "source": "D02:55",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:52:10–13:55:40": "the gap's span, hh:mm:ss–hh:mm:ss UTC",
+        "recording was interrupted (connection lost)": "the cause words of D02 §6.1 for the gap's reason"
+      }
+    },
+    {
+      "id": "replay.gap.skipped",
+      "screen": "SCR-097",
+      "string": "Skipped a gap 13:52:10–13:55:40 UTC — recording was interrupted (connection lost).",
+      "source": "D02:317",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:52:10–13:55:40": "the gap's span, hh:mm:ss–hh:mm:ss UTC",
+        "recording was interrupted (connection lost)": "the cause words of D02 §6.1 for the gap's reason"
+      }
+    },
+    {
+      "id": "replay.coverage.recorded_from",
+      "screen": "SCR-097",
+      "string": "Recorded from 13:04:12",
+      "source": "D02:255",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:04:12": "the history start, hh:mm:ss UTC"
+      }
+    },
+    {
+      "id": "replay.coverage.unknown",
+      "screen": "SCR-097",
+      "string": "coverage unknown before 24 Jul 2026",
+      "source": "D02:256",
+      "status": "key PROPOSED",
+      "slots": {
+        "24 Jul 2026": "the report's horizon date"
+      }
+    },
+    {
+      "id": "replay.speed.custom_range",
+      "screen": "SCR-097",
+      "string": "Speed is 0.1× to 100×.",
+      "source": "D02:167",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.speed.clamped",
+      "screen": "SCR-097",
+      "string": "Set to 100×, the highest speed.",
+      "source": "D02:167",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.speed.achieved",
+      "screen": "SCR-097",
+      "string": "achieved 41× of 100×",
+      "source": "D02:168",
+      "status": "key PROPOSED",
+      "slots": {
+        "41": "the achieved rate, whole",
+        "100": "the requested speed"
+      }
+    },
+    {
+      "id": "replay.speed.slower_spoken",
+      "screen": "SCR-097",
+      "string": "Playback is slower than requested: 41 times of 100",
+      "source": "D02:168",
+      "status": "key PROPOSED",
+      "slots": {
+        "41": "the achieved rate",
+        "100": "the requested speed"
+      }
+    },
+    {
+      "id": "replay.speed.no_frames",
+      "screen": "SCR-097",
+      "string": "No data arrived in the last second.",
+      "source": "D02:169",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.speed.on_play",
+      "screen": "SCR-097",
+      "string": "4× on Play",
+      "source": "D02:166",
+      "status": "key PROPOSED",
+      "slots": {
+        "4": "the held speed"
+      }
+    },
+    {
+      "id": "replay.leave.confirm",
+      "screen": "SCR-097",
+      "string": "Leave replay and return to your LIVE workspace? This session stays paused at 13:38:04 and closes after 2 h without a control.",
+      "source": "D02:59",
+      "status": "key PROPOSED",
+      "slots": {
+        "LIVE": "the workspace environment returned to",
+        "13:38:04": "the last rendered frame's time, hh:mm:ss UTC"
+      }
+    },
+    {
+      "id": "replay.expiry.countdown",
+      "screen": "SCR-097",
+      "string": "Closes after 2 h without a control — 9:58 left. Play, step or seek keeps it open.",
+      "source": "D02:62",
+      "status": "key PROPOSED",
+      "slots": {
+        "9:58": "minutes and seconds left, from 10 min"
+      }
+    },
+    {
+      "id": "replay.page.disconnected",
+      "screen": "SCR-097",
+      "string": "Disconnected — replay data as of 13:52:04",
+      "source": "D02:66",
+      "status": "key PROPOSED",
+      "slots": {
+        "13:52:04": "the last rendered frame's time, hh:mm:ss UTC"
+      }
+    },
+    {
+      "id": "replay.error.off_grid",
+      "screen": "SCR-097",
+      "string": "A recorded price does not fit BTCUSDT's current tick size; the tick size changed after this was recorded.",
+      "source": "D02:346",
+      "status": "key PROPOSED",
+      "slots": {
+        "BTCUSDT": "the session's symbol"
+      }
+    },
+    {
+      "id": "replay.error.source",
+      "screen": "SCR-097",
+      "string": "The recorded data could not be read.",
+      "source": "D02:347",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.error.memory",
+      "screen": "SCR-097",
+      "string": "This moment holds more data than one replay session can load.",
+      "source": "D02:348",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.error.tier_straddle",
+      "screen": "SCR-097",
+      "string": "This window spans archived and recent data; one session reads one of them.",
+      "source": "D02:349",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.error.book_not_archived",
+      "screen": "SCR-097",
+      "string": "The order book of this window was not archived; replay trades only.",
+      "source": "D02:350",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.error.killed",
+      "screen": "SCR-097",
+      "string": "The kill switch was engaged.",
+      "source": "D02:351",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.error.other",
+      "screen": "SCR-097",
+      "string": "Something went wrong while reading the recorded data.",
+      "source": "D02:352",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.sim.header",
+      "screen": "SCR-097",
+      "string": "SIMULATED FILLS · Paper 1",
+      "source": "D02:47",
+      "status": "key PROPOSED",
+      "slots": {
+        "Paper 1": "the paper account's `label` (never an id)"
+      }
+    },
+    {
+      "id": "replay.sim.ticket_header",
+      "screen": "SCR-097",
+      "string": "SIMULATED · Paper 1",
+      "source": "D02:52",
+      "status": "key PROPOSED",
+      "slots": {
+        "Paper 1": "the paper account's `label` (never an id)"
+      }
+    },
+    {
+      "id": "replay.sim.arm_pill",
+      "screen": "SCR-097",
+      "string": "ARMED (REPLAY · DEMO)",
+      "source": "D02:52",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.sim.no_account_band",
+      "screen": "SCR-097",
+      "string": "REPLAY · no account attached",
+      "source": "D02:46",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "replay.sim.no_account_header",
+      "screen": "SCR-097",
+      "string": "No account attached",
+      "source": "D02:47",
+      "status": "key PROPOSED",
+      "slots": {}
+    },
+    {
+      "id": "rbac.view_as",
+      "screen": "SCR-097",
+      "string": "Read-only while viewing as {user}.",
+      "source": "D02:222",
+      "status": "registered (E09-D09 §3.1)",
+      "slots": {
+        "{user}": "the view-as target's display name"
+      }
+    },
+    {
+      "id": "rbac.permission",
+      "screen": "SCR-097",
+      "string": "Your role can't control replay.",
+      "source": "D02:223",
+      "status": "registered (E09-D09 §3.1–§3.2)",
+      "slots": {}
+    },
+    {
+      "id": "replay.no_session",
+      "screen": "SCR-097",
+      "string": "Start a session first.",
+      "source": "D02:224",
+      "status": "PROPOSED (D02 §5.3)",
+      "slots": {}
+    },
+    {
+      "id": "replay.degraded",
+      "screen": "SCR-097",
+      "string": "On hold until an operator checks this session.",
+      "source": "D02:225",
+      "status": "PROPOSED (D02 §5.3)",
+      "slots": {}
+    },
+    {
+      "id": "replay.end_of_range",
+      "screen": "SCR-097",
+      "string": "End of range — restart or extend the window.",
+      "source": "D02:226",
+      "status": "PROPOSED (D02 §5.3)",
+      "slots": {}
+    },
+    {
+      "id": "replay.window_start",
+      "screen": "SCR-097",
+      "string": "This is the start of the window.",
+      "source": "D02:227",
+      "status": "PROPOSED (D02 §5.3)",
+      "slots": {}
+    },
+    {
+      "id": "replay.step_bar_time",
+      "screen": "SCR-097",
+      "string": "Step by bar needs a time interval on this panel — step by tick instead.",
+      "source": "D02:228",
+      "status": "PROPOSED (D02 §5.3)",
+      "slots": {}
+    },
+    {
+      "id": "replay.paper_working",
+      "screen": "SCR-097",
+      "string": "Cancel or close simulated orders and positions first.",
+      "source": "D02:229",
+      "status": "PROPOSED (D02 §5.3)",
+      "slots": {}
+    },
+    {
+      "id": "replay.paper_above_25x",
+      "screen": "SCR-097",
+      "string": "Paper fills are off above 25× — at this speed an order placed by hand lands too far from the moment you meant.",
+      "source": "D02:230",
+      "status": "PROPOSED (D02 §5.3)",
+      "slots": {}
+    },
+    {
+      "id": "replay.no_account",
+      "screen": "SCR-097",
+      "string": "No account is attached to this session.",
+      "source": "D02:231",
+      "status": "PROPOSED (D02 §5.3)",
+      "slots": {}
+    },
+    {
+      "id": "replay.paper_off",
+      "screen": "SCR-097",
+      "string": "Paper fills are off in this session.",
+      "source": "D02:232",
+      "status": "PROPOSED (D02 §5.3)",
+      "slots": {}
+    },
+    {
+      "id": "replay.realtime_panel",
+      "screen": "SCR-097",
+      "string": "Trading is off on a real-time panel.",
+      "source": "D02:233",
+      "status": "PROPOSED (D02 §5.3)",
+      "slots": {}
+    },
+    {
+      "id": "replay.symbol_replaying",
+      "screen": "SCR-097",
+      "string": "This symbol is replaying.",
+      "source": "D02:234",
+      "status": "PROPOSED (D02 §5.3)",
+      "slots": {}
+    },
+    {
+      "id": "replay.not_replayed",
+      "screen": "SCR-097",
+      "string": "Not replayed yet — CandleViewer records this data but replay does not play it back yet.",
+      "source": "D02:235",
+      "status": "PROPOSED (D02 §5.3)",
+      "slots": {}
+    }
+  ]
+}
