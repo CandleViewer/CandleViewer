@@ -5803,6 +5803,7 @@ Resolution order (first match wins): session override → user override → role
 | `live_trading`                                                    | boolean | `false`                      | ✔           | Master gate for any live order. Off until the R4 pen-test gate passes |
 | `trading.enabled`                                                 | boolean | `true`                       | ✔           | Global halt of all order entry (demo included)                        |
 | `trading.trade_groups`                                            | boolean | `false` (demo `true`)        | ✘           | Trade-group definition writes and the preview (21 §10.7, C-4.13)      |
+| `admin.account_profiles`                                          | boolean | `false`                      | ✘           | The SCR-130 / SCR-131 screens; client-read only (21 §10.7, C-4.13)    |
 | `trading.algos.oco` / `.iceberg` / `.twap` / `.chase` / `.scaled` | boolean | `false`                      | ✘           | Per-algo rollout                                                      |
 | `rules.enabled`                                                   | boolean | `true`                       | ✔           | Master switch of rule actions; off while unread (§11.5)               |
 | `rules.oms_actions`                                               | boolean | `false`                      | ✘           | Rollout: rule actions reach the OMS (C-4.13)                          |
