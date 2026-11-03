@@ -71,6 +71,10 @@ def test_cli_env_file_exchange_key_fails_startup_without_its_value(
 
     captured = capsys.readouterr()
     assert "invalid settings" in captured.err
+    if main is not audit_ack_break.main:  # audit-ack-break prints the error type only (:78)
+        assert _VARIABLE.lower() in captured.err.lower()
+    else:
+        assert "invalid settings (ValidationError); nothing ran" in captured.err
     assert _SENTINEL not in captured.err + captured.out
 
 

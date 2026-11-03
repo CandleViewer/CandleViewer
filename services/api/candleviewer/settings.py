@@ -1159,8 +1159,9 @@ class Settings(BaseSettings):
         is absolute, without `..`, and neither it nor a directory above it is a symlink.
 
         A field validator, not a model one (#2728): a refusal's `errors()` and `json()` carry
-        only this field's input, never another setting's value (C-12.6; a `CV_BYBIT_API_*` name is
-        not a setting and is refused at startup by name only). It also runs on the default, so
+        only this field's input, never another setting's value (C-12.6; `CV_BYBIT_API_*` is no
+        setting, so `Settings` never holds its value; a `.env` entry fails startup, by name only).
+        It also runs on the default, so
         `CV_TEST_CLOCK` alone is refused; `info.data` holds the
         fields declared above."""
         enabled = info.data.get("test_clock", False)
@@ -1196,8 +1197,9 @@ class Settings(BaseSettings):
         """#2097 Q1, the #2086 gate: perf instrumentation never runs in live or demo, or next
         to an exchange key; startup fails before any module starts. A field validator, not a
         model one: `hide_input_in_errors` hides input only from the message, and a model
-        validator's `ValidationError.errors()` would still carry the whole input (C-12.6; a
-        `CV_BYBIT_API_*` name is no setting and is refused at startup, names only).
+        validator's `ValidationError.errors()` would still carry the whole input (C-12.6;
+        `CV_BYBIT_API_*` is no setting, so `Settings` never holds its value; a `.env` entry fails
+        startup, by name only).
         `info.data` holds the fields declared above."""
         if not value:
             return value
@@ -1230,10 +1232,10 @@ class Settings(BaseSettings):
         it nor a directory above it is a symlink (the test clock's rules, #2728).
 
         A field validator, not a model one (#2728): a refusal's `errors()` and `json()` carry only
-        the dir's input, never another setting's value (C-12.6; a `CV_BYBIT_API_*` name is not a
-        setting and is refused at startup, names only). It also runs
-        on the default, so `CV_ACCOUNT_FIXTURE` alone is gated; `info.data` holds the fields
-        declared above. An empty dir alone counts as unset, as an empty `CV_TEST_CLOCK_FILE`
+        the dir's input, never another setting's value (C-12.6; `CV_BYBIT_API_*` is no
+        setting, so `Settings` never holds its value; a `.env` entry fails startup, by name only).
+        It also runs on the default, so `CV_ACCOUNT_FIXTURE` alone is gated; `info.data` holds the
+        fields declared above. An empty dir alone counts as unset, as an empty `CV_TEST_CLOCK_FILE`
         does, so a blank passthrough never stops a boot; an empty switch is still refused."""
         scenario = info.data.get("account_fixture")
         if scenario is None and not value:
@@ -1335,9 +1337,9 @@ class Settings(BaseSettings):
 
         A field validator on the last of the three terms, not a model one (#2728 did the same
         for the test clock): a refusal's `errors()` and `json()` carry only this field's input,
-        never every setting (C-12.6; a `CV_BYBIT_API_*` name is no setting: refused at startup,
-        names only). `info.data` holds the other two
-        terms; one whose own check failed is absent, and its error is the one to report.
+        never every setting (C-12.6; `CV_BYBIT_API_*` is no setting, so `Settings`
+        never holds its value; a `.env` entry fails startup, by name only). `info.data` holds the
+        other two terms; one whose own check failed is absent, and its error is the one to report.
 
         The sum is the worst case of ONE hung module: `Supervisor._stop_each` cuts a stop off at
         its grace plus `STOP_SLACK_S` (`TEARDOWN_STOP_CAP_S`), and the two fixed ticks of the exit
@@ -1414,8 +1416,9 @@ class Settings(BaseSettings):
         builds one.
 
         A field validator on the second window, not a model one (#2728, #2565): a refusal's
-        `errors()` and `json()` carry only this field's input, never every setting,
-        (C-12.6; a `CV_BYBIT_API_*` name is no setting: refused at startup, names only).
+        `errors()` and `json()` carry only this field's input, never every setting
+        (C-12.6; `CV_BYBIT_API_*` is no setting, so `Settings` never holds its value; a `.env`
+        entry fails startup, by name only).
         `info.data` holds the heartbeat window, declared first; one whose own check failed is
         absent, and its error is the one to report."""
         heartbeat_s = info.data.get("account_heartbeat_s")
@@ -1443,8 +1446,9 @@ class Settings(BaseSettings):
         builds one.
 
         A field validator on the second window, not a model one (#2728, #2565): a refusal's
-        `errors()` and `json()` carry only this field's input, never every setting,
-        (C-12.6; a `CV_BYBIT_API_*` name is no setting: refused at startup, names only).
+        `errors()` and `json()` carry only this field's input, never every setting
+        (C-12.6; `CV_BYBIT_API_*` is no setting, so `Settings` never holds its value; a `.env`
+        entry fails startup, by name only).
         `info.data` holds the policy days, declared first and
         keyed by field name, not by alias; a value whose own check failed is absent, and its error
         is the one to report."""
