@@ -37,8 +37,12 @@ Gates (each FAIL led by its name):
   G-CITE      every cite in range, on a non-blank line at its base, and equal to the pins.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double brace, tag line or
               deny word in the spec; no deny word in this tool or the pins.
-  G-SCOPE     the diff touches only the spec, this tool and the pins file.
+  G-SCOPE     the diff touches only the spec, this tool, the pins file and the four board PNGs.
   G-ID        the shared cell's CMP id (BQ-06 on #997) is never written, in any case.
+  G-BOARDS    the boards as built: every §0 frame row reads "drawn"; §0.1 records the page by name and
+              id and one row per board (its PNG, size, sha256 and board id), each PNG in the tree with
+              that size and sha256; §0.2 embeds each PNG once, at one 40-hex commit, by its
+              raw.githubusercontent.com form (the one URL G-HYGIENE allows).
 
 Usage (from the repo root): python3 -I docs/design/_tools/e34_d02_hifi_audit.py
   --check | --self-test | --fill (§8's figures) | --repin-ruled (the pins' only writer)
@@ -62,7 +66,11 @@ ROOT = Path(__file__).resolve().parents[3]
 SPEC_REL = "docs/design/E34/E34-D02.md"
 TOOL_REL = "docs/design/_tools/e34_d02_hifi_audit.py"
 PINS_REL = "docs/design/_tools/e34_d02_ruled_pins.txt"
-OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
+IMG_DIR = "docs/design/E34/img"
+BOARD_SLUGS = {"01": "scr-061-partial-failure", "02": "scr-061-send", "03": "scr-061-preview",
+               "04": "scr-061-blocked-and-t2"}  # fmt: skip
+IMG_PATHS = tuple(f"{IMG_DIR}/E34-D02-{n}-{s}.png" for n, s in BOARD_SLUGS.items())
+OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL, *IMG_PATHS)
 BASE = "a7d659a5bee5d06a28950f324800f84dc3853e6f"  # origin/main when written; re-pinned by content
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
@@ -93,6 +101,13 @@ CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.I
 LOCAL_PATH = re.compile("/" + "home/|/Us" + "ers/|/" + "tmp/|[A-Za-z]:\\\\|\\bnotes" + "/")
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
 URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
+# §0.2's embeds: the one URL form the spec may carry (a board PNG at a pinned commit)
+EMBED = re.compile(
+    r"^!\[E34-D02 / (\d\d) ([a-z0-9-]+)\]\(https://raw\.githubusercontent\.com/CandleViewer/"
+    r"CandleViewer/([0-9a-f]{40})/docs/design/E34/img/(E34-D02-(\d\d)-[a-z0-9-]+\.png)\)$"
+)
+UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+PAGE_LINE = re.compile(r"page `E34-D02 Trade-group ticket hi-fi` \(page id `" + UUID.pattern + "`")
 # explicit joins, so this tool's own text carries none of the words
 DENY = ("le" + "ak", "expo" + "sed", "by" + "pass", "ex" + "ploit", "att" + "ack", "ora" + "cle",
         "rev" + "eal", "unbou" + "nded", "flo" + "od", "st" + "all", "d" + "os", "advi" + "sory",
@@ -651,7 +666,7 @@ def g_hygiene(t: Texts) -> list[str]:
               (AGENT_NAME, "an agent name"), (URL_OR_HOST, "a URL or a host"))  # fmt: skip
     for i, ln in enumerate(t.spec.split("\n"), 1):
         for rx, what in checks:
-            if rx.search(ln):
+            if rx.search(ln) and not (rx is URL_OR_HOST and EMBED.match(ln)):
                 bad.append(f"spec:{i} carries {what}")
         if "{{" in ln:
             bad.append(f"spec:{i} carries a double-brace slot")
@@ -673,6 +688,50 @@ def g_scope(t: Texts) -> list[str]:
     return [f"{p} is touched; this ticket owns {own}" for p in t.changed if p not in OWN_PATHS]
 
 
+def png_size(data: bytes) -> tuple[int, int] | None:
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def g_boards(t: Texts) -> list[str]:
+    bad: list[str] = []
+    zero = section(t.spec, "## 0.")
+    for fr in table_rows(zero, "B"):
+        if len(fr) > 3 and re.fullmatch(r"B\d\d", fr[0]) and fr[3] != "drawn":
+            bad.append(f"{fr[0]} reads {fr[3]!r}, not drawn")
+    built = section(t.spec, "### 0.1 ")
+    if not PAGE_LINE.search(built):
+        bad.append("§0.1 does not record the page by name and id")
+    rows = {r[0]: r for r in table_rows(built, "0") if len(r) > 4}
+    for n, slug in BOARD_SLUGS.items():
+        r = rows.get(n)
+        name = f"E34-D02-{n}-{slug}.png"
+        if r is None or r[1].strip("`") != name or not re.fullmatch(r"\d+ × \d+", r[2]):
+            bad.append(f"§0.1 has no row for board {n} ({name})")
+            continue
+        sha, bid = r[3].strip("`"), r[4].strip("`")
+        if not re.fullmatch(r"[0-9a-f]{64}", sha) or not UUID.fullmatch(bid):
+            bad.append(f"§0.1 board {n}: sha256 or board id malformed")
+        f = ROOT / IMG_DIR / name
+        if not f.exists():
+            bad.append(f"{IMG_DIR}/{name} is not in the tree")
+            continue
+        data = f.read_bytes()
+        size = png_size(data)
+        if hashlib.sha256(data).hexdigest() != sha:
+            bad.append(f"§0.1 board {n}: sha256 is not {name}'s")
+        if size is None or f"{size[0]} × {size[1]}" != r[2]:
+            bad.append(f"§0.1 board {n}: size {r[2]} is not {name}'s {size}")
+    embeds = [m for m in (EMBED.match(ln) for ln in t.spec.split("\n")) if m]
+    shas = {m.group(3) for m in embeds}
+    got = sorted((m.group(1), m.group(2), m.group(4)) for m in embeds)
+    want = [(n, s, f"E34-D02-{n}-{s}.png") for n, s in BOARD_SLUGS.items()]
+    if got != want or len(shas) != 1:
+        bad.append("§0.2 does not embed each board PNG once at one commit")
+    return bad
+
+
 def g_id(t: Texts) -> list[str]:
     lines = enumerate(t.spec.split("\n"), 1)
     return [f"spec:{i} hard-codes the shared cell's CMP id (BQ-06)" for i, ln in lines if ID_258.search(ln)]  # fmt: skip
@@ -682,6 +741,7 @@ GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-STATE": g_state, "G-TOKEN": g_token, "G-CONTRAST": g_contrast, "G-CVD": g_cvd, "G-T2": g_t2,
     "G-SAFETY": g_safety, "G-RECOVERY": g_recovery, "G-RULED": g_ruled, "G-COPY": g_copy,
     "G-D01": g_d01, "G-CITE": g_cite, "G-HYGIENE": g_hygiene, "G-SCOPE": g_scope, "G-ID": g_id,
+    "G-BOARDS": g_boards,
 }  # fmt: skip
 
 
@@ -830,6 +890,14 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-HYGIENE", "close the file with a tag line", lambda t: replace(t, spec=t.spec + "</content>\n")),
     ("G-HYGIENE", "put a deny word into the tool's own text", lambda t: replace(t, tool=t.tool + "\n# " + DENY[6] + "\n")),
     ("G-SCOPE", "touch `14` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["14"]])),
+    ("G-BOARDS", "put B05 back to draw", set_cell("B05", 3, "to draw (PR 2)")),
+    ("G-BOARDS", "drop the page id from §0.1", sub("(page id `", "(page `")),
+    ("G-BOARDS", "type board 02's sha256 off", set_cell("02", 3, "`" + "0" * 64 + "`")),
+    ("G-BOARDS", "type board 03's size off", set_cell("03", 2, "2560 × 4344")),
+    ("G-BOARDS", "record board 04 under another PNG name", set_cell("04", 1, "`E34-D02-04-scr-061-blocked.png`")),
+    ("G-BOARDS", "malform board 01's id", set_cell("01", 4, "`307e836f`")),
+    ("G-BOARDS", "embed board 01 at another commit", lambda t: replace(t, spec=re.sub(r"(CandleViewer/CandleViewer/)[0-9a-f]{40}/", r"\g<1>" + "0" * 40 + "/", t.spec, count=1))),
+    ("G-BOARDS", "drop board 03's embed", drop_row("![E34-D02 / 03 ")),
 )  # fmt: skip
 
 
