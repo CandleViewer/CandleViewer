@@ -1,0 +1,107 @@
+/*
+ * E24-S05 (#780): the liquidation feed's chrome. Tokens only (D03 §6.1, §10). The feed binds `type.num.sm`
+ * mono cells in `color.text.primary` on `color.surface.raised`; the ▲ / ▼ glyph alone takes
+ * `color.status.danger.default` (one hue for both sides, D03 §6.1), always beside its side word. No motion:
+ * rows insert without sliding (D02 §13).
+ */
+
+.cv-liq-pane {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  color: var(--color-text-primary);
+  background: var(--color-surface-raised);
+  border-block-start: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+}
+
+.cv-liq-pane__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-xs) var(--space-inset-sm);
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+}
+
+.cv-liq-pane__title {
+  margin: 0;
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+}
+
+.cv-liq-pane__rate {
+  font: var(--type-num-base-font-weight) var(--type-num-base-font-size) /
+    var(--type-num-base-line-height) var(--type-num-base-font-family);
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-liq-pane__caption {
+  margin: 0;
+  padding-inline: var(--space-inset-sm);
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-liq-pane__toolbar .cv-liq-pane__caption {
+  padding-inline: 0;
+}
+
+.cv-liq-pane__controls {
+  display: flex;
+  gap: var(--space-inset-xs);
+  margin-inline-start: auto;
+}
+
+.cv-liq-pane__feed {
+  min-block-size: 0;
+  overflow: auto;
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-liq-side {
+  white-space: nowrap;
+}
+
+.cv-liq-side__glyph {
+  color: var(--color-status-danger-default);
+}
+
+@media (forced-colors: active) {
+  /* D03 §10.4: the glyph and the word survive as CanvasText; the hue is not needed */
+  .cv-liq-side__glyph {
+    color: CanvasText;
+  }
+}
+
+.cv-liq-pane__title:focus-visible {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-hairline) * 1px);
+}
+
+.cv-liq-pane__retry,
+.cv-liq-pane__partial,
+.cv-liq-pane__loading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-xs) var(--space-inset-sm);
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+}
+
+.cv-liq-pane__retry-title {
+  margin: 0;
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+}
+
+.cv-liq-pane__partial .cv-liq-pane__caption,
+.cv-liq-pane__retry .cv-liq-pane__caption {
+  padding-inline: 0;
+}
+
+.cv-liq-pane__loading {
+  flex-direction: column;
+  align-items: stretch;
+}
