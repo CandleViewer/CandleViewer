@@ -753,20 +753,23 @@ class NotReady:
 @dataclass
 class Amends:
     """The exit service as a rule's amend drives it: `scope` answers `scoped` (the exit service's
-    refusal) or the order, and `amend` answers or raises `answer`; each amend recorded."""
+    refusal) or the order, and `amend` answers or raises each of `answers` in turn, then `answer`;
+    each amend recorded."""
 
     scoped: ExitOutcome | None = None
     answer: Any = None
     asked: list[Any] = field(default_factory=list)
+    answers: list[Any] = field(default_factory=list)
 
     async def scope(self, caller: Any, order_id: uuid.UUID) -> Any:
         return self.scoped if self.scoped is not None else SimpleNamespace(order_id=order_id)
 
     async def amend(self, scoped: Any, terms: Any, *, caller: Any, expected_seq: Any) -> Any:
         self.asked.append(terms)
-        if isinstance(self.answer, BaseException):
-            raise self.answer
-        return self.answer
+        answer = self.answers.pop(0) if self.answers else self.answer
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
 
 
 async def test_a_rule_cancel_the_exit_service_does_not_take_answers_and_never_raises() -> None:
@@ -927,15 +930,110 @@ async def test_a_selection_past_the_cap_is_never_ok_and_never_counted_done(
 
 async def test_the_breaker_never_cancels_a_reduce_only_exit_or_a_take_profit_it_reads() -> None:
     """24 §11.7, C-2.6: the breaker keeps a filter of its own beside the read's: a reduce-only
-    close and a take-profit row the read hands it never reach `cancel_admitted`, and the rule's
-    entry is cancelled."""
+    close, a reduce-only order the OMS classed as an opening entry (no position shown to reduce)
+    and a take-profit row the read hands it never reach `cancel_admitted`, and the rule's entry is
+    cancelled."""
     entry = _entry(seq=1)
     close = _entry(seq=2, reduce_only=True, intent="flatten")
     take_profit = _entry(seq=3, intent="take_profit")
+    opening = _entry(seq=4, reduce_only=True, intent="entry")
     once, alerts = Exits([ExitOutcome(kind="accepted", status=202)]), Alerts()
     breaker = RuleBreakerCancels(
         lambda: cast(Any, Composed(once)), Principals(frozenset({cr.ACCOUNT})),
-        Reading((entry, close, take_profit)), "demo", alerts,
+        Reading((entry, close, take_profit, opening)), "demo", alerts,
     )  # fmt: skip
     await breaker.cancel_resting(exit_request("scale_out", node="x7"))
     assert [i for i, *_ in once.cancelled] == [entry.id] and alerts.counted == [("x7", 1, 0)]
+
+
+async def test_a_rule_amend_tries_every_entry_and_answers_the_first_not_taken() -> None:
+    """24 §11.5 "Exits": an amend, as a cancel, tries every entry it selected, even past one not
+    taken (an exit only reduces risk), and answers the first that was not once all were tried;
+    check 8 judged each level first, so no entry is amended unjudged (C-2.6)."""
+    rows = (_entry(seq=1), _entry(seq=2), _entry(seq=3))
+    amends = Amends(answers=[
+        ExitOutcome(kind="accepted", status=202),
+        ExitOutcome(kind="refused", status=409, code="order_not_amendable"),
+        ExitOutcome(kind="accepted", status=202),
+    ])  # fmt: skip
+    amend = RuleAmendHandler(
+        "modify_stop_loss", lambda: cast(Any, Composed(cast(Any, amends))),
+        Principals(frozenset({cr.ACCOUNT})), Reading(rows), "demo",
+    )  # fmt: skip
+    move = exit_request("modify_stop_loss", {"mode": "absolute", "value": "58600"})
+    prepared = amend.prepare(move, cr.ACCOUNT, max_notional_usd=None)
+    answer = await amend.send(prepared, client_ref=REF)
+    assert (answer.answer, answer.error_code, answer.order_id) == (
+        "refused", "order_not_amendable", rows[1].id,
+    )  # fmt: skip
+    assert len(amends.asked) == 3
+
+
+async def test_a_selection_of_exactly_the_cap_is_ok_and_counts_nothing_not_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """24 §11.5 "Exits", §11.7: a read that holds exactly `RULE_ENTRIES_LIMIT` rows has nothing
+    past the cap: `cancel_all_orders` cancels each and is `ok`, and the breaker counts none not
+    done."""
+    monkeypatch.setattr(exits_module, "RULE_ENTRIES_LIMIT", 2)
+    rows = (_entry(seq=1), _entry(seq=2))  # the cap, and none more
+    principals = Principals(frozenset({cr.ACCOUNT}))
+    exits = Exits([ExitOutcome(kind="accepted", status=202)] * 2)
+    cancel = RuleCancelHandler(
+        "cancel_all_orders", lambda: cast(Any, Composed(exits)), principals, Reading(rows), "demo"
+    )
+    prepared = cancel.prepare(exit_request("cancel_all_orders"), cr.ACCOUNT, max_notional_usd=None)
+    answer = await cancel.send(prepared, client_ref=REF)
+    assert (answer.answer, len(exits.cancelled)) == ("accepted", 2)
+    once, alerts = Exits([ExitOutcome(kind="accepted", status=202)] * 2), Alerts()
+    breaker = RuleBreakerCancels(
+        lambda: cast(Any, Composed(once)), principals, Reading(rows), "demo", alerts
+    )
+    await breaker.cancel_resting(exit_request("scale_out", node="x9"))
+    assert alerts.counted == [("x9", 2, 0)]
+
+
+async def test_a_take_profit_move_with_only_tighten_off_leaves_the_orders_stop() -> None:
+    """24 §11.5 check 8: `only_tighten: false` asks for a loosening on a stop move alone; a
+    take-profit move with it is judged as any take-profit move (admitted, with a target), and its
+    amend names the take-profit side alone, so the order's stop stays as it is."""
+    principals, reading = Principals(frozenset({cr.ACCOUNT})), Reading((_entry(),))
+    params = {"mode": "absolute", "value": "63000", "only_tighten": False}
+    move = exit_request("modify_take_profit", params)
+    check = RuleStopCheck(principals, reading, Held((stored(),)), "demo")
+    assert await check.judge(move, cr.ACCOUNT) == STOP_ADMITTED
+    amends = Amends(answer=ExitOutcome(kind="accepted", status=202))
+    amend = RuleAmendHandler(
+        "modify_take_profit", lambda: cast(Any, Composed(cast(Any, amends))), principals,
+        reading, "demo",
+    )  # fmt: skip
+    prepared = amend.prepare(move, cr.ACCOUNT, max_notional_usd=None)
+    answer = await amend.send(prepared, client_ref=REF)
+    [terms] = amends.asked
+    assert answer.answer == "accepted" and list(terms.sides) == ["take_profit"]
+
+
+@pytest.mark.parametrize(
+    ("action_type", "params"),
+    [("cancel_order", {}),
+     ("modify_stop_loss", {"mode": "absolute", "value": "58600"}),
+     ("modify_take_profit", {"mode": "absolute", "value": "63000"}),
+     ("tighten_stop", {"mode": "absolute", "value": "58600"})],
+)  # fmt: skip
+async def test_a_cancel_order_or_an_amend_with_no_instance_symbol_is_invalid_params(
+    action_type: str, params: dict[str, Any]
+) -> None:
+    """24 §11.6: `cancel_order` and the three amends need the instance's symbol; on an
+    account-wide instance each answers `invalid_params` with nothing read or sent, and check 8
+    takes such an amend as no request, reading nothing, so the handler's answer is the action's."""
+    principals, reading = Principals(frozenset({cr.ACCOUNT})), Reading((_entry(),))
+    wide = ScopeInstanceRef("*@x", None, cr.ACCOUNT)
+    req = replace(exit_request(action_type, params), instance=wide)
+    kind = RuleCancelHandler if action_type == "cancel_order" else RuleAmendHandler
+    exits = Exits()
+    exit_ = kind(action_type, lambda: cast(Any, Composed(exits)), principals, reading, "demo")
+    answer = await exit_.send(exit_.prepare(req, cr.ACCOUNT, max_notional_usd=None), client_ref=REF)
+    assert (answer.answer, answer.error_code) == ("refused", "invalid_params")
+    check = RuleStopCheck(principals, reading, Held((stored(),)), "demo")
+    assert await check.judge(req, cr.ACCOUNT) == STOP_ADMITTED
+    assert reading.calls == [] and exits.cancelled == []

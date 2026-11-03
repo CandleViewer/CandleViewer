@@ -189,6 +189,7 @@ class Gated:
     moving: Any = True  # what the move answers: True, False, or an exception it raises
     dropped: list[tuple[str, str]] = field(default_factory=list)  # (rule, blocked_by) drops
     rows: Any = None  # a `RulesManager` check 1 reads the stored row from, else scripted verdicts
+    fire_alerts: Any = None  # the executor's alerts (AC-14, the partial fire), unbound by default
     executor: ActionExecutor = field(init=False)
 
     def __post_init__(self) -> None:
@@ -203,6 +204,7 @@ class Gated:
             records=self.records, audit=self.records, metrics=self.counted.metrics,
             handlers=bound_table(self.sent, self.answers, self.refuse), clock=self.clock,
             halts=self.halts, budget=self.budget, breaker=breaker, wall=lambda: self.wall,
+            alerts=self.fire_alerts,
         )  # fmt: skip
 
     async def move(self, rule_id: str) -> bool:
@@ -682,10 +684,13 @@ async def test_abort_on_first_skips_the_actions_remaining_accounts() -> None:
     assert gated.sent == [("a1", str(A)), ("a1", str(B)), ("a2", str(A))]
 
 
-@pytest.mark.parametrize("action_type", ["flatten_all_positions", "cancel_all_orders"])
+@pytest.mark.parametrize(
+    "action_type", ["flatten_all_positions", "cancel_all_orders", "tighten_stop"]
+)
 async def test_an_exit_tries_every_account_and_its_first_failure_decides(action_type: str) -> None:
-    """24 §11.5 "Exits": an exit does not take `abort_on_first`, as it only reduces risk: account A
-    refused, accounts B and C are still closed or cancelled, each recorded on its own; then the
+    """24 §11.5 "Exits": an exit (`oms_reduce`, `oms_cancel` or `oms_amend`) does not take
+    `abort_on_first`, as it only reduces risk: account A refused, accounts B and C are still
+    closed, cancelled or amended (check 8 admitting each), each recorded on its own; then the
     first account's failure decides for the fire, so `abort_remaining` stops the next action."""
     gated = Gated(refuse={A}, stop=_Stops({A, B, C}))
     await gated.run(action("a1", action_type, targets="all_accounts"), action("a2"))
@@ -694,6 +699,53 @@ async def test_an_exit_tries_every_account_and_its_first_failure_decides(action_
         ("a1", str(C), "ok", None), ("a2", str(A), "skipped", None),
     ]  # fmt: skip
     assert gated.sent == [("a1", str(A)), ("a1", str(B)), ("a1", str(C))]
+
+
+class _AheadFails(Records):
+    """`Records` whose first `rules.fired` write fails: the first account's write ahead."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fired_calls = 0
+
+    async def fired(self, fields: Any) -> None:
+        self.fired_calls += 1
+        if self.fired_calls == 1:
+            raise ConnectionError("the store refused the write")
+        await super().fired(fields)
+
+
+@dataclass
+class _FireAlerts(BreakerAlerts):
+    """The executor's alerts, each write-ahead alert by the node it names (AC-14)."""
+
+    writes: list[str] = field(default_factory=list)
+
+    async def write_ahead_failed(self, rule_id: str, run_id: uuid.UUID, node_id: str) -> None:
+        self.writes.append(node_id)
+
+
+@pytest.mark.parametrize("stop", ["write", "unread"])
+async def test_an_exit_stops_its_later_accounts_at_a_failed_write_or_an_unread_row(
+    stop: str,
+) -> None:
+    """24 §11.5 ("The records written ahead", check 1): an exit tries every account past a
+    refusal, never past a stop that ends the fire whatever `on_error` says. Account A's write
+    ahead fails, or check 1 cannot read A's row (`unread`, each skip then `mode_changed`):
+    accounts B and C are `skipped`, nothing is sent for any of them, and the failed write raises
+    the write-ahead alert once."""
+    alerts = _FireAlerts()
+    gated = Gated(records=_AheadFails() if stop == "write" else Records(), fire_alerts=alerts)
+    if stop == "unread":
+        gated.verdicts["a1"] = ["unread"]
+    exit_ = action("a1", "flatten_all_positions", targets="all_accounts", on_error="continue")
+    await gated.run(exit_)
+    why = None if stop == "write" else "mode_changed"
+    assert per_account(gated) == [
+        ("a1", str(A), "failed" if stop == "write" else "skipped", why),
+        ("a1", str(B), "skipped", why), ("a1", str(C), "skipped", why),
+    ]  # fmt: skip
+    assert gated.sent == [] and alerts.writes == (["a1"] if stop == "write" else [])
 
 
 async def test_revoked_grant_blocks_action_at_runtime() -> None:

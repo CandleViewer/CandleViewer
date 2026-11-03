@@ -38,11 +38,14 @@ its detail a generic sentence that never holds the id; a principal view gone sin
   manual entry, another rule's order or an algo's child, never a stop, a take-profit or a
   reduce-only exit (C-2.6). The amends move each resting limit entry of the rule on the
   instance's symbol through the exit service's `scope` and `amend`, the rule's request
-  (`ExitCaller.origin`), its ratchet last; the level is `stop_level`'s.
+  (`ExitCaller.origin`), its ratchet last; the level is `stop_level`'s. A cancel and an amend
+  each try every entry selected, and the first not taken answers once all were tried.
 - **Check 8** (`RuleStopCheck`; BQ-2): the amend writer's own comparison (`oms/stop_ratchet.py`)
   on the level each target would take, against its own stop and the position's stop at the
   venue on the same side; a loosening is `native_sl` with what `sl.loosen_refused` records; a
-  move with no target is the position's, `unavailable`; a cancel naming a stop-loss `native_sl`.
+  move with no target is the position's, `unavailable`; a cancel naming a stop-loss `native_sl`;
+  an amend that is no request (parameters that do not parse, or no instance symbol) is judged
+  by no read, as the handler answers it `invalid_params`.
 - **The circuit breaker's cancels** (`RuleBreakerCancels`; BQ-10): the tripped rule's resting
   entries on every account of the environment, each `cancel_admitted` with the reason
   `rule_circuit_breaker` (`critical`), as the owner and with no principal check (an exit is
@@ -731,14 +734,16 @@ class RuleAmendHandler(_ExitBase):
             owner_scope(principal.owner, account), principal.actor, None, principal.origin
         )
         first: HandlerAnswer | None = None
-        for row, level in zip(targets, levels, strict=True):
+        worst: HandlerAnswer | None = None
+        for row, level in zip(targets, levels, strict=True):  # every entry tried, as the cancels
             if level is None:  # held above
                 return _INVALID
             answer = await self._amend(exits, caller, row, level)
-            if answer.answer != "accepted":
-                return answer
-            first = first or answer
-        return first or HandlerAnswer("done")
+            if answer.answer == "accepted":
+                first = first or answer
+            else:
+                worst = worst or answer  # the first not taken answers once all were tried
+        return worst or first or HandlerAnswer("done")
 
     async def _amend(
         self, exits: _Exits, caller: ExitCaller, row: OrderRow, level: Decimal
@@ -778,10 +783,10 @@ class RuleStopCheck:
             return StopVerdict(refused="native_sl") if purpose == "stop_loss" else STOP_ADMITTED
         if req.action_type not in AMEND_TYPES:  # a type no port judges: fail closed
             return StopVerdict(refused="native_sl")
-        if not isinstance(params, StopMoveParams) or account_id is None:
+        symbol = req.instance.symbol  # none on an account-wide instance: no amend to judge
+        if not isinstance(params, StopMoveParams) or account_id is None or not symbol:
             return STOP_ADMITTED  # no request: the handler answers `invalid_params`, nothing sent
         stop = req.action_type != "modify_take_profit"
-        symbol = req.instance.symbol
         if stop and not params.only_tighten:  # asks for a loosening: refused as one
             return StopVerdict(refused="native_sl", loosening=Loosening(symbol=symbol))
         targets = amend_targets(
