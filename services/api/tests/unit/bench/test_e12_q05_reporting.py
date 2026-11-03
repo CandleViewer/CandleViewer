@@ -176,6 +176,27 @@ def test_scrub_keeps_quotes_so_json_stays_valid() -> None:
     assert json.loads(out) == {"apiKey": "[REDACTED]", "n": 3, "token": "[REDACTED]"}
 
 
+@pytest.mark.parametrize(
+    "raw,secret",
+    [
+        ("password: 'p w'", " w"),
+        ("token='a\\'b c' tail", "b c"),
+        ("{'apiKey': 'k 1'}", "k 1"),
+    ],
+)
+def test_scrub_handles_single_quoted_values(raw: str, secret: str) -> None:
+    out = scrub(raw)
+    assert secret not in out and "'[REDACTED]'" in out
+
+
+def test_scrub_single_quote_keeps_what_follows() -> None:
+    assert scrub("password: 'p w' next=1") == "password: '[REDACTED]' next=1"
+
+
+def test_scrub_redacts_an_unterminated_single_quoted_value() -> None:
+    assert "oops" not in scrub("secret: 'oops here")
+
+
 def test_scrub_redacts_an_unterminated_quoted_value() -> None:
     assert "oops" not in scrub('{"secret": "oops')
 
