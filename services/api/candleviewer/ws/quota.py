@@ -8,8 +8,9 @@ specs. Every value is interim until the Owner ratifies it (`ws/limits.py`).
   at the faster of its effective throttle and its bucket (`column_points`), floored at
   `MIN_THROTTLE_MS`: a throttle above the bucket still sends one frame per column, and one below it
   is a margin, not a frame rate. A `structured` one weighs `STRUCTURED_HEATMAP_WEIGHT` times its
-  binary points, G-03's per-row bound ratio; a binary one's window that leaves structured for an
-  incomplete column is one window and keeps the binary weight. A deep `book.*`
+  binary points, G-03's per-row bound ratio, and so does one whose window cannot hold its depth
+  (`heatmap_window_cannot_hold`), whatever its `encoding`; one whose window holds its depth keeps
+  the binary weight in the binary encoding. A deep `book.*`
   (depth 200 or 500) weighs the measured rows of one depth-200 publish
   (`DEEP_BOOK_ROWS_PER_PUBLISH`), scaled by depth, at its publisher's rate. Every other family
   weighs 0 and is bounded by its own caps; `system` is never charged. `WEIGHTS` names every
@@ -65,6 +66,7 @@ from candleviewer.ws.limits import (
     QUOTA_POINTS_PER_CONNECTION,
     QUOTA_POINTS_PER_USER,
     STRUCTURED_HEATMAP_WEIGHT,
+    heatmap_window_cannot_hold,
 )
 
 if TYPE_CHECKING:
@@ -158,12 +160,14 @@ def _book(topic: ParsedTopic, effective: Mapping[str, Any]) -> Charge:
 
 def _heatmap(topic: ParsedTopic, effective: Mapping[str, Any]) -> Charge:
     """A `heatmap.*`: its columns at the faster of its effective throttle and its bucket, the
-    throttle leg a margin (a column is published once, at its close); a `structured` one weighs
-    `STRUCTURED_HEATMAP_WEIGHT` times that. Its spec, the producer's cost, is the same in both."""
+    throttle leg a margin (a column is published once, at its close); `STRUCTURED_HEATMAP_WEIGHT`
+    times that when it is `structured` or its window cannot hold its depth, whatever its encoding.
+    Its spec, the producer's cost, is the same either way."""
     spec = spec_of(topic.symbol or "", effective)
     period = max(MIN_THROTTLE_MS, min(int(effective["throttle_ms"]), spec.time_bucket_ms))
     points = column_points(spec.depth, period)
-    if effective.get("encoding") == "structured":
+    structured = effective.get("encoding") == "structured"
+    if structured or heatmap_window_cannot_hold(spec.depth, spec.price_grouping):
         points *= STRUCTURED_HEATMAP_WEIGHT
     return Charge(points, spec)
 

@@ -8,6 +8,7 @@ refuses to write such a column, so a round trip is total. The shared fuzz corpus
 from __future__ import annotations
 
 import struct
+from typing import Any
 
 import pytest
 from hypothesis import example, given
@@ -111,3 +112,11 @@ def test_the_encoder_refuses_a_column_whose_step_is_not_positive() -> None:
     for step in (0, -1):
         with pytest.raises(FrameEncodeError, match="price_step is not positive"):
             encode(Frame(HEATMAP_COLUMN, ((1, 2),), 0, 1, 3, 0, prefix=(100, 99_000, step)))
+
+
+@pytest.mark.parametrize("prefix", [(100, 99_000), (100, 99_000, None), (100, 99_000, "1")])
+def test_the_encoder_refuses_a_malformed_prefix_as_its_own_error(prefix: Any) -> None:
+    """A prefix that is not the layout's three ints is refused `FrameEncodeError`, the encoder's
+    one error, never an `IndexError` or a `TypeError` from the bounds check."""
+    with pytest.raises(FrameEncodeError, match="a malformed prefix"):
+        encode(Frame(HEATMAP_COLUMN, ((1, 2),), 0, 1, 3, 0, prefix=prefix))
