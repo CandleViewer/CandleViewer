@@ -67,6 +67,27 @@ function typeNameFor(id, title) {
     .join("");
 }
 
+/** The keywords of a root `allOf` member that only constrains values and adds no type. */
+const CONDITIONAL_ONLY = new Set(["if", "then", "else", "description", "$comment"]);
+
+/**
+ * The schema as json-schema-to-typescript compiles it. A root `allOf` makes the root an anonymous
+ * alias, so the comment on each of its `$defs` reads "`undefined`'s JSON-Schema". Where the root
+ * has `$defs`, the root `allOf` members that hold only `if` / `then` / `else` are left out here:
+ * the generator emits no type for them either way. The bundle the validators read keeps them.
+ */
+function forTypes(schema) {
+  if (!schema.$defs || !Array.isArray(schema.allOf)) {
+    return schema;
+  }
+  const typed = schema.allOf.filter((member) =>
+    Object.keys(member).some((key) => !CONDITIONAL_ONLY.has(key)),
+  );
+  const rest = { ...schema };
+  delete rest.allOf;
+  return typed.length > 0 ? { ...rest, allOf: typed } : rest;
+}
+
 async function main() {
   const artefact = JSON.parse(readFileSync(schemaPath, "utf8"));
   const schemasById = artefact.schemas;
@@ -89,7 +110,7 @@ async function main() {
     }
     exportedNames.push(typeName);
 
-    const ts = await compile(schema, typeName, {
+    const ts = await compile(forTypes(schema), typeName, {
       cwd: repoRoot,
       bannerComment: "",
       style: { semi: true, singleQuote: false },

@@ -1805,7 +1805,20 @@ export interface Error {
 }
 
 // Source: cv://ws/v1/system.schema.json
-export type System = {
+/**
+ * This interface was referenced by `System`'s JSON-Schema
+ * via the `definition` "safetyClass".
+ */
+export type SafetyClass =
+  | "native_sl_missing"
+  | "sl_attach_failed"
+  | "liquidation_risk"
+  | "risk_auto_flatten"
+  | "risk_lockout"
+  | "unwind_incomplete"
+  | "order_entry_halted";
+
+export interface System {
   kind:
     | "health"
     | "kill_switch"
@@ -1871,22 +1884,9 @@ export type System = {
    */
   since_ms?: number;
   safety_classes?: SafetyCoverage[];
-};
+}
 /**
- * This interface was referenced by `undefined`'s JSON-Schema
- * via the `definition` "safetyClass".
- */
-export type SafetyClass =
-  | "native_sl_missing"
-  | "sl_attach_failed"
-  | "liquidation_risk"
-  | "risk_auto_flatten"
-  | "risk_lockout"
-  | "unwind_incomplete"
-  | "order_entry_halted";
-
-/**
- * This interface was referenced by `undefined`'s JSON-Schema
+ * This interface was referenced by `System`'s JSON-Schema
  * via the `definition` "killSwitch".
  */
 export interface KillSwitch {
@@ -1899,7 +1899,7 @@ export interface KillSwitch {
   reason?: string | null;
 }
 /**
- * This interface was referenced by `undefined`'s JSON-Schema
+ * This interface was referenced by `System`'s JSON-Schema
  * via the `definition` "safetyCoverage".
  */
 export interface SafetyCoverage {

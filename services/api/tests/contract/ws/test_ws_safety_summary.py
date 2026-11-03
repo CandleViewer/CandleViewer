@@ -86,7 +86,7 @@ def test_safety_frame_refuses_a_class_outside_the_enum(safety_class: str) -> Non
         pytest.param({"_at_ms": 1}, id="in-process-time"),
     ],
 )
-def test_safety_frame_refuses_any_field_beyond_its_six(extra: dict[str, Any]) -> None:
+def test_safety_frame_refuses_any_field_beyond_its_seven(extra: dict[str, Any]) -> None:
     assert _errors(_RAISED | extra)
 
 
