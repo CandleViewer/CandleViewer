@@ -264,6 +264,21 @@ describe("REST: at first paint and after each snapshot, never polled (BQ-9)", ()
     expect(api.queries).toHaveLength(3);
   });
 
+  it("the backfills asked inside one interval share one owed read, and the reads stop after it", async () => {
+    const api = fakeApi();
+    start(api);
+    await settle();
+    for (let i = 0; i < 4; i += 1) {
+      handle()?.push(snap(snapshotBody()));
+      await settle(FRAME_MS);
+    }
+    await settle(BACKFILL_INTERVAL_MS);
+    const afterOwed = api.queries.length;
+    expect(afterOwed).toBe(3); // first paint, the first snapshot's, the one owed at the interval's end
+    await settle(BACKFILL_INTERVAL_MS * 3);
+    expect(api.queries).toHaveLength(afterOwed); // never polled (BQ-9)
+  });
+
   it("a settled narrowing reads REST again, to bring back who stayed", async () => {
     const api = fakeApi();
     const accountsApi = directory();

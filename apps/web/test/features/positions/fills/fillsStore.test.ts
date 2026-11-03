@@ -118,6 +118,40 @@ describe("No double counting: the same exec_id on the WS stream and again throug
     expect(store.getSnapshot().dedupeHits).toBe(12);
   });
 
+  it("a fill a narrowing dropped counts again when both sources bring it back", () => {
+    const store = started();
+    store.applyFrames([snap(snapshotBody())]);
+    store.applyRest(restItems());
+    store.commit();
+    expect(store.getSnapshot().dedupeHits).toBe(12);
+    store.applyFrames([reset("narrowed")]);
+    store.setAccounts(withoutSub2);
+    const served = snapshotBody().executions.filter((i) => i.exchange_account_id !== SUB2);
+    store.applyFrames([snap({ executions: served })]);
+    store.applyRest(restItems());
+    store.commit();
+    expect(store.getSnapshot().dedupeHits).toBe(12 + 11); // the 11 served fills, each again
+  });
+
+  it("a fill the bound evicted counts again when both sources bring it back", () => {
+    const store = started();
+    const many = Array.from({ length: MAX_FILLS + 10 }, (_, i) => ({
+      ...newFill,
+      id: `0e000000-0000-4000-8000-${i.toString(16).padStart(12, "0")}`,
+      exec_id: `x${i}`,
+      ts_ms: 1_792_000_000_000 + i,
+    }));
+    const oldest = many.slice(0, 10);
+    store.applyFrames([snap({ executions: many })]);
+    store.applyRest(oldest); // both sources bring the ten oldest: ten hits
+    store.commit(); // and the bound evicts them
+    expect(store.getSnapshot().dedupeHits).toBe(10);
+    store.applyFrames([delta({ executions: oldest })]);
+    store.applyRest(oldest);
+    store.commit();
+    expect(store.getSnapshot().dedupeHits).toBe(20);
+  });
+
   it("a repeat from the same source changes nothing to publish", () => {
     const store = started();
     store.applyRest(restItems());
@@ -407,16 +441,39 @@ describe("the directory (SR-E29-11, in depth)", () => {
 });
 
 describe("revocation and narrowing (SR-E29-11, E29-D05 F-02)", () => {
-  it("revoked: every fill leaves at once, each account gets its line, and no read brings one back", () => {
+  /** The 12 snapshot fills committed, then a revocation; `late` sets REST's 14 out after it. */
+  function revoked(late = false): Store {
     const store = started();
     store.applyFrames([snap(snapshotBody())]);
     store.commit();
     store.applyFrames([reset("revoked")]);
-    store.applyRest(restItems());
+    if (late) store.applyRest(restItems());
     store.commit();
-    const s = store.getSnapshot();
-    expect(s).toMatchObject({ status: "revoked", rows: [] });
-    expect(s.withdrawn.map((w) => w.label).sort()).toEqual(["Main", "Sub-1", "Sub-2"]);
+    return store;
+  }
+
+  it("revoked: every fill leaves", () => {
+    expect(revoked().getSnapshot()).toMatchObject({ status: "revoked", rows: [] });
+  });
+
+  it("revoked: each account that held fills gets its line", () => {
+    const { withdrawn } = revoked().getSnapshot();
+    expect(withdrawn.map((w) => w.label).sort()).toEqual(["Main", "Sub-1", "Sub-2"]);
+  });
+
+  it("revoked: no read brings a fill back", () => {
+    expect(revoked(true).getSnapshot().rows).toEqual([]);
+  });
+
+  it("after a revocation no read brings back an account that held no rows when it came", () => {
+    const store = started();
+    const mainOnly = snapshotBody().executions.filter((i) => i.exchange_account_id === MAIN);
+    store.applyFrames([snap({ executions: mainOnly })]);
+    store.commit();
+    store.applyFrames([reset("revoked")]);
+    store.applyRest(restItems()); // Sub-1 and Sub-2 held none: no line of theirs bars them
+    store.commit(true);
+    expect(store.getSnapshot().rows).toEqual([]);
   });
 
   it("narrowed: every fill leaves; the directory names who left; REST brings back who stayed", () => {
@@ -455,6 +512,17 @@ describe("revocation and narrowing (SR-E29-11, E29-D05 F-02)", () => {
     store.applyRest(restItems()); // a read in flight: Sub-1 and Sub-2 held no rows to name them
     store.commit();
     expect(accountsOf(store).size).toBe(0);
+  });
+
+  it("a snapshot serving only some candidates leaves the others barred", () => {
+    const store = started();
+    store.applyFrames([snap(snapshotBody())]);
+    store.commit();
+    const served = snapshotBody().executions.filter((i) => i.exchange_account_id !== SUB2);
+    store.applyFrames([reset("narrowed"), snap({ executions: served })]);
+    store.applyRest(restItems());
+    store.commit();
+    expect(accountsOf(store).has(SUB2)).toBe(false);
   });
 
   it("a snapshot serving every candidate settles the narrowing too", () => {

@@ -113,8 +113,12 @@ describe("slippage's other forms (D-7; D03 §3.4 board 05)", () => {
     expect(slippageOf(NO_FILLS, "buy", intentOf(order("limit")), TICK)).toBeNull();
   });
 
-  it("a price shows one decimal more than its tick; a zero tick is none", () => {
-    expect([pricePlaces("0.10"), pricePlaces("0")]).toEqual([2, null]);
+  it("a price shows one decimal more than its tick", () => {
+    expect(pricePlaces("0.10")).toBe(2);
+  });
+
+  it("a zero tick shows no price places", () => {
+    expect(pricePlaces("0")).toBeNull();
   });
 });
 
