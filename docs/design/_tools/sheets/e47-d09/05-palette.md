@@ -71,7 +71,7 @@ Board 05 of ten (§0 L72: SCR-012 deltas: the binding column with "unbound", an 
 
 ## Sources (1)
 
-- spec docs/design/E47/E47-D09.md md5 690029fa (§0 L72); hand-off docs/design/E47/E47-D09-handoff.md md5 d50c31f7 (§H L105); registry at 4c662fd5b apps/web/src/keymap/keymap.json md5 eb409e85 and apps/web/src/keymap/reserved-keys.json md5 5683c37f; tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
+- spec docs/design/E47/E47-D09.md md5 26cc703c (§0 L72); hand-off docs/design/E47/E47-D09-handoff.md md5 bbb18e25 (§H L105); registry at 4c662fd5b apps/web/src/keymap/keymap.json md5 eb409e85 and apps/web/src/keymap/reserved-keys.json md5 5683c37f; tick size: packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a
 
 ## Tokens (39)
 

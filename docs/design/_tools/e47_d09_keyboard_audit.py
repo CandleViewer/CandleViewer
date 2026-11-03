@@ -35,7 +35,7 @@ form follows the E47-D04 tool (the same modes, anchored values, default-deny pin
    form validity never T2; §3, §4 and §8 cite it; RL-1's Save is a form-validity state, never T2;
    W-8 names its state key and vocabulary owner; the hand-off lists CMP-079 and CMP-019), G-NORM
    (`05` §3.5 owns every K-n and §1.4 mirrors the same ids, each citing `05` §3.5; `05`:36 and
-   `05`:88 fixed; §3.2's table byte-identical to D04's merge), G-HEUR, G-WALK (at most ten
+   `05`:88 fixed; §3.2's cells as D04's merge, its prose kept), G-HEUR, G-WALK (at most ten
    items), G-OWNER (G-ledger owners are tickets, never an agent), G-UNMERGED, G-URL, G-UNTOUCHED
    (only this ticket's files, `05`, the boards and their kit differ from the merge base with
    origin/main), G-BUDGET, G-MUTLIST.
@@ -44,7 +44,7 @@ form follows the E47-D04 tool (the same modes, anchored values, default-deny pin
    a line-shape tag per region) in `e47_d09_ruled_pins.txt`. Anchored values are cut out of the
    pinned text (G-ANCHOR owns them). `--repin-ruled` is the only writer and refuses while a
    placeholder is unfilled. A pin finding in a region another gate already FAILs prints as NOTE.
-5. **--self-test** applies every mutation (M-n) and pin probe (P-n) in memory with the values
+5. **--self-test** applies every mutation (M-n) and probe (P-n) in memory with the values
    frozen at the filled baseline; each must add exactly one FAIL, from the gate it names; the
    texts on disk are checked byte-identical afterwards (sha256). Output is ASCII.
 
@@ -787,6 +787,15 @@ PROBES: tuple[Mutation, ...] = (
         "through the drag's confirm path",
         "through a confirm path",
     ),
+    Mutation(
+        "P-3",
+        "re-word `05` §3.2's prose",
+        "G-NORM",
+        "norm",
+        "### 3.2 ",
+        "Research found no reusable default keymap",
+        "Research found a reusable default keymap",
+    ),
 )
 
 
@@ -919,7 +928,8 @@ def g_quote(t: Texts) -> list[Finding]:
 def g_arow(t: Texts) -> list[Finding]:
     out: list[Finding] = []
     _, _, region = section(t.hand, "## §C")
-    for row in first_table(t.hand, "## §C")[1:]:
+    rows = first_table(t.hand, "## §C")[1:] + first_table(t.hand, "## §J")[1:]
+    for row in rows:
         if len(row) < 5:
             continue
         if not cite_targets(row[2]) or row[3].replace("\\|", "|") not in cited_text(row[2]):
@@ -1135,6 +1145,15 @@ def norm_cells(text: str) -> list[str]:
     return [ln for ln in norm_section(text, "### 3.2 ") if ln.startswith("|")]
 
 
+def norm_prose(text: str) -> list[str]:
+    return [ln for ln in norm_section(text, "### 3.2 ") if ln.strip() and not ln.startswith("|")]
+
+
+def kept_in_order(base: list[str], now: list[str]) -> bool:
+    it = iter(now)
+    return all(any(ln == x for x in it) for ln in base)
+
+
 def g_norm(t: Texts) -> list[Finding]:
     bad: list[str] = []
     _, _, r14 = section(t.spec, "### 1.4")
@@ -1158,8 +1177,12 @@ def g_norm(t: Texts) -> list[Finding]:
         bad.append("the `05` §3.3 node-graph pointer is not fixed")
     # BQ-2 locks §3.2's cells: its table rows equal D04's merge (which edited two cells, its own
     # ruling); a later "As built" note under the table (E47-S08) is not a cell
-    if norm_cells(t.norm) != norm_cells(git("show", f"{D04_PIN}:{NORM_REL}")):
+    at_d04 = git("show", f"{D04_PIN}:{NORM_REL}")
+    if norm_cells(t.norm) != norm_cells(at_d04):
         bad.append("`05` §3.2 (the locked keymap) differs from the base")
+    # its prose too: every line D04's merge has stays, in order; a later note may follow
+    if not kept_in_order(norm_prose(at_d04), norm_prose(t.norm)):
+        bad.append("`05` §3.2's prose differs from the base")
     return [("G-NORM", b, "norm", "") for b in bad] + (spec_bad if unowned or not mirror else [])
 
 

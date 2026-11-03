@@ -18,7 +18,7 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 | Essential exceptions     | [x] none                                  | [x] none                      | [x] none                     | [x] none                                   |
 | Tokens used              | [x] E10-D03 §6.1's                        | [x] E10-D03 §6.2's            | [x] CMP-064's                | [x] the pending line: §0 board 01          |
 | Data contract            | [ ] NO: D09-G5                            | [x] the registry              | [x] the registry             | [ ] NO: D09-G4, D09-G6                     |
-| Contrast                 | [ ] measured when boards 05, 10 are drawn | [ ] board 07                  | [ ] board 08                 | [ ] boards 01–04                           |
+| Contrast                 | [x] spec §21; dark fails, see D09-A19, §J | [ ] board 07                  | [ ] board 08                 | [ ] boards 01–04                           |
 | Storybook                | [x] §D                                    | [x] §D                        | [x] §D                       | [x] §D                                     |
 | Sign-off                 | [ ] owner approval pending                | [ ] owner approval pending    | [ ] owner approval pending   | [ ] owner approval pending                 |
 
@@ -119,7 +119,7 @@ The boards of spec §0, on page `E47-D09`; frames named `<surface>/<state> · <t
 | 09    | `inert/journal · dark`; inset `inert/journal-200 · dark` (200 % and the text scale)                                                                                |
 | 10    | the frames of 05 · hc                                                                                                                                              |
 
-Contrast: every ratio (the "unbound" word, the pending label, the lock row) is measured with the repo contrast tool in each theme when its board is drawn; none is quoted before.
+Contrast: every ratio (the "unbound" word, the pending label, the lock row) is measured with the repo contrast tool in each theme when its board is drawn; none is quoted before. Boards 05, 06 and 10's T2 rows on `color.surface.selected` are measured in spec §21: dark fails, raised as D09-A19 (§J).
 
 ## §I Summary for #1308
 
@@ -130,3 +130,11 @@ Contrast: every ratio (the "unbound" word, the pending label, the lock row) is m
 5. The palette lists all 75<!--=COUNT:palette--> commands with their current binding or "unbound"; the cheatsheet is searchable by action or key and shows remaps.
 6. The inert message says where an action works; SCR-113 reports conflicts before Save; refusals name no internals.
 7. The chart keys are E06-D03's and the node graph E37-D02's, with node Move mode added and the pan through it; BQ-0 … BQ-15 are RULED as the defaults (comments 6566806943 and 6567605660).
+
+## §J After the boards: the contrast row (PROPOSED)
+
+§C's shape, one row the drawn boards raised (spec §21, Contrast); its Old is verbatim on its cited line (the tool checks it).
+
+| A       | Target                 | Field (`file`:line) | Old                                      | New                                                                                                                                                                                                                             | Applied by                            |
+| ------- | ---------------------- | ------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| D09-A19 | E09-D09 T2, the visual | D09E09:49           | in `color.text.tertiary`; a `lock` glyph | insert after: ; on a row in `color.surface.selected` (the palette's active row) the label and the glyph take `color.text.secondary` (`text.tertiary` there is 3.98:1 dark, under `05` §5 item 1's 4.5:1; E47-D09 §21; PROPOSED) | the E09-D09 owner (the T2 vocabulary) |
