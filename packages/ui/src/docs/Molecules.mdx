@@ -5,9 +5,9 @@ import { Meta } from "@storybook/addon-docs/blocks";
 # Molecules
 
 `CMP-040..069` in `docs/plan/15-component-catalogue.md`: form fields, menus, tabs, dialogs, toasts,
-tables and cards; and six components catalogued in other bands: CMP-079 RbacGate, CMP-160
-SymbolSearchInput, CMP-161 WatchlistRow, CMP-162 WatchlistGroupTabs, CMP-213 FuzzyList and CMP-219
-SymbolPicker. A component's stories live under
+tables and cards; and seven components catalogued in other bands: CMP-079 RbacGate, CMP-099
+PrintExportBar, CMP-160 SymbolSearchInput, CMP-161 WatchlistRow, CMP-162 WatchlistGroupTabs, CMP-213
+FuzzyList and CMP-219 SymbolPicker. A component's stories live under
 `Molecules/<Component>` and ship with the component (E05-S01..S04).
 
 ## RbacGate (CMP-079)
@@ -902,3 +902,24 @@ actions and mounts with the ticket that wires them (E29-S01's ruling, BQ-3).
 Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): both halves grow with their text and the split
 button widens to its label's full width, never truncating a verb (E29-D02 D-8); SCR-063's Actions column widens with
 it, and a two-line T2 item in the ▾ menu wraps and grows (E29-D02 §11.5).
+
+### PrintExportBar (CMP-099, one APG Button per format)
+
+| Keys                    | Action                                                                           |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| Tab / Shift+Tab         | Each format's button is its own stop, in the host's order.                       |
+| Enter / Space           | Starts that format's export (`onExport`).                                        |
+| Enter / Space (running) | Nothing is sent while `aria-busy`; focus stays. Busy is never T2 (E29-D04 §4.2). |
+
+| Element       | Role             | Name                                                | ARIA                                                                  |
+| ------------- | ---------------- | --------------------------------------------------- | --------------------------------------------------------------------- |
+| bar           | none             | —                                                   | A plain row of buttons: each button's words name its format.          |
+| format button | button (CMP-001) | "Export CSV" (E29-D03:297); "Export PDF" (PROPOSED) | Running: `aria-busy="true"`, the label kept, a CMP-014 arc before it. |
+
+A running export keeps "Export CSV" in place with the arc leading it (CMP-038's busy form, E29-D03:200), so the button
+widens by the arc and its gap; under reduced motion the arc stands still. The bar has no live region: the export's
+progress, done and failed lines and the CSV's watermark line are the host's (SCR-078's footer, CMP-027 and the file).
+Export is a read, so nothing in the bar is T2 or disabled, offline included (E29-D03 §3.7).
+
+Text resize (`05` §5 item 7: 200 % zoom and the in-app text scale): each button grows with its label, never
+truncating it, and the bar wraps a second button onto a new line rather than clip it.
