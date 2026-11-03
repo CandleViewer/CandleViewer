@@ -26,7 +26,7 @@ const down = (cause: OfflineCause, closeCode?: number, lost = LOST): EngineEvent
 /** Up, then lost at `T0` with data 12 s before; the first attempt is due 4 s later. */
 const dropped = (...more: EngineEvent[]) => up(retry(LOST), ...more);
 const at = (ws: WsState, ms = 0, privateFeedDown = false) =>
-  R.connectionRegion(ws, T0 + ms, { privateFeedDown });
+  R.connectionRegion(ws, T0 + ms, { privateFeedDown, stopsConfirmed: true });
 const ORDERS_OFF = "New orders off; cancel and close remain available, confirmed over the server.";
 const STOPS = "Exchange-side stops still protect open positions; app-managed rules are paused.";
 

@@ -15,6 +15,8 @@ import {
   ShellCanvasOverlaySlot,
   ShellConnectionSlot,
 } from "../../../src/features/app-shell/slots";
+import { positionsApi } from "../../../src/features/positions/api";
+import { getReassurance } from "../../../src/features/reconciliation/reassurance";
 import { INITIAL_DEGRADED_FACTS } from "../../../src/features/system-states/degradedIssues";
 import { REFRESH_SENT_KEY, accessToken } from "../../../src/lib/auth/accessToken";
 import { bootViewAs, resetViewAs, startViewAsSync } from "../../../src/lib/auth/viewAsContext";
@@ -27,6 +29,7 @@ import {
   setShellState,
   type ConnectionState,
   type HeldViewAs,
+  type Me,
 } from "../../../src/shell/bootstrap/store.js";
 import {
   OFF,
@@ -281,6 +284,36 @@ describe("CMP-077 region: the 1 Hz clock", () => {
   });
 });
 
+describe("CMP-077 region: the stops clause needs the stream (E29-S07, BQ-7, C-2.6)", () => {
+  const A = "a1000000-0000-4000-8000-00000000000a";
+  const ME = { accounts: [{ exchange_account_id: A, label: "Sub-1" }] } as unknown as Me;
+
+  it("a held verdict is claimed while the stream is live, and not while the link is up and it is not", async () => {
+    vi.spyOn(positionsApi, "listPositions").mockResolvedValue({
+      kind: "ok",
+      items: [],
+      aggregates: [],
+    });
+    act(() => setShellState({ me: ME }));
+    // the reassurance watch consumes the `positions` topic: an idle handle, no frame arrives
+    const idle = { read: () => [], release: () => undefined };
+    act(() => setActiveClient({ ...client, consume: () => idle } as unknown as WsClientHandle));
+    render(<ShellBannerSlot />);
+    const live = run(connecting, authOk(OFF), stream("live"), shutdown);
+    go(live);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300); // the read's answer and the watch's first drain
+    });
+    expect(getReassurance().get(A)?.kind).toBe("true");
+    expect(region()).toHaveTextContent("exchange-side stops still protect open positions");
+    go(reduce(live, stream("resyncing"))); // the link is up; the watch's baseline is not
+    expect(region()).not.toHaveTextContent("stops still protect");
+    expect(region()).toHaveTextContent(
+      "Cancel and close still work; app-managed rules are paused.",
+    );
+  });
+});
+
 describe("CMP-077 region: announcements through the shell announcer (§11)", () => {
   function mountBoth(): Node[] {
     const said = watchAssertive();
@@ -301,8 +334,10 @@ describe("CMP-077 region: announcements through the shell announcer (§11)", () 
     act(() => setShellState({ connection }));
     go(next);
   };
+  // E29-S07 (#1028, BQ-7 ruled 6610918411): no account is confirmed in these sessions (`/me` names
+  // none), so the stops clause is dropped (fail closed); `reassurance.test.tsx` covers it kept.
   const ROW_1 =
-    "Disconnected. New orders off. Cancel and close still work, confirmed over the server. Exchange-side stops still protect open positions.";
+    "Disconnected. New orders off. Cancel and close still work, confirmed over the server.";
   const DOWN: ConnectionState = { kind: "offline", cause: "backend_unreachable" };
 
   // The two sources in separate commits, in either order: the chip never speaks, the region once.
@@ -466,7 +501,7 @@ describe("CMP-077 region: announcements through the shell announcer (§11)", () 
     expect(said.map((p) => p.textContent)).toEqual([
       "Offline — retry stopped. New orders off. Cancel and close still work, confirmed over the server.",
       "Order entry off — trading frozen by the owner. Cancel still works.",
-      "Order entry off — backend restarting. Cancel and close still work; exchange-side stops still protect open positions; app-managed rules are paused.",
+      "Order entry off — backend restarting. Cancel and close still work; app-managed rules are paused.",
     ]);
   });
 });
