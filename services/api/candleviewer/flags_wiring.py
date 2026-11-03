@@ -263,8 +263,9 @@ class HubSessions:
 class RecorderSlot:
     """Maintenance mode's `RecorderControl` (#5629), bound by `create_app` once the recorder is
     composed, which happens after the flags: `bind` it once, before the lifespan starts the poll.
-    Unbound (a backend with no recorder), a pause is a logged no-op, as an unbound port is in
-    `MaintenanceController`, and a resume does nothing."""
+    Unbound (a backend with no recorder), a pause is a logged no-op and a resume does nothing.
+    Its event is its own, `maintenance_recorder_slot_unbound`: the controller's
+    `maintenance_recorder_pause_unavailable` means no port at all, which a runtime never builds."""
 
     def __init__(self) -> None:
         self._target: RecorderControl | None = None
@@ -273,6 +274,11 @@ class RecorderSlot:
     def bound(self) -> bool:
         return self._target is not None
 
+    @property
+    def bound_target(self) -> RecorderControl | None:
+        """The recorder control `bind` was given, else `None` (the composition test reads it)."""
+        return self._target
+
     def bind(self, target: RecorderControl) -> None:
         if self._target is not None:
             raise RuntimeError("the maintenance recorder is bound once")
@@ -280,7 +286,7 @@ class RecorderSlot:
 
     async def pause(self, reason: str) -> None:
         if self._target is None:
-            _log().warning("maintenance_recorder_pause_unavailable")
+            _log().warning("maintenance_recorder_slot_unbound")
             return
         await self._target.pause(reason)
 

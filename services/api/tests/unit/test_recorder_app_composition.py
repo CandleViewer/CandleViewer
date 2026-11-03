@@ -80,3 +80,11 @@ def test_the_apps_recorder_anchors_read_the_ingestion_books_lazily(app: Any) -> 
     books = _IngestionBooks()
     ingestion.books = books  # attached after the build
     assert anchors_books.anchor("BTCUSDT") == "not_live" and books.asked == ["BTCUSDT"]
+
+
+def test_maintenance_holds_the_apps_own_recorder_and_its_runtime_stops_that_hold(app: Any) -> None:
+    """#5629: `create_app` binds the flags runtime's recorder slot to the composed recorder's
+    pause, the one the recorder runtime stops (deleting the bind line fails this test)."""
+    pause = app.state.recorder.pause
+    assert app.state.feature_flags.recorder.bound_target is pause
+    assert app.state.recorder.runtime._pause is pause

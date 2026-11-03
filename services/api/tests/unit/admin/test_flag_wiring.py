@@ -762,10 +762,11 @@ async def test_an_unbound_recorder_slot_logs_the_pause_it_cannot_make_and_binds_
         await slot.pause("maintenance.enabled")
         await slot.resume("maintenance.disabled")
     assert [(e["event"], e["log_level"]) for e in logs] == [
-        ("maintenance_recorder_pause_unavailable", "warning")
+        ("maintenance_recorder_slot_unbound", "warning")
     ]
-    assert not slot.bound
-    slot.bind(_Recorder())
-    assert slot.bound
+    assert not slot.bound and slot.bound_target is None
+    target = _Recorder()
+    slot.bind(target)
+    assert slot.bound and slot.bound_target is target
     with pytest.raises(RuntimeError, match="bound once"):
         slot.bind(_Recorder())

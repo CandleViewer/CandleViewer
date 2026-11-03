@@ -318,15 +318,15 @@ def build_recorder(
             books, writer, interval_s=float(settings.recorder_snapshot_interval_s),
             clock=clocks.mono_s, wall_us=wall_us,
         )  # fmt: skip
+    pause = RecorderPause(
+        writer, manager, now_us=wall_us,
+        flush_timeout_s=PAUSE_FLUSH_TIMEOUT_S, gap_timeout_s=PAUSE_GAP_TIMEOUT_S,
+    )  # fmt: skip
     runtime = RecorderRuntime(
         policy=policy, sessions=manager, writer=writer, restore_b11=restore_b11,
         seed=NoPositionSource(env), process_start_us=clocks.process_start_us, env=env,
         clock=clocks.mono_s, sleep=clocks.sleep, rng=clocks.rng, bounds=bounds, on_ready=on_ready,
-        heal=open_missing, anchors=None if anchors is None else anchors.tick,
-    )  # fmt: skip
-    pause = RecorderPause(
-        writer, manager, now_us=wall_us,
-        flush_timeout_s=PAUSE_FLUSH_TIMEOUT_S, gap_timeout_s=PAUSE_GAP_TIMEOUT_S,
+        heal=open_missing, anchors=None if anchors is None else anchors.tick, pause=pause,
     )  # fmt: skip
     return ComposedRecorder(
         policy, rows, budget, env, manager, writer, runtime, on_ready, pause, anchors
