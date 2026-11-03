@@ -579,7 +579,7 @@
         "type": "prometheus",
         "uid": "cv-prometheus"
       },
-      "description": "Ticks shed by the bounded queue (drop-oldest). Catalogue alert: any.",
+      "description": "Ticks shed by the bounded queue (drop-oldest). Catalogue alert: any. The counter's value, not an increase(): its series starts at the first drop, so increase() would read that first burst as 0.",
       "fieldConfig": {
         "defaults": {
           "thresholds": {
@@ -618,12 +618,12 @@
             "type": "prometheus",
             "uid": "cv-prometheus"
           },
-          "expr": "round(sum(increase(cv_alert_eval_dropped_total{env=\"$env\"}[$__range])))",
+          "expr": "max(cv_alert_eval_dropped_total{env=\"$env\"})",
           "legendFormat": "",
           "refId": "A"
         }
       ],
-      "title": "Ticks dropped (range)",
+      "title": "Ticks dropped since the evaluator started",
       "type": "stat"
     },
     {

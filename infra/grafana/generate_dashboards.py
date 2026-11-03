@@ -1021,12 +1021,17 @@ def _alert_evaluator(b: Board) -> None:
         "Catalogue alert: depth > 512 for 1m. 1024 is QUEUE_BOUND in alerts/evaluator.py.",
     )
     b.stat(
-        "Ticks dropped (range)",
-        _in_range("cv_alert_eval_dropped_total"),
+        "Ticks dropped since the evaluator started",
+        f"max(cv_alert_eval_dropped_total{{{E}}})",
         "short",
         1,
     )
-    _describe(b, "Ticks shed by the bounded queue (drop-oldest). Catalogue alert: any.")
+    _describe(
+        b,
+        "Ticks shed by the bounded queue (drop-oldest). Catalogue alert: any. The counter's "
+        "value, not an increase(): its series starts at the first drop, so increase() would "
+        "read that first burst as 0.",
+    )
     b.ts(
         "Owner-skipped/s by stage and reason",
         rate("cv_alert_owner_skipped_total", "stage, reason"),

@@ -369,3 +369,6 @@ def test_rules_board_alert_evaluator_row_uses_catalogue_metrics_and_labels() -> 
     assert steps(queue) == [None, 512, 1024]
     dropped = next(p for t, p in by_title.items() if t.startswith("Ticks dropped"))
     assert steps(dropped) == [None, 1]
+    # the counter's value, never increase(): the series starts at the first drop (lazy child)
+    exprs = [t["expr"] for t in dropped["targets"]]
+    assert exprs == ['max(cv_alert_eval_dropped_total{env="$env"})']
