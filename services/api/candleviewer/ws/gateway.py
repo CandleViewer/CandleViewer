@@ -1056,7 +1056,7 @@ class _Connection:
         """#2302: the socket's principal changed since its safety state was last seen, and the
         change's `settle` (`reconcile_safety`) has not run yet. Every swap after the snap is
         followed by a settle or an eviction (`ConnectionRegistry._fan_out`, `revoke_account`,
-        `run_auth`)."""
+        `run_auth`, a re-`auth` that failed after its swap included)."""
         return self.authz is not None and self.authz.principal is not self.safety_edges.principal
 
     def _safety_due(self, key: tuple[str, str]) -> None:
@@ -1769,6 +1769,18 @@ def make_ws_router(
         async with _auth_call("view_as", auth_call_timeout_s):
             return await view_as(session_id)
 
+    async def settle_failed_reauth(conn: _Connection, authz: ConnectionAuthz) -> None:
+        """A re-`auth` that failed after its swap (`registry.apply`) keeps the socket open, so the
+        change is settled as a successful one is (§9.5: the re-pended subscriptions; #2302: the
+        safety state under the principal now). A settle that raises never masks the failure:
+        the safety state is still reconciled."""
+        try:
+            await registry.settle(authz, conn.evict)
+        except Exception:
+            with contextlib.suppress(Exception):  # a failing logger must not skip the fallback
+                _log().error("ws reauth settle failed", connection_id=conn.connection_id)
+            conn.reconcile_safety()
+
     def view_as_refusal(read: ViewAsBinding | None, socket_context: str | None) -> str | None:
         """§9.6: why an `auth` that read `read` is refused, or `None`. A held context refuses
         with `view_as_expired`; a context other than the socket's (none, or another one: a
@@ -1925,6 +1937,8 @@ def make_ws_router(
                 conn.close_with("auth_failed")
             else:
                 conn.push(build_ws_error("auth_failed", id=_str_or_none(frame.get("id"))))
+                if reauth and conn.authz is not None:
+                    await settle_failed_reauth(conn, conn.authz)
             return
         if conn.closing:
             return  # closed (expiry, revocation) while this auth was in flight: no auth_ok

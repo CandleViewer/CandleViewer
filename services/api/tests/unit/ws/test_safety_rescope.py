@@ -7,6 +7,7 @@ the `raised` of a live incident it now may see; neither waits for the publisher.
 from __future__ import annotations
 
 import asyncio
+import functools
 import uuid
 from collections.abc import Callable
 from typing import Any, cast
@@ -20,6 +21,7 @@ from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import SYSTEM_HELD_MAX, _Connection
 from candleviewer.ws.metrics import cv_ws_system_frames_withheld_total
 from candleviewer.ws.permissions import ConnectionAuthz
+from tests.unit.ws import test_system_topic_roles
 from tests.unit.ws.test_system_filter import ACC_A, ACC_B
 from tests.unit.ws.test_system_snap import _SNAP_BODY, _queued, _rig
 from tests.unit.ws.test_system_topic_roles import (
@@ -356,4 +358,37 @@ async def test_a_safety_body_during_the_snaps_flag_read_is_in_the_snap() -> None
             }
         ]
         assert await _system(sock) == []  # the body itself is not sent after the snap
+        await rig.close()
+
+
+async def test_a_reauth_that_fails_after_its_swap_still_settles_the_safety_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The re-`auth`'s second view-as read raises after the principal swap: the socket stays
+    open with `auth_failed`, and the change is settled, so a later in-scope raise reaches it."""
+    calls = 0
+
+    async def view_as(_session_id: str) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 4:  # the first auth reads twice; the re-auth's second read fails
+            raise RuntimeError("view-as store down")
+
+    monkeypatch.setattr(
+        test_system_topic_roles,
+        "make_ws_router",
+        functools.partial(gateway.make_ws_router, view_as=view_as),
+    )
+    rig, user = _Rig(), uuid.uuid4()
+    async with asyncio.timeout(_DEADLINE_S):
+        sock = await rig.connect(_as(user, "manager", accounts=(ACC_A,)))
+        rig.principals[user] = _as(user, "manager", accounts=(ACC_A,))  # a new snapshot
+        sock.feed({"t": "auth", "id": "re", "p": {"access_token": str(user)}})
+        failed = await sock.sent.get()
+        assert (failed["t"], failed["p"]["code"]) == ("err", "auth_failed")
+        assert calls == 4
+        rig.hub.broadcast_system(_ON_A_AND_B)
+        assert [(p["state"], p["affected_count"]) for _, p in await _system(sock)] == [
+            ("raised", 1)
+        ]
         await rig.close()
