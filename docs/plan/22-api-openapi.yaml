@@ -2476,7 +2476,10 @@ paths:
       tags: [users]
       operationId: createUser
       summary: Invite a user
-      description: "Creates a user in `invited` state and returns a one-time invite link valid for 72 h. No password is set by the owner."
+      description: >
+        Requires step-up `users`. Creates a user in `invited` state and returns a one-time invite
+        link valid for 72 h. No password is set by the owner. `mfa_required: false` is refused
+        with `422` (`detail: invalid invite request`, C-12.2) and nothing is stored.
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: recommended
       parameters:
@@ -2504,6 +2507,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/UserWithInvite" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
@@ -14126,22 +14130,26 @@ paths:
       tags: [users]
       operationId: reissueInvite
       summary: Revoke open invites and mint a new link (shown once)
+      description: "Requires step-up `users`. Without a live one the call is `403 step_up_required`, after RBAC and the target's lookup (`404`)."
       x-rbac: { permissions: [users:write], scope: none }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "201": { description: New invitation with one-time link. }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [users]
       operationId: revokeInvite
       summary: Revoke the pending invitation
+      description: "Requires step-up `users`. Without a live one the call is `403 step_up_required`, after RBAC and the target's lookup (`404`)."
       x-rbac: { permissions: [users:write], scope: none }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "200": { description: Revoked. }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -19246,7 +19254,11 @@ components:
           maxItems: 1
           description: "Invites grant `viewer` only (#2109); the owner promotes after activation."
           items: { type: string, enum: [viewer] }
-        mfa_required: { type: boolean, default: true }
+        mfa_required:
+          type: boolean
+          enum: [true]
+          default: true
+          description: "TOTP is mandatory for every user (C-12.2); `false` is refused with the generic invalid-invite `422` (`detail` `invalid invite request`), before any step-up, and nothing is written."
         account_access:
           { type: array, items: { $ref: "#/components/schemas/AccountAccessGrantInput" } }
     UpdateUserRequest:

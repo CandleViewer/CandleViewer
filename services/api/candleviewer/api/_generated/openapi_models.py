@@ -7159,7 +7159,12 @@ class CreateUserRequest(BaseModel):
             min_length=1,
         ),
     ]
-    mfa_required: StrictBool = True
+    mfa_required: Annotated[
+        Literal[True],
+        Field(
+            description="TOTP is mandatory for every user (C-12.2); `false` is refused with the generic invalid-invite `422` (`detail` `invalid invite request`), before any step-up, and nothing is written."
+        ),
+    ] = True
     account_access: list[AccountAccessGrantInput] | None = None
     __null_refused = field_validator("display_name", "account_access", mode="before")(_refuse_null)
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -407,7 +407,7 @@ class InviteCreateRequest(BaseModel):
     email: Email
     display_name: str | None = Field(default=None, max_length=80)
     roles: tuple[InviteRole, ...] = Field(min_length=1, max_length=1)
-    mfa_required: bool = True
+    mfa_required: Literal[True] = True
     account_access: tuple[dict[str, object], ...] = Field(default=(), max_length=0)
 
 
