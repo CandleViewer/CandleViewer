@@ -62,7 +62,7 @@ Unmutated: `5 passed`, and six runs in a row green (`-p no:randomly`).
 Slice 1 of 4: the harness, the oracle, s5, s6 and the meta-test, in the same lane. Built to the
 ruling on #1148's blocking questions (comment 6603186420): BQ-1, BQ-4 and BQ-9 as amended, BQ-6 as
 ruled (the oracle holds a native stop sized to each position), the rest as recommended; BQ-5 is
-held, and nothing here depends on it.
+held, and no S1 scenario reaches that point.
 
 **Harness.** `_world.py`: the OMS runtime as the process composes it (`OmsRuntime`, 20 Sec.6.2),
 on `tests/unit/oms/test_oms_runtime.py`'s `World`, extended: the pipeline's submit as `placeOrder`
@@ -116,8 +116,9 @@ test doubles on the composed runtime and `FakeTradingPort`, with no mock-exchang
 no container orchestration; the Postgres tier (slice 3) runs on testcontainers. Postgres failover
 (BQ-4, amended): an outage of the one node at named commits; a promoted-instance failover is
 post-GA, E45-T08's. The partial-close resize (BQ-6): the oracle holds each position's stop to its
-size, and slice 3 asserts the resize completes; if #978 ships its BQ-1 option A, that row stays an
-open deviation on #978 with E32-S02 named. E29-S07's banner, controls and summary (BQ-9, amended):
+size, never weakened to fit; #978 shipped its BQ-1 option A (#5356 merged, 24 Sec.19.73: below
+100 % no stop is resized, which is E32-S02's), so that row is an open deviation on #978, with
+E32-S02 named. E29-S07's banner, controls and summary (BQ-9, amended):
 E29-Q02's (#1147); the server half is slice 4's. In this slice the stores are in memory, and
 `seed_order` cannot take an ended order out of the fake's open book, so the venue's open read
 leaves out the orders the engine ended (`VenuePort.open_orders`); nothing here cancels or amends

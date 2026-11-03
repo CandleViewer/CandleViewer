@@ -26,14 +26,15 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
+import itertools
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, Final, Literal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from candleviewer.domain.primitives import TsUs
 from candleviewer.exchange.base.models import FeeRate, RiskLimitTier, Wallet
@@ -181,6 +182,9 @@ class World(rt.World):
     positions: Positions = field(default_factory=Positions)
     #: Whether the oracle checked this world (the suite's autouse fixture asks, `conftest.py`).
     checked: bool = False
+    #: The client keys of its submits, in order: a count, not `uuid4`, so a run repeats them
+    #: (C-13.7). The pipeline draws its own group, order and anchor ids: link ids still differ.
+    refs: Iterator[int] = field(default_factory=lambda: itertools.count(1), init=False, repr=False)
     oms: OmsRuntime = field(init=False)
 
     def __post_init__(self) -> None:
@@ -226,9 +230,9 @@ class World(rt.World):
 
     async def submit(self, **over: Any) -> SubmitOutcome:
         """`placeOrder`'s pipeline: a limit buy entry, its stop and take-profit attached, under a
-        key of its own (`submit_rig.entry`)."""
+        key of its own (`submit_rig.entry`), the world's next."""
         outcome: SubmitOutcome = await self.oms.submission.submit(
-            entry(**over), context(client_ref=uuid4())
+            entry(**over), context(client_ref=UUID(int=next(self.refs)))
         )
         return outcome
 
