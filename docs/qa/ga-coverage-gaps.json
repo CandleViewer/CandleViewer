@@ -20,7 +20,8 @@
       "surface": {
         "kind": "unbuilt",
         "incidental": {
-          "SCR-019": "the shipped setup checklist (SCR-019, covered under US-ONB) names this step; the step's own screens are not built"
+          "SCR-019": "the shipped setup checklist (SCR-019, covered under US-ONB) names this step; the step's own screens are not built",
+          "SCR-125": "the SCR-120 admin overview (E42-S01) links its accounts tile to R-310 (overview/links.ts); R-310 renders its stub, so this screen is not built"
         }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
@@ -79,7 +80,10 @@
       "story": "US-ACCT-010",
       "owner_epic": "E27",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-125": "the SCR-120 admin overview (E42-S01) links its accounts tile to R-310 (overview/links.ts); R-310 renders its stub, so this screen is not built"
+        }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
     },
@@ -87,7 +91,10 @@
       "story": "US-PROF-001",
       "owner_epic": "E28",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-130": "the SCR-120 admin overview (E42-S01) links its profiles tile to R-330 (overview/links.ts); R-330 renders its stub, so this screen is not built"
+        }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
       "stub": "apps/web/e2e/ga/carried.spec.ts"
@@ -96,7 +103,10 @@
       "story": "US-PROF-002",
       "owner_epic": "E28",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-130": "the SCR-120 admin overview (E42-S01) links its profiles tile to R-330 (overview/links.ts); R-330 renders its stub, so this screen is not built"
+        }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
     },
@@ -112,7 +122,10 @@
       "story": "US-PROF-004",
       "owner_epic": "E39",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-071": "the SCR-120 admin overview (E42-S01) links its Trading safety tile to R-150 (overview/links.ts); R-150 renders its stub, so this screen is not built"
+        }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
     },
@@ -840,6 +853,7 @@
         "kind": "unbuilt",
         "incidental": {
           "SCR-020": "lib/capability/frameProbe.ts sizes the grid's panel cap; the grid itself is not built",
+          "SCR-029": "features/confirm-policy (unmounted, declared under US-SET-003) names this dialog as a future caller; the dialog is not built",
           "SCR-150": "the boot sequence ships; saved workspaces are not built"
         }
       },
@@ -898,7 +912,10 @@
       "story": "US-ORD-003",
       "owner_epic": "E30",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-114": "features/confirm-policy (unmounted, declared under US-SET-003) keeps the per-action choice client-side because SCR-114 is unbuilt"
+        }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
     },
@@ -957,7 +974,8 @@
       "surface": {
         "kind": "unbuilt",
         "incidental": {
-          "SCR-063": "ConnectionRegion.tsx names the positions panel in a comment; R-130 renders its stub"
+          "SCR-063": "ConnectionRegion.tsx names the positions panel in a comment; R-130 renders its stub",
+          "SCR-072": "features/confirm-policy (unmounted, declared under US-SET-003) holds the flatten and cancel-all confirm floors; the confirm modal and the actions are not built"
         }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
@@ -1090,7 +1108,8 @@
       "surface": {
         "kind": "unbuilt",
         "incidental": {
-          "SCR-063": "ConnectionRegion.tsx names the positions panel in a comment; R-130 renders its stub"
+          "SCR-063": "ConnectionRegion.tsx names the positions panel in a comment; R-130 renders its stub",
+          "SCR-071": "the SCR-120 admin overview (E42-S01) links its Trading safety tile to R-150 (overview/links.ts); R-150 renders its stub, so this screen is not built"
         }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
@@ -1138,7 +1157,8 @@
       "story": "US-RULE-005",
       "owner_epic": "E37",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unmounted",
+        "module": "apps/web/src/features/rule-builder-graph"
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
       "stub": "apps/web/e2e/ga/carried.spec.ts"
@@ -1147,7 +1167,10 @@
       "story": "US-RULE-006",
       "owner_epic": "E37",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-082": "features/rule-builder-graph holds only the graph editor's unmounted keyboard core (US-RULE-005); switching editors is not built"
+        }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
       "stub": "apps/web/e2e/ga/carried.spec.ts"
@@ -1189,7 +1212,10 @@
       "story": "US-RULE-012",
       "owner_epic": "E39",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-071": "the SCR-120 admin overview (E42-S01) links its Trading safety tile to R-150 (overview/links.ts); R-150 renders its stub, so this screen is not built"
+        }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
     },
@@ -1205,7 +1231,10 @@
       "story": "US-RULE-014",
       "owner_epic": "E39",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-072": "features/confirm-policy (unmounted, declared under US-SET-003) holds the freeze confirm floor; the kill-switch and its modal are not built"
+        }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
     },
@@ -1250,7 +1279,8 @@
       "surface": {
         "kind": "unbuilt",
         "incidental": {
-          "SCR-019": "the shipped setup checklist (SCR-019, covered under US-ONB) names this step; the step's own screens are not built"
+          "SCR-019": "the shipped setup checklist (SCR-019, covered under US-ONB) names this step; the step's own screens are not built",
+          "SCR-140": "the SCR-120 admin overview (E42-S01) links its recorder tile to R-340 (overview/links.ts); R-340 renders its stub, so this screen is not built"
         }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
@@ -1262,7 +1292,8 @@
         "kind": "unbuilt",
         "incidental": {
           "SCR-041": "the quick-switcher is built in features/symbol-search but no workspace binds its opener",
-          "SCR-100": "useRouteFocus.ts names the watchlist panel's tabs in a comment; the panel is not built"
+          "SCR-100": "useRouteFocus.ts names the watchlist panel's tabs in a comment; the panel is not built",
+          "SCR-140": "the SCR-120 admin overview (E42-S01) links its recorder tile to R-340 (overview/links.ts); R-340 renders its stub, so this screen is not built"
         }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
@@ -1290,7 +1321,10 @@
       "story": "US-REC-005",
       "owner_epic": "E16",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-140": "the SCR-120 admin overview (E42-S01) links its recorder tile to R-340 (overview/links.ts); R-340 renders its stub, so this screen is not built"
+        }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
     },
@@ -1309,7 +1343,10 @@
       "story": "US-REC-008",
       "owner_epic": "E16",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-140": "the SCR-120 admin overview (E42-S01) links its recorder tile to R-340 (overview/links.ts); R-340 renders its stub, so this screen is not built"
+        }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
     },
@@ -1422,8 +1459,11 @@
       "owner_epic": "E42",
       "surface": {
         "kind": "partial",
-        "shipped": ["R-303"],
-        "note": "the invite form ships (exercised by e2e/invites.spec.ts under US-ONB-*); the user list, disable and delete (R-301, R-302) render their stubs",
+        "shipped": [
+          "apps/web/src/features/invites/AdminInviteScreen.tsx",
+          "apps/web/src/features/admin/overview/OverviewPage.tsx"
+        ],
+        "note": "the invite form ships at R-303, now inside the admin area (shell/AdminArea.tsx; reached by e2e/e09-auth-a11y.spec.ts and e2e/admin/admin-shell.spec.ts), and the SCR-120 overview counts users; the user list, disable and delete (R-301, R-302) render their stubs",
         "incidental": {
           "SCR-004": "the change-password screen ships (R-007, US-ONB); user administration is not built"
         }
@@ -1435,7 +1475,11 @@
       "story": "US-ADMIN-002",
       "owner_epic": "E42",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-121": "the SCR-120 admin overview (E42-S01) links its users tile to R-301 (overview/links.ts); R-301 renders its stub, so this screen is not built",
+          "SCR-154": "the admin area's 403 state ships (shell/AdminDenied.tsx, E42-S01); binding users to accounts is not built"
+        }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
     },
@@ -1451,7 +1495,9 @@
       "story": "US-ADMIN-004",
       "owner_epic": "E42",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "partial",
+        "shipped": ["apps/web/src/features/admin/overview/OverviewPage.tsx"],
+        "note": "the SCR-120 overview ships with a Trading safety tile; the per-account risk dashboard (SCR-071, R-150) with its aggregate figures, per-manager freeze and threshold escalation renders its stub"
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
     },
@@ -1475,7 +1521,11 @@
       "story": "US-ADMIN-007",
       "owner_epic": "E42",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-145": "the overview's flags tile counts flags (overview/copy.ts) and links to R-351, which renders its stub; listing and toggling flags is not built",
+          "SCR-148": "the SCR-120 admin overview (E42-S01) links its maintenance tile to R-356 (overview/links.ts); R-356 renders its stub, so this screen is not built"
+        }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
       "stub": "apps/web/e2e/ga/carried.spec.ts"
@@ -1484,7 +1534,11 @@
       "story": "US-ADMIN-008",
       "owner_epic": "E42",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-135": "the SCR-120 admin overview (E42-S01) links its audit tile to R-360 (overview/links.ts); R-360 renders its stub, so this screen is not built",
+          "SCR-136": "the overview's audit tile notes the per-entry detail link is E42-S04's (OverviewTile.tsx, links.ts); the detail screen is not built"
+        }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
       "stub": "apps/web/e2e/ga/carried.spec.ts"
@@ -1493,7 +1547,10 @@
       "story": "US-ADMIN-009",
       "owner_epic": "E42",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-135": "the SCR-120 admin overview (E42-S01) links its audit tile to R-360 (overview/links.ts); R-360 renders its stub, so this screen is not built"
+        }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
       "stub": "apps/web/e2e/ga/carried.spec.ts"
@@ -1502,7 +1559,11 @@
       "story": "US-ADMIN-010",
       "owner_epic": "E43",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unbuilt",
+        "incidental": {
+          "SCR-136": "the overview's audit tile notes the per-entry detail link is E42-S04's (OverviewTile.tsx, links.ts); the detail screen is not built",
+          "SCR-137": "R-354 renders SecurityCentrePlaceholder (\"ships in R4\") until E43 builds SCR-137; the overview links to it (links.ts)"
+        }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
     },
@@ -1510,7 +1571,9 @@
       "story": "US-ADMIN-011",
       "owner_epic": "E42",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "partial",
+        "shipped": ["apps/web/src/features/admin/overview/OverviewPage.tsx"],
+        "note": "the SCR-120 overview ships with its system health tile; the system health screen (SCR-143, R-350) with per-subsystem drill-down, and maintenance (SCR-148, R-356), render their stubs"
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
       "stub": "apps/web/e2e/ga/carried.spec.ts"
@@ -1521,7 +1584,8 @@
       "surface": {
         "kind": "unbuilt",
         "incidental": {
-          "SCR-010": "the shell chrome ships (shell specs); this story's own controls are not built"
+          "SCR-010": "the shell chrome ships (shell specs); this story's own controls are not built",
+          "SCR-137": "R-354 renders SecurityCentrePlaceholder (\"ships in R4\") until E43 builds SCR-137; the overview links to it (links.ts)"
         }
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335"
@@ -1530,7 +1594,9 @@
       "story": "US-SET-001",
       "owner_epic": "E47",
       "surface": {
-        "kind": "unbuilt",
+        "kind": "partial",
+        "shipped": ["apps/web/src/features/settings/SettingsLayout.tsx", "R-901"],
+        "note": "the SCR-110 layout ships around the built settings routes (nav, search over the settings index, reset preview; E47-S08) and R-901 renders the SCR-155 404; three of the nine sections (trading defaults, data & performance, help) are not built, so search and scope labels cover only the built ones",
         "incidental": {
           "SCR-011": "the nav rail ships (shell specs); this story's own controls are not built"
         }
@@ -1541,7 +1607,8 @@
       "story": "US-SET-003",
       "owner_epic": "E47",
       "surface": {
-        "kind": "unbuilt",
+        "kind": "unmounted",
+        "module": "apps/web/src/features/confirm-policy",
         "incidental": {
           "SCR-015": "the toast host ships (keymap/KeymapHost.tsx); delivery channels and their settings are not built",
           "SCR-076": "the keymap registry marks dangerous commands for the confirm flow; the confirm policy screen is not built"
@@ -1611,7 +1678,8 @@
       "story": "US-OBS-005",
       "owner_epic": "E34",
       "surface": {
-        "kind": "unbuilt"
+        "kind": "unmounted",
+        "module": "apps/web/src/features/admin-connectivity"
       },
       "risk_acceptance_ref": "PROPOSED: owner acceptance pending on #1335",
       "stub": "apps/web/e2e/ga/carried.spec.ts"
