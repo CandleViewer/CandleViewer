@@ -352,7 +352,9 @@ async def test_a_report_while_the_accounts_reaction_is_in_flight_waits_in_its_sl
 
 async def test_reports_past_the_slots_wait_and_begin_as_reactions_end() -> None:
     """Security L2 (C-2.18): `MAX_REJECTIONS` run at once; the rest wait, one slot an account,
-    and each begins when a reaction ends; past `MAX_PENDING` accounts a report is dropped."""
+    and each begins when a reaction ends; past `MAX_PENDING` accounts a report is dropped. Each
+    is stamped when it arrives (#5559): the wall clock moves on before any reaction runs, and
+    every disarm still carries the reports' time."""
     accounts = [UUID(int=1000 + n) for n in range(MAX_REJECTIONS + MAX_PENDING + 1)]
     store = Store(*(target(key=UUID(int=5000 + n), acct=a) for n, a in enumerate(accounts)))
     p = Process(store)
@@ -360,9 +362,11 @@ async def test_reports_past_the_slots_wait_and_begin_as_reactions_end() -> None:
         for account in accounts:
             p.check.credential_rejected(account, Refusal.UNKNOWN_KEY, exchange_ret_code=None)
         (dropped,) = [log for log in logs if log["event"] == "key_selfcheck_rejection_dropped"]
+        p.wall = NOW + SECOND  # every reaction begins after this, the waiting ones later still
         await settle()
     assert dropped["log_level"] == "critical" and dropped["account_id"] == str(accounts[-1])
     assert set(store.disarms) == set(accounts[:-1])  # every one that waited was disarmed
+    assert {at for _code, at, _mark in store.disarms.values()} == {NOW}  # stamped on arrival
     assert len(store.audits(DISABLED)) == len(accounts) - 1
 
 
