@@ -28,6 +28,9 @@ export const tableCaption = (symbol: string): string =>
 /** D02 §11 / D03 S54-66 headers with their units. */
 export const COL_TIME = "Time (UTC)";
 export const COL_SIDE = "Liquidated side";
+export const COL_PRINTS = "Prints";
+/** D02 §6's bucket row: the average bankruptcy price is labelled. */
+export const AVG = "avg";
 export const colSize = (base: string): string => `Size (${base})`;
 export const COL_PRICE = "Bankruptcy price (p), USDT";
 export const COL_NOTIONAL = "Notional (USDT)";

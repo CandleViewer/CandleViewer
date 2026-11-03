@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import type { LiqCoverage } from "../history";
 import type { LiqSnapshot } from "../liquidationFeed";
-import type { HeldPrint } from "../ring";
+import type { FeedRow } from "../buckets";
 import { LiquidationPane, type LiquidationPaneProps } from "./LiquidationPane";
 
 // CMP-186's liquidations sub-pane, the feed (E24-S05 #780), every state of slice 1. No recorded liquidation
@@ -9,8 +9,8 @@ import { LiquidationPane, type LiquidationPaneProps } from "./LiquidationPane";
 // is a declared contract or design sample, never invented:
 // - `22` `getLiquidations` example `liqs`: 2026-09-14T10:12:44.120Z, BTCUSDT, sell, 62880.00, 3.220, 202473.60, ×1;
 // - D02 §6 / D03 S54-41's row: 09:14:02, Long liquidated, 0.498 BTC, 82,751.20, 41,210.10 USDT, ×8;
-// - D02 §6's cascade, one 500 ms push of 620 prints (600 long at avg 82,500.00 over 48.00 BTC, 20 short at avg
-//   82,600.00 over 1.20 BTC), so 1,240 prints/s; each print here is that bucket's average print;
+// - D02 §6's cascade rows, one 500 ms push of 620 prints (600 long at avg 82,500.00 over 48.00 BTC, 20 short at avg
+//   82,600.00 over 1.20 BTC), so 1,240 prints/s;
 // - coverage: `22` example `liqs` `meta.coverage` (first 2026-09-01T00:00:00.250Z, covered 10:00–11:00Z), and D02 §6
 //   / D03 S54-44's partial sample (recorded from 09:14 UTC, 34 min, in a 24 h window); SOLUSDT never recorded (S54-46).
 // Plain CSF.
@@ -25,7 +25,7 @@ const T_EXAMPLE = Date.parse("2026-09-14T10:12:44.120Z");
 const T_ROW = Date.parse("2026-10-21T09:14:02Z");
 const T_CASCADE = Date.parse("2026-10-21T09:31:10Z");
 
-export const EXAMPLE_PRINT: HeldPrint = {
+export const EXAMPLE_PRINT: FeedRow = {
   seq: 0,
   tsMs: T_EXAMPLE,
   side: "long", // `sell` (BQ 1)
@@ -33,8 +33,9 @@ export const EXAMPLE_PRINT: HeldPrint = {
   size: "3.220",
   notionalUsd: "202473.60",
   clusterSize: 1,
+  prints: 1,
 };
-export const DESIGN_ROW: HeldPrint = {
+export const DESIGN_ROW: FeedRow = {
   seq: 1,
   tsMs: T_ROW,
   side: "long",
@@ -42,21 +43,32 @@ export const DESIGN_ROW: HeldPrint = {
   size: "0.498",
   notionalUsd: "41210.10",
   clusterSize: 8,
+  prints: 1,
 };
 
-/** The cascade push, newest first and bounded to the 40 rows in view (D02 §6). */
-export const CASCADE_ROWS: HeldPrint[] = Array.from({ length: 40 }, (_, k) => {
-  const short = k % 31 === 0; // 20 of 620 are shorts: roughly one in 31
-  return {
-    seq: 659 - k,
+/** D02 §6's cascade rows, verbatim: one 500 ms push of 620 prints in one 250 ms bucket per side. */
+export const CASCADE_ROWS: FeedRow[] = [
+  {
+    seq: 659,
     tsMs: T_CASCADE,
-    side: short ? "short" : "long",
-    price: short ? "82600.00" : "82500.00",
-    size: short ? "0.060" : "0.080",
-    notionalUsd: short ? "4956.00" : "6600.00",
-    clusterSize: 1,
-  };
-});
+    side: "long",
+    price: "82500.00",
+    size: "48.00",
+    notionalUsd: "3960000.00",
+    clusterSize: 600,
+    prints: 600,
+  },
+  {
+    seq: 658,
+    tsMs: T_CASCADE,
+    side: "short",
+    price: "82600.00",
+    size: "1.20",
+    notionalUsd: "99120.00",
+    clusterSize: 20,
+    prints: 20,
+  },
+];
 
 /** `22` example `liqs`, `meta.coverage`. */
 export const EXAMPLE_COVERAGE: LiqCoverage = {
@@ -75,6 +87,7 @@ export const base: LiqSnapshot = {
   rows: [DESIGN_ROW, EXAMPLE_PRINT],
   newestSeq: 1,
   ratePerSec: 0,
+  longShare: null,
   minNotionalUsd: null,
   window: EXAMPLE_WINDOW,
   history: { phase: "ready", coverage: EXAMPLE_COVERAGE, truncated: null },
@@ -108,7 +121,7 @@ const withCoverage = (s: LiqSnapshot): LiqSnapshot =>
 /** S54-41: prints with the side word and glyph, size, `p`, notional and cluster. */
 export const Populated = { render: () => <At /> };
 
-/** S54-43: a cascade, the counter "1,240 prints/s", at most 40 rows in view, the cut disclosed. */
+/** S54-43: a cascade, the counter "1,240 prints/s", the bucket rows, the cut disclosed. */
 export const Cascade = {
   render: () => (
     <At snapshot={{ rows: CASCADE_ROWS, newestSeq: 659, ratePerSec: 1_240, held: 1_000 }} />

@@ -7,6 +7,7 @@
 // carries it; no local storage.
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getActiveClient, subscribeActiveClient } from "../../../lib/ws/client/activeClient";
+import { createLiqAnalytics, type LiqAnalytics } from "./analytics";
 import type { LiqHistoryRequest, LiqHistoryResult } from "./history";
 import { fetchLiquidationHistory } from "./historyRead";
 import {
@@ -24,7 +25,10 @@ export interface LiqFeedHookOptions {
   readonly minNotionalUsd?: string | null | undefined;
   readonly loadHistory?: ((req: LiqHistoryRequest) => Promise<LiqHistoryResult>) | undefined;
   readonly clock?: LiqClock | undefined;
+  readonly analytics?: LiqAnalytics | undefined;
 }
+
+const defaultAnalytics = createLiqAnalytics();
 
 /** The running feed, or `null` without a client or for a symbol that is not a USDT perpetual. */
 export function useLiquidationFeed(
@@ -37,6 +41,8 @@ export function useLiquidationFeed(
   loadRef.current = options.loadHistory ?? fetchLiquidationHistory;
   const clockRef = useRef(options.clock);
   clockRef.current = options.clock;
+  const analyticsRef = useRef(options.analytics ?? defaultAnalytics);
+  analyticsRef.current = options.analytics ?? defaultAnalytics;
   const client = useSyncExternalStore(subscribeActiveClient, getActiveClient, getActiveClient);
   const [feed, setFeed] = useState<LiqFeedHandle | null>(null);
 
@@ -49,6 +55,7 @@ export function useLiquidationFeed(
       window: { fromMs, toMs },
       loadHistory: (req) => loadRef.current(req),
       clock: clockRef.current,
+      onBackfillFailed: (status, code) => analyticsRef.current.backfillFailed(symbol, status, code),
     });
     setFeed(started);
     return () => {

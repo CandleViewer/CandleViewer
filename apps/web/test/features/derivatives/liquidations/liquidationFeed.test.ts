@@ -94,7 +94,9 @@ describe("startLiquidationFeed", () => {
       for (let f = 0; f < 32; f += 1) d.frame(); // ~500 ms of frames
     }
     const snapshot = feed.getSnapshot();
-    expect(snapshot.rows).toHaveLength(VIEW_ROWS);
+    // one row per 250 ms bucket and side over the ring's 1,000 prints, never one per print
+    expect(snapshot.rows.length).toBeLessThanOrEqual(VIEW_ROWS);
+    expect(snapshot.rows.reduce((n, r) => n + r.prints, 0)).toBe(1_000);
     expect(feed.metrics().held).toBe(1_000);
     expect(snapshot.newestSeq).toBe(4_999);
     expect(published.mock.calls.length).toBeLessThanOrEqual(40 * 2 + 4); // per bucket, never per print
@@ -121,7 +123,8 @@ describe("startLiquidationFeed", () => {
     const twin = { ...DESIGN, size: "1.000" }; // same ms, another print
     handle.queue.push(reset(), snap([DESIGN, twin]));
     for (let f = 0; f < 6; f += 1) d.frame();
-    expect(feed.getSnapshot().rows.map((r) => r.size)).toEqual(["1.000", "0.498"]);
+    // both prints held: one bucket row of 2 prints, sizes summed exactly
+    expect(feed.getSnapshot().rows.map((r) => [r.prints, r.size])).toEqual([[2, "1.498"]]);
   });
 
   it("names the last data frame's wall time", () => {
@@ -139,10 +142,10 @@ describe("startLiquidationFeed", () => {
     for (let f = 0; f < 6; f += 1) d.frame();
     handle.queue.push(reset(), snap([EXAMPLE, DESIGN, { ...DESIGN, ts_ms: DESIGN.ts_ms + 1 }]));
     for (let f = 0; f < 6; f += 1) d.frame();
-    expect(feed.getSnapshot().rows.map((r) => r.tsMs)).toEqual([
-      DESIGN.ts_ms + 1,
-      DESIGN.ts_ms,
-      EXAMPLE.ts_ms,
+    expect(feed.getSnapshot().held).toBe(3); // the replay's two old prints dropped, the new one kept
+    expect(feed.getSnapshot().rows.map((r) => [r.tsMs, r.prints])).toEqual([
+      [DESIGN.ts_ms, 2],
+      [EXAMPLE.ts_ms, 1],
     ]);
     expect(feed.getSnapshot().ratePerSec).toBe(0); // a replay is not a burst
   });
@@ -211,11 +214,11 @@ describe("startLiquidationFeed", () => {
     await settle();
     for (let f = 0; f < 6; f += 1) d.frame();
     const snapshot = feed.getSnapshot();
-    expect(snapshot.rows.map((r) => [r.tsMs, r.price])).toEqual([
-      [newer.ts_ms, "82751.20"],
-      [DESIGN.ts_ms, "82751.30"],
-      [DESIGN.ts_ms, "82751.20"],
-      [EXAMPLE.ts_ms, "62880.00"],
+    // the live twin of the recorded print dropped; the same-ms distinct print and the newer one kept, in one
+    // 250 ms bucket with the recorded print
+    expect(snapshot.rows.map((r) => [r.tsMs, r.prints])).toEqual([
+      [DESIGN.ts_ms, 3],
+      [EXAMPLE.ts_ms, 1],
     ]);
     expect(snapshot.held).toBe(4);
     expect(snapshot.mergedSeq).toBe(1); // the two recorded prints; a paused view counts from here
@@ -245,7 +248,8 @@ describe("startLiquidationFeed", () => {
       { kind: "failed", status: 500, code: null },
     ];
     const loadHistory = vi.fn(async () => results.shift() ?? never());
-    const { d, feed, handle } = start({ loadHistory });
+    const onBackfillFailed = vi.fn();
+    const { d, feed, handle } = start({ loadHistory, onBackfillFailed });
     await settle();
     d.frame();
     expect(feed.getSnapshot().history.phase).toBe("ready");
@@ -262,6 +266,7 @@ describe("startLiquidationFeed", () => {
     expect(feed.getSnapshot().rows).toHaveLength(1);
     expect(feed.getSnapshot().coverage?.noCoverage).toBe(true); // the chip's data survives the failed retry
     expect(loadHistory).toHaveBeenCalledTimes(2);
+    expect(onBackfillFailed).toHaveBeenCalledWith(500, null); // the ticket's error event
   });
 
   it("aborts the read on stop and ignores its late answer", async () => {

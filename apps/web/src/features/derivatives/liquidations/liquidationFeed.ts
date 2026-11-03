@@ -8,10 +8,11 @@
 import { useSyncExternalStore } from "react";
 import type { WsClient } from "../../../lib/ws/api";
 import type { TopicStatus } from "../../../lib/ws/state/types";
+import { feedRows, type FeedRow } from "./buckets";
 import { LiquidationCoalescer } from "./coalescer";
 import type { LiqCoverage, LiqHistoryRequest, LiqHistoryResult, LiqTruncation } from "./history";
 import { CLUSTER_WINDOW_MS, parseLiquidationFrames, type LiquidationPrint } from "./prints";
-import { LiquidationRing, type HeldPrint } from "./ring";
+import { LiquidationRing } from "./ring";
 
 /** `23` common `symbol`: a USDT linear perpetual (C-1.3). */
 export const LIQ_SYMBOL = /^[A-Z0-9]{2,20}USDT$/;
@@ -55,12 +56,14 @@ export interface LiqWindow {
 
 export interface LiqSnapshot {
   readonly feed: "idle" | TopicStatus;
-  /** Newest first, at most `VIEW_ROWS`. */
-  readonly rows: readonly HeldPrint[];
+  /** Newest first, at most `VIEW_ROWS`: one per 250 ms bucket and side (D02 §6, BQ 5). */
+  readonly rows: readonly FeedRow[];
   /** The newest held `seq` (-1 when none): the paused view counts `N new` from it. */
   readonly newestSeq: number;
   /** Prints per second over the last push window; a lower bound (`23` §14.9). */
   readonly ratePerSec: number;
+  /** The long side's share of that window's served notional (AN-4), or `null`. */
+  readonly longShare: number | null;
   /** The active server-side filter, as sent (`min_notional_usd`); `null` for none. */
   readonly minNotionalUsd: string | null;
   /** The requested backfill window; `null` before a feed runs. */
@@ -85,6 +88,8 @@ export interface LiqFeedOptions {
   readonly loadHistory: (req: LiqHistoryRequest) => Promise<LiqHistoryResult>;
   readonly clock?: LiqClock | undefined;
   readonly capacity?: number | undefined;
+  /** The ticket's error event when the read fails. */
+  readonly onBackfillFailed?: ((status: number | null, code: string | null) => void) | undefined;
 }
 
 export interface LiqFeedHandle {
@@ -192,9 +197,10 @@ export function startLiquidationFeed(
 
   const build = (feed: LiqSnapshot["feed"], ratePerSec: number): LiqSnapshot => ({
     feed,
-    rows: ring.newest(VIEW_ROWS),
+    rows: feedRows(ring.newest(ring.capacity), VIEW_ROWS),
     newestSeq: ring.nextSeq - 1,
     ratePerSec,
+    longShare: ratePerSec > 0 ? coalescer.longShare() : null,
     minNotionalUsd,
     window,
     history,
@@ -249,8 +255,8 @@ export function startLiquidationFeed(
         coverage = result.coverage;
         history = { phase: "ready", coverage: result.coverage, truncated: result.truncated };
       } else {
-        // TODO(slice 3, #780): the ticket's backfill error event rides with the analytics.
         history = { phase: "failed", status: result.status, lastSuccessAtMs };
+        options.onBackfillFailed?.(result.status, result.code);
       }
       pendingStructural = true;
     });
@@ -314,6 +320,7 @@ export const INITIAL_LIQ_SNAPSHOT: LiqSnapshot = {
   rows: [],
   newestSeq: -1,
   ratePerSec: 0,
+  longShare: null,
   minNotionalUsd: null,
   window: null,
   history: { phase: "loading" },
