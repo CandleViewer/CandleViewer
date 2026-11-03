@@ -49,7 +49,7 @@ BQ_LIST = "6596009389"  # the BQ list on #506
 RULING = "6599703549"  # the orchestrator's ruling of record on it
 AGREED = (0, 1, 2, 14, 15)  # agreed as written; every other bullet amended
 RIDERS = 25  # the RR rows: one per amendment, rider, missed row and cite note of the ruling
-HELPER_SHA = "03007e3fc2be98f7"  # sha256[:16] of the shared helper as landed
+HELPER_SHA = "62b56d6446b218cd"  # sha256[:16] of the shared helper as landed
 
 SPEC_REL = "docs/design/E21/E21-D06.md"
 TOOL_REL = "docs/design/_tools/e21_d06_a11y_review_audit.py"
