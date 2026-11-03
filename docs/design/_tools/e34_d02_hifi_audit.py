@@ -825,7 +825,7 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-COPY", "drop a PROPOSED string's owner", set_cell("`preview.failed`", 2, "PROPOSED")),
     ("G-COPY", "claim a string verbatim that the line lacks", set_cell("`refusal.frozen`", 1, '"Trading paused by the owner"')),
     ("G-D01", "cite the memo by path", sub("Only these words appear on SCR-061,", "Only these words appear on SCR-061 (research/e34 memo),")),
-    ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:1503) and, in a dialog", "(`14`:1502) and, in a dialog")),
+    ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:1503) and cancels nothing", "(`14`:1502) and cancels nothing")),
     ("G-HYGIENE", "write a closing keyword against #996", sub("carries the closing line.", "carries the closing line. Closes #996.")),
     ("G-HYGIENE", "close the file with a tag line", lambda t: replace(t, spec=t.spec + "</content>\n")),
     ("G-HYGIENE", "put a deny word into the tool's own text", lambda t: replace(t, tool=t.tool + "\n# " + DENY[6] + "\n")),
