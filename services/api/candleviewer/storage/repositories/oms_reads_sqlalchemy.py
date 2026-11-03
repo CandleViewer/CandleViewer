@@ -216,6 +216,7 @@ def position_statement(
 
 def position_holder_statement(position_id: UUID) -> sa.Select[Any]:
     """The account holding an id the scope does not view, for the refusal's audit alone."""
+    # nosemgrep: cv-oms-unscoped-select reason=refusal-audit-holder owner=@CandleViewer/security review=2027-02-04  # noqa: E501
     return sa.select(_P.exchange_account_id).where(_P.id == position_id)
 
 
