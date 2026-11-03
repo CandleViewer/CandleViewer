@@ -120,6 +120,14 @@ jobs:
         # PR open is still caught.
         run: python tools/ci/check_accepted_risk_expiry.py --report "$RUNNER_TEMP/accepted-risk-report.md"
 
+      - name: Accessibility conformance report and matrix staleness, exception register (E47-T05)
+        # Per PR (BQ-02): the generated report and per-screen matrix match the registers, and the
+        # exception register is complete. The release-candidate mode (--release) also fails on an
+        # open Level A finding or an expired acceptance; the GA gate runs it, not every PR.
+        run: |
+          python tools/a11y/conformance.py --check
+          python docs/plan/a11y/_tools/register.py --check
+
       - name: Publish accepted-risk report (live count; not pinned in the inventory doc, #1984)
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
