@@ -270,6 +270,11 @@
       "token": "color.chart.pill.bg",
       "reason": "Decorative chrome that carries no meaning, so the 3:1 floor of docs/plan/16-design-system-brief.md §6 rule 7 (for meaning-carrying lines) does not apply (docs/design/E11/E11-D05.md §4.4 rule 5, Q4): the fill of the neutral GL pills, a surface rather than ink; its text pair is registered in pairs.mjs.",
       "owner": "basiltt"
+    },
+    {
+      "pair": "dark:color.status.danger.default on color.surface.hover",
+      "reason": "CMP-177's danger state icon (an octagon) on a hovered CMP-049 row measures 2.92:1 against the 3:1 non-text floor in the dark theme (E16-D02 §10.4); the state's word in color.text.primary and the octagon's shape carry the state, never the hue alone. Registered so the gate prints it (B-5309-14); retuning the pair or the hover fill is E16-D02's call.",
+      "owner": "E16-D02"
     }
   ]
 }

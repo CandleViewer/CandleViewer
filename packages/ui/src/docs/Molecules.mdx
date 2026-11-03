@@ -632,6 +632,30 @@ stacked: a stale row is a tint, demoted text and one CMP-239 chip; a stale OI ba
 initialising and not-live rows show "—" with a word; a delisted row merges its live cells. Disconnected is one
 `data-cv-feed="disconnected"` on an ancestor (no chip, text at `opacity.muted`). Values never announce.
 
+### RecorderStatusRow (CMP-177; in SCR-140 a row of the APG Grid through CMP-049's row contract, standalone a group)
+
+| Keys                            | Action                                                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Arrows, Home / End, Page        | CMP-049's grid keys: one Tab stop, by cell; the Since and Depth cells are absent in the narrow plan.   |
+| Enter on a cell with no control | Opens the row's detail (`onOpenDetail`), the symbol's cell included; a held key opens it once.         |
+| Enter / F2 on a control cell    | Into its controls (Why?, Keep forever, the action); Esc back to the cell (CMP-049's interactive cell). |
+| Enter / Space on a T2 action    | Changes nothing; the reason is said once per press, politely, and shows in the cell's echo (2b).       |
+| Tab (stacked, or standalone)    | The symbol, Why?, Keep forever, then the action: each a Tab stop (D02H table 2).                       |
+
+| Element      | Role                        | Name                                                                       | ARIA                                                                                                      |
+| ------------ | --------------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| row          | row (standalone: group)     | "BTCUSDT, manual, recording since 1 Sep 2026, 34.8 GB, keep forever on"    | standalone: named "{symbol} recording", the summary its description; the date only on a "recording" state |
+| symbol       | rowheader (a button inside) | the symbol                                                                 | the button opens the detail; no Tab stop of its own while the grid roves                                  |
+| Why?         | button (CMP-002)            | "Why is SOLUSDT recorded?"                                                 | `aria-expanded`, `aria-controls`; its popover's Keep recording returns focus to it                        |
+| state        | gridcell                    | the state's words ("Degraded · stream unhealthy · 2 gaps in 24 h")         | one line, cut with an ellipsis; the icon `aria-hidden`; CMP-049's echo shows the whole words while cut    |
+| Keep forever | switch                      | "Keep BTCUSDT data forever" ("Not available" first while T2)               | `aria-checked`; T2: `aria-disabled`, described by the reason                                              |
+| action       | button (CMP-001 ghost)      | "Stop recording BTCUSDT", "Keep recording BTCUSDT", "Record BTCUSDT again" | T2: `aria-disabled`, the lock leading, described by the hidden reason node (grid) or the inline one (2a)  |
+
+The columns are E16-D02 §1's widths in `em` of the root's 16 px, each its own minimum, so the grid stacks into
+cards rather than squeeze a column; a host narrower than the nine (72 em) shows the narrow seven (62 em). Stacked,
+a T2 reason sits inline under its action and a control a frame removes hands focus to the row's next stop. Values
+never announce: the host's summary region says the 10 s batch of state changes.
+
 ### WatchlistGroupTabs (CMP-162, APG Tabs, manual activation)
 
 | Keys                                 | Action                                                                                  |

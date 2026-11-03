@@ -23,6 +23,18 @@ export type {
 export { Tabs } from "./Tabs.js";
 export type { TabItem, TabsBaseProps, TabsProps } from "./Tabs.js";
 
+export { RECORDER_REASONS, RecorderStatusRow, recorderStatusColumns } from "./RecorderStatusRow.js";
+export type {
+  RecorderCellOptions,
+  RecorderCellProps,
+  RecorderColumnsOptions,
+  RecorderReason,
+  RecorderRowGrid,
+  RecorderRowState,
+  RecorderStatusRowData,
+  RecorderStatusRowProps,
+} from "./RecorderStatusRow.js";
+
 export { Tag } from "./Tag.js";
 export type { TagProps } from "./Tag.js";
 
