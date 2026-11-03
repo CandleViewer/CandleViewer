@@ -1990,9 +1990,8 @@ def create_app(
     ws_backpressure = BackpressureConfig.from_settings(resolved)
     # E29-S07 (#1028, 23 Sec.15.9): each account's latest reconciliation notice, kept as the OMS's
     # notice bindings broadcast it (`StatesBroadcast`, below), and the standing's locks once it is
-    # bound (below), replayed after a first `auth_ok`; each reported pass ends a kept resync (the
-    # runtime's `notice_states`). Read and written on this loop only.
-    app.state.account_notice_states = account_states = AccountNoticeStates()
+    # bound (below), replayed after a first `auth_ok`. Read and written on this loop only.
+    account_states = AccountNoticeStates()
     include_ws_router(  # #3907: `/ws` and, under the server base, `/api/v1/ws`
         app,
         make_ws_router(
@@ -2766,7 +2765,6 @@ def create_app(
         hub=StatesBroadcast(account_states, ws_hub),
         standing=reconcile_standing,
         digests=reconcile_digests,
-        notice_states=account_states,  # E29-S07: each reported pass ends a kept resync
         topics=ws_oms,  # E29-T13 (#4207): its WS topics, published from its lane
         trade_groups=ws_trade_groups,
         kill_switch=kill_switch_port,  # #2904: the halt's port, shared (G-79)

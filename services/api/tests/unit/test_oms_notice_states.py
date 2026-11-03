@@ -1,8 +1,8 @@
 """E29-S07 (#1028; 23-ws-protocol.md Sec.15.9 "Replay at connect" and "The transition time"):
 `AccountNoticeStates` keeps each account's latest notice of the `oms.` family for the gateway's
-`system_notices` port, each reported pass ends a kept resync, `StatesBroadcast` keeps it and
-broadcasts it in one call, both OMS notice bindings stamp `changed_at_ms`, and `create_app` binds
-it all. Recording doubles, a fake clock,
+`system_notices` port, `StatesBroadcast` checks, keeps and broadcasts it in one call, both OMS
+notice bindings stamp `changed_at_ms`, the clean pass a resync requests sends the synced row that
+ends the resync, and `create_app` binds it all. Recording doubles, a fake clock,
 no sleeps; the socket-level cases are `tests/unit/ws/test_account_notice_replay.py`."""
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from structlog.testing import capture_logs
 
 from candleviewer import app as app_module
 from candleviewer.domain.primitives import AccountId
-from candleviewer.oms.reconcile_report import STALE_NOTICE, Notice
+from candleviewer.oms.reconcile_report import STALE_NOTICE, Notice, ReconcileReport, pass_notices
 from candleviewer.oms.reconcile_standing import ReconcileStanding
 from candleviewer.oms_reconcile_wiring import ReconcileNoticesBinding
 from candleviewer.oms_stream_wiring import (
@@ -33,7 +33,6 @@ from tests.unit.auth.test_break_glass_notice import _app, _authenticated, _Event
 
 A = AccountId(UUID("0a000000-0000-4000-8000-00000000000a"))
 B = AccountId(UUID("0a000000-0000-4000-8000-00000000000b"))
-C = AccountId(UUID("0a000000-0000-4000-8000-00000000000c"))
 T1, T2 = 1_789_132_262_000, 1_789_132_381_500  # epoch ms, the OMS's clock
 
 
@@ -242,50 +241,47 @@ def test_stream_and_reconcile_bindings_record_and_broadcast_together() -> None:
     assert hub.frames[-1]["reason"] == "oms.account_synced" and states.notices() == hub.frames[1:2]
 
 
-def test_notice_states_a_reported_pass_ends_a_kept_resync() -> None:
-    """23 Sec.15.9 (E29-S07): a resync, then a clean pass of the account whose reads follow it,
-    then a later first authentication: nothing is replayed, though the pass sent no notice. A pass
-    whose reads were made before the drop verified nothing of it, so the resync stays."""
-    states = AccountNoticeStates()
-    states.offer(_resyncing(A, at=T1))
-    states.offer(_resyncing(B, at=T1))
-    states.offer(account_notice(C, "oms.account_resyncing"))  # untimed: any pass ends it
-    states.pass_reported(A, T1)
-    states.pass_reported(str(B), T1 - 1)
-    states.pass_reported(C, 0)
-    assert states.notices() == [_resyncing(B, at=T1)]
-
-
-def test_notice_states_a_reported_pass_leaves_every_other_state() -> None:
-    """A desync and a lock are no resync's; a desync pass's own notice follows its record's hop
-    and becomes the account's state."""
-    standing = ReconcileStanding()
-    standing.mark_stale(B)
-    states = AccountNoticeStates()
-    states.bind_standing(standing)
-    states.offer(_desync(A))
-    states.offer(_stale(B))
-    states.offer(_resyncing(B, at=T2))  # a drop during the lock: the lock is replayed
-    for account in (A, B):
-        states.pass_reported(account, T2 + 1)
-    assert states.notices() == [_desync(A), _stale(B)]
-    states.offer(_resyncing(A, at=T2 + 2))
-    states.pass_reported(A, T2 + 3)  # a desync pass: its record's hop first ...
-    states.offer(_desync(A, at=T2 + 4))  # ... then its notice
-    assert states.notices()[0] == _desync(A, at=T2 + 4)
-    standing.clear(B)  # the operator's unlock: the resync the pass ended is no state
-    assert states.notices() == [_desync(A, at=T2 + 4)]
-
-
-def test_a_body_the_states_cannot_keep_is_logged_and_still_broadcast() -> None:
-    """The bookkeeping never costs a live frame: the producers' `checked_notice` is the check."""
+@pytest.mark.parametrize(
+    "body",
+    [
+        _stale(A) | {"changed_at_ms": -1},
+        account_notice(A, "oms.account_synced") | {"severity": "critical"},
+        _desync(A) | {"exchange_account_ids": []},
+    ],
+    ids=["negative-time", "off-the-table", "no-account"],
+)
+def test_a_body_the_check_refuses_is_logged_and_sent_to_nobody(body: dict[str, Any]) -> None:
+    """The broadcast sends only a body its check accepts: a refused one is kept for nothing and
+    reaches no socket, logged by its class."""
     states, hub = AccountNoticeStates(), _Hub()
-    body = _stale(A) | {"changed_at_ms": -1}
     with capture_logs() as logs:
-        assert StatesBroadcast(states, hub).broadcast_system(body) == 1
-    assert hub.frames == [body] and states.notices() == []
+        assert StatesBroadcast(states, hub).broadcast_system(body) == 0
+    assert hub.frames == [] and states.notices() == []
     assert [(log["event"], log["error"]) for log in logs] == [
-        ("account_notice_state_unkept", "ValueError")
+        ("account_notice_refused", "ValueError")
+    ]
+
+
+class _Unkept(AccountNoticeStates):
+    """States whose keeping raises `error`, for the broadcast's guard."""
+
+    def __init__(self, error: type[Exception]) -> None:
+        super().__init__()
+        self.error = error
+
+    def offer(self, body: Any) -> None:
+        raise self.error("the states are broken")
+
+
+@pytest.mark.parametrize("error", [RuntimeError, LookupError])
+def test_a_body_the_states_fail_to_keep_is_logged_and_still_sent(error: type[Exception]) -> None:
+    """Only the keeping after the check is guarded: the bookkeeping never costs a live frame."""
+    hub, body = _Hub(), _stale(A)
+    with capture_logs() as logs:
+        assert StatesBroadcast(_Unkept(error), hub).broadcast_system(body) == 1
+    assert hub.frames == [body]
+    assert [(log["event"], log["error"]) for log in logs] == [
+        ("account_notice_state_unkept", error.__name__)
     ]
 
 
@@ -294,8 +290,7 @@ def test_create_app_replays_the_states_after_the_read_only_and_break_glass_notic
 ) -> None:
     """The composition root: the port answers the read-only gate's notice, an unresolved
     break-glass, then the account states; the OMS runtime is handed `StatesBroadcast` over the
-    gateway's hub and the states themselves, which each reported pass reaches (a kept resync
-    ends), and the reconciliation standing is bound (a restored lock, no time)."""
+    gateway's hub, and the reconciliation standing is bound (a restored lock, no time)."""
     handed: dict[str, Any] = {}
     build = build_oms_runtime
 
@@ -309,12 +304,10 @@ def test_create_app_replays_the_states_after_the_read_only_and_break_glass_notic
         reason = "net.binding_check_failed"
         state.app_context.oms_read_only_gate.trip(reason_code=reason, reason_text="no mesh")
         state.reconcile_standing.mark_stale(A)
-        hub, states = handed["hub"], handed["notice_states"]
-        assert isinstance(hub, StatesBroadcast) and states is state.account_notice_states
+        hub = handed["hub"]
+        assert isinstance(hub, StatesBroadcast)
         assert client.portal is not None
         client.portal.call(hub.broadcast_system, _desync(B))  # as the runtime's binding does
-        client.portal.call(hub.broadcast_system, _resyncing(C))  # a drop, then a pass after it
-        client.portal.call(states.pass_reported, C, T1)
         with _authenticated(client) as ws:
             frames = [f["p"] for f in _queued(ws)]
     assert [(f["kind"], f["reason"]) for f in frames] == [
@@ -324,3 +317,22 @@ def test_create_app_replays_the_states_after_the_read_only_and_break_glass_notic
         ("account_notice", "oms.account_stale"),
     ]
     assert frames[2] == _desync(B) and frames[3] == account_notice(A, "oms.account_stale")
+
+
+def test_the_clean_pass_a_resync_requests_ends_the_resync_for_a_later_connection() -> None:
+    """23 Sec.15.9's `synced` rule (the orchestrator's ruling of 2026-11-03): the stream drops
+    (`oms.account_resyncing`), the pass its resync requests (`reconnect`) is clean, so its notice
+    is `oms.account_synced`, which the states keep for nothing: a later first authentication is
+    replayed nothing for the account. A resync on another account stays."""
+    states, hub, serving = AccountNoticeStates(), _Hub(), _Serving()
+    kept = StatesBroadcast(states, hub)
+    for account in (A, B):
+        StreamNotices(kept, serving, now_ms=lambda: T1).publish(
+            account, reason="oms.account_resyncing"
+        )
+    clean = ReconcileReport(A, "a3000000-0000-4000-8000-000000000001", "reconnect", (0, 1))
+    out = pass_notices(clean, episode_open=False)
+    for notice in out.notices:  # B19's `broadcast_recon_complete`, as the runtime publishes it
+        ReconcileNoticesBinding(kept, serving, now_ms=lambda: T2).publish(A, notice)
+    assert (out.notices, out.episode_open) == ((Notice("oms.account_synced", "info"),), False)
+    assert states.notices() == [_resyncing(B)]

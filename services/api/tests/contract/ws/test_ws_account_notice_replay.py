@@ -72,10 +72,12 @@ def _paragraph(start: str) -> str:
         "Only the lock is read from the standing: every other state of the family is the notice as "
         "the server keeps it in memory, so after a restart a desync or a resync is not replayed "
         "until the account's next notice.",
-        "A kept `oms.account_resyncing` ends when the account's next reconciliation pass whose "
-        "reads follow it reports, whatever the pass found",
-        "a socket open during the drop keeps the state until its next connection, as the "
-        "`oms.account_synced` rule above is unchanged.",
+        "A resync ends as every state of the family does, at `oms.account_synced`, which the "
+        "clean pass the resync requests sends (above): a socket open during the drop is sent it "
+        "live, and a later first authentication replays nothing for the account.",
+        "A frame for the same account and `reason` that adds a time to the state the client holds "
+        "is that state with its time, never a new episode: the standing's untimed "
+        "`oms.account_stale` and B19's timed one that follows are one lock.",
     ],
 )
 def test_section_15_9_replays_the_oms_family_at_a_first_authentication(sentence: str) -> None:
@@ -118,10 +120,8 @@ def test_24_says_how_a_connecting_client_learns_a_lock_and_a_resync() -> None:
     assert (
         "and with no time after a restart, as the standing is rebuilt from B19's restored " in doc
     )
-    assert (
-        "a connecting client is sent it after `auth_ok` until then or its next pass (E29-S07)"
-        in (doc)
-    )
+    assert "a connecting client is sent it after `auth_ok` until then (E29-S07)" in doc
+    assert "which the resync's clean pass ends (`oms.account_synced`, E29-T06)" in doc
     assert (
         "A lock the standing gains with no notice of its own (a restored one, or one set ahead of "
         "B19's notice) is broadcast at once as `oms.account_stale` with no time, one frame per "
@@ -133,6 +133,8 @@ def test_24_says_how_a_connecting_client_learns_a_lock_and_a_resync() -> None:
         "step 1) confirmed nothing, so it keeps no digest and the account's last one stands"
     ) in doc
     assert "The digest is kept before the pass's notice is sent" in doc
+    assert "the `synced` rule, on the orchestrator's ruling of 2026-11-03" in doc
+    assert "This change's own decisions, in `23-ws-protocol.md` §15.9 and §16.1 and in §8.5" in doc
 
 
 def test_section_16_1_records_the_change() -> None:
@@ -140,6 +142,29 @@ def test_section_16_1_records_the_change() -> None:
     note = doc.split("**Contract change, 2026-11-02 (#1028).**", 1)[1].split("###", 1)[0]
     assert "gains an optional `changed_at_ms` (`epochMs`, §15.9)" in note
     assert "This is additive (C-6.3)" in note
+    assert "for the resync's end, its ruling of 2026-11-03" in note
+    assert "a lock gained after a socket's `auth_ok` is this change's own decision" in note
+
+
+def test_section_15_9_names_b19s_notice_as_the_lock_sent_once_per_episode() -> None:
+    doc = _words(PROTOCOL_DOC.read_text(encoding="utf-8"))
+    section = doc.split("### 15.9 `SystemUpdate`", 1)[1].split("### 15.10", 1)[0]
+    assert (
+        "so its order entry is refused with `account_stale`. That once is B19's notice: the "
+        "standing's untimed broadcast of the same lock comes first"
+    ) in section
+
+
+def test_section_15_9_has_a_resyncs_clean_pass_send_synced() -> None:
+    """The orchestrator's ruling of 2026-11-03: the producer, not the replay, ends a resync."""
+    doc = _words(PROTOCOL_DOC.read_text(encoding="utf-8"))
+    section = doc.split("### 15.9 `SystemUpdate`", 1)[1].split("### 15.10", 1)[0]
+    assert (
+        "A pass the private stream's resync requests (the `reconnect` trigger) opens an episode "
+        "too (E29-S07, the orchestrator's ruling of 2026-11-03), so its clean pass, or the first "
+        "clean pass after it, sends `oms.account_synced`, which ends the resync's "
+        "`oms.account_resyncing`."
+    ) in section
 
 
 @pytest.mark.parametrize(

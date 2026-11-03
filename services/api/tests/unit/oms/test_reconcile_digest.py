@@ -25,6 +25,7 @@ from candleviewer.oms.reconcile_digest import (
 )
 from candleviewer.oms.reconcile_report import (
     EMPTY_TEXT,
+    HANDOVER_UNREADABLE,
     NO_RECORD_IN_FORCE,
     PassError,
     PositionDrift,
@@ -143,6 +144,17 @@ def test_a_pass_that_read_the_exchange_is_confirmed_at_its_windows_end() -> None
     assert confirmed_us(_state()) == TO_US
     naked = PassError("5", NO_RECORD_IN_FORCE, "SOLUSDT")
     assert confirmed_us(_state(errors=(naked,))) == TO_US  # an error is no lost read
+
+
+def test_a_step_one_error_alone_or_an_empty_window_alone_is_no_lost_pass() -> None:
+    """Only both together are: a real pass lists an unreadable hand-over at step 1 with its
+    window, and an empty window with no step-1 error confirmed its end."""
+    unreadable = PassError("1", HANDOVER_UNREADABLE, "x")
+    assert confirmed_us(_state(errors=(unreadable,))) == TO_US
+    naked = PassError("5", NO_RECORD_IN_FORCE, "SOLUSDT")
+    empty = _state(errors=(naked,)) | {"gap_window": [TO_US, TO_US]}
+    assert confirmed_us(empty) == TO_US
+    assert confirmed_us(_state() | {"gap_window": [TO_US, TO_US]}) == TO_US
 
 
 def test_a_pass_whose_reads_were_lost_confirmed_nothing() -> None:

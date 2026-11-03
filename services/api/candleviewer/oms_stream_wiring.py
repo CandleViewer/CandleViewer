@@ -183,7 +183,6 @@ OMS_FAMILY: Final = "oms."
 #: The accounts `AccountNoticeStates` keeps a notice for, the oldest forgotten past it (C-2.18).
 MAX_NOTICE_ACCOUNTS: Final = 4096
 _SYNCED: Final[AccountNoticeReason] = "oms.account_synced"
-_RESYNCING: Final[AccountNoticeReason] = "oms.account_resyncing"
 _STALE: Final[AccountNoticeReason] = "oms.account_stale"
 _DESYNC: Final[AccountNoticeReason] = "oms.account_desync"
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
@@ -363,13 +362,13 @@ class AccountNoticeStates:
     `oms.account_stale`, with the time of the lock's notice when this process sent it and with
     none otherwise (never a restart's time). Any other state is the account's latest notice of the
     `oms.` family as checked and broadcast (`StatesBroadcast`), kept in memory only, until
-    `oms.account_synced` drops the account, or, for `oms.account_resyncing`, until the account's
-    next reconciliation pass whose reads follow it reports (`pass_reported`), clean or not; a lock's
-    notice the standing no longer holds is not answered. A notice of another family is an event
-    and is never kept, nor is a body `checked_notice` refuses (it raises). Each state is keyed by
-    its account id and names that account alone (C-2.11). Bounded at `max_accounts` (C-2.18): past
-    it the least recently changed account goes, with its lock's time, logged once (one instance per
-    process) with the count and no id. Read and written on the serving loop only."""
+    `oms.account_synced` drops the account (the clean pass a resync requests sends it, 23
+    Sec.15.9); a lock's notice the standing no longer holds is not answered. A notice of another
+    family is an event and is never kept, nor is a body `checked_notice` refuses (it raises). Each
+    state is keyed by its account id and names that account alone (C-2.11). Bounded at
+    `max_accounts` (C-2.18): past it the least recently changed account goes, with its lock's time,
+    logged once (one instance per process) with the count and no id. Read and written on the
+    serving loop only."""
 
     def __init__(self, *, max_accounts: int = MAX_NOTICE_ACCOUNTS) -> None:
         self._max = max_accounts
@@ -408,18 +407,6 @@ class AccountNoticeStates:
                 self._overflowed = True
                 _log().warning("account_notice_states_full", accounts=len(self._kept))
 
-    def pass_reported(self, account_id: UUID | str, read_at_ms: int) -> None:
-        """The account's reconciliation pass reported, its reads made at `read_at_ms` (its window's
-        end, the digest's `confirmed_at`): a kept `oms.account_resyncing` sent no later ends, as
-        the pass verified the account after the drop, whatever it found (a desync pass's own
-        notice follows). A resync sent after the reads began stays the account's state."""
-        account = str(account_id)
-        kept = self._kept.get(account)
-        if kept is None or kept["reason"] != _RESYNCING:
-            return
-        if kept.get(CHANGED_AT, read_at_ms) <= read_at_ms:
-            del self._kept[account]
-
     def notices(self) -> list[dict[str, Any]]:
         """The kept states of the accounts the standing does not hold, a lock's notice left out;
         then each lock the standing holds, in id order. Each a fresh `dict`, so no caller changes
@@ -441,21 +428,27 @@ class AccountNoticeStates:
 
 
 class StatesBroadcast:
-    """The OMS runtime's `SystemBroadcast` (E29-S07): each notice its bindings publish is offered
-    to the states, then to the gateway's `broadcast_system`, in the one call the serving loop runs,
-    so what a later socket is replayed and what every live socket is sent never part. A body the
-    states cannot keep is logged by its class and still broadcast: the producers' `checked_notice`
-    is the check, so the bookkeeping never costs a live frame."""
+    """The OMS runtime's `SystemBroadcast` (E29-S07), which carries its account notices only. The
+    broadcast sends only a body its check accepts (`checked_notice`): one the check refuses is
+    logged by its class and sent to nobody (`0`). An accepted body is offered to the states, then
+    to the gateway's `broadcast_system`, in the one call the serving loop runs, so what a later
+    socket is replayed and what every live socket is sent never part; only the keeping after the
+    check is guarded, so a body the states fail to keep is logged by its class and still sent."""
 
     def __init__(self, states: AccountNoticeStates, hub: SystemBroadcast) -> None:
         self._states, self._hub = states, hub
 
     def broadcast_system(self, body: dict[str, Any]) -> int:
         try:
-            self._states.offer(body)
+            checked = checked_notice(body)
+        except Exception as exc:
+            _log().error("account_notice_refused", error=type(exc).__name__)
+            return 0
+        try:
+            self._states.offer(checked)
         except Exception as exc:
             _log().error("account_notice_state_unkept", error=type(exc).__name__)
-        return self._hub.broadcast_system(body)
+        return self._hub.broadcast_system(checked)
 
 
 class StreamNotices:

@@ -25,9 +25,8 @@ the facade and before the private-stream consumer, which takes its driver as its
   driver's);
 * the standing's listener (`GainedLocks`, E29-S07): a lock the standing gains with no notice of
   its own is broadcast at once, untimed, so the sockets already open learn it;
-* each pass's digest, kept once its record is written, and the end of a kept resync its reads
-  follow (`DigestRecords`, E29-S07, 24 Sec.8.5 "The digest", 23 Sec.15.9), on the serving loop,
-  for `getReconciliationDigest` and the replay at connect;
+* each pass's digest, kept once its record is written (`DigestRecords`, E29-S07, 24 Sec.8.5 "The
+  digest"), on the serving loop, for `getReconciliationDigest`;
 * the stream's last message per account (`LastMessages`), the other half of `gap_from`;
 * the requests the startup sweep resumed (`SweptRequests`), which the sweep records and each
   account's next fetch waits for, bounded, so the first pass never races them (24 Sec.8.5).
@@ -114,7 +113,6 @@ __all__ = [
     "LastMessages",
     "PassFills",
     "PassOrders",
-    "PassReports",
     "PassStops",
     "PositionsTruth",
     "ReconcileNoticesBinding",
@@ -369,47 +367,34 @@ class DigestKeep(Protocol):
     def keep(self, account_id: UUID, state: Mapping[str, object]) -> None: ...
 
 
-class PassReports(Protocol):
-    """`oms_stream_wiring.AccountNoticeStates.pass_reported`, on the serving loop (E29-S07)."""
-
-    def pass_reported(self, account_id: UUID | str, read_at_ms: int) -> None: ...
-
-
 class DigestRecords:
-    """`reconcile_phases.ReportRecords` with what each reported pass feeds on the serving loop
-    (E29-S07; 24 Sec.8.5 "The digest", 23 Sec.15.9): the pass's record first, durable or it raises
-    (C-2.9), then, handed to the serving loop (`Serving.notify`, never awaited), its digest and, to
-    the replay's states, the end of a kept resync its reads follow. A pass whose record is not
-    written feeds neither. A pass whose reads were lost (`confirmed_us` is None) confirmed nothing:
-    it keeps no digest, so the last one stands, and ends no resync, logged with its account and
-    pass ids. A hand-off that fails is logged by its class and the account; the record stands."""
+    """`reconcile_phases.ReportRecords` with the digest (E29-S07, 24 Sec.8.5 "The digest"): the
+    pass's record first, durable or it raises (C-2.9), then its digest handed to the serving loop
+    (`Serving.notify`, never awaited), so a pass whose record is not written keeps no digest. A
+    pass whose reads were lost (`confirmed_us` is None) confirmed nothing: it keeps no digest, so
+    the last one stands, logged with its account and pass ids. A record whose window
+    `confirmed_us` refuses still goes to `keep`, which drops the account and refuses it (fail
+    closed: no digest, a `404`). A hand-off that fails is logged by its class and the account;
+    the record stands."""
 
-    def __init__(
-        self,
-        records: ReconcileRecords,
-        digests: DigestKeep | None,
-        serving: Notify,
-        *,
-        states: PassReports | None = None,
-    ) -> None:
+    def __init__(self, records: ReconcileRecords, digests: DigestKeep, serving: Notify) -> None:
         self._records, self._digests, self._serving = records, digests, serving
-        self._states = states
 
     async def finished(
         self, account_id: AccountId, *, pass_id: str, state: Mapping[str, object]
     ) -> None:
         await self._records.finished(account_id, pass_id=pass_id, state=state)
         try:
-            read_at_us = confirmed_us(state)
-            if read_at_us is None:
+            try:
+                lost = confirmed_us(state) is None
+            except ValueError:  # `keep` refuses it too, once it has dropped the account
+                lost = False
+            if lost:
                 _log().warning(
                     "reconcile_digest_lost_pass", account_id=str(account_id), pass_id=pass_id
                 )
                 return
-            if self._digests is not None:
-                self._serving.notify(self._digests.keep, account_id, dict(state))
-            if self._states is not None:
-                self._serving.notify(self._states.pass_reported, account_id, read_at_us // 1_000)
+            self._serving.notify(self._digests.keep, account_id, dict(state))
         except Exception as exc:
             _log().error(
                 "reconcile_digest_unkept", account_id=str(account_id), error=type(exc).__name__
@@ -617,16 +602,14 @@ def build_reconciliation(
     sink: MachineEventSink, persistence: JobPersistence | None, now_us: Callable[[], int],
     stale_after_s: float, remediates: Callable[[Environment], bool],
     resumed: ResumedRequests | None = None, digests: DigestKeep | None = None,
-    states: PassReports | None = None,
 ) -> ReconcileWiring:  # fmt: skip
     """The pass, its phases and the driver over the runtime's stores and adapters (module
     docstring), built and not started; `ReconcileJobs.start` opens the jobs. A live or demo
     environment whose capability record does not remediate is a `ValueError` here, so the OMS's
     composition fails closed (24 Sec.14.3, C-2.6, C-4.14). `resumed`, the requests the startup
     sweep resumed, holds each account's next fetch until they have answered (24 Sec.8.5);
-    `digests`, when given, keeps each pass's digest once its record is written, and `states`, the
-    replay's, hears each reported pass (a kept resync ends, E29-S07). The standing's listener
-    broadcasts each lock it gains (`GainedLocks`)."""
+    `digests`, when given, keeps each pass's digest once its record is written (E29-S07). The
+    standing's listener broadcasts each lock it gains (`GainedLocks`)."""
     if environment in ("live", "demo") and not remediates(environment):
         raise ValueError("a live or demo reconciliation job always remediates (24 Sec.14.3)")
     standing.listen(GainedLocks(hub, serving))
@@ -646,10 +629,7 @@ def build_reconciliation(
     phases = ReconcilePhases(
         reconciler, standing=standing, tracker=FailureTracker(window_s=stale_after_s),
         marks=marks, watermarks=AccountWatermarks(reads),
-        records=(
-            records if digests is None and states is None
-            else DigestRecords(records, digests, serving, states=states)
-        ),
+        records=records if digests is None else DigestRecords(records, digests, serving),
         notices=ReconcileNoticesBinding(hub, serving, now_ms=lambda: now_us() // 1_000),
         retries=hop, metrics=counted,
         pager=pager, now_us=now_us, resumed=resumed,

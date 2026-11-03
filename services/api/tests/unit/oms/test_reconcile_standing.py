@@ -111,11 +111,12 @@ def test_the_listener_hears_each_account_the_standing_gains_once_it_holds_it() -
     assert heard == [(ACCOUNT, True), (OTHER, True)] and standing.is_stale(ACCOUNT)
 
 
-def test_a_listener_that_raises_is_logged_and_the_lock_stands() -> None:
+@pytest.mark.parametrize("error", [RuntimeError, LookupError])
+def test_a_listener_that_raises_is_logged_and_the_lock_stands(error: type[Exception]) -> None:
     """C-2.21: the refusal is in force whatever the listener does, and its writer hears nothing."""
 
     def broken(account: AccountId) -> None:
-        raise RuntimeError("the serving loop is closed")
+        raise error("the serving loop is closed")
 
     standing = ReconcileStanding()
     standing.listen(broken)
@@ -123,7 +124,7 @@ def test_a_listener_that_raises_is_logged_and_the_lock_stands() -> None:
         standing.mark_stale(ACCOUNT)
     assert standing.refusal(ACCOUNT) == OrderEntryRefusal("account_stale", STALE_DETAIL)
     assert [(log["event"], log["error"]) for log in logs] == [
-        ("reconcile_standing_listener_failed", "RuntimeError")
+        ("reconcile_standing_listener_failed", error.__name__)
     ]
 
 

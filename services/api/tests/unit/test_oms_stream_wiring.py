@@ -483,10 +483,19 @@ def _raising() -> int:
     raise RuntimeError(SENTINEL)
 
 
+def _gone() -> int:
+    raise OSError(SENTINEL)
+
+
 @pytest.mark.parametrize(
     ("clock", "error"),
-    [(_raising, "RuntimeError"), (lambda: -1, "out_of_range"), (lambda: True, "out_of_range")],
-    ids=["raises", "negative", "bool"],
+    [
+        (_raising, "RuntimeError"),
+        (_gone, "OSError"),
+        (lambda: -1, "out_of_range"),
+        (lambda: True, "out_of_range"),
+    ],
+    ids=["raises", "raises-another", "negative", "bool"],
 )
 def test_a_stream_notice_whose_clock_raises_is_logged_and_sent_untimed(
     clock: Callable[[], int], error: str

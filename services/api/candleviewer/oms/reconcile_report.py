@@ -23,8 +23,9 @@ pass, its notices and its metrics need is derived here, once:
   correction, `warning`, or `critical` for a pass that found an open position with no stop and no
   record in force; such a pass sends it at `critical` even when that is its only finding, as 23
   Sec.15.9 says, and is never clean. `oms.account_synced` once, on the first clean pass after a
-  desync or stale episode: a clean pass applied nothing, left nothing for the Owner and listed no
-  error. The notices are the pass's output; publishing them is the wiring's (PR 2b).
+  desync or stale episode, or after a pass the private stream's resync requested (`reconnect`,
+  E29-S07): a clean pass applied nothing, left nothing for the Owner and listed no error. The
+  notices are the pass's output; publishing them is the wiring's (PR 2b).
 """
 
 from __future__ import annotations
@@ -271,14 +272,18 @@ class PassNotices:
 def pass_notices(report: ReconcileReport, *, episode_open: bool) -> PassNotices:
     """BQ-6 and BQ-9 (23 Sec.15.9): the desync row once for a pass that applied a correction, at
     `critical` when the pass found a naked position with no record in force, which alone sends it
-    at `critical` too; the synced row once, on the first clean pass of an open episode."""
+    at `critical` too; the synced row once, on the first clean pass of an open episode. A pass the
+    private stream's resync requested (`reconnect`) opens an episode itself (E29-S07, the
+    orchestrator's ruling of 2026-11-03), so its clean pass, or the first clean pass after it,
+    sends the synced row, which ends the resync's `oms.account_resyncing`."""
     critical = report.naked_without_record
     if report.applied or critical:
         severity: NoticeSeverity = "critical" if critical else "warning"
         return PassNotices((Notice("oms.account_desync", severity),), episode_open=True)
-    if report.clean and episode_open:
+    opened = episode_open or report.trigger == "reconnect"
+    if report.clean and opened:
         return PassNotices((_SYNCED,), episode_open=False)
-    return PassNotices((), episode_open=episode_open)
+    return PassNotices((), episode_open=opened)
 
 
 def watermark_us(report: ReconcileReport) -> TsUs | None:

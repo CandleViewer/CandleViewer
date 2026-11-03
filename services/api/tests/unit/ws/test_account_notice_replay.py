@@ -1,8 +1,9 @@
 """E29-S07 (#1028; 23-ws-protocol.md Sec.15.9 "Replay at connect"): each account's latest notice of
 the `oms.` family reaches a socket right after its first `auth_ok` and the `system` snap, through
 the gateway's `system_notices` port bound as `create_app` binds it, cut as every `account_notice`
-is (SR-E29-10), and never on an in-place re-`auth`; a resync a later pass verified is replayed to
-no later socket, and a lock the standing gains after a socket's `auth_ok` reaches it at once. The
+is (SR-E29-10), and never on an in-place re-`auth`; a resync its clean pass ended (`synced`) is
+replayed to no later socket, and a lock the standing gains after a socket's `auth_ok` reaches it
+at once. The
 real `/ws` router runs on the test's loop behind a fake socket (`test_system_topic_roles`' rig),
 its port reading `AccountNoticeStates`; the notices are published by the OMS's own bindings over
 `StatesBroadcast`, on a fake clock. No threads, no sleeps."""
@@ -19,15 +20,9 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.view_as import ViewAsBinding, ViewAsPhase
 from candleviewer.domain.primitives import AccountId
-from candleviewer.oms.reconcile_digest import ReconcileDigests
-from candleviewer.oms.reconcile_report import STALE_NOTICE, Notice, ReconcileReport, audit_state
+from candleviewer.oms.reconcile_report import STALE_NOTICE, Notice, ReconcileReport, pass_notices
 from candleviewer.oms.reconcile_standing import ReconcileStanding
-from candleviewer.oms_reconcile_wiring import (
-    DigestRecords,
-    GainedLocks,
-    ReconcileNoticesBinding,
-    ReconcileRecords,
-)
+from candleviewer.oms_reconcile_wiring import GainedLocks, ReconcileNoticesBinding
 from candleviewer.oms_stream_wiring import (
     AccountNoticeStates,
     StatesBroadcast,
@@ -52,13 +47,6 @@ DESYNC = Notice("oms.account_desync", "warning")
 class _Serving:
     def notify(self, fn: Callable[..., object], /, *args: Any, **kwargs: Any) -> None:
         fn(*args, **kwargs)
-
-
-class _Emitter:
-    """The pass's record writer, which writes: a pass's record comes before what it feeds."""
-
-    async def emit(self, action: str, **fields: Any) -> None:
-        return None
 
 
 def _rig(
@@ -289,28 +277,26 @@ async def test_replay_under_view_as_is_cut_to_the_target() -> None:
     assert [(f["s"], f["p"]) for f in frames if f.get("ch") == "system"] == [(2, stale_a)]
 
 
-async def test_a_resync_a_later_pass_verified_is_replayed_to_no_later_connection() -> None:
-    """The stream drops (`oms.account_resyncing` at T1); the reconnect pass reads A after it and
-    finds nothing to correct, so it sends no notice. A socket open during the drop keeps the state
-    it was sent until its next connection; one that connects after the pass is replayed nothing."""
+async def test_a_resync_its_clean_pass_ended_is_replayed_to_no_later_connection() -> None:
+    """23 Sec.15.9's `synced` rule: the stream drops (`oms.account_resyncing` at T1), and the pass
+    its resync requests (`reconnect`) finds nothing to correct, so the producer sends
+    `oms.account_synced`. A socket open during the drop is sent both, live; one that connects
+    after the pass is replayed nothing for the account."""
     states = AccountNoticeStates()
     rig = _rig(states)
     kept, serving = StatesBroadcast(states, rig.hub), _Serving()
-    records = DigestRecords(
-        ReconcileRecords(_Emitter(), environment="demo"), ReconcileDigests(), serving,
-        states=states,
-    )  # fmt: skip
-    window = ((T1 - 60_000) * 1_000, (T1 + 2_000) * 1_000)  # the pass's reads follow the drop
-    clean = audit_state(ReconcileReport(AccountId(ACC_A), RUN, "reconnect", window, 400))
+    clean = ReconcileReport(AccountId(ACC_A), RUN, "reconnect", (T1 * 1_000, (T1 + 2_000) * 1_000))
     async with asyncio.timeout(_DEADLINE_S):
         early = await rig.connect(_as(uuid.uuid4(), "manager"))
         StreamNotices(kept, serving, now_ms=lambda: T1).publish(
             AccountId(ACC_A), reason="oms.account_resyncing"
         )
-        await records.finished(AccountId(ACC_A), pass_id=RUN, state=clean)
+        for notice in pass_notices(clean, episode_open=False).notices:
+            _publish(rig, states, ACC_A, notice, at=T1 + 2_000)  # B19's `broadcast_recon_complete`
         late = await rig.connect(_as(uuid.uuid4(), "manager"))
         resync = account_notice(ACC_A, "oms.account_resyncing", changed_at_ms=T1)
-        assert await _system(early) == [(2, resync)]
+        synced = account_notice(ACC_A, "oms.account_synced", changed_at_ms=T1 + 2_000)
+        assert await _system(early) == [(2, resync), (3, synced)]
         assert await _system(late) == []
         await rig.close()
 
