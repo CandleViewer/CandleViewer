@@ -30,10 +30,24 @@ _ORDER: Final = (
     "The list is ordered by `created_at` ascending, then `id` ascending",
     "a page resumes strictly after the last row of the page before it (`meta.next_cursor`)",
     "a user created while the list is read lands on a later page and no row repeats",
+    "A user whose creating transaction began before a page was read and committed after it "
+    "carries an earlier `created_at`, so the walk in progress does not list it and a new walk does",
 )
 _BINDING: Final = (
     "The cursor is bound to the caller and to `status`, `role` and `q` as sent, for one hour",
-    "issued to another caller or for other filters is `400 invalid_cursor`",
+    "one that is malformed (a cursor over 512 characters included), expired, or issued to "
+    "another caller or for other filters is `400 invalid_cursor`",
+)
+#: The rest of what the description states, the two PROPOSED refusals among it.
+_STATED: Final = (
+    "Each parameter is sent at most once",
+    "holding a NUL character",
+    "or a parameter sent twice",
+    "A served read writes no audit record",
+    "In a live view-as context",
+    "answers it `403 forbidden`, as no target holds `users:read`; "
+    "a held one answers `403 view_as_expired`",
+    "An undeclared query parameter is ignored",
 )
 
 
@@ -76,7 +90,7 @@ def test_list_users_cites_registered_codes_with_their_status(spec: dict[str, Any
 
 def test_list_users_states_its_order_and_cursor_binding(spec: dict[str, Any]) -> None:
     text = _flat(_op(spec)["description"])
-    for phrase in (*_ORDER, *_BINDING):
+    for phrase in (*_ORDER, *_BINDING, *_STATED):
         assert phrase in text, phrase
     assert "Authorisation comes first" in text and "never the value" in text
 
