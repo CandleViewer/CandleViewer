@@ -15,7 +15,10 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from candleviewer.api.storage_outage import is_storage_outage, sqlstate_of
 from candleviewer.observability.redaction import redact_structure, redact_text
+from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
 
 def _log() -> Any:
@@ -23,6 +26,8 @@ def _log() -> Any:
     return structlog.get_logger(__name__)
 
 
+#: Seconds a client waits before retrying a store outage; as the routers' own 503 (`Retry-After`).
+_RETRY_AFTER_S = 5
 _PROBLEM = "application/problem+json"
 _BASE = "https://candleviewer.local/errors/"
 #: Constant validation messages (C-12.6), keyed by pydantic error type: the types whose `msg`
@@ -71,7 +76,29 @@ async def validation_error_handler(request: Request, exc: Exception) -> JSONResp
     )
 
 
+def _bare_os_error(exc: Exception) -> bool:
+    """An `OSError` the routers map knowing a store call raised it; here, with no such context,
+    it may be a file, venue or timeout fault (every `asyncio.timeout` expiry is one): a 500."""
+    return isinstance(exc, OSError) and not isinstance(exc, StorageTierUnavailable)
+
+
 async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    if is_storage_outage(exc) and not _bare_os_error(exc):
+        # A store outage that no router mapped: 503, not 500. Driver text embeds bound
+        # parameters, so this line carries only the class name and SQLSTATE. Starlette still
+        # re-raises after the response, so the server's own traceback line is not covered here.
+        _log().error(
+            "store_unavailable_unhandled", error=type(exc).__name__, sqlstate=sqlstate_of(exc)
+        )
+        response = _problem(
+            503,
+            "store_unavailable",
+            ERROR_META[ErrorCode.STORE_UNAVAILABLE].title,
+            detail="The store is unavailable.",
+            retry_after_seconds=_RETRY_AFTER_S,
+        )
+        response.headers["Retry-After"] = str(_RETRY_AFTER_S)
+        return response
     # Never echo str(exc) to the client. The traceback is logged through the
     # RedactionFilter-wired logger so 500s stay visible without leaking.
     _log().error("unhandled_exception", exc_info=exc)
