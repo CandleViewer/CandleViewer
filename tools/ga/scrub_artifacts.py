@@ -157,7 +157,7 @@ _SNAPSHOT_VALUE = re.compile(rf"{_Q}__playwright_value_(?P=q)\s*:\s*(?P=q){_VALU
 _FIELD_NODE = re.compile(rf"\[\s*{_Q}(?P<tag>INPUT|TEXTAREA)(?P=q)\s*,\s*\{{", re.I)
 #: The same fields in page HTML (a `.html` trace resource or report): `<input ... value="...">`
 #: and the body of a `<textarea>`.
-_HTML_INPUT = re.compile(r"<input\b[^<>]*>?", re.I)
+_HTML_INPUT = re.compile(r"<input\b(?:[^<>\"']|\"[^\"]*\"|'[^']*')*>?", re.I)
 #: Its `value`, quoted (raw, or `\"` inside a JSON string) or bare; the mask keeps the quoting.
 _HTML_VALUE = re.compile(
     r"(?P<p>\svalue\s*=\s*)(?:(?P<o>\\{0,8}[\"'])(?P<v>.*?)(?<!\\)(?P=o)|(?P<b>[^\s\"'>\\]+))",
@@ -167,7 +167,7 @@ _HTML_TEXTAREA = re.compile(r"(?P<p><textarea\b[^<>]*>)(?P<v>[^<]+)(?=</textarea
 #: The userinfo of a URL (`scheme://user:password@host`).
 _USERINFO = re.compile(
     r"(?P<s>\b[A-Za-z][A-Za-z0-9+.-]{0,30}://)(?!\[REDACTED\]@)"
-    r"[^\s/?#@:\"'<>\\]{0,256}:[^\s/?#@\"'<>\\]{1,256}@"
+    r"[^\s/?#@:\"'<>\\]{0,256}:[^\s/?#@\"'<>\\]{1,2048}@"
 )
 _ARIA_FIELD = r"- (?:textbox|searchbox|spinbutton)"
 #: An aria-snapshot field line with a value, raw (`error-context.md`).

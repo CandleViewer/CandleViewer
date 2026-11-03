@@ -313,6 +313,17 @@ def test_url_userinfo_is_redacted_and_plain_hosts_stay() -> None:
     assert _scrubbed(keep) == keep
 
 
+def test_a_bracket_inside_a_quoted_html_value_does_not_end_the_input() -> None:
+    out = _scrubbed(f'<input name=pw value="a>{FAKE}"><p>after</p>')
+    assert FAKE not in out and "<p>after</p>" in out
+
+
+def test_long_url_userinfo_passwords_are_redacted() -> None:
+    long_pw = FAKE + "x" * 300
+    out = _scrubbed(f"https://ann:{long_pw}@127.0.0.1:4173/")
+    assert FAKE not in out and out == f"https://{MASK}@127.0.0.1:4173/"
+
+
 MB = 1 << 20
 
 
