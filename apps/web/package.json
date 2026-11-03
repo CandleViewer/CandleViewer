@@ -17,6 +17,8 @@
     "build": "vite build",
     "size": "size-limit",
     "e2e": "playwright test -c e2e/playwright.config.ts",
+    "e2e:engine": "playwright test -c e2e/playwright.engine.config.ts",
+    "check:harness-excluded": "vite build && node scripts/check-engine-harness-excluded.mjs dist",
     "preview": "vite preview"
   },
   "dependencies": {

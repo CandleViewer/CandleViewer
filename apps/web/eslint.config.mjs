@@ -73,6 +73,24 @@ export default tseslint.config(
     ],
     rules: { "react/no-danger": "error" },
   },
+  // E11-Q02 (#444): no sleeps in the engine suite: wait on an engine event or a frame.
+  {
+    files: ["e2e/specs/e11-chart/**/*.ts", "e2e/support/engine/**/*.ts"],
+    rules: {
+      "no-restricted-properties": [
+        "error",
+        {
+          property: "waitForTimeout",
+          message: "E11-Q02: no sleeps; await an engine event or a frame.",
+        },
+      ],
+      "no-restricted-globals": [
+        "error",
+        { name: "setTimeout", message: "E11-Q02: no sleeps." },
+        { name: "setInterval", message: "E11-Q02: no timers." },
+      ],
+    },
+  },
   // E17-T04 S5e-2 (ADR-0005; 50-security): the shared worker's code has no page, so it names none of a page's globals.
   {
     files: ["src/lib/ws/worker/**/*.ts"],
