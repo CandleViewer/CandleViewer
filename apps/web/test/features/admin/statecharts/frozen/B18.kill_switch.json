@@ -1,0 +1,51 @@
+{
+  "id": "kill_switch",
+  "on": { "KILL": { "target": "#kill_switch.engaged_incomplete" } },
+  "initial": "clear",
+  "states": {
+    "clear": { "on": { "ENGAGE": { "target": "#kill_switch.engaging" } } },
+    "engaging": {
+      "always": [
+        { "target": "#kill_switch.cancelling", "guard": "cancel_working_requested" },
+        { "target": "#kill_switch.engaged" }
+      ]
+    },
+    "cancelling": {
+      "invoke": {
+        "id": "cx",
+        "src": "cancel_all_working_orders",
+        "onDone": [
+          { "target": "#kill_switch.flattening", "guard": "flatten_requested" },
+          { "target": "#kill_switch.engaged" }
+        ],
+        "onError": { "target": "#kill_switch.engaged" }
+      }
+    },
+    "flattening": {
+      "invoke": {
+        "id": "fl",
+        "src": "flatten_all_positions",
+        "onDone": [
+          { "target": "#kill_switch.engaged", "guard": "all_accounts_flat" },
+          { "target": "#kill_switch.engaged_incomplete" }
+        ],
+        "onError": { "target": "#kill_switch.engaged_incomplete" }
+      }
+    },
+    "engaged": {
+      "on": { "RELEASE": [{ "target": "#kill_switch.clear", "guard": "owner_and_elevated" }, {}] }
+    },
+    "engaged_incomplete": {
+      "on": {
+        "RETRY_FLATTEN": { "target": "#kill_switch.flattening" },
+        "RELEASE": [
+          {
+            "target": "#kill_switch.clear",
+            "guard": "owner_and_elevated_and_acknowledged_residual"
+          },
+          {}
+        ]
+      }
+    }
+  }
+}
