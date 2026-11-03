@@ -20,6 +20,7 @@
  *   of no order, which only REST serves (D03 G20). Never polled. Past 25 accounts a read names the
  *   25 the subscription does. Every read that answers applies, a superseded one too (the store is
  *   a set); a failed one, or a failed page, is the store's `readFailed` if it was asked last.
+ *   A Retry after a revoke drops the answers of the reads asked before it, waiting ones too.
  * - **S-02:** no first `snap` within 5 s, or a refused subscription, is "Could not load"; `retry()`
  *   re-subscribes, and reads REST again after a failed read. A narrowing re-reads the directory,
  *   as the positions feed does, and the subscription is made again only when the directory changed;
@@ -289,9 +290,11 @@ export function startFillsFeed(options: FillsFeedOptions): FillsFeed {
       // feed never is made again, as the frames it has not read yet would be lost
       const { status } = store.getSnapshot();
       const lost = { read: readLost, directory: directoryLost };
+      const asked = store.readSignal(); // aborted below when this Retry starts the reads afresh
       readLost = false; // as `markRetrying` clears the line: a read that fails again sets it
       directoryLost = false;
       store.markRetrying();
+      if (asked.aborted) queue.length = 0; // the answers still waiting were read before it
       if (lost.read) readRest();
       if (accountIds === null) loadAccounts();
       else {
