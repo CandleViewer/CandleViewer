@@ -7,7 +7,7 @@
 > **Precedence:** `CONSTITUTION.md` > `AGENTS.md` > `CONTRIBUTING.md` > tool defaults. If this file
 > contradicts the Constitution, the Constitution wins and this file is a bug.
 >
-> **Version:** 2.2.0 · Last updated 2026-11-02 · Owner `@basiltt`
+> **Version:** 2.3.0 · Last updated 2026-11-02 · Owner `@basiltt`
 
 ---
 
@@ -420,6 +420,7 @@ reading CRLF line endings as LF (#3454).
 | Sync Unreleased for a sync PR (`--limit` spans every PR since the last tag) | `gh pr list --state merged --limit 10000 --json number,labels > /tmp/pr-labels.json && python tools/ci/update_changelog.py --since-last-tag --pr-labels-json /tmp/pr-labels.json`                            |
 | Prepare a release-prep PR's `CHANGELOG.md` + `version.txt`                  | `git fetch origin --tags && gh pr list --state merged --limit 10000 --json number,labels > /tmp/pr-labels.json && python tools/ci/prepare_release.py --rev origin/main --pr-labels-json /tmp/pr-labels.json` |
 | Verify a release candidate (no API or remote checks)                        | `git fetch origin --tags && python tools/ci/prepare_release.py --verify --rev <sha>`                                                                                                                         |
+| Dispatch the release run on a candidate (`dry_run=true` creates nothing)    | `gh workflow run release.yml --ref main -f candidate=<sha> -f dry_run=true`                                                                                                                                  |
 
 ### Merge (delivery orchestrator only, C-10.1; `docs/plan/01-sdlc-and-branching.md` §7)
 
@@ -674,8 +675,8 @@ Violations of this list are treated as incidents, not mistakes. If you are about
 - **Idempotent runs.** Re-running your own workflow must not create duplicate branches, PRs or comments.
 - **Release freeze and tags** (`docs/plan/07-release-and-prr.md` §4): while a `type/release` PR is open,
   nothing else is enqueued into `main`'s merge queue, and the prep PR is enqueued only into an empty
-  queue and merges alone. Release tags come only from the release run: never create, push, move or
-  delete a `v*` tag by hand.
+  queue and merges alone. Release tags come only from the release run (`release.yml`, dispatched
+  only from `main`): never create, push, move or delete a `v*` tag by hand.
 - **Model tiering** (per the workspace policy) when spawning sub-agents: default `sonnet`, `opus` for
   genuinely complex reasoning, `fable` only for exceptional work. Never pin a versioned model id.
 - **Time-boxing**: if you have made no progress after two full attempt cycles on the same failure, stop and

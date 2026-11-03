@@ -165,7 +165,8 @@ def test_e2e_electron_runs_on_every_call_and_the_input_stays_for_its_callers() -
     for path in sorted(WORKFLOWS.glob("*.yml")):
         jobs = (_load(path.name).get("jobs") or {}).values()
         calls[path.name] = [job for job in jobs if job.get("uses") == LANE]
-    assert sorted(name for name, found in calls.items() if found) == [NIGHTLY, "pr.yml"]
+    callers = [NIGHTLY, "pr.yml", "release.yml"]  # #3099: the release run's e2e gate
+    assert sorted(name for name, found in calls.items() if found) == callers
     assert [job for job in calls["pr.yml"] if "with" in job] == []
 
 
@@ -286,7 +287,10 @@ def test_e2e_and_a11y_lanes_keep_no_git_credential_after_checkout() -> None:
     lanes += [(A11Y_LANE, "storybook")]  # #269: the Storybook gate beside it
     lanes += [(A11Y_LANE, "vr")]  # #270: the visual-regression job beside them
     assert sorted((name, job) for name, job, _ in checkouts) == sorted(lanes)
-    kept = [c for c in checkouts if c[2] not in ({"persist-credentials": False}, BASE_CHECKOUT)]
+    # #3099 (BQ-14): every e2e-lane checkout takes the `ref` input (the release run's candidate).
+    lane_checkout = {"ref": "${{ inputs.ref }}", "persist-credentials": False}
+    other = ({"persist-credentials": False}, BASE_CHECKOUT)
+    kept = [c for c in checkouts if c[2] not in ((lane_checkout,) if c[0] == LANE_FILE else other)]
     assert kept == []
     # No later step needs a credential: none fetches, pushes or calls GitHub, so neither a token
     # nor the repository's visibility matters to them.

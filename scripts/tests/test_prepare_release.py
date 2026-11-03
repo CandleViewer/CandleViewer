@@ -254,6 +254,27 @@ def test_verify_allow_list_error_names_a_path_containing_a_space(repo: _Repo) ->
     assert any("outside the prep allow-list: read me.md" in e for e in _verify(repo, sha))
 
 
+def test_changed_files_non_utf8_name_is_refused_by_the_allow_list_and_not_a_candidate(
+    repo: _Repo,
+) -> None:
+    before = repo.commit("feat(chart-engine): a pane (#1)")
+    repo.prepare()
+    odd = os.fsencode(repo.dir) + b"/caf\xe9.md"
+    with open(odd, "wb") as handle:
+        handle.write(b"drive-by\n")
+    repo.git("add", "-A")
+    sha = repo.commit("chore(infra-devops): prepare release 0.1.0 (#2)")
+    assert any("\ufffd" in name for name in pr.changed_files(repo.dir, sha))
+    assert any("outside the prep allow-list: caf\ufffd.md" in e for e in _verify(repo, sha))
+    # a lone odd-named file never makes a commit a candidate
+    repo.git("reset", "-q", "--hard", before)
+    with open(odd, "wb") as handle:
+        handle.write(b"notes\n")
+    repo.git("add", "-A")
+    other = repo.commit("docs(docs): a note (#3)")
+    assert pr.classify(repo.dir, other, before) == []
+
+
 def test_verify_candidate_whose_tag_exists_elsewhere_fails(repo: _Repo) -> None:
     feat = repo.commit("feat(chart-engine): a pane (#1)")
     sha, _ = repo.merge_prep()

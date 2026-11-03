@@ -12,8 +12,12 @@ about: a well-formed CycloneDX 1.x document with the fields any consumer
 
 Error code: CI-IMG-005 (SBOM generation/structure failure).
 
-Exit codes: 0 valid, 1 invalid (CI-IMG-005), 2 internal error (file missing
-or not JSON).
+#3099 (SR-133, the release run): with `--artefact NAME` the codes are CI-REL-006 and name the
+artefact, and an SBOM listing no component is refused as empty; a missing, empty or non-JSON
+file is a finding too (exit 1). `main.yml`'s image SBOM call is unchanged.
+
+Exit codes: 0 valid, 1 invalid (CI-IMG-005, or CI-REL-006 with `--artefact`), 2 internal error
+(file missing or not JSON, without `--artefact`).
 
 Stdlib only.
 """
@@ -62,26 +66,33 @@ def validate(doc: dict[str, object]) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sbom", required=True, type=Path, help="path to the CycloneDX JSON SBOM")
+    parser.add_argument(
+        "--artefact", default=None, help="release artefact the SBOM describes (CI-REL-006 mode)"
+    )
     args = parser.parse_args(argv)
+    prefix = f"CI-REL-006: {args.artefact} SBOM ({args.sbom})" if args.artefact else "CI-IMG-005"
+    unreadable = 1 if args.artefact else 2
 
     if not args.sbom.exists():
-        print(f"CI-IMG-005: SBOM file not found: {args.sbom}", file=sys.stderr)
-        return 2
+        print(f"{prefix}: SBOM file not found: {args.sbom}", file=sys.stderr)
+        return unreadable
 
     try:
         doc = json.loads(args.sbom.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        print(f"CI-IMG-005: SBOM is not valid JSON: {exc}", file=sys.stderr)
-        return 2
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        print(f"{prefix}: SBOM is not valid JSON: {exc}", file=sys.stderr)
+        return unreadable
 
     if not isinstance(doc, dict):
-        print("CI-IMG-005: SBOM root is not a JSON object", file=sys.stderr)
-        return 2
+        print(f"{prefix}: SBOM root is not a JSON object", file=sys.stderr)
+        return unreadable
 
     problems = validate(doc)
+    if args.artefact and not problems and not doc["components"]:
+        problems.append("empty: it lists no component")
     if problems:
         for p in problems:
-            print(f"CI-IMG-005: {p}", file=sys.stderr)
+            print(f"{prefix}: {p}", file=sys.stderr)
         return 1
 
     print(f"SBOM OK: {len(doc['components'])} components, specVersion={doc['specVersion']}")

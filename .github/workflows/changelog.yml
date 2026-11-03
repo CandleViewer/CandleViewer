@@ -9,6 +9,10 @@ name: changelog
 # #3099/#3098: the merged PRs' labels route security fixes (--pr-labels-json), so the job reads
 # pull requests. It runs only the base ref's committed tools (checked out to `base/`) against the
 # PR's checkout (`pr/`); the token lives only in the `gh pr list` step, which runs no repo code.
+# #3099 (release contract (3)): a PR titled as a release-prep PR, or changing version.txt, gets
+# the release verification as an advisory check (warnings, never a failure; the release run's
+# verify is the gate), and the summary names an untagged candidate: a topmost version section no
+# final tag carries yet.
 
 on:
   push:
@@ -21,6 +25,9 @@ on:
       - tools/ci/update_changelog.py
       - tools/ci/finalize_changelog.py
       - tools/ci/collect_commits.py
+      - tools/ci/prepare_release.py
+      - tools/ci/release_run.py
+      - version.txt
   workflow_dispatch:
 
 permissions:
@@ -63,6 +70,34 @@ jobs:
         run: >-
           gh pr list --repo "$GITHUB_REPOSITORY" --state merged --limit 10000
           --json number,labels > "$RUNNER_TEMP/pr-labels.json"
+
+      # The base's tools may predate #3099; both steps skip until they exist there.
+      - name: Advisory release verification of a release-prep PR (warnings only)
+        if: github.event_name == 'pull_request'
+        working-directory: pr
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          [ -f ../base/tools/ci/prepare_release.py ] || exit 0
+          prep='^chore\(infra-devops\): prepare release [0-9]+\.[0-9]+\.[0-9]+$'
+          if ! printf '%s\n' "$TITLE" | grep -Eq "$prep" \
+            && ! git diff --name-only HEAD^1 HEAD | grep -qx version.txt; then
+            exit 0
+          fi
+          rc=0
+          python ../base/tools/ci/prepare_release.py --verify --rev HEAD --main-ref HEAD \
+            > "$RUNNER_TEMP/verify.out" || rc=$?
+          sed 's/^::error::/::warning::/' "$RUNNER_TEMP/verify.out"
+          echo "release verification (advisory): exit $rc" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Name an untagged candidate in the summary
+        working-directory: pr
+        run: |
+          set -euo pipefail
+          [ -f ../base/tools/ci/release_run.py ] || exit 0
+          python ../base/tools/ci/release_run.py untagged --repo . --changelog CHANGELOG.md \
+            --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Preview the Unreleased section (writes nothing)
         working-directory: pr

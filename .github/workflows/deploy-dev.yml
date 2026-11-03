@@ -94,11 +94,11 @@ jobs:
         # `push origin HEAD:main` here both violates that rule and simply
         # fails once `permissions.contents` is correctly scoped. Ledger
         # commits instead land on a dedicated, unprotected
-        # `ops/deploy-ledger` ref that carries *only* `deployments/*` (the
-        # same "commit outside main's protection" shape the release
-        # workflow already uses for its changelog commit — see the
-        # bypass-register intro: pushing a ref that is not `main` is not a
-        # protection bypass). The `deploy-dev` concurrency group above
+        # `ops/deploy-ledger` ref that carries *only* `deployments/*`
+        # (pushing a ref that is not `main` is not a protection bypass;
+        # see the bypass-register intro; the release workflow pushes no
+        # commit at all since #3099, only its release tag). The
+        # `deploy-dev` concurrency group above
         # serialises runs, so this workflow is always the ref's sole
         # writer at any given time; a fresh checkout of the ref each run
         # (rather than reusing the `head_sha` checkout, which has no

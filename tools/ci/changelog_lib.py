@@ -7,17 +7,18 @@ installers (signed) -> release checklist + PRR gate").
 
 This module is the shared, unit-testable core used by both
 `.github/workflows/changelog.yml` (read-only preview of `Unreleased`; the
-sync lands via reviewed PRs) and `.github/workflows/release.yml` (compute the semver bump and
-finalise the `Unreleased` section at a release-train cut). It has no GitHub
+sync lands via reviewed PRs) and `tools/ci/prepare_release.py` (the release-prep PR finalises
+`Unreleased`; `.github/workflows/release.yml` verifies and tags that candidate). It has no GitHub
 API calls and no I/O beyond what its callers pass in, so it is exercised
 entirely by fixture-driven unit tests (stdlib only, no network).
 
 Error codes referenced by callers (ticket "Technical notes"):
   CI-REL-001 unparseable changelog fragment
   CI-REL-002 1.0.0 guard
-  CI-REL-003 unsigned release tag
+  CI-REL-003 release installer missing or unsigned (release.yml build, sign-attach)
   CI-REL-004 release checklist incomplete
   CI-REL-005 release candidate refused: classify or verify (tools/ci/prepare_release.py)
+  CI-REL-006 release SBOM missing, empty or invalid (release.yml sbom, validate_sbom.py)
 """
 
 from __future__ import annotations
