@@ -29,16 +29,21 @@ Gates (each FAIL led by its name):
               G-T2.1b, G-T2.2 and G-T2.3 verbatim from `DS` at the base (`T2_QUOTES`); §8.1
               carries the G-T2.2 label pair (tertiary on raised).
   G-SAFETY    C-2.6: §1 states that no control turns the native stop off; no state row offers
-              a stop as an option; the CMP-158 sentence and the never-empty SL cell are stated;
-              every accepted-row word carries its protection word.
-  G-RECOVERY  the recovery actions name their scope in the label (Retry sub_NNN, Unwind N
-              accepted legs, Cancel working orders (N legs), Leave as is (N open), Retry unwind
-              (N legs not flat)); the retired words appear only on A- and C-rows; Unwind and
-              Cancel working orders are never asked for the arm and stay enabled under the
-              registered states and view-as.
+              a stop as an option or leaves the SL cell empty or blank; the CMP-158 sentence and
+              the never-empty SL cell are stated; every leg row of the B01 sketch carries its SL,
+              and every accepted one its protection word.
+  G-RECOVERY  §4.2 is the shared recovery table (RC-1 … RC-6: labels, confirms, never armed,
+              available in every state, the cited tone); the B01 sketch and the rows use the
+              labels in their scoped form; the retired words appear only on A- and C-rows; no
+              row withholds a protective action, and the stop-pending, unknown, offline,
+              lockout, frozen and view-as rows keep Unwind, Retry unwind and Cancel working
+              orders enabled.
   G-RULED     OQ-1 is carried, not decided (the confirm names the whole position and what the
               group added); the Manager scope is stated (C-12.4); the Viewer's frame has no Send;
-              §3.1's status cell is E34-D03's shared CMP-258, with no row-status cell of its own.
+              §3.1 consumes E34-D03's CMP-258 and no status component is defined here; no
+              client "N of M accepted / protected / unknown" count.
+  G-COPY      every §11 row is verbatim with a cite whose line holds its fixed words, PROPOSED
+              with an owner, or a request row to E34-D03's keys.
   G-D01       the unmerged E34-D01 (#936) and E34-D03 (#997), and any CMP id `15` lacks at the
               base, appear only on request rows or in a sentence naming a request row, never as a
               cite or by path.
@@ -78,24 +83,16 @@ TOKENS = ROOT / "packages" / "ui" / "tokens"
 CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
 CONTRAST_PATH = ROOT / "docs" / "design" / "_tools" / "contrast_check.py"
 PATHS: dict[str, str] = {
-    "05": "docs/plan/05-accessibility-standard.md",
-    "11": "docs/plan/11-user-stories.md",
-    "14": "docs/plan/14-screens-catalogue.md",
-    "15": "docs/plan/15-component-catalogue.md",
-    "20": "docs/plan/20-architecture.md",
-    "22": "docs/plan/22-api-openapi.yaml",
-    "23": "docs/plan/23-ws-protocol.md",
-    "24": "docs/plan/24-internal-schemas.md",
+    "05": "docs/plan/05-accessibility-standard.md", "11": "docs/plan/11-user-stories.md",
+    "14": "docs/plan/14-screens-catalogue.md", "15": "docs/plan/15-component-catalogue.md",
+    "20": "docs/plan/20-architecture.md", "22": "docs/plan/22-api-openapi.yaml",
+    "23": "docs/plan/23-ws-protocol.md", "24": "docs/plan/24-internal-schemas.md",
     "28": "docs/plan/28-statechart-catalogue.md",
-    "ADR8": "docs/plan/27-adrs/ADR-0008-trade-group-fanout.md",
-    "CON": "CONSTITUTION.md",
-    "E09D09": "docs/design/E09/E09-D09.md",
-    "E30D02": "docs/design/E30/E30-D02.md",
-    "E30D03": "docs/design/E30/E30-D03.md",
-    "E28D02": "docs/design/E28/E28-D02.md",
-    "E28D03": "docs/design/E28/E28-D03.md",
-    "DS": ".claude/rules/32-design-specs.md",
-}
+    "ADR8": "docs/plan/27-adrs/ADR-0008-trade-group-fanout.md", "CON": "CONSTITUTION.md",
+    "E09D09": "docs/design/E09/E09-D09.md", "E30D02": "docs/design/E30/E30-D02.md",
+    "E30D03": "docs/design/E30/E30-D03.md", "E28D02": "docs/design/E28/E28-D02.md",
+    "E28D03": "docs/design/E28/E28-D03.md", "DS": ".claude/rules/32-design-specs.md",
+}  # fmt: skip
 DASH = "–"  # the en dash of a line range, `14`:1504–1505
 CITE = re.compile(
     r"`(\d\d|ADR8|CON|E09D09|E30D0[23]|E28D0[23]|DS)`:"
@@ -105,58 +102,26 @@ TOKEN_NAME = re.compile(
     r"`((?:color|font|border|radius|type|space|size|motion|opacity)\.[a-z0-9.-]*[a-z0-9])`"
 )
 CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE)
-LOCAL_PATH = re.compile("/" + "home/|/Users/|/" + "tmp/|[A-Za-z]:\\\\|\\bnotes/")  # assembled
+# assembled, so this tool's own text carries none of the paths
+LOCAL_PATH = re.compile("/" + "home/|/Us" + "ers/|/" + "tmp/|[A-Za-z]:\\\\|\\bnotes" + "/")
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
 URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
-DENY = (
-    "le" + "ak",
-    "expo" + "sed",
-    "by" + "pass",
-    "ex" + "ploit",
-    "att" + "ack",
-    "ora" + "cle",
-    "rev" + "eal",
-    "unbou" + "nded",
-    "flo" + "od",
-    "st" + "all",
-    "d" + "os",
-    "advi" + "sory",
-    "gh" + "sa",
-    "pre-" + "auth",
-)  # each entry an explicit join, so this tool's own text carries none of the words
+# explicit joins, so this tool's own text carries none of the words
+DENY = ("le" + "ak", "expo" + "sed", "by" + "pass", "ex" + "ploit", "att" + "ack", "ora" + "cle",
+        "rev" + "eal", "unbou" + "nded", "flo" + "od", "st" + "all", "d" + "os", "advi" + "sory",
+        "gh" + "sa", "pre-" + "auth")  # fmt: skip
 THEMES = ("dark", "light", "high-contrast")
 FLOOR = {"text": 4.5, "ui": 3.0}
 DEFICIENCIES = ("protanopia", "deuteranopia", "tritanopia")
 COVER = "SCR-061/partial-failure"
 # the states the catalogue (`14` SCR-061), the ticket's Scope and the assignment name
-REQUIRED_FRAMES = (
-    COVER,
-    "SCR-061/unwind-confirm",
-    "SCR-061/partial-failure-demo",
-    "SCR-061/unwinding",
-    "SCR-061/unwind-incomplete",
-    "SCR-061/sending",
-    "SCR-061/rate-limit-backoff",
-    "SCR-061/checking-outcome",
-    "SCR-061/partial-fill",
-    "SCR-061/done",
-    "SCR-061/all-failed",
-    "SCR-061/all-or-none-unwound",
-    "SCR-061/stop-not-confirmed",
-    "SCR-061/loading",
-    "SCR-061/previewing",
-    "SCR-061/ready",
-    "SCR-061/sub-minimum",
-    "SCR-061/override",
-    "SCR-061/preview-failed",
-    "SCR-061/empty",
-    "SCR-061/blocked-lockout",
-    "SCR-061/blocked-kill-switch",
-    "SCR-061/viewer",
-    "SCR-061/view-as",
-    "SCR-061/live-not-enabled",
-    "SCR-061/read-only-member",
-)
+REQUIRED_FRAMES = (COVER,) + tuple(f"SCR-061/{f}" for f in (
+    "unwind-confirm", "partial-failure-demo", "unwinding", "unwind-incomplete", "sending",
+    "rate-limit-backoff", "checking-outcome", "partial-fill", "done", "all-failed",
+    "all-or-none-unwound", "stop-not-confirmed", "loading", "previewing", "ready", "sub-minimum",
+    "override", "preview-failed", "empty", "blocked-lockout", "blocked-kill-switch", "viewer",
+    "view-as", "live-not-enabled", "read-only-member",
+))  # fmt: skip
 ACS = ("AC-1", "AC-2", "AC-3")
 FRAME = re.compile(r"`(SCR-\d{3}/[a-z0-9-]+)`")
 UNMERGED = re.compile(r"E34-D01|#936|E34-D03|#997")
@@ -168,18 +133,37 @@ STOP_OPTION = re.compile(
     re.IGNORECASE,
 )
 RETIRED = re.compile(r"Flatten accepted|Retry failed|rollback|Flatten group|cancel-remaining")
-LABELS = (
-    ("S061-19", r"\*\*Retry sub_\d{3}\*\*"),
-    ("S061-20", r"\*\*Unwind \d+ accepted legs\*\*"),
-    ("S061-25", r"\*\*Cancel working orders \(\d+ legs?\)\*\*"),
-    ("S061-21", r"\*\*Leave as is \(\d+ open\)\*\*"),
-    ("S061-27", r"\*\*Retry unwind \(\d+ legs? not flat\)\*\*"),
+# the one recovery table, E34-D03 §3.5 as it stands: RC row -> (trigger label, confirm label)
+RC = {
+    "RC-1": ("Retry {account}", "Retry {account} of group {id}"),
+    "RC-2": ("Unwind {n} accepted legs", "Unwind {n} accepted legs of group {id}"),
+    "RC-3": ("Retry unwind ({n} leg not flat)", "Retry unwind on {legs} of group {id}"),
+    "RC-4": ("Close group", "Close {legs} of group {id}"),
+    "RC-5": ("Cancel working orders ({n} leg)", "Cancel working orders on {legs} of group {id}"),
+    "RC-6": ("Leave as is ({n} open)", ""),
+}
+SKETCH_LABELS = (r"\[ Retry sub_\d{3} \]", r"\[ Unwind \d+ accepted legs \]",
+                 r"\[ Cancel working orders \(\d+ legs?\) \]", r"\[ Leave as is \(\d+ open\) \]")  # fmt: skip
+PROTECTIVE = "Unwind, Retry unwind and Cancel working orders stay enabled"
+THREATS = ("S061-14", "S061-15", "S061-37", "S061-32", "S061-34", "S061-38")
+WITHHOLD = re.compile(
+    r"(?:\bUnwind\b|Retry unwind|Cancel working orders)[^.;|]{0,40}?"
+    r"\b(?:gated|withheld|waits?|hidden|disabled|not offered|unavailable)\b"
+    r"|no (?:recovery|protective) action|\bactions wait\b"
 )
-PROTECTIVE = "Unwind and Cancel working orders stay enabled"
+SL_BLANK = re.compile(r"\bSL\b(?:(?!never)[^.;|]){0,20}\b(?:empty|blank)\b", re.IGNORECASE)
+OWN_COMPONENT = re.compile(
+    r"(?i)\b(?:new|own|second|another)\b[^|.;]{0,30}\b(?:status|state)\b[^|.;]{0,20}"
+    r"\b(?:component|cell|badge)\b|\bdefined here\b"
+)
+COUNT = re.compile(
+    r"(?:\b\d+|\{\w+\}) of (?:\d+|\{\w+\})(?: legs?)? (?:protected|accepted|unknown)\b"
+)
+TAG_LINE = re.compile(r"^\s*</?[A-Za-z][\w-]*>\s*$")
 SAFETY_LINE = (
     "No control on SCR-061 turns the native stop off, and no frame shows a way to omit it."
 )
-OWN_CELL = "SCR-061 defines no row-status component of its own."
+OWN_CELL = "SCR-061 defines no status component of its own."
 NOTICE = "Every order carries a stop-loss at the exchange. This cannot be turned off."
 
 
@@ -481,30 +465,10 @@ RENDERING = re.compile(r"rendering (2a|2b|the sentence form)")
 T2_REASON = re.compile(r'T2 "([^"]{8,})"')
 # G-T2.1b, G-T2.2 and G-T2.3 as `DS` words them (its `**` emphasis dropped); §1 item 7 quotes each
 T2_QUOTES = (
-    (
-        "G-T2.1b",
-        (
-            '`aria-disabled="true"`, never the `disabled` attribute — it stays in the Tab'
-            " order and a menu item stays arrow-reachable"
-        ),
-    ),
-    (
-        "G-T2.2",
-        (
-            "hi-fi label `color.text.tertiary`, reason `color.text.secondary`; for primary /"
-            " buy / sell actions the fill becomes `color.surface.raised` with a"
-            " `color.border.default` hairline; never `color.text.disabled`, never"
-            " `opacity.disabled` on the label, glyph or reason"
-        ),
-    ),
-    (
-        "G-T2.3",
-        (
-            "`Enter`, `Space` or a bound hotkey on a T2 control changes nothing and re-shows"
-            " the reason inline with one polite announcement"
-        ),
-    ),
-)
+    ("G-T2.1b", '`aria-disabled="true"`, never the `disabled` attribute — it stays in the Tab order and a menu item stays arrow-reachable'),
+    ("G-T2.2", "hi-fi label `color.text.tertiary`, reason `color.text.secondary`; for primary / buy / sell actions the fill becomes `color.surface.raised` with a `color.border.default` hairline; never `color.text.disabled`, never `opacity.disabled` on the label, glyph or reason"),
+    ("G-T2.3", "`Enter`, `Space` or a bound hotkey on a T2 control changes nothing and re-shows the reason inline with one polite announcement"),
+)  # fmt: skip
 
 
 def t2_quotes(t: Texts) -> list[str]:
@@ -549,32 +513,57 @@ def g_safety(t: Texts) -> list[str]:
     if SAFETY_LINE not in section(t.spec, "## 1."):
         bad.append("§1 item 1 does not state that no control turns the native stop off")
     for r in table_rows(t.spec, "S061-"):
-        if STOP_OPTION.search(" ".join(r)):
-            bad.append(f"{r[0]}: a state row offers the native stop as an option (C-2.6)")
+        if STOP_OPTION.search(" ".join(r)) or SL_BLANK.search(" ".join(r)):
+            bad.append(f"{r[0]}: a state row offers the stop as an option or leaves it out")
     two = section(t.spec, "### 2.1")
     if f'"{NOTICE}"' not in two:
         bad.append("§2.1 does not carry the CMP-158 sentence verbatim")
     if "The SL cell is **never empty**" not in two:
         bad.append("§2.1 does not state the SL cell is never empty")
-    accepted = [r for r in table_rows(section(t.spec, "### 3.1"), "`open`") if len(r) > 3]
-    if not accepted or "protected" not in accepted[0][3]:
-        bad.append("§3.1: the accepted row word carries no protection word (V-10)")
+    legs = [ln for ln in sketch(t).split("\n") if re.match(r"\| (?:Main|sub_\d{3}) ", ln)]
+    if len(legs) != 5:
+        bad.append(f"§4.1: the B01 sketch draws {len(legs)} leg rows, not 5")
+    for ln in legs:
+        if not re.search(r"\(s\) [\d,.]+", ln):
+            bad.append(f"B01 sketch: {ln[2:9].strip()} draws no SL")
+        if "accepted" in ln and not re.search(r"protected|stop pending", ln):
+            bad.append(f"B01 sketch: accepted {ln[2:9].strip()} has no protection word")
     return bad
+
+
+def sketch(t: Texts) -> str:
+    four1 = section(t.spec, "### 4.1")
+    i = four1.find("```\n")
+    return four1[i : four1.find("```", i + 4)] if i >= 0 else ""
 
 
 def g_recovery(t: Texts) -> list[str]:
     bad = []
-    for lead, rx in LABELS:
-        r = row(t, lead)
-        if not re.search(rx, " ".join(r)):
-            bad.append(f"{lead}: the action's label does not name its scope")
-    for lead in ("S061-20", "S061-25"):
-        r = row(t, lead)
-        if "never asked" not in r[4] or "T2" in " ".join(r):
-            bad.append(f"{lead}: a protective action is gated or asked for the arm (R5, C-2.6)")
-    for lead in ("S061-32", "S061-34"):
-        if PROTECTIVE not in row(t, lead)[4]:
-            bad.append(f"{lead}: Unwind and Cancel working orders are not kept enabled")
+    four2 = section(t.spec, "### 4.2")
+    rows = {r[0]: r for r in table_rows(four2, "RC-") if len(r) == 6}
+    for rc, (trigger, confirm) in RC.items():
+        r = rows.get(rc)
+        if r is None or r[2] != f'"{trigger}"' or (confirm and f'"{confirm}"' not in r[3]):
+            bad.append(f"{rc}: not the shared label {trigger!r} and its confirm")
+        elif rc in ("RC-2", "RC-3", "RC-4", "RC-5") and (
+            r[4] != "never" or "in every state" not in r[5]
+        ):
+            bad.append(f"{rc}: a protective action is armed or not available in every state")
+    if "CMP-001 `danger`" not in four2 or "`15`:522" not in four2:
+        bad.append("§4.2 does not state the one Confirm tone with its owner's cite")
+    for rx in SKETCH_LABELS:
+        if not re.search(rx, sketch(t)):
+            bad.append(f"B01 sketch: no label in its scoped form /{rx}/")
+    if not re.search(r"\*\*Retry unwind \(\d+ legs? not flat\)\*\*", " ".join(row(t, "S061-27"))):
+        bad.append("S061-27: Retry unwind does not name its scope")
+    for r in table_rows(t.spec, "S061-"):
+        if any(WITHHOLD.search(c) for c in r[1:]):
+            bad.append(f"{r[0]}: withholds or gates a protective action")
+    if WITHHOLD.search(section(t.spec, "### 4.1")):
+        bad.append("§4.1 withholds a protective action")
+    for lead in THREATS:
+        if PROTECTIVE not in " ".join(row(t, lead)):
+            bad.append(f"{lead}: does not keep the protective actions enabled")
     checklist = set(section(t.spec, "### 10.1").split("\n"))  # `14`'s own item words, quoted
     for i, ln in enumerate(t.spec.split("\n"), 1):
         if ln in checklist and ln.startswith("| "):
@@ -590,7 +579,7 @@ def g_ruled(t: Texts) -> list[str]:
     four3 = section(t.spec, "### 4.3")
     if "This spec decides nothing about OQ-1" not in four3:
         bad.append("§4.3: OQ-1 is not carried as undecided")
-    if "(this group added" not in four3:
+    if "this group added" not in four3:
         bad.append("§4.3: the confirm does not name what the group added beside the position")
     oq1 = row(t, "OQ-1")
     if "until ruled" not in oq1[2]:
@@ -603,6 +592,32 @@ def g_ruled(t: Texts) -> list[str]:
     three1 = section(t.spec, "### 3.1")
     if "CMP-258" not in three1 or OWN_CELL not in three1:
         bad.append("§3.1: the status cell is not E34-D03's shared CMP-258 (coordination ruling)")
+    for i, ln in enumerate(t.spec.split("\n"), 1):
+        if OWN_COMPONENT.search(ln) and not ln.startswith("| R-"):
+            bad.append(f"spec:{i} defines a status component of SCR-061's own")
+        if COUNT.search(ln):
+            bad.append(f"spec:{i} counts legs in the client (G-7)")
+    return bad
+
+
+def g_copy(t: Texts) -> list[str]:
+    bad = []
+    rows = [r for r in table_rows(section(t.spec, "## 11."), "`") if len(r) == 3]
+    if not rows:
+        return ["§11 has no copy deck"]
+    for r in rows:
+        status = r[2]
+        if "request row" in status or ("PROPOSED" in status and "owner" in status):
+            continue
+        cs = cites(status)
+        if "verbatim" not in status or not cs:
+            bad.append(f"copy {r[0]}: neither verbatim with a cite nor PROPOSED with an owner")
+            continue
+        key, a, b = cs[0]
+        text = norm(" ".join(at(t, key).split("\n")[a - 1 : b])).lower()
+        for w in re.split(r"\{[a-z_:]+\}", r[1].strip('"')):
+            if w.strip(" .:,") and norm(w).lower().strip(" ,") not in text:
+                bad.append(f"copy {r[0]}: {w.strip()!r} is not in {key}:{a}")
     return bad
 
 
@@ -646,6 +661,8 @@ def g_hygiene(t: Texts) -> list[str]:
                 bad.append(f"spec:{i} carries {what}")
         if "{{" in ln:
             bad.append(f"spec:{i} carries a double-brace slot")
+        if TAG_LINE.match(ln):
+            bad.append(f"spec:{i} is a markup tag line")
         if any(d in ln.lower() for d in DENY):
             bad.append(f"spec:{i} carries a public-text deny word")
     for label, text in (("tool", t.tool), ("pins", t.pins)):
@@ -671,6 +688,7 @@ GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-SAFETY": g_safety,
     "G-RECOVERY": g_recovery,
     "G-RULED": g_ruled,
+    "G-COPY": g_copy,
     "G-D01": g_d01,
     "G-CITE": g_cite,
     "G-HYGIENE": g_hygiene,
@@ -777,7 +795,7 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-CONTRAST", "type a contrast figure off", set_cell("P-01", 4, "1.00")),
     ("G-CONTRAST", "report a ui pair as structure", set_cell("P-05", 3, "structure")),
     ("G-CVD", "type a ΔE figure off", set_cell("V-01", 4, "1.00 / 1.00 / 1.00 / 1.00")),
-    ("G-T2", "drop the view-as rendering", set_cell("S061-34", 4, 'T2 "Read-only while viewing as alex." (`rbac.view_as`); Unwind and Cancel working orders stay enabled (the C-2.6 carve-out)')),
+    ("G-T2", "drop the view-as rendering", set_cell("S061-34", 4, f'T2 "Read-only while viewing as alex." (`rbac.view_as`); {PROTECTIVE} (the C-2.6 carve-out)')),
     ("G-T2", "retype a key's text", sub("T2 \"Live trading isn't enabled for you.\"", 'T2 "Live trading is off for you."')),
     ("G-T2", "drop the lock from §1 item 7", sub("led by the CMP-019 `lock` glyph", "led by its glyph")),
     ("G-T2", "let a T2 control leave the Tab order (G-T2.1b)", sub("never the `disabled` attribute — it stays in the Tab order", "or the `disabled` attribute")),
@@ -786,22 +804,33 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-T2", "drop the tertiary label pair from §8.1 (G-T2.2)", drop_row("| P-08 ")),
     ("G-SAFETY", "drop the no-control statement", sub(SAFETY_LINE, "The stop is attached.")),
     ("G-SAFETY", "offer the stop as an option on a row", set_cell("S061-05", 4, "E28-D03 S61-2; the totals line; Send enabled; an Attach SL checkbox per row")),
-    ("G-SAFETY", "paraphrase the CMP-158 sentence", sub(f'"{NOTICE}"', '"Orders carry stops."')),
-    ("G-SAFETY", "drop the protection word from accepted", sub('"stop pending" until `native_sl_confirmed` (`22`:21524), then "protected"', '"stop pending" until `native_sl_confirmed` (`22`:21524)')),
-    ("G-RECOVERY", "label Unwind without its scope", set_cell("S061-20", 1, "**Unwind** (V-2)")),
-    ("G-RECOVERY", "label Leave as is without its count", sub("**Leave as is (3 open)** (V-4)", "**Leave as is** (V-4)")),
-    ("G-RECOVERY", "ask Unwind for the arm", set_cell("S061-20", 4, "a submit: needs the arm on LIVE")),
+    ("G-SAFETY", "paraphrase the CMP-158 sentence", sub(f'"{NOTICE}" (`E28D02`:587). `role', '"Orders carry stops." (`E28D02`:587). `role')),
+    ("G-SAFETY", "drop sub_001's protection word in the sketch", sub("filled 0.100 of 0.100  | protected", "filled 0.100 of 0.100  | —")),
+    ("G-SAFETY", "blank sub_001's SL cell in the sketch", sub("| sub_001  [LIVE]  | 0.100 | (s) 63,900.0 |", "| sub_001  [LIVE]  | 0.100 |              |")),
+    ("G-SAFETY", "leave the partial-fill row's SL cell empty", set_cell("S061-16", 3, 'an accepted row "accepted — filled 0.040 of 0.080", protected, its SL cell empty')),
+    ("G-SAFETY", "blank the ready row's SL", set_cell("S061-05", 4, "E28-D03 S61-2; the totals line; Send enabled; the SL blank where the profile sets none")),
+    ("G-RECOVERY", "label Unwind without its scope", set_cell("RC-2", 2, '"Unwind"')),
+    ("G-RECOVERY", "label Leave as is without its count", sub("[ Leave as is (3 open) ]", "[ Leave as is ]")),
+    ("G-RECOVERY", "write Cancel remaining in the sketch", sub("[ Cancel working orders (1 leg) ]", "[ Cancel remaining (1 leg) ]")),
+    ("G-RECOVERY", "rename Cancel working orders in the table", set_cell("RC-5", 2, '"Cancel open orders ({n} leg)"')),
+    ("G-RECOVERY", "make the actions wait on a pending stop", sub("Leave as is waits, and " + PROTECTIVE, "the actions wait")),
+    ("G-RECOVERY", "ask Unwind for the arm", set_cell("RC-2", 4, "on LIVE (a submit)")),
     ("G-RECOVERY", "gate Unwind under the kill switch", set_cell("S061-32", 4, 'T2 "Trading frozen by the owner at 14:02 UTC — new orders off. Cancel and close still work." (`frozen`, `E30D02`:422); rendering 2a; Unwind gated too')),
     ("G-RECOVERY", "bring back a retired word", sub("**Never offered:** a control", "**Never offered:** Flatten accepted, a control")),
     ("G-RULED", "decide OQ-1 in §4.3", sub("**This spec decides nothing about OQ-1**", "**This spec closes only what the leg added**")),
     ("G-RULED", "drop the Manager scope", sub("**Manager scope (C-12.4).**", "**Scope.**")),
     ("G-RULED", "give the Viewer a Send", sub("rendering the sentence form, CMP-026 with `cta` omitted; no Send", "rendering the sentence form, CMP-026 with `cta` omitted; Send shown")),
     ("G-D01", "lean on E34-D01 outside a request row", sub("**Rows:** `size.row.compact`", "**Rows (E34-D01 P-1):** `size.row.compact`")),
-    ("G-D01", "name the unmerged CMP-258 off a request row", sub("CMP-258 (a request row, R-7); the tokens", "CMP-258; the tokens")),
+    ("G-D01", "name the unmerged CMP-258 off a request row", sub(" in E34-D03 §5.3 (a request row, R-7), drawn", ", drawn")),
     ("G-RULED", "define a row-status cell of SCR-061's own", sub(OWN_CELL, "SCR-061 defines its own status cell.")),
-    ("G-D01", "cite the memo by path", sub("Only these words appear on SCR-061.", "Only these words appear on SCR-061 (research/e34 memo).")),
+    ("G-RULED", "define a second status component, no CMP id", sub("No summary counts legs in the client (§1 item 10).", "SendRowStatus, a status component, is defined here.")),
+    ("G-RULED", "count protection in the client", set_cell("S061-17", 3, '"5 of 5 accepted. All 5 are protected by a native stop."')),
+    ("G-COPY", "drop a PROPOSED string's owner", set_cell("`preview.failed`", 2, "PROPOSED")),
+    ("G-COPY", "claim a string verbatim that the line lacks", set_cell("`refusal.frozen`", 1, '"Trading paused by the owner"')),
+    ("G-D01", "cite the memo by path", sub("Only these words appear on SCR-061,", "Only these words appear on SCR-061 (research/e34 memo),")),
     ("G-CITE", "re-point a `14` cite to an unpinned line", sub("(`14`:1503) and, in a dialog", "(`14`:1502) and, in a dialog")),
     ("G-HYGIENE", "write a closing keyword against #996", sub("carries the closing line.", "carries the closing line. Closes #996.")),
+    ("G-HYGIENE", "close the file with a tag line", lambda t: replace(t, spec=t.spec + "</content>\n")),
     ("G-HYGIENE", "put a deny word into the tool's own text", lambda t: replace(t, tool=t.tool + "\n# " + DENY[6] + "\n")),
     ("G-SCOPE", "touch `14` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["14"]])),
 )  # fmt: skip
