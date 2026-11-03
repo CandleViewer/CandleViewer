@@ -119,7 +119,7 @@ tool's entry, stop and target are its three points**, in placement order entry �
 TM DR16 (High, owned by E14-S07, unbuilt); this record adds no control for it and removes none. Per-tool
 tables (point counts, option fields, bounds) are in `24-internal-schemas.md` §1.7 (this ticket's second slice, BQ-07),
 checked against these constants and `22` by `test_drawing_tool_schemas_contract.py`. Server validation of all 25 is
-shipped (#357); the client's R1 tool set belongs to E14-S04 to S06.
+shipped (#357); the client's R1 tool set belongs to E14-S01 to S07 and the descoping ladder (`30` §12).
 
 ### Decision 4 — optimistic store, debounced atomic batches (debounce negotiable)
 
@@ -280,6 +280,8 @@ A rising `version_conflict` rate says Decision 5's single-owner premise is wrong
 - Validation is in the application layer only (Decision 3); the per-tool tables of slice 2 (24 §1.7) make it reviewable, and
   "server validation generated from the tables" is a direction, not built here.
 - No WS contract change, no migration and no OpenAPI change come from this record.
+- **Risk.** Retained (soft-deleted) rows are not yet observed by the live gauges; a bound and a metric follow in
+  E14's retention work, the E14 retention follow-up (owner: #357).
 
 ## Why not the alternatives
 
@@ -308,7 +310,9 @@ A rising `version_conflict` rate says Decision 5's single-owner premise is wrong
 ## Open questions
 
 The rulings on BQ-01 to BQ-10 (#540 comment 6610606584) are pending; every default above is the BQ default. A ruling
-that differs amends this record before it leaves `proposed`.
+that differs amends this record before it leaves `proposed`. BQ-07 (b) is taken in a narrower form: `24` §1.7 has no
+per-tool shipped / not-shipped column; the sentence that server validation of all 25 tools is shipped (#357) is the
+marking, and which tools the client draws is E14-S01 to S07 and the descoping ladder.
 
 ## Validation (epic-close gate, recorded on the E14 epic)
 

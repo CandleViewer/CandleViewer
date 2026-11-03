@@ -188,18 +188,18 @@ on drift from the code and from `22`. Geometry is chart space (time and price, n
 (`extra="forbid"`); the tool decides only the point count and which optional keys are allowed. Any other combination is
 `422` rule `property_not_allowed_for_tool` (a wrong point count is `tool_point_count`, a missing `text` is
 `text_required`). Server validation of all 25 tools is shipped (#357). Which tools the first client release draws is a
-client matter (E14-S04 to S06) and is not recorded here.
+client matter (E14-S01 to S07 and the descoping ladder (`30` §12)) and is not recorded here.
 
-| Field          | Type and bound                                                                                | Allowed on                                         |
-| -------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `points`       | array of `{t, p}`, 1..500 items; the per-tool count below is the rule                         | every tool (required)                              |
-| `points[].t`   | RFC 3339 UTC instant with `Z`, at most millisecond precision, years 2000 to 2099              | every point                                        |
-| `points[].p`   | decimal string, at most 15 integer and 12 fractional digits, may be negative, stored verbatim | every point                                        |
-| `extend_left`  | boolean                                                                                       | every tool                                         |
-| `extend_right` | boolean                                                                                       | every tool                                         |
-| `levels`       | 1..24 unique numbers in [-1000, 1000]; a non-zero value has \|x\| at least 1e-6               | `fib_retracement`, `fib_extension`, `fib_timezone` |
-| `bands`        | 1..3 unique integers from {1, 2, 3}                                                           | `anchored_vwap`                                    |
-| `text`         | 1..1000 code points after control-character stripping (LF kept); required where allowed       | `text`, `callout`                                  |
+| Field          | Type and bound                                                                                                        | Allowed on                                         |
+| -------------- | --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `points`       | array of `{t, p}`, 1..500 items; the per-tool count below is the rule                                                 | every tool (required)                              |
+| `points[].t`   | RFC 3339 UTC instant with `Z`, at most millisecond precision, years 2000 to 2099                                      | every point                                        |
+| `points[].p`   | decimal string, at most 15 integer and 12 fractional digits, may be negative, stored verbatim                         | every point                                        |
+| `extend_left`  | boolean                                                                                                               | every tool                                         |
+| `extend_right` | boolean                                                                                                               | every tool                                         |
+| `levels`       | 1..24 unique numbers in [-1000, 1000]; a non-zero value has \|x\| at least 1e-6                                       | `fib_retracement`, `fib_extension`, `fib_timezone` |
+| `bands`        | 1..3 unique integers from {1, 2, 3}                                                                                   | `anchored_vwap`                                    |
+| `text`         | 1..1000 code points as sent; control characters (LF kept) are then stripped; empty after stripping is `text_required` | `text`, `callout`                                  |
 
 An optional key is omitted, never `null`. A horizontal ray is a `horizontal_line` with `extend_left: false` and
 `extend_right: true`. There is no channel-width field and no separate entry, stop or target field: they are the points.
@@ -6872,7 +6872,7 @@ Number assigned by the orchestrator (#540, comment 6615130246).
 
 ### 19.122 2026-11-03 — `22`: ADR-0045 pointers in the drawing descriptions (E14-C01, #540)
 
-Number assigned by the orchestrator (#540).
+Number assigned by the orchestrator (#540, comment 6616458979).
 
 - `22` `/drawings` (`listDrawings`), `/drawings/batch` (`batchUpsertDrawings`) and the `DrawingTool` schema descriptions each gain one sentence: "Persistence model, conflict policy and geometry contract: ADR-0045; per-tool tables: `24` §1.7."
 - The "until layouts ship" text in the `/drawings` description is unchanged (#3055).
