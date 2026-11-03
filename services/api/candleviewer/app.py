@@ -274,7 +274,7 @@ from candleviewer.bars.models import BarSpec
 from candleviewer.bars.reader import BarReader, tape_time_bar_reader
 from candleviewer.bars.series_store import RepairHook, SeriesStore
 from candleviewer.bars.service import BarsService
-from candleviewer.bars_wiring import wire_bars
+from candleviewer.bars_wiring import KlineBarsSink, kline_tape_lookup, wire_bars
 from candleviewer.book.service import BookService
 from candleviewer.budget_wiring import build_disk_budget
 from candleviewer.bus.models import Topic
@@ -1665,8 +1665,12 @@ def create_app(
     )
     # #2599: the public WS and the instrument catalogue share one public REST client (C-12.7).
     public_rest = PublicRest(ctx) if resolved.ingestion_ws_enabled else None
+    # BR-07 / SR-E12-10: kline backfill pages reach `bars_time` only through the precedence
+    # check; bound to the bars writer and the stored-tape lookup once `wire_bars` has run.
+    kline_bars = KlineBarsSink()
+    app.state.kline_bars = kline_bars
     if public_rest is not None:
-        wire_public_ws(ctx, kline_boundary, public_rest, machine_feed)
+        wire_public_ws(ctx, kline_boundary, public_rest, machine_feed, kline_bars=kline_bars)
     # E12 #2031: the set and its writer are started/stopped by the lifespan (set first, then
     # writer). Always on: the `bars_enabled` flag was removed in #399.
     # #399: the WS series store (hydrated by the reader, built first) and the bars publisher on
@@ -1707,6 +1711,11 @@ def create_app(
         series=bars_series,
         publisher=publisher,
         indicators=indicators,
+        precedence=kline_bars.health,
+    )
+    kline_bars.bind(
+        app.state.bars_runtime.writer,
+        kline_tape_lookup(bars_sink.pgwire) if bars_sink is not None else None,
     )
     # #2487: quarantined, or the symbol's tape past the watchdog's trade limit (§6, §7.2).
     stale = series_stale(ctx, app.state.bars_runtime.builder_set.quarantined)
@@ -4193,6 +4202,8 @@ def wire_public_ws(
     kline_boundary: KlineHotBoundary | None = None,
     public_rest: PublicRest | None = None,
     machine_feed: MachineStatePort | None = None,
+    *,
+    kline_bars: KlineBarsSink | None = None,
 ) -> ConnectionManager:
     """E08-T04 (flag `ingestion_ws_enabled`, default off — C-4.13): compose the
     public WS skeleton. The exchange adapter (M4) supplies the socket factory and
@@ -4289,7 +4300,12 @@ def wire_public_ws(
         inst = snap.get(symbol) if snap is not None else None
         return None if inst is None else int(inst.launch_time)
 
-    _wire_klines(ctx, adapter.kline_fetcher(rest, _tick_size), kline_boundary)
+    _wire_klines(
+        ctx,
+        adapter.kline_fetcher(rest, _tick_size),
+        kline_boundary,
+        kline_bars=kline_bars if kline_bars is not None else KlineBarsSink(),
+    )
 
     # #1892/#1912: wall clock (not the monotonic demand clock) bounds event time,
     # shifted by ClockGuard's measured offset so the exchange clock is truth.
@@ -4378,13 +4394,18 @@ def wire_public_ws(
 
 
 def _wire_klines(
-    ctx: AppContext, fetch_klines: KlineFetcher, kline_boundary: KlineHotBoundary | None = None
+    ctx: AppContext,
+    fetch_klines: KlineFetcher,
+    kline_boundary: KlineHotBoundary | None = None,
+    *,
+    kline_bars: KlineBarsSink,
 ) -> None:
     """E12-S05: cache-first `/market/klines` with background exchange backfill.
 
     The hot tier is both the backfill cache and the read source; pages are written as
-    `source=rest` kline rows. Persisting kline-sourced `bars_time` rows (`bars.kline_rows`) is
-    wired once a `BarWriter` is composed (E12-T05), so no `kline_sink` here yet.
+    `source=rest` kline rows. BR-07 / SR-E12-10: every confirmed page also reaches `bars_time`
+    as `source=kline` rows through `kline_bars` (`submit_kline_bars`: never over a stored or
+    queued tape row); the sink is mandatory, so no backfill write path bypasses that check.
     """
 
     class _HotKlines:
@@ -4402,7 +4423,7 @@ def _wire_klines(
 
     hot = _HotKlines()
     boundary = kline_boundary if kline_boundary is not None else KlineHotBoundary()
-    backfill = KlineBackfillService(fetch_klines=fetch_klines, cache=hot)
+    backfill = KlineBackfillService(fetch_klines=fetch_klines, cache=hot, kline_sink=kline_bars)
     cold = ParquetKlineReader(
         DatasetRegistry(ctx.settings.parquet_root),
         max_concurrency=ctx.settings.cold_kline_concurrency,

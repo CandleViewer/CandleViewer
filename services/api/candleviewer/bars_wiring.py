@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol
@@ -42,16 +42,28 @@ import structlog
 
 from candleviewer.bars.builder_set import BarBuilderSet, production_factory
 from candleviewer.bars.emit import BarSink, EmitRouter, WriterSink
+from candleviewer.bars.errors import BarsError
 from candleviewer.bars.heal_driver import HealDriver
-from candleviewer.bars.kline_rows import PrecedenceHealth
+from candleviewer.bars.kline_rows import (
+    PrecedenceHealth,
+    RowSubmitter,
+    StoredHigherSource,
+    TapePrecedenceUnknown,
+    guarded_tape_lookup,
+    stored_tape_lookup,
+    submit_kline_bars,
+)
+from candleviewer.bars.reader import RowFetcher
 from candleviewer.bars.series_store import SeriesStore
+from candleviewer.bars.spec import TIME_INTERVALS
 from candleviewer.bars.state_store import StateStore
 from candleviewer.bars.write_holes import WriteHoleLedger
 from candleviewer.bars.writer import BarWriter, RowSink, default_is_permanent
-from candleviewer.exchange.base.models import TradeEvent
+from candleviewer.exchange.base.models import KlineEvent, TradeEvent
 from candleviewer.ingestion.ticker_stream import uuid7
 from candleviewer.storage.errors import IlpRowError, StorageTierUnavailable
 from candleviewer.storage.models import TimeRange
+from candleviewer.storage.questdb.wiring import PGWIRE_DRIVER_ERRORS
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
@@ -157,6 +169,60 @@ class StorageTape:
             start = stop
 
 
+async def _precedence_unknown(symbol: str, bar_param: str, ts: list[int]) -> set[int]:
+    raise TapePrecedenceUnknown("No stored-tape lookup is composed.")
+
+
+class _NoWriter:
+    async def submit_rows(
+        self, rows: list[dict[str, object]], spec: object, *, source: str
+    ) -> None:
+        raise BarsError("No bars writer is composed.")  # unreachable: the lookup refuses first
+
+
+def kline_tape_lookup(conn: RowFetcher) -> StoredHigherSource:
+    """The stored-tape lookup over the hot tier's PG-wire, its driver errors made a refusal."""
+    return guarded_tape_lookup(stored_tape_lookup(conn), transient=PGWIRE_DRIVER_ERRORS)
+
+
+class KlineBarsSink:
+    """BR-07 / SR-E12-10: the `KlineBackfillService.kline_sink` of the composed app. Every
+    confirmed kline page becomes `bars_time` rows only through `submit_kline_bars`, so a kline
+    row is never written where a tape row is stored or queued (refusals counted by
+    `bars_source_overwrite_refused_total`).
+
+    Late-bound: `_wire_klines` runs before `wire_bars` composes the writer, so `create_app`
+    binds the writer and the stored-tape lookup afterwards. Unbound (or with no hot tier) it
+    fails closed: precedence cannot be proven, so every row is refused and counted
+    (`bars_kline_refused_total{reason=precedence_unknown}`) and `health` is degraded. Monthly
+    klines have no fixed-width `bars_time` series and are not persisted there. A bars error
+    (full buffer, spec cap) is logged and never fails the backfill that fed it: the kline
+    cache is the served tier, these rows are its secondary copy."""
+
+    def __init__(self, health: PrecedenceHealth | None = None) -> None:
+        self.health = health if health is not None else PrecedenceHealth()
+        self.writer: RowSubmitter = _NoWriter()
+        self._lookup: StoredHigherSource = _precedence_unknown
+
+    def bind(self, writer: RowSubmitter, lookup: StoredHigherSource | None) -> None:
+        self.writer = writer
+        self._lookup = lookup if lookup is not None else _precedence_unknown
+
+    async def __call__(self, symbol: str, interval: str, events: Sequence[KlineEvent]) -> None:
+        if interval not in TIME_INTERVALS:
+            return
+        try:
+            await submit_kline_bars(
+                self.writer, symbol, interval, events, stored_higher=self._lookup,
+                health=self.health,
+            )  # fmt: skip
+        except BarsError as exc:
+            logger().error(
+                "kline_bars_not_persisted", symbol=symbol, interval=interval,
+                error=type(exc).__name__,
+            )  # fmt: skip
+
+
 class BarsRuntime:
     """Lifecycle of the set and its writer; started/stopped by the ASGI lifespan."""
 
@@ -252,11 +318,13 @@ def wire_bars(
     series: SeriesStore | None = None,
     publisher: BarSink | None = None,
     indicators: IndicatorSink | None = None,
+    precedence: PrecedenceHealth | None = None,
 ) -> BarsRuntime:
     """Build the set + writer, attach the set to `ctx.bars`, return the lifecycle owner. `series`,
     `publisher` (the WS sinks) and `indicators` (the engine) are emitted to before the writer, in
     that order (module docstring); `reader_stop` closes the series store's own reader connection
-    after `sink_stop`; the runtime owns a heal driver over `series` and stops `indicators`."""
+    after `sink_stop`; the runtime owns a heal driver over `series` and stops `indicators`.
+    `precedence` is the kline sink's health (`KlineBarsSink.health`), reported by the probe."""
     if inner_sink is None:
         logger().warning(
             "bars_rows_not_persisted",
@@ -282,6 +350,6 @@ def wire_bars(
     ctx.bars.attach(builder_set)
     heal = HealDriver(series) if series is not None else None
     return BarsRuntime(
-        builder_set, writer, root, sink_stop, sink_degraded, reader_stop=reader_stop, heal=heal,
-        indicators=indicators, holes=holes,
+        builder_set, writer, root, sink_stop, sink_degraded, precedence, reader_stop=reader_stop,
+        heal=heal, indicators=indicators, holes=holes,
     )  # fmt: skip

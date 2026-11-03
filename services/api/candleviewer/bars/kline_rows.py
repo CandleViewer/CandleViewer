@@ -150,8 +150,8 @@ def guarded_tape_lookup(
     become `TapePrecedenceUnknown`. Cancellation is never swallowed."""
     # Default `(OSError, TimeoutError)`. asyncpg errors derive from `asyncpg.PostgresError` /
     # `asyncpg.InterfaceError`, NOT `OSError`, so they are NOT caught until the caller passes
-    # them in `transient` (#398 must wire `(asyncpg.PostgresError, asyncpg.InterfaceError)`;
-    # `bars` may not import a driver, #2053).
+    # them in `transient` (`bars_wiring.kline_tape_lookup` passes
+    # `storage.questdb.wiring.PGWIRE_DRIVER_ERRORS`; `bars` may not import a driver, #2053).
     caught: tuple[type[BaseException], ...] = (OSError, TimeoutError, *transient)
 
     async def guarded(symbol: str, bar_param: str, ts: list[int]) -> set[int]:
@@ -179,8 +179,12 @@ async def submit_kline_bars(
 
     A kline never overwrites tape (BR-07), **across restarts too**: `stored_higher` is
     mandatory — the writer's own precedence map only knows rows this process wrote, so open
-    times already holding a stored tape/parquet row (`stored_tape_lookup`, keyed on the
-    deployed dedup key `(ts, symbol, bar_param)`) are refused and counted up front. If the
+    times already holding a stored tape/parquet row (`stored_tape_lookup`, matched on
+    `(symbol, bar_param, ts)` whatever the row's `generation` and `index`) are refused and
+    counted up front. The deployed DEDUP key is `(ts, symbol, bar_param, generation, index)`
+    (`0004_bars_key_by_index.sql`), so a kline row (generation 0, NULL index) would NOT replace
+    a tape row at the same `ts`: it would sit beside it. This lookup is what keeps it out, and
+    `BarReader.read_bars` serves the tape row where both exist. If the
     writer still refuses the batch (`SourceOverwriteRefused`, a tape row written by this
     process), rows are retried one by one so only the conflicting ones are skipped — never
     forced through. If the lookup itself fails (`TapePrecedenceUnknown`) the whole batch is

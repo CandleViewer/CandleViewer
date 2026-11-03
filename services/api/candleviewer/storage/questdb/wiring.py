@@ -36,6 +36,13 @@ from candleviewer.storage.questdb.schemas import ALL_SCHEMAS
 
 #: Bound on the sink's final ILP drain at shutdown (the default 30 s is too long for bars).
 STOP_TIMEOUT_S = 10.0
+#: The driver errors a `LazyPgWire.fetch` re-raises as-is: a module that may not import the
+#: driver (`bars`, C-3.1) is handed this tuple by the composition root.
+PGWIRE_DRIVER_ERRORS: Final[tuple[type[Exception], ...]] = (
+    asyncpg.PostgresError,
+    asyncpg.InterfaceError,
+    asyncpg.InternalClientError,
+)
 
 
 def build_hot_tier_writer(

@@ -1874,8 +1874,9 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         " (from_source = the refused write, to_source = the stored row; SR-E12-10). Counts"
         " refusals, not distinct rows: a batch refused whole counts once before its rows are"
         " retried singly.",
-        "none; nothing emits it in the composed app yet: only the E12-T05 kline path"
-        " (submit_kline_bars) does, and it is not wired",
+        "none expected; each is a kline backfill row kept off an open time holding a tape row"
+        " (submit_kline_bars via the composed KlineBarsSink); a sustained rate = backfill"
+        " re-paging windows the tape already covers",
         _L,
         "E12",
         max_series=2,
