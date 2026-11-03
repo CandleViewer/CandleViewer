@@ -407,12 +407,13 @@ class _SpyUsers(FakeUserRepository):
         self.events = events
         self.time = time
 
-    async def record_login_failure(
+    async def reserve_login_attempt(
         self, user_id: str, *, lockout_threshold: int, lock_duration: timedelta, now: datetime
-    ) -> datetime | None:
-        self.events.append(("record_login_failure",))
+    ) -> tuple[int, datetime | None] | None:
+        # #5563: step-up counts the attempt here, before its password is verified.
+        self.events.append(("reserve_login_attempt",))
         self.time.work()
-        return await super().record_login_failure(
+        return await super().reserve_login_attempt(
             user_id, lockout_threshold=lockout_threshold, lock_duration=lock_duration, now=now
         )
 
@@ -527,7 +528,8 @@ async def test_step_up_slow_refusal_is_not_held_further_and_is_counted() -> None
     with pytest.raises(StepUpCodeInvalid):
         await world.step_up(world.wrong_code())
 
-    assert world.time.now == pytest.approx(slow)
+    # Two slow writes (#5563: the password's reservation, then the strike), and no hold on top.
+    assert world.time.now == pytest.approx(2 * slow)
     assert not _sleeps(world.events)
     assert _missed() == before + 1
 
@@ -589,7 +591,7 @@ async def test_step_up_password_recheck_failure_is_held_after_its_failure_count(
 
     assert not verdict.ok
     assert world.time.now == pytest.approx(_MIN_S)
-    assert [e[0] for e in world.events] == ["record_login_failure", "sleep"]
+    assert [e[0] for e in world.events] == ["reserve_login_attempt", "sleep"]
 
 
 async def test_step_up_password_recheck_for_an_unknown_account_is_held() -> None:
@@ -620,7 +622,7 @@ async def test_step_up_password_recheck_left_to_the_caller_is_not_held_here() ->
     verdict = await world.svc.verify_password(str(world.user), "a-guess", hold=False)
 
     assert not verdict.ok
-    assert [e[0] for e in world.events] == ["record_login_failure"]
+    assert [e[0] for e in world.events] == ["reserve_login_attempt"]
     assert world.svc.failure_hold.minimum == FAILURE_MINIMUM
 
 

@@ -666,20 +666,42 @@ class StepUpService:
         if user is None:
             await self._hasher.verify_dummy(password)  # same Argon2id work as a real user
             return PasswordVerdict(ok=False)
-        ok = await self._hasher.verify(user.password_hash, password)  # always, even if locked
-        if user.locked_until is not None and user.locked_until > now:
-            return PasswordVerdict(ok=False)  # locked accounts are refused like any other failure
-        if ok:
-            return PasswordVerdict(ok=True)
-        locked_until = await self._users.record_login_failure(
+        # #5563: the account reserves the attempt (counted, and locked at the threshold) before
+        # the password is verified, as sign-in does since #2802; only an attempt holding a
+        # reservation is verified against the account's hash.
+        slot = await self._users.reserve_login_attempt(
             str(user.id),
             lockout_threshold=LOCKOUT_THRESHOLD,
             lock_duration=LOCKOUT_DURATION,
             now=now,
         )
-        if locked_until is not None:
-            auth_lockouts_total.inc()  # SR-125: a wrong step-up password can lock the account
-        return PasswordVerdict(ok=False, locked_until=locked_until)
+        if slot is None:
+            # Locked (or the row is gone): the same Argon2id work against the dummy hash, and
+            # refused like any other failure. Not this attempt's lock, so nothing to report.
+            await self._hasher.verify_dummy(password)
+            return PasswordVerdict(ok=False)
+        # A lock this attempt's reservation applied is counted once: on the wrong-password arm,
+        # or, if the attempt ends (cancelled, or the verify or settle raised) before either that
+        # or the settle that clears it, on the way out below, with the error propagated.
+        count, locked_until = slot
+        lock_uncounted = locked_until is not None
+        try:
+            if not await self._hasher.verify(user.password_hash, password):
+                lock_uncounted = False
+                if locked_until is not None:
+                    auth_lockouts_total.inc()  # SR-125: a wrong step-up password can lock it
+                return PasswordVerdict(ok=False, locked_until=locked_until)
+            # Verified: give the reservation back (a step-up never resets the count), unless
+            # another attempt's lock landed while this one was in flight: then even the correct
+            # password is refused, so nothing is elevated after the lock.
+            settled = await self._users.settle_login_attempt(
+                str(user.id), slot=count, complete=False, now=now
+            )
+            lock_uncounted = False
+        finally:
+            if lock_uncounted:
+                auth_lockouts_total.inc()
+        return PasswordVerdict(ok=settled)
 
     async def _verify(self, user_id: str, code: str, now: datetime) -> bool:
         refused: list[tuple[bytes | bytearray, int | None]] = []
