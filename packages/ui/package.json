@@ -23,6 +23,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --project unit",
     "test:cov": "vitest run --project unit --coverage",
+    "test:perf": "vitest run --project perf",
     "build": "pnpm run build:tokens && pnpm run build:icons --check && tsup",
     "build:tokens": "node scripts/build-tokens.mjs",
     "build:icons": "node scripts/build-icons.mjs",
