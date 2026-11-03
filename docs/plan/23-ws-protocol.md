@@ -880,13 +880,13 @@ The account-scoped private topics (below) intersect the requested `exchange_acco
 **As built (E40-T04, #1016).** Served once E17-S03 (#411) and E17-T03 (#412) landed. The alerts module owns the adapter (`alerts/ws_topic.py`); the gateway only wires it.
 
 - **Scope (#2521).** `sub` records the principal's user id on the subscription as its owner (never a client value). The snapshot is built for that user alone, and a delta names its owner to the fan-out, which delivers it only to the subscriptions that user owns. A subscription without an owner gets nothing. Permission `alerts:read`, own alerts only (§6.3); an option naming a user is `invalid_options`.
-- **Snapshot.** The owner's newest 500 deliveries that are `sent` and unacknowledged, newest first, and the exact `unacked_count` (older ones through `GET /v1/alerts/deliveries`). The rows are read from Postgres beside the subscription, so it is `snapshot_pending` until the read lands (§7.7). It is private: never cached across subscriptions, and `snapshot: false` is always `snapshot_forced` (§7.6). A `desktop` delivery the dispatcher has handed to the shell stays `queued` until the shell reports back, so it is in no snapshot: it reaches only the sessions connected when it was handed over (as a delta, to subscriptions without `unacked_only`). A shell that was closed or reconnecting then never shows it, and the row stays `queued`; a snapshot of queued desktop rows, or an expiry that fails them, is a follow-up.
-- **Deltas.** Each change to a delivery (the dispatcher settling it, an ack, an ack-all batch, a desktop report, and the channel-failure notice a failed delivery raises) goes out as one `AlertUpdate` with the changed items, at most 100 a frame, and the owner's `unacked_count` after the change. With `unacked_only: true` a subscription gets only the items that enter or leave the unacked set (`sent`, `acked`); otherwise every change. Deliveries are discrete records, so none is coalesced away: throttle and coalescing reuse the §6.2 defaults (250 ms per connection, no merge rule, §8.2).
+- **Snapshot.** The owner's newest 500 deliveries that are `sent` and unacknowledged, newest first, and the exact `unacked_count`, which counts the `in_app` rows only (E40-D02 CC-18: one firing on several channels is one unread item, and acknowledging its in-app row clears it) (older ones through `GET /v1/alerts/deliveries`). The rows are read from Postgres beside the subscription, so it is `snapshot_pending` until the read lands (§7.7). It is private: never cached across subscriptions, and `snapshot: false` is always `snapshot_forced` (§7.6). A `desktop` delivery the dispatcher has handed to the shell stays `queued` until the shell reports back, so it is in no snapshot: it reaches only the sessions connected when it was handed over (as a delta, to subscriptions without `unacked_only`). A shell that was closed or reconnecting then never shows it, and the row stays `queued`; a snapshot of queued desktop rows, or an expiry that fails them, is a follow-up.
+- **Deltas.** Each change to a delivery (the dispatcher settling it, an ack, an ack-all batch, a desktop report, and the channel-failure notice a failed delivery raises) goes out as one `AlertUpdate` with the changed items, at most 100 a frame, and the owner's `unacked_count` (in-app rows only) after the change. With `unacked_only: true` a subscription gets only the items that enter or leave the unacked set (`sent`, `acked`); otherwise every change. Deliveries are discrete records, so none is coalesced away: throttle and coalescing reuse the §6.2 defaults (250 ms per connection, no merge rule, §8.2).
 - **Integrity.** A change the server could not publish (its rows could not be read, its queue was full, or its publish raised) re-snapshots the affected subscriptions, or every `alerts` subscription when their owners are unknown, with reason `upstream_desync` (§7.4), so a client never silently misses one; so does a snapshot load that a change kept racing for three reads (it serves what it read, then reads again). A load whose read fails is tried three times in all, backed off and jittered; after the third the subscription stays `snapshot_pending` until the owner's next change, the connection's next `sub` or `ctl`, or a resync. The alerts module logs each cause (`alerts_topic_*`), and each re-snapshot counts once per subscription in `cv_ws_resync_total{reason="upstream_desync"}`.
 - **Owner status (#3349).** Nothing starts leaving for a user who is not active (disabled, locked, invited or deleted) after the disable. The evaluator skips a due alert of theirs (for up to its 1 s owner cache it can still record a firing, which is never delivered), and the dispatcher, reading the status fresh, settles a delivery queued before the disable `suppressed` with `error` `owner_inactive` (`recipient_deleted` once the user row is gone): final, kept in history and never announced here, so no delta follows. A delivery already past that read can still be sent once, and one whose owner's status cannot be read stays `queued` for the next lease. Once the Owner enables the user again, new firings are delivered and the dropped ones stay `suppressed`. No frame, option or schema changes.
 - **Backpressure (§8.4).** The deltas of one 250 ms window leave whole and in order at its close; past the window's frame bound the window is dropped for a `backpressure` snapshot of the owner's current set (step 2), which the topic reads again first when it no longer holds that set, so a window is never sent cut short.
 
-Payload: [`AlertUpdate`](#157-alertupdate); `message` is the delivery `body`, falling back to `title`. Desktop-channel outcomes are reported over REST via `POST /v1/alerts/deliveries/{deliveryId}/desktop-outcome`, not over this socket. Metric: `cv_ws_alerts_subscriptions_in_use`, the live `alerts` subscriptions (the ticket's `cv_ws_alerts_subscribers`; 20-architecture.md §12.1).
+Payload: [`AlertUpdate`](#157-alertupdate); `message` is the delivery `body`, falling back to `title`. A firing's `title` is the alert's name and its `body` the message rendered at fire time with the values it fired on, or the condition restated with them when the template is empty (E40-D02 CC-1): plain text, control characters removed, no `{{` from a substituted value, and the value of an account- or position-scope metric shown as `—`; rows written before CC-1 hold the raw template as `title`. `kind` classes every item (CC-7, D-39): `firing`, `disarm_notice`, `failure_notice` or `storm_summary`, derived from the row the server wrote; a `storm_summary` item carries `summary` (the held count, the symbols in first-seen order and the window, its bounds null on a summary written before CC-7), every other item `summary: null`. `silenced` (CC-9) is `muted_symbol` or `quiet_hours` on the `in_app` item of a firing a symbol mute or quiet hours held: it is recorded and kept, and the client shows no toast and plays no sound for it; null otherwise. The server sends `kind`, `summary` and `silenced` on every item once E40-S02's delivery change is served; the schema leaves them optional so a client reads an older server. The fire-time values themselves are read over REST, `GET /v1/alerts/deliveries/{deliveryId}` (CC-2, a PROPOSED path), never sent on this topic. Desktop-channel outcomes are reported over REST via `POST /v1/alerts/deliveries/{deliveryId}/desktop-outcome`, not over this socket. A `skipped` report (CC-17: the window was visible, or desktop notifications are off) settles the row `suppressed` with that reason and raises no failure notice. Metric: `cv_ws_alerts_subscriptions_in_use`, the live `alerts` subscriptions (the ticket's `cv_ws_alerts_subscribers`; 20-architecture.md §12.1).
 
 #### 6.2.2 `recorder` topic
 
@@ -4146,7 +4146,35 @@ behind a `positions` window open when it arrives (§16.1 S5).
               { "type": "null" }
             ]
           },
-          "error": { "type": ["string", "null"] }
+          "error": { "type": ["string", "null"] },
+          "kind": { "enum": ["firing", "disarm_notice", "failure_notice", "storm_summary"] },
+          "silenced": { "enum": ["muted_symbol", "quiet_hours", null] },
+          "summary": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["count", "symbols", "window_start_ms", "window_end_ms"],
+                "properties": {
+                  "count": { "type": "integer", "minimum": 0 },
+                  "symbols": { "type": "array", "items": { "type": "string" } },
+                  "window_start_ms": {
+                    "oneOf": [
+                      { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
+                      { "type": "null" }
+                    ]
+                  },
+                  "window_end_ms": {
+                    "oneOf": [
+                      { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
+                      { "type": "null" }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              { "type": "null" }
+            ]
+          }
         },
         "additionalProperties": false
       }

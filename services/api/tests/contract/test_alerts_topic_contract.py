@@ -43,7 +43,9 @@ def test_an_item_carries_exactly_the_schemas_properties() -> None:
     reader = FakeReader()
     item = delivery_item(reader.add(USER_A))
     declared = _ALERTS["properties"]["deliveries"]["items"]["properties"]
-    assert set(item) == set(declared)
+    # E40-S02 (#1130): contracted in slice 1, served from the delivery slice, which drops this.
+    pending = {"kind", "summary", "silenced"}
+    assert set(item) == set(declared) - pending
     assert set(_ALERTS["properties"]) == {"deliveries", "unacked_count"}
 
 

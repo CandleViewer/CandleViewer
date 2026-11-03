@@ -288,6 +288,15 @@ operations:
     public: false
     state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
+  GET /alerts/deliveries/{deliveryId}:
+    permissions: ['alerts:read']
+    scope: self
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml; E40-S02's backend PR 1 (#1130) mounts it
+    request:
+      path: {deliveryId: '1'}
+    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   POST /alerts/deliveries/ack-all:
     permissions: ['alerts:write']
     scope: self

@@ -25,6 +25,14 @@ export interface Alerts {
     fired_at_ms: number;
     acked_at_ms?: number | null;
     error?: string | null;
+    kind?: "firing" | "disarm_notice" | "failure_notice" | "storm_summary";
+    silenced?: "muted_symbol" | "quiet_hours" | null;
+    summary?: {
+      count: number;
+      symbols: string[];
+      window_start_ms: number | null;
+      window_end_ms: number | null;
+    } | null;
   }[];
   unacked_count?: number;
 }

@@ -53,6 +53,9 @@ def test_judge_patch_keeps_only_the_named_leaves() -> None:
     assert _judge({"appearance": {"theme": "light"}}) == {"appearance.theme": "light"}
 
 
+_QUIET = {"enabled": True, "start": "22:00", "end": "07:00", "tz": "Europe/Berlin"}
+
+
 def test_judge_patch_a_null_leaf_is_a_reset() -> None:
     patch = _judge({"appearance": {"theme": None}, "notifications": {"webhook_url": None}})
     assert patch == {"appearance.theme": None, "notifications.webhook_url": None}
@@ -64,7 +67,7 @@ def test_judge_patch_stores_each_value_as_its_generated_model_writes_it() -> Non
             "appearance": {"font_scale": 1},
             "orderflow": {"min_stack": 3.0},
             "trading": {"default_qty_presets": ["0.010", "1"], "default_environment": "demo"},
-            "notifications": {"quiet_hours": {"from": "22:00", "days": [1, 2]}},
+            "notifications": {"quiet_hours": _QUIET},
         }
     )
     assert patch == {
@@ -72,8 +75,41 @@ def test_judge_patch_stores_each_value_as_its_generated_model_writes_it() -> Non
         "orderflow.min_stack": 3,
         "trading.default_qty_presets": ["0.010", "1"],  # decimals stay strings (C6)
         "trading.default_environment": "demo",
-        "notifications.quiet_hours": {"from": "22:00", "days": [1, 2]},
+        "notifications.quiet_hours": _QUIET,
     }
+
+
+def test_judge_patch_takes_the_typed_notification_leaves() -> None:
+    """E40-D02 CC-8 (#1130): the matrix, sounds, toast duration and mutes are typed leaves."""
+    leaves = {
+        "matrix": {"alerts": {"toast": True, "sound": True}, "recorder": {"desktop": False}},
+        "sounds": {"alerts": {"tone": "alert", "volume": 70}},
+        "toast_duration": "until_dismissed",
+        "muted_symbols": [{"symbol": "ETHUSDT", "muted_at": "2026-11-03T14:02:00Z"}],
+    }
+    patch = _judge({"notifications": leaves})
+    assert set(patch) == {f"notifications.{k}" for k in leaves}
+    assert patch["notifications.toast_duration"] == "until_dismissed"
+
+
+@pytest.mark.parametrize(
+    "notifications",
+    [
+        {"quiet_hours": {"from": "22:00", "days": [1, 2]}},  # the old free-form shape
+        {"quiet_hours": {**_QUIET, "start": "24:00"}},
+        {"matrix": {"alerts": {"desktop": True}}},  # per alert, never a matrix cell
+        {"matrix": {"unknown_row": {"toast": True}}},
+        {"sounds": {"alerts": {"tone": "alert", "volume": 72}}},  # steps of 5
+        {"sounds": {"alerts": {"tone": "siren"}}},
+        {"toast_duration": "30s"},
+        {"muted_symbols": [{"symbol": "ETHUSDT"}]},
+    ],
+)
+def test_judge_patch_refuses_an_off_contract_notification_leaf(
+    notifications: dict[str, object],
+) -> None:
+    with pytest.raises(m.PatchRefused):
+        _judge({"notifications": notifications})
 
 
 def test_judge_patch_an_empty_body_object_changes_nothing() -> None:

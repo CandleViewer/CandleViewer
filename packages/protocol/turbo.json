@@ -25,6 +25,8 @@
         "$TURBO_ROOT$/docs/plan/ws-schema.json",
         "$TURBO_ROOT$/packages/fixtures/golden/policy/corpus.json",
         "$TURBO_ROOT$/packages/fixtures/golden/policy/rules.json",
+        "$TURBO_ROOT$/services/api/candleviewer/alerts/_generated/__init__.py",
+        "$TURBO_ROOT$/services/api/candleviewer/alerts/_generated/notification_overrides.py",
         "$TURBO_ROOT$/services/api/candleviewer/ws/_generated/cvwb_layout.py"
       ]
     },

@@ -6,14 +6,17 @@
 // `linguist-generated` in .gitattributes.
 //
 // Barrel for the generated surfaces, written by scripts/generate-barrel.mjs:
-//  - ./rest   — TS types for docs/plan/22-api-openapi.yaml (via openapi-typescript)
-//  - ./ws     — TS types for docs/plan/23-ws-protocol.md §13-15 (via ws-schema.json)
-//  - ./policy — enum-value tables mirroring services/api/candleviewer/
-//               exchange/policy.py (tools/gen/export_instrument_policy_rules.py)
-//  - ./bars   — bar domain model mirroring services/api/candleviewer/bars/
-//               models.py (scripts/generate-bar-types.mjs)
+//  - ./rest                  — TS types for docs/plan/22-api-openapi.yaml (via openapi-typescript)
+//  - ./ws                    — TS types for docs/plan/23-ws-protocol.md §13-15 (via ws-schema.json)
+//  - ./policy                — enum-value tables mirroring services/api/candleviewer/
+//                              exchange/policy.py (tools/gen/export_instrument_policy_rules.py)
+//  - ./notificationOverrides — the critical-override constant (notification-overrides.json,
+//                              E40-D01 §5; scripts/generate-notification-overrides.mjs)
+//  - ./bars                  — bar domain model mirroring services/api/candleviewer/bars/
+//                              models.py (scripts/generate-bar-types.mjs)
 // ==========================================================================
 export * as rest from "./rest/index.js";
 export * as ws from "./ws/index.js";
 export * as policy from "./policy/index.js";
+export * as notificationOverrides from "./notificationOverrides/index.js";
 export * as bars from "./bars/index.js";

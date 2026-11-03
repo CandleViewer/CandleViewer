@@ -45,6 +45,14 @@
               "id": {
                 "type": "integer"
               },
+              "kind": {
+                "enum": [
+                  "firing",
+                  "disarm_notice",
+                  "failure_notice",
+                  "storm_summary"
+                ]
+              },
               "message": {
                 "type": "string"
               },
@@ -57,6 +65,13 @@
                   "critical"
                 ]
               },
+              "silenced": {
+                "enum": [
+                  "muted_symbol",
+                  "quiet_hours",
+                  null
+                ]
+              },
               "status": {
                 "enum": [
                   "queued",
@@ -64,6 +79,55 @@
                   "failed",
                   "suppressed",
                   "acked"
+                ]
+              },
+              "summary": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "count": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "symbols": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "window_end_ms": {
+                        "oneOf": [
+                          {
+                            "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "window_start_ms": {
+                        "oneOf": [
+                          {
+                            "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "count",
+                      "symbols",
+                      "window_start_ms",
+                      "window_end_ms"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ]
               },
               "symbol": {

@@ -3926,6 +3926,16 @@
         }
       }
     },
+    "/alerts/deliveries/{deliveryId}": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "alerts:read"
+          ],
+          "scope": "self"
+        }
+      }
+    },
     "/alerts/deliveries/{deliveryId}/ack": {
       "post": {
         "x-rbac": {
