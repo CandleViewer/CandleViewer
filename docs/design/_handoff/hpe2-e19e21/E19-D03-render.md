@@ -69,6 +69,11 @@
 
 Nodes = `lc.count`. Lint is the post-step `lintd` of the root (`lintd.shapes` = nodes - 1).
 
+Dark exports of boards 05 and 09 (kit reading R-K1), taken 1:1 under the dark theme (probe `canvas.fill` #11151a before export); the theme was left on dark:
+
+- `docs/design/E19/img/E19-D03-05-greyscale-cvd-dark.png`: 3280x1878, 332179 bytes, PASS E19-D03-05-greyscale-cvd-dark.png theme=dark own=1502 other=97
+- `docs/design/E19/img/E19-D03-09-settings-dark.png`: 3280x1878, 434426 bytes, PASS E19-D03-09-settings-dark.png theme=dark own=2329 other=199
+
 SHEET-FIX E19-D03 01 root height 1896 -> 1878 (checked want: footer end 1798 + 80)
 SHEET-FIX E19-D03 01 legend keys in the four docked legends (compact, dense, comfortable, degraded): 16 key rows raised 12 -> 14 to fit their 14 px words, and the 8 HVN / LVN glyphs fixed to their 12 x 8 swatch with content centred (their 12 px line box ran 2 px past the swatch's top and bottom); in the text-scale-200 inset the HVN and LVN swatches widened 12 -> 24 (the 18 px glyph ran 9 px past the right edge) and their glyphs centred in them
 SHEET-FIX E19-D03 01 frames 'SCR-038∕degraded-dark' and 'SCR-038∕text-scale-200-dark' raised 728 -> 736 (one 8 px step): each holds a 736 px docked panel that spilled 8 px past the frame's bottom
@@ -106,8 +111,8 @@ SHEET-FIX E19-D03 10 backticks removed from the drawn 'line 01' ("(`15`:464)"), 
   sizes (12 px rows around 14 px words; 12 px glyph line boxes in 8 px swatches) cut text on every board; a regenerated
   kit can carry the 14 px rows and fitted glyph boxes above.
 - 05 and 09: their md's kit reading R-K1 asks for a second export under dark (`E19-D03-05-greyscale-cvd-dark.png`,
-  `E19-D03-09-settings-dark.png`), and their annotations name those files. RENDER.md and the drawing brief say light only,
-  once, so this return does not carry them; the '-dark' frames in the two light PNGs are therefore under the light set.
+  `E19-D03-09-settings-dark.png`), and their annotations name those files. RENDER.md said light only; the kit owner
+  confirmed both are needed, and they are now carried (the dark-exports list above).
 - 05: its md also asks for Rec. 601 greyscale crops of the 'greyscale-dark' and 'greyscale-light' frames. RENDER.md does
   not list them, so this return does not carry them; they are `cvd_sim.py` runs on the PNGs, for whoever owns that step.
   Its `SCR-038∕cvd-sheet` frame leaves its lower part empty, as the sheet draws it.
