@@ -1,10 +1,12 @@
 # Fixture for cv-oms-env-branch (E29-X02): tests of the environment against its values in an OMS
-# module; fail-closed self-checks, C-2.11's comparisons of two environments and look-alikes stay
-# quiet. A marker sits on the comparison's line.
+# module; fail-closed self-checks that only raise, C-2.11's comparisons of two environments and
+# look-alikes stay quiet. A marker sits on the comparison's line, or on the `if`'s for a raise that
+# does more than raise.
 from candleviewer.config import ProcessEnvironment
 from candleviewer.domain.primitives import Environment
 
 _NOT_LIVE = frozenset({"demo", "testnet"})
+_LIVE = frozenset({"live"})
 
 
 def branches(env, environment, order, settings, accounts, served, unserved):
@@ -32,6 +34,43 @@ def branches(env, environment, order, settings, accounts, served, unserved):
         unserved()
         raise ValueError("live")
     return [a for a in accounts if a.mode in ("live", "demo")], figures, live  # ruleid: cv-oms-env-branch
+
+
+def values(settings, environment, order, served, unserved):
+    """An environment's `.value` is the environment: it is tested the way the environment is."""
+    if settings.environment.value not in _NOT_LIVE:  # ruleid: cv-oms-env-branch
+        served()
+    figures = unserved() if environment.value in _LIVE else served()  # ruleid: cv-oms-env-branch
+    if environment.value not in _NOT_LIVE:  # ruleid: cv-oms-env-branch
+        raise ValueError("live")
+    else:
+        served()
+    if order.value in _NOT_LIVE:  # ok: cv-oms-env-branch
+        served()
+    if settings.environment.value in order.router.ports:  # ok: cv-oms-env-branch
+        served()
+    return figures
+
+
+async def raising(environment, port, order, ready):
+    """A raise that does work, or a condition that keeps the test, is not a plain self-check."""
+    if environment == "live":  # ruleid: cv-oms-env-branch
+        raise Refused(_open_live_route(port))
+    if environment == "live":  # ruleid: cv-oms-env-branch
+        raise Refused(reason=_open_live_route(port))
+    if environment == "live":  # ruleid: cv-oms-env-branch
+        raise Refused(await port.place_order(order))
+    if environment == "live":  # ruleid: cv-oms-env-branch
+        raise Refused(await ready)
+    if environment == "live":  # ruleid: cv-oms-env-branch
+        raise Refused(reason=await ready)
+    if (live := environment == "live") and ready:  # ruleid: cv-oms-env-branch
+        raise Refused("live")
+    if environment == "live":  # ok: cv-oms-env-branch
+        raise Refused(f"serves demo and testnet only, not {environment!r}")
+    if environment == "live":  # ok: cv-oms-env-branch
+        raise Refused
+    return live
 
 
 def isolation(account, route_environment, order, mode, phase, ViewAsPhase, served):

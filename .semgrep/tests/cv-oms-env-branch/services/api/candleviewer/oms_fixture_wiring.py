@@ -20,4 +20,12 @@ def figures_for[T](env: str, none: T, served: T, live_default: str) -> T:
         return served
     if env == live_default:  # ok: cv-oms-env-branch
         return none
+    if env.value not in _NOT_LIVE:  # ruleid: cv-oms-env-branch
+        return served
+    if env == "live":  # ruleid: cv-oms-env-branch
+        raise ValueError(live_default.upper())
+    if (live := env == "live") and none is None:  # ruleid: cv-oms-env-branch
+        raise ValueError(env)
+    if env == "testnet":  # ok: cv-oms-env-branch
+        raise ValueError(f"not {env!r}")
     return none if env not in _NOT_LIVE else served  # ruleid: cv-oms-env-branch

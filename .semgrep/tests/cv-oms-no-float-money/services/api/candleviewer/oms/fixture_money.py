@@ -17,7 +17,12 @@ def converted(order, row, leg, fill, position, payload):
     e = float(payload["avgPrice"])  # ruleid: cv-oms-no-float-money
     f = float(str(position.unrealised_pnl))  # ruleid: cv-oms-no-float-money
     g = float(order.sl)  # ruleid: cv-oms-no-float-money
-    return a, b, c, d, e, f, g
+    h = float(fill.cum_exec_value)  # ruleid: cv-oms-no-float-money
+    i = float(row["cumExecValue"])  # ruleid: cv-oms-no-float-money
+    j = float(order.trailing_distance)  # ruleid: cv-oms-no-float-money
+    k = float(order.trailing_stop)  # ruleid: cv-oms-no-float-money
+    m = float(leg.distance)  # ruleid: cv-oms-no-float-money
+    return a, b, c, d, e, f, g, h, i, j, k, m
 
 
 def stored(raw, quote, record):
@@ -26,7 +31,9 @@ def stored(raw, quote, record):
     record["balance"] = float(raw)  # ruleid: cv-oms-no-float-money
     leg = dict(qty=float(raw))  # ruleid: cv-oms-no-float-money
     rung = {"take_profit": float(quote)}  # ruleid: cv-oms-no-float-money
-    return price, leg, rung
+    exec_value = float(raw)  # ruleid: cv-oms-no-float-money
+    kept = dict(trailingStop=float(quote), cumExecValue=float(raw))  # ruleid: cv-oms-no-float-money
+    return price, leg, rung, exec_value, kept
 
 
 def decimals(raw, level: Px, tick, step: Qty | None = None):
@@ -43,6 +50,13 @@ def _seconds(name: str, value: float) -> float:
     if isinstance(value, bool) or not (math.isfinite(value) and value > 0):
         raise ValueError(f"{name} must be a finite number of seconds above zero")
     return float(value)  # ok: cv-oms-no-float-money
+
+
+def bare(standing, row):
+    """A bare `value` names no money: only a `_value` or `...Value` suffix does."""
+    a = float(standing.value)  # ok: cv-oms-no-float-money
+    b = float(row["value"])  # ok: cv-oms-no-float-money
+    return a, b
 
 
 class Fold:

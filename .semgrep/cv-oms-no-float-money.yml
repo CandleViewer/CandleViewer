@@ -8,12 +8,13 @@ rules:
     severity: ERROR
     message: >-
       `float()` on a money value in an OMS module: a price, quantity, size, notional, fee, PnL,
-      balance, equity, margin, leverage or risk figure converted to binary floating point, or a
-      float stored under such a name. The OMS computes in `Decimal` end to end (AGENTS.md §5.2;
-      24-internal-schemas.md §8, §14.4 `Px`, `Qty`), as the exchange's decimal strings round-trip
-      only as decimals and a float rounds `0.1 + 0.2` (R7 data accuracy, threat model OM-T08). Fix:
-      keep the `Decimal` and quantize it to the instrument's tick or step. A duration in seconds
-      stays a float. Rule doc: docs/plan/security/ci-gates-e29.md#cv-oms-no-float-money.
+      balance, equity, margin, leverage, distance, risk or `*_value` figure converted to binary
+      floating point, or a float stored under such a name. The OMS computes in `Decimal` end to
+      end (AGENTS.md §5.2; 24-internal-schemas.md §8, §14.4 `Px`, `Qty`), as the exchange's decimal
+      strings round-trip only as decimals and a float rounds `0.1 + 0.2` (R7 data accuracy, threat
+      model OM-T08). Fix: keep the `Decimal` and quantize it to the instrument's tick or step. A
+      duration in seconds stays a float. Rule doc:
+      docs/plan/security/ci-gates-e29.md#cv-oms-no-float-money.
     metadata:
       rule-id: cv-oms-no-float-money
       threat: [OM-T08]
@@ -27,7 +28,7 @@ rules:
               - pattern: float($ARG)
               - metavariable-regex:
                   metavariable: $ARG
-                  regex: '^(?!.*(?i:_s|_ms|_us|_ns|_secs?|_seconds|timeout|interval|delay|wait|deadline|ttl)\W*$)(?=.*(?:(?<![A-Za-z])|(?<=[a-z])(?=[A-Z]))(?i:price|px|qty|quantity|size|notional|amount|amt|cost|fee|commission|pnl|profit|loss|balance|equity|margin|exposure|collateral|cash|usdt|usd|leverage|mark|risk|sl|tp)(?:e?s)?(?![a-z]))'
+                  regex: '^(?!.*(?i:_s|_ms|_us|_ns|_secs?|_seconds|timeout|interval|delay|wait|deadline|ttl)\W*$)(?=.*(?:(?<![A-Za-z])|(?<=[a-z])(?=[A-Z]))(?i:price|px|qty|quantity|size|notional|amount|amt|cost|fee|commission|pnl|profit|loss|balance|equity|margin|exposure|collateral|cash|usdt|usd|leverage|mark|risk|sl|tp|distance|trailing)(?:e?s)?(?![a-z])|.*(?:_value|[a-z]Value)s?(?![a-z]))'
           - patterns:
               - pattern-either:
                   - pattern: $NAME = float($ARG)
@@ -37,7 +38,7 @@ rules:
               - focus-metavariable: $ARG
               - metavariable-regex:
                   metavariable: $NAME
-                  regex: '^(?!.*(?i:_s|_ms|_us|_ns|_secs?|_seconds|timeout|interval|delay|wait|deadline|ttl)\W*$)(?=.*(?:(?<![A-Za-z])|(?<=[a-z])(?=[A-Z]))(?i:price|px|qty|quantity|size|notional|amount|amt|cost|fee|commission|pnl|profit|loss|balance|equity|margin|exposure|collateral|cash|usdt|usd|leverage|mark|risk|sl|tp)(?:e?s)?(?![a-z]))'
+                  regex: '^(?!.*(?i:_s|_ms|_us|_ns|_secs?|_seconds|timeout|interval|delay|wait|deadline|ttl)\W*$)(?=.*(?:(?<![A-Za-z])|(?<=[a-z])(?=[A-Z]))(?i:price|px|qty|quantity|size|notional|amount|amt|cost|fee|commission|pnl|profit|loss|balance|equity|margin|exposure|collateral|cash|usdt|usd|leverage|mark|risk|sl|tp|distance|trailing)(?:e?s)?(?![a-z])|.*(?:_value|[a-z]Value)s?(?![a-z]))'
           - pattern: float(Decimal(...))
           - pattern: float($MOD.Decimal(...))
           - pattern: float($VALUE.quantize(...))

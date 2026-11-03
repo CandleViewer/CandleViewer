@@ -11,7 +11,8 @@ rules:
       (OM-I05; SR-E29-08, threat model §6; C-12.6): the table is append-only and kept
       indefinitely, so a key, a signature or an `auth` frame stored once cannot be removed. Write
       `"payload": redact_exchange_payload(event.payload)`, as `orders_sqlalchemy._event_values`
-      does, through the Core builder, never text SQL. Rule doc:
+      does, through the Core builder, never text SQL, an `INSERT ... SELECT` or a change to the
+      payload after it was redacted. Rule doc:
       docs/plan/security/ci-gates-e29.md#cv-oms-order-events-unredacted.
     metadata:
       rule-id: cv-oms-order-events-unredacted
@@ -33,6 +34,10 @@ rules:
               - pattern: '{..., "payload": $VALUE, ...}'
               - pattern: $TARGET["payload"] = $VALUE
               - pattern: $STMT.values(..., payload=$VALUE, ...)
+              - pattern: dict(..., payload=$VALUE, ...)
+              - pattern: $DICT.update(..., payload=$VALUE, ...)
+              - pattern: $DICT.setdefault("payload", $VALUE)
+              - pattern: $TARGET["payload"][$KEY] = $VALUE
           - pattern-not: '{..., "payload": redact_exchange_payload(...), ...}'
           - pattern-not: '{..., "payload": $REDACTOR.redact_exchange_payload(...), ...}'
           - pattern-not: '{..., "payload": {}, ...}'
@@ -40,7 +45,31 @@ rules:
           - pattern-not: $TARGET["payload"] = $REDACTOR.redact_exchange_payload(...)
           - pattern-not: $STMT.values(..., payload=redact_exchange_payload(...), ...)
           - pattern-not: $STMT.values(..., payload=$REDACTOR.redact_exchange_payload(...), ...)
+          - pattern-not: dict(..., payload=redact_exchange_payload(...), ...)
+          - pattern-not: dict(..., payload=$REDACTOR.redact_exchange_payload(...), ...)
+          - pattern-not: dict(..., payload={}, ...)
+          - pattern-not: $DICT.update(..., payload=redact_exchange_payload(...), ...)
+          - pattern-not: $DICT.update(..., payload=$REDACTOR.redact_exchange_payload(...), ...)
+          - pattern-not: $DICT.setdefault("payload", redact_exchange_payload(...))
+          - pattern-not: $DICT.setdefault("payload", $REDACTOR.redact_exchange_payload(...))
+          - pattern-not: $TARGET["payload"][$KEY] = redact_exchange_payload(...)
+          - pattern-not: $TARGET["payload"][$KEY] = $REDACTOR.redact_exchange_payload(...)
           - focus-metavariable: $VALUE
+      # A payload changed in place after it was redacted, and an `INSERT ... SELECT`, whose payload
+      # the database picks: neither passes through the redactor in Python. Same import gate.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  from $MODULE import order_events
+                  ...
+              - pattern-inside: |
+                  from $MODULE import order_events as $TABLE
+                  ...
+          - pattern-either:
+              - pattern: $TARGET["payload"].update(...)
+              - pattern: $STMT.from_select(...)
+          - pattern-not: $TARGET["payload"].update(redact_exchange_payload(...))
+          - pattern-not: $TARGET["payload"].update($REDACTOR.redact_exchange_payload(...))
       - patterns:
           - pattern-either:
               - pattern: $SA.insert($MODULE.order_events).values(..., payload=$VALUE, ...)

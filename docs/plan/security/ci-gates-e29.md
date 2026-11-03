@@ -65,20 +65,26 @@ would retire its exception.
 - **Matches,** in OMS modules: `float(x)` where `x` names money as a whole word of a name, attribute
   or key, in snake or camel case (`price`, `px`, `qty`, `quantity`, `size`, `notional`, `amount`,
   `amt`, `cost`, `fee`, `commission`, `pnl`, `profit`, `loss`, `balance`, `equity`, `margin`,
-  `exposure`, `collateral`, `cash`, `usdt`, `usd`, `leverage`, `mark`, `risk`, `sl`, `tp`, plurals
-  too); a float stored under such a name (an assignment, annotated or not, a keyword or a dict key),
-  reported on the float's line; `float(Decimal(...))` and `float(x.quantize(...))`; and `float(p)` of
-  a parameter or a local annotated `Decimal`, `Px`, `Qty`, `Notional`, `Bps`, `Amount`, `Money`,
-  `Price`, `Quantity` or `Figure` (or `| None`). Fix: keep the `Decimal`; quantize to the tick or step.
+  `exposure`, `collateral`, `cash`, `usdt`, `usd`, `leverage`, `mark`, `risk`, `sl`, `tp`,
+  `distance`, `trailing`, plurals too), or with `value` closing a longer name, as the exchange names
+  its money fields (`cum_exec_value`, `cumExecValue`, `position_value`); a float stored under such a
+  name (an assignment, annotated or not, a keyword or a dict key), reported on the float's line;
+  `float(Decimal(...))` and `float(x.quantize(...))`; and `float(p)` of a parameter or a local
+  annotated `Decimal`, `Px`, `Qty`, `Notional`, `Bps`, `Amount`, `Money`, `Price`, `Quantity` or
+  `Figure` (or `| None`). Fix: keep the `Decimal`; quantize to the tick or step.
 - **Does not match:** a name that ends as a duration does (`_s`, `_ms`, `_us`, `_ns`, `_sec`,
   `_secs`, `_seconds`, `timeout`, `interval`, `delay`, `wait`, `deadline`, `ttl`), a money word in it
   or not (`price_age_s`); counts and clocks; `float("inf")`; a money word inside another (`slot`,
-  `tpsl`). Every `float()` in OMS modules on `main` is one of these: eight durations, a gauge's
+  `tpsl`); a bare `value` (the `_seconds` helpers' argument: only `value` closing a longer name is
+  money). Every `float()` in OMS modules on `main` is one of these: eight durations, a gauge's
   count and a clock. A count named after money (`float(len(prices))`) fires: name the count.
-- **Not seen:** a float of an unnamed value (Python refuses `Decimal * float`, so such money was a
-  float where it was made), `parse_float=float`, an unannotated money value under a name the list
-  lacks (`value`). `cv-no-float-prices` covers `storage/**`, `bars/**` and `ingestion/**`, and
-  `cv-decimal-discipline` the `float` annotations.
+- **Not seen:** a float of a value that neither its name nor its annotation marks as money
+  (`level = order.price`, then `float(level)`), `parse_float=float`, an unannotated money value
+  under a name the list lacks; other ways to a float (`np.float64(price)`, `price.__float__()`,
+  `builtins.float`, `math.fsum` or `math.isclose` over prices); an argument that mixes money with a
+  trailing duration (`float(price or timeout_s)`), which the duration ending exempts.
+  `cv-no-float-prices` covers `storage/**`, `bars/**` and `ingestion/**`, and `cv-decimal-discipline`
+  the `float` annotations.
 - **Fixture:** `.semgrep/tests/cv-oms-no-float-money/` (an `oms/` module, one with PEP 695 syntax, an
   `oms_*.py` module).
 
@@ -103,8 +109,12 @@ would retire its exception.
   scoped `where`'s arguments. A predicate in a `where` on another statement fires: write it in the
   chain.
 - **Not seen:** a table only in `select_from`, an alias passed in or built by a helper, a tuple of five
-  or more, text SQL (these stores build Core only; `cv-storage-sql-construction` owns text), and the
-  stores outside the scope: `order_path_symbols_sqlalchemy.py` (the instrument refresh's seed, symbol
+  or more, a table or column list imported under another name (`orders as order_table`,
+  `ORDER_COLUMNS as _ORDER_COLUMNS`), a column tuple built at module level, an alias made by
+  `sa.alias(orders, ...)` and bound to a name (`orders.alias(...)` is seen), a column added by
+  `.add_columns(...)`, an UPDATE or a DELETE (the rule reads selects only), text SQL (these stores
+  build Core only; `cv-storage-sql-construction` owns text), and the stores outside the scope:
+  `order_path_symbols_sqlalchemy.py` (the instrument refresh's seed, symbol
   names across every account, answered to no request), `reconcile_sqlalchemy.py` (the reconciliation
   pass, one account per call), and the trade-group, notification and admin stores of their own epics.
   Each store's `UNSCOPED` set, which its unit test pins, names its unscoped builders beside the rule.
@@ -115,20 +125,31 @@ would retire its exception.
 
 - **Protects:** OM-I05; SR-E29-08 (threat model section 6, items 2 and 4); C-12.6. `order_events` is
   append-only and kept indefinitely: a key, a signature or an `auth` frame stored once stays.
-- **Matches:** in a module that imports the `order_events` table, a value written under `payload` (a
-  dict key, `row["payload"] = ...` or `.values(payload=...)`) that is not a direct
-  `redact_exchange_payload(...)` call, bare or module-qualified, or `{}`, reported on the value's line;
-  in any module, an insert or update of `<module>.order_events` whose `.values(payload=...)` is not
-  that call; and text SQL that writes the table (an `INSERT INTO`, `UPDATE ... SET` or `COPY` of
-  `order_events`), which would skip the redaction that runs in Python before the bind. Scope:
-  `services/api/candleviewer/**`, not migrations. Fix: write
+- **Matches:** in a module that imports the `order_events` table by name, a value written under
+  `payload` (a dict key, `dict(payload=...)`, `row["payload"] = ...`, `.values(payload=...)`,
+  `.update(payload=...)`, `.setdefault("payload", ...)`, or a key of a payload already built,
+  `row["payload"][key] = ...`) that is not a direct `redact_exchange_payload(...)` call, bare or
+  module-qualified, or, in a dict, `{}`, reported on the value's line; there too, a payload merged in
+  place (`row["payload"].update(...)`) unless by such a call, and an `INSERT ... SELECT`
+  (`.from_select(...)`), whose payload the database picks; in any module, an insert or update of
+  `<module>.order_events` whose `.values(payload=...)` is not that call; and text SQL that writes the
+  table (an `INSERT INTO`, `UPDATE ... SET` or `COPY` of `order_events`), which would skip the
+  redaction that runs in Python before the bind. Scope: `services/api/candleviewer/**`, not
+  migrations. Fix: write
   `"payload": redact_exchange_payload(event.payload)` through the Core builder, as
   `orders_sqlalchemy._event_values` does.
 - **Does not match:** a `payload` in a module that writes no `order_events` row (a WS frame's, a
   handover's), a read (`SELECT payload FROM order_events`). A value redacted earlier and held in a
   variable fires: call the redactor where the value is written.
-- **Not seen:** the values built in another module (`.values(**helper(event))`), a dict held in a
-  variable then passed to `.values(rows)`, a statement split across string literals. The in-memory
+- **Not seen:** a module that names the table through its module
+  (`from candleviewer.db import models as m`): there only `insert(m.order_events).values(payload=...)`
+  and the `update` form are read, so a `{"payload": ...}` dict, `m.order_events.insert().values(...)`,
+  executemany parameters and the in-place forms pass (no store does so today); values built in
+  another module that does not import the table (`.values(**helper(event))`: a helper's own dict is
+  read where the helper is, as `_event_values`' is); a dict held in a variable then passed to
+  `.values(rows)`; a payload changed through a name (`p = values["payload"]; p["sign"] = ...`) or by
+  `|=`; text SQL with an alias between the table and its columns
+  (`INSERT INTO order_events AS oe (...)`); a statement split across string literals. The in-memory
   fake (`oms/fakes.py`) redacts the same way, proven by its own tests. The threat model's record-type
   form (section 6 item 4) waits for closed payload schemas (SR-E29-08 item 3, G-1):
   `NewOrderEvent.payload` is a plain `Mapping` today.
@@ -143,9 +164,11 @@ would retire its exception.
   `aiohttp`, `requests`, `urllib3`, `urllib.request`, `http.client`, `websockets`, `websocket`,
   `socket`, `ssl`, `grpc`, `pycurl`, `treq`), by `importlib.import_module` or `__import__` too; a call
   on one of those modules (`httpx.AsyncClient(...)`); asyncio's own streams (`asyncio.open_connection`,
-  `open_unix_connection`, a loop's `create_connection` or `sock_connect`). Fix: call the
+  `open_unix_connection`) and a `create_connection` or `sock_connect` call on any receiver, an event
+  loop however it is named; an `if TYPE_CHECKING:` (or `typing.TYPE_CHECKING`) whose `else` or `elif`
+  branch imports one of those clients, reported on the `if` line, as that branch runs. Fix: call the
   `TradingPort` the runtime hands the OMS; an adapter change belongs in `exchange/`.
-- **Does not match:** an import under `if TYPE_CHECKING:` (the order lane's
+- **Does not match:** an import in the first branch of `if TYPE_CHECKING:` (the order lane's
   `httpx.AsyncBaseTransport` type in `oms_wiring.py`), an annotation, the adapter's port
   (`exchange/base`) and the adapter import CONSTITUTION.md section 3 allows M14: the ticket's "any
   exchange call outside the adapter package" is narrowed to network clients, as
@@ -161,23 +184,31 @@ would retire its exception.
 - **Matches,** in OMS modules: an environment compared with one of its values (`==`, `!=`, `is`,
   `is not` against `"live"`, `"demo"` or `"testnet"`, or a member `LIVE`, `DEMO` or `TESTNET` of an
   enum whose name holds `Env`, also inside a call such as `Environment("live")`), membership of an
-  environment-named value (`env`, `environment`, `self._env`, `order.environment`) in any collection
-  (`env not in _NOT_LIVE`), and membership of any value in a literal collection of environment values;
+  environment-named value (`env`, `environment`, `self._env`, `order.environment`, and an
+  environment's `.value`: `settings.environment.value`) in a constant (`env not in _NOT_LIVE`) or in
+  a literal collection, and membership of any value in a literal collection of environment values;
   in an `if`, a `while`, a conditional expression, a comprehension or an assignment alike. Fix: read a
   field of `ExchangeCapabilities` or of another record the composition root builds.
-- **Exemption:** a test whose `if` body is a single `raise` and that has no `else` or `elif`, a
-  fail-closed self-check. Seven pass on `main` without an annotation:
+- **Exemption:** a test whose `if` body is a single `raise` of a class, bare or called with a message
+  (a string, an f-string or a name), and that has no `else` or `elif`, a fail-closed self-check. Seven
+  pass on `main` without an annotation:
   `ports.refuse_live_without_reconciliation`, `stream_consumer.refuse_live_without_position_rows`,
   `oms_stream_wiring.refuse_live_without_freeze`, the reconcile wiring's and the reconcile job's
   always-remediate checks, `DayRiskFigures`' constructor and the runtime's machine-event sink check.
   An `if` that raises and has an `else` or an `elif`, or whose body does more than raise, is reported
-  on its `if` line; the fixture holds both.
+  on its `if` line, and so is a raise-only `if` that does work for one environment: a call or an
+  `await` in the raise's arguments (`raise Refused(_open_live_route(port))`), or a walrus in its
+  condition, which keeps the test for a later branch (`(live := env == "live")`); the fixture holds
+  each.
 - **Does not match:** a comparison of two environment values (C-2.11's isolation checks:
   `account.environment != self._environment`, `Validator.check_route`), an execution mode
   (`mode == "paper"`), another enum's `LIVE` (`ViewAsPhase.LIVE`).
 - **Not seen:** `match`/`case`, a table keyed by the environment (`ENV_LETTER[environment]`, data as
   `ExchangeCapabilities` is), a boolean computed elsewhere (`is_live`), an environment under a name
-  the pattern lacks.
+  the pattern lacks, an environment enum imported under a name without `Env` (`PE.LIVE`), a value
+  tested for membership in the environment (`"live" in env`). In a raise-only `if`: an exception used
+  as control flow (`raise _UseTradeSocket`, which an `except` one frame up answers with the live
+  work) and an exception whose constructor does work, both of which read as a bare raise.
 - **Fixture:** `.semgrep/tests/cv-oms-env-branch/`, with the annotated statement that proves the marker
   placement the four exceptions use.
 
@@ -195,7 +226,11 @@ would retire its exception.
   allocation; `replace` of anything else.
 - **Not seen:** an id string sent without the allocator (`order_link_id=candidate.value`):
   `OrderLinkId` is a pattern-checked `str` today. SR-E29-03's nominal type, which `place_order` alone
-  will accept, is a change still to land; the rule follows that type when it does.
+  will accept, is a change still to land; the rule follows that type when it does. Copies the rule
+  does not follow: `replace` of a parameter or of an `allocate_replacement(...)` result (the
+  allocator's second entry point; only `allocate(...)` is followed), `copy.deepcopy`, `type(x)(...)`,
+  `object.__new__(ola.AllocatedOrderLinkId)` and the class held in a variable (`cls(...)`). An
+  aliased import (`... as Allocated`) is seen.
 - **Fixture:** `.semgrep/tests/cv-oms-link-id-constructor/`, with a fixture at the allocator's own path.
 
 ## Requesting an exception

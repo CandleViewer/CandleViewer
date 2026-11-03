@@ -6,6 +6,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import httpx  # ok: cv-oms-no-network-client
 
+if TYPE_CHECKING:  # ruleid: cv-oms-no-network-client
+    from httpx import AsyncClient
+else:
+    import websockets
+
 type Transport = "httpx.AsyncBaseTransport | None"
 
 

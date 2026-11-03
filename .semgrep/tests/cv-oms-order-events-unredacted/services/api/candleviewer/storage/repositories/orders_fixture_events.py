@@ -36,5 +36,36 @@ def keyword(order_id, event):
     yield sa.insert(order_events).values(order_id=order_id, payload=redact_exchange_payload(event.payload))  # ok: cv-oms-order-events-unredacted
 
 
+def calls(values, event, raw):
+    row = dict(kind=event.kind, payload=raw)  # ruleid: cv-oms-order-events-unredacted
+    row = dict(kind=event.kind, payload=redact_exchange_payload(raw))  # ok: cv-oms-order-events-unredacted
+    row = dict(kind=event.kind, payload=xp.redact_exchange_payload(raw))  # ok: cv-oms-order-events-unredacted
+    row = dict(kind=event.kind, payload={})  # ok: cv-oms-order-events-unredacted
+    values.update(payload=raw)  # ruleid: cv-oms-order-events-unredacted
+    values.update(payload=redact_exchange_payload(raw))  # ok: cv-oms-order-events-unredacted
+    values.update(payload=xp.redact_exchange_payload(raw))  # ok: cv-oms-order-events-unredacted
+    values.setdefault("payload", raw)  # ruleid: cv-oms-order-events-unredacted
+    values.setdefault("payload", redact_exchange_payload(raw))  # ok: cv-oms-order-events-unredacted
+    values.setdefault("payload", xp.redact_exchange_payload(raw))  # ok: cv-oms-order-events-unredacted
+    return row, values
+
+
+def in_place(event, headers):
+    """A redacted payload is a plain dict: a value written into it later skips the redactor."""
+    values = {"payload": redact_exchange_payload(event.payload)}  # ok: cv-oms-order-events-unredacted
+    values["payload"]["sign"] = headers["sign"]  # ruleid: cv-oms-order-events-unredacted
+    values["payload"]["extra"] = redact_exchange_payload(headers)  # ok: cv-oms-order-events-unredacted
+    values["payload"]["extra"] = xp.redact_exchange_payload(headers)  # ok: cv-oms-order-events-unredacted
+    values["payload"].update(event.payload)  # ruleid: cv-oms-order-events-unredacted
+    values["payload"].update(redact_exchange_payload(headers))  # ok: cv-oms-order-events-unredacted
+    values["payload"].update(xp.redact_exchange_payload(headers))  # ok: cv-oms-order-events-unredacted
+    return values
+
+
+def bulk(rows):
+    yield sa.insert(order_events).from_select(["order_id", "payload"], rows)  # ruleid: cv-oms-order-events-unredacted
+    yield sa.select(order_events.c.payload).where(order_events.c.order_id == rows)  # ok: cv-oms-order-events-unredacted
+
+
 _INSERT = sa.text("INSERT INTO order_events (order_id, seq, payload) VALUES (:o, :s, :p)")  # ruleid: cv-oms-order-events-unredacted
 _READ = sa.text("SELECT payload FROM order_events WHERE order_id = :o")  # ok: cv-oms-order-events-unredacted

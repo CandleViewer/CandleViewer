@@ -12,3 +12,7 @@ class _Kept[T]:
 
 def _fresh[K, T](wallet: dict[K, T], key: K) -> float:
     return float(wallet[key].available_balance)  # ruleid: cv-oms-no-float-money
+
+
+def _held[K, T](book: dict[K, T], key: K) -> float:
+    return float(book[key].position_value)  # ruleid: cv-oms-no-float-money

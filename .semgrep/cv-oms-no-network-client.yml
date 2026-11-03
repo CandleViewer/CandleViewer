@@ -36,6 +36,35 @@ rules:
           - pattern-not-inside: |
               if typing.TYPE_CHECKING:
                   ...
+      # Semgrep's `if TYPE_CHECKING:` pattern above also matches an `if` that has an `else` (or an
+      # `elif`), whose other branch runs: that `if` is reported on its own line when the branch
+      # imports a client.
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  if TYPE_CHECKING:
+                      ...
+                  else:
+                      $...RUNTIME
+              - pattern: |
+                  if typing.TYPE_CHECKING:
+                      ...
+                  else:
+                      $...RUNTIME
+          - metavariable-pattern:
+              metavariable: $...RUNTIME
+              pattern-either:
+                - patterns:
+                    - pattern-either:
+                        - pattern: import $NET
+                        - pattern: import $NET as $ALIAS
+                        - pattern: from $NET import $NAME
+                        - pattern: from $NET import $NAME as $ALIAS
+                    - metavariable-regex:
+                        metavariable: $NET
+                        regex: ^(?:httpx|httpcore|aiohttp|requests|urllib3|urllib\.request|http\.client|websockets?|socket|ssl|grpc|pycurl|treq)(?:\.\w+)*$
+                - pattern: from urllib import request
+                - pattern: from http import client
       - pattern: from urllib import request
       - pattern: from http import client
       - pattern: httpx.$CALL(...)
@@ -50,13 +79,8 @@ rules:
       - pattern: http.client.$CALL(...)
       - pattern: asyncio.open_connection(...)
       - pattern: asyncio.open_unix_connection(...)
-      - patterns:
-          - pattern-either:
-              - pattern: $LOOP.create_connection(...)
-              - pattern: $LOOP.sock_connect(...)
-          - metavariable-regex:
-              metavariable: $LOOP
-              regex: (?i)loop
+      - pattern: $LOOP.create_connection(...)
+      - pattern: $LOOP.sock_connect(...)
       - patterns:
           - pattern-either:
               - pattern: importlib.import_module($MODNAME, ...)
