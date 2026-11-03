@@ -88,7 +88,7 @@ Board 06 of ten (§0 L76: SCR-038/attach-menu-dark, SCR-038/attached-dark). Grid
 
 ## Sources (8)
 
-- spec E19-D04.md md5 bad23883 in this checkout (§0 L76; BQ ruling RULED, comment 6585044844)
+- spec E19-D04.md md5 ede2cf4a in this checkout (§0 L76; BQ ruling RULED, comment 6585044844)
 - D03 E19-D03.md md5 928db4e4 at 35032f521 (read via git show 35032f521; PR #5517 head; re-pinned when it merges)
 - D02 E19-D02.md md5 1299df3b at 3619e95c5 (read via checkout; merge commit of PR #5487)
 - D02E14 E14-D02.md md5 8560e306 at the base 95a625b09

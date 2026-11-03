@@ -88,8 +88,8 @@ view-as user "Sam", the stale age 7 s (W-39's figure, so D02's last update reads
   under its footer raises.
 - **Focus rings (PNG review).** A focused control's 2 px outer ring was cut by its clipping parent on board 02 (the
   three name fields, the delete dialog's Cancel) and board 06 (Attach profile): the dialog footer, the CMP-040 field
-  and E14's extension slot are now unclipped (`"clip": False`; no geometry change). The drawn PNGs keep the cut
-  rings (spec §16).
+  and E14's extension slot are now unclipped (`"clip": False`; no geometry change). Boards 02 and 06 were
+  redrawn from the rebuilt sheets and show whole rings (spec §16).
 
 The rebuild reproduces the drawn geometry: every node matches the drawn sheets but for the values above.
 
