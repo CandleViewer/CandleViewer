@@ -16,6 +16,13 @@ import { type MutationRange, RangeSlot } from "../../model/counters.js";
 import { MARK_HEAVY } from "./geometry.js";
 import { CANDLE_DIR, CANDLE_META, CANDLE_STRIDE, MARK, type RangePatchSink } from "./ring.js";
 
+// Module-local copies for the per-tick path (one load each, not a namespace read per use).
+const DIR_SHIFT = CANDLE_META.dirShift;
+const DIR_MASK = MARK.dir;
+const COLOUR_UP = CANDLE_META.colourUp;
+const ZERO_RANGE = CANDLE_DIR.zeroRange;
+const DOWN = CANDLE_DIR.down;
+
 /** What a `MarkRing` reads from its `CandleRing` (structurally). */
 export interface MarkOwner {
   readonly sink: RangePatchSink | null;
@@ -112,6 +119,9 @@ export class MarkRing {
       const f = flags[p] as number;
       found += ((f >> 1) & 1) + ((f >> 3) & 1); // one entry per bit: forming (2), amended (8)
     }
+    // The live tick: one bar rewritten that already has its entries (same bits, same bar). Its
+    // entries are refreshed in place; nothing is copied, reserved or queued (no state changed).
+    if (!all && found > 0 && to - from === 1 && this.retick(store, from, n, head, mask)) return;
     const before = this.count;
     if (found === 0 && !all) {
       // The common case: no mark in the range; skip unless a kept entry falls in it or past n.
@@ -190,27 +200,95 @@ export class MarkRing {
   private put(e: number, slot: number, kind: number, t: number): number {
     const w = e * CANDLE_STRIDE;
     if (w + CANDLE_STRIDE > this.ints.length) outside(e, this.slots);
-    // The drawn words (the ring writes before its follower runs): the store's bar, or under
-    // Heikin-Ashi its HA candle, so the ring circles and the square tops what is on screen.
+    const v = this.drawn(slot);
     const words = this.owner.ints;
-    const v = slot * CANDLE_STRIDE;
-    if (v + CANDLE_STRIDE > words.length) outside(slot, words.length / CANDLE_STRIDE);
-    const o = words[v] as number;
-    const h = words[v + 1] as number;
-    const l = words[v + 2] as number;
-    const meta = words[v + 4] as number;
-    const dir = (meta >> CANDLE_META.dirShift) & MARK.dir;
-    const heavy =
-      this.owner.hollow && dir !== CANDLE_DIR.zeroRange
-        ? (meta & CANDLE_META.colourUp) === 0
-        : dir === CANDLE_DIR.down;
     this.ints[w] = slot;
-    this.ints[w + 1] = h;
-    this.ints[w + 2] = l;
-    this.ints[w + 3] = o;
-    this.ints[w + 4] = kind | (dir << CANDLE_META.dirShift) | (heavy ? MARK_HEAVY : 0);
+    this.ints[w + 1] = words[v + 1] as number;
+    this.ints[w + 2] = words[v + 2] as number;
+    this.ints[w + 3] = words[v] as number;
+    this.ints[w + 4] = kind | this.look(words[v + 4] as number);
     this.times[e] = t;
     return e + 1;
+  }
+
+  /**
+   * The drawn words' offset for `slot` (the ring writes before its follower runs): the store's
+   * bar, or under Heikin-Ashi its HA candle, so the ring circles and the square tops what is on
+   * screen.
+   */
+  private drawn(slot: number): number {
+    const v = slot * CANDLE_STRIDE;
+    const n = this.owner.ints.length;
+    if (v + CANDLE_STRIDE > n) outside(slot, n / CANDLE_STRIDE);
+    return v;
+  }
+
+  /** An entry's word 4 without its kind, from the drawn `meta`: `dir << 4 | heavy`. */
+  private look(meta: number): number {
+    const dir = (meta >> DIR_SHIFT) & DIR_MASK;
+    const heavy = this.owner.hollow && dir !== ZERO_RANGE ? (meta & COLOUR_UP) === 0 : dir === DOWN;
+    return (dir << DIR_SHIFT) | (heavy ? MARK_HEAVY : 0);
+  }
+
+  /**
+   * The live-tick fast path: bar `i` (the one bar the ring wrote) keeps its marks. When its
+   * entries are exactly its bits (forming, then amended), of the same bar (its time), and no
+   * entry lies past the store's end, each is refreshed in place from the drawn words; a changed
+   * one (a new high, a direction change, an HA or hollow move) patches its slots and counts as a
+   * list change, with no event (no bar's bits changed). Otherwise false: the full sync runs.
+   */
+  private retick(store: BarStore, i: number, n: number, head: number, mask: number): boolean {
+    const c = store.columns;
+    const p = (head + i) & mask;
+    const f = (c.flags[p] as number) & MARK_BITS;
+    const t = c.time[p] as number;
+    let first = -1;
+    let k = 0;
+    for (let e = 0; e < this.count; e += 1) {
+      const idx = this.indexOf(e, head, mask);
+      if (idx >= n) return false;
+      if (idx !== i) continue;
+      if (first < 0) first = e;
+      k += 1;
+    }
+    const forming = f & BAR_FLAG.forming;
+    if (first < 0 || k !== (forming !== 0 ? 1 : 0) + ((f & BAR_FLAG.amended) !== 0 ? 1 : 0)) {
+      return false;
+    }
+    for (let j = 0; j < k; j += 1) {
+      const want = j === 0 && forming !== 0 ? BAR_FLAG.forming : BAR_FLAG.amended;
+      if (this.kindOf(first + j) !== want || this.times[first + j] !== t) return false;
+    }
+    const v = this.drawn(p);
+    const words = this.owner.ints;
+    const h = words[v + 1] as number;
+    const l = words[v + 2] as number;
+    const o = words[v] as number;
+    const look = this.look(words[v + 4] as number);
+    const ints = this.ints;
+    let lo = -1;
+    let hi = -1;
+    for (let e = first; e < first + k; e += 1) {
+      const w = e * CANDLE_STRIDE;
+      const word = ((ints[w + 4] as number) & MARK_BITS) | look;
+      if (ints[w + 1] === h && ints[w + 2] === l && ints[w + 3] === o && ints[w + 4] === word) {
+        continue;
+      }
+      ints[w + 1] = h;
+      ints[w + 2] = l;
+      ints[w + 3] = o;
+      ints[w + 4] = word;
+      if (lo < 0) lo = e;
+      hi = e + 1;
+    }
+    if (lo < 0) return true;
+    this.changes += 1;
+    const sink = this.owner.sink;
+    if (sink === null) return true;
+    this.patched += hi - lo;
+    const span = this.range.set("patch", lo, hi, 0);
+    for (let j = 0; j < this.nodes.length; j += 1) sink.patch(this.nodes[j] as string, span);
+    return true;
   }
 
   /**
