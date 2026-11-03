@@ -13,8 +13,11 @@ pins file, and runs G-DECK, G-PROV, G-NAMED's deck part, G-HYGIENE and G-SCOPE. 
 PR 1b's: it runs every gate, and any of the five files missing FAILs G-SCOPE.
 
 Gates (each FAIL led by its name):
-  G-DECK     the deck parses: the header line first, then one row per string with every field, a
-             unique key, a known kind, status and provenance; a `merged` row cites a merged file, a
+  G-DECK     the deck parses: the header line first (it names the `frozen` flag and pins the row
+             and status counts), then one row per string with every field, no field outside the
+             closed set, the `frozen` field (null, or the reason the string is frozen), a unique
+             key, a known kind, status and provenance; a `merged` row cites a merged file (a merged row's `quote`
+             is a composition: the quoted prefix, then the line's own tail), a
              `RULED` row names its ruling; each row's text, or its `quote`, is on its cited line,
              a text as a whole delimited span (never a cut prefix); every owner is a ticket key
              (a PROPOSED row's always).
@@ -46,8 +49,8 @@ Gates (each FAIL led by its name):
              the pins file's hash (a moved or edited line FAILs until re-pointed by content and
              `--repin-ruled` re-pins it); the SHA anchor is the pinned base.
   G-HYGIENE  no closing keyword, local path, URL or host, agent name, double-brace slot or
-             public-text deny word in the stage's texts; no deny word in this tool or the pins
-             file; no unknown anchor key.
+             public-text deny word in the stage's texts; no closing keyword, local path, URL,
+             host, agent name or deny word in this tool or the pins file; no unknown anchor key.
   G-SCOPE    the stage's files are all present, and the diff against
              `git merge-base HEAD origin/main` touches only them.
   G-HANDOFF  the hand-off carries one `16` §11.4 block per changed component (CMP-186, CMP-126,
@@ -129,10 +132,10 @@ CITE = re.compile(r"`(\d\d|D0[234]|CAL|E08H|R01)`:(\d+(?:–\d+)?(?:, :\d+(?:–
 ANCHOR = re.compile(r"`?([^\s<|(`]+)`?<!--=([A-Z]+:[A-Za-z0-9.]+)-->")
 CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE)
 LOCAL_PATH = re.compile(
-    "/" + "home/|/" + "tmp/|/Users/|[A-Za-z]:\\\\|\\bnotes" + "/|\\bwt-" + "notes\\b"
+    "/" + "home/|/" + "tmp/|/Us" + "ers/|[A-Za-z]:\\\\|\\bnotes" + "/|\\bwt-" + "notes\\b"
 )  # assembled, so this file carries none of the paths it refuses
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
-URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
+URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-" + r"id=|file-" + r"id=", re.IGNORECASE)
 PLACEHOLDER = re.compile(r"\bTBD\b|\bTODO\b|\bFIXME\b|\?\?\?|\bXXX\b")
 DENY = (
     "le" + "ak",
@@ -151,6 +154,9 @@ DENY = (
     "pre-" + "auth",
 )  # each entry an explicit `+` join, so the tool's own text carries none of the words
 FIELDS = ("id", "text", "screen", "kind", "where", "status", "owner", "provenance", "source")
+OPTIONAL = ("consumer", "scope", "quote", "q1", "ruling", "superseded_by")  # a row's other fields
+KNOWN = (*FIELDS, *OPTIONAL, "frozen")  # the closed set; `frozen` is required: null or a reason
+FLAGS = ["frozen"]  # the header's flags (E37-D05's shape)
 KINDS = (
     "label",
     "value",
@@ -284,7 +290,9 @@ def parse_deck(text: str) -> Deck:
         except json.JSONDecodeError as e:
             problems.append(f"deck:{i} does not parse: {e}")
             continue
-        if not isinstance(row, dict) or not all(isinstance(v, str) for v in row.values()):
+        if not isinstance(row, dict) or not all(
+            isinstance(v, str) or (k == "frozen" and v is None) for k, v in row.items()
+        ):
             problems.append(f"deck:{i} is not an object of strings")
             continue
         rows.append(row)
@@ -418,11 +426,32 @@ def whole_span(text: str, ln: str) -> bool:
     return False
 
 
+def composed(r: dict[str, str], ln: str) -> bool:
+    """A merged row with a `quote`: its text is the backticked prefix before the quote's "…", then
+    the line's own tail, which stands on `ln` as the end of a delimited span."""
+    m = re.search(r"`([^`]*)…`", r["quote"])
+    if not m or not r["text"].startswith(m[1]):
+        return False
+    tail = r["text"][len(m[1]) :]
+    return (
+        bool(tail)
+        and re.search(re.escape(tail) + r"\s*(?:[" + CLOSE_DELIM + "]|$)", ln) is not None
+    )
+
+
 def g_deck(t: Texts, vals: dict[str, str]) -> list[str]:
     deck = parse_deck(t.deck)
     bad = list(deck.problems)
     if deck.head and deck.head.get("base") != BASE[:10]:
         bad.append("the deck's header names another base than the tool's")
+    if deck.head and deck.head.get("flags") != FLAGS:
+        bad.append(f"the deck's header does not name the flags {FLAGS}")
+    counts = {
+        "rows": len(deck.rows),
+        **{s: sum(r.get("status") == s for r in deck.rows) for s in STATUSES},
+    }
+    if deck.head and deck.head.get("counts") != counts:
+        bad.append("the deck's header counts (rows, merged, RULED, PROPOSED) are not the rows'")
     seen: set[str] = set()
     for r in deck.rows:
         k = r.get("id", "?")
@@ -430,6 +459,12 @@ def g_deck(t: Texts, vals: dict[str, str]) -> list[str]:
         if missing:
             bad.append(f"{k}: no {', '.join(missing)}")
             continue
+        if unknown := sorted(set(r) - set(KNOWN)):
+            bad.append(f"{k}: a field outside the closed set ({', '.join(unknown)})")
+        if "frozen" not in r:
+            bad.append(f"{k}: no `frozen` field (null, or the reason the string is frozen)")
+        elif r["frozen"] is not None and not r["frozen"]:
+            bad.append(f"{k}: `frozen` is empty (null, or a reason)")
         if not re.fullmatch(r"derivatives\.[a-z0-9_.]+", k):
             bad.append(f"{k}: not a `derivatives.*` key")
         if k in seen:
@@ -462,6 +497,8 @@ def g_deck(t: Texts, vals: dict[str, str]) -> list[str]:
             bad.append(f"{k}: {want[:40]!r} is not on {r['source']} at its ref")
         elif not r.get("quote") and not whole_span(want, ln):
             bad.append(f"{k}: the text is part of a span on {r['source']}, not the whole span")
+        elif r["status"] == "merged" and r.get("quote") and not composed(r, ln):
+            bad.append(f"{k}: the text is not the quoted prefix plus the tail on {r['source']}")
     return bad
 
 
@@ -523,7 +560,7 @@ def g_named(t: Texts, vals: dict[str, str]) -> list[str]:
     for d in deck.rows:
         if d.get("scope") is not None:
             if d["scope"] not in group:
-                bad.append(f"{d.get('key')}: scope {d['scope']!r} is not T-1 ... T-7")
+                bad.append(f"{d.get('id')}: scope {d['scope']!r} is not T-1 ... T-7")
             else:
                 group[d["scope"]].add(d.get("id", ""))
     bad += [f"{i} ({SCOPE_GROUPS[n]}) has no deck row" for n, i in enumerate(ids) if not group[i]]
@@ -702,20 +739,17 @@ def g_cite(t: Texts, vals: dict[str, str]) -> list[str]:
 
 def g_hygiene(t: Texts, vals: dict[str, str]) -> list[str]:
     bad = []
-    checks = ((CLOSING, "a closing keyword (the closing PR alone closes #663)"),
+    checks = ((CLOSING, "a closing keyword (the closing PR alone closes #" + "663)"),
               (LOCAL_PATH, "a local path"), (AGENT_NAME, "an agent name"),
               (URL_OR_HOST, "a URL or a host"))  # fmt: skip
-    for label, text in (("spec", t.spec), ("hand-off", t.hand), ("deck", t.deck)):
+    for label, text, slots in (("spec", t.spec, 1), ("hand-off", t.hand, 1), ("deck", t.deck, 1),
+                               ("tool", t.tool, 0), ("pins", t.pins, 0)):  # fmt: skip
         for i, ln in enumerate(text.split("\n"), 1):
             for rx, what in checks:
                 if rx.search(ln):
                     bad.append(f"{label}:{i} carries {what}")
-            if "{{" in ln:
+            if slots and "{{" in ln:
                 bad.append(f"{label}:{i} carries a double-brace slot")
-            if any(d in ln.lower() for d in DENY):
-                bad.append(f"{label}:{i} carries a public-text deny word")
-    for label, text in (("tool", t.tool), ("pins", t.pins)):
-        for i, ln in enumerate(text.split("\n"), 1):
             if any(d in ln.lower() for d in DENY):
                 bad.append(f"{label}:{i} carries a public-text deny word")
     for text in (t.spec, t.hand):
@@ -882,6 +916,40 @@ def deck_set(key: str, **fields: str) -> Callable[[Texts], Texts]:
     return f
 
 
+def deck_edit(key: str, fn: Callable[[dict[str, str | None]], None]) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        out = []
+        for ln in t.deck.split("\n"):
+            if ln.startswith(f'{{"id": "{key}"'):
+                row = json.loads(ln)
+                fn(row)
+                ln = json.dumps(row, ensure_ascii=False)
+            out.append(ln)
+        return replace(t, deck="\n".join(out))
+
+    return f
+
+
+def drop_field(key: str, field: str) -> Callable[[Texts], Texts]:
+    def fn(row: dict[str, str | None]) -> None:
+        del row[field]
+
+    return deck_edit(key, fn)
+
+
+def rename_field(key: str, old: str, new: str) -> Callable[[Texts], Texts]:
+    def fn(row: dict[str, str | None]) -> None:
+        row[new] = row.pop(old)
+
+    return deck_edit(key, fn)
+
+
+def drop_row(key: str) -> Callable[[Texts], Texts]:
+    return lambda t: replace(
+        t, deck="\n".join(ln for ln in t.deck.split("\n") if not ln.startswith(f'{{"id": "{key}"'))
+    )
+
+
 Mutation = Callable[[Texts], Texts]
 BOTH, FULL_ONLY = (DECK, FULL), (FULL,)
 
@@ -905,7 +973,7 @@ MUTATIONS: tuple[tuple[str, str, Mutation, tuple[str, ...]], ...] = (
     ("G-FILLED", "write a placeholder", sub("spec", "The table is empty until the READY dry run.", "The table is TBD."), FULL_ONLY),
     ("G-AROW", "change an A-row's Old text", sub("hand", '"Cluster (×N)"', '"Cluster (count)"'), FULL_ONLY),
     ("G-CITE", "re-point a `D02` cite to an unpinned line", sub("spec", "The order is D02's (`D02`:106).", "The order is D02's (`D02`:107)."), FULL_ONLY),
-    ("G-HYGIENE", "write a closing keyword against #663", sub("spec", "carries the closing line for #663.", "carries the closing line. Closes #663."), FULL_ONLY),
+    ("G-HYGIENE", "write a closing keyword against #663", sub("spec", "carries the closing line for #663.", "carries the closing line. Closes #" + "663."), FULL_ONLY),
     ("G-SCOPE", "touch `14` in the diff", lambda t: replace(t, changed=[*owned(t.stage), PATHS["14"]]), BOTH),
     ("G-DECK", "give a row a text not on its line", deck_set("derivatives.oi.forming", text="forming span"), BOTH),
     ("G-PROV", "make an approximate row claim publication", deck_set("derivatives.announce.cascade.shorts", provenance="approximate", text="Liquidations: about 1,240 per second, published by Bybit."), BOTH),
@@ -919,7 +987,7 @@ MUTATIONS: tuple[tuple[str, str, Mutation, tuple[str, ...]], ...] = (
     ("G-PROPS", "rename a `22` Wire field", sub("spec", "`22`:20716 `source`", "`22`:20716 `origin`"), FULL_ONLY),
     ("G-PROV", "write ≈ for 'about' in a charge line", deck_set("derivatives.countdown.imminent.pay", text="Funding settles in 00:04:12 — you pay ≈ 12.40 USDT, predicted, on Demo 1 · DEMO"), BOTH),
     ("G-PROV", "relabel Q-1's symbol reading as words", deck_set("derivatives.countdown.imminent.pay.q1_symbol", q1="words"), BOTH),
-    ("G-PROV", "detach a charge line's symbol twin", lambda t: replace(t, deck=t.deck.replace("imminent.live_line.q1_symbol", "imminent.live_line.q1_sym", 1)), BOTH),
+    ("G-PROV", "detach a charge line's symbol twin", lambda t: replace(t, deck=t.deck.replace("imminent.live_line.q1_symbol", "imminent.live_line.q1_sym", 1), spec=t.spec.replace("imminent.live_line.q1_symbol", "imminent.live_line.q1_sym")), BOTH),
     ("G-NAMED", "drop T-2's only scope row", deck_set("derivatives.oi.native_granularity", scope="T-9"), BOTH),
     ("G-NAMED", "drop a group from the deck header", lambda t: replace(t, deck=t.deck.replace('"T-7": "the unit column headers"', '"T-7": "the column headers"', 1)), BOTH),
     ("G-NAMED", "list a symbol twin under T-3 in §8.2 that the deck lacks", sub("spec", "`derivatives.countdown.imminent.pay.q1_symbol`", "`derivatives.countdown.imminent.no_position.q1_symbol`"), FULL_ONLY),
@@ -931,6 +999,15 @@ MUTATIONS: tuple[tuple[str, str, Mutation, tuple[str, ...]], ...] = (
     ("G-SCOPE", "the deck missing", absent(DECK_REL), BOTH),
     ("G-SCOPE", "a pack file in the deck stage's diff", lambda t: replace(t, changed=[*DECK_PATHS, SPEC_REL]), (DECK,)),
     ("G-HYGIENE", "a deny word in the deck", deck_set("derivatives.oi.forming", where="forming " + DENY[2]), BOTH),
+    ("G-DECK", "drop a row's `frozen` field", drop_field("derivatives.oi.forming", "frozen"), BOTH),
+    ("G-DECK", "drop the header's `frozen` flag", lambda t: replace(t, deck=t.deck.replace('"flags": ["frozen"]', '"flags": []', 1)), BOTH),
+    ("G-DECK", "reword the tail of a merged row's quoted text", deck_set("derivatives.liq.partial_chip.not_today", text="No history before 21 Oct 09:14 UTC. Bybit publishes all liquidation history."), BOTH),
+    ("G-DECK", "misspell a row's `scope` field", rename_field("derivatives.table.oi.columns", "scope", "scop"), (DECK,)),
+    ("G-DECK", "delete a deck row", drop_row("derivatives.group.label"), (DECK,)),
+    ("G-DECK", "drift the header's merged count", lambda t: replace(t, deck=t.deck.replace('"merged": 123', '"merged": 124', 1)), BOTH),
+    ("G-HYGIENE", "a local path in the tool", lambda t: replace(t, tool=t.tool + "\n# /" + "home/x\n"), BOTH),
+    ("G-HYGIENE", "a closing keyword in the tool", lambda t: replace(t, tool=t.tool + "\n# closes #" + "663\n"), BOTH),
+    ("G-HYGIENE", "a URL in the tool", lambda t: replace(t, tool=t.tool + "\n# https:" + "//x.example\n"), BOTH),
 )  # fmt: skip
 
 
