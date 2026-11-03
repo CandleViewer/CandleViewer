@@ -1,5 +1,4 @@
-# E34-D02 cite pins: the cite, a hash of its cited line(s) at its base.
-# Written by --repin-ruled only.
+# E34-D02 cite pins: the cite, a hash of its cited line(s) at its base. Written by --repin-ruled only.
 E29D03:262	382c23b39d33
 14:1504	d8982b6d13ed
 DS:72–73	9d8a2a78354e
@@ -98,6 +97,9 @@ E09D09:95	42ecee944520
 E09D09:93	035b53b28568
 E09D09:92	fed770ab6bd2
 E30D02:406	b3be0e82f022
+24:2317	27d706b9f746
+24:2325	023fa9d0a21c
+24:2333	f94104a816df
 22:21553	a0bee24da920
 22:18739	87373ad15542
 20:625	5416e66ff4f6
