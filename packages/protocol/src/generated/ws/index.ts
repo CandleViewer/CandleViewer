@@ -29,6 +29,9 @@ export interface Alerts {
     silenced?: "muted_symbol" | "quiet_hours" | null;
     summary?: {
       count: number;
+      /**
+       * @maxItems 100
+       */
       symbols: string[];
       window_start_ms: number | null;
       window_end_ms: number | null;

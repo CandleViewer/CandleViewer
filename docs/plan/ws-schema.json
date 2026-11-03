@@ -3180,10 +3180,12 @@
                 "enum": ["debug", "info", "warning", "error", "critical"]
               },
               "title": {
-                "type": "string"
+                "type": "string",
+                "maxLength": 1000
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "maxLength": 1000
               },
               "symbol": {
                 "oneOf": [
@@ -3229,8 +3231,10 @@
                       },
                       "symbols": {
                         "type": "array",
+                        "maxItems": 100,
                         "items": {
-                          "type": "string"
+                          "type": "string",
+                          "maxLength": 1000
                         }
                       },
                       "window_start_ms": {

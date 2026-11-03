@@ -514,7 +514,7 @@ def test_no_list_answer_carries_a_withheld_field(env: Env) -> None:
     r = env.c.get("/alerts/deliveries")
     assert _MARKER not in r.text
     declared = set(load_openapi_spec()["components"]["schemas"]["AlertDelivery"]["properties"])
-    # E40-S02 (#1130): contracted in slice 1, served from the delivery slice, which drops this.
+    # E40-S02: contracted in slice 1, served from slice 2 of #1130, which drops this.
     pending = {"kind", "summary", "silenced"}
     assert _keys(r.json()["items"]) == declared - pending  # field by field: the contract's
 

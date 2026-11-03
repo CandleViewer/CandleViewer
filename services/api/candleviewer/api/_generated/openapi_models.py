@@ -4351,18 +4351,18 @@ class RuleEvent(BaseModel):
     __null_refused = field_validator("id", "ts", "kind", "payload", mode="before")(_refuse_null)
 
 
+class Symbol3(RootModel[str]):
+    root: Annotated[str, Field(max_length=1000)]
+
+
 class AlertDeliveryStormSummary(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
     count: Annotated[JsonInt, Field(ge=0)]
-    symbols: list[str]
+    symbols: Annotated[list[Symbol3], Field(max_length=100)]
     window_start: AwareDatetime | None
     window_end: AwareDatetime | None
-
-
-class Symbol3(RootModel[str]):
-    root: Annotated[str, Field(max_length=1000)]
 
 
 class AlertDeliveryContext(BaseModel):
@@ -5517,7 +5517,14 @@ class NotificationQuietHours(BaseModel):
     enabled: StrictBool
     start: Annotated[str, Field(pattern="^([01][0-9]|2[0-3]):[0-5][0-9]$")]
     end: Annotated[str, Field(pattern="^([01][0-9]|2[0-3]):[0-5][0-9]$")]
-    tz: Annotated[str, Field(examples=["Europe/Berlin"], max_length=64, min_length=1)]
+    tz: Annotated[
+        str,
+        Field(
+            description="An IANA zone name. The pattern is checked now; a zone the server's tz database lacks is refused from the preferences slice of #1130 on.\n",
+            examples=["Europe/Berlin"],
+            pattern="^[A-Za-z0-9_+./-]{1,64}$",
+        ),
+    ]
 
 
 class MutedSymbol(BaseModel):
@@ -7974,13 +7981,15 @@ class AlertDelivery(BaseModel):
     title: Annotated[
         str | None,
         Field(
-            description="A firing's title is the alert's name, as it was at fire time (E40-D02 CC-1); a notice's or a storm summary's is the server's own wording. Rows written before CC-1 hold the raw message template here.\n"
+            description="A firing's title is the alert's name, as it was at fire time (E40-D02 CC-1); a notice's or a storm summary's is the server's own wording. Rows written before CC-1 hold the raw message template here.\n",
+            max_length=1000,
         ),
     ] = None
     message: Annotated[
         str | None,
         Field(
-            description="The delivery row `body`, falling back to `title` when `body` is empty. A firing's `body` is its message template rendered at fire time with the values it fired on, or, for an empty template, the condition restated with those values (E40-D02 CC-1, D-17). Plain text, never markup: control and bidirectional-control characters are removed and a substituted value never carries `{{` or `}}`. The value of a metric of account or position scope, and every `position.*` placeholder, renders `—`, so no account data reaches any channel until an in-app-only body exists.\n"
+            description="The delivery row `body`, falling back to `title` when `body` is empty. A firing's `body` is its message template rendered at fire time with the values it fired on, or, for an empty template, the condition restated with those values (E40-D02 CC-1, D-17). Plain text, never markup: control and bidirectional-control characters are removed and a substituted value never carries `{{` or `}}`. The value of a metric of account or position scope, and every `position.*` placeholder, renders `—`, so no account data reaches any channel until an in-app-only body exists.\n",
+            max_length=1000,
         ),
     ] = None
     symbol: Symbol | None = None

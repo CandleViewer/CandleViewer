@@ -12,6 +12,7 @@ import jsonschema
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.alerts._generated.notification_overrides import LOCKED_CELLS
 from candleviewer.api import user_settings_models as m
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.audit.redact import REDACTION_MARKER, redact
@@ -90,6 +91,25 @@ def test_judge_patch_takes_the_typed_notification_leaves() -> None:
     patch = _judge({"notifications": leaves})
     assert set(patch) == {f"notifications.{k}" for k in leaves}
     assert patch["notifications.toast_duration"] == "until_dismissed"
+
+
+@pytest.mark.parametrize(("category", "channel"), sorted(LOCKED_CELLS))
+def test_judge_patch_refuses_a_locked_cell_set_false(category: str, channel: str) -> None:
+    """E40-D02 CC-8 (#1130 S1 lens M-1): never stored, whatever else the matrix holds."""
+    matrix = {"alerts": {"toast": True}, category: {channel: False}}
+    with pytest.raises(m.PatchRefused) as got:
+        _judge({"notifications": {"matrix": matrix}})
+    assert got.value.errors == [{"field": f"notifications.matrix.{category}.{channel}",
+                                 "rule": "risk_channel_locked",
+                                 "message": "Cannot be muted — critical."}]  # fmt: skip
+
+
+def test_judge_patch_takes_a_locked_cell_set_true_or_left_out() -> None:
+    matrix = {category: {channel: True} for category, channel in LOCKED_CELLS}
+    stored = _judge({"notifications": {"matrix": matrix}})["notifications.matrix"]
+    assert isinstance(stored, dict)
+    assert all(stored[category][channel] is True for category, channel in LOCKED_CELLS)
+    assert _judge({"notifications": {"matrix": {"risk_events": {"sound": False}}}})
 
 
 @pytest.mark.parametrize(

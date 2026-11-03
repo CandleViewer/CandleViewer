@@ -9837,6 +9837,13 @@ paths:
                   type: string
                   enum: [granted, denied, default, unsupported]
                   description: OS notification permission observed by the shell; recorded in audit.
+              oneOf:
+                - description: A skipped delivery says why (CC-17).
+                  properties: { outcome: { const: skipped } }
+                  required: [reason]
+                - description: Any other outcome carries no reason.
+                  properties: { outcome: { enum: [shown, blocked, failed] } }
+                  not: { required: [reason] }
       responses:
         "204": { description: Outcome recorded. }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -22857,12 +22864,14 @@ components:
         severity: { $ref: "#/components/schemas/Severity" }
         title:
           type: string
+          maxLength: 1000
           description: >
             A firing's title is the alert's name, as it was at fire time (E40-D02 CC-1); a
             notice's or a storm summary's is the server's own wording. Rows written before CC-1
             hold the raw message template here.
         message:
           type: string
+          maxLength: 1000
           description: >
             The delivery row `body`, falling back to `title` when `body` is empty. A firing's
             `body` is its message template rendered at fire time with the values it fired on, or,
@@ -22937,7 +22946,7 @@ components:
         on a summary written before CC-7.
       properties:
         count: { type: integer, minimum: 0 }
-        symbols: { type: array, items: { type: string } }
+        symbols: { type: array, maxItems: 100, items: { type: string, maxLength: 1000 } }
         window_start: { type: ["string", "null"], format: date-time }
         window_end: { type: ["string", "null"], format: date-time }
     AlertDeliveryDetail:
@@ -24078,7 +24087,13 @@ components:
         enabled: { type: boolean }
         start: { type: string, pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" }
         end: { type: string, pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" }
-        tz: { type: string, minLength: 1, maxLength: 64, examples: ["Europe/Berlin"] }
+        tz:
+          type: string
+          pattern: "^[A-Za-z0-9_+./-]{1,64}$"
+          description: >
+            An IANA zone name. The pattern is checked now; a zone the server's tz database lacks
+            is refused from the preferences slice of #1130 on.
+          examples: ["Europe/Berlin"]
     MutedSymbol:
       type: object
       additionalProperties: false

@@ -10161,7 +10161,10 @@ export interface components {
       enabled: boolean;
       end: string;
       start: string;
-      /** @example Europe/Berlin */
+      /**
+       * @description An IANA zone name. The pattern is checked now; a zone the server's tz database lacks is refused from the preferences slice of #1130 on.
+       * @example Europe/Berlin
+       */
       tz: string;
     };
     NotificationSound: {
@@ -15690,7 +15693,16 @@ export interface operations {
            * @enum {string}
            */
           reason?: "window_visible" | "desktop_off";
-        };
+        } & (
+          | {
+              /** @constant */
+              outcome?: "skipped";
+            }
+          | {
+              /** @enum {unknown} */
+              outcome?: "shown" | "blocked" | "failed";
+            }
+        );
       };
     };
     responses: {
