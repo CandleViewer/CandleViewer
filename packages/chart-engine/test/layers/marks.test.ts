@@ -542,6 +542,37 @@ describe("the marks follow the drawn bar under E12-S07's hollow and Heikin-Ashi"
     expect(marks.takeEvents()).toBe(0);
   });
 
+  it.each([
+    ["hollow", [16, 12, 16], [false, true, false]], // close vs the previous close (15)
+    ["candles", [16, 12, 16], [false, true, false]], // close vs open (14): up, down, up
+  ] as const)(
+    "%s: a live tick refreshes `heavy` on the fast path, as a full rescan",
+    (kind, closes, heavy) => {
+      const { c, store, ring, marks } = live([0, FORMING], {
+        open: Int32Array.of(10, 14),
+        high: Int32Array.of(20, 30),
+        low: Int32Array.of(5, 5),
+        close: Int32Array.of(15, 16),
+      });
+      c.setKind(kind, false, store);
+      const ints = marks.ints;
+      const bar = { ...flagged(1, 1, [FORMING]), open: Int32Array.of(14), high: Int32Array.of(30) };
+      closes.forEach((close, k) => {
+        const tick = { ...bar, low: Int32Array.of(5), close: Int32Array.of(close) };
+        const r = store.append(tick, true);
+        expect([r.from, r.to]).toEqual([1, 2]); // one bar written: the fast path's case
+        ring.sync(store, r);
+        expect(marks.ints).toBe(ints); // refreshed in place, never rebuilt
+        expect(((marks.ints[4] ?? 0) & MARK_HEAVY) !== 0, `tick ${k}`).toBe(heavy[k]);
+        const fresh = new MarkRing(ring);
+        fresh.sync(store, { op: "replace", from: 0, to: store.length, indexShift: 0 }, true);
+        const words = (m: MarkRing): number[] => [...m.ints.subarray(0, m.count * CANDLE_STRIDE)];
+        expect(words(marks), `tick ${k}`).toEqual(words(fresh));
+        expect(marks.takeEvents()).toBe(0);
+      });
+    },
+  );
+
   it("hollow: `heavy` is the colour-down wick (close < previous close), not the body's dir", () => {
     // Bar 2 is up (close >= open) but closes below bar 1: hollow, down colour, 2-hairline wick.
     const { c, store, marks } = live([0, 0, FORMING], {
