@@ -329,6 +329,11 @@ class OpenInterestService:
         self.backfill = backfill
         self._clock_s = clock_s
 
+    @property
+    def store(self) -> OiStore:
+        """The guarded store, read by the derivatives engine's `/market/metrics` path."""
+        return self._store
+
     async def series(
         self,
         symbol: str,

@@ -135,12 +135,13 @@ class DerivBar:
 class OiSample:
     ts_ms: int
     open_interest: Decimal
-    open_interest_value: Decimal
+    open_interest_value: Decimal | None  # None on a history point: the venue gives no value
     source: str  # kept so a displayed value is attributable (ticket security note R)
 
     def __post_init__(self) -> None:
         _non_negative(self.open_interest, "open_interest")
-        _non_negative(self.open_interest_value, "open_interest_value")
+        if self.open_interest_value is not None:
+            _non_negative(self.open_interest_value, "open_interest_value")
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,8 +224,8 @@ DESCRIPTORS: Final[Mapping[str, Mapping[str, tuple[str, ...]]]] = {
 }
 
 
-def metric_value(m: BarMetrics, name: str, params: Mapping[str, str] | None = None) -> Value:
-    """The one read path: a descriptor's value for a bar, with its params validated."""
+def resolve_params(name: str, params: Mapping[str, object] | None = None) -> dict[str, str]:
+    """A descriptor's full params (defaults filled in), or `DerivativesInputError`."""
     allowed = DESCRIPTORS.get(name)
     if allowed is None:
         raise DerivativesInputError(f"{name!r} is not a derivatives metric")
@@ -234,6 +235,12 @@ def metric_value(m: BarMetrics, name: str, params: Mapping[str, str] | None = No
     p = {k: given.get(k, v[0]) for k, v in allowed.items()}
     if any(p[k] not in v for k, v in allowed.items()):
         raise DerivativesInputError(f"{name}: param value outside {dict(allowed)}")
+    return {k: str(v) for k, v in p.items()}
+
+
+def metric_value(m: BarMetrics, name: str, params: Mapping[str, str] | None = None) -> Value:
+    """The one read path: a descriptor's value for a bar, with its params validated."""
+    p = resolve_params(name, params)
     mark = p.get("source") == "mark"
     side = p.get("side")
     with localcontext(_CTX):
@@ -322,16 +329,23 @@ class DerivativesEngine:
     """Per-symbol state: the bar grid (at most `max_bars`), the rows it reads, the series."""
 
     def __init__(
-        self, instrument: InstrumentMeta, *, max_bars: int = MAX_BARS, prune: bool = True
+        self,
+        instrument: InstrumentMeta,
+        *,
+        max_bars: int = MAX_BARS,
+        prune: bool = True,
+        count_none: bool = True,
     ) -> None:
         """`prune=False` keeps every row (no compaction): TEST-ONLY, the oracle that a pruning
-        bug shared by the full and incremental paths cannot hide from."""
+        bug shared by the full and incremental paths cannot hide from. `count_none=False` is a
+        one-shot read (`/market/metrics`): it must not count a bar a live engine counts."""
         if max_bars < 1:
             raise DerivativesInputError("max_bars must be at least 1")
         self._interval_ms = resolve_funding_interval_minutes(instrument) * _MS_PER_MIN
         self._interval_min = self._interval_ms // _MS_PER_MIN
         self._max_bars = max_bars
         self._prune = prune
+        self._count_none = count_none
         self._bars: list[DerivBar] = []
         self._oi: _Sorted[OiSample] = _Sorted()
         self._tickers: _Sorted[TickerSnapshot] = _Sorted()
@@ -534,6 +548,8 @@ class DerivativesEngine:
 
     def _count_closed(self) -> None:
         """Count the None case of every closed bar (all but the last) not counted yet."""
+        if not self._count_none:
+            return
         lo = (
             0
             if self._counted_ms is None
