@@ -334,19 +334,19 @@ _Shipped (E12-S06 PR 2, package README "OHLC bars, gap seams, bar picks and `dat
 
 ### 3.11 Interaction and gestures
 
-| Input                  | Action                                                                                                                                                        |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Drag on plot           | Pan time (and price if the price scale is unlocked) with momentum                                                                                             |
-| Wheel                  | Zoom time at cursor; `Shift+wheel` horizontal pan; `Ctrl+wheel` (a trackpad pinch) is the plain wheel; no modifier+wheel zooms price (E11-D01, amended #5645) |
-| Drag on time axis      | Compress/expand bar spacing                                                                                                                                   |
-| Drag on price axis     | Compress/expand price scale; double-click resets to auto                                                                                                      |
-| Double-click plot      | Reset to auto-scale + latest bar                                                                                                                              |
-| Pinch (touch/trackpad) | Zoom at centroid; two-finger drag pans                                                                                                                        |
-| Crosshair              | Follows pointer, snaps to bar centre, broadcasts to the sync group                                                                                            |
-| Hover footprint cell   | Cell tooltip (bid/ask/delta/trades) via the DOM overlay                                                                                                       |
-| Drag an order line     | Live price preview with tick snapping; drop opens a confirm (or fires directly in armed one-click mode)                                                       |
-| `Esc`                  | Cancel the in-progress drawing / clear selection                                                                                                              |
-| Keyboard               | `←/→` move the data cursor by a bar, `Shift+←/→` by 10, `Home/End` jump, `+/-` zoom, `Space` pan-drag modifier, `Alt+←/→` step tick in replay                 |
+| Input                  | Action                                                                                                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Drag on plot           | Pan time (and price if the price scale is unlocked) with momentum                                                                                                                           |
+| Wheel                  | Zoom time at cursor; `Shift+wheel` horizontal pan; `Ctrl+wheel` (a trackpad pinch) is the plain wheel; no modifier+wheel zooms price (E11-D01, amended #5645; Old: `Ctrl+wheel` zoom price) |
+| Drag on time axis      | Compress/expand bar spacing                                                                                                                                                                 |
+| Drag on price axis     | Compress/expand price scale; double-click resets to auto                                                                                                                                    |
+| Double-click plot      | Reset to auto-scale + latest bar                                                                                                                                                            |
+| Pinch (touch/trackpad) | Touch: zoom about the two pointers' midpoint, two-finger drag pans; trackpad: a `Ctrl+wheel`, zoom at the cursor (`gestures.ts`, amended #5645; Old: zoom at centroid)                      |
+| Crosshair              | Follows pointer, snaps to bar centre, broadcasts to the sync group                                                                                                                          |
+| Hover footprint cell   | Cell tooltip (bid/ask/delta/trades) via the DOM overlay                                                                                                                                     |
+| Drag an order line     | Live price preview with tick snapping; drop opens a confirm (or fires directly in armed one-click mode)                                                                                     |
+| `Esc`                  | Cancel the in-progress drawing / clear selection                                                                                                                                            |
+| Keyboard               | `←/→` move the data cursor by a bar, `Shift+←/→` by 10, `Home/End` jump, `+/-` zoom, `Space` pan-drag modifier, `Alt+←/→` step tick in replay                                               |
 
 All input is captured on the main thread with `setPointerCapture`, coalesced, and forwarded at most once per frame. Wheel events are accumulated and applied once per frame (trackpads emit far more than 60 events/s).
 
