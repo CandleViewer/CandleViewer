@@ -9,6 +9,18 @@ import type {
   AuditRowProps,
   ButtonProps,
   CardProps,
+  LiqTierCellProps,
+  PositionsGridColumnId,
+  PositionsGridGroup,
+  PositionsGridLiq,
+  PositionsGridProps,
+  PositionsGridRUnavailable,
+  PositionsGridRow,
+  PositionsGridTier,
+  PositionsGridTotals,
+  TableKeptRow,
+  TableTreeRow,
+  UpdatesPausedChipProps,
   ColumnPickerProps,
   FileDropProps,
   FreshnessMarkerProps,
@@ -193,6 +205,48 @@ describe("@candleviewer/ui admin chrome molecules (E42-S01)", () => {
     expect(Atoms.AUDIT_ROW_COPY.outcome.denied).toBe("Denied");
     expect(Atoms.AUDIT_ACTION_LABELS["admin.area_entered"]).toBe("Area entered");
     const props: [AuditRowProps, AuditRowListProps, PageHeaderProps] | null = null;
+    expect(props).toBeNull();
+  });
+});
+
+describe("@candleviewer/ui positions grid and CMP-049's treegrid (E29-S01)", () => {
+  it.each([
+    ["PositionsGrid", Atoms.PositionsGrid],
+    ["LiqTierCell", Atoms.LiqTierCell],
+    ["UpdatesPausedChip", Atoms.UpdatesPausedChip],
+    ["liqSentence", Atoms.liqSentence],
+  ])("exports %s from the package entry as a function", (_name, value) => {
+    expect(typeof value).toBe("function");
+  });
+
+  it("exports the default and narrow column lists", () => {
+    expect(Atoms.POSITIONS_GRID_COLUMNS[0]).toBe("account");
+    expect(Atoms.POSITIONS_GRID_NARROW_COLUMNS).toEqual([
+      "symbol",
+      "side",
+      "size",
+      "upnl",
+      "status",
+    ]);
+  });
+
+  it("exports the grid's and the treegrid's types (checked by the typechecker)", () => {
+    const props:
+      | [
+          LiqTierCellProps,
+          PositionsGridColumnId,
+          PositionsGridGroup,
+          PositionsGridLiq,
+          PositionsGridProps,
+          PositionsGridRUnavailable,
+          PositionsGridRow,
+          PositionsGridTier,
+          PositionsGridTotals,
+          TableKeptRow<unknown>,
+          TableTreeRow,
+          UpdatesPausedChipProps,
+        ]
+      | null = null;
     expect(props).toBeNull();
   });
 });
