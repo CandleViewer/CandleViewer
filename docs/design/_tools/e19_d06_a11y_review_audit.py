@@ -45,7 +45,7 @@ D03_HEAD = "35032f521"  # #5517 (E19-D03, #438) head; re-pinned to its merge com
 D04_HEAD = "b720bd97f"  # #5553 (E19-D04, #439) head; re-pinned to its merge commit
 D05_HEAD = "eacb7cce2"  # #5555 (E19-D05, #500) head; re-pinned to its merge commit
 BQ_LIST = "6598368330"  # the BQ list on #501; no ruling yet
-HELPER_SHA = "03007e3fc2be98f7"  # sha256[:16] of the shared helper as landed
+HELPER_SHA = "62b56d6446b218cd"  # sha256[:16] of the shared helper as landed
 
 SPEC_REL = "docs/design/E19/E19-D06.md"
 TOOL_REL = "docs/design/_tools/e19_d06_a11y_review_audit.py"
