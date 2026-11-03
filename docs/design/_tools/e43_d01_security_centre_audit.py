@@ -513,7 +513,9 @@ GATE_TEXTS = (
     ("§6.4", "shows whenever the gate is `enabled` **or its state is unknown**"),
     ("§6.4", "it shows from mount until the server reports `locked` or `eligible`"),
     ("§6.4", 'the screen never shows "turned off" before the server reports `locked`'),
-    ("§6.4", "**no typed word and no code**"),
+    ("§6.4", "**no typed word, no code and no hold**"),
+    ("§6.4", "focus starts on Cancel (BQ-03)"), ("§1 item 6", "no-grace and single use"),
+    ("GATE-05", "natively disabled until \"ENABLE LIVE\" matches"),
     ("§7.2", "**Protective writes are never gated.**"),
     ("§6.3", "the match is exact and case-sensitive"),
     ("§3", '**"Skip to live gate"** joins the top-of-page skip-link set'),
@@ -529,10 +531,12 @@ TURN_OFF_ROWS = (
     ("GATE-07", "Turn off enabled, never gated"),
     ("GATE-08", 'Confirm "Turn off live trading" enabled from the start'),
     ("GATE-13", "Turn off live trading… present and T1"),
+    ("GATE-12", "Turn off is not gated by the UI"),
 )
 _OFF = r"(?:disabled|hidden|absent|gated|T2|inert|unavailable|(?<!`)locked(?!`))\b"
-TURN_OFF_NEG, NEVER = re.compile(r"\b" + _OFF), re.compile(r"\bnever " + _OFF)
+TURN_OFF_NEG, NEVER = re.compile(r"\b" + _OFF), re.compile(r"\b(?:never|not) " + _OFF)
 SEVERITIES = ("Critical", "Error", "Warning", "Info")  # BQ-05: never `debug`
+HOLD = re.compile(r"(?<!no )\b(?:hold|held)\b")
 REUSE = re.compile(r"\b(?:grace|reus\w*|window|\d+ minutes?)\b", re.IGNORECASE)
 
 
@@ -543,6 +547,8 @@ def turn_off(t: Texts) -> list[str]:
         cells = " ; ".join(row(t, lead)[2:])
         if need not in cells:
             bad.append(f"{lead}: Turn off is not drawn present ({need[:40]!r})")
+        if HOLD.search(cells):
+            bad.append(f"{lead}: Turn off asks a hold (INV-B17-d)")
         for clause in re.split(r"[;.]", cells):
             if "Turn off" in clause and TURN_OFF_NEG.search(NEVER.sub("", clause)):
                 bad.append(f"{lead}: Turn off is drawn disabled, hidden, absent or gated")
@@ -635,9 +641,11 @@ def g_gate(t: Texts) -> list[str]:
         bad.append("§6.4: the consequence is not `11`:5013's sentence verbatim")
     if '"Type ENABLE LIVE to confirm"' not in section(t.spec, "### 6.3"):
         bad.append("§6.3: the enable confirm types no ENABLE LIVE token")
+    if HOLD.search(section(t.spec, "### 6.4")):
+        bad.append("§6.4: Turn off asks a hold (INV-B17-d)")
     off = row(t, "GATE-08")[3]
-    if "no typed word, no code" not in off:
-        bad.append("GATE-08: turning off must ask no typed word and no code")
+    if "no word, no code, no hold" not in off:
+        bad.append("GATE-08: turning off must ask no word, no code and no hold")
     for lead in ("SEC-10", "GATE-05", "GATE-08"):
         if "focus on Cancel" not in row(t, lead)[3]:
             bad.append(f"{lead}: the confirm does not start with focus on Cancel")
@@ -849,6 +857,12 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-T2", "drop the tertiary label pair (G-T2.2)", drop_row("| P-03 ")),
     ("G-GATE", "let the screen claim enforcement", sub("records and orchestrates; it does not enforce", "records and enforces")),
     ("G-GATE", "let enabling switch sessions (C-2.11)", sub("it switches no session.", "every session follows.")),
+    ("G-GATE", "ask a hold to turn live off (§6.4)", sub("focus starts on Cancel (BQ-03)", "hold to confirm; focus starts on Cancel (BQ-03)")),
+    ("G-GATE", "ask a hold to turn live off (GATE-08)", set_cell("GATE-08", 3, "CMP-044 `standard`, no word, no code, no hold; hold to confirm; focus on Cancel")),
+    ("G-GATE", "reuse the enable code (item 6)", sub("no-grace and single use", "a five-minute grace, reusable")),
+    ("G-GATE", "move the turn-off focus to Confirm (§6.4)", sub("focus starts on Cancel (BQ-03)", "focus starts on Confirm (BQ-03)")),
+    ("G-GATE", "gate Turn off in GATE-12", sub("Turn off is not gated by the UI", "Turn off is gated by the UI")),
+    ("G-GATE", "drop the typed word from GATE-05", sub("natively disabled until \"ENABLE LIVE\" matches", "natively enabled")),
     ("G-GATE", "ask a code to turn live off", set_cell("GATE-08", 3, "standard confirm and a fresh code; focus on Cancel")),
     ("G-GATE", "paraphrase the reduce-only consequence", sub("remain manageable in reduce-only mode\" (`11`:5013)", "stay manageable\" (`11`:5013)")),
     ("G-GATE", "drop the typed token", sub('"Type ENABLE LIVE to confirm"', '"Type LIVE to confirm"')),
