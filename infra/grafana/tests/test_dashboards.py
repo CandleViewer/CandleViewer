@@ -324,3 +324,27 @@ def test_the_trading_board_shows_the_trade_group_and_sizer_series() -> None:
         assert [s["value"] for s in defaults["thresholds"]["steps"]] == [None, budget]
         assert defaults["custom"]["thresholdsStyle"] == {"mode": "dashed"}
         assert p95.get("description")
+
+
+def test_rules_board_alert_evaluator_row_uses_catalogue_metrics_and_labels() -> None:
+    """#1868 (E40-T03): the Alert evaluator row draws the evaluator's series, env-filtered,
+    and every cv_alert* name it uses is in the catalogue."""
+    d = json.loads((G / "dashboards" / "rules.json").read_text("utf-8"))
+    exprs = [t["expr"] for p in d["panels"] for t in p.get("targets", [])]
+    used = {
+        "cv_alert_fires_total": "trigger_mode",
+        "cv_alert_suppressed_total": "reason",
+        "cv_alert_autodisarmed_total": "reason",
+        "cv_alert_eval_latency_seconds": "",
+        "cv_alerts_armed": "",
+        "cv_alert_subscriptions": "",
+        "cv_alert_eval_queue_depth": "",
+        "cv_alert_eval_dropped_total": "",
+        "cv_alert_owner_skipped_total": "stage, reason",
+    }
+    for metric, by in used.items():
+        assert metric in lint.catalogue_names(), metric
+        hits = [e for e in exprs if metric in e and 'env="$env"' in e]
+        assert hits, metric
+        if by:
+            assert all(f"by ({by})" in e for e in hits), metric
