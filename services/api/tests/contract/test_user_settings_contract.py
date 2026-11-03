@@ -12,6 +12,7 @@ route's `401`, asserted here in the declared shape."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from typing import Any
 
@@ -21,6 +22,7 @@ from jsonschema import Draft202012Validator
 
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.user_settings_models import judge_patch
 from candleviewer.auth.csrf import CSRF_HEADER
 from candleviewer.auth.errors import SessionNotFound
 from tests.contract.rbac.rbac_harness import (
@@ -106,13 +108,21 @@ def test_settings_operations_declare_every_status_the_routes_answer(method: str)
 async def test_get_settings_answers_each_role_its_own_settings_in_22s_shape(
     world: World, store: FakeUserSettings, actor: str
 ) -> None:
-    await _seed(store, actor, {"appearance.density": "compact"})
+    # E40-S02 CC-8 (#1130): matrix and sounds as the judge stores a sparse patch with nulls.
+    notifications = judge_patch(json.dumps({"notifications": {
+        "matrix": {"risk_events": {"toast": None, "sound": True}, "alerts": {}},
+        "sounds": {"alerts": {"tone": None, "volume": 70}},
+    }}).encode())  # fmt: skip
+    await _seed(store, actor, {"appearance.density": "compact", **notifications})
     body = _conforms("get", _get(world, bearer(actor)))
     assert (
         api.Settings.model_validate(body).model_dump(mode="json", by_alias=True, exclude_unset=True)
         == body
     )
-    assert body["_meta"]["overridden"] == ["appearance.density"]
+    assert body["_meta"]["overridden"] == [
+        "appearance.density", "notifications.matrix", "notifications.sounds",
+    ]  # fmt: skip
+    assert body["notifications"]["matrix"] == {"risk_events": {"sound": True}, "alerts": {}}
 
 
 @pytest.mark.parametrize("actor", ["owner", "manager_with_grant", "manager_without_grant"])

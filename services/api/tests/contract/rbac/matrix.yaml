@@ -293,7 +293,7 @@ operations:
     scope: self
     public: false
     state: not_mounted
-    reason: declared in 22-api-openapi.yaml; slice 2 of #1130 (E40-S02) mounts it
+    reason: declared in 22-api-openapi.yaml at a PROPOSED path; slice 2 of #1130 (E40-S02) mounts it
     request:
       path: {deliveryId: '1'}
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}

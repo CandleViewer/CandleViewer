@@ -107,9 +107,26 @@ def test_judge_patch_refuses_a_locked_cell_set_false(category: str, channel: str
 def test_judge_patch_takes_a_locked_cell_set_true_or_left_out() -> None:
     matrix = {category: {channel: True} for category, channel in LOCKED_CELLS}
     stored = _judge({"notifications": {"matrix": matrix}})["notifications.matrix"]
-    assert isinstance(stored, dict)
-    assert all(stored[category][channel] is True for category, channel in LOCKED_CELLS)
-    assert _judge({"notifications": {"matrix": {"risk_events": {"sound": False}}}})
+    assert stored == matrix  # exactly what was sent: no null member is stored
+    left_out = _judge({"notifications": {"matrix": {"risk_events": {"sound": False}}}})
+    assert left_out == {"notifications.matrix": {"risk_events": {"sound": False}}}
+
+
+@pytest.mark.parametrize("cell", [{}, {"toast": None}])
+def test_judge_patch_stores_an_absent_or_null_locked_cell_as_absent(
+    cell: dict[str, object],
+) -> None:
+    """22 `NotificationMatrix`: an absent or null cell reads as its default (on, for a locked
+    one); a null is never stored, so the served matrix conforms to `Settings`."""
+    stored = _judge({"notifications": {"matrix": {"risk_events": cell, "alerts": {"sound": None}}}})
+    assert stored == {"notifications.matrix": {"risk_events": {}, "alerts": {}}}
+
+
+def test_judge_patch_drops_a_null_tone_and_refuses_a_null_volume() -> None:
+    stored = _judge({"notifications": {"sounds": {"alerts": {"tone": None, "volume": 70}}}})
+    assert stored == {"notifications.sounds": {"alerts": {"volume": 70}}}
+    with pytest.raises(m.PatchRefused):
+        _judge({"notifications": {"sounds": {"alerts": {"volume": None}}}})
 
 
 @pytest.mark.parametrize(
