@@ -76,6 +76,8 @@ WEB_AUTH_PATHS = (
     # Owner-only T2 reads the session claims (`instruments:write`); the server enforces it
     "apps/web/src/features/stepUp/",  # the step-up dialog and challenge gate: answers the
     # server's challenge, holds and re-sends the refused request
+    "apps/web/src/features/view-as/",  # SCR-124: shows only the view-as context the server holds,
+    # and its Exit ends that context (`DELETE /auth/session/view-as`); E42-S03
     "apps/web/src/lib/auth/",  # the session claims cache
     "apps/web/src/lib/http/",  # CSRF double submit and its cookie; the bearer's same-origin rule
     "apps/web/src/lib/ws/client/createWsClient.ts",  # the tab asks its TokenSource, posts the token
