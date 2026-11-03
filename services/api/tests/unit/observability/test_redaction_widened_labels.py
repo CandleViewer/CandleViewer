@@ -134,8 +134,11 @@ def test_a_doubled_quote_value_that_starts_with_a_quote_or_a_space_is_redacted_a
         (f"password:\\xa0 {_FAKE}", f"password:\\xa0 {_KEY_MARK}"),
         (f"token=\\x0b {_FAKE}", f"token=\\x0b {_KEY_MARK}"),
         (f"token=\\u2028 {_FAKE}", f"token=\\u2028 {_KEY_MARK}"),
+        (f"password:\\xa0\\xa0 {_FAKE}", f"password:\\xa0\\xa0 {_KEY_MARK}"),
+        (f"token=\\x0b\\t {_FAKE}", f"token=\\x0b\\t {_KEY_MARK}"),
+        (f"token=\\xa0\\t\n{_FAKE}", f"token=\\xa0\\t\n{_KEY_MARK}"),
     ],
-    ids=["nbsp", "vt", "line-separator"],
+    ids=["nbsp", "vt", "line-separator", "two", "then-a-tab", "then-a-line-break"],
 )
 def test_an_escaped_whitespace_character_after_the_separator_reads_as_whitespace(
     text: str, shown: str
@@ -207,6 +210,8 @@ _SEP_AFTER = ["", " ", "\t", "\n", "\r\n", "\xa0", "\x0b", "\\n", "\\t", "\\\\n"
 _SEP_AFTER += ["\\x0b", "\\u2028"]
 #: An escaped whitespace character and then a space.
 _SEP_AFTER += ["\\xa0 ", "\\x0b ", "\\u2028 ", "\\f ", "\\u00a0 "]
+#: A run of them and then a space.
+_SEP_AFTER += ["\\xa0\\xa0 ", "\\x0b\\t "]
 _VALUE_QUOTES = ["", '"', "'", '""', "''", "\\'", '\\"', "\\\\'", '\\\\"', "\"'"]
 #: Doubled quotes with whitespace or the other quote after them (`"" …""`, `""'…""'`).
 _VALUE_QUOTES += ['"" ', "'' ", '""\'', "''\""]
@@ -460,12 +465,12 @@ def test_each_output_hides_each_value_the_rules_before_them_hid_in_a_kept_case(
 
 
 #: The last kept cases: values only the widened rules read, hidden on each output now.
-_KEPT_GAINS = 4
+_KEPT_GAINS = 6
 
 
 def test_the_kept_cases_are_all_read() -> None:
     kept = _kept()
-    assert len(kept) == 349
+    assert len(kept) == 351
     for text, values in kept[:-_KEPT_GAINS]:  # each a value the rules before #4713 hid
         assert any(value not in old(text) for value in values for old, _ in _OUTPUTS.values())
     for text, values in kept[-_KEPT_GAINS:]:

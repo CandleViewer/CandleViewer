@@ -118,10 +118,12 @@ _TO_LINE_END: Final = r"(?<=cookie)|(?<=input[-_]value)"
 #: fixed-width look-behind for each form, read after the first-letter check (#4713).
 _LABEL_START: Final = r"(?:\b" + "".join(rf"|(?<=\\{form})" for form in _SPACE_ESCAPES) + ")"
 #: A label's `:` or `=` and the whitespace around it, read as the bundle scan reads them: the
-#: redaction filter and the bundle scan agree on whitespace between a label and its value. An
-#: escaped whitespace character after it (`\xa0`, `\x0b`, `\u2028`) reads as whitespace too, where
-#: whitespace follows it (#4713); otherwise the value starts there, as before.
-_LABEL_SPACE: Final = rf"\s*[:=](?:\s|\\[tnr]|\\{_SPACE_ESCAPE}(?=\s))*+"
+#: redaction filter and the bundle scan agree on whitespace between a label and its value. A run of
+#: escaped whitespace characters after it (`\xa0`, `\x0b\t`, `\u2028`) reads as whitespace too,
+#: where whitespace follows the run (#4713); otherwise the value starts there, as before. The run is
+#: possessive, so it is read once.
+_ESCAPED_SPACE_RUN: Final = rf"(?:\\{_SPACE_ESCAPE})++(?=\s)"
+_LABEL_SPACE: Final = rf"\s*[:=](?:\s|\\[tnr]|{_ESCAPED_SPACE_RUN})*+"
 #: `_SPACE_ESCAPES`, each with its `\`, written backwards, for `_LABEL_END_BACK`.
 _SPACE_ESCAPES_BACK: Final = (
     r"[tnrfv]\\",
@@ -140,7 +142,7 @@ _DOUBLED_SQ: Final = r"""[^\s"',}\]]|[\s"]*+[^\s"'][^\n]*?''"""
 #: than `\t`, `\n` or `\r`, as before, and runs to the line's end from there.
 _LABEL: Final = rf"""(?=[{_KEY_FIRST}]){_LABEL_START}{_NOT_DOTTED}(?:{_KEY_NAMES})
     (?P<line>{_TO_LINE_END})?["']{{0,2}}
-    \s*[:=](?:\s|\\[tnr]|(?(line)(?!)|\\{_SPACE_ESCAPE}(?=\s)))*+"""
+    \s*[:=](?:\s|\\[tnr]|(?(line)(?!)|{_ESCAPED_SPACE_RUN}))*+"""
 #: A value labelled with a key name in text (`token = …`, `"password": "…"`, `Authorization: Bearer
 #: …`): the bundle scan's labelled-secret rule as a substitution (#415). On its line, a
 #: quoted value runs to its closing quote, a `_TO_LINE_END` name's to the line's end, and any other
@@ -261,13 +263,13 @@ _KEY_NAMES_BACK: Final = "|".join(
 )
 #: The end of a label as `_LABELLED_VALUE` reads it, written backwards, to read it back from a line
 #: break (#4671): whitespace (an escaped line break, tab or return, `\n`, `\t` or `\r`, reads `n\`,
-#: `t\` or `r\`; another escaped whitespace character where whitespace or the line break follows
-#: it, as `_LABEL_SPACE` reads one, #4713), a separator and the whitespace before it, a quote or two
-#: (#4713), and a key name.
+#: `t\` or `r\`; a run of escaped whitespace characters where whitespace or the line break follows
+#: it, as `_LABEL_SPACE` reads one, read first and whole, #4713), a separator and the whitespace
+#: before it, a quote or two (#4713), and a key name.
 #: Each part is optional, so it always matches, and it ends where the text stops reading as the end
 #: of a label.
 _LABEL_END_BACK: Final = re.compile(
-    rf"""(?i)(?:\s|[tnr]\\|(?<![^\s])(?:{"|".join(_SPACE_ESCAPES_BACK)}))*+"""
+    rf"""(?i)(?:\s|(?<![^\s])(?:{"|".join(_SPACE_ESCAPES_BACK)})++|[tnr]\\)*+"""
     rf"""(?P<sep>[:=]\s*+)?["']{{0,2}}"""
     rf"""(?P<name>{_KEY_NAMES_BACK})?"""
 )

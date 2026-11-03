@@ -347,3 +347,5 @@
 {"text": "password=\"\" FAKEs3cq9w\"\"", "values": ["FAKEs3cq9w"]}
 {"text": "password:\\xa0 FAKEs3cq9w", "values": ["FAKEs3cq9w"]}
 {"text": "token=\\x0b FAKEs3cq9w", "values": ["FAKEs3cq9w"]}
+{"text": "x password:\\xa0\\xa0 FAKEmP7q9Xw3Rt done", "values": ["FAKEmP7q9Xw3Rt"]}
+{"text": "{'token=\\x0b\\t FAKEZk2_Lw9-qX'}", "values": ["FAKEZk2_Lw9-qX"]}
