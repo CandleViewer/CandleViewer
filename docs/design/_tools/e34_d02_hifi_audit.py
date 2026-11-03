@@ -13,7 +13,8 @@ read its input FAILs.
 Gates (each FAIL led by its name):
   G-STATE     every state the catalogue, the ticket's Scope and the assignment name has a §0 frame
               row; each of the three acceptance criteria (AC-1 … AC-3) maps to frames §0 lists;
-              the cover board opens on `SCR-061/partial-failure` (AC-2).
+              the cover board opens on `SCR-061/partial-failure` (AC-2); the cover and the ready
+              frame have light and comfortable twins (BQ-10).
   G-TOKEN     every design token the spec names (`color.*`, `font.*`, `border.*`, `radius.*`,
               `type.*`, `space.*`, `size.*`, `motion.*`, `opacity.*`) is in a merged set.
   G-CONTRAST  every §8.1 row is recomputed per theme (dark, light, high-contrast as
@@ -24,8 +25,9 @@ Gates (each FAIL led by its name):
               spec to two decimals, and its JND column names the simulations under 5.0.
   G-T2        every S061 state row whose Presentation quotes a T2 reason names its rendering
               (2a, 2b or the sentence form; G-T2.1c), and the reason is an E09-D09 key's text or
-              a registered state string of E30-D02 at the base (its `{slot}` filled) unless the
-              cell marks it PROPOSED. §1 item 7 names CMP-079 and the CMP-019 `lock`, and quotes
+              a registered state string of E30-D02, E30-D03's `ratelimit.held` or OD-11's reason
+              at the base (its `{slot}` filled) unless the cell marks it PROPOSED; no coined
+              "held: rate budget" reason (G-T2.4). §1 item 7 names CMP-079 and the CMP-019 `lock`, and quotes
               G-T2.1b, G-T2.2 and G-T2.3 verbatim from `DS` at the base (`T2_QUOTES`); §8.1
               carries the G-T2.2 label pair (tertiary on raised).
   G-SAFETY    C-2.6: §1 states that no control turns the native stop off; no state row offers
@@ -36,12 +38,12 @@ Gates (each FAIL led by its name):
               available in every state, the cited tone); the B01 sketch and the rows use the
               labels in their scoped form; the retired words appear only on A- and C-rows; no
               row withholds a protective action, and the stop-pending, unknown, offline,
-              lockout, frozen and view-as rows keep Unwind, Retry unwind and Cancel working
-              orders enabled.
+              lockout and view-as rows keep Unwind, Retry unwind and Cancel working orders
+              enabled; the `frozen` rows split per OD-11 (Cancel passes; Owner / Manager).
   G-RULED     OQ-1 is carried, not decided (the confirm names the whole position and what the
               group added); the Manager scope is stated (C-12.4); the Viewer's frame has no Send;
-              §3.1 consumes E34-D03's CMP-258 and no status component is defined here; no
-              client "N of M accepted / protected / unknown" count.
+              §3.1 consumes E34-D03's LegStatusCell and defines no status component; no client
+              "N of M" count; the unserved rows are stamped; the minimum is a preview-only offer.
   G-COPY      every §11 row is verbatim with a cite whose line holds its fixed words, PROPOSED
               with an owner, or a request row to E34-D03's keys.
   G-D01       the unmerged E34-D01 (#936) and E34-D03 (#997), and any CMP id `15` lacks at the
@@ -92,10 +94,11 @@ PATHS: dict[str, str] = {
     "E09D09": "docs/design/E09/E09-D09.md", "E30D02": "docs/design/E30/E30-D02.md",
     "E30D03": "docs/design/E30/E30-D03.md", "E28D02": "docs/design/E28/E28-D02.md",
     "E28D03": "docs/design/E28/E28-D03.md", "DS": ".claude/rules/32-design-specs.md",
+    "E29D03": "docs/design/E29/E29-D03.md", "E32D06": "docs/design/E32/E32-D06.md", "E39D01": "docs/design/E39/E39-D01.md",
 }  # fmt: skip
 DASH = "–"  # the en dash of a line range, `14`:1504–1505
 CITE = re.compile(
-    r"`(\d\d|ADR8|CON|E09D09|E30D0[23]|E28D0[23]|DS)`:"
+    r"`(\d\d|ADR8|CON|E09D09|E30D0[23]|E28D0[23]|E29D03|E32D06|E39D01|DS)`:"
     rf"(\d+(?:{DASH}\d+)?(?:, :\d+(?:{DASH}\d+)?)*)"
 )
 TOKEN_NAME = re.compile(
@@ -120,7 +123,7 @@ REQUIRED_FRAMES = (COVER,) + tuple(f"SCR-061/{f}" for f in (
     "rate-limit-backoff", "checking-outcome", "partial-fill", "done", "all-failed",
     "all-or-none-unwound", "stop-not-confirmed", "loading", "previewing", "ready", "sub-minimum",
     "override", "preview-failed", "empty", "blocked-lockout", "blocked-kill-switch", "viewer",
-    "view-as", "live-not-enabled", "read-only-member",
+    "view-as", "live-not-enabled", "read-only-member", "partial-failure-light", "ready-light",
 ))  # fmt: skip
 ACS = ("AC-1", "AC-2", "AC-3")
 FRAME = re.compile(r"`(SCR-\d{3}/[a-z0-9-]+)`")
@@ -145,7 +148,10 @@ RC = {
 SKETCH_LABELS = (r"\[ Retry sub_\d{3} \]", r"\[ Unwind \d+ accepted legs \]",
                  r"\[ Cancel working orders \(\d+ legs?\) \]", r"\[ Leave as is \(\d+ open\) \]")  # fmt: skip
 PROTECTIVE = "Unwind, Retry unwind and Cancel working orders stay enabled"
-THREATS = ("S061-14", "S061-15", "S061-37", "S061-32", "S061-34", "S061-38")
+THREATS = ("S061-14", "S061-15", "S061-37", "S061-34", "S061-38")
+OD11 = '"Frozen — the owner closes or releases"'
+FROZEN = ("S061-32", "S061-38")  # Cancel passes (`E39D01`:455); the closes split per OD-11
+STAMPED = ("S061-13", "S061-14", "RC-1", "RC-3")
 WITHHOLD = re.compile(
     r"(?:\bUnwind\b|Retry unwind|Cancel working orders)[^.;|]{0,40}?"
     r"\b(?:gated|withheld|waits?|hidden|disabled|not offered|unavailable)\b"
@@ -453,6 +459,12 @@ def reason_templates(t: Texts) -> list[re.Pattern[str]]:
     lines += [
         ln for ln in at(t, "E30D02").split("\n") if ln.startswith(("| `lockout`", "| `frozen`"))
     ]
+    lines += [
+        ln.replace('\\"', '"')
+        for ln in at(t, "E30D03").split("\n")
+        if ln.startswith("| `ratelimit.held` ")
+    ]
+    lines += [ln for ln in at(t, "E39D01").split("\n") if ln.startswith("| OD-11 ")]
     out = []
     for ln in lines:
         for q in re.findall(r'"([^"]{8,})"', ln):
@@ -502,6 +514,8 @@ def g_t2(t: Texts) -> list[str]:
         quote = T2_REASON.search(r[4])
         if quote and "PROPOSED" not in r[4] and not any(k.match(quote[1]) for k in keys):
             bad.append(f"{r[0]}: {quote[1]!r} is no E09-D09 key or registered state string")
+    if "held: rate budget" in t.spec:
+        bad.append("a coined T2 reason: Send's rate-limit reason is `ratelimit.held` verbatim")
     one = section(t.spec, "## 1.")
     if "CMP-019 `lock`" not in one or "CMP-079" not in one:
         bad.append("§1 item 7 does not name CMP-079 and the CMP-019 `lock` (G-T2.1d)")
@@ -564,6 +578,11 @@ def g_recovery(t: Texts) -> list[str]:
     for lead in THREATS:
         if PROTECTIVE not in " ".join(row(t, lead)):
             bad.append(f"{lead}: does not keep the protective actions enabled")
+    for lead in FROZEN:
+        if not all(w in " ".join(row(t, lead)) for w in ("OD-11", "`E39D01`:455", "Owner", OD11)):
+            bad.append(
+                f"{lead}: `frozen` does not split per OD-11 (Cancel passes; Owner / Manager)"
+            )
     checklist = set(section(t.spec, "### 10.1").split("\n"))  # `14`'s own item words, quoted
     for i, ln in enumerate(t.spec.split("\n"), 1):
         if ln in checklist and ln.startswith("| "):
@@ -579,7 +598,7 @@ def g_ruled(t: Texts) -> list[str]:
     four3 = section(t.spec, "### 4.3")
     if "This spec decides nothing about OQ-1" not in four3:
         bad.append("§4.3: OQ-1 is not carried as undecided")
-    if "this group added" not in four3:
+    if "from this group" not in four3:
         bad.append("§4.3: the confirm does not name what the group added beside the position")
     oq1 = row(t, "OQ-1")
     if "until ruled" not in oq1[2]:
@@ -590,8 +609,15 @@ def g_ruled(t: Texts) -> list[str]:
     if "no Send" not in row(t, "S061-33")[4]:
         bad.append("S061-33: the Viewer's frame offers a Send")
     three1 = section(t.spec, "### 3.1")
-    if "CMP-258" not in three1 or OWN_CELL not in three1:
-        bad.append("§3.1: the status cell is not E34-D03's shared CMP-258 (coordination ruling)")
+    if "LegStatusCell" not in three1 or OWN_CELL not in three1:
+        bad.append("§3.1: the status cell is not E34-D03's shared LegStatusCell (BQ-06 on #997)")
+    for r in [
+        r for r in table_rows(t.spec, "S061-") + table_rows(t.spec, "RC-") if r[0] in STAMPED
+    ]:
+        if "not served yet" not in " ".join(r):
+            bad.append(f"{r[0]}: an unserved state or action is not stamped as not served yet")
+    if not all(w in row(t, "S061-08")[4] for w in ("at preview only", "never at Send")):
+        bad.append("S061-08: the minimum is not offered at preview only (BQ-8)")
     for i, ln in enumerate(t.spec.split("\n"), 1):
         if OWN_COMPONENT.search(ln) and not ln.startswith("| R-"):
             bad.append(f"spec:{i} defines a status component of SCR-061's own")
@@ -649,12 +675,8 @@ def g_cite(t: Texts) -> list[str]:
 
 def g_hygiene(t: Texts) -> list[str]:
     bad = []
-    checks = (
-        (CLOSING, "a closing keyword (PR 2 alone closes #996)"),
-        (LOCAL_PATH, "a local path"),
-        (AGENT_NAME, "an agent name"),
-        (URL_OR_HOST, "a URL or a host"),
-    )
+    checks = ((CLOSING, "a closing keyword (PR 2 alone closes #996)"), (LOCAL_PATH, "a local path"),
+              (AGENT_NAME, "an agent name"), (URL_OR_HOST, "a URL or a host"))  # fmt: skip
     for i, ln in enumerate(t.spec.split("\n"), 1):
         for rx, what in checks:
             if rx.search(ln):
@@ -680,20 +702,10 @@ def g_scope(t: Texts) -> list[str]:
 
 
 GATES: dict[str, Callable[[Texts], list[str]]] = {
-    "G-STATE": g_state,
-    "G-TOKEN": g_token,
-    "G-CONTRAST": g_contrast,
-    "G-CVD": g_cvd,
-    "G-T2": g_t2,
-    "G-SAFETY": g_safety,
-    "G-RECOVERY": g_recovery,
-    "G-RULED": g_ruled,
-    "G-COPY": g_copy,
-    "G-D01": g_d01,
-    "G-CITE": g_cite,
-    "G-HYGIENE": g_hygiene,
-    "G-SCOPE": g_scope,
-}
+    "G-STATE": g_state, "G-TOKEN": g_token, "G-CONTRAST": g_contrast, "G-CVD": g_cvd, "G-T2": g_t2,
+    "G-SAFETY": g_safety, "G-RECOVERY": g_recovery, "G-RULED": g_ruled, "G-COPY": g_copy,
+    "G-D01": g_d01, "G-CITE": g_cite, "G-HYGIENE": g_hygiene, "G-SCOPE": g_scope,
+}  # fmt: skip
 
 
 def audit(t: Texts) -> list[tuple[str, str]]:
@@ -821,7 +833,12 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-RULED", "drop the Manager scope", sub("**Manager scope (C-12.4).**", "**Scope.**")),
     ("G-RULED", "give the Viewer a Send", sub("rendering the sentence form, CMP-026 with `cta` omitted; no Send", "rendering the sentence form, CMP-026 with `cta` omitted; Send shown")),
     ("G-D01", "lean on E34-D01 outside a request row", sub("**Rows:** `size.row.compact`", "**Rows (E34-D01 P-1):** `size.row.compact`")),
-    ("G-D01", "name the unmerged CMP-258 off a request row", sub(" in E34-D03 §5.3 (a request row, R-7), drawn", ", drawn")),
+    ("G-D01", "hard-code the unmerged CMP-258 off a request row", sub("Every word is text in the status cell;", "Every word is text in the CMP-258 status cell;")),
+    ("G-STATE", "drop the ready frame's light twin", drop_row("| B28 ")),
+    ("G-T2", "coin Send's rate-limit reason", sub('T2 "Rate limited — your request is held." (`ratelimit.held`', 'T2 "held: rate budget" (`ratelimit.held`')),
+    ("G-RECOVERY", "let a frozen Manager close with no OD-11 split", sub("the Owner's enabled, a Manager's \"Frozen — the owner closes or releases\" until E39-S03 rules (C-5)", "every role enabled")),
+    ("G-RULED", "drop the checking-outcome stamp", sub('stamped "not served yet" (G-3)', "(G-3)")),
+    ("G-RULED", "offer the minimum at Send", sub("offered at preview only, never at Send;", "offered at preview and at Send;")),
     ("G-RULED", "define a row-status cell of SCR-061's own", sub(OWN_CELL, "SCR-061 defines its own status cell.")),
     ("G-RULED", "define a second status component, no CMP id", sub("No summary counts legs in the client (§1 item 10).", "SendRowStatus, a status component, is defined here.")),
     ("G-RULED", "count protection in the client", set_cell("S061-17", 3, '"5 of 5 accepted. All 5 are protected by a native stop."')),
