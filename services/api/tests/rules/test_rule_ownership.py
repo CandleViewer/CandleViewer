@@ -158,8 +158,19 @@ _ROUTES: dict[str, tuple[str, str, Callable[[str], Any], str | None]] = {
     "delete": ("delete", "/rules/{rid}", lambda _v: None, "delete"),
 }
 #: Route -> the refusals a request for a rule the caller cannot reach leaves: one naming the `op`
-#: for a write, none for a read, which is scoping and not a refusal.
-_REFUSED = {route: [(op, "rule_not_visible")] if op else [] for route, (*_, op) in _ROUTES.items()}
+#: for a write, none for a read, which is scoping and not a refusal. Written out, not derived
+#: from `_ROUTES`, so a wrong `op` there is caught here.
+_REFUSED: dict[str, list[tuple[str, str]]] = {
+    "get": [],
+    "list_versions": [],
+    "get_version": [],
+    "update": [("update", "rule_not_visible")],
+    "set_active_version": [("set_active_version", "rule_not_visible")],
+    "set_mode": [("set_mode", "rule_not_visible")],
+    "arm": [("set_mode", "rule_not_visible")],
+    "disarm": [("set_mode", "rule_not_visible")],
+    "delete": [("delete", "rule_not_visible")],
+}
 
 
 @_KIND
