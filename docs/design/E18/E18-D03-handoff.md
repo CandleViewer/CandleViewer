@@ -15,9 +15,9 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR stil
 - [x] **Live data** — Table 5
 - [x] **Motion pair** — N/A — E18-D04 #498 owns the motion
 - [x] **Density notes** — the density table; R-3
-- [x] **Essential-exceptions log** — `E47-S02-TSE-01`: cells below 24 CSS px at maximum zoom-out (SC 2.5.8), SCR-045 the compensating alternative (`15`:1292)
+- [x] **Essential-exceptions log** — `E47-S02-TSE-01`: cells below 24 CSS px at maximum zoom-out (SC 2.5.8), SCR-045 the compensating alternative (`15`:1294)
 - [x] **Tokens used** — equal to A-3 after PR 2; the PROPOSED names of pack §2.1 land in PR 2's token JSON through `16` §11.2 (G-2)
-- [x] **Data contract confirmed** — `24` §4.1's footprint level (`24`:816: `bid_volume` is aggressor sell volume); the wire's imbalance and POC flags (pack §10)
+- [x] **Data contract confirmed** — `24` §4.1's footprint level (`24`:819: `bid_volume` is aggressor sell volume); the wire's imbalance and POC flags (pack §10)
 - [x] **Contrast and CVD** — computed by the tool (pack §2.3–§2.5); the PM rows land with the token JSON (G-2)
 - [ ] **Design QA checklist (16 §12)** — with the boards at PR 2
 - [ ] **Sign-off** — owner `approved` on #497 (pending, #2701); CMP-109 through `15`'s owner's stamp
@@ -71,7 +71,7 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR stil
 ## Handoff checklist — CMP-132 ImbalanceStackIndicator (E18-D03, #497)
 
 - [ ] **Final Penpot link** — file `E18-D03 boards`, page `E18-D03`; boards 03, 04 and 09 — PR 2
-- [x] **Variants × States matrix** — Table 1; the registered states stand (`15`:1635); A-7 adds the lane's words
+- [x] **Variants × States matrix** — Table 1; the registered states stand (`15`:1637); A-7 adds the lane's words
 - [x] **Keyboard table** — N/A — the entry's own keys are unchanged (`15` CMP-132 A11y)
 - [x] **Accessible name / role table** — N/A — unchanged: the surrogate label of `15` CMP-132
 - [x] **Live data** — N/A — unchanged (≤ 4 Hz, E25's)

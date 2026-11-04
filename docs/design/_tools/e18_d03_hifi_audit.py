@@ -4,7 +4,8 @@
 Offline and default-deny. The shared gates (git, cites, pins, G-T2 vocabulary, closing keywords,
 public text, R7, G-UNTOUCHED, the runner and the mutation harness) live in `spec_audit_lib.py`;
 this file keeps only E18-D03's rows. It reads, AS TEXT at the pinned base, the plan and design
-texts the spec cites and the token JSON, and, from the working tree, the spec and its hand-off. The only repo code it runs is `contrast_ratio()`, `simulate()`, `delta_e76()`,
+texts the spec cites and the token JSON, and, from the working tree, the spec and its hand-off.
+The only repo code it runs is `contrast_ratio()`, `simulate()`, `delta_e76()`,
 `srgb_to_xyz()` and `xyz_to_lab()` of `docs/research/_tools/cvd_simulate.py`, loaded by path.
 
 Gates: G-CITE, G-QUOTE, G-VERSION, G-AC, G-BQ, G-RULED, G-BOARDS, G-PENPOT, G-TOKENS,
@@ -34,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "136142433"  # origin/main at the ruling fold; every cite is read here
+BASE = "1708e0ad3"  # origin/main at the closing slice; every cite is read here
 BQ_LIST = "6599273411"  # the BQ list on #497
 RULING = "6608046466"  # the orchestrator's ruling of record on it
 AGREE = frozenset({0, 1, 3, 5, 6, 7, 8})  # the rest are AMEND: 2, 4, 9
@@ -147,6 +148,7 @@ MARKS: tuple[tuple[str, str, str, float], ...] = (
     ("broken lane hatch", "color.chart.boundary", CANVAS, 3.0),
     ("forming cap", "color.text.secondary", CANVAS, 3.0),
     ("bracket label text", TEXT, CANVAS, 4.5),
+    ("reduced-detail badge glyph", "color.status.warning.strong", PANEL, 3.0),
     ("SCR-056 side glyph, buy", "color.buy.default", PANEL, 3.0),
     ("SCR-056 side glyph, sell", "color.sell.default", PANEL, 3.0),
     ("SCR-056 side and status words", TEXT, PANEL, 4.5),
@@ -182,17 +184,18 @@ REGISTERED = (
     "pattern.hatch.estimated",
     "pattern.outline.imbalance",
 )
-# 26:282: printable ASCII plus the three mono extras; the canvas never needs another glyph.
-CANVAS_GLYPHS = frozenset(chr(c) for c in range(0x20, 0x7F)) | {"×", "▲", "▼"}
+TIMES = "\u00d7"  # the multiplication sign, the mono family's extra glyph
+# 26:284: printable ASCII plus the three mono extras; the canvas never needs another glyph.
+CANVAS_GLYPHS = frozenset(chr(c) for c in range(0x20, 0x7F)) | {TIMES, "▲", "▼"}
 COMPACT_RE = re.compile(r"\d(?:\.\d+)?[KMB]\b")
 FORMAT_ROWS = 7
 INVALIDATIONS = 5
-MODES = ("Bid × Ask", "Volume", "Delta", "Delta / Total")
+MODES = (f"Bid {TIMES} Ask", "Volume", "Delta", "Delta / Total")
 HANDOFF_CMPS = ("CMP-109", "CMP-132", "CMP-182", "CMP-228")
 # `16` section 11.4's thirteen lines, in order (the ruling's missed row; `02`:56).
 HANDOFF_ITEMS = (
     "**Final Penpot link**",
-    "**Variants × States matrix**",
+    f"**Variants {TIMES} States matrix**",
     "**Keyboard table**",
     "**Accessible name / role table**",
     "**Live data**",
@@ -218,22 +221,28 @@ PINS_CLOSE = '"""  # end of the ruled pins'
 RULED_PINS = """
 BQ-0 30751ee038b0c596
 BQ-1 e4d1b7385446bf6b
-BQ-2 96794f3c0610d583
-BQ-3 851fd69660ce6b30
+BQ-2 915052ece5fc908f
+BQ-3 165cf2594447bb46
 BQ-4 e4bcdae43d3e6df0
 BQ-5 3130f065ff4ffb0b
 BQ-6 4f40a7ea895c8f39
 BQ-7 6a3870e8ef137e06
-BQ-8 4f526ff9bad0e4b7
-BQ-9 71a834638c3b1dac
+BQ-8 c99a99762c325739
+BQ-9 5a12d29b77b3ab16
 """  # end of the ruled pins
-# BQ-1: D02 lines this pack builds on, re-pinned when #496's boards PR moves them.
+# BQ-1: D02 lines this pack builds on, re-pinned when #496's boards PR moves them; then the
+# `26` section 3.7 lines and `16`'s DoD item 7 (a cite that names the line above fails here).
 KEY_CITES = (
     L.KeyCite("D02", 155, "D5  | Imbalance"),
     L.KeyCite("D02", 157, "alpha is E18-D03's"),
     L.KeyCite("D02", 289, "3 px active, 2 px tested, 1 px broken"),
     L.KeyCite("D02", 877, "A-25"),
     L.KeyCite("D02", 935, "E18-D03 (#497)"),
+    L.KeyCite("26", 284, "**Glyph set**: printable ASCII"),
+    L.KeyCite("26", 286, "**mandatory, not opportunistic**"),
+    L.KeyCite("26", 287, "a per-cell glyph run"),
+    L.KeyCite("26", 297, "Measured budget: 5,000 glyphs"),
+    L.KeyCite("16", 750, "7. Ticket's linked downstream engineering ticket"),
 )
 
 
@@ -650,7 +659,7 @@ def g_handoff(t: L.Tree) -> list[str]:
         miss = [i for i in HANDOFF_ITEMS if f"- [ ] {i}" not in block and f"- [x] {i}" not in block]
         if not block or miss:
             bad.append(f"{cmp}: {miss or 'no block'}")
-        if "### Table 1 — Variants × States" not in block:
+        if f"### Table 1 — Variants {TIMES} States" not in block:
             bad.append(f"{cmp}: Table 1")
     return bad
 
@@ -684,7 +693,7 @@ _M = L.Mutation
 _V = "### 16.1 Version line\n"
 # fmt: off
 MUTATIONS: tuple[L.Mutation, ...] = (
-    _M("M-1", "G-CITE", "a cite past the end of `26`", "spec", "`26`:295", "`26`:99999"),
+    _M("M-1", "G-CITE", "a cite past the end of `26`", "spec", "`26`:297", "`26`:99999"),
     _M("M-2", "G-QUOTE", "W-8 reworded off its line", "spec",
        '"Reduced detail — footprint text hidden · zoom in for numbers"',
        '"Reduced detail — text hidden · zoom in for numbers"'),
@@ -697,7 +706,8 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-6", "G-BQ", "the heading drops the ruling", "spec",
        "— RULED (comment 6608046466, on the BQ list", "— defaults built (comment 6608046466, on"),
     _M("M-7", "G-RULED", "a ruled bullet edited without a re-pin", "spec",
-       "ten boards, one light and one high-contrast", "nine boards, one light and one high-contrast"),
+       "ten boards, one light and one high-contrast",
+       "nine boards, one light and one high-contrast"),
     _M("M-8", "G-BOARDS", "an eleventh board", "spec",
        r"(\| 10 +\| `E18-D03 / 10 [^\n]*\n)",
        r"\1| 11  | `E18-D03 / 11 extra` | x | dark | PENDING |\n", regex=True),
@@ -809,7 +819,7 @@ def fill() -> int:
     spec = p.read_text(encoding="utf-8")
     h23 = ["Theme", "Palette", "Density", "Size class", "Worst fill, bare", "Bare"]
     t23 = table(
-        h23 + ["Worst fill, outlined", "Outlined", "Floor"],
+        [*h23, "Worst fill, outlined", "Outlined", "Floor"],
         [text_row(n, p, d, s) for n in THEMES for p in RAMPS for d, s in DENSITIES],
     )
     t24 = table(
@@ -820,7 +830,7 @@ def fill() -> int:
         f"{d[:4].title()} {p}" for d in DEFICIENCIES for p in ["±1", "±ε", "imb"]
     ]
     t25 = table(
-        h25 + ["Grey ±1", "Grey ±ε", "Grey imb"], [cvd_row(n, q) for n in THEMES for q in RAMPS]
+        [*h25, "Grey ±1", "Grey ±ε", "Grey imb"], [cvd_row(n, q) for n in THEMES for q in RAMPS]
     )
     spec = replace_table(spec, "### 2.3 Cell text over the heat", t23)
     spec = replace_table(spec, "### 2.4 Marks over the heat", t24)
