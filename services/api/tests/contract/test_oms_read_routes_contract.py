@@ -114,7 +114,7 @@ def test_every_read_declares_the_shared_unauthorized_for_its_missing_session() -
     the `session` case above drives it and checks the body it answers."""
     shared = {"$ref": "#/components/responses/Unauthorized"}
     for operation, (template, _) in _ROUTES.items():
-        assert _SPEC["paths"][template]["get"]["responses"]["401"] == shared, operation
+        assert _SPEC["paths"][template]["get"]["responses"].get("401") == shared, operation
 
 
 def test_contract_conformance_covers_every_read_this_pr_serves() -> None:

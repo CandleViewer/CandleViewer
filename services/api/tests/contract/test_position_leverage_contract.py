@@ -126,3 +126,12 @@ def test_contract_conformance_covers_the_operation_this_pr_serves() -> None:
     assert "ArmToken" in str(_OPERATION["parameters"])
     declared = {int(s) for s in _OPERATION["responses"]}
     assert declared == {status for _, status, *_ in _CASES}
+
+
+def test_contract_conformance_declares_the_shared_401_and_replay_header() -> None:
+    """The `401` is the shared `Unauthorized` and the `200`'s replay header the shared
+    `IdempotencyReplayed`, not another response or header under the right name (E29-Q02, #1147)."""
+    responses = _OPERATION["responses"]
+    assert responses.get("401") == {"$ref": "#/components/responses/Unauthorized"}
+    replayed = {"$ref": "#/components/headers/IdempotencyReplayed"}
+    assert responses["200"]["headers"]["Idempotency-Replayed"] == replayed

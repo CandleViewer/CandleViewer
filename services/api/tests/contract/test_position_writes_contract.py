@@ -211,7 +211,7 @@ def test_position_writes_contract_each_declares_the_shared_unauthorized_for_no_s
     `closeAllPositions` (E29-Q02, #1147); the `*_no_session` cases above drive it."""
     shared = {"$ref": "#/components/responses/Unauthorized"}
     for path in (CLOSE_PATH, REVERSE_PATH, CLOSE_ALL_PATH):
-        assert _SPEC["paths"][path]["post"]["responses"]["401"] == shared, path
+        assert _SPEC["paths"][path]["post"]["responses"].get("401") == shared, path
 
 
 async def test_position_writes_contract_a_close_all_replay_carries_the_declared_header() -> None:
@@ -224,6 +224,8 @@ async def test_position_writes_contract_a_close_all_replay_carries_the_declared_
     assert "idempotency-replayed" not in first.headers
     assert again.headers["idempotency-replayed"] == "true" and again.json() == first.json()
     assert "idempotency-replayed" in _declared_headers(CLOSE_ALL_PATH, 200)
+    declared = _SPEC["paths"][CLOSE_ALL_PATH]["post"]["responses"]["200"]["headers"]
+    assert declared["Idempotency-Replayed"] == {"$ref": "#/components/headers/IdempotencyReplayed"}
 
 
 async def test_position_writes_contract_close_all_refuses_more_ids_than_22_declares() -> None:
