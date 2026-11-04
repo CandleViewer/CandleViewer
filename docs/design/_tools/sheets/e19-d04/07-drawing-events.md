@@ -14,8 +14,8 @@ Board 07 of ten (§0 L77: SCR-038/drawing-moved-dark, SCR-038/drawing-locked-dar
 
 ## Validator and size
 
-- `07-drawing-events.json: 0 errors, 43 warnings, 44 sections, 176847 bytes` (exit 0)
-- 44 sections, 176847 bytes
+- `07-drawing-events.json: 0 errors, 43 warnings, 44 sections, 176857 bytes` (exit 0)
+- 44 sections, 176857 bytes
 
 ## Live checks (8)
 
@@ -94,7 +94,7 @@ Board 07 of ten (§0 L77: SCR-038/drawing-moved-dark, SCR-038/drawing-locked-dar
 
 - spec E19-D04.md md5 9e0d20c3 in this checkout (§0 L77; BQ ruling RULED, comment 6585044844)
 - D03 E19-D03.md md5 928db4e4 at 35032f521 (read via git show 35032f521; PR #5517 head; re-pinned when it merges)
-- D02 E19-D02.md md5 1299df3b at 3619e95c5 (read via checkout; merge commit of PR #5487)
+- D02 E19-D02.md md5 1299df3b at 3619e95c5 (read via git show 3619e95c5; merge commit of PR #5487)
 - D02E14 E14-D02.md md5 8560e306 at the base 95a625b09
 - D07E14 E14-D07.md md5 697232d6 at the base 95a625b09
 - D02E17 E17-D02.md md5 cb9a4d78 at the base 95a625b09
