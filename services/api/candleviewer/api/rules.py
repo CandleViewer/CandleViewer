@@ -233,6 +233,7 @@ def make_rules_router(
     on_rate_limited: _Counter = lambda route: None,
     on_cap_refused: _Counter = lambda cap: None,
     check_worker: CheckWorker | None = None,
+    producer_gaps: Callable[[], frozenset[str] | None] = lambda: None,
 ) -> APIRouter:
     router = APIRouter(tags=["rules"])
     worker = CheckWorker() if check_worker is None else check_worker
@@ -324,7 +325,11 @@ def make_rules_router(
             if registry is None:
                 raise VocabularyUnavailableError("metric registry not wired")
             body: dict[str, Any] = build_vocabulary(
-                registry, permissions=perms, symbol=symbol, recorded_symbols=recorded_symbols()
+                registry,
+                permissions=perms,
+                symbol=symbol,
+                recorded_symbols=recorded_symbols(),
+                producer_gaps=producer_gaps(),
             )
         except VocabularyUnavailableError:
             return _problem(503, "Service unavailable", "rule engine vocabulary unavailable")

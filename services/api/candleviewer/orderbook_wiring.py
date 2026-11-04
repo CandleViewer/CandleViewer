@@ -437,6 +437,13 @@ class BookStream:
             return True
         return self._clock() - at >= BOOK_STALE_AFTER_S
 
+    def applied_age_ms(self, symbol: str) -> int | None:
+        """E35-T15: milliseconds since `symbol`'s book last applied a frame, on the stream's own
+        monotonic clock (never the wall clock); None while it has applied none (or was dropped).
+        The rules' `book_staleness_ms`; `is_stale` ages the same stamp."""
+        at = self._applied_at.get(symbol)
+        return None if at is None else max(0, round((self._clock() - at) * 1000))
+
     def anchor(self, symbol: str) -> BookSnapshot | Literal["no_book", "not_live"]:
         """#2223: the recorder's periodic seek anchor, the active tier's full book stamped with
         its last applied frame, or why there is none. Gated on LIVE, not on frame age: the
