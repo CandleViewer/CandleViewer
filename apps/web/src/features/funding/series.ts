@@ -53,3 +53,20 @@ export function buildFundingSeries({
     gaps: coverage?.gaps ?? [],
   };
 }
+
+/**
+ * The settled points after a newer read (slice 2's settlement poll): unique by time, the newer read wins,
+ * ascending. Returns `true` with the list when `next` added a settlement the model did not have.
+ */
+export function mergeSettled(
+  prev: readonly SettledPoint[],
+  next: readonly SettledPoint[],
+): { readonly points: readonly SettledPoint[]; readonly added: boolean } {
+  const byTime = new Map(prev.map((p) => [p.tMs, p] as const));
+  let added = false;
+  for (const p of next) {
+    if (!byTime.has(p.tMs)) added = true;
+    byTime.set(p.tMs, p);
+  }
+  return { points: [...byTime.values()].sort((a, b) => a.tMs - b.tMs), added };
+}

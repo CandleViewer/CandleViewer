@@ -1,8 +1,10 @@
 // E24-S03 (#778) slice 1: the React side of the funding pane's history. It starts one feed for the symbol
 // and window, restarts it when either changes, and stops it on unmount.
 import { useEffect, useState } from "react";
+import { syncedNow } from "../../lib/state/syncedTick";
 import { createFundingAnalytics, type FundingAnalytics } from "./analytics";
 import { FUNDING_SYMBOL, startFundingFeed, type FundingFeedHandle } from "./fundingFeed";
+import type { FundingClock } from "./history";
 import {
   fetchFundingHistory,
   type FundingHistoryRequest,
@@ -16,6 +18,9 @@ export interface FundingFeedHookOptions {
     ((req: FundingHistoryRequest) => Promise<FundingHistoryResult>) | undefined;
   readonly wallNow?: (() => number) | undefined;
   readonly analytics?: FundingAnalytics | undefined;
+  /** The settlement poll's clock: the exchange-synced one by default (BQ 5). */
+  readonly now?: (() => number) | undefined;
+  readonly timers?: FundingClock | undefined;
 }
 
 const defaultAnalytics = createFundingAnalytics();
@@ -25,7 +30,8 @@ export function useFundingFeed(
   symbol: string,
   options: FundingFeedHookOptions,
 ): FundingFeedHandle | null {
-  const { fromMs, toMs, wallNow } = options;
+  const { fromMs, toMs, wallNow, timers } = options;
+  const now = options.now ?? syncedNow;
   const loadHistory = options.loadHistory ?? fetchFundingHistory;
   const analytics = options.analytics ?? defaultAnalytics;
   const [feed, setFeed] = useState<FundingFeedHandle | null>(null);
@@ -37,6 +43,8 @@ export function useFundingFeed(
       window: { fromMs, toMs },
       loadHistory,
       wallNow,
+      now,
+      timers,
       onFailed: (status, code) => analytics.historyFailed(symbol, status, code),
     });
     setFeed(started);
@@ -44,7 +52,7 @@ export function useFundingFeed(
       started.stop();
       setFeed((current) => (current === started ? null : current));
     };
-  }, [symbol, fromMs, toMs, loadHistory, wallNow, analytics]);
+  }, [symbol, fromMs, toMs, loadHistory, wallNow, now, timers, analytics]);
 
   // a symbol change never shows the previous feed, not even for one render
   return feed?.symbol === symbol ? feed : null;

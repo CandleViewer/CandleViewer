@@ -1,3 +1,4 @@
+import { FundingCountdown } from "@candleviewer/ui";
 import type { FundingSnapshot } from "../fundingFeed";
 import type { SettledPoint } from "../history";
 import { buildFundingSeries } from "../series";
@@ -98,4 +99,21 @@ export const Comfortable = story({ density: "comfortable", headingLevel: 2 });
 export const LongText = story({
   symbol: "1000000BABYDOGEUSDT",
   snapshot: { ...btc, history: ready({ empty: true, coverage: "unknown" }), series: none },
+});
+export const Stale = story({
+  stale: { tier: "t1", ageS: 7, lastTsMs: Date.parse("2023-11-15T15:55:41Z") },
+});
+/** D03 S54-38 `funding-empty`: none settled yet, the legend's countdown (silent: the header's speaks) running. */
+const SETTLES = Date.UTC(2023, 10, 15, 8, 0, 0);
+export const EmptyWithCountdown = story({
+  symbol: "SOLUSDT",
+  snapshot: { ...btc, history: ready({ empty: true }), series: none },
+  countdown: (
+    <FundingCountdown
+      announce={false}
+      symbol="SOLUSDT"
+      nextFundingTimeMs={SETTLES}
+      now={() => SETTLES - 11_564_000}
+    />
+  ),
 });
