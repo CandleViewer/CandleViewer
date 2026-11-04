@@ -7,7 +7,8 @@ packed sheet's source sha256 = the raw sheet's and mkcall4 count = its sections,
 (color.text.disabled, opacity.disabled), the data statement under the frames; the set: the source md5 pins, <= 10 boards
 with twins <= 1/3, §4's every state drawn on its §0 board, the T2 renderings (the 500 option on 02, the ARM pill on 07,
 the footer's four trade buttons and the one notice on every panel frame: the CMP-019 lock, color.surface.raised +
-color.border.default), DEMO and LIVE badges as separate frames on 07 with no own order under LIVE."""
+color.border.default; the sentence form with no glyph and no button), DEMO and LIVE badges as separate frames on 07
+with no own order under LIVE."""
 from __future__ import annotations
 
 import hashlib
@@ -143,6 +144,18 @@ def t2_checks() -> None:
             check(ok, f"{nn:02d} {fid}: BUY MKT, SELL MKT, FLAT, CXL T2 2a and the one notice")
             n_frames += ok
     check(n_frames > 0, f"T2 footer and notice on {n_frames} panel frames")
+    # G-T2.1d: the sentence form (CMP-026, `cta` omitted) carries no lock glyph and no button
+    sf = [(nn, fid) for nn, b in k.BOARDS.items() for fid in b.frames if fid.endswith(" · sentence form")]
+    for nn, fid in sf:
+        ns = frame_nodes(json.loads((k.CAP_DIR / k.BOARDS[nn].sheet).read_text(encoding="utf-8")), fid)
+        card = [n for n in ns if n["name"].startswith("CMP-026 EmptyState")]
+        sub = [x for c in card for _p, x in k.walk(c)]
+        sent = [x for x in sub if x["name"] == "sentence form (W-18)"]
+        ok = len(card) == 1 and len(sent) == 1 and not any(x["t"] == "icon" for x in sub) and not any(
+            x["name"].startswith(("CMP-001", "CMP-019")) or "button" in x["name"].lower() for x in sub) and any(
+            x["t"] == "text" and x["chars"] == k.W("W-18") for _p, x in k.walk(sent[0]))
+        check(ok, f"{nn:02d} {fid}: the sentence form W-18 alone, no lock glyph and no button")
+    check(len(sf) == 1, f"{len(sf)} sentence-form frame (board 04)")
 
 
 def texts(nn: int) -> list[str]:

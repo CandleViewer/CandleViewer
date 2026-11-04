@@ -67,7 +67,7 @@ VALIDATOR, PACKER, MKCALL = TOOLS / "validate_sheet.py", TOOLS / "compact.py", T
 COMPONENTS, TOKENS_FILE = TOOLS / "components.offline.json", TOOLS / "token-sync.json"
 HEAD = "the boards PR"  # the text as built: #5488 (b4fdf44c9) plus the boards PR's in-place edits and its §17
 DOCS = {  # key -> (repo-relative path, md5 at HEAD): every read is md5-checked
-    "spec": (_SPEC_PATH, "4d99a14edaaa38680621310731662f6d"),
+    "spec": (_SPEC_PATH, "0431d0041dabe975c91a73421fa4e187"),
     "fixture": ("packages/fixtures/bybit/2026-10-05/rest/instruments_before.json", "edd9dd2a060c51bd4bd1450307728ddf"),
 }
 REV = "r1"

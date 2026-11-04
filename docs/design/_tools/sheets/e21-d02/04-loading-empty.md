@@ -12,8 +12,8 @@ Board 04 of 10 (§0 L103: SCR-050/loading, SCR-050/empty-no-recording (Owner CTA
 
 ## Validator and size
 
-- `04-loading-empty.json: 0 errors, 23 warnings, 24 sections, 71801 bytes` (exit 0)
-- 24 sections, 394 shapes, 71801 bytes
+- `04-loading-empty.json: 0 errors, 22 warnings, 24 sections, 71613 bytes` (exit 0)
+- 24 sections, 393 shapes, 71613 bytes
 
 ## Live checks (10)
 
@@ -82,7 +82,7 @@ Board 04 of 10 (§0 L103: SCR-050/loading, SCR-050/empty-no-recording (Owner CTA
 
 ## Sources (2)
 
-- spec docs/design/E21/E21-D02.md md5 4d99a14edaaa38680621310731662f6d at the boards PR (§0 L103); no hand-off file (BQ-2)
+- spec docs/design/E21/E21-D02.md md5 0431d0041dabe975c91a73421fa4e187 at the boards PR (§0 L103); no hand-off file (BQ-2)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a060c51bd4bd1450307728ddf (BTCUSDT tick 0.10, qty step 0.001)
 
 ## Tokens (39)

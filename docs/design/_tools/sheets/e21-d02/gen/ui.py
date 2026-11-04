@@ -507,8 +507,10 @@ def empty_state(p: P, y0: int, h: int) -> list[Node]:
     else:
         # live, the heading sets on one line at w - 24 (h 17); the kit's width estimate would wrap it to two
         hd = ring(vbox("heading (tabindex -1)", [head], {}, w=hw, h=round(k.text_h(k.HEADING_SM, 1))))
-        sent = hbox("sentence form (W-18)", [lock(), text("words", k.W("W-18"), k.BODY, k.TEXT_2)],
-                    {"gap": k.INSET_XS}, h=20, note="no control: the sentence form (D09E09); rbac.owner_only")
+        # G-T2.1d: the sentence form is CMP-026 with `cta` omitted and `description` carrying the sentence, so W-18
+        # is drawn alone, with no glyph and no button (the design read of #5638)
+        sent = hbox("sentence form (W-18)", [text("words", k.W("W-18"), k.BODY, k.TEXT_2)],
+                    {}, h=20, note="no control, no glyph: the sentence form (D09E09); rbac.owner_only")
         kids = [hd, cause, sent]
     card = vbox("CMP-026 EmptyState · recording-not-started", kids,
                 {"gap": k.STACK_MD, "pad": k.INSET_LG, "fill": k.RAISED, "radius": k.R_CARD, "align": "start"}, w=w)

@@ -26,7 +26,7 @@ def empty(owner: bool) -> tuple[k.Node, tuple[str, list[str]]]:
     p = ui.P(state="empty-owner" if owner else "empty-other")
     lines = ["CMP-026 `recording-not-started` (D05E16:236–239, D10E08:363): W-16 heading, W-17 cause"]
     lines.append("Owner: the W-19 CTA, initial focus on it" if owner else
-                 "Not the Owner: the sentence form W-18 (rbac.owner_only) with the CMP-019 lock and no control; "
+                 "Not the Owner: the sentence form W-18 (rbac.owner_only) alone, with no glyph and no control; "
                  "initial focus on the heading (tabindex=\"-1\")")
     return ui.panel(fid, p), k.frame_block(fid, lines)
 

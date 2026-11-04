@@ -105,7 +105,7 @@ Light twin: export this board again under the light theme as `docs/design/E21/im
 
 ## Sources (2)
 
-- spec docs/design/E21/E21-D02.md md5 4d99a14edaaa38680621310731662f6d at the boards PR (§0 L106); no hand-off file (BQ-2)
+- spec docs/design/E21/E21-D02.md md5 0431d0041dabe975c91a73421fa4e187 at the boards PR (§0 L106); no hand-off file (BQ-2)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a060c51bd4bd1450307728ddf (BTCUSDT tick 0.10, qty step 0.001)
 
 ## Tokens (52)

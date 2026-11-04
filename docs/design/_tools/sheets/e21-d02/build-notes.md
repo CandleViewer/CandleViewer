@@ -8,7 +8,7 @@ each sheet's `notes.copy_gaps`. Every number comes from the seeded world.
 
 ## Sources and pins
 
-- Spec `docs/design/E21/E21-D02.md`, md5 `4d99a14edaaa38680621310731662f6d` as the boards PR leaves it (the text merged as #5488 at
+- Spec `docs/design/E21/E21-D02.md`, md5 `0431d0041dabe975c91a73421fa4e187` as the boards PR leaves it (the text merged as #5488 at
   `b4fdf44c9`; the boards PR edits §0 and the pins in place and appends §17 As built); no hand-off file (BQ-2). Ruling of record: comment 6576656158 (BQ-0 … BQ-15 RULED).
 - `packages/fixtures/bybit/2026-10-05/rest/instruments_before.json` md5 `edd9dd2a060c51bd4bd1450307728ddf`: the
   BTCUSDT tick 0.10 and qty step 0.001 only.
