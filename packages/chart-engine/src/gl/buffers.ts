@@ -16,6 +16,8 @@ interface Shared {
   /** The node whose batch uploads for every node of the source (one upload, not one per node). */
   readonly owner: string;
   uploaded: Float32Array | null;
+  /** On the GPU when the context was lost: only these are restored (a never-drawn one waits). */
+  held: boolean;
 }
 
 interface Slot {
@@ -51,7 +53,13 @@ export class GlBuffers implements UploadSink {
     if (this.slots.has(nodeId)) return;
     let shared = this.sources.get(source);
     if (shared === undefined) {
-      shared = { source, buffer: this.registry.create("buffer"), owner: nodeId, uploaded: null };
+      shared = {
+        source,
+        buffer: this.registry.create("buffer"),
+        owner: nodeId,
+        uploaded: null,
+        held: false,
+      };
       this.sources.set(source, shared);
       this.sharedList.push(shared);
     }
@@ -95,16 +103,28 @@ export class GlBuffers implements UploadSink {
   /** On a context loss: the GPU copies are gone, so each source's next upload is a full one. */
   invalidate(): void {
     const shared = this.sharedList;
-    for (let i = 0; i < shared.length; i += 1) (shared[i] as Shared).uploaded = null;
+    for (let i = 0; i < shared.length; i += 1) {
+      const s = shared[i] as Shared;
+      s.held ||= s.uploaded !== null; // a second loss before the restore keeps the mark
+      s.uploaded = null;
+    }
     const slots = this.slotList;
     for (let i = 0; i < slots.length; i += 1) (slots[i] as Slot).configured = false;
     this.bytes = 0;
   }
 
-  /** After a restore: every source's ring again, in full, from its store (the CPU truth). */
+  /**
+   * After a restore: every source the GPU held at the loss, its ring again in full, from its
+   * store (the CPU truth). A source never uploaded (a hidden layer's, BQ-9) stays off the GPU
+   * until its first draw, as it would without the loss.
+   */
   restore(): void {
     const shared = this.sharedList;
-    for (let i = 0; i < shared.length; i += 1) this.full(shared[i] as Shared);
+    for (let i = 0; i < shared.length; i += 1) {
+      const s = shared[i] as Shared;
+      if (s.held) this.full(s);
+      s.held = false;
+    }
   }
 
   uploadSubRange(batch: RetainedBatch, from: number, to: number): void {

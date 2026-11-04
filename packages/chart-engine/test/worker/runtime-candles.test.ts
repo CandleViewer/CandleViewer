@@ -31,8 +31,8 @@ const bars = (m: number, n: number, op = "replace"): void => {
   rt.handle({ t: "data", id: 1, store: "bars", op, layout, buffer, series: 0 });
 };
 const mark = (): { draws: number; writes: number; attribs: number } => ({
-  draws: gl.draws.length,
-  writes: gl.writes.length,
+  draws: gl.intDraws().length,
+  writes: gl.intWrites().length,
   attribs: gl.attribs.length,
 });
 
@@ -77,9 +77,9 @@ afterEach(() => {
 describe("candle drawing (BQ-1)", () => {
   it("draws each series in exactly two instanced draws over one shared buffer", () => {
     const capacity = rt.series(1, 0)?.ring.capacity;
-    expect(gl.draws).toEqual([`4 ${capacity}`, `4 ${capacity}`]);
+    expect(gl.intDraws()).toEqual([`4 ${capacity}`, `4 ${capacity}`]);
     // The ring once for both parts; the gap seams' 16-entry buffer once (no gap: never drawn).
-    expect(gl.writes.filter((w) => w.startsWith("full"))).toEqual([
+    expect(gl.intWrites().filter((w) => w.startsWith("full"))).toEqual([
       `full ${(capacity ?? 0) * 20}`,
       `full ${16 * 20}`,
     ]);
@@ -97,18 +97,18 @@ describe("candle drawing (BQ-1)", () => {
     const before = mark();
     bars(300, 1, "append");
     frame();
-    const now = gl.writes.slice(before.writes);
+    const now = gl.intWrites().slice(before.writes);
     expect(now).toEqual([
       `sub ${(rt.series(1, 0)?.ring.head ?? 0) * 20 + 300 * 20} ${(rt.series(1, 0)?.ring.head ?? 0) * 5 + 300 * 5} 5`,
     ]);
-    expect(gl.draws.length - before.draws).toBe(2);
+    expect(gl.intDraws().length - before.draws).toBe(2);
   });
 
   it("a theme switch rewrites the palette uniforms only: no buffer upload", () => {
     const before = mark();
     cmd({ k: "setTheme", theme: { ...THEME, "color.candle.up": "#00ff00" } });
     frame();
-    expect(gl.writes.length - before.writes).toBe(0);
+    expect(gl.intWrites().length - before.writes).toBe(0);
     const palette = gl.uniforms.filter((u) => u[0] === "u_palette").at(-1);
     expect(palette?.slice(1, 5)).toEqual([0, 1, 0, 1]);
   });
@@ -117,7 +117,9 @@ describe("candle drawing (BQ-1)", () => {
     const before = mark();
     rt.handle({ t: "input", id: 1, kind: "key", events: Float32Array.of(4, 3, 0, 0, 0, 16) });
     frame();
-    expect([gl.writes.length - before.writes, gl.draws.length - before.draws]).toEqual([0, 2]);
+    expect([gl.intWrites().length - before.writes, gl.intDraws().length - before.draws]).toEqual([
+      0, 2,
+    ]);
   });
 
   it("a theme missing a candle token is a recoverable error and no series drawn (BQ-4)", () => {
@@ -127,10 +129,10 @@ describe("candle drawing (BQ-1)", () => {
     expect(out.filter((m) => m.t === "error").map((m) => (m as { code: string }).code)).toEqual([
       ENGINE_THEME_TOKEN_MISSING,
     ]);
-    expect(gl.draws.length - before.draws).toBe(0);
+    expect(gl.intDraws().length - before.draws).toBe(0);
     cmd({ k: "setTheme", theme: THEME });
     frame();
-    expect(gl.draws.length - before.draws).toBe(2);
+    expect(gl.intDraws().length - before.draws).toBe(2);
   });
 
   it("a context restore re-uploads the ring from the CPU and rebinds the attributes", () => {
@@ -142,15 +144,18 @@ describe("candle drawing (BQ-1)", () => {
     on.get("webglcontextrestored")?.({ preventDefault: () => undefined });
     frame();
     const capacity = rt.series(1, 0)?.ring.capacity ?? 0;
-    expect(gl.writes.slice(before.writes)).toEqual([`full ${capacity * 20}`, `full ${16 * 20}`]);
+    expect(gl.intWrites().slice(before.writes)).toEqual([
+      `full ${capacity * 20}`,
+      `full ${16 * 20}`,
+    ]);
     expect(gl.attribs.length - before.attribs).toBe(12);
-    expect(gl.draws.length - before.draws).toBe(2);
+    expect(gl.intDraws().length - before.draws).toBe(2);
   });
 
   it("removing the series stops its draws", () => {
     const before = mark();
     cmd({ k: "removeSeries", series: 0 });
     frame();
-    expect(gl.draws.length - before.draws).toBe(0);
+    expect(gl.intDraws().length - before.draws).toBe(0);
   });
 });

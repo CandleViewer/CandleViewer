@@ -31,6 +31,30 @@ describe("GlBuffers", () => {
   });
 });
 
+describe("GlBuffers restore: only what the GPU held at the loss (the `held` mark)", () => {
+  it("re-uploads a source drawn before the loss and leaves a never-uploaded one off the GPU", () => {
+    const gl = new FakeGl();
+    const buffers = new GlBuffers(gl, new GlRegistry(gl));
+    const drawn = { data: new Float32Array(8), head: 0, stride: 2 };
+    const hidden = { data: new Float32Array(4), head: 0, stride: 2 }; // a hidden layer's (BQ-9)
+    buffers.attach("drawn", drawn);
+    buffers.attach("hidden", hidden);
+    buffers.uploadSubRange(batch("drawn"), 0, 4);
+    expect(gl.writes).toEqual(["full 32"]);
+    buffers.invalidate();
+    buffers.invalidate(); // a second loss before the restore keeps the mark
+    buffers.restore();
+    expect(gl.writes).toEqual(["full 32", "full 32"]); // `drawn` only; `hidden` never uploaded
+    buffers.invalidate(); // a loss right after a restore: `drawn` was re-uploaded, so held again
+    buffers.restore();
+    expect(gl.writes).toEqual(["full 32", "full 32", "full 32"]);
+    buffers.restore(); // the mark is consumed: a second restore uploads nothing
+    expect(gl.writes).toHaveLength(3);
+    buffers.uploadSubRange(batch("hidden"), 0, 2); // its first draw: in full, as without a loss
+    expect(gl.writes.at(-1)).toBe("full 16");
+  });
+});
+
 describe("GlTextures", () => {
   it("defines, patches and binds RGBA8 textures, counting their bytes", () => {
     const gl = new FakeGl();

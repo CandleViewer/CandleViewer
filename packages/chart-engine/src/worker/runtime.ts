@@ -18,6 +18,8 @@
 // refused (`ENGINE_SERIES_INCOMPATIBLE`) and the series keeps drawing. Two metrics:
 // `series_type_switch_duration_ms{target}` (the switch to the end of the next frame) and
 // `series_incompatible_combination_total{combination}`.
+import { AxisModel, SAY, UPDATE } from "../axes/axis-model.js";
+import { GRID_NODE_ID } from "../axes/grid.js";
 import type { RenderBackend } from "../gl/backend.js";
 import { ContextLoss, type LossDetails } from "../gl/context-loss.js";
 import { type OpenedBackend, openBackend } from "../gl/open-backend.js";
@@ -195,6 +197,10 @@ interface Instance {
   readonly viewport: ChartViewport;
   /** Autoscale, the log guard and the anchor, once per frame before the uniforms (E11-S05). */
   readonly autoscale: AutoScaler;
+  /** The axes (E11-S06): ticks, decimation, the grid node and the labels the mirror lists. */
+  readonly axes: AxisModel;
+  /** The retained labels or the stops' names changed: post `axes` with the next frame. */
+  axesDirty: boolean;
   /** Pane 0's GPU block, rewritten once per frame before submission. */
   readonly uniforms: PaneUniforms;
   ready: boolean;
@@ -285,6 +291,7 @@ const describe = (n: scene.FrameNotice): string => {
 
 export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   const charts = new Map<ChartId, Instance>();
+  const gridRange = new RangeSlot();
   let scheduled = false;
   let report: CapabilityReport | null = null;
   /** One CPU atlas per runtime, uploaded into each chart's context (BQ-277). */
@@ -306,10 +313,13 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     render: () => void,
     opened: (o: OpenedBackend) => void,
     viewport: ChartViewport,
+    dataState: () => void,
+    axes: AxisModel,
     prepare: () => void,
   ) {
     const graph = new scene.SceneGraph();
     graph.addPane("main");
+    graph.addNode("main", "background", axes.grid);
     const layout = new scene.LayoutEngine(graph);
     layout.addPane("main");
     const builder = new scene.BatchBuilder(graph, {
@@ -324,8 +334,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
     const scheduler = new scene.FrameScheduler(graph, clock, {
       layout: () => {
-        prepare(); // before collect and build: the background layer's visibility (BQ-9)
+        dataState(); // before collect and build: the background layer's visibility (BQ-9)
         layout.run();
+        prepare(); // the axes see this frame's layout and view before collect (E11-S06)
       },
       build: (sink) => {
         open(); // before the first build, so its full uploads reach the GPU
@@ -397,6 +408,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     if (atlas?.image) backend.uploadAtlas(atlas.image);
     backend.setBatchUniforms((b) => inst.blocks.get(b.nodeId) ?? null); // E12-S06
     for (const c of inst.candles) attachCandle(backend, c);
+    backend.attach(GRID_NODE_ID, inst.axes.grid); // the grid is its own instance ring
     if (degraded !== null) {
       const { reason, message, reducedCapabilities } = degraded;
       post(ENGINE_NO_WEBGL2, message, true, { reducedCapabilities, reason }); // BQ-90
@@ -417,6 +429,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       resume: () => {
         inst.parked = false;
         inst.graph.markAllData(); // the GPU mirrors are rebuilt; the scene graph is untouched
+        inst.axes.invalidate(); // the grid's ring re-uploads with the next frame (E11-S06)
         kick(inst);
       },
       giveUp: () => inst.scheduler.dispose(), // slot.frame === null for good; the host swaps
@@ -457,6 +470,35 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     touch(inst);
   }
 
+  /**
+   * The layout hook's second half, before collect (E11-S06): autoscale (once per frame per key
+   * change, BQ-116), then the axes. A new gutter width lays the chart out again, narrows the plot
+   * and refits on the new width before the axes rebuild; a rebuilt grid rewrites its ring.
+   */
+  function prepare(inst: Instance): void {
+    if (inst.autoscale.update()) inst.viewportDirty = true;
+    const { axes, layout, viewport: vp } = inst;
+    let r = axes.update(vp, layout, inst.theme);
+    if ((r & UPDATE.gutter) !== 0) {
+      layout.setPriceGutter(axes.gutter.width);
+      layout.run();
+      // In this frame, before collect: TRANSFORM without a wake, so no second frame follows.
+      if (vp.setSize(plotWidthOf(layout.width, layout.priceGutter), vp.height, vp.dpr)) {
+        inst.viewportDirty = true;
+        inst.graph.markViewport();
+        // The narrower plot can change the visible bars, so refit now: else render's refit moves
+        // the price range after the axes were built, and a static chart (no wake) keeps them stale.
+        inst.autoscale.update();
+      }
+      r = axes.update(vp, layout, inst.theme);
+    }
+    if ((r & UPDATE.grid) !== 0) {
+      inst.graph.markData(GRID_NODE_ID);
+      inst.builder.patch(GRID_NODE_ID, gridRange.set("replace", 0, axes.grid.count, 0));
+    }
+    if ((r & UPDATE.labels) !== 0) inst.axesDirty = true;
+  }
+
   /** F-13 (BQ-92): no export while the pixels cannot be trusted; the reason, never a stale PNG. */
   function exportRefusal(inst: Instance): ExportRejectReason | null {
     const phase = inst.loss?.phase ?? "live";
@@ -492,7 +534,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       inst.resizes.reallocations += 1;
     }
     inst.viewport.setPanePlot(0, 0, h);
-    moved(inst, inst.viewport.setSize(plotWidthOf(w), h, dpr));
+    moved(inst, inst.viewport.setSize(plotWidthOf(w, inst.layout.priceGutter), h, dpr));
     inst.layout.setSize(w, h); // LAYOUT: recomputed on the next frame only
     const from = inst.dpr;
     if (dpr !== from) {
@@ -900,6 +942,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       const gpu: Instance["gpu"] = { backend: undefined, forced: msg.profile !== undefined };
       const c = msg.canvas as CanvasLike;
       const viewport = new ChartViewport(deps.timeMap);
+      const axes = new AxisModel(msg.config.timeZone);
       const [w, h] = [c.width / msg.dpr, c.height / msg.dpr];
       viewport.setSize(plotWidthOf(w), h, msg.dpr); // the plot rect, not the canvas (RULED (5))
       viewport.setPanePlot(0, 0, h);
@@ -911,6 +954,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         (backend) => opened(inst, backend),
         viewport,
         () => dataState(inst),
+        axes,
+        () => prepare(inst),
       );
       scene.layout.setSize(w, h);
       const inst: Instance = {
@@ -922,6 +967,8 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         theme: msg.theme,
         config: msg.config,
         viewport,
+        axes,
+        axesDirty: false,
         uniforms: createPaneUniforms(),
         autoscale: new AutoScaler(viewport, (pane) =>
           pane === 0 ? (deps.priceSources ?? []) : [],
@@ -936,6 +983,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
           moved: (changed) => moved(inst, changed),
           hover: (x) => crosshairAt(inst, screenToTime(viewport, x)),
           animate: (m) => inst.scheduler.animate(m),
+          say: (code) => (inst.axes.say = code),
         }),
         // G-28: the degraded-2d re-init keeps the registrations, re-placed under the new view.
         objects: old ? old.objects.rebind(viewport) : new ObjectIndex(viewport, 0, "main"),
@@ -1106,6 +1154,22 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         logAvailable: pane?.logReason === null,
         logReason: pane?.logReason ?? null,
         anchorTick: Number.isFinite(pane?.anchorTick) ? (pane?.anchorTick ?? null) : null,
+      });
+    }
+    if (inst.axesDirty || inst.axes.say !== SAY.none) {
+      inst.axesDirty = false;
+      const ax = inst.axes;
+      const say = ax.takeSay(inst.viewport);
+      deps.post({
+        t: "axes",
+        id: inst.id,
+        price: [...ax.priceLabels],
+        time: [...ax.timeLabels],
+        priceName: ax.priceName,
+        timeName: ax.timeName,
+        priceGutter: inst.layout.priceGutter,
+        timeZone: ax.timeZone,
+        ...(say !== null && { say }),
       });
     }
     if (inst.a11yDirty) {

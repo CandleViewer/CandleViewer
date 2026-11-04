@@ -19,14 +19,24 @@ export const MOD = { shift: 1, ctrl: 2, alt: 4, meta: 8, pan: 16 } as const;
 export const REGION = { plot: 0, time: 1, price: 2 } as const;
 export type Region = (typeof REGION)[keyof typeof REGION];
 
-/** The plot's width for a canvas `width` CSS px wide: the price gutter is not plot (RULED (5)). */
-export const plotWidthOf = (width: number): number => Math.max(0, width - PRICE_GUTTER_PX);
+/**
+ * The plot's width for a canvas `width` CSS px wide: the price gutter is not plot (RULED (5)).
+ * E11-S06 (BQ-201): the gutter is the layout's measured width; 64 px until one is measured.
+ */
+export const plotWidthOf = (width: number, gutter = PRICE_GUTTER_PX): number =>
+  Math.max(0, width - gutter);
 
 /** The plot's height for a canvas `height` CSS px high (the time gutter below it). */
 export const plotHeightOf = (height: number): number => Math.max(0, height - TIME_GUTTER_PX);
 
-export function regionAt(x: number, y: number, width: number, height: number): Region {
-  if (x >= plotWidthOf(width)) return REGION.price;
+export function regionAt(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  gutter = PRICE_GUTTER_PX,
+): Region {
+  if (x >= plotWidthOf(width, gutter)) return REGION.price;
   return y >= plotHeightOf(height) ? REGION.time : REGION.plot;
 }
 

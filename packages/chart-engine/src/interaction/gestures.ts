@@ -5,10 +5,12 @@
 // drag and wheel zoom price about the pointer and engage the lock, its double-click restores auto,
 // and a vertical plot drag pans price only while locked. Two touches pinch about their midpoint.
 // Only a one-pointer plot drag coasts. Keys go through the navigator (PR 2, BQ-106 to BQ-109); a
-// reduced-motion release never coasts (BQ-104). DOM-free and allocation-free per row.
+// reduced-motion release never coasts (BQ-104). E11-S06: a key row's target sends it to an axis
+// stop's keys (BQ-194). DOM-free and allocation-free per row.
 import { DEFAULT_BAR_SPACING, type ChartViewport } from "../viewport/Viewport.js";
 import { INPUT, INPUT_STRIDE, KEY } from "../worker/protocol.js";
 import { Momentum } from "./momentum.js";
+import { priceAxisKey, TARGET, timeAxisKey } from "./axis-keys.js";
 import { navigate, resetView } from "./navigator.js";
 import { VelocityEstimator } from "./velocity.js";
 import { axisDragFactor, MOD, priceDragFactor, REGION, regionAt, wheelFactor } from "./wheel.js";
@@ -20,6 +22,8 @@ export interface GestureSink {
   hover(x: number): void;
   /** Registers the glide with the chart's frame scheduler. */
   animate(m: Momentum): void;
+  /** An axis key changed the view (E11-S06): its `SAY` announcement code. */
+  say?(code: number): void;
 }
 
 const Drag = { none: 0, pan: 1, spacing: 2, price: 3 } as const;
@@ -47,8 +51,12 @@ export class Gestures {
 
   constructor(
     private readonly vp: ChartViewport,
-    /** The canvas size in CSS px, for the regions (the layout engine's own fields). */
-    private readonly size: { readonly width: number; readonly height: number },
+    /** The canvas size and price gutter in CSS px, for the regions (the layout engine's). */
+    private readonly size: {
+      readonly width: number;
+      readonly height: number;
+      readonly priceGutter?: number;
+    },
     private readonly sink: GestureSink,
   ) {
     this.momentum = new Momentum((dx) => {
@@ -88,12 +96,12 @@ export class Gestures {
         this.up(touch, b, type === INPUT.up ? dt : Number.NaN);
       } else if (type === INPUT.wheel) this.wheel(x, y, b, ev[i + 4] as number);
       else if (type === INPUT.dblclick) this.dblclick(x, y);
-      else if (type === INPUT.key) this.key(x, ev[i + 4] as number);
+      else if (type === INPUT.key) this.key(x, ev[i + 4] as number, y);
     }
   }
 
   private region(x: number, y: number): number {
-    return regionAt(x, y, this.size.width, this.size.height);
+    return regionAt(x, y, this.size.width, this.size.height, this.size.priceGutter);
   }
 
   private down(touch: boolean, x: number, y: number, id: number): void {
@@ -212,12 +220,22 @@ export class Gestures {
    * A key that moves the viewport stops a glide first (BQ-103, E11-D06 D5); Space only sets the
    * pan-drag modifier, so releasing it after a Space+drag leaves that drag's coast running.
    */
-  private key(code: number, mods: number): void {
+  private key(code: number, mods: number, target: number): void {
     if (code === KEY.spaceDown || code === KEY.spaceUp) {
       this.panModifier = code === KEY.spaceDown;
       return;
     }
     this.stop();
-    this.sink.moved(navigate(this.vp, code, mods, this.pointerX));
+    if (target === TARGET.plot) {
+      this.sink.moved(navigate(this.vp, code, mods, this.pointerX));
+      return;
+    }
+    // E11-S06 (BQ-194): an axis stop's key, and what it announces.
+    const say =
+      target === TARGET.price
+        ? priceAxisKey(this.vp, PANE, code, mods)
+        : timeAxisKey(this.vp, code, mods);
+    this.sink.moved(say !== 0);
+    if (say !== 0) this.sink.say?.(say);
   }
 }

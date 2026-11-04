@@ -124,10 +124,41 @@ export class FakeGl implements GL2Like {
     return this.call("getUniformLocation") ? { name } : null;
   }
   bufferData(_t: number, data: ArrayBufferView): void {
-    if (this.call("bufferData")) this.writes.push(`full ${data.byteLength}`);
+    if (!this.call("bufferData")) return;
+    this.writes.push(`full ${data.byteLength}`);
+    this.writeBuffers.push(this.buffer);
   }
   bufferSubData(_t: number, dst: number, _src: ArrayBufferView, from: number, n: number): void {
-    if (this.call("bufferSubData")) this.writes.push(`sub ${dst} ${from} ${n}`);
+    if (!this.call("bufferSubData")) return;
+    this.writes.push(`sub ${dst} ${from} ${n}`);
+    this.writeBuffers.push(this.buffer);
+  }
+  /**
+   * E11-S06 (the axes' grid and text share the frame with the series): the buffer and VAO of
+   * each write and draw, so a test reads only the int-attribute ones (the candle and bar-cell
+   * rings: their VAOs bind `vertexAttribIPointer`), whatever else the scene draws.
+   */
+  private buffer: GLObject | null = null;
+  private vao: GLObject | null = null;
+  private readonly writeBuffers: (GLObject | null)[] = [];
+  private readonly drawVaos: (GLObject | null)[] = [];
+  private readonly intBuffers = new Set<GLObject | null>();
+  private readonly intVaos = new Set<GLObject | null>();
+  /** `writes` into int-attribute buffers only. */
+  intWrites(): string[] {
+    return this.writes.filter((_, i) => this.intBuffers.has(this.writeBuffers[i] ?? null));
+  }
+  /** `draws` of int-attribute VAOs only. */
+  intDraws(): string[] {
+    return this.draws.filter((_, i) => this.intVaos.has(this.drawVaos[i] ?? null));
+  }
+  /** `writes` into float-only buffers (the axes' grid ring, E11-S06): the complement. */
+  floatWrites(): string[] {
+    return this.writes.filter((_, i) => !this.intBuffers.has(this.writeBuffers[i] ?? null));
+  }
+  /** `draws` of float-only VAOs (the grid's one `line` draw): the complement. */
+  floatDraws(): string[] {
+    return this.draws.filter((_, i) => !this.intVaos.has(this.drawVaos[i] ?? null));
   }
   private uniform(fn: string, at: unknown, values: number[]): void {
     if (this.call(fn)) this.uniforms.push([(at as { name: string }).name, ...values]);
@@ -141,8 +172,10 @@ export class FakeGl implements GL2Like {
   readonly attribs: string[] = [];
   enableVertexAttribArray = (): void => void this.call("enableVertexAttribArray");
   vertexAttribIPointer(i: number, size: number, _t: number, stride: number, offset: number): void {
-    if (this.call("vertexAttribIPointer"))
-      this.attribs.push(`attrib ${i} ${size} ${stride} ${offset}`);
+    if (!this.call("vertexAttribIPointer")) return;
+    this.attribs.push(`attrib ${i} ${size} ${stride} ${offset}`);
+    this.intBuffers.add(this.buffer);
+    this.intVaos.add(this.vao);
   }
   vertexAttribDivisor(i: number, d: number): void {
     if (this.call("vertexAttribDivisor")) this.attribs.push(`divisor ${i} ${d}`);
@@ -151,8 +184,12 @@ export class FakeGl implements GL2Like {
   attachShader = (): void => void this.call("attachShader");
   linkProgram = (): void => void this.call("linkProgram");
   useProgram = (): void => void this.call("useProgram");
-  bindBuffer = (): void => void this.call("bindBuffer");
-  bindVertexArray = (): void => void this.call("bindVertexArray");
+  bindBuffer = (_t: number, b: GLObject | null): void => {
+    if (this.call("bindBuffer")) this.buffer = b;
+  };
+  bindVertexArray = (v: GLObject | null): void => {
+    if (this.call("bindVertexArray")) this.vao = v;
+  };
   activeTexture = (): void => void this.call("activeTexture");
   bindTexture = (): void => void this.call("bindTexture");
   /** `texParameteri` calls a live context took, as `<pname> <param>` (E11-S11 wrap modes). */
@@ -206,8 +243,9 @@ export class FakeGl implements GL2Like {
   readonly draws: string[] = [];
   trackDraws = false;
   drawArraysInstanced(_m: number, _f: number, count: number, instances: number): void {
-    if (this.call("drawArraysInstanced") && this.trackDraws)
-      this.draws.push(`${count} ${instances}`);
+    if (!this.call("drawArraysInstanced") || !this.trackDraws) return;
+    this.draws.push(`${count} ${instances}`);
+    this.drawVaos.push(this.vao);
   }
 }
 

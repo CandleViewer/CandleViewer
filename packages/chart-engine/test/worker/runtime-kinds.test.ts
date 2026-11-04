@@ -40,11 +40,12 @@ function bars(flags?: Uint8Array, series = 0, N = 60): void {
 }
 const view = (from: number, to: number): void =>
   cmd({ k: "setViewport", timeStart: from * 60e6, timeEnd: to * 60e6 });
+// The series' draws only: the int-attribute VAOs (the axis grid and labels are their own draws).
 const drawn = (fn: () => void): string[] => {
-  const before = gl.draws.length;
+  const before = gl.intDraws().length;
   fn();
   frame();
-  return gl.draws.slice(before);
+  return gl.intDraws().slice(before);
 };
 beforeEach(() => {
   vi.useFakeTimers();
