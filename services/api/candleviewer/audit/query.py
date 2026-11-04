@@ -104,6 +104,11 @@ def _canonical_digest(prev_hash: str, renderings: Iterable[str | None]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+#: The public name of `audit_chain()`'s digest, for a caller outside this module that builds a
+#: chain to check (the offline check's self-test, #1238): the one encoder, never a second copy.
+chain_digest = _canonical_digest
+
+
 def _canonical_hash(prev_hash: str, row: Mapping[str, Any]) -> str:
     """Recompute `audit_chain()`'s digest.
 

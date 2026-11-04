@@ -489,6 +489,10 @@ class Settings(BaseSettings):
     # E40-T01: `cv_owner` DSN used ONLY by the alert_deliveries retention purge
     # (trg_ad_append refuses DELETE for every other role). Unset => purge off.
     pg_owner_dsn: SecretStr | None = None
+    # E43-T10 (#1238): the read-only login (`cv_ro` is enough) of the offline audit-chain check,
+    # `python -m candleviewer.audit_chain_verify`, and nothing else. Unset => the check refuses to
+    # run; it never falls back to `pg_dsn`.
+    audit_verify_dsn: SecretStr | None = None
     questdb_ilp: str = "questdb:9009"
     questdb_pg: str = "questdb:8812"
     # PG-wire credentials for the bars ILP sink probes (#2037).

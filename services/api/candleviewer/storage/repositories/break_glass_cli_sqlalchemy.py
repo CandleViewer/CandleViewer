@@ -1,14 +1,16 @@
 """`SqlAlchemyBreakGlassDatabase`: the offline break-glass CLI's whole Postgres side (E09-S11
 #2119 slice 5, decision R2c); `SqlAlchemyBootstrapOwnerDatabase`, the bootstrap-Owner CLI's (#4479);
 `SqlAlchemyAuditAckDatabase`, the audit-chain break acknowledgement CLI's (#2904: `audit_log` and
-the read of an active Owner, no writer but the audit append).
+the read of an active Owner, no writer but the audit append); `SqlAlchemyAuditVerifyDatabase`, its
+read-only sibling for the offline chain check (#1238: every session read-only, no writer at all).
 
 One pool serves the CLI's stores (`audit_log`, `kek_versions` and the one-transaction reset
 store) and the cv-api probe. Every session of the pool carries this run's `application_name`,
 from the startup packet (so an idle one has it too) and again per transaction
 (`unit_of_work()`), so `others_connected` tells the CLI's own sessions from any other session of
 the database role: cv-api's pool, another run, a `psql`. Only the entry points
-`candleviewer.breakglass` and `candleviewer.bootstrap_owner` (#4479 C2) construct them, and nothing
+`candleviewer.breakglass`, `candleviewer.bootstrap_owner` (#4479 C2), `candleviewer.audit_ack_break`
+and `candleviewer.audit_chain_verify` construct them, and nothing
 cv-api serves imports this module (S8). Each CLI holds only its own writer (DC-4479-17): the
 bootstrap run the Owner-invite mint (`bootstrap_owners`) instead of the reset store (`owners`).
 `kcv` has no audit row builder, so it cannot enrol a KEK (decision O1). No I/O until a store is
@@ -19,12 +21,16 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Any
+from typing import Any, Final
 
 import sqlalchemy as sa
+from sqlalchemy.exc import SQLAlchemyError
 
 from candleviewer.domain.primitives import Environment
-from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
+from candleviewer.storage.repositories.audit_sqlalchemy import (
+    AuditReadFailed,
+    SqlAlchemyAuditRepository,
+)
 from candleviewer.storage.repositories.auth_keys_sqlalchemy import SqlAlchemyAuthKeyRows
 from candleviewer.storage.repositories.bootstrap_owner_sqlalchemy import (
     SqlAlchemyBootstrapOwnerRepository,
@@ -36,6 +42,7 @@ from candleviewer.storage.repositories.break_glass_sqlalchemy import (
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    sqlstate_of,
 )
 
 #: R2c: client sessions of this login role other than the probe's own and the CLI's, which all
@@ -52,12 +59,15 @@ PING_TIMEOUT_S = 5.0
 
 class _CliDatabase:
     """What every CLI run shares: its pool, named for the run, the journal's stores and the
-    cv-api probe. `cli` is the name's prefix."""
+    cv-api probe. `cli` is the name's prefix. `read_only` opens every session with
+    `default_transaction_read_only = on` (in the startup packet), so no statement of the run can
+    write, whatever the login."""
 
-    def __init__(self, dsn: str, cli: str) -> None:
+    def __init__(self, dsn: str, cli: str, *, read_only: bool = False) -> None:
         suffix = f"{cli}:{os.urandom(4).hex()}"
         #: What every session of the pool reports; `unit_of_work()` sets it per transaction too.
         self.application_name = f"candleviewer:{suffix}"
+        self._read_only = read_only
         self._relational = SqlAlchemyRelationalRepository(dsn, suffix)
         sa.event.listen(self._relational.engine.sync_engine, "do_connect", self._name_session)
         self.audit_log = SqlAlchemyAuditRepository(self._relational)
@@ -68,6 +78,8 @@ class _CliDatabase:
     ) -> None:
         """asyncpg's startup parameters, so the name holds before the first statement."""
         settings = {**cparams.get("server_settings", {}), "application_name": self.application_name}
+        if self._read_only:
+            settings["default_transaction_read_only"] = "on"
         cparams["server_settings"] = settings
 
     async def others_connected(self) -> bool:
@@ -115,3 +127,73 @@ class SqlAlchemyAuditAckDatabase(_CliDatabase):
     def __init__(self, dsn: str) -> None:
         super().__init__(dsn, "audit-ack")
         self.owners = SqlAlchemyActiveOwners(self._relational)
+
+
+#: (role, table, privilege, held) for each named role, table of schema `public` and privilege.
+_HELD: Final = sa.text(
+    "SELECT r.rolname AS role, c.relname AS table_name, p.priv AS privilege, "
+    "has_table_privilege(r.oid, c.oid, p.priv) AS held "
+    "FROM pg_roles r CROSS JOIN pg_class c "
+    "JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public' "
+    "CROSS JOIN unnest(CAST(:privileges AS text[])) AS p(priv) "
+    "WHERE r.rolname = ANY(CAST(:roles AS text[])) "
+    "AND c.relname = ANY(CAST(:tables AS name[])) AND c.relkind = 'r' ORDER BY 1, 2, 3"
+)
+_TRIGGERS: Final = sa.text(
+    "SELECT t.tgname AS name, c.relname AS table_name, t.tgenabled <> 'D' AS enabled "
+    "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+    "JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public' "
+    "WHERE NOT t.tgisinternal AND c.relname = ANY(CAST(:tables AS name[])) ORDER BY 1"
+)
+#: The deployed `public.audit_chain()`, as Postgres renders it.
+_CHAIN_FUNCTION: Final = sa.text(
+    "SELECT pg_get_functiondef(p.oid) AS definition FROM pg_proc p "
+    "JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public' "
+    "WHERE p.proname = 'audit_chain' AND p.pronargs = 0"
+)
+
+
+class SqlAlchemyAuditVerifyDatabase(_CliDatabase):
+    """An offline chain check's stores (#1238): `audit_log` with the in-app verify reads and their
+    budgets, and three catalogue reads, on sessions that are all read-only. Tables and the
+    function are looked up in schema `public`, never through the `search_path`. A catalogue read
+    that fails raises `AuditReadFailed` with the SQLSTATE only (C-12.6)."""
+
+    def __init__(self, dsn: str, *, statement_timeout_ms: int, max_entry_bytes: int) -> None:
+        super().__init__(dsn, "audit-verify", read_only=True)
+        self.audit_log = SqlAlchemyAuditRepository(
+            self._relational,
+            verify_read_timeout_ms=statement_timeout_ms,
+            verify_max_entry_bytes=max_entry_bytes,
+        )
+
+    async def held_privileges(
+        self, roles: list[str], tables: list[str], privileges: list[str]
+    ) -> dict[tuple[str, str], frozenset[str]]:
+        """(role, table) -> the privileges held; a role or table that does not exist has no key."""
+        params = {"roles": roles, "tables": tables, "privileges": privileges}
+        held: dict[tuple[str, str], set[str]] = {}
+        for row in await self._read(_HELD, params):
+            pair = held.setdefault((str(row["role"]), str(row["table_name"])), set())
+            if row["held"]:
+                pair.add(str(row["privilege"]))
+        return {pair: frozenset(privileges) for pair, privileges in held.items()}
+
+    async def triggers(self, tables: list[str]) -> dict[str, tuple[str, bool]]:
+        """Trigger name -> (its table, enabled) for the user triggers on `tables`."""
+        rows = await self._read(_TRIGGERS, {"tables": tables})
+        return {str(r["name"]): (str(r["table_name"]), bool(r["enabled"])) for r in rows}
+
+    async def chain_definition(self) -> str | None:
+        """The deployed `audit_chain()` definition, or `None` when there is none."""
+        rows = await self._read(_CHAIN_FUNCTION, {})
+        return str(rows[0]["definition"]) if rows else None
+
+    async def _read(self, statement: sa.TextClause, params: dict[str, Any]) -> list[Any]:
+        state: str | None = None
+        try:
+            async with self._relational.unit_of_work() as uow:
+                return list((await uow.session.execute(statement, params)).mappings().all())
+        except SQLAlchemyError as exc:
+            state = sqlstate_of(exc)
+        raise AuditReadFailed(state)  # outside the handler: no driver text in its context
