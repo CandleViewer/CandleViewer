@@ -24,9 +24,9 @@ The `15` fields are D03's §14 rows, applied by #5482 (R-1); until it merges, D0
 | Component | Props                    | States                                       | A11y                                       | Motion    | Data contract                   |
 | --------- | ------------------------ | -------------------------------------------- | ------------------------------------------ | --------- | ------------------------------- |
 | CMP-254   | D03 §9.1 Props           | three × four; T2 (D03 §6.1)                  | D05 §3, §5.1, AN rows; F-02, F-03, F-07    | M-7, NA-6 | the profile's symbol lists      |
-| CMP-255   | D03 §9.2 Props           | ready, not ready, unknown, disabled, loading | its text is the name; D05 F-04             | M-6, NA-5 | `readiness.ready` (`22`:21333)  |
+| CMP-255   | D03 §9.2 Props           | ready, not ready, unknown, disabled, loading | its text is the name; D05 F-04             | M-6, NA-5 | `readiness.ready` (`22`:21566)  |
 | CMP-256   | D03 §9.3 Props           | default, with cap                            | the host field's description; D05 AN rows  | NA-9      | the served cap (E28-S05)        |
-| CMP-138   | `size?`, D03 §9.4        | ok, warn, lock, stale, unknown               | `role="meter"`, `aria-valuetext`; D05 F-14 | NA-8      | `getRiskSummary` (`22`:14841)   |
+| CMP-138   | `size?`, D03 §9.4        | ok, warn, lock, stale, unknown               | `role="meter"`, `aria-valuetext`; D05 F-14 | NA-8      | `getRiskSummary` (`22`:15055)   |
 | CMP-049   | the reason row, D03 §9.6 | under warn, skipped, blocked                 | the parent row's `aria-describedby`; F-13  | NA-7      | `rejection`, `warnings`         |
 | CMP-028   | `tone="gap"`, D03 §9.7   | one                                          | `role="note"`, not live                    | none      | none (chrome)                   |
 | CMP-044   | the diff entry, D03 §9.8 | DiffSummary, relaxing                        | a list, "relaxing" in the text             | M-2       | the read and the edited profile |
@@ -38,12 +38,12 @@ Each row adds one line to its `14` entry, after the entry's last pointer line (B
 
 | A   | Entry   | Anchor (`14`) | New line                                                                                                                                                                          | Owner       |
 | --- | ------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| A-1 | SCR-130 | `14`:2755     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.1 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
-| A-2 | SCR-131 | `14`:2787     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.2 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
-| A-3 | SCR-132 | `14`:2800     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.3 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
-| A-4 | SCR-133 | `14`:2812     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.4 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
-| A-5 | SCR-062 | `14`:1528     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.5 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
-| A-6 | SCR-061 | `14`:1513     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.6 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
+| A-1 | SCR-130 | `14`:2757     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.1 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
+| A-2 | SCR-131 | `14`:2789     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.2 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
+| A-3 | SCR-132 | `14`:2802     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.3 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
+| A-4 | SCR-133 | `14`:2814     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.4 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
+| A-5 | SCR-062 | `14`:1530     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.5 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
+| A-6 | SCR-061 | `14`:1515     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.6 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
 
 Every other change the pack needs is a routed row with its owner (spec §14, §17).
 
@@ -75,7 +75,7 @@ The lists are D03 §9's, under `15`'s titles; the stories are built by E28-S01 �
 
 ## §F References
 
-**Motion:** D04 §2–§5 by id (R-3). **Accessibility:** D05 §3–§16 by id (R-4). **Tokens and redlines:** D03 §2–§11 by state row. **The deck as data:** one header line (the pack, the version, the base, the fields, the status words, the render values, the freeze note and `T`'s eleven codes), then one row per string. A builder reads the deck, not this file, for any string.
+**Motion:** D04 §2–§5 by id, merged as #5618 (R-3). **Accessibility:** D05 §3–§16 by id, merged as #5619 (R-4). **Tokens and redlines:** D03 §2–§11 by state row. **The deck as data:** one header line (the pack, the version, the base, the fields, the status words, the render values, the freeze note and `T`'s eleven codes), then one row per string. A builder reads the deck, not this file, for any string.
 
 ## §G Handoff checklists (`16` §11.4)
 
@@ -108,7 +108,7 @@ One block per component contract the six screens change (`16` §13.3 item 8). Ru
 - [x] **Density notes** — segments 12 × 8 px comfortable, 8 × 6 px compact (D03 §9.2); not a target
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — PENDING — D03 §9.2's Tokens line becomes the `15` field with CMP-255's entry (R-1)
-- [x] **Data contract confirmed** — `readiness.ready` (`22`:21333), `.total`, `.members[].ready`, `.reason`; never counted by the client
+- [x] **Data contract confirmed** — `readiness.ready` (`22`:21566), `.total`, `.members[].ready`, `.reason`; never counted by the client
 - [ ] **Contrast and CVD** — PENDING — D05 CV-05 measures the unknown segment's outline (F-04); the renders come with R-1
 - [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PENDING — attached with the boards (R-1)
 - [ ] **Sign-off** — PENDING — the owner's `approved` on #842 (spec §16)
@@ -140,7 +140,7 @@ One block per component contract the six screens change (`16` §13.3 item 8). Ru
 - [ ] **Density notes** — PENDING — the three sizes of D03 §9.4; D05 F-14 moves the `row` text to `type.num.sm` (A-20)
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — PENDING — the appended Props field (D03 §14 A-4) lands with R-1
-- [x] **Data contract confirmed** — `getRiskSummary` (`22`:14841); "unknown" and the hatched track when absent
+- [x] **Data contract confirmed** — `getRiskSummary` (`22`:15055); "unknown" and the hatched track when absent
 - [ ] **Contrast and CVD** — PENDING — P16, P24, P30, P31 in D03 §11.1; the renders come with R-1
 - [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PENDING — attached with the boards (R-1)
 - [ ] **Sign-off** — PENDING — the owner's `approved` on #842 (spec §16)
@@ -156,7 +156,7 @@ One block per component contract the six screens change (`16` §13.3 item 8). Ru
 - [x] **Density notes** — 32 px comfortable, 24 px compact rows (D03 §2.1); the reason row follows its record
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — PENDING — the appended States field (D03 §14 A-6) lands with R-1
-- [x] **Data contract confirmed** — `legs[].rejection.code`, `.message` and `warnings` (`22`:24853); D02 §10's words
+- [x] **Data contract confirmed** — `legs[].rejection.code`, `.message` and `warnings` (`22`:25086); D02 §10's words
 - [ ] **Contrast and CVD** — PENDING — D05 F-01 (A-01, A-03 and #840's A-1, the joint stale-preview rule: the text at full opacity, decoration only muted) open (H-1)
 - [ ] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — PENDING — attached with the boards (R-1)
 - [ ] **Sign-off** — PENDING — the owner's `approved` on #842 (spec §16)
