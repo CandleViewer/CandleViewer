@@ -2,7 +2,7 @@
 // VU per account opens `orders` for it, then places a limit entry, native stop-loss included
 // (C-2.6), every RATE_MS. The timer runs from the POST to the first `orders` ack or reject for
 // that `order_link_id` (BQ-01, lib/frames.js); the backend-added portion is `order_submit_seconds`
-// over the run less one pack draw (lib/thresholds.js). CV_E29_PROFILE=calibrate is the BQ-09
+// over the run less the one pack draw the create waits on (lib/thresholds.js). CV_E29_PROFILE=calibrate is the BQ-09
 // self-test. How to run: docs/qa/perf/e29-oms-k6.md.
 /* global __ENV */
 import http from "k6/http";
@@ -13,7 +13,8 @@ import { Counter, Gauge, Trend } from "k6/metrics";
 import { guardedBase, guardedWsUrl } from "./lib/guard.js";
 import { loadUser, signIn, submitParams } from "./lib/session.js";
 import * as fr from "./lib/frames.js";
-import { backendAddedMs, packDelayMs, profileOf, thresholdsFor } from "./lib/thresholds.js";
+import { backendReading, mayFire, orderBody, orderEnv, summaryOf } from "./lib/order.js";
+import { packDelayMs, profileOf, thresholdsFor } from "./lib/thresholds.js";
 
 const BASE = guardedBase();
 const WS_URL = guardedWsUrl(BASE);
@@ -28,21 +29,11 @@ const ACCOUNTS = String(__ENV.CV_E29_ACCOUNT_IDS || "")
 if (ACCOUNTS.length < 1 || !ACCOUNTS.every((x) => UUID.test(x))) {
   throw new Error("CV_E29_ACCOUNT_IDS must list the demo account ids (uuid, comma separated)");
 }
-const DECIMAL = /^\d{1,12}(\.\d{1,8})?$/;
-const SYMBOL = __ENV.CV_E29_SYMBOL || "BTCUSDT";
-const PRICE = __ENV.CV_E29_PRICE || "";
-const QTY = __ENV.CV_E29_QTY || "0.001";
-const SL_PCT = __ENV.CV_E29_SL_PERCENT || "1";
-if (!/^[A-Z0-9]{2,16}USDT$/.test(SYMBOL) || ![PRICE, QTY, SL_PCT].every((x) => DECIMAL.test(x))) {
-  throw new Error("CV_E29_SYMBOL, CV_E29_PRICE, CV_E29_QTY and CV_E29_SL_PERCENT must be valid");
-}
-const px = (k) => (Number(PRICE) * k).toFixed(8).replace(/\.?0+$/, "");
-const BUY_PRICE = px(0.99); // 1 % either side of CV_E29_PRICE, which should sit near the mark
-const SELL_PRICE = px(1.01);
-const MAX_ORDERS = Number(__ENV.CV_E29_MAX_ORDERS || 200); // open orders per account (none cancelled)
-const RUN_S = Number(__ENV.CV_E29_RUN_S || 120);
-const RATE_MS = Number(__ENV.CV_E29_RATE_MS || 500);
-const ACK_TIMEOUT_MS = 5000; // an ack later than this is a miss, not a slow sample
+const CFG = orderEnv(__ENV);
+const MAX_ORDERS = CFG.maxOrders; // open orders per account (none cancelled)
+const RUN_S = CFG.runS;
+const RATE_MS = CFG.rateMs;
+const ACK_TIMEOUT_MS = 5000; // SUBMIT_TIMEOUT_S, oms/commands.py:289: an ack later is a miss
 const ORIGIN = "http://127.0.0.1:5173"; // tests/load/ws/profiles.json origin
 
 const ackMs = new Trend("oms_submit_ack_ms", true);
@@ -78,21 +69,6 @@ export function setup() {
   return { session: signIn(BASE, USER), before: submitted() };
 }
 
-// One limit entry, its native SL a percent off the entry (22 PlaceOrderRequest, Offset).
-function order(account, i) {
-  return JSON.stringify({
-    exchange_account_id: account,
-    symbol: SYMBOL,
-    side: i % 2 === 0 ? "buy" : "sell",
-    order_type: "limit",
-    intent: "entry",
-    price: i % 2 === 0 ? BUY_PRICE : SELL_PRICE, // buy below, sell above: they never cross
-    time_in_force: "GTC",
-    sizing: { mode: "fixed_qty", qty: QTY },
-    stop_loss: { unit: "percent", value: SL_PCT },
-  });
-}
-
 export default function (data) {
   const account = ACCOUNTS[(__VU - 1) % ACCOUNTS.length];
   const ws = new WebSocket(WS_URL, ["cv.v1.json"], { headers: { Origin: ORIGIN } });
@@ -101,6 +77,7 @@ export default function (data) {
   let ready = false;
   let n = 0;
   let inFlight = 0;
+  let closing = false;
   const record = (s) => {
     if (s === null) return;
     ackMs.add(s.ms);
@@ -133,6 +110,9 @@ export default function (data) {
     else for (const a of fr.acksOf(m, at)) record(fr.addAck(mt, a));
   });
   ws.addEventListener("error", () => wsErrors.add(1));
+  ws.addEventListener("close", () => {
+    if (!closing) wsErrors.add(1); // dropped before the run ended
+  });
 
   const end = Date.now() + RUN_S * 1000;
   const fire = () => {
@@ -143,7 +123,7 @@ export default function (data) {
       .asyncRequest(
         "POST",
         `${BASE}/orders`,
-        order(account, i),
+        JSON.stringify(orderBody(CFG, account, i)),
         submitParams(data.session, fr.uuidV4(new Uint8Array(randomBytes(16)))),
       )
       .then((r) => {
@@ -160,13 +140,14 @@ export default function (data) {
   const tick = setInterval(() => {
     const now = Date.now();
     missing.add(fr.expire(mt, now, ACK_TIMEOUT_MS));
-    if (ready && now < end && n < MAX_ORDERS) fire();
+    if (mayFire(ready, now, end, n, MAX_ORDERS)) fire();
     else if (
       now >= end &&
       ((inFlight === 0 && mt.sent.size === 0) || now > end + ACK_TIMEOUT_MS * 2)
     ) {
       clearInterval(tick);
       missing.add(mt.sent.size + inFlight);
+      closing = true;
       ws.close();
       check(n, { "the account was ready and submitted": (c) => c > 0 });
     }
@@ -175,14 +156,12 @@ export default function (data) {
 
 export function teardown(data) {
   const p95 = fr.quantile(0.95, fr.delta(data.before, submitted()));
-  const added = backendAddedMs(p95, DELAY_MS);
-  if (added === null) backendMissing.add(1);
-  else backendAdded.add(added);
+  const r = backendReading(p95, DELAY_MS);
+  backendMissing.add(r.missing);
+  if (r.added !== null) backendAdded.add(r.added);
 }
 
 export function handleSummary(data) {
-  delete data.setup_data; // the session token: never written to a file (C-12.2)
-  data.cv_profile = PROFILE; // compare_baseline.py refuses a calibration summary
-  data.cv_pack_delay_ms = DELAY_MS;
-  return { [__ENV.CV_E29_SUMMARY || "k6-summary-oms-submit-ack.json"]: JSON.stringify(data) };
+  const out = summaryOf(data, PROFILE); // no session token; compare_baseline.py refuses calibrate
+  return { [__ENV.CV_E29_SUMMARY || "k6-summary-oms-submit-ack.json"]: JSON.stringify(out) };
 }

@@ -138,9 +138,11 @@ def test_the_histogram_is_summed_over_labels_and_read_as_a_run_delta() -> None:
 
 def test_the_budget_numbers_are_the_standards() -> None:
     lines = STANDARD.read_text(encoding="utf-8").splitlines()
-    assert "Order submit → ack | p95 < 300ms (demo/paper" in lines[27]  # 06 line 28
-    assert "### 5.2" in lines[119] and "backend-added overhead" in lines[123]
-    assert "≤50ms" in lines[124]
+    (row,) = [x for x in lines if x.startswith("| 4 | Order submit")]
+    assert "p95 < 300ms (demo/paper" in row
+    sec = next(i for i, x in enumerate(lines) if x.startswith("### 5.2 Order submit"))
+    (added,) = [x for x in lines[sec:] if "backend-added overhead" in x and "≤50ms" in x][:1]
+    assert "Demo/paper" in added
     got = _js("thresholds.js", "[f.SUBMIT_ACK_P95_MS, f.BACKEND_ADDED_P95_MS]")
     assert got == [[300, 50]]
 
@@ -170,38 +172,122 @@ def test_the_pack_delay_profile_and_backend_figure_parse() -> None:
         *(f"f.packDelayMs({json.dumps(b)})" for b in bad),
         'f.profileOf("Gate")',
         '[f.profileOf(undefined), f.profileOf("calibrate"), f.packDelayMs(" 40 ")]',
-        "[f.backendAddedMs(0.075, 40), f.backendAddedMs(0.02, 40), f.backendAddedMs(null, 40)]",
     )
     assert all("CV_E29_PACK_DELAY_MS" in g["error"] for g in got[: len(bad)])
     assert "CV_E29_PROFILE" in got[len(bad)]["error"]
-    assert got[-2:] == [["gate", "calibrate", 40], [35, 0, None]]
+    assert got[-1] == ["gate", "calibrate", 40]
+
+
+# The two lists of services/api/tests/chaos/accounts/test_e27_harness_guards.py (C-13.5).
+ACCEPT = [
+    "http://127.0.0.1:8000",
+    "http://localhost:8000/",
+    "http://api:8000",
+    "http://[::1]:8000",
+    "http://LOCALHOST:8000",
+    "HTTP://API:8000",
+]
+REFUSE = [
+    "https://api.bybit.com", "http://api-demo.bybit.com:8000", "http://stream.bytick.com",
+    "https://127.0.0.1:8000", "http://evil.example", "http://127.0.0.1.evil.example",
+    "http://user:pw@127.0.0.1:8000", "http://127.0.0.1:8000/v5", "ftp://localhost", "not a url",
+]  # fmt: skip
+
+
+def _guard(base: str, **extra: str) -> Any:
+    env = {"CV_E29_FIXTURE_STACK": "1", "BASE_URL": base, **extra}
+    (got,) = _js("guard.js", "f.guardedWsUrl(f.guardedBase())", env=env)
+    return got
+
+
+@pytest.mark.parametrize("url", ACCEPT)
+def test_the_guard_accepts_loopback_and_the_compose_service(url: str) -> None:
+    got = _guard(url)
+    assert got.lower().startswith("ws://") and got.endswith("/ws")
+
+
+@pytest.mark.parametrize("url", REFUSE)
+def test_the_guard_refuses_everything_else(url: str) -> None:
+    got = _guard(url)
+    assert isinstance(got, dict) and "refusing" in got["error"]
 
 
 @pytest.mark.parametrize(
     ("env", "ok"),
     [
         ({"CV_E29_FIXTURE_STACK": "1"}, True),
-        ({"CV_E29_FIXTURE_STACK": "1", "BASE_URL": "http://api:8000/"}, True),
-        ({"BASE_URL": "http://127.0.0.1:8000"}, False),
-        (
-            {"CV_E29_FIXTURE_STACK": "1", "BASE_URL": "https://api-demo.bybit.com"},
-            False,
-        ),
+        ({}, False),
+        ({"CV_E29_FIXTURE_STACK": "0"}, False),
         ({"CV_E29_FIXTURE_STACK": "1", "BASE_URL": "http://10.0.0.5:8000"}, False),
         ({"CV_E29_FIXTURE_STACK": "1", "WS_PATH": "/ws@evil"}, False),
     ],
 )
-def test_the_guard_takes_only_the_loopback_fixture_stack(env: dict[str, str], ok: bool) -> None:
+def test_the_guard_needs_the_flag_and_a_plain_ws_path(env: dict[str, str], ok: bool) -> None:
     (got,) = _js("guard.js", "f.guardedWsUrl(f.guardedBase())", env=env)
     assert isinstance(got, str) == ok
-    if ok:
-        assert got.startswith("ws://") and got.endswith("/ws")
 
 
-def test_every_order_carries_a_native_stop_and_the_summary_drops_the_token() -> None:
+CFG = (
+    '{symbol: "BTCUSDT", price: "100", qty: "0.001", slPct: "1", maxOrders: 3, runS: 1, rateMs: 10}'
+)
+
+
+def test_every_order_has_a_native_stop_and_buys_never_cross_sells() -> None:
+    got = _js(
+        "order.js",
+        f"f.orderBody({CFG}, 'acc', 0)",
+        f"f.orderBody({CFG}, 'acc', 1)",
+        'f.prices("100")',
+        'f.prices("0.5")',
+    )
+    buy, sell, px, small = got
+    for o in (buy, sell):  # C-2.6: no order without its stop
+        assert o["stop_loss"] == {"unit": "percent", "value": "1"}
+        assert o["order_type"] == "limit" and o["exchange_account_id"] == "acc"
+    assert (buy["side"], sell["side"]) == ("buy", "sell")
+    assert (buy["price"], sell["price"]) == ("99", "101")
+    assert float(px["buy"]) < 100 < float(px["sell"]) and float(small["buy"]) < 0.5
+
+
+def test_the_cap_stops_firing_and_a_missing_scrape_is_counted() -> None:
+    got = _js(
+        "order.js",
+        "[f.mayFire(true, 1, 9, 2, 3), f.mayFire(true, 1, 9, 3, 3), f.mayFire(false, 1, 9, 0, 3)]",
+        "[f.mayFire(true, 9, 9, 0, 3)]",
+        "[f.backendReading(null, 40), f.backendReading(0.075, 40), f.backendReading(0.02, 40)]",
+    )
+    assert got[0] == [True, False, False] and got[1] == [False]
+    assert got[2] == [
+        {"missing": 1, "added": None},
+        {"missing": 0, "added": pytest.approx(35)},
+        {"missing": 0, "added": 0},
+    ]
+
+
+def test_the_summary_drops_the_token_and_names_its_profile() -> None:
+    (got,) = _js(
+        "order.js", 'f.summaryOf({setup_data: {session: {token: "t"}}, metrics: {}}, "gate")'
+    )
+    assert got == {"metrics": {}, "cv_profile": "gate"}
+
+
+def test_the_env_numbers_are_validated() -> None:
+    good = {"CV_E29_PRICE": "100"}
+    got = _js(
+        "order.js",
+        "f.orderEnv(__ENV)",
+        *(f"f.orderEnv({{...__ENV, CV_E29_{k}: {json.dumps(v)}}})"
+          for k, v in [("RUN_S", "0"), ("RATE_MS", "1.5"), ("MAX_ORDERS", "x"), ("PRICE", "")]),
+        env=good,
+    )  # fmt: skip
+    assert (got[0]["maxOrders"], got[0]["runS"], got[0]["rateMs"]) == (200, 120, 500)
+    assert all("must" in g["error"] for g in got[1:])
+
+
+def test_the_script_wires_the_pure_parts_and_names_no_exchange() -> None:
     script = (KIT / "oms_submit_ack.js").read_text(encoding="utf-8")
-    assert 'stop_loss: { unit: "percent", value: SL_PCT }' in script  # C-2.6
-    assert "delete data.setup_data" in script and "data.cv_profile = PROFILE" in script
+    assert "orderBody(CFG, account, i)" in script and "summaryOf(data, PROFILE)" in script
+    assert "mayFire(" in script and "backendReading(p95, DELAY_MS)" in script
     assert "acksOf(m, at)" in script and 'histogram(body, "order_submit_seconds")' in script
     assert "bybit" not in script.lower() and "bytick" not in script.lower()
 
