@@ -2061,9 +2061,11 @@ class _Parts:
     #: E29-T06 #914: the reconciliation jobs, started where the sweep ends, before `ready`
     #: (BQ-14); None where the stores compose none.
     reconcile: ReconcileWiring | None = None
-    #: The accounts a job opens for at start: the environment's that resolve to a trading
-    #: account (an active key, not deleted); the rest open on their stream's first trigger.
-    tradable: Callable[[Sequence[UUID]], Awaitable[list[AccountId]]] | None = None
+    #: The accounts a job opens for, and the closed-PnL sync first reads, at start: the
+    #: environment's that resolve to a trading account (an active key, not deleted), each one it
+    #: skips logged under its caller's event (`skipped`); the rest open on their stream's first
+    #: trigger.
+    tradable: Callable[[Sequence[UUID], str], Awaitable[list[AccountId]]] | None = None
     #: E29-S06 #981: the closed-PnL sync, built, started once `ready` (`_closed_pnl_started`);
     #: None where the stores compose no closed-PnL store.
     closed_pnl: ClosedPnlSync | None = None
@@ -3010,7 +3012,7 @@ class OmsRuntime:
 
         async def opened() -> None:
             ids = await self._bounded(parts.sweep.environment_accounts(self._env))
-            await jobs.start(await tradable(ids))
+            await jobs.start(await tradable(ids, "oms_reconcile_account_skipped"))
 
         try:
             await self._bounded(parts.lane.call(opened()))
@@ -3055,24 +3057,26 @@ class OmsRuntime:
     async def _closed_pnl_started(self, parts: _Parts) -> None:
         """E29-S06 #981 (24 Sec.8.13): the closed-PnL sync starts on the lane, where it runs, with
         the environment's accounts that resolve to a trading account, each read at once; another
-        joins at its first stored fill or `resyncing`. Bounded as the jobs' start is. A start that
-        fails, or that the lane refuses or does not answer, is logged CRITICAL and paged, and
-        `ready` stands: order entry never waits for the sync."""
+        joins at its first stored fill or `resyncing`. Bounded as the jobs' start is. A start the
+        lane does not confirm, one that fails or one whose answer the bound cuts off (it may
+        still have run, as nothing suspends between the accounts' read and the start), is logged
+        CRITICAL and paged as unconfirmed, and `ready` stands: order entry never waits for the
+        sync."""
         sync, tradable = parts.closed_pnl, parts.tradable
         if sync is None or tradable is None:
             return
 
         async def begun() -> None:
             ids = await self._bounded(parts.sweep.environment_accounts(self._env))
-            sync.start(await tradable(ids))
+            sync.start(await tradable(ids, "oms_closed_pnl_account_skipped"))
 
         try:
             await self._bounded(parts.lane.call(begun()))
         except Exception as exc:
             if self._stopping:  # the stop's own lane: nothing to start
                 raise asyncio.CancelledError from exc
-            _log().critical("oms_closed_pnl_sync_unstarted", error=type(exc).__name__)
-            _page(self._pager, "oms_closed_pnl_sync_unstarted")
+            _log().critical("oms_closed_pnl_sync_start_unconfirmed", error=type(exc).__name__)
+            _page(self._pager, "oms_closed_pnl_sync_start_unconfirmed")
 
     async def _swept(self, parts: _Parts) -> bool:
         """Steps 2 to 4; False when step 3 refuses `ready`, past `MAX_MACHINES` orders (paged).
@@ -3570,8 +3574,9 @@ class OmsRuntime:
                 environment=env, clock=lane_clock,
             )  # fmt: skip
 
-            async def tradable(ids: Sequence[UUID]) -> list[AccountId]:
-                """The accounts that resolve to a trading account now, each read bounded."""
+            async def tradable(ids: Sequence[UUID], skipped: str) -> list[AccountId]:
+                """The accounts that resolve to a trading account now, each read bounded; one
+                that does not is logged as `skipped`, its caller's own event."""
                 found: list[AccountId] = []
                 for account_id in ids:
                     try:
@@ -3580,8 +3585,7 @@ class OmsRuntime:
                                 (await accounts.trading_account(AccountId(account_id))).account_id
                             )
                     except Exception as exc:  # deleted, keyless or unread: its stream opens it
-                        _log().info("oms_reconcile_account_skipped", account_id=str(account_id),
-                                    reason=type(exc).__name__)  # fmt: skip
+                        _log().info(skipped, account_id=str(account_id), reason=type(exc).__name__)
                 return found
 
             parts = _Parts(
