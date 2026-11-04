@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "ticket": "E29-Q03 (#977)",
+  "mode": "warn-only",
+  "machine_profile": "ci-ubuntu-latest",
+  "recorded": null,
+  "note": "No CI-runner numbers yet: the values are set by a reviewed baseline PR from a green run's compare.json (06 section 7.4), which also moves mode to gate.",
+  "metrics": {
+    "submit_ack_p95_ms": {
+      "metric": "oms_submit_ack_ms",
+      "stat": "p(95)",
+      "value": null
+    },
+    "submit_http_p95_ms": {
+      "metric": "oms_submit_http_ms",
+      "stat": "p(95)",
+      "value": null
+    },
+    "backend_added_p95_ms": {
+      "metric": "oms_backend_added_p95_ms",
+      "stat": "value",
+      "value": null
+    }
+  }
+}
