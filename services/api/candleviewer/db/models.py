@@ -2542,6 +2542,8 @@ executions = Table(
     Column("is_paper", Boolean, nullable=False, server_default=text("false")),
     Column("exec_ts", TIMESTAMP(timezone=True), nullable=False),
     Column("recv_ts", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    # E29-S06's revision (21 Sec.3.3.6, second block): the size the fill closed, where stated.
+    Column("closed_size", _MONEY, comment=_P1),
     CheckConstraint("exec_qty > 0", name="ex_qty"),
     CheckConstraint("exec_price > 0", name="ex_px"),
     CheckConstraint("side IN ('Buy','Sell')", name="ex_side"),
@@ -2550,6 +2552,7 @@ executions = Table(
         name="ex_type",
     ),
     CheckConstraint("position_idx IN (0,1,2)", name="ex_posidx"),
+    CheckConstraint("closed_size IS NULL OR closed_size BETWEEN 0 AND exec_qty", name="ex_closed"),
     Index("ux_exec_id", "exchange_account_id", "exec_id", unique=True),
     Index("ix_exec_order", "order_id", "exec_ts"),
     Index("ix_exec_acct_time", "exchange_account_id", text("exec_ts DESC")),
@@ -2557,6 +2560,7 @@ executions = Table(
     Index(
         "ix_exec_leg", "trade_group_leg_id", postgresql_where=text("trade_group_leg_id IS NOT NULL")
     ),
+    Index("ix_exec_walk", "exchange_account_id", "symbol", "exec_ts", "exec_id"),
 )
 positions = Table(
     "positions",
@@ -2631,11 +2635,21 @@ position_snapshots = Table(
     Column("equity_usd", _MONEY, comment=_P1),
     Column("reason", Text, nullable=False),
     Column("snap_ts", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    # E29-S06's revision (21 Sec.3.3.7, second block): the reading's own time at the venue.
+    Column("exchange_updated_ts", TIMESTAMP(timezone=True)),
     CheckConstraint(
         "reason IN ('ws_push','rest_reconcile','minute_tick','risk_eval')", name="psnap_reason"
     ),
     Index("ix_psnap_acct_time", "exchange_account_id", text("snap_ts DESC")),
     Index("ix_psnap_sym_time", "symbol", text("snap_ts DESC")),
+    Index(
+        "ix_psnap_flat",
+        "exchange_account_id",
+        "symbol",
+        "position_idx",
+        "exchange_updated_ts",
+        postgresql_where=text("size = 0 AND exchange_updated_ts IS NOT NULL"),
+    ),
 )
 
 
@@ -3147,6 +3161,68 @@ oms_handovers = Table(
     ),
     Index("ix_oh_account", "exchange_account_id", "kind", "id"),
 )
+
+#: `closed_pnl_records` (E29-S06 #981; 21 Sec.3.3.13, its revision in Sec.9.4): the venue's
+#: closed-PnL records and their composition (24 Sec.8.13), every `numeric` column P1 (Sec.12). The
+#: revision's tests pin the CHECK bodies, partial predicates and guard `alembic check` skips.
+closed_pnl_records = Table(
+    "closed_pnl_records",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("exchange_account_id", ForeignKey("exchange_accounts.id", ondelete="RESTRICT"),
+           nullable=False),
+    Column("exchange_order_id", Text),
+    Column("symbol", symbol_code, nullable=False),
+    Column("side", Text, nullable=False),
+    Column("position_idx", SmallInteger),
+    Column("trade_group_id", ForeignKey("trade_groups.id", ondelete="RESTRICT")),  # P0: no comment
+    Column("qty", _MONEY, comment=_P1),
+    Column("avg_entry_price", _MONEY, comment=_P1),
+    Column("avg_exit_price", _MONEY, comment=_P1),
+    Column("leverage", Numeric(10, 2), comment=_P1),
+    Column("closed_pnl", _MONEY, comment=_P1),
+    Column("gross_pnl", _MONEY, comment=_P1),
+    Column("fee_pnl", _MONEY, comment=_P1),
+    Column("funding_pnl", _MONEY, comment=_P1),
+    Column("opened_at", TIMESTAMP(timezone=True)),
+    Column("closed_at", TIMESTAMP(timezone=True), nullable=False),
+    Column("venue_created_at", TIMESTAMP(timezone=True)),
+    Column("settled_at", TIMESTAMP(timezone=True)),
+    Column("final_at", TIMESTAMP(timezone=True)),
+    Column("divergent", Boolean, nullable=False, server_default=text("false")),
+    Column("audited_local_net", _MONEY, comment=_P1),
+    Column("audited_closed_pnl", _MONEY, comment=_P1),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("side IN ('long','short')", name="cpr_side"),
+    CheckConstraint("position_idx IS NULL OR position_idx IN (0,1,2)", name="cpr_posidx"),
+    CheckConstraint(
+        "exchange_order_id IS NULL OR char_length(exchange_order_id) BETWEEN 1 AND 64",
+        name="cpr_order"),
+    CheckConstraint(
+        "CASE WHEN settled_at IS NULL THEN exchange_order_id IS NOT NULL AND closed_pnl IS NULL "
+        "AND leverage IS NULL AND venue_created_at IS NULL ELSE closed_pnl IS NOT NULL "
+        "AND qty IS NOT NULL AND avg_entry_price IS NOT NULL AND avg_exit_price IS NOT NULL "
+        "AND leverage IS NOT NULL AND venue_created_at IS NOT NULL END", name="cpr_settled"),
+    CheckConstraint(
+        "final_at IS NULL OR (settled_at IS NOT NULL AND exchange_order_id IS NOT NULL "
+        "AND final_at >= settled_at)", name="cpr_final"),
+    CheckConstraint("qty IS NULL OR qty > 0", name="cpr_qty"),
+    CheckConstraint(
+        "(audited_local_net IS NULL) = (audited_closed_pnl IS NULL) "
+        "AND (NOT divergent OR (settled_at IS NOT NULL AND audited_closed_pnl IS NOT NULL))",
+        name="cpr_pair"),
+    CheckConstraint(
+        "NOT ('NaN'::numeric IN (qty, avg_entry_price, avg_exit_price, leverage, closed_pnl, "
+        "gross_pnl, fee_pnl, funding_pnl, audited_local_net, audited_closed_pnl))",
+        name="cpr_numbers"),
+    Index("ux_cpr_order", "exchange_account_id", "exchange_order_id", unique=True,
+          postgresql_where=text("exchange_order_id IS NOT NULL")),
+    Index("ix_cpr_day", "exchange_account_id", "closed_at", "id"),
+    Index("ix_cpr_pending", "exchange_account_id", "closed_at",
+          postgresql_where=text("final_at IS NULL AND exchange_order_id IS NOT NULL")),
+    Index("ix_cpr_group", "exchange_account_id", "trade_group_id", "closed_at",
+          postgresql_where=text("trade_group_id IS NOT NULL")),
+)  # fmt: skip
 
 
 #: `machine_snapshots`, `machine_drain_journal`, `machine_events` (E50-T61, revision

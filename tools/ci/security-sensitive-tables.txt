@@ -29,3 +29,4 @@ risk_policy
 kill_switch_state
 idempotency_anchors
 recorded_stops
+closed_pnl_records
