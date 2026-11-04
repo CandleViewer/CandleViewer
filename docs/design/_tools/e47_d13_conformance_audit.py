@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """E47-D13 (#1311) audit: the conformance report, the statement and the limitations register.
 
-Standalone, offline, stdlib only; it executes no repo code and runs under `python3 -I`. It reads,
+Offline, stdlib only, under `python3 -I`; the one repo module it loads is the product generator
+`tools/a11y/conformance.py` (E47-T05, BQ-01), which holds the model it shares. It reads,
 AS TEXT at the pinned base (`git show`): the plan texts and merged design texts the spec cites; the
 E47-T01 register (`findings.json`) and the E47-D02 register (`47-audit-register.json`) by their
 pinned git blob shas, so a tick in another lane never reds `--check`; the token JSON. From the
@@ -9,9 +10,11 @@ working tree it reads the spec `docs/design/E47/E47-D13.md`, its hand-off, the `
 edits (§8.3), the limitations register `docs/plan/a11y/47-limitations.json`, the generated dry run
 `docs/plan/a11y/47-conformance-report.md` and the pins file. Its form follows the E47-D04 tool.
 
-1. **The report.** `--fill` regenerates the dry run from the two registers under the honest-claims
-   rule (spec §3) and the evidence-capture contract (spec §4); `--check` FAILs a stale report
-   (G-REPORT, per row; a row another gate FAILs prints as NOTE).
+1. **The report.** The dry run at the pins is generated in memory from the two registers under the
+   honest-claims rule (spec §3) and the evidence-capture contract (spec §4); the committed file
+   `47-conformance-report.md` is E47-T05's, generated from the live registers by
+   `tools/a11y/conformance.py`. G-REPORT checks the in-memory dry run (per row; a row another
+   gate FAILs prints as NOTE).
 2. **Values.** Every `{{KIND:key}}` placeholder is written by `--fill` as `VALUE<!--=KIND:key-->`:
    COUNT (the report, the register, the spec's own tables), LIST (the seeded ten-row sample) and
    CONTRAST (a WCAG 2.x ratio over the resolved tokens). `--check` re-derives each (G-ANCHOR) and
@@ -53,6 +56,7 @@ from __future__ import annotations
 import argparse
 import functools
 import hashlib
+import importlib.util
 import json
 import math
 import random
@@ -64,6 +68,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+_CONF_REL = "tools/a11y/conformance.py"
+_cspec = importlib.util.spec_from_file_location("a11y_conformance", ROOT / _CONF_REL)
+assert _cspec and _cspec.loader
+C = importlib.util.module_from_spec(_cspec)
+sys.modules["a11y_conformance"] = C  # dataclasses resolve their module here
+_cspec.loader.exec_module(C)
 BASE = "4c662fd5b"  # origin/main when the spec was written; every cite is read here
 SPEC_REL = "docs/design/E47/E47-D13.md"
 HAND_REL = "docs/design/E47/E47-D13-handoff.md"
@@ -73,6 +83,14 @@ NORM_REL = "docs/plan/05-accessibility-standard.md"  # §8.3 is edited by this P
 REPORT_REL = "docs/plan/a11y/47-conformance-report.md"
 LIMITS_REL = "docs/plan/a11y/47-limitations.json"
 OWN = (SPEC_REL, HAND_REL, TOOL_REL, PIN_REL, NORM_REL, REPORT_REL, LIMITS_REL)
+# E47-T05's generator, its checks and its inputs: the successor PRs may touch these (BQ-01).
+T05_OWN = (
+    _CONF_REL,
+    "scripts/tests/test_a11y_conformance.py",
+    "docs/plan/a11y/_tools/register.py",
+    "docs/plan/a11y/conformance-matrix.md",
+    "docs/plan/a11y/finding-record.schema.json",
+)
 OWN_BOARDS = re.compile(r"docs/design/E47/img/E47-D13-\d\d-[a-z0-9-]+\.png")
 SPEC_BUDGET = 560
 HAND_BUDGET = 160
@@ -158,140 +176,41 @@ NONTEXT_BAR = 3.0  # SC 1.4.11, non-text (focus ring, borders)
 BOARD_PENDING = "pending: drawn in a later push of this PR"
 
 # ---------------------------------------------------------------------------- the criteria
+# The model (criteria, evidence-capture contract, honest-claims rule, report renderer, limitations
+# checks) lives in the product tool tools/a11y/conformance.py (E47-T05, BQ-01); this audit feeds it
+# its blob-pinned inputs and keeps its own gates over the spec, the hand-off and the report.
 
-SC: dict[str, tuple[str, str]] = {
-    "1.1.1": ("A", "Non-text Content"),
-    "1.2.1": ("A", "Audio-only and Video-only (Prerecorded)"),
-    "1.2.2": ("A", "Captions (Prerecorded)"),
-    "1.2.3": ("A", "Audio Description or Media Alternative (Prerecorded)"),
-    "1.2.4": ("AA", "Captions (Live)"),
-    "1.2.5": ("AA", "Audio Description (Prerecorded)"),
-    "1.3.1": ("A", "Info and Relationships"),
-    "1.3.2": ("A", "Meaningful Sequence"),
-    "1.3.3": ("A", "Sensory Characteristics"),
-    "1.3.4": ("AA", "Orientation"),
-    "1.3.5": ("AA", "Identify Input Purpose"),
-    "1.4.1": ("A", "Use of Color"),
-    "1.4.2": ("A", "Audio Control"),
-    "1.4.3": ("AA", "Contrast (Minimum)"),
-    "1.4.4": ("AA", "Resize Text"),
-    "1.4.5": ("AA", "Images of Text"),
-    "1.4.10": ("AA", "Reflow"),
-    "1.4.11": ("AA", "Non-text Contrast"),
-    "1.4.12": ("AA", "Text Spacing"),
-    "1.4.13": ("AA", "Content on Hover or Focus"),
-    "2.1.1": ("A", "Keyboard"),
-    "2.1.2": ("A", "No Keyboard Trap"),
-    "2.1.4": ("A", "Character Key Shortcuts"),
-    "2.2.1": ("A", "Timing Adjustable"),
-    "2.2.2": ("A", "Pause, Stop, Hide"),
-    "2.3.1": ("A", "Three Flashes or Below Threshold"),
-    "2.4.1": ("A", "Bypass Blocks"),
-    "2.4.2": ("A", "Page Titled"),
-    "2.4.3": ("A", "Focus Order"),
-    "2.4.4": ("A", "Link Purpose (In Context)"),
-    "2.4.5": ("AA", "Multiple Ways"),
-    "2.4.6": ("AA", "Headings and Labels"),
-    "2.4.7": ("AA", "Focus Visible"),
-    "2.4.11": ("AA", "Focus Not Obscured (Minimum)"),
-    "2.5.1": ("A", "Pointer Gestures"),
-    "2.5.2": ("A", "Pointer Cancellation"),
-    "2.5.3": ("A", "Label in Name"),
-    "2.5.4": ("A", "Motion Actuation"),
-    "2.5.7": ("AA", "Dragging Movements"),
-    "2.5.8": ("AA", "Target Size (Minimum)"),
-    "3.1.1": ("A", "Language of Page"),
-    "3.1.2": ("AA", "Language of Parts"),
-    "3.2.1": ("A", "On Focus"),
-    "3.2.2": ("A", "On Input"),
-    "3.2.3": ("AA", "Consistent Navigation"),
-    "3.2.4": ("AA", "Consistent Identification"),
-    "3.2.6": ("A", "Consistent Help"),
-    "3.3.1": ("A", "Error Identification"),
-    "3.3.2": ("A", "Labels or Instructions"),
-    "3.3.3": ("AA", "Error Suggestion"),
-    "3.3.4": ("AA", "Error Prevention (Legal, Financial, Data)"),
-    "3.3.7": ("A", "Redundant Entry"),
-    "3.3.8": ("AA", "Accessible Authentication (Minimum)"),
-    "4.1.2": ("A", "Name, Role, Value"),
-    "4.1.3": ("AA", "Status Messages"),
-}
-REMOVED = "4.1.1"
-LEVEL_WORDS = ("Supports", "Partially Supports", "Does Not Support", "Not Applicable")
-
-# The evidence-capture contract (spec §4): class -> (criteria, required artefact kinds, alternative)
-# Kinds read from the T01 register per screen: automated, keyboard, deep, wcag22. The rest are run
-# records the stories produce (pass = a T04 / Q02 pass record, d12 = a D12 verdict, q05 = a Q05
-# appendix row, contrast = an A11Y-C00x run, t03 = a T03 matrix row, flash = an A11Y-G005 run).
-CONTRACT: dict[str, tuple[tuple[str, ...], tuple[str, ...], str]] = {
-    "K-AXE": (
-        ("1.1.1", "1.3.1", "1.3.5", "2.4.1", "2.4.2", "2.4.4", "3.1.1", "3.1.2", "3.3.2", "4.1.2"),
-        ("automated", "pass"),
-        "report",
-    ),
-    "K-CONTRAST": (("1.4.3", "1.4.11"), ("automated", "contrast", "t03"), "theme"),
-    "K-KEY": (("2.1.1", "2.1.2", "2.1.4", "2.4.3", "2.4.7"), ("keyboard", "pass"), "keys"),
-    "K-W22": (("2.4.11", "2.5.7", "2.5.8", "3.2.6", "3.3.7", "3.3.8"), ("wcag22", "d12"), "keys"),
-    "K-FLASH": (("2.3.1",), ("flash", "q05"), "motion"),
-    "K-MOTION": (("2.2.2",), ("q05", "pass"), "motion"),
-    "K-MEDIA": (("1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5"), ("pass",), "report"),
-    "K-ZOOM": (("1.3.4", "1.4.4", "1.4.10", "1.4.12"), ("deep", "pass"), "scale"),
-    "K-SR": (("1.3.2", "2.2.1", "3.2.1", "3.2.2", "3.3.1", "4.1.3"), ("pass", "d12"), "verbosity"),
-    "K-MANUAL": (
-        (
-            "1.3.3",
-            "1.4.1",
-            "1.4.2",
-            "1.4.5",
-            "1.4.13",
-            "2.4.5",
-            "2.4.6",
-            "2.5.1",
-            "2.5.2",
-            "2.5.3",
-            "2.5.4",
-            "3.2.3",
-            "3.2.4",
-            "3.3.3",
-            "3.3.4",
-        ),
-        ("pass",),
-        "report",
-    ),
-}
-REGISTER_KINDS = ("automated", "keyboard", "deep", "wcag22")
-ALT = {
-    "report": "report the problem (statement §9)",
-    "theme": "high-contrast theme `Ctrl+Shift+H` (SCR-116)",
-    "keys": "keyboard equivalents (SCR-013)",
-    "motion": "reduced motion `Ctrl+Shift+M` (SCR-117)",
-    "scale": "in-app text scale `Ctrl+=` (SCR-116)",
-    "verbosity": "announcement verbosity (SCR-117)",
-    "table": "`Alt+T` table view",
-}
-CANVAS = ("1.1.1", "1.3.1", "1.4.11", "2.1.1", "4.1.2", "4.1.3")
-CANVAS_REMARK = (
-    "canvas: met only through the four layers of `05` §6.1–§6.4 (DOM mirror, live regions, table"
-    " alternative, canvas semantics fallback), never by the canvas itself"
-)
-NA_REASONS = {
-    "K-MEDIA": (
-        "no prerecorded or live audio or video content: `14` names none",
-        re.compile(r"\b(?:video|audio|podcast|transcript|captions)\b", re.IGNORECASE),
-    ),
-}
-TRADING_BANDS = range(50, 80)  # SCR-050..079: order flow and trading (`14` §0.2)
+SC = C.SC
+REMOVED = C.REMOVED
+LEVEL_WORDS = C.LEVEL_WORDS
+CONTRACT = C.CONTRACT
+REGISTER_KINDS = C.REGISTER_KINDS
+ALT = C.ALT
+CANVAS = C.CANVAS
+CANVAS_REMARK = C.CANVAS_REMARK
+NA_REASONS = C.NA_REASONS
+TRADING_BANDS = C.TRADING_BANDS
+Row = C.Row
+sc_key = C.sc_key
+class_of = C.class_of
+cell_verdict = C.cell_verdict
+overrides = C.overrides
+limits_data = C.limits_data
+limit_rows = C.limit_rows
+disposition_ok = C.disposition_ok
+unowned = C.unowned
+table = C.table
+counts = C.counts
+status_words = C.status_words
 SAMPLE_SEED = BASE
 SAMPLE_N = 10
 
 # ---------------------------------------------------------------------------- statement checks
 
-URL_RE = re.compile(
-    r"https?://|www\.|/home/|localhost|\.local\b|\b[a-z0-9-]+\.(?:com|io|org|net)\b"
-)
-KEYLIKE_RE = re.compile(r"[A-Za-z0-9+/=_-]{24,}")
-IMAGE_RE = re.compile(r"!\[|<img|\.png\b|\.svg\b", re.IGNORECASE)
-IDLIKE_RE = re.compile(r"\b\d{6,}\b|\bUID\b")
+URL_RE = C.URL_RE
+KEYLIKE_RE = C.KEYLIKE_RE
+IMAGE_RE = C.IMAGE_RE
+IDLIKE_RE = C.IDLIKE_RE
 SCNUM_RE = re.compile(r"\b\d\.\d{1,2}\.\d{1,2}\b")
 JARGON_RE = re.compile(
     r"\b[Aa]ria\b|aria-|\bARIA\b|\bDOM\b|\bWCAG\b|\b[Vv]iewport\b|\bCSS\b|\bpx\b|role=|\bSC\b|\bAT\b"
@@ -299,7 +218,7 @@ JARGON_RE = re.compile(
 PLAIN_MAX_WORDS = 30
 AGENT_RE = re.compile(r"worker|orchestrator|\bagent\b|lane\b", re.IGNORECASE)
 OWNER_OK_RE = re.compile(r"\bE\d\d-[A-Z]+\d\d\b|\bowner")
-TICKET_RE = re.compile(r"^E\d\d-[A-Z]+\d\d #\d+$")
+TICKET_RE = C.TICKET_RE
 
 Finding = tuple[str, str, str, str]  # gate, message, doc, region
 Values = dict[str, str]
@@ -493,308 +412,42 @@ def live_screens() -> list[dict[str, object]]:
     return [s for s in t01_screens() if not text_of(s.get("coverage")).startswith("reserved")]
 
 
-def open_t01(sc: str) -> list[str]:
-    return sorted(
-        text_of(f.get("id"))
-        for f in t01_findings()
-        if f.get("wcagSc") == sc and f.get("status") != "fixed"
+@functools.lru_cache(maxsize=1)
+def pinned() -> C.Inputs:
+    """The model's inputs at this audit's pins (spec §4: a tick in another lane never reds it)."""
+    return C.Inputs(
+        findings=t01(),
+        register=d02(),
+        plan14=at_base(PLAN["14"]),
+        findings_blob=FINDINGS_BLOB,
+        register_blob=REGISTER_BLOB,
     )
 
 
-def d02_rows() -> list[dict[str, object]]:
-    return dicts(d02().get("findings")) + dicts(d02().get("unattributed"))
+def determine(sc: str, limits: str) -> tuple[C.Row, bool]:
+    return C.determine(sc, limits, pinned())
 
 
-def d02_open(sc: str) -> list[dict[str, object]]:
-    out = []
-    for f in d02_rows():
-        scs = f.get("sc")
-        if (
-            isinstance(scs, list)
-            and sc in scs
-            and text_of(f.get("status")).startswith("open")
-            and not text_of(f.get("id")).startswith("A11Y-F-")
-        ):
-            out.append(f)
-    return out
+def model(limits: str) -> list[C.Row]:
+    return C.model(limits, pinned())
 
 
-def trading_blocker(sc: str) -> bool:
-    for f in d02_open(sc):
-        screens = f.get("screens")
-        nums = (
-            [int(s[4:]) for s in screens if isinstance(s, str)] if isinstance(screens, list) else []
-        )
-        if f.get("severity") == "blocker" and any(n in TRADING_BANDS for n in nums):
-            return True
-    return False
-
-
-def cell_verdict(screen: dict[str, object], kind: str, sc: str) -> str:
-    """The recorded verdict of a register kind on a screen: '' when none was recorded."""
-    if kind == "wcag22":
-        cells_ = screen.get("wcag22")
-        cell = cells_.get(sc) if isinstance(cells_, dict) else None
-    else:
-        ev = screen.get("evidence")
-        cell = ev.get(kind) if isinstance(ev, dict) else None
-    v = text_of(cell.get("verdict")) if isinstance(cell, dict) else ""
-    if v.startswith(("pass", "fail")) or (kind == "wcag22" and v.startswith("n/a (not applicable")):
-        return v
-    return ""
-
-
-def class_of(sc: str) -> str:
-    for k, (scs, _, _) in CONTRACT.items():
-        if sc in scs:
-            return k
-    return ""
-
-
-@dataclass(frozen=True)
-class Row:
-    sc: str
-    level: str
-    name: str
-    conformance: str
-    remarks: str
-    evidence: str
-    alternative: str
-
-
-def overrides(limits: str) -> dict[str, str]:
-    try:
-        data = json.loads(limits)
-    except json.JSONDecodeError:
-        return {}
-    out: dict[str, str] = {}
-    for o in dicts(data.get("overrides") if isinstance(data, dict) else None):
-        out[text_of(o.get("sc"))] = text_of(o.get("to"))
-    return out
-
-
-def determine(sc: str, limits: str) -> tuple[Row, bool]:
-    """The row by the honest-claims rule (spec §3); bool = a reviewer override tried to raise it."""
-    level, name = SC[sc]
-    k = class_of(sc)
-    _, kinds, alt_key = CONTRACT[k]
-    reg_kinds = [x for x in kinds if x in REGISTER_KINDS]
-    screens = live_screens()
-    sha = audited_sha()
-    remarks: list[str] = []
-    evidence: list[str] = []
-    if k in NA_REASONS:
-        reason, probe = NA_REASONS[k]
-        if not probe.search(at_base(PLAN["14"])):
-            row = Row(sc, level, name, "Not Applicable", f"not applicable: {reason}", "n/a", "")
-            return row, False
-    produced = {x: sum(1 for s in screens if cell_verdict(s, x, sc)) for x in reg_kinds}
-    for x in reg_kinds:
-        if produced[x]:
-            verdicts = [cell_verdict(s, x, sc) for s in screens]
-            n_pass = sum(1 for v in verdicts if v.startswith("pass"))
-            n_fail = sum(1 for v in verdicts if v.startswith("fail"))
-            n_na = produced[x] - n_pass - n_fail
-            tally = f"{n_pass} pass, {n_fail} fail" + (f", {n_na} n/a" if n_na else "")
-            evidence.append(f"t01:{x}@{sha} ({produced[x]} screens: {tally})")
-    missing_kinds = [x for x in kinds if x not in REGISTER_KINDS]
-    passing = sum(
-        1
-        for s in screens
-        if reg_kinds and all(cell_verdict(s, x, sc).startswith(("pass", "n/a")) for x in reg_kinds)
+def render_report(limits: str) -> str:
+    """The dry run at the pins: the committed report is E47-T05's, generated from the live inputs."""
+    return C.render_report(
+        limits,
+        pinned(),
+        generator=TOOL_REL,
+        ref=BASE,
+        note="E47-T05 may replace the generator, not this format.",
+        exceptions=False,
     )
-    gap = len(screens) - passing
-    opens = open_t01(sc)
-    d02n = len(d02_open(sc))
-    if not evidence:
-        conf = "Does Not Support"
-        remarks.append("evidence not produced on any screen")
-    else:
-        full = gap == 0 and not missing_kinds
-        conf = "Supports" if full and not opens and not d02n else "Partially Supports"
-        if gap:
-            remarks.append(f"evidence not produced for {gap} of {len(screens)} screens")
-    if trading_blocker(sc):
-        conf = "Does Not Support"
-        remarks.append("an open blocker on a trading path")
-    if missing_kinds:
-        remarks.append("not yet produced: " + ", ".join(missing_kinds))
-    if opens:
-        remarks.append("open findings: " + ", ".join(opens))
-    if d02n:
-        remarks.append(f"open design findings: {d02n} (E47-D02)")
-    if sc in CANVAS:
-        remarks.append(CANVAS_REMARK)
-    raised = False
-    want = overrides(limits).get(sc)
-    rank = {"Supports": 3, "Partially Supports": 2, "Does Not Support": 1}
-    if want:
-        if rank.get(want, 9) > rank[conf]:
-            raised = True
-        elif want != conf:
-            conf = want
-            remarks.append("lowered by a reviewer")
-    alt = ALT["table"] if sc in CANVAS and sc != "4.1.3" else ALT[alt_key]
-    row = Row(
-        sc,
-        level,
-        name,
-        conf,
-        "; ".join(remarks) or "-",
-        "; ".join(evidence) or "none produced",
-        alt if conf in ("Partially Supports", "Does Not Support") else "",
-    )
-    return row, raised
-
-
-def sc_key(sc: str) -> tuple[int, ...]:
-    return tuple(int(x) for x in sc.split("."))
-
-
-def model(limits: str) -> list[Row]:
-    return [determine(sc, limits)[0] for sc in sorted(SC, key=sc_key)]
 
 
 # ---------------------------------------------------------------------------- limitations
 
 
-def limits_data(limits: str) -> dict[str, object]:
-    try:
-        data = json.loads(limits)
-    except json.JSONDecodeError:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def limit_rows(limits: str) -> list[dict[str, object]]:
-    return dicts(limits_data(limits).get("limitations"))
-
-
-def disposition_ok(row: dict[str, object]) -> bool:
-    d = row.get("disposition")
-    if not isinstance(d, dict):
-        return False
-    kind = d.get("kind")
-    if kind == "fix-ticket":
-        t = text_of(d.get("ticket"))
-        return bool(TICKET_RE.match(t)) and not t.startswith("E47-T01")
-    if kind == "accepted-risk":
-        return bool(
-            text_of(d.get("owner")) and re.fullmatch(r"\d{4}-\d\d-\d\d", text_of(d.get("expiry")))
-        )
-    return False
-
-
-def unowned(limits: str) -> list[str]:
-    return [text_of(r.get("id")) for r in limit_rows(limits) if not disposition_ok(r)]
-
-
 # ---------------------------------------------------------------------------- the report
-
-
-def table(header: list[str], rows: list[list[str]]) -> list[str]:
-    """A Markdown table padded the way Prettier pads it (register.py's rendering)."""
-    body_ = [[x.replace("|", "\\|").strip() for x in r] for r in [header, *rows]]
-    widths = [max(3, *(len(r[i]) for r in body_)) for i in range(len(header))]
-    out = ["| " + " | ".join(x.ljust(w) for x, w in zip(body_[0], widths, strict=True)) + " |"]
-    out.append("| " + " | ".join("-" * w for w in widths) + " |")
-    for r in body_[1:]:
-        out.append("| " + " | ".join(x.ljust(w) for x, w in zip(r, widths, strict=True)) + " |")
-    return out
-
-
-def counts(rows: list[Row]) -> dict[str, int]:
-    return {w: sum(1 for r in rows if r.conformance == w) for w in LEVEL_WORDS}
-
-
-def status_words(rows: list[Row]) -> str:
-    full = all(r.conformance in ("Supports", "Not Applicable") for r in rows)
-    return "Fully conforms" if full else "Partially conforms"
-
-
-def render_report(limits: str) -> str:
-    rows = model(limits)
-    c = counts(rows)
-    lim = limit_rows(limits)
-    blocked = unowned(limits)
-    n_a = sum(1 for r in rows if r.level == "A")
-    out = [
-        f"<!-- generated by {TOOL_REL} --fill from the E47-T01 and E47-D02 registers; do not edit -->",
-        "",
-        "# Accessibility conformance report (WCAG 2.2 Level A and AA): dry run",
-        "",
-        (
-            f"**Dry run at `{BASE}`, not a conformance claim.** Generated from `{FINDINGS_REL}` (blob"
-            f" `{FINDINGS_BLOB[:9]}`) and `{REGISTER_REL}` (blob `{REGISTER_BLOB[:9]}`) under the"
-            " honest-claims rule and the evidence-capture contract of `docs/design/E47/E47-D13.md`"
-            " §3-§4. E47-T05 may replace the generator, not this format."
-        ),
-        "",
-        (
-            "- Product: CandleViewer, the web app in its desktop shell. Target: WCAG 2.2 Level AA."
-            " Shape: VPAT-shaped; nothing is filed."
-        ),
-        (
-            f"- Criteria: {len(rows)} rows (Level A {n_a}, Level AA {len(rows) - n_a}). Supports"
-            f" {c['Supports']}, Partially Supports {c['Partially Supports']}, Does Not Support"
-            f" {c['Does Not Support']}, Not Applicable {c['Not Applicable']}."
-        ),
-        f"- Status in words: {status_words(rows)}.",
-        (
-            f"- Screens: {len(live_screens())} non-reserved; register evidence audited at"
-            f" `{audited_sha()}`."
-        ),
-        (
-            f"- Known limitations: {len(lim)} rows in `{LIMITS_REL}`; {len(blocked)} without a"
-            " disposition, so sign-off is blocked"
-            + (f" ({', '.join(blocked)})." if blocked else ".")
-        ),
-        "",
-        "## Criteria",
-        "",
-    ]
-    out += table(
-        ["Criterion", "Level", "Conformance level", "Remarks", "Evidence", "Alternative"],
-        [
-            [f"{r.sc} {r.name}", r.level, r.conformance, r.remarks, r.evidence, r.alternative]
-            for r in rows
-        ],
-    )
-    out += [
-        "",
-        "## Not claimed",
-        "",
-        f"- {REMOVED} Parsing: removed from WCAG 2.2, so it is not a row.",
-        (
-            "- Level AAA, including the `05` §1 extras (non-text contrast 7:1 for buy and sell state,"
-            " no timing limits): not claimed."
-        ),
-        "- Section 508 and EN 301 549: not claimed.",
-        "",
-        "## Known limitations",
-        "",
-    ]
-    lrows: list[list[str]] = []
-    for r in lim:
-        d = r.get("disposition")
-        dd = d if isinstance(d, dict) else {}
-        kind = text_of(dd.get("kind")) or "none"
-        closed = text_of(dd.get("closedTicket"))
-        what = (
-            text_of(dd.get("ticket"))
-            or text_of(dd.get("owner"))
-            or (f"fix ticket {closed} closed, finding open" if closed else "-")
-        )
-        covers = r.get("covers")
-        cov = ", ".join(x for x in covers if isinstance(x, str)) if isinstance(covers, list) else ""
-        scs = r.get("sc")
-        scl = ", ".join(x for x in scs if isinstance(x, str)) if isinstance(scs, list) else ""
-        ok = "yes" if disposition_ok(r) else "no: blocks sign-off"
-        lrows.append(
-            [text_of(r.get("id")), cov, scl, f"{kind}: {what}", ok, text_of(r.get("disclosure"))]
-        )
-    out += table(["Id", "Covers", "Criteria", "Disposition", "Owned", "Disclosure"], lrows)
-    return "\n".join(out) + "\n"
 
 
 def report_rows(report: str) -> dict[str, list[str]]:
@@ -1241,57 +894,7 @@ def g_canvas(t: Texts) -> list[Finding]:
 
 
 def g_limit(t: Texts) -> list[Finding]:
-    bad: list[str] = []
-    rows = limit_rows(t.limits)
-    if not rows:
-        return [("G-LIMIT", "the register has no rows or is not JSON", "limits", "")]
-    pat_of = {text_of(p.get("id")): p for p in t01_patterns()}
-    covered: dict[str, int] = {}
-    level_of = {text_of(f.get("id")): text_of(f.get("level")) for f in t01_findings()}
-    sc_of = {text_of(f.get("id")): text_of(f.get("wcagSc")) for f in t01_findings()}
-    open_ids = {text_of(f.get("id")) for f in t01_findings() if f.get("status") != "fixed"}
-    for r in rows:
-        rid = text_of(r.get("id"))
-        if not re.fullmatch(r"A11Y-F-\d{4}|A11Y-P-\d\d|MX-\d\d", rid):
-            bad.append(f"{rid!r} is not an A11Y-F, A11Y-P or MX id")
-        members: list[str] = []
-        if rid.startswith("A11Y-P-"):
-            p = pat_of.get(rid, {})
-            fs = p.get("findings")
-            members = [x for x in fs if isinstance(x, str)] if isinstance(fs, list) else []
-        elif rid.startswith("A11Y-F-"):
-            members = [rid]
-        members = [m for m in members if m in open_ids]
-        cov = r.get("covers")
-        if rid.startswith("A11Y-") and cov != members:
-            bad.append(f"{rid} covers {cov}, the register says {members}")
-        for m in members:
-            covered[m] = covered.get(m, 0) + 1
-        scs = r.get("sc")
-        want_scs = sorted({sc_of[m] for m in members}, key=sc_key)
-        if rid.startswith("A11Y-") and scs != want_scs:
-            bad.append(f"{rid}'s criteria {scs} are not {want_scs}")
-        lvl = "A" if any(level_of.get(m) == "A" for m in members) else "AA"
-        if rid.startswith("A11Y-") and r.get("level") != lvl:
-            bad.append(f"{rid}'s level is not {lvl}")
-        d = r.get("disposition")
-        dd = d if isinstance(d, dict) else {}
-        if dd.get("kind") == "accepted-risk" and r.get("level") == "A":
-            bad.append(f"{rid} accepts a Level A risk")
-        if dd.get("kind") not in ("fix-ticket", "accepted-risk", "none"):
-            bad.append(f"{rid}'s disposition kind is not one of the three")
-        if dd.get("kind") == "fix-ticket" and text_of(dd.get("ticket")).startswith("E47-T01"):
-            bad.append(f"{rid} names the audit as its fix ticket")
-        closed = text_of(dd.get("closedTicket"))
-        if closed and (dd.get("kind") != "none" or not TICKET_RE.match(closed)):
-            bad.append(f"{rid}'s closed fix ticket is not a ticket on a 'none' disposition")
-        for field in ("plain", "impact", "workaround", "category", "disclosure"):
-            if not text_of(r.get(field)):
-                bad.append(f"{rid} has no {field}")
-    for m in sorted(open_ids):
-        if covered.get(m, 0) != 1:
-            bad.append(f"{m} is covered {covered.get(m, 0)} times")
-    return [("G-LIMIT", b, "limits", "") for b in bad]
+    return [("G-LIMIT", b, "limits", "") for b in C.limits_problems(t.limits, pinned())]
 
 
 def statement_rows(t: Texts) -> list[dict[str, object]]:
@@ -1489,7 +1092,9 @@ def g_lines(t: Texts, gate: str, test: Callable[[str], bool], what: str) -> list
 
 
 def g_untouched(t: Texts) -> list[Finding]:
-    extra = [p for p in t.changed if p not in OWN and not OWN_BOARDS.fullmatch(p)]
+    extra = [
+        p for p in t.changed if p not in OWN and p not in T05_OWN and not OWN_BOARDS.fullmatch(p)
+    ]
     return [("G-UNTOUCHED", f"{p} differs from the base", "changed", "") for p in extra]
 
 
@@ -1995,7 +1600,7 @@ def read_texts() -> Texts:
         spec=rd(SPEC_REL),
         hand=rd(HAND_REL),
         norm=rd(NORM_REL),
-        report=rd(REPORT_REL),
+        report=render_report(rd(LIMITS_REL)) if rd(LIMITS_REL) else "",
         limits=rd(LIMITS_REL),
         changed=changed_paths(),
     )
@@ -2020,7 +1625,6 @@ def fill(t: Texts) -> Texts:
     t = replace(t, spec=sub(t.spec), hand=sub(t.hand))
     (ROOT / SPEC_REL).write_text(t.spec, encoding="utf-8", newline="\n")
     (ROOT / HAND_REL).write_text(t.hand, encoding="utf-8", newline="\n")
-    (ROOT / REPORT_REL).write_text(t.report, encoding="utf-8", newline="\n")
     return t
 
 

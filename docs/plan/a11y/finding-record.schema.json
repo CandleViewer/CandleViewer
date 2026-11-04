@@ -303,6 +303,17 @@
           "type": "boolean",
           "description": "On the ticket's 33-id deep-pass list"
         },
+        "signOff": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["verdict", "by", "date"],
+          "description": "E47-T05 BQ-05: the screen's accessibility sign-off; absent = not signed off. Read by the matrix generator",
+          "properties": {
+            "verdict": { "enum": ["signed", "declined"] },
+            "by": { "type": "string", "minLength": 1 },
+            "date": { "type": "string", "pattern": "^\\d{4}-\\d\\d-\\d\\d$" }
+          }
+        },
         "states": {
           "type": "array",
           "items": {

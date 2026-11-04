@@ -138,6 +138,22 @@
         "note": "fix ticket closed, finding open: unowned, so it blocks sign-off"
       },
       "disclosure": "statement"
+    },
+    {
+      "id": "A11Y-F-0035",
+      "covers": ["A11Y-F-0035"],
+      "sc": ["1.4.10"],
+      "level": "AA",
+      "category": "reflow",
+      "plain": "The main screen has a small extra scroll bar beside the page's own scrolling.",
+      "impact": "People who zoom in may find a second scroll area that is easy to confuse with the chart's own.",
+      "workaround": "Scroll inside the chart area, or zoom out one step.",
+      "disposition": {
+        "kind": "none",
+        "closedTicket": "E10-Q03 #302",
+        "note": "fix ticket closed, finding open: unowned, so it blocks sign-off"
+      },
+      "disclosure": "statement"
     }
   ]
 }
