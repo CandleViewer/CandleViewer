@@ -141,6 +141,22 @@ def test_vocabulary_signals_carry_their_descriptor_scope() -> None:
     assert set(served.values()) == {"symbol", "position", "account", "global"}
 
 
+def test_vocabulary_scope_is_read_from_the_descriptor() -> None:
+    """The served `scope` is the descriptor's, its one owner, and no list in `build.py`: three
+    metrics no table knows serve the scope each was registered with."""
+    scopes: dict[str, typing.Literal["account", "global", "position"]] = {
+        "zz_account": "account",
+        "zz_global": "global",
+        "zz_position": "position",
+    }
+    registry = MetricRegistry(
+        MetricDescriptor(name=name, title="Z", unit="count", scope=scope)
+        for name, scope in scopes.items()
+    )
+    served = {s["id"]: s["scope"] for s in build_vocabulary(registry)["signals"]}
+    assert served == scopes
+
+
 def test_vocabulary_actions_carry_places_orders() -> None:
     """E37-S02 (24 section 19.118): every action serves `places_orders`, true for exactly the six
     that can open or add to a position, whatever the caller holds."""
