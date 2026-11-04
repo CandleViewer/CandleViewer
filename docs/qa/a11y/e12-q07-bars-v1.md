@@ -6,7 +6,7 @@ PR 1 audits the E12 surfaces that are built at the pin, per the ruling of record
 
 This is an **agent-run, offline** audit. No screen reader was operated, nobody tabbed a mounted chart, and nothing was zoomed by hand (the layout criteria are listed as not run in §3.7). Every verdict below is agent-run and marked (heuristic); every item that needs a person is an owner-run row (§6).
 
-- **Pin:** `main` at `aa0a02b8c54c877c39718f101abf69467cb4a2d6` (tree `apps` `b8fbf0c2df34`); every cite below is read there.
+- **Pin:** `main` at `0bd95021a29c9f8ae39b218a2613267f9d8d5ea2` (tree `apps` `f6d30fa15492`); every cite below is read there. Re-pinned at the design-read rebase: no cited document and no audited source file moved since the first pin.
 - **Reachability is cited, not re-derived:** E47-T01's rows (T01:178–185) put every E12 surface out of reach of a route: SCR-041 and SCR-048 built but not mounted, the rest not built. No route hosts `Chart`, `QuickSwitcher`, `PriceScaleMenu`, `ChartTablePanel` or `ChartErrorSurface`, so no Playwright collector can visit them.
 - **AC 1's axe sweep is not run: not mounted** (ruling BQ-2). It joins the required `a11y` check's screen set (`05`:304) when E15 mounts the chart and the collectors take the E12 states as E10-Q03's driver took the shell's. No new check name is added (BQ-3).
 - **Offline legs (BQ-2):** vitest with React Testing Library on jsdom in `apps/web`; the `packages/ui` Storybook project in Chromium headless (axe through the a11y addon); the repo's contrast gate. No new dependency, no new route, no live feed (C-2.11): the synthetic fixture `apps/web/test/chart/a11y/fixture.ts` only.
@@ -48,23 +48,24 @@ This is an **agent-run, offline** audit. No screen reader was operated, nobody t
 `pnpm --filter @candleviewer/web exec vitest run test/chart/a11y test/features/chart-price-scale test/features/chart-errors test/features/symbol-search/QuickSwitcher.test.tsx`: **16 files, 307 tests, all pass** at the pin. They are the keyboard journeys of the built surfaces (RTL, real key events on jsdom), cited here and not duplicated:
 
 - SCR-041: Esc, the trigger and an outside press close without commit and return focus to the trigger; Tab out closes; the commit returns focus to its trigger and is said once (`QuickSwitcher.test.tsx`, "closes on the open trigger's press, Esc or a press outside, without commit, focus back on the trigger"). This is D04E47:122 (R-7).
-- SCR-043: arrows wrap, Home and End, Enter and Space activate, a gated item is T2 with its reason said again, and every close returns focus to the chart container (`PriceScaleMenu.test.tsx`, "keyboard: arrows wrap and reach the gated items, Home / End, Enter activates"). This is D04E47:119 (R-4).
+- SCR-043: arrows wrap, Home and End, Enter activates (`PriceScaleMenu.test.tsx`, "keyboard: arrows wrap and reach the gated items, Home / End, Enter activates"); a gated item is T2 with its reason said again (`PriceScaleMenu.test.tsx`, "Log is refused, not faked: T2 with D03's reason, never activated, the reason re-said"); Space activates and the close returns focus to the chart container (`PriceScaleMenu.test.tsx`, "closes on activation by Space (D1) and returns focus to the chart container"). This is D04E47:119 (R-4).
 - SCR-045: the grid keys, `Esc` back to the chart, Alt+T both ways, focus on the chart surface or the Table button and never the page (`ChartDataTable.test.tsx`, `ChartTablePanel.test.tsx`).
 - SCR-048: the card keeps focus, moves focus from the panes to its first stop and returns it on close (`ChartErrorSurface.test.tsx`, "focus in the panes moves to the card's first stop and returns to it on close").
 
 Four of those files already run axe-core on jsdom (colour contrast off): SCR-041, SCR-043, SCR-045 and SCR-048, each with 0 serious or critical. That is supplementary, layout-free evidence (jsdom has no layout, so contrast and target size cannot run there) and **not** AC 1 (N-4). These runs evidence no layout-dependent criterion: target size, reflow, text spacing, focus appearance and forced colours are §3.7's rows, not covered by them.
 
-### 3.2 This PR's tests (`apps/web/test/chart/a11y/e12Q07Audit.test.tsx`, 5 tests, all pass)
+### 3.2 This PR's tests (`apps/web/test/chart/a11y/e12Q07Audit.test.tsx`, 6 tests, all pass)
 
 | Test                                       | Oracle                                 | Measured (heuristic)                                                                                                                                                                                                            |
 | ------------------------------------------ | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Windowing at 100 000 bars, open and travel | D11:96 (60 rows, cap 200, 1,800 nodes) | at open 61 bar rows and 882 grid nodes; after 40 × ↓ and an expanded bar, 59 bar rows plus 3 level rows and 908 nodes; never above 200 rows or 1,800 nodes                                                                      |
-| A forming-bar update at 100 000 bars       | the ticket's Performance notes         | one mutation record, 0 nodes added; the grid keeps its 459 nodes (the cursor on the latest bar)                                                                                                                                 |
+| A forming-bar update at 100 000 bars       | the ticket's Performance notes         | one mutation record, 0 nodes added, inside the last row only (both asserted: a full re-render fails); the grid keeps its 459 nodes (the cursor on the latest bar)                                                               |
+| Time-mode columns against D07 §3           | D07:142 (§3.1, the ruled oracle)       | the shell draws D07's primary time columns (time, open, high, low, close, volume, delta) but `state`, and adds CVD, which D07 tiers E; both are #521's per-mode rows                                                            |
 | BG-09: a held ↓ in the table               | D11:537                                | 60 presses (2 s at 30 Hz): 0 polite writes; the reader follows focus                                                                                                                                                            |
-| BG-13: a forming value at 20 Hz for 60 s   | D11:541, `05`:185                      | 31 writes in 60 s through the polite writer, at most 1 in any 1 s window (the ceiling is 2); the last write is the latest value. The writer alone: the combined cursor-plus-panel worst case (D11:552) is not built, so not run |
-| Parity: no footprint, delta and CVD absent | D07:238                                | every row's delta and CVD cell reads "—", never a digit                                                                                                                                                                         |
+| BG-13: a forming value at 20 Hz for 60 s   | D11:541 (BG-13; `11`:1035)             | 31 writes in 60 s through the polite writer, at most 1 in any 1 s window (the ceiling is 2); the last write is the latest value. The writer alone: the combined cursor-plus-panel worst case (D11:552) is not built, so not run |
+| Parity: no footprint, delta and CVD absent | D07:238                                | no hit: every row's delta and CVD cell reads "—", never a digit (§3.6)                                                                                                                                                          |
 
-The test asserts the caps and the 61 rows at open; the other node and row counts above were read from a one-off instrumented run of the same test and are reported, not asserted. The node count and the update cost are counted, not timed: a wall-clock budget belongs in a perf project, not in the unit run.
+The test asserts the caps, the 61 rows at open, the update's 0 added nodes and its last-row scope, and the column list; the other node and row counts above were read from a one-off instrumented run of the same test and are reported, not asserted. The node count and the update cost are counted, not timed: a wall-clock budget belongs in a perf project, not in the unit run. BG-13's oracle is D11 §7 (the ticket's 2 per second is BG-13's reading of `11`:1035); `05`:185 governs the ambient trading fields it names, not the chart cursor, and only sets the writer's 1-per-2-s default behind the 31.
 
 ### 3.3 CMP-029 in Storybook
 
@@ -80,7 +81,7 @@ The test asserts the caps and the 61 rows at open; the other node and row counts
 | `color.candle.down` | 4.68 | 4.85  | 4.68          |
 | `color.candle.wick` | 5.96 | 6.36  | 5.96          |
 
-Buy against sell under simulation (ΔE76, floor 5.0): deuteranopia 8.26 / 16.14 / 5.76, protanopia 41.16 / 19.40 / 31.85, tritanopia 127.72 / 109.82 / 91.31 (dark / light / high contrast). Heikin-Ashi draws through the same candle ring and tokens. The non-colour cue in the accessible representation is the numbers themselves: SCR-045 gives OHLC as text, so up or down never rests on hue. Baseline, the volume sub-pane and the partial-history marker are not yet built (#533, the E12-S08 story, #535).
+Buy against sell under simulation (ΔE76, floor 5.0): deuteranopia 8.26 / 16.14 / 5.76, protanopia 41.16 / 19.40 / 31.85, tritanopia 127.72 / 109.82 / 91.31 (dark / light / high contrast). Heikin-Ashi draws through the same candle ring and tokens. The non-colour cue in the accessible representation is the numbers themselves: SCR-045 gives OHLC as text, so up or down never rests on hue. Baseline, the volume sub-pane and the partial-history marker are not yet built (#533, E12-S08 #534, #535).
 
 ### 3.5 Reduced motion
 
@@ -88,7 +89,7 @@ Against E12-D10: every built moment is a cut in both modes (D10:55–62; only M-
 
 ### 3.6 The Security-notes parity row
 
-Run offline against D07:238 as the ruling asks; its outcome is routed to the coordinator and is not recorded here (BQ-0 rider).
+Run offline against D07:238 as the ruling asks: **no hit**, every absent delta and CVD reads "—", never 0 (§3.2). The ruling forbids writing a hit, not a no-hit: a hit would have gone to the coordinator privately and never into this record (BQ-0 rider).
 
 ### 3.7 Layout criteria: not run
 
@@ -106,11 +107,11 @@ The Storybook leg (§3.3) lays out CMP-029 in Chromium but does not zoom it or f
 
 ## 4. Findings
 
-| #   | Where                        | SC    | Severity             | Evidence                                                                                                                       | Disposition                                                                                                                 | Register        |
-| --- | ---------------------------- | ----- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| F-1 | SCR-045, delta and CVD cells | 1.3.1 | moderate (heuristic) | the absent value is the bare glyph "—" in its cell; a reader at its default punctuation level may say nothing after the header | open, owner: #521; D07's named form ("no delta: bar from exchange klines") lands with #521; severity provisional until OR-3 | report only (1) |
+| #   | Where                        | SC    | Severity             | Evidence                                                                                                                       | Disposition                                                                                                                 | Register      |
+| --- | ---------------------------- | ----- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| F-1 | SCR-045, delta and CVD cells | 1.3.1 | moderate (heuristic) | the absent value is the bare glyph "—" in its cell; a reader at its default punctuation level may say nothing after the header | open, owner: #521; D07's named form ("no delta: bar from exchange klines") lands with #521; severity provisional until OR-3 | `A11Y-F-0036` |
 
-1. F-1 is not a register row yet: `findings.json` admits a finding only on a screen its sweep audited (`covered` or `partial`), and SCR-045's row is E47-T01's "unreachable: not built" (C-3). The row is appended with the next free `A11Y-F` id once SCR-045 is mounted and swept, or when the coordinator rules another way (BQ-3's rider, a deviation recorded in §5).
+F-1 is register row `A11Y-F-0036` (Level A, P1, owner E11-S14 #521; BQ-3). The register's schema test admits a finding only on an audited screen, so SCR-045's row moves from "unreachable: not built" to `partial`: the built shell, audited offline here, not mounted (C-3). Its limitation row is added, and the matrix, the E47-D02 catalogue and the conformance report are regenerated; the catalogue test's finding count moves to 126.
 
 No serious or critical finding is open on the built set. Notes that are not defects:
 
@@ -118,38 +119,54 @@ No serious or critical finding is open on the built set. Notes that are not defe
 - **N-2 (T01 rows):** T01 reads SCR-043 and SCR-045 "not built" (T01:180, :182) while `PriceScaleMenu.tsx` and the SCR-045 shell are built, not mounted (C-3).
 - **N-3 (SCR-047):** the engine posts `dataState` with no `apps/web` consumer, so the empty state has no surface to audit yet (#487).
 - **N-4 (jsdom axe):** BQ-2 read `apps/web` as having no axe in vitest; four of the cited files already run it through the transitive axe-core. No test of this PR adds one (the ruling declined the jsdom leg).
+- **N-5 (Q07-65):** the shell says "Chart view" on the way back where D11 scripts "Chart"; both name the chart, and the shell's string is PROPOSED for E47-D06 (#1305) to confirm or replace, so it is a copy note, not a defect.
 
 ## 5. Acceptance criteria and Definition of Done
 
-| Item                                        | Result                                            | Evidence and what remains                                                                                                                                      |
-| ------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| AC 1: zero serious or critical in the sweep | **not run: not mounted**                          | §0; the jsdom and Storybook legs (§3.1, §3.3) are supplementary. F-1 is report-only, not a ticket (BQ-3; note 1 of §4)                                         |
-| AC 2: every bar family readable             | **heuristic for time bars; not yet built — #521** | §3.2 parity and windowing; the `state` cell with `forming` (D07:225) and the per-mode columns are #521's; the "42 seconds to close" utterance is refuted (C-2) |
-| AC 3: an unavailable mode explains itself   | **not yet built — #535**                          | SCR-042 is not built; the oracle is D11 BQ-13 and the D03 C-24, C-25 and C-28 strings, checked, never edited                                                   |
-| AC 4: keyboard rebuild cancel, focus return | **not yet built — #535**                          | the test is held for the closing slice, never merged skipped (BQ-7); R-7 when the invoker is mounted, R-4's plot cursor when it is gone                        |
-| AC 5: reduced motion loses nothing          | **heuristic for the built set**                   | §3.5; the rebuild progress is #535's                                                                                                                           |
-| DoD: sweep wired as a required check        | **deviation**                                     | the existing `a11y` check aggregates axe (`05`:304); no new check name                                                                                         |
-| DoD: both manual screen-reader passes       | **owner-run (OR-1 to OR-3)**                      | the script is D11's §6 (D11:285, :291: 70 rows), cited and not restated                                                                                        |
-| DoD: report with SC, severity, disposition  | **pass for PR 1**                                 | §4                                                                                                                                                             |
-| DoD: keyboard journeys in the E2E suite     | **held**                                          | RTL now (§3.1); the Playwright encoding waits for #5829 and a mounted route                                                                                    |
-| DoD: `14` / `15` a11y notes                 | **pass: none found wrong in the built set**       | no A-row in PR 1                                                                                                                                               |
-| DoD: sprint-review recording                | **owner-run (OR-5)**                              | SCR-042 is not built, so there is no menu to record yet                                                                                                        |
+| Item                                        | Result                                            | Evidence and what remains                                                                                                                                                                           |
+| ------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AC 1: zero serious or critical in the sweep | **not run: not mounted**                          | §0; the jsdom and Storybook legs (§3.1, §3.3) are supplementary. F-1 is register row `A11Y-F-0036`, not a ticket (BQ-3)                                                                             |
+| AC 2: every bar family readable             | **heuristic for time bars; not yet built — #521** | §3.2 parity and windowing; `forming` in the `state` cell and in the row's accessible name (D07:221, :225) and the per-mode columns are #521's; the "42 seconds to close" utterance is refuted (C-2) |
+| AC 3: an unavailable mode explains itself   | **not yet built — #535**                          | SCR-042 is not built; the oracle is D11 BQ-13 and the D03 C-24, C-25 and C-28 strings, checked, never edited, and E09-D09's T2 gate for its unavailable modes (D09E09:49)                           |
+| AC 4: keyboard rebuild cancel, focus return | **not yet built — #535**                          | the test is held for the closing slice, never merged skipped (BQ-7); R-7 when the invoker is mounted (SCR-031's parameter field), R-4's plot cursor when it is gone (SCR-042's closed popover)      |
+| AC 5: reduced motion loses nothing          | **heuristic for the built set**                   | §3.5; the rebuild progress is #535's                                                                                                                                                                |
+| DoD: sweep wired as a required check        | **deviation**                                     | the existing `a11y` check aggregates axe (`05`:304); no new check name                                                                                                                              |
+| DoD: both manual screen-reader passes       | **owner-run (OR-1 to OR-3)**                      | the script is D11's §6 (D11:285, :291: 70 rows), cited and not restated                                                                                                                             |
+| DoD: report with SC, severity, disposition  | **pass for PR 1**                                 | §4                                                                                                                                                                                                  |
+| DoD: keyboard journeys in the E2E suite     | **held**                                          | RTL now (§3.1); the Playwright encoding waits for #5829 and a mounted route                                                                                                                         |
+| DoD: `14` / `15` a11y notes                 | **pass: none found wrong in the built set**       | no A-row in PR 1                                                                                                                                                                                    |
+| DoD: sprint-review recording                | **owner-run (OR-5)**                              | SCR-042 is not built, so there is no menu to record yet                                                                                                                                             |
 
-**Deviations:** the ticket's "E12-Q07: …" PR title (a conventional-commit title instead), no new required check, register rows instead of a ticket per moderate (F-1 report-only until SCR-045 is swept, §4 note 1), the owner-run heard passes, AC 1's sweep not run while nothing is mounted.
+### 5.1 Deviations
+
+The ticket's "E12-Q07: …" PR title (a conventional-commit title instead), no new required check, register rows instead of a ticket per moderate (F-1 is `A11Y-F-0036`, §4), the owner-run heard passes, AC 1's sweep not run while nothing is mounted.
 
 ## 6. Owner-run rows (the checklist, ≤ 10)
 
-| Row  | What the owner runs                                                                                                                                               | Standard              |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| OR-1 | NVDA + Electron, D11's script over the built rows, heard; the record follows `05` §8.4 (text transcripts, the E47-T04 template)                                   | `05` §8.1 row 1       |
-| OR-2 | VoiceOver + Electron, the same                                                                                                                                    | `05` §8.1 row 4       |
-| OR-3 | NVDA + Chromium, the fast leg, including whether "—" is spoken in an SCR-045 delta cell (F-1)                                                                     | `05` §8.1 row 3       |
-| OR-4 | JAWS + Electron is not covered by this ticket; stated so it is not assumed                                                                                        | `05` §8.1 row 2       |
-| OR-5 | The sprint-review recording of SCR-042 once #535 lands, reviewed for incidental disclosure before it is attached                                                  | the ticket's DoD      |
-| OR-6 | A waiver or a fix decision on F-1 under the delegation, and QA sign-off of this record                                                                            | the DoD's waiver line |
-| OR-7 | Once a route mounts them: zoom to 200 % and 400 %, text spacing, target size, focus appearance and forced colours on SCR-041, SCR-043, SCR-045 and SCR-048 (§3.7) | `05`:165, WCAG 2.2 AA |
+| Row  | What the owner runs                                                                                                                                                 | Standard              |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| OR-1 | NVDA + Electron, D11's script over the built rows (§6.1's map), heard; the record follows `05` §8.4 (`qa/evidence/e47/sr/`, text transcripts, the E47-T04 template) | `05` §8.1 row 1       |
+| OR-2 | VoiceOver + Electron, the same                                                                                                                                      | `05` §8.1 row 4       |
+| OR-3 | NVDA + Chromium, the fast leg, including whether "—" is spoken in an SCR-045 delta cell (F-1)                                                                       | `05` §8.1 row 3       |
+| OR-4 | JAWS + Electron is not covered by this ticket; stated so it is not assumed                                                                                          | `05` §8.1 row 2       |
+| OR-5 | The sprint-review recording of SCR-042 once #535 lands, reviewed for incidental disclosure before it is attached                                                    | the ticket's DoD      |
+| OR-6 | A waiver or a fix decision on F-1 under the delegation, and QA sign-off of this record                                                                              | the DoD's waiver line |
+| OR-7 | Once a route mounts them: zoom to 200 % and 400 %, text spacing, target size, focus appearance and forced colours on SCR-041, SCR-043, SCR-045 and SCR-048 (§3.7)   | `05`:165, WCAG 2.2 AA |
 
 The heard passes are E12-D13's OR-3 (D13:514). An agent-run pass counts toward none of `05` §8.1 (`05`:293).
+
+### 6.1 D11's script on the built set
+
+The 70 `Q07-nn` rows (D11:291) are cited, never restated. OR-1 to OR-3 run the rows marked built below once a route mounts them; every other row waits for its story. The agent's built-row run is code reading against the built copy, **(heuristic)**:
+
+| Rows                                           | D11 scenario                                  | Surface at the pin                                                           | Agent's run (heuristic)                                                                                                                                                                                                                                                          |
+| ---------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Q07-01..Q07-16, Q07-36..Q07-40, Q07-48..Q07-57 | §6.2–§6.4, §6.8, §6.10, §6.11 (D11:293, :308) | the plot stop, the mirror and the cursor region: no route hosts `Chart` (§0) | none: not mounted                                                                                                                                                                                                                                                                |
+| Q07-20..Q07-35, Q07-41..Q07-47                 | §6.5–§6.7, §6.9                               | SCR-042, SCR-031, the switch and the rebuild: not yet built — #535, #451     | none                                                                                                                                                                                                                                                                             |
+| Q07-60..Q07-66                                 | §6.12 (D11:461)                               | SCR-045: the shell built, not mounted                                        | Q07-60 matches the open line ("Data table, row k of N"); Q07-65 reads "Chart view", not "Chart" (the shell's copy is PROPOSED pending E47-D06 #1305; N-5); Q07-61..Q07-64 are the non-time, separator, loaded-edge and Heikin-Ashi rows, #521's; Q07-66 needs the mounted cursor |
+| Q07-70..Q07-72                                 | §6.13                                         | SCR-047: not yet built — #487                                                | none                                                                                                                                                                                                                                                                             |
+| Q07-73..Q07-77                                 | §6.14 (D11:491)                               | SCR-048: built for the render-failure card, not mounted                      | "Copy reference" (Q07-75) and "Other panels are unaffected." (Q07-73's second line) are in the built copy; the data-feed and backend lines (Q07-73, Q07-76), the countdown (Q07-74) and `Open diagnostics` (Q07-77) are not                                                      |
+| Q07-80                                         | §6.15                                         | the reserved real-reader check (F-08)                                        | OR-3                                                                                                                                                                                                                                                                             |
 
 ## 7. Rows routed to their owners
 
@@ -168,4 +185,4 @@ No G-row and no A-row in PR 1.
 1. `pnpm install --frozen-lockfile --offline`, then `pnpm --filter @candleviewer/ui build:tokens`.
 2. `pnpm --filter @candleviewer/web exec vitest run test/chart/a11y test/features/chart-price-scale test/features/chart-errors test/features/symbol-search/QuickSwitcher.test.tsx` (§3.1 and §3.2).
 3. `pnpm --filter @candleviewer/ui exec vitest run --project storybook src/components/Skeleton.stories.tsx src/components/SkeletonChart.stories.tsx` (§3.3) and `pnpm --filter @candleviewer/ui contrast:gate` (§3.4).
-4. `python3 -I docs/design/_tools/e12_q07_bars_audit.py --check` and `--self-test`; `python3 -I docs/plan/a11y/_tools/register.py --check`.
+4. `python3 -I docs/design/_tools/e12_q07_bars_audit.py --check` and `--self-test`; `python3 -I docs/plan/a11y/_tools/register.py --check`, `catalogue.py --check` beside it and `python3 -I tools/a11y/conformance.py --check` (the register row `A11Y-F-0036`).

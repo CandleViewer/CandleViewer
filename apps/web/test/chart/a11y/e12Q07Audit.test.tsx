@@ -1,13 +1,14 @@
 /**
  * E12-Q07 (#530) PR 1: the offline legs of the bar-mode a11y audit over the built SCR-045 shell and the polite
  * writer (report `docs/qa/a11y/e12-q07-bars-v1.md` §3). Oracles: E12-D11 §7 (the announcement budget, BG-09 and
- * BG-13), E12-D11's mirror caps (60 rows by default, cap 200, 1,800 nodes per pane) and E12-D07's parity rule (an
- * absent delta or CVD reads "—", never 0). Every verdict is agent-run (heuristic); no screen reader runs here.
+ * BG-13), E12-D11's mirror caps (60 rows by default, cap 200, 1,800 nodes per pane), E12-D07 §3's column sets and
+ * E12-D07's parity rule (an absent delta or CVD reads "—", never 0). Every verdict is agent-run (heuristic); no screen
+ * reader runs here.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { ChartDataTable } from "../../../src/chart/a11y/ChartDataTable";
-import { NOT_AVAILABLE } from "../../../src/chart/a11y/copy";
+import { EXPANDER_HEADER, NOT_AVAILABLE } from "../../../src/chart/a11y/copy";
 import { createAmbientWriter, type AnnouncePrefs } from "../../../src/chart/a11y/politeWriter";
 import type { ChartTableSeries } from "../../../src/chart/a11y/series";
 import { clearAnnouncements } from "../../../src/features/app-shell/announcer";
@@ -19,6 +20,8 @@ const ROW_CAP = 200;
 const NODE_CAP = 1_800;
 /** BG-13: at most two polite writes in any one second. */
 const PER_SECOND = 2;
+/** E12-D07 §3.1: time mode's primary (P) columns, in the table's order; the audit tool re-reads them at its base. */
+const D07_TIME_PRIMARY = ["time", "open", "high", "low", "close", "volume", "delta", "state"];
 
 afterEach(() => {
   vi.useRealTimers();
@@ -102,8 +105,11 @@ describe("Q07 windowing at 100 000 bars (E12-D11 mirror caps; ticket Performance
     records.push(...observer.takeRecords());
     observer.disconnect();
     const added = records.reduce((n, r) => n + r.addedNodes.length, 0);
+    const lastRow = barRows(grid).at(-1);
     expect(records.length).toBeGreaterThan(0); // the change reached the drawn last row
-    expect(added).toBeLessThanOrEqual(drawn);
+    // A full re-render would add nodes or touch other rows: the update rewrites text in the last row only.
+    expect(added).toBe(0);
+    expect(records.every((r) => lastRow?.contains(r.target) === true)).toBe(true);
     expect(grid.querySelectorAll("*").length).toBe(drawn);
   });
 });
@@ -143,6 +149,18 @@ describe("Q07 announcement budget (E12-D11 §7: BG-09, BG-13)", () => {
     ).toBeLessThanOrEqual(PER_SECOND);
     expect(writes.length).toBeLessThanOrEqual(31); // 05 §6.2: one per 2 s, plus the trailing value
     expect(writes.at(-1)?.text).toBe(last);
+  });
+});
+
+describe("Q07 time-mode columns (E12-D07 §3, the ruled oracle)", () => {
+  it("the built shell draws D07's primary time columns but `state` (held: #521), plus CVD (D07 tier E)", () => {
+    const { grid } = table(makeSeries({ bars: 120, levels: 0 }));
+    const headers = within(grid)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent ?? "")
+      .filter((h) => h !== EXPANDER_HEADER);
+    // The two differences are #521's per-mode rows (record §3.2); this fails when either side moves.
+    expect(headers).toEqual([...D07_TIME_PRIMARY.filter((c) => c !== "state"), "CVD"]);
   });
 });
 

@@ -154,6 +154,18 @@
         "note": "fix ticket closed, finding open: unowned, so it blocks sign-off"
       },
       "disclosure": "statement"
+    },
+    {
+      "id": "A11Y-F-0036",
+      "covers": ["A11Y-F-0036"],
+      "sc": ["1.3.1"],
+      "level": "A",
+      "category": "announcements",
+      "plain": "In the chart's data table, a missing value is shown as a dash that a screen reader may not read out.",
+      "impact": "Screen reader users may hear nothing in that cell and not know the value is missing.",
+      "workaround": "Turn on punctuation reading in your screen reader, or read the cell character by character.",
+      "disposition": { "kind": "fix-ticket", "ticket": "E11-S14 #521" },
+      "disclosure": "statement"
     }
   ]
 }
