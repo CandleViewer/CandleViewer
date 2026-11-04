@@ -85,6 +85,56 @@ describe("useLiquidationsByPrice", () => {
     expect(calls[0]?.signal.aborted).toBe(true);
   });
 
+  it("ignores a late answer for the old symbol and one that lands after unmount", async () => {
+    let late!: (r: ByPriceRead) => void;
+    const btc = new Promise<ByPriceRead>((res) => {
+      late = res;
+    });
+    const read = vi.fn((req: ByPriceRequest) =>
+      req.symbol === "BTCUSDT" ? btc : new Promise<ByPriceRead>(() => undefined),
+    );
+    const { set, hook } = mount({ read });
+    await flush();
+    set({ symbol: "ETHUSDT" });
+    await flush();
+    late(OK);
+    await flush();
+    expect(hook.result.current).toMatchObject({ phase: "loading", layer: null });
+
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let late2!: (r: ByPriceRead) => void;
+    const slow = new Promise<ByPriceRead>((res) => {
+      late2 = res;
+    });
+    const other = mount({ read: () => slow });
+    await flush();
+    other.hook.unmount();
+    late2(OK);
+    await flush();
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it("re-reads within 5 s when new prints arrive while a read is pending", async () => {
+    let done!: (r: ByPriceRead) => void;
+    const pending = new Promise<ByPriceRead>((res) => {
+      done = res;
+    });
+    const calls: ByPriceRequest[] = [];
+    const read = vi.fn((req: ByPriceRequest) => {
+      calls.push(req);
+      return calls.length === 1 ? pending : Promise.resolve(OK);
+    });
+    const { set } = mount({ read });
+    await flush();
+    set({ printSeq: 1 });
+    await flush(1_000);
+    expect(calls).toHaveLength(1);
+    done(OK);
+    await flush(MIN_INTERVAL_MS);
+    expect(calls).toHaveLength(2);
+  });
+
   it("keeps the layer and marks it stale when a refresh fails", async () => {
     const fail: ByPriceRead = { kind: "failed", status: 503, code: "unavailable" };
     const { set, hook, analytics } = mount({}, [OK, fail]);
