@@ -37,3 +37,27 @@ Run result: 404 tests passed (contract/rbac, authz abuse, ws permissions, gatewa
 
 ## Anomalies
 None observed in-process. Known open items above are already tracked.
+
+## Since run 1 (status 2026-11-04)
+- #2090 (CSRF token negative test): closed by #2238 (`tests/security/auth/test_csrf_double_submit.py`).
+- #2096 (owner check shape in rules_actor): closed (#2164). #2593 (owner effect re-check) closed by #5256.
+- #2094 (rules-manager grant isolation): still open.
+
+## Run 2 plan (staging, #2491) · Status: not yet run · planned 2026-11-04
+- Format: session-based, 90 min (60-120 time box), human tester on staging with a browser; test accounts only; no live or demo exchange key present. Cites 03 §11.2 and §12.
+- Mission: As a viewer and a grantless manager, reach an admin or owner affordance by deep link, replay, downgrade, view-as or an audit-break halt, from the browser and from raw requests.
+- Areas:
+  - deny-by-default matrix, replay of a captured request after a downgrade, CSRF and Origin checks
+  - view-as (SCR-124) is read-only: any state change while impersonating is P0
+  - the owner effect re-check (#5256) and the audit-chain-break halt with its Owner acknowledgement (#5323); #1238 open: record what is observed, do not call it a pass
+  - US-ONB-005, -010; US-ADMIN-001/-002 via E09-S05; threat rows U3, U4, U14, U15, U20, U25, U30 (#1237 open), U31, U32, U35
+  - does not repeat E49-C7 (`E49-charter-7-admin-rbac-probing.md`) or E10-C1 (`E10-charter-1-routing-rbac.md`); Security co-reviews, and the Security engineer and the owner `@basiltt` are notified the same day (SECURITY.md escalation chain) of any security-oracle anomaly
+- Oracles (the run-1 oracles O1-O4 stay in force):
+  - O2.5 a request replayed after a role downgrade still passes
+  - O2.6 a view-as session changes any state (P0)
+  - O2.7 an audit-chain break that leaves order entry open, or an acknowledgement a non-Owner can give
+  - O2.8 an action with no audit row or no metric movement (U7, U19); observe for more than 1 s
+- Keyboard-only segment (03 §12): admin invite (SCR-123) and a denied page by Tab and Enter only; the denied page offers a keyboard way back.
+- Automated neighbours: `tests/contract/rbac/test_route_matrix.py`; `tests/contract/rbac/test_scope_and_ws.py`; `tests/security/auth/test_view_as_http.py`; `tests/security/auth/test_csrf_double_submit.py`; `tests/unit/audit/test_break_halt.py`; `apps/web/e2e/auth/denied.spec.ts`.
+- Private routing: anomalies matching a security oracle (bypass, escalation, audit gap) go the same day through SECURITY.md's private channel (GitHub Private Vulnerability Reporting, or a direct message to the owner `@basiltt`), never a public issue; the debrief records only the private report id and a pattern-level label. Other anomalies: issue links.
+- Debrief slots: tester, date, build sha, minutes spent; anomalies (the private report id for a security-oracle anomaly, an issue link otherwise); not probed; follow-ups. Filled at the #2491 run.
