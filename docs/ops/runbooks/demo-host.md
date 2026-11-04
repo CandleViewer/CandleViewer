@@ -347,6 +347,27 @@ Expected: `"status":"ok"`. `degraded` names its failing check: `accounts`, the s
 self-check (`key-selfcheck.md`; `CV_EGRESS_IP` must be the key's whitelisted address); `secrets`,
 the KEK (`kek-custody.md`); a `storage_*` tier, step 4.
 
+## 9. The backup sidecar's run record unreadable (#3319)
+
+The sidecar keeps its own run record at `<backup volume>/.cvb/ledger.jsonl` (24 §15.8 item 11).
+A torn or tampered record fails closed: the sidecar logs `cvbackup.ledger_unreadable` at start,
+and `verify`, `remove` and new runs answer `ledger_unreadable` (the backups screen shows the store
+unavailable) until you repair it. Nothing truncates it for you. Check it from the pinned checkout,
+as the volume's owner, read only:
+
+```bash
+cd services/api && CVB_BACKUP_ROOT=<backup volume mount> python3 -m cvbackup check-ledger
+```
+
+`the run record replays, N entries` (exit 0) means the record is whole: look elsewhere (the
+sidecar's log). `does not replay from line N` (exit 1) names the first line that breaks it: a last
+line with no newline is a write the sidecar never acknowledged, and only that line may go; any
+other break is tampering until shown otherwise. Copy the file aside first, raise it as a security
+incident (`SECURITY.md`) unless the break is that torn last line, remove only what you have
+established, run the check again until it exits 0, then restart the sidecar, which replays it at
+start. The record grows by about 600 bytes per run, plus about 275 per verification and 465 per
+removal; v1 prunes nothing (ADR-0041, a plan gap on #2701).
+
 ## Stopping
 
 `$COMPOSE stop` keeps everything. `$COMPOSE down` removes the containers and keeps the volumes;

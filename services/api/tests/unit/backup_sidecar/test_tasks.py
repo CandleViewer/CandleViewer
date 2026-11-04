@@ -9,12 +9,15 @@ import ast
 import asyncio
 import inspect
 import logging
+import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 import cvbackup
-from cvbackup import tasks
+from cvbackup import protocol, server, tasks
+from tests.unit.backup_sidecar._sidecar import request_frame
 
 _CREATORS = {"create_task", "ensure_future", "run_in_executor", "TaskGroup"}
 _UNLOGGED = "a-text-that-must-never-be-logged"
@@ -139,3 +142,33 @@ async def test_uninterrupted_caller_sees_its_cancel_at_once_while_the_work_lands
     gate.set()
     await _wait_all()
     assert landed.is_set()
+
+
+async def test_server_cancels_the_job_when_the_peer_watch_hits_the_bound(
+    monkeypatch: pytest.MonkeyPatch, sock: str
+) -> None:
+    class _Ops:
+        async def handle(self, request: protocol.Request, progress: Any) -> dict[str, object]:
+            await asyncio.Event().wait()
+            return {}
+
+    real, jobs = tasks.spawn, []
+
+    def spawn(work: Any, *, name: str, quiet: bool = False) -> Any:
+        if name == "cvbackup.peer":
+            work.close()
+            raise tasks.TaskLimit
+        jobs.append(real(work, name=name, quiet=quiet))
+        return jobs[-1]
+
+    monkeypatch.setattr(server, "spawn", spawn)
+    listening = await server.Server(_Ops(), api_uid=os.getuid()).start(sock)
+    async with listening:
+        reader, writer = await asyncio.open_unix_connection(sock)
+        writer.write(request_frame("plan", {"kind": "pg_dump"}))
+        await writer.drain()
+        assert await asyncio.wait_for(reader.read(), 5) == b""  # closed unanswered
+        writer.close()
+    assert len(jobs) == 1
+    await asyncio.wait(jobs)
+    assert jobs[0].cancelled()

@@ -1,15 +1,18 @@
 """Test support for the backup sidecar (#3319 B1b): generated age recipients and well-formed age
 headers (no key, no crypto: a header's stanza values are random bytes), a fake UTC clock, a
-configuration under `tmp_path` and an in-process sidecar built on it. Every value is generated per
-test; no network, nothing outside `tmp_path`."""
+configuration under `tmp_path`, an in-process sidecar on a socket there, and a raw client. Every
+value is generated per test; no network, nothing outside `tmp_path`."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import hashlib
 import os
+import socket
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -21,6 +24,7 @@ from cvbackup.floor import Floor
 from cvbackup.ledger import Ledger, timestamp
 from cvbackup.ops import KINDS, Ops
 from cvbackup.paths import LEDGER_DIR, QUARANTINE_DIR, Root
+from cvbackup.server import Server
 
 T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
 _CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
@@ -171,3 +175,50 @@ async def build(cfg: SidecarConfig, clock: Clock | None = None) -> Sidecar:
     await ledger.load()
     floor = Floor(root, ledger, run_cap=cfg.run_cap, run_window=cfg.run_window, grace=cfg.grace)
     return Sidecar(cfg, root, ledger, floor, Ops(cfg, root, ledger, floor, clock=clock), clock)
+
+
+@contextlib.asynccontextmanager
+async def serving(
+    cfg: SidecarConfig, clock: Clock | None = None, **server: Any
+) -> AsyncIterator[Sidecar]:
+    """The sidecar serving its socket for the body."""
+    sidecar = await build(cfg, clock)
+    listening = await Server(sidecar.ops, api_uid=cfg.api_uid, **server).start(cfg.socket)
+    sidecar.server = listening
+    try:
+        async with listening:
+            yield sidecar
+    finally:
+        sidecar.ledger.close()
+
+
+def request_frame(op: str, args: dict[str, str], *, deadline_s: int = 60, **extra: Any) -> bytes:
+    body: dict[str, Any] = {"v": 1, "id": str(uuid.uuid4()), "op": op, "deadline_s": deadline_s,
+                            "args": args}  # fmt: skip
+    body.update(extra)
+    return protocol.frame(body)
+
+
+async def exchange(path: str, data: bytes, *, close: bool = False) -> list[dict[str, Any]]:
+    """Write `data` on a new connection and read every answer frame until the server closes;
+    `close` closes the connection right after writing instead (a cancel)."""
+    reader, writer = await asyncio.open_unix_connection(path)
+    writer.write(data)
+    await writer.drain()
+    if close:
+        writer.close()
+        return []
+    frames = []
+    try:
+        while header := await reader.readline():
+            body = await reader.readexactly(int(header) + 1)
+            frames.append(protocol.loads(body[:-1], floats=True))
+    except ConnectionResetError:
+        pass  # closed with our request unread: the kernel resets, which ends the exchange too
+    finally:
+        writer.close()
+    return [f for f in frames if isinstance(f, dict)]
+
+
+def families(server: asyncio.Server) -> set[socket.AddressFamily]:
+    return {s.family for s in server.sockets}
