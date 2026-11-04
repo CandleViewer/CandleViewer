@@ -623,7 +623,8 @@ describe("each action's clause (E36-D01 §5.6)", () => {
       ends([act("modify_take_profit", { mode: "absolute", value: 1 })]),
       ends([act("flatten_all_positions"), act("log_journal_tag", { tag: "x" })]),
       ends([act("move_to_breakeven"), loose]),
-    ]).toEqual([true, true, true, false, false, false, false]);
+      ends([act("tighten_stop", { mode: "atr", value: 1, only_tighten: null })]),
+    ]).toEqual([true, true, true, false, false, false, false, false]);
     // No deck string says a stop may loosen (#4137): nothing stands in the line's place.
     expect(say({ actions: [loose] })).toMatch(
       /: tighten the stop to 1 × ATR\(14\) from the close\.$/,
