@@ -384,18 +384,18 @@ async def test_checksum_mismatch_and_missing_are_integrity_events() -> None:
         **bar_row(_bar(index=5, open_time=1_700_000_000_000_010), SPEC, generation=0),
         "row_checksum": None,
     }
-    legacy = {**missing, "source": None, "ts": 1_700_000_000_000_011}
+    unprovenanced = {**missing, "source": None, "ts": 1_700_000_000_000_011}
     b = (
         m.labels("bars_time", "mismatch")._value.get(),
         m.labels("bars_time", "missing")._value.get(),
     )
-    page = await BarReader(_Conn([good, bad, missing, legacy]), _sched_noop).read_bars(
+    page = await BarReader(_Conn([good, bad, missing, unprovenanced]), _sched_noop).read_bars(
         "BTCUSDT", SPEC, 0, 2**55, 10
     )
-    assert page.rows == [good, legacy]  # NULL checksum + non-NULL source is NOT trusted
-    assert page.integrity_degraded and page.dropped == 2
+    assert page.rows == [good]  # a NULL checksum is never trusted, NULL source or not (BR-05)
+    assert page.integrity_degraded and page.dropped == 3
     assert m.labels("bars_time", "mismatch")._value.get() == b[0] + 1
-    assert m.labels("bars_time", "missing")._value.get() == b[1] + 1
+    assert m.labels("bars_time", "missing")._value.get() == b[1] + 2
 
 
 def test_checksum_round_trips_through_ilp_floats() -> None:

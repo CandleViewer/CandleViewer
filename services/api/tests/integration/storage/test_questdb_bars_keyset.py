@@ -31,9 +31,11 @@ async def test_same_ts_renko_bricks_page_by_key_on_real_questdb(
 ) -> None:
     """#2017: three same-ts bricks (index 0..2) paged with limit=1 through `BarReader` (the
     `/market/bars` read path) and the expanded keyset predicate -> [0], [1], [2], then done."""
-    from candleviewer.bars.models import BarSpec
+    from decimal import Decimal
+
+    from candleviewer.bars.models import Bar, BarSpec
     from candleviewer.bars.reader import BarReader, row_key
-    from candleviewer.bars.rows import bar_param_for
+    from candleviewer.bars.rows import bar_row
     from candleviewer.storage.questdb.wiring import QuestDbRowSink
 
     host, pg_port, ilp_port = questdb_container
@@ -43,15 +45,23 @@ async def test_same_ts_renko_bricks_page_by_key_on_real_questdb(
     ts = 1_700_000_000_000_000
     try:
         await run_migrations(_AsyncpgExecutor(conn), DDL_DIR)
-        base: dict[str, object] = {
-            "symbol": "BTCUSDT", "bar_param": bar_param_for(spec), "ts": ts, "open": 1.0,
-            "high": 2.0, "low": 0.5, "close": 1.5, "volume": 3.0, "is_closed": True,
-            "generation": 0,
-        }  # fmt: skip
-        # Same shape as #2126's passing write: no `source`/`row_checksum` (a pre-0003 legacy
-        # row, trusted by the reader). `source` is a SYMBOL column but `_BAR_TAG_COLUMNS` omits
-        # it, so the ILP writer emits it as an unquoted field and QuestDB drops the line.
-        rows = [{**base, "index": i} for i in (2, 0, 1)]
+
+        # Rows as `BarWriter` stamps them (`bar_row`: `source`, `row_checksum`): the reader
+        # withholds a row without provenance at any open time (BR-05).
+        def _row(i: int) -> dict[str, object]:
+            bar = Bar.model_validate(
+                dict(
+                    spec_hash=spec.spec_hash, symbol="BTCUSDT", index=i, open_time=ts,
+                    close_time=ts, open=Decimal("1"), high=Decimal("2"), low=Decimal("0.5"),
+                    close=Decimal("1.5"), volume=Decimal("3"), buy_volume=Decimal("2"),
+                    sell_volume=Decimal("1"), delta=Decimal("1"), min_delta=Decimal("0"),
+                    max_delta=Decimal("1"), trade_count=3, turnover=Decimal("4.5"),
+                    vwap=Decimal("1.5"), closed=True, partial=False, gap_before=False,
+                )
+            )  # fmt: skip
+            return bar_row(bar, spec, generation=0)
+
+        rows = [_row(i) for i in (2, 0, 1)]
         await sink.write_rows("bars_renko", rows, "ts")
         await sink.stop()
         await wait_for_row_count(conn, "bars_renko", 3)

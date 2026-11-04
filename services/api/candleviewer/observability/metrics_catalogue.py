@@ -1887,7 +1887,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "rows",
         ("table", "reason"),
         "Stored bar rows withheld on a range or tail read after a failed integrity check"
-        " (reason: mismatch = checksum differs, missing = NULL checksum on a non-legacy row;"
+        " (reason: mismatch = checksum differs, missing = NULL checksum or NULL source;"
         " SR-E12-11).",
         "any = a stored bar was altered or written without a checksum; the result is incomplete",
         _L,

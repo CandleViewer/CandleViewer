@@ -232,12 +232,12 @@ async def submit_kline_bars(
 _STORED_HIGHER_SQL: Final = (
     "SELECT ts FROM bars_time WHERE symbol = $1 AND bar_param = $2 AND ts >= $3 AND ts <= $4 "
     "AND (source IS NULL OR source != 'kline')"
-)  # NULL source = pre-0003 legacy row, which only the tape builder ever wrote
+)  # NULL source: unprovenanced, withheld on read (BR-05); still guarded conservatively
 
 
 def stored_tape_lookup(conn: RowFetcher) -> StoredHigherSource:
     """The stored-row half of SR-E12-10 over the hot tier: open times in `ts` that already hold
-    a tape/parquet (or legacy) `bars_time` row. Parameterised; one bounded range query."""
+    a tape/parquet (or unprovenanced) `bars_time` row. Parameterised; one bounded range query."""
 
     async def lookup(symbol: str, bar_param: str, ts: list[int]) -> set[int]:
         if not ts:
