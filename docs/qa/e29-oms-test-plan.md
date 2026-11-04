@@ -49,7 +49,7 @@ E29-T08 (#916), not worked around (ruling, BQ-9).
 | --- | --- | --- | --- |
 | REST | `listPositions`, `getPosition`, `listOrders`, `getOrder`, `placeOrder`, `amendOrder`, `cancelOrder`, `cancelAllOrders`, `closePosition`, `closeAllPositions`, `listExecutions`, `listClosedPnl` (`docs/plan/22-api-openapi.yaml`); the audit read `GET /admin/audit` | The current `state` and `lifecycle_state` of an order, a command's answer (`202`, or a problem with its `code`; an exchange refusal adds `exchange.ret_code`), the typed per-account results of a bulk route, `rejected_reason` (CandleViewer's reason, never the exchange's text, SR-E29-09) | The path an order took: `OrderEvent` holds only `id`, `kind` and `event_ts` (`docs/plan/22-api-openapi.yaml:21366`) |
 | WS | private topics `orders`, `positions`, `executions`, `wallet`; `system` (auto-subscribed); control frames `sub_ok`, `permission_change`, `revoked` (`docs/plan/23-ws-protocol.md` §6.2, §9.5) | Every order step as a frame of its own, never coalesced (`change`: `created`, `submitted`, `ack`, `fill`, `amend`, `cancel`, `reject`, `expire`, `reconcile`), snapshot then deltas, the scope a subscription kept (`sub_ok.effective`), `account_notice` and `kill_switch` | B1's `protection` region (no field on `Order` or `OrderUpdate`, no event kind) and B1's reason for entering `unknown`, which only the failed call's record in diagnostics implies (candidate gap rows, part 2) |
-| Diagnostics | `getOrderDiagnostics` (`GET /orders/{orderId}/diagnostics`), mounted at `services/api/candleviewer/api/oms_reads.py:390` | Owner only (`orders:read` and `admin:read`), each read audited as `order.diagnostics_viewed`: the `order_events` chain as `kind` and time, `exchange_calls[]` (the allow-listed request, response and push records with `ret_code` and `ret_msg`) | `reconciliation` is absent until E29-T06 persists its verdict (`docs/plan/22-api-openapi.yaml:14831`); no secret, header or signature is ever served (SR-E29-08) |
+| Diagnostics | `getOrderDiagnostics` (`GET /orders/{orderId}/diagnostics`), mounted at `services/api/candleviewer/api/oms_reads.py:390` | Owner only (`orders:read` and `admin:read`), each read audited as `order.diagnostics_viewed`: the `order_events` chain as `kind` and time, `exchange_calls[]` (the allow-listed request, response and push records with `ret_code` and `ret_msg`) | `reconciliation` is absent until E29-T06 persists its verdict (`docs/plan/22-api-openapi.yaml:14854`); no secret, header or signature is ever served (SR-E29-08) |
 
 The state chain of one order is therefore read from the WS `orders` frames, its end state from REST, and the venue's
 words from diagnostics. A UI case adds the screen's accessible tree, read by role and accessible name.
@@ -561,7 +561,7 @@ algorithm, its metrics and its alerts are E29-T06 and E29-T08 (part 2).
 Screens SCR-063 (the closed view) and SCR-078. REST `listClosedPnl` (`GET /executions/closed-pnl`). State S-10. The fills
 half of this story is E29-TC-200 to E29-TC-209. Until the venue backfill lands, `listClosedPnl` is served from stored fills,
 one item per closing fill, and `avg_entry_price`, `qty`, `cum_entry_value`, `cum_exit_value`, `leverage` and `opened_at`
-are absent, never estimated (`docs/plan/22-api-openapi.yaml:8594`).
+are absent, never estimated (`docs/plan/22-api-openapi.yaml:8609-8610`).
 
 <!-- prettier-ignore -->
 | Case | Source | Preconditions | Black-box steps | Oracle | Rules | Runs it | Evidence today | Status |
