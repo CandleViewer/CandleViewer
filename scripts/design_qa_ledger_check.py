@@ -161,6 +161,9 @@ KEY_RE = re.compile(r"#\d+|E\d\d-[A-Z]\d\d|DQA-\d{4}")
 BACKLOG_RE = re.compile(r"E\d\d-[A-Z]\d\d")
 OWNER_RE = re.compile(r"(?:^|;\s*)owner:\s*\S")
 REASON_RE = re.compile(r"(?:^|;\s*)reason:\s*\S")
+CONTROL_RE = re.compile(r"(?:^|;\s*)control:\s*\S")
+A11Y_CLAUSE_RE = re.compile(r"\bDQ-(?:AX-\d|BS-2|TS-1)\b")
+T2_CHECKS = ("G-T2.1a", "G-T2.1b", "G-T2.1c", "G-T2.1d", "G-T2.2", "G-T2.3", "G-T2.4")
 TICKET_RE = re.compile(r"(E\d\d-[A-Z]\d\d) #(\d+)")
 AC_ROWS = tuple(f"AC {n}" for n in range(1, 6)) + tuple(f"DoD {n}" for n in range(1, 10))
 AC_STATES = frozenset({"done", "PR 2", "owner", "open"})
@@ -311,6 +314,12 @@ def _row_codes(d: dict[str, str], keys: frozenset[str], dqa: set[str]) -> list[s
         OWNER_RE.search(d["notes"]) and REASON_RE.search(d["notes"]) and follow
     ):
         bad.append(f"E_EXCEPTION {sid}: owner, reason and follow-up key")
+    if (
+        v == "accepted-exception"
+        and A11Y_CLAUSE_RE.search(d["notes"])
+        and not CONTROL_RE.search(d["notes"])
+    ):
+        bad.append(f"E_EXCEPTION {sid}: an a11y exception names no compensating control")
     if v == "not-applicable" and not REASON_RE.search(d["notes"]):
         bad.append(f"E_NA {sid}: no reason")
     return bad
@@ -413,6 +422,14 @@ def g_clauses(t: L.Tree) -> list[str]:
     got = [[_plain(c) for c in r] for r in L.table_rows(L.section(spec(t), "## 4."))]
     bad = [f"{w[0]} differs" for w, g in zip(want, got, strict=False) if w != g]
     return bad + ([f"{len(got)} rows, not {len(want)}"] if len(got) != len(want) else [])
+
+
+def g_evidence(t: L.Tree) -> list[str]:
+    clauses = [r[0] for r in L.table_rows(L.section(spec(t), "## 4."))]
+    rows = [r[0] for r in L.table_rows(L.section(spec(t), "### 8.1"))]
+    t2 = [r[0] for r in L.table_rows(L.section(spec(t), "### 8.2"))]
+    bad = [] if rows == clauses else [f"8.1 rows {rows} are not the clauses in order"]
+    return bad + ([] if tuple(t2) == T2_CHECKS else [f"8.2 rows {t2} are not the T2 checks"])
 
 
 def g_severity(t: L.Tree) -> list[str]:
@@ -531,9 +548,9 @@ def g_mutlist(t: L.Tree) -> list[str]:
 
 # fmt: off
 GATES = tuple(L.Gate("G-" + f.__name__[2:].upper(), f) for f in (
-    g_cite, g_keycite, g_clauses, g_severity, g_order, g_reserved, g_fixtures, g_ledger, g_ac,
-    g_bq, g_decisions, g_oq, g_walk, g_noclose, g_public, g_hygiene, g_helper, g_untouched,
-    g_mutlist,
+    g_cite, g_keycite, g_clauses, g_evidence, g_severity, g_order, g_reserved, g_fixtures,
+    g_ledger, g_ac, g_bq, g_decisions, g_oq, g_walk, g_noclose, g_public, g_hygiene, g_helper,
+    g_untouched, g_mutlist,
 ))
 # fmt: on
 
@@ -564,7 +581,7 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        r"(\| 1 +\| SCR-030 +\|[^|]+\| )1( +\|)", r"\g<1>2\2", regex=True),
     _M("M-08", "G-RESERVED", "a reserved id dropped", _S, "SCR-138, SCR-139.", "SCR-138."),
     _M("M-09", "G-FIXTURES", "the complete fixture loses a row", "fx:complete.csv",
-       r"\nSCR-005,[^\n]*", "", regex=True),
+       r"\nSCR-010,[^\n]*", "", regex=True),
     _M("M-10", "G-FIXTURES", "the fixture table drifts", _S,
        r"(\| `bad-verdict\.csv` +\| )`E_VERDICT`", r"\1`E_NAME`", regex=True),
     _M("M-11", "G-LEDGER", "no ledgers outside slice PR 1", _S, SLICE_MARK,
@@ -595,6 +612,10 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "docs/plan/15-component-catalogue.md"),
     _M("M-24", "G-UNTOUCHED", "the cross-link grows", f"@numstat:{CROSS_LINK}", "", "5 0"),
     _M("M-25", "G-MUTLIST", "the list drifts", _S, r"\| M-01 +\| G-CITE +\|", "| M-01 | G-AC |",
+       regex=True),
+    _M("M-26", "G-EVIDENCE", "a clause without its evidence row", _S,
+       r"\n\| DQ-AX-2 \| the tree's[^\n]*", "", regex=True),
+    _M("M-27", "G-EVIDENCE", "a T2 check dropped", _S, r"\n\| G-T2\.1b \|[^\n]*", "",
        regex=True),
 )
 # fmt: on

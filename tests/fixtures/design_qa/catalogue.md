@@ -2,10 +2,10 @@
 
 ### SCR-001 — Login
 
-### SCR-002 — TOTP challenge
+### SCR-002 — Two-factor (TOTP) challenge
 
-### SCR-003 — App shell
+### SCR-003 — TOTP enrolment (first login / re-enrol)
 
-### SCR-004 — Session expired
+### SCR-004 — Forced password change
 
-### SCR-005 — Global toast host
+### SCR-010 — App shell (global chrome)

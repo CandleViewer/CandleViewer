@@ -5,6 +5,6 @@
     { "id": "SCR-002", "verdict": "no findings at sha" },
     { "id": "SCR-003", "verdict": "findings" },
     { "id": "SCR-004", "verdict": "not auditable at sha" },
-    { "id": "SCR-005", "verdict": "not auditable at sha" }
+    { "id": "SCR-010", "verdict": "not auditable at sha" }
   ]
 }

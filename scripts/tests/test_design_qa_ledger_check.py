@@ -55,13 +55,13 @@ def test_exception_without_followup_key_fails() -> None:
 @pytest.mark.parametrize(
     ("old", "new", "code"),
     [
-        ("SCR-005,Global toast host", "SCR-009,Global toast host", "E_RESERVED"),
-        ("SCR-005,Global toast host", "SCR-006,Global toast host", "E_EXTRA"),
+        ("SCR-010,App shell", "SCR-009,App shell", "E_RESERVED"),
+        ("SCR-010,App shell", "SCR-006,App shell", "E_EXTRA"),
         ("SCR-001,Login,E09", "SCR-001,Sign in,E09", "E_NAME"),
         ("SCR-001,Login,E09,", "SCR-001,Login,E9,", "E_EPIC"),
         ("pass,0,0,0,0,,,findings,", "pass,0,0,0,0,,,no findings at sha,", "E_E47"),
         ("SCR-001,Login,E09,agent-run,2026-11-04", "SCR-001,Login,E09,agent-run,4 Nov", "E_AUDIT"),
-        ("Global toast host,E05,,", "Global toast host,E05,agent-run,", "E_AUDIT"),
+        ("(global chrome),E05,,", "(global chrome),E05,agent-run,", "E_AUDIT"),
         ("pass,0,0,0,0,", "pass,0,0,x,0,", "E_COUNTS"),
         ("pass,0,0,0,0,,", "pass,0,0,0,0,X-1,", "E_BUGKEY"),
         ("DQA-0002;E49-D05", "DQA-0002;E99-Z99", "E_BUGKEY"),
@@ -71,6 +71,13 @@ def test_exception_without_followup_key_fails() -> None:
 )
 def test_one_broken_rule_gives_its_code(old: str, new: str, code: str) -> None:
     assert code in _run(_swap(old, new))
+
+
+def test_a11y_exception_needs_a_compensating_control() -> None:
+    a11y = "owner: the owner; reason: DQ-AX-5 dense cells"
+    old = "owner: the owner; reason: deferred to the post-GA polish pass"
+    assert _run(_swap(old, a11y)) == {"E_EXCEPTION"}
+    assert _run(_swap(old, a11y + "; control: the table view")) == frozenset()
 
 
 def test_pass_with_a_finding_and_findings_with_none_fail() -> None:
