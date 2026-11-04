@@ -60,6 +60,18 @@ def test_flood_default_is_silent_and_always_is_not() -> None:
     expect(table["Always · Normal"][1] != "0", "Always is silent")
 
 
+def test_sc_screen_holds_the_criteria_a_reviewer_asked_for() -> None:
+    for sc in ("2.1.1", "2.4.11", "2.5.7", "2.5.8", "3.3.8"):
+        expect(sc in audit.SC_SCREEN, f"{sc} is not screened")
+
+
+def test_t2_note_rejects_an_unknown_status_and_a_missing_ad() -> None:
+    memo = TREE.text("memo")
+    bad = memo.replace("AD-5 a key binding", "a key binding", 1).replace("AD-5 and AD-4", "", 1)
+    mutated = L.Tree(files={**TREE.files, "memo": bad}, changed=TREE.changed)
+    expect(audit.g_t2(mutated) == ["section 3.3 does not name AD-5"], f"{audit.g_t2(mutated)}")
+
+
 def test_pending_heading_names_the_posted_list() -> None:
     tail = f"ruling pending (comment {audit.BQ_LIST})"
     expect(audit.BQ_HEADING.endswith(tail), "the heading lost the comment id")

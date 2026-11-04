@@ -8,8 +8,10 @@ code texts the memo cites; from the working tree, the memo, this tool and its te
 one repo module: the merged E47-D07 announcement tool's `replay`, on E47-D07's own spec and
 seeded transcripts at the base, to re-derive the memo's SYNTHETIC counts.
 
-Gates: G-AC, G-BQ, G-TASKS, G-ROWS, G-KEYS, G-D02, G-ROUTE, G-COUNTS, G-FLOOD, G-CITE,
-G-CHECKLIST, G-NOCLOSE, G-PUBLIC, G-UNTOUCHED and G-MUTLIST (section 14 equals this tool's list).
+Gates: G-AC, G-BQ, G-TASKS, G-ROWS, G-KEYS, G-D02, G-ROUTE, G-COUNTS, G-SC (section 3.2 screens
+every AA criterion in SC_SCREEN), G-T2 (section 3.3 names every AD and TOP-1/2 and the T2 items),
+G-FLOOD, G-CITE, G-CHECKLIST, G-NOCLOSE, G-PUBLIC, G-UNTOUCHED and G-MUTLIST (section 14 equals
+this tool's list).
 The BQ list (comment 6634720172) is posted with its ruling pending: G-BQ checks the
 "defaults built; ruling pending" heading and the ten rows BQ-0..BQ-9.
 
@@ -103,6 +105,12 @@ FLOOD_ROWS = {
     "Always · Normal, whale prints on": "always-whale",
     "Reduce announcements on": "reduce",
 }
+SC_SCREEN = (  # the AA criteria that decide a keyboard and SR trading UI (section 3.2)
+    "1.4.1", "1.4.3", "1.4.10", "2.1.1", "2.1.2", "2.4.3", "2.4.5", "2.4.6", "2.4.7", "2.4.11",
+    "2.5.7", "2.5.8", "3.2.1", "3.2.2", "3.3.4", "3.3.8", "4.1.2", "4.1.3",
+)  # fmt: skip
+SC_STATUS = ("finding: F-", "no finding (heuristic)", "not assessable at the sha", "not assessed: ")
+T2_ITEMS = ("G-T2.1b", "G-T2.1c", "G-T2.3", "TOP-1", "TOP-2")
 WINDOW_MS = 120_000  # BQ-6: a 2-minute window
 CADENCES = (1000, 2000, 5000)
 
@@ -258,6 +266,33 @@ def g_counts(t: L.Tree) -> list[str]:
     return [] if got == want else [f"counts {got}, tables say {want}"]
 
 
+def g_sc(t: L.Tree) -> list[str]:
+    """Section 3.2: every screened criterion has a row, a source and a status in the vocabulary."""
+    rows = rows_of(t.text("memo"), "### 3.2")
+    named = {sc for r in rows for sc in re.findall(r"\b\d\.\d+\.\d+\b", r[0])}
+    bad = [f"{sc} has no row" for sc in SC_SCREEN if sc not in named]
+    for r in rows:
+        if len(r) != 4 or not r[2]:
+            bad.append(f"{r[0]}: {len(r)} cells or no source")
+        elif not r[3].startswith(SC_STATUS):
+            bad.append(f"{r[0]}: status {r[3][:40]!r}")
+    fids = {r[0] for r in f_rows(t.text("memo"))}
+    bad += [f"{r[0]}: {f} is no F row" for r in rows for f in re.findall(r"F-\d+", r[3])
+            if f not in fids]  # fmt: skip
+    return bad
+
+
+def g_t2(t: L.Tree) -> list[str]:
+    """Section 3.3: the T2 standing gate is stated against every AD and TOP-1, TOP-2."""
+    memo = t.text("memo")
+    note = L.section(memo, "### 3.3 T2 applicability")
+    if not note.strip():
+        return ["section 3.3 (T2 applicability) is missing"]
+    ads = [r[0] for r in rows_of(memo, "## 8.")]
+    want = (*T2_ITEMS, *ads)
+    return [f"section 3.3 does not name {w}" for w in want if w not in note]
+
+
 @functools.cache
 def d07_module() -> ModuleType:
     spec = importlib.util.spec_from_file_location("e47_d07_for_d01", ROOT / D07_TOOL_REL)
@@ -356,6 +391,8 @@ GATES = (
     L.Gate("G-D02", g_d02),
     L.Gate("G-ROUTE", g_route),
     L.Gate("G-COUNTS", g_counts),
+    L.Gate("G-SC", g_sc),
+    L.Gate("G-T2", g_t2),
     L.Gate("G-FLOOD", g_flood),
     L.Gate("G-CITE", g_cite),
     L.Gate("G-CHECKLIST", g_checklist),
@@ -419,6 +456,12 @@ MUTATIONS = (
     _M("M-16", "G-UNTOUCHED", "an owner document edited", "@changed",
        "", "docs/plan/05-accessibility-standard.md"),
     _M("M-17", "G-MUTLIST", "the list drifts", "memo", "| M-1  | G-AC ", "| M-1  | G-BQ "),
+    _M("M-18", "G-ROWS", "a finding without its SC", "memo",
+       r"(\| CMP-094 \| )2\.4\.6( +\| T9 )", r"\1     \2", regex=True),
+    _M("M-19", "G-SC", "an AA criterion drops off the screen", "memo",
+       "| 2.5.7 Dragging movements ", "| Dragging movements       "),
+    _M("M-20", "G-T2", "the T2 applicability note is missing", "memo",
+       "### 3.3 T2 applicability", "### 3.3 Notes"),
 )
 # fmt: on
 
