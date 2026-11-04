@@ -179,14 +179,15 @@ _CATALOG = (
 
 def _doc_ddl() -> str:
     """Sec.3.3.4-3.3.7's ```sql blocks, to their fences, then Sec.3.3.4's second, third and fourth
-    blocks (`0034_order_vocabulary`, `0043_order_submission`, the origin columns' revision), so the
-    doc is compared with the head. The leg FKs resolve to `public.trade_group_legs` through the
-    search path, under the names the live ones carry."""
+    blocks (`0034_order_vocabulary`, `0043_order_submission`, the origin columns' revision) and
+    Sec.3.3.6's and Sec.3.3.7's second (E29-S06's revision), so the doc is compared with the head.
+    The leg FKs resolve to `public.trade_group_legs` through the search path, under the names the
+    live ones carry."""
     sections = [_DOC.read_text(encoding="utf-8").split(f"#### {h}", 1)[1] for h in _BLOCKS]
     blocks = [s.split("```sql", 1)[1].split("```", 1)[0] for s in sections]
-    later = sections[0].split("#### ", 1)[0].split("```sql")[2:]
-    assert len(later) == 3, "Sec.3.3.4 holds 0029's, 0034's, 0043's and the origin's blocks"
-    blocks += [block.split("```", 1)[0] for block in later]
+    later = [s.split("#### ", 1)[0].split("```sql")[2:] for s in sections]
+    assert [len(b) for b in later] == [3, 0, 1, 1], "0034's, 0043's, the origin's, E29-S06's"
+    blocks += [block.split("```", 1)[0] for section in later for block in section]
     return "\n".join(blocks)
 
 
@@ -222,7 +223,7 @@ def test_schema_matches_the_plan_doc(pg_dsn: str) -> None:
         found = c.execute(
             "SELECT indexname FROM pg_indexes WHERE indexname = ANY(%s)", (list(indexes),)
         )
-        assert len(indexes) == 22 and {row[0] for row in found} == indexes
+        assert len(indexes) == 24 and {row[0] for row in found} == indexes
         tagged = c.execute(
             "SELECT attrelid::regclass::text, d, count(*) FROM ("
             "SELECT attrelid, col_description(attrelid, attnum) AS d FROM pg_attribute "
@@ -237,7 +238,7 @@ def test_schema_matches_the_plan_doc(pg_dsn: str) -> None:
         )
         assert {(row[0], row[1]): row[2] for row in tagged} == {
             ("orders", p1): 10, ("orders", text): 2, ("order_events", text): 3,
-            ("executions", p1): 7, ("positions", p1): 14, ("position_snapshots", p1): 7,
+            ("executions", p1): 8, ("positions", p1): 14, ("position_snapshots", p1): 7,
         }  # fmt: skip
 
 

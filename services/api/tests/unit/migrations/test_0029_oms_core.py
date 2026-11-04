@@ -36,6 +36,13 @@ _LATER = frozenset(
     {"lifecycle_state", "ord_lifecycle", "ix_orders_open", "provenance", "ord_provenance",
      "origin", "origin_ref", "ord_origin", "ord_origin_ref"}
 )  # fmt: skip
+#: Added by E29-S06's revision (`test_closed_pnl_records_revision.py` pins them against the second
+#: ```sql blocks of Sec.3.3.6 and Sec.3.3.7, which this file does not read), per table, as 0029's
+#: `positions` has an `exchange_updated_ts` of its own.
+_S06 = {
+    "executions": frozenset({"closed_size", "ex_closed", "ix_exec_walk"}),
+    "position_snapshots": frozenset({"exchange_updated_ts", "ix_psnap_flat"}),
+}
 #: 0034 appends to these two (21 Sec.9.3 rule 7), so 0029 created the first n values.
 _CREATED = {"order_state": 12, "order_event_kind": 14}
 _TABLES = {
@@ -72,6 +79,11 @@ def _up() -> str:
 @cache
 def _down() -> str:
     return _norm(_alembic("downgrade", _DOWN, "--sql"))
+
+
+def _later(table: str) -> frozenset[str]:
+    """What a later revision added to `table`: not 0029's, so not in its SQL."""
+    return _LATER | _S06.get(table, frozenset())
 
 
 @cache
@@ -228,7 +240,8 @@ def _doc_columns(table: str) -> list[tuple[str, bool, str | None]]:
 def test_models_mirror_the_doc_columns(table: Table) -> None:
     """The `migrations` job autogenerate-diffs the DB against `db.models.metadata`; names,
     nullability and server defaults are pinned against the plan doc here."""
-    got = [(c.name, bool(c.nullable), _default(c)) for c in table.columns if c.name not in _LATER]
+    later = _later(table.name)
+    got = [(c.name, bool(c.nullable), _default(c)) for c in table.columns if c.name not in later]
     assert got == _doc_columns(table.name)
 
 
@@ -252,7 +265,7 @@ def test_models_mirror_the_check_constraints(table: Table) -> None:
         for c in table.constraints
         if isinstance(c, CheckConstraint)
     }
-    checks = {name: body for name, body in checks.items() if name not in _LATER}
+    checks = {name: body for name, body in checks.items() if name not in _later(table.name)}
     assert set(checks) == set(re.findall(r"CONSTRAINT (\w+)\s+CHECK", _doc_table(table.name)))
     for name, body in checks.items():
         assert _norm(f"CONSTRAINT {name} CHECK ({body})") in _up(), name
@@ -289,12 +302,12 @@ def _create_index(ix: Index) -> str:
 
 @pytest.mark.parametrize("table", _TABLES.values(), ids=list(_TABLES))
 def test_models_mirror_the_indexes(table: Table) -> None:
-    doc = "\n".join(_doc_block(h) for h in _BLOCKS)
-    assert sorted(str(ix.name) for ix in table.indexes) == sorted(
+    doc, added = "\n".join(_doc_block(h) for h in _BLOCKS), _S06.get(table.name, frozenset())
+    assert sorted(str(ix.name) for ix in table.indexes if ix.name not in added) == sorted(
         re.findall(rf"INDEX (\w+)\s+ON {table.name} ", doc)
     )
     for ix in table.indexes:
-        assert ix.name in _LATER or _create_index(ix) in _up(), ix.name
+        assert ix.name in _later(table.name) or _create_index(ix) in _up(), ix.name
 
 
 def test_leaves_qty_is_the_stored_generated_column() -> None:
@@ -322,7 +335,8 @@ def test_orders_carry_the_native_stop_loss_fields_from_day_one() -> None:
 def test_every_numeric_column_reads_back_as_decimal() -> None:
     """`Decimal` end to end (#845): no numeric column may hand a writer or reader a float."""
     numeric = [c.type for t in _TABLES.values() for c in t.columns if isinstance(c.type, Numeric)]
-    assert len(numeric) == 10 + 8 + 15 + 7  # orders, executions, positions, position_snapshots
+    # orders, executions (and E29-S06's `closed_size`), positions, position_snapshots
+    assert len(numeric) == 10 + 8 + 1 + 15 + 7
     assert all(n.asdecimal and n.python_type is Decimal for n in numeric)
 
 
@@ -351,7 +365,8 @@ def test_money_and_exchange_text_columns_carry_the_p1_classification_comment() -
         want |= dict.fromkeys(_EXCHANGE_TEXT.get(name, ()), models.OMS_EXCHANGE_TEXT_COMMENT)
         assert {c.name: c.comment for c in table.columns if c.comment} == want, name
         for column, comment in want.items():
-            assert f"COMMENT ON COLUMN {name}.{column} IS '{comment}';" in _up()
+            if column not in _later(name):
+                assert f"COMMENT ON COLUMN {name}.{column} IS '{comment}';" in _up()
 
 
 @pytest.mark.parametrize("table", list(_TABLES))

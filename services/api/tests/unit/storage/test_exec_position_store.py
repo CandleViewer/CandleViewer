@@ -84,11 +84,16 @@ _PORTS: list[tuple[Callable[..., object], type, Table, set[str]]] = [
 ]
 
 
+#: E29-S06's migration slice adds these two (21 Sec.3.3.6, Sec.3.3.7); its writer slice adds them to
+#: the ports, which until then never write or read them.
+_S06_COLUMNS = {"executions": {"closed_size"}, "position_snapshots": {"exchange_updated_ts"}}
+
+
 @pytest.mark.parametrize(("new", "row", "table", "assigned"), _PORTS)
 def test_rows_hold_every_column_and_inputs_all_but_what_is_assigned(
     new: Callable[..., object], row: type, table: Table, assigned: set[str]
 ) -> None:
-    columns = {c.name for c in table.columns}
+    columns = {c.name for c in table.columns} - _S06_COLUMNS.get(table.name, set())
     assert {f.name for f in fields(row)} == columns
     assert columns - {f.name for f in fields(cast(Any, new()))} == assigned
 
