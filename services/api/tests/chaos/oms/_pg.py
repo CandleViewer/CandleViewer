@@ -162,8 +162,9 @@ def ephemeral_range() -> tuple[int, int]:
 def free_port(ephemeral: tuple[int, int] | None = None) -> int:
     """A loopback port nothing listens on now, for the node to keep across a restart, and outside
     the ephemeral range (`ephemeral_range`) so that no outgoing connection takes it while the node
-    is stopped: above the range, else below it, else the kernel's pick. The scan above it starts at
-    a place of the process's own (its pid), so two nodes starting at once do not meet."""
+    is stopped: above the range, else below it; the kernel's pick only when no port lies outside
+    the range, an error when every one is taken. The scan above it starts at a place of the
+    process's own (its pid), so two nodes starting at once do not meet."""
     low, high = ephemeral if ephemeral is not None else ephemeral_range()
     above = list(range(high + 1, 65536))
     turn = os.getpid() % len(above) if above else 0
@@ -390,7 +391,7 @@ class PgWorld:
     #: From its start, when it was ready and when its account's startup pass reported (wall time).
     ready_s: float = 0.0
     passed_s: float = 0.0
-    oms: OmsRuntime = field(init=False)
+    oms: OmsRuntime = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.pool = SqlAlchemyRelationalRepository(self.db.app, "q04-oracle")

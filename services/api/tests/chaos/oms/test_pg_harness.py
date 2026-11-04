@@ -1,8 +1,9 @@
 """The Postgres tier's parts that need no Docker (E29-Q04 #1148; C-13.7). The scenarios themselves
 are deselected by the PR lanes, so what they lean on runs here: the venue handed from one process
-to the next (`_pg.HostPort`), a `PgWorld` among the worlds the oracle must check, and the markers
+to the next (`_pg.HostPort`), a `PgWorld` among the worlds the oracle must check, the markers
 of the scenarios' modules, `chaos`, `integration` and `nightly`, by which the nightly job selects
-the tier and the merge group's integration step leaves it out."""
+the tier and the merge group's integration step leaves it out, the node's port outside the
+kernel's ephemeral range, and the child's exit once its parent's pipe is closed."""
 
 from __future__ import annotations
 

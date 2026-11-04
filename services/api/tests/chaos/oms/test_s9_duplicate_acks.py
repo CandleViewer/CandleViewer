@@ -42,7 +42,8 @@ async def crashed(world: World) -> None:
 
     async def landed(_command: b01.Command) -> NoReturn:
         await world.port.place_order(place_request(SENDING, REF))
-        await asyncio.Event().wait()  # the answer never comes back: the process goes down
+        # the venue holds the create: the process goes down after the send
+        await asyncio.Event().wait()
         raise AssertionError("unreachable")
 
     rig.commands.on_place = landed
