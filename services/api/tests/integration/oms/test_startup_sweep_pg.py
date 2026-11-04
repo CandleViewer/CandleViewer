@@ -196,6 +196,7 @@ def _runtime(rig: Rig, pg_dsn: str, tmp_path: Path, writer: Writer) -> OmsRuntim
             pg_stores(settings, metrics),
             accounts=InMemoryTradingAccountReads(row),
             audit=lambda _alarm: writer,
+            closed_pnl=None,  # no closed-PnL sync: these read the sweep's own venue calls
         ),
         now=rig.clock,
         registry=REGISTRY,
