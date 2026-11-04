@@ -1182,7 +1182,7 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-HYGIENE", "put a deny word into the tool's own text", deny_in_tool),
     ("G-SCOPE", "touch `15` in the diff", touch_15),
     ("G-SCOPE", "edit a `14` line no A-row lists (SCR-055's checklist)", cat_sub("rolling window selector (10s/1m/5m)", "rolling window selector (10s/1m)")),
-    ("G-SCOPE", "drop A-3's line from `14`", cat_sub("the sign-off rows SO-13 … SO-18)\n", "")),
+    ("G-SCOPE", "corrupt A-3's line in `14` (drop its closing bracket and newline)", cat_sub("the sign-off rows SO-13 … SO-18)\n", "")),
     ("G-AROW", "move A-5 off its listed anchor", lambda t: replace(t, hand=t.hand.replace("| A-5 | `14`:1438,", "| A-5 | `14`:1439,"))),
 )
 DECK_MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
