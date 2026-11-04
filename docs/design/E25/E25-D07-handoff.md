@@ -1,6 +1,6 @@
 # E25-D07 — Hand-off (§A–§F for the five detector surfaces, SCR-055 … SCR-059)
 
-The spec is [E25-D07.md](E25-D07.md); every §, C-, G-, Q- and FZ- id below without a prefix is the spec's. The copy deck as data is `E25-D07-copy-deck.jsonl`. Nothing here edits `14`, `15` or a parent: §C's rows are copy-ready, applied by this ticket's closing slice (PR 1b); #5415 and #5456 have merged. The component-level hand-off of the six detector components is D05's own file, [E25-D05-handoff.md](E25-D05-handoff.md), cited and not repeated.
+The spec is [E25-D07.md](E25-D07.md); every §, C-, G-, Q- and FZ- id below without a prefix is the spec's. The copy deck as data is `E25-D07-copy-deck.jsonl`. Nothing here edits `15` or a parent. §C's rows are applied to `14` by this ticket's closing slice (PR 1b), which carries this file; #5415 and #5456 have merged. The component-level hand-off of the six detector components is D05's own file, [E25-D05-handoff.md](E25-D05-handoff.md), cited and not repeated.
 
 ## §A Placement
 
@@ -27,7 +27,7 @@ The cell widths are D03's band board (`D03`:42); the drawer and the dialog sizes
 | Copy     | `detectors.tape.*`               | `detectors.imbalance.*`          | `detectors.regime.*` | `detectors.methodology.*`     | `detectors.settings.*`                   |
 | Shared   | `detectors.shared.*`             | `detectors.shared.*`             | `detectors.shared.*` | none                          | `detectors.shared.*`                     |
 
-## §C Copy-ready rows (applied by the closing PR)
+## §C Copy-ready rows (applied to `14` by PR 1b)
 
 | A   | File and line           | Old | New                                                                                                                                                                                                                                 | Owner                    |
 | --- | ----------------------- | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
@@ -37,7 +37,7 @@ The cell widths are D03's band board (`D03`:42); the drawer and the dialog sizes
 | A-4 | `14`:1424, a line after | —   | "- **Hand-off pack (E25-D07):** [E25-D07.md](../design/E25/E25-D07.md) v0 (owner approval pending; the bindings DB-21 … DB-23, the frozen string FZ-1, the deck's `detectors.methodology.*` rows, the sign-off rows SO-19 … SO-22)" | this ticket (`14` owner) |
 | A-5 | `14`:1438, a line after | —   | "- **Hand-off pack (E25-D07):** [E25-D07.md](../design/E25/E25-D07.md) v0 (owner approval pending; the bindings DB-24 … DB-28, the frozen strings FZ-2 … FZ-15, the sign-off rows SO-23 … SO-27)"                                   | this ticket (`14` owner) |
 
-The lines are read at the base, with #5415's rewrite of SCR-058's and SCR-059's pointer lines merged. Each A-row inserts a line, which would shift every later anchor by one, so the closing slice applies A-1 … A-5 by content, bottom-up (A-5 first). Every other change the pack needs is a routed row with its owner (spec §8.3, §14).
+The lines are read at the base, with #5415's rewrite of SCR-058's and SCR-059's pointer lines merged. Each A-row inserts a line, which would shift every later anchor by one, so PR 1b applies A-1 … A-5 by content, bottom-up (A-5 first), and the tool's full stage permits `14` edits at these five anchors only (spec §17, G-SCOPE). Every other change the pack needs is a routed row with its owner (spec §8.3, §14).
 
 ## §D Storybook
 

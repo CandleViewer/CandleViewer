@@ -53,7 +53,10 @@ Gates (each FAIL led by its name):
   G-FILLED    no placeholder word in the pack, the hand-off or the deck.
   G-HYGIENE   no closing keyword, local path, URL or host, agent name, double-brace slot or
               public-text deny word in the texts; no deny word in this tool or the pins file.
-  G-SCOPE     the diff against `git merge-base HEAD origin/main` touches only the stage's files.
+  G-SCOPE     the diff against `git merge-base HEAD origin/main` touches only the stage's files;
+              at the full stage `14` too, at the listed anchors only: the working tree's `14` is
+              the merge base's with each A-row's New on its own line after its anchor (CAT_ANCHORS)
+              and no other line changed. The deck stage stays `14`-strict.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e25_d07_handoff_audit.py --stage full --check
@@ -68,6 +71,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import difflib
 import hashlib
 import json
 import re
@@ -104,6 +108,11 @@ PATHS: dict[str, str] = {
     "E17": "docs/design/E17/E17-D01.md",
     "CAL": "docs/plan/backlog/_tools/calendar_cv.py",
 }
+CAT_REL = PATHS["14"]
+# The `14` anchors the full stage permits (the orchestrator's ruling on #5818, 2026-11-04 12:08Z):
+# PR 1b applies A-1 ... A-5, each one line after its screen's hi-fi pointer line at the base. A
+# `14` edit anywhere else fails G-SCOPE; G-AROW holds hand-off section C to this list.
+CAT_ANCHORS = {"A-1": 1359, "A-2": 1385, "A-3": 1410, "A-4": 1424, "A-5": 1438}
 REF_OF = {"D06": D06_REF}  # every other key is read at BASE
 MERGED_KEYS = ("D02", "D03", "D04", "D05")  # a deck row cites one of these, never a request ref
 
@@ -262,6 +271,7 @@ class Texts:
     memo: dict[str, str | None]
     full: bool
     missing: tuple[str, ...]
+    cat14: str = ""  # the working tree's `14` (the full stage), as PR 1b applied the A-rows
 
 
 def git(*args: str) -> str | None:
@@ -899,6 +909,9 @@ def g_arow(t: Texts, vals: dict[str, str]) -> list[str]:
             bad.append(f"{r[0]}: an insert row with Old text")
     if hit != {sc.hifi for sc in SCREENS.values()}:
         bad.append("§C does not follow each of the five screens' pointer lines once")
+    anchors = {r[0]: int(m[1]) for r in rows if (m := re.match(r"`14`:(\d+)", r[1]))}
+    if anchors != CAT_ANCHORS:
+        bad.append(f"§C's anchors {anchors} are not the permitted list {CAT_ANCHORS}")
     return bad
 
 
@@ -948,12 +961,44 @@ def g_hygiene(t: Texts, vals: dict[str, str]) -> list[str]:
     return bad
 
 
+def cat_scope(t: Texts) -> list[str]:
+    """The full stage's `14`: the merge base's, with each A-row's New on its own line after its
+    listed anchor (CAT_ANCHORS), bottom-up; any other difference is a stray edit."""
+    mb = git("merge-base", "HEAD", "origin/main")
+    old = show(t, mb.strip(), CAT_REL) if mb else None
+    if old is None:
+        return ["cannot read `14` at the merge base (git failed)"]
+    ls = old.split("\n")
+    new_of = {r[0]: r[3] for r in table_rows(section(t.hand, "## §C"), "A-") if len(r) > 3}
+    bad, at_i = [], []
+    for aid, n in CAT_ANCHORS.items():
+        anchor, new = line(t, "14", n), new_of.get(aid, "")
+        if len(new) < 2 or not (new[0] == new[-1] == '"'):
+            bad.append(f"{aid}: §C carries no quoted New text to apply")
+            continue
+        hits = [i for i, x in enumerate(ls) if x == anchor]
+        if len(hits) != 1:
+            bad.append(f"{aid}: its anchor `14`:{n} stands {len(hits)} times at the merge base")
+            continue
+        at_i.append((hits[0], new[1:-1]))
+    for i, new in sorted(at_i, reverse=True):
+        ls.insert(i + 1, new)
+    want, have = ls, t.cat14.split("\n")
+    ops = difflib.SequenceMatcher(None, want, have, autojunk=False).get_opcodes()
+    for op, _, _, j1, j2 in ops:
+        if op != "equal":
+            where = f"`14`:{j1 + 1}" if j2 > j1 else f"after `14`:{j1}"
+            bad.append(f"{where}: {op} outside the permitted anchors {sorted(CAT_ANCHORS)}")
+    return bad
+
+
 def g_scope(t: Texts, vals: dict[str, str]) -> list[str]:
     if t.changed is None:
         return ["cannot list the changed paths (git failed)"]
-    own = OWN_PATHS if t.full else DECK_PATHS
-    return [f"{p} is touched; the {stage(t)} stage owns {', '.join(own)}" for p in t.changed
-            if p not in own]  # fmt: skip
+    own = (*OWN_PATHS, CAT_REL) if t.full else DECK_PATHS
+    bad = [f"{p} is touched; the {stage(t)} stage owns {', '.join(own)}" for p in t.changed
+           if p not in own]  # fmt: skip
+    return bad + (cat_scope(t) if t.full else [])
 
 
 GATES: dict[str, Callable[[Texts, dict[str, str]], list[str]]] = {
@@ -1016,7 +1061,7 @@ def load(stage_name: str) -> Texts:
     missing = tuple(rel for rel in need if not (ROOT / rel).exists())
     if full:
         return Texts(read(SPEC_REL), read(HAND_REL), read(DECK_REL), read(PINS_REL),
-                     read(TOOL_REL), changed_paths(), {}, True, missing)  # fmt: skip
+                     read(TOOL_REL), changed_paths(), {}, True, missing, read(CAT_REL))  # fmt: skip
     # the deck stage reads the deck and this tool alone, present pack files or not
     return Texts("", "", read(DECK_REL), "", read(TOOL_REL), changed_paths(), {}, False, missing)
 
@@ -1078,6 +1123,27 @@ def touch_14(t: Texts) -> Texts:
     return replace(t, changed=[*(OWN_PATHS if t.full else DECK_PATHS), PATHS["14"]])
 
 
+def touch_15(t: Texts) -> Texts:
+    return replace(t, changed=[*OWN_PATHS, CAT_REL, PATHS["15"]])
+
+
+def add_a7(t: Texts) -> Texts:
+    ls = t.hand.split("\n")
+    i = next(k for k, ln in enumerate(ls) if ln.startswith("| A-5 |"))
+    return replace(t, hand="\n".join([*ls[: i + 1], "| A-7 " + ls[i][6:], *ls[i + 1 :]]))
+
+
+def cat_sub(old: str, new: str) -> Mutation:
+    """Edits the working tree's `14` only (the full stage's applied A-rows)."""
+
+    def f(t: Texts) -> Texts:
+        if t.cat14.count(old) != 1:
+            raise SystemExit(f"self-test: `14` carries {old[:50]!r} {t.cat14.count(old)} times")
+        return replace(t, cat14=t.cat14.replace(old, new))
+
+    return f
+
+
 # fmt: off
 MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-STAGE", "the hand-off missing at the full stage", missing(HAND_REL)),
@@ -1109,12 +1175,15 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-DERIVED", "type a wrong `T` budget", sub("spec", "1.5<!--=BUD:t.s56.ms-->", "2<!--=BUD:t.s56.ms-->")),
     ("G-OPEN", "drop a parent's open row from §14", sub("spec", "D05 G1, G11, G12", "D05 G1, G11")),
     ("G-OPEN", "close an open row in §14.2", sub("spec", "| D05 Q9 ", "| D05 Q9, Q10 ")),
-    ("G-AROW", "leave a gap in §C", sub("hand", "| A-4 |", "| A-6 |")),
+    ("G-AROW", "leave a gap in §C (an A-7 after A-5)", add_a7),
     ("G-CITE", "re-point a `D04` cite to an unpinned line", sub("spec", "(`D04`:208)", "(`D04`:209)")),
     ("G-FILLED", "write a placeholder", sub("spec", "The table is empty until the walkthrough is posted on #672.", "The table is TBD.")),
     ("G-HYGIENE", "write a closing keyword against #672", sub("spec", "it alone carries the closing line,", "it alone carries the closing line (Closes #672),")),
     ("G-HYGIENE", "put a deny word into the tool's own text", deny_in_tool),
-    ("G-SCOPE", "touch `14` in the diff", touch_14),
+    ("G-SCOPE", "touch `15` in the diff", touch_15),
+    ("G-SCOPE", "edit a `14` line no A-row lists (SCR-055's checklist)", cat_sub("rolling window selector (10s/1m/5m)", "rolling window selector (10s/1m)")),
+    ("G-SCOPE", "drop A-3's line from `14`", cat_sub("the sign-off rows SO-13 … SO-18)\n", "")),
+    ("G-AROW", "move A-5 off its listed anchor", lambda t: replace(t, hand=t.hand.replace("| A-5 | `14`:1438,", "| A-5 | `14`:1439,"))),
 )
 DECK_MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-STAGE", "the deck missing at the deck stage", missing(DECK_REL)),
@@ -1146,9 +1215,9 @@ def repin_refusal(t: Texts) -> str | None:
 
 def selftest(stage_name: str) -> tuple[bool, list[str]]:
     first = load(stage_name)
-    base = replace(first, changed=list(OWN_PATHS if first.full else DECK_PATHS))
+    base = replace(first, changed=list((*OWN_PATHS, CAT_REL) if first.full else DECK_PATHS))
     muts = MUTATIONS if base.full else DECK_MUTATIONS
-    before = (base.spec, base.hand, base.deck)
+    before = (base.spec, base.hand, base.deck, base.cat14)
     found = audit(base)
     out = [*(f"self-test: {h}" for h in header(base)), f"self-test: baseline {len(found)} FAIL"]
     out += [f"  baseline {g}: {m}" for g, m in found]
@@ -1170,7 +1239,7 @@ def selftest(stage_name: str) -> tuple[bool, list[str]]:
     if uncovered:
         out.append(f"FAIL no mutation for {', '.join(uncovered)}")
     after = load(stage_name)
-    restored = (after.spec, after.hand, after.deck) == before
+    restored = (after.spec, after.hand, after.deck, after.cat14) == before
     ok &= restored
     out.append(f"self-test: {len(muts)} mutations, texts restored: {'yes' if restored else 'NO'}")
     out.append(f"self-test: {'PASS' if ok else 'FAIL'}")
