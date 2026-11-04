@@ -1,20 +1,11 @@
 #!/usr/bin/env python3
-"""E26-D06 (#513) audit: the replay motion spec and accessibility design review.
+"""E26-D06 (#513) audit: the replay motion spec and accessibility review (section 17).
 
-Offline and default-deny; the shared gates and the mutation harness live in `spec_audit_lib.py`
-beside this file (byte-identical, G-HELPER). It reads every cited document AS TEXT at its pin
-(KEYED), and the review and the helper from the working tree; the only repo code it runs is
-`contrast_ratio()` (contrast_check.py) and `simulate()` / `delta_e76()` (cvd_simulate.py).
-
-Gates: GATES below (section 17.2). The BQ list is comment 6598368751 on #513, RULED by comment
-6608045629 (G-RULING). Pins (G-RULED): each BQ bullet's sha256[:16] in RULED_PINS below, no pins
-file (the pack rule); `--repin-ruled` is the only writer of that block.
-
-Usage (from the repo root):
-  python3 -I -B docs/design/_tools/e26_d06_motion_a11y_audit.py --check | --json | --self-test
-  python3 -I -B docs/design/_tools/e26_d06_motion_a11y_audit.py --repin | --repin-ruled | --fill
-`--repin` prints where each key cite's words stand now; `--fill` writes section 10's tables.
-Exit 0 = no FAIL; 1 = at least one FAIL.
+Offline; the shared gates live in `spec_audit_lib.py` beside this file (G-HELPER). Cited documents
+are read AS TEXT at their pins (KEYED); it runs only `contrast_ratio()` and `simulate()` /
+`delta_e76()`. RULED_PINS hold each BQ bullet's sha256[:16] (`--repin-ruled` writes them).
+Usage, from the repo root: python3 -I -B <this file> --check | --json | --self-test | --repin |
+--repin-ruled | --fill. Exit 0 = no FAIL; 1 = at least one FAIL.
 """
 
 from __future__ import annotations
@@ -131,6 +122,12 @@ T_MOTIONS = ("Playhead advance", "Scrub drag", "Scrub settle", "Seeking", "Play 
     "Bookmark marker", "Gap-encountered", "REPLAY chrome entry / exit")
 DECORATIVE_TOKENS = ("`motion.duration.fast`", "`motion.duration.normal`")
 THRESHOLD = "20"
+T2_KEYS = dict(k.split(":") for k in (  # D02:222-235, D02B:238 / :240 -> the rendering
+    "rbac.view_as:notice rbac.permission:sentence replay.no_session:notice "
+    "replay.degraded:notice replay.ended:notice replay.end_of_range:2b replay.error:2a "
+    "replay.window_start:2b replay.step_bar_time:2b replay.paper_working:2a "
+    "replay.paper_above_25x:2a replay.no_account:2a replay.paper_off:banner "
+    "replay.realtime_panel:2a replay.symbol_replaying:second replay.not_replayed:second").split())
 LR_OBJECTS = ("clock", "opt-in", "status", "alert", "notice", "press", "dialog", "drawer", "silent")
 LR_POLITE = ("off", "polite", "assertive")
 LR_RATES = ("at most once a second", "1 per 2 s by default, at most once a second",
@@ -158,15 +155,14 @@ def _pairs(packed: str) -> tuple[tuple[str, str, float], ...]:
 # Section 10.1: the union of the parents' pairs (D02 section 12.2, D03 section 13, D04 section
 # 11.2, D05 section 7.2), the replay frame on the shipped token; every pair must meet its floor.
 UNION_PAIRS = _pairs(
-    "text.primary/surface.raised/T text.secondary/surface.raised/T "
-    "text.tertiary/surface.raised/T text.primary/surface.selected/T "
-    "text.on-action/action.primary.default/T text.primary/status.warning.subtle/T "
-    "text.primary/status.info.subtle/T text.primary/status.danger.subtle/T "
-    "text.primary/surface.overlay/T text.secondary/surface.overlay/T "
-    "text.tertiary/surface.overlay/T text.primary/surface.canvas/T "
-    "text.primary/surface.hover/T chart.replay.border/surface.canvas/N "
-    "chart.replay.border/surface.raised/N env.demo/surface.raised/N "
-    "text.tertiary/surface.sunken/N neutral.default/surface.raised/N "
+    "text.primary/surface.raised/T text.secondary/surface.raised/T text.tertiary/surface.raised/T "
+    "text.primary/surface.selected/T text.on-action/action.primary.default/T "
+    "text.primary/status.warning.subtle/T text.primary/status.info.subtle/T "
+    "text.primary/status.danger.subtle/T text.primary/surface.overlay/T "
+    "text.secondary/surface.overlay/T text.tertiary/surface.overlay/T "
+    "text.primary/surface.canvas/T text.primary/surface.hover/T "
+    "chart.replay.border/surface.canvas/N chart.replay.border/surface.raised/N "
+    "env.demo/surface.raised/N text.tertiary/surface.sunken/N neutral.default/surface.raised/N "
     "neutral.default/surface.sunken/N neutral.default/surface.overlay/N "
     "focus.ring/surface.raised/N focus.ring/surface.canvas/N focus.ring/surface.overlay/N "
     "focus.ring/status.warning.subtle/N status.warning.strong/status.warning.subtle/N "
@@ -179,8 +175,8 @@ REJECTED_PAIRS = _pairs(
     "text.tertiary/surface.selected/T border.strong/surface.raised/N "
     "border.strong/surface.overlay/N text.primary/neutral.default/N "
     "text.disabled/surface.raised/T text.disabled/surface.overlay/T "
-    "sell.default/surface.overlay/T buy.default/surface.overlay/T "
-    "sell.default/surface.raised/T status.warning.default/surface.overlay/T"
+    "sell.default/surface.overlay/T buy.default/surface.overlay/T sell.default/surface.raised/T "
+    "status.warning.default/surface.overlay/T"
 )
 # Section 10.3: the pairs this review adds (F-01, F-02); a floor miss is a finding, not a FAIL.
 REVIEW_PAIRS = _pairs(
@@ -261,9 +257,8 @@ def review_row(fg: str, bg: str, floor: float) -> list[str]:
 def cvd_rows() -> list[list[str]]:
     cvd, out = measurers()[1], []
     for o, n in [(o, n) for o in CVD_OTHERS for n in THEMES]:
-        sim = [
-            (cvd.simulate(theme(n)[REPLAY], d), cvd.simulate(theme(n)[o], d)) for d in DEFICIENCIES
-        ]
+        tn = theme(n)
+        sim = [(cvd.simulate(tn[REPLAY], d), cvd.simulate(tn[o], d)) for d in DEFICIENCIES]
         out.append([f"`{REPLAY}` vs `{o}`", n, *(f"{float(cvd.delta_e76(*p)):.1f}" for p in sim)])
     return out
 
@@ -426,13 +421,16 @@ def g_keys(t: L.Tree) -> list[str]:
 def g_t2(t: L.Tree) -> list[str]:
     r4 = next((ln for ln in spec(t).split("\n") if ln.startswith("- **R-4 ")), "")
     bad = L.t2_markers(r4) + L.no_disabled_tokens(spec(t))
-    got = rows(t, "## 7. Gated controls")
-    if not got or "rbac.view_as" not in got[0][4] or "viewing as" not in got[0][1]:
+    lines = (ln.strip()[1:-1] for ln in sec(t, "## 7. Gated").split("\n") if ln.startswith("| T2-"))
+    got = [r for r in ([c.strip() for c in re.split(r"(?<!\\)\|", x)] for x in lines) if len(r) > 5]
+    if not got or "rbac.view_as" not in got[0][1] or "viewing as" not in got[0][2]:
         bad.append("the view-as row is not first")
+    for key, form in T2_KEYS.items():  # every D02 5.3 key: a row, its rendering and a press
+        r = next((x for x in got if f"`{key}`" in x[1]), None)
+        if r is None or form not in r[3] or not r[4]:
+            bad.append(f"{key}: no row with its {form} rendering and a press")
     for r in got:
-        if len(r) < 6 or r[2] not in ("T2", "not gated"):
-            bad.append(f"{r[0] if r else '?'} class")
-        elif re.search(r"cancel|close", r[1]) and "never the arm" not in " ".join(r):
+        if re.search(r"cancel|close", r[2]) and "never the arm" not in r[3]:
             bad.append(f"{r[0]} cancel gated on the arm")
     return bad
 
@@ -604,11 +602,11 @@ def g_ruling(t: L.Tree) -> list[str]:
 # ruled-pins:begin (written by --repin-ruled only)
 # fmt: off
 RULED_PINS: tuple[str, ...] = (
-    "BQ-0 7bb5d5ceb5ed6c04", "BQ-1 191dd12073a4aa71", "BQ-2 55d15bd60609988d",
+    "BQ-0 96880a872a6ad26f", "BQ-1 fd163719449225ff", "BQ-2 5dbc5f5146f2578d",
     "BQ-3 583aa9e4df37bdb7", "BQ-4 485b9c72fa5c7125", "BQ-5 a3451e531467647c",
     "BQ-6 014817a72d76dda6", "BQ-7 4257452494242623", "BQ-8 8817f362d19fbf82",
-    "BQ-9 bd2cfb9532dad927", "BQ-10 4f3af5bb4d1a9417", "BQ-11 b2ac60b543a68f11",
-    "BQ-12 ebc9328051bee661", "BQ-13 85b712db0ef4a877",
+    "BQ-9 bd2cfb9532dad927", "BQ-10 4f3af5bb4d1a9417", "BQ-11 acecf3008a4b1d71",
+    "BQ-12 49c094d2d34533ab", "BQ-13 85b712db0ef4a877",
 )
 # ruled-pins:end
 # fmt: on
@@ -620,7 +618,7 @@ def g_outrank(t: L.Tree) -> list[str]:
         (rows(t, "### 14.1"), "C-06", ("E47D09:179", "DE-19")),
         (rows(t, "### 14.4"), "A-06", ("E47D04:139", "Replay transport")),
         (rows(t, "## 13. Findings"), "F-10", ("E47D04:301",)),
-        (rows(t, "## 7. Gated controls"), "T2-13", ("not gated", "E47D08:260")),
+        (rows(t, "## 7. Gated controls"), "T2-21", ("not gated", "E47D08:260")),
     )
     bad = []
     for got, rid, words in want:
@@ -755,8 +753,10 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        r"(\| MP-05 \|(?:[^|\n]*\|){3} )`motion\.duration\.instant`", r"\1`motion.duration.fast`"),
     _S("M-40", "G-KEYS", "the thumb's arrows apply at once",
        "adjust a pending seek one bar (DE-19)", "step one bar at once"),
-    _R("M-41", "G-OUTRANK", "replay Pause gated", r"(\| T2-13 \|[^|]*\| )not gated", r"\1T2"),
+    _R("M-41", "G-OUTRANK", "Pause gated", r"(\| T2-21 \|(?:[^|]*\|){2} )not gated", r"\1T2"),
     _file("M-42", "G-CITE", "a sibling pin on a wrong pushed commit", "pin", f"D03 {BASE}"),
+    _S("M-43", "G-T2", "a D02 5.3 key with no row", "`replay.ended` (4", "`replay.over` (4"),
+    _S("M-44", "G-T2", "the Viewer's sentence form lost", "| sentence form: CMP", "| 2a: CMP"),
 )
 # fmt: on
 
