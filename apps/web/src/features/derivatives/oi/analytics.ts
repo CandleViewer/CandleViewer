@@ -21,7 +21,7 @@ export function createOiAnalytics(sink: Report = dispatch) {
     }
   };
   return {
-    /** D02 §14 `{mode, quadrant_colouring}`: E24-S02's toggle calls it (keys: #778's contract). */
+    /** D02 §14 `{mode, quadrant_colouring}`: the mode and colouring toggles call it. */
     metricToggled: (mode: "absolute" | "delta", quadrantColouring: boolean): void =>
       report({ name: "oi_panel.metric_toggled", mode, quadrant_colouring: quadrantColouring }),
     /** The chart interval re-aligning the series. */
@@ -50,3 +50,18 @@ export function createOiAnalytics(sink: Report = dispatch) {
 }
 
 export type OiAnalytics = ReturnType<typeof createOiAnalytics>;
+
+/** E24-S02 (#777): the unclassified counter, beside the feed's analytics (the feed never calls it). */
+export function createQuadrantAnalytics(report: Report = dispatch) {
+  return {
+    /** A material change in the unclassified count (counts only, D02 §14). */
+    unclassifiedCounted: (symbol: string, total: number, noSample: number): void =>
+      report({ name: "oi_panel.unclassified_counted", symbol, total, no_sample: noSample }),
+    /**
+     * PROPOSED event name (not in D02 §14): the unclassified count a pane seeds with, once per symbol |
+     * interval, so a steady gap present from the first render reaches telemetry (counts only).
+     */
+    unclassifiedSeeded: (symbol: string, total: number, noSample: number): void =>
+      report({ name: "oi_panel.unclassified_seeded", symbol, total, no_sample: noSample }),
+  };
+}
