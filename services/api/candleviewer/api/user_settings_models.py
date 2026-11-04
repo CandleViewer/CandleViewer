@@ -155,15 +155,41 @@ def _no_constant(name: str) -> object:
     raise ValueError(name)  # NaN, Infinity and -Infinity are not JSON (RFC 8259)
 
 
+def _nested_model(annotation: object) -> type[BaseModel] | None:
+    """The generated object model a member holds (`NotificationSound | None` is its model)."""
+    for candidate in (annotation, *get_args(annotation)):
+        if isinstance(candidate, type) and issubclass(candidate, BaseModel):
+            return candidate
+    return None
+
+
+def _without_optional_nulls(model: type[BaseModel], value: dict[str, object]) -> dict[str, object]:
+    """`value` with every nested null left out where `model`'s member is optional (#4237: the
+    generated models refuse a sent null; 22 reads an absent and a null member alike). A null on a
+    member that has a non-null default (a sound's `volume`) stays, so the model refuses it."""
+    kept: dict[str, object] = {}
+    for key, member_value in value.items():
+        member = model.model_fields.get(key)
+        if member is None:
+            kept[key] = member_value  # `extra="forbid"` refuses it
+        elif member_value is None and not member.is_required() and member.default is None:
+            continue
+        elif (inner := _nested_model(member.annotation)) and isinstance(member_value, dict):
+            kept[key] = _without_optional_nulls(inner, member_value)
+        else:
+            kept[key] = member_value
+    return kept
+
+
 def canonical(leaf: Leaf, value: object) -> object:
     """`value` as the leaf's generated model writes it; `ValidationError` when it refuses it.
-    A nested null is dropped (`exclude_none`): an object leaf's absent and null members both read
-    as their default (22 `NotificationMatrix`, E40-D02 CC-8), and a stored `null` member would
+    A nested null on an optional member is dropped: an object leaf's absent and null members both
+    read as their default (22 `NotificationMatrix`, E40-D02 CC-8), and a stored `null` member would
     break 22's own `Settings` schema when served. A leaf whose value is null is a reset, judged
     before this is called."""
-    dumped = leaf.model.model_validate({leaf.field: value}).model_dump(
-        mode="json", exclude_none=True
-    )
+    dumped = leaf.model.model_validate(
+        _without_optional_nulls(leaf.model, {leaf.field: value})
+    ).model_dump(mode="json", exclude_none=True)
     return dumped[leaf.field]
 
 
