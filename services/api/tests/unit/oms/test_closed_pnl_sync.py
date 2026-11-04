@@ -21,12 +21,14 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from structlog.testing import capture_logs
 
+from candleviewer.domain.order_entry import OrderEntryRefusal, RefusalReason
 from candleviewer.domain.primitives import Environment
 from candleviewer.exchange.base.models import AccountRef, ClosedPnl, Position, RateLane
 from candleviewer.exchange.bybit import private_parse as pp
 from candleviewer.exchange.bybit import trading_parse as tp
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.closed_pnl_sync import FETCH_SECONDS, ClosedPnlSync, merged
+from candleviewer.oms.errors import AccountScopeDenied, OrderEntryRefused, StoreUnavailable
 from candleviewer.oms.ports import RateReading
 from candleviewer.storage.repositories.closed_pnl import (
     VENUE_COLUMNS,
@@ -198,8 +200,11 @@ class Store:
 @dataclass
 class Accounts:
     named: Any = None  # the account every resolve answers, when set; else the one asked
+    failures: list[Exception] = field(default_factory=list)  # the next resolves', in order
 
     async def trading_account(self, account_id: Any) -> AccountRef:
+        if self.failures:
+            raise self.failures.pop(0)
         return account(self.named or account_id)
 
 
@@ -219,11 +224,12 @@ class Rig:
         return {k: seen.get(f"{FETCH_SECONDS}_count{{result={k}}}", 0) for k in ("ok", "failed")}
 
 
-def rig(at: datetime = T0, resolve: Any = None, **venue: Any) -> Rig:
+def rig(at: datetime = T0, resolve: Any = None, unresolved: Any = (), **venue: Any) -> Rig:
     v, store, metrics, loop = Venue(**venue), Store(), Metrics("demo"), asyncio.get_running_loop()
     told = list[str]()
     sync = ClosedPnlSync(
-        accounts=Accounts(resolve), router=v, records=store, closes=store, snapshots=store,
+        accounts=Accounts(resolve, list(unresolved)), router=v, records=store, closes=store,
+        snapshots=store,
         metrics=metrics, now=lambda: at + timedelta(seconds=loop.time()),
         on_ended=lambda: told.append("ended"),
     )  # fmt: skip
@@ -297,6 +303,44 @@ async def test_a_failed_read_keeps_the_poll_until_one_succeeds() -> None:
     assert r.times() == [0, 60, 120] and r.counted() == {"ok": 1, "failed": 2}
     failed = [e["kind"] for e in logs if e["event"] == "closed_pnl_read_failed"]
     assert failed == ["ConnectionError", "TimeoutError"]
+    await r.sync.stop()
+
+
+def _refusal(reason: RefusalReason) -> OrderEntryRefused:
+    return OrderEntryRefused(OrderEntryRefusal(reason, "Order entry is not available."))
+
+
+@pytest.mark.parametrize(
+    "refusal", [AccountScopeDenied(), _refusal("no_active_key")], ids=["deleted", "keyless"]
+)
+@virtual
+async def test_an_account_the_binding_refuses_is_not_polled_until_its_next_trigger(
+    refusal: Exception,
+) -> None:
+    """A refusal outright (deleted, missing or another environment's, or keyless) ends the
+    account's poll, the wait its stored fill keeps too, rather than resolving it every
+    `SETTLE_POLL_S` until a restart; its next trigger asks again."""
+    r = rig(unresolved=[refusal] * 2)
+    r.sync.start([])
+    r.sync.stored(_fill(Decimal("0.5")))  # it comes in by a fill, whose wait would poll it
+    await asyncio.sleep(600)
+    assert r.counted() == {"ok": 0, "failed": 1}
+    r.sync.reconnected(ACCOUNT_A)
+    await asyncio.sleep(600)
+    assert r.counted() == {"ok": 0, "failed": 2} and r.venue.reads == []
+    await r.sync.stop()
+
+
+@pytest.mark.parametrize(
+    "failure", [TimeoutError(), StoreUnavailable(), _refusal("maintenance")],
+    ids=["timeout", "store", "another_refusal"],
+)  # fmt: skip
+@virtual
+async def test_a_resolve_that_fails_otherwise_keeps_the_poll(failure: Exception) -> None:
+    r = rig(unresolved=[failure] * 2)
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(600)
+    assert r.counted() == {"ok": 1, "failed": 2} and r.times() == [120]
     await r.sync.stop()
 
 
