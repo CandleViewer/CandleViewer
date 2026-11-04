@@ -20,7 +20,7 @@ import socket
 import subprocess
 import sys
 import time
-from collections.abc import AsyncIterator, Callable, MutableMapping
+from collections.abc import AsyncIterator, Callable, Iterator, MutableMapping
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -42,6 +42,7 @@ from candleviewer.observability.logging import reset_logging
 from candleviewer.ws import limits
 from candleviewer.ws.binary import TRADES, Frame, decode_b64
 from candleviewer.ws.gateway import WS_PATH
+from candleviewer.ws.metrics import cv_ws_fanout_seconds
 from candleviewer.ws.sequencing import CLIENT_RESYNC_REASONS, SequencingHub
 from tests import _ci_network_guard as ci_guard
 
@@ -2477,9 +2478,28 @@ async def frames_until(ws: Any, book_deltas: int) -> list[dict[str, Any]]:
     return got
 
 
+def fanout_count() -> float:
+    """The in-process fan-out histogram's count. The harness backend runs in this process, so
+    its `/metrics` serves the process-global registry: whatever an earlier test observed
+    (tests/unit/ws/test_withdrawn_grant_frames.py leaves 64) is already in it (#5751)."""
+    return cv_ws_fanout_seconds.labels().reading()[0][-1]
+
+
+@pytest.fixture(params=[False, True], ids=["clean", "leftover"])
+def prior_fanout_count(request: pytest.FixtureRequest) -> Iterator[float]:
+    """`leftover` plays an earlier test that left observations behind (the #5751 order
+    dependence); the cells are restored after, so no other test sees them."""
+    cells = cv_ws_fanout_seconds.labels()._cells
+    saved = list(cells)
+    if request.param:
+        cv_ws_fanout_seconds.labels().observe(0.001, 64)
+    yield fanout_count()
+    cells[:] = saved
+
+
 @pytest.mark.parametrize("mode", ["off", "on"])
 async def test_with_instrumentation_off_nothing_is_recorded_and_a_client_still_ends_consistent(
-    mode: str, tmp_path: Path
+    mode: str, tmp_path: Path, prior_fanout_count: float
 ) -> None:
     """Off: every inventoried name holds its stand-in while the backend serves, no
     frame carries an `sp` past the 32nd delta, the book a client rebuilds is the server's, the
@@ -2514,7 +2534,8 @@ async def test_with_instrumentation_off_nothing_is_recorded_and_a_client_still_e
             data = [m for m in got if m["t"] in ("snap", "d")]
             assert any("sp" in m for m in data) is (mode == "on")
         scrape = budgets.parse_scrape(await asyncio.to_thread(runner.get, be.port, "/metrics"))
-        assert (budgets.total(scrape, "cv_ws_fanout_seconds_count") > 0) is (mode == "on")
+        recorded = budgets.total(scrape, "cv_ws_fanout_seconds_count") - prior_fanout_count
+        assert (recorded > 0) is (mode == "on")  # what THIS backend recorded, not the registry's
         assert budgets.total(scrape, "cvwb_frames_encoded_total") > 0  # E17-T02's: never stubbed
         assert budgets.total(scrape, "process_cpu_seconds_total") > 0  # the harness's own
     assert all(held()[k] is v for k, v in before.items())  # scoped: production names restored
