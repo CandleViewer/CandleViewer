@@ -41,6 +41,10 @@ dependencies = [
   "opentelemetry-api",
   "psutil",
   "psycopg[binary]>=3.2",
+  # #1130: the IANA zone data alert quiet hours read, from the package rather
+  # than the image: the slim base's tzdata drops the legacy aliases (US/Eastern, Asia/Calcutta) a
+  # browser still reports. Pure data, Apache-2.0.
+  "tzdata>=2026.4",
 ]
 
 [dependency-groups]
