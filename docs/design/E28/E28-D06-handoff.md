@@ -1,6 +1,6 @@
 # E28-D06 — Hand-off (§A–§G for SCR-130, SCR-131, SCR-132, SCR-133, SCR-062 and the SCR-061 preview)
 
-The spec is [E28-D06.md](E28-D06.md); every §, C-, G6-, H-, Q- and R- id below without a prefix is the spec's. The copy deck as data is `E28-D06-copy-deck.jsonl`. Nothing here edits `14`, `15`, D02, D03, D04 or D05: §C's rows are copy-ready and applied by the closing PR (R-2). §G carries the `16` §11.4 checklist of each component contract the six screens change; every D03 cite reads at the base, where #5482 is merged (R-1).
+The spec is [E28-D06.md](E28-D06.md); every §, C-, G6-, H-, Q- and R- id below without a prefix is the spec's. The copy deck as data is `E28-D06-copy-deck.jsonl`. Nothing here edits `15`, D02, D03, D04 or D05; `14` takes §C's six rows, applied in this PR (R-2). §G carries the `16` §11.4 checklist of each component contract the six screens change; every D03 cite reads at the base, where #5482 is merged (R-1).
 
 ## §A Placement
 
@@ -32,18 +32,18 @@ The `15` fields are D03's §14 rows, applied by #5482 (R-1) and read at the base
 | CMP-044   | the diff entry, D03 §9.8 | DiffSummary, relaxing                        | a list, "relaxing" in the text             | M-2       | the read and the edited profile |
 | CMP-050   | `template`, D03 §9.9     | Template, not applicable                     | radio card; D05 F-10                       | none      | none (placeholders, D02 D17)    |
 
-## §C Copy-ready rows (applied by the closing PR; R-2)
+## §C The `14` rows (applied in this PR; R-2)
 
-Each row adds one line to its `14` entry, after the entry's last pointer line (BQ-13 as ruled). The anchor below is that line at the base, #5482's Hi-fi line (R-1); a pointer line added later moves it, so the closing PR finds the entry's last pointer line by content and adds the row after it.
+Each row adds one line to its `14` entry, after the entry's last pointer line (BQ-13 as ruled). The anchor below is that line at the base, #5482's Hi-fi line (R-1), found by content; this PR adds each row after it, and the tool's full stage permits `14` at these six anchors only (spec §18). This branch's merge base predates #5482, so its `14` also carries #5482's six Hi-fi lines byte for byte as `main` has them; they leave the diff at the rebase onto `main`.
 
-| A   | Entry   | Anchor (`14`) | New line                                                                                                                                                                          | Owner       |
-| --- | ------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| A-1 | SCR-130 | `14`:2760     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.1 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
-| A-2 | SCR-131 | `14`:2793     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.2 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
-| A-3 | SCR-132 | `14`:2807     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.3 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
-| A-4 | SCR-133 | `14`:2820     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.4 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
-| A-5 | SCR-062 | `14`:1532     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.5 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
-| A-6 | SCR-061 | `14`:1516     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.6 (approved on #842; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
+| A   | Entry   | Anchor (`14`) | New line                                                                                                                                                                                | Owner       |
+| --- | ------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| A-1 | SCR-130 | `14`:2760     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.1 (owner approval pending; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
+| A-2 | SCR-131 | `14`:2793     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.2 (owner approval pending; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
+| A-3 | SCR-132 | `14`:2807     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.3 (owner approval pending; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
+| A-4 | SCR-133 | `14`:2820     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.4 (owner approval pending; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
+| A-5 | SCR-062 | `14`:1532     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.5 (owner approval pending; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
+| A-6 | SCR-061 | `14`:1516     | "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.6 (owner approval pending; the copy deck keyed by code, the bindings, the events and the sign-off checklist)" | this ticket |
 
 Every other change the pack needs is a routed row with its owner (spec §14, §17).
 
@@ -69,13 +69,13 @@ The lists are D03 §9's, under `15`'s titles; the stories are built by E28-S01 �
 - **Role and name first.** Tests query the accessibility tree by D05 §6's names and the deck's `name` rows.
 - **Strings byte for byte.** A test asserts each rendered deck string equals its row's `text`, fills replaced by the fixture's; a `served` row asserts the client adds nothing around the served words.
 - **One string per code.** For each of `T`'s eleven codes a test sends the served answer and asserts the deck row of spec §8.2 renders, on every screen that can receive it.
-- **Announcements on a fake clock.** LR-01 at most once per 1 000 ms; LR-05 at most once per 2 000 ms across the list; nothing on mount.
+- **Announcements on a fake clock.** LR-01 at most once per 2 000 ms (`05`:185, D05 C-08); LR-05 at most once per 2 000 ms across the list; nothing on mount.
 - **State attributes.** `data-state` on each screen root with the D03 S-row name; `data-motion` read from the root only.
 - **No `data-testid`** unless an element has no role.
 
 ## §F References
 
-**Motion:** D04 §2–§5 by id, merged as #5618 (R-3). **Accessibility:** D05 §3–§16 by id, merged as #5619 (R-4). **Forced colours:** D05 §12 holds the statement for these components (`D05`:372): the cell states keep their glyphs and words, the focus ring is an `outline`, and the readiness outline keeps its dash in `CanvasText`; F-15's changed edge in `Highlight` is D03's (A-21). **Tokens and redlines:** D03 §2–§11 by state row. **The deck as data:** one header line (the pack, the version, the base, the fields, the status words, the render values, the freeze note and `T`'s eleven codes), then one row per string. A builder reads the deck, not this file, for any string.
+**Motion:** D04 §2–§5 by id, merged as #5618 (R-3). **Accessibility:** D05 §3–§16 by id, merged as #5619 (R-4). **Forced colours:** D05 §12 holds the statement for these components (`D05`:372): the cell states keep their glyphs and words, the focus ring is an `outline`, and, after A-07, the readiness outline keeps its dash in `CanvasText`; F-15's changed edge in `Highlight` is D03's (A-21). D05 §12 names no rendering for the CMP-138 track, the selected CMP-050 template card or the CMP-256 pill: G6-8 asks for each. **Tokens and redlines:** D03 §2–§11 by state row. **The deck as data:** one header line (the pack, the version, the base, the fields, the status words, the render values, the freeze note and `T`'s eleven codes), then one row per string. A builder reads the deck, not this file, for any string.
 
 ## §G Handoff checklists (`16` §11.4)
 
@@ -85,9 +85,9 @@ One block per component contract the six screens change (`16` §13.3 item 8). Ru
 
 - [x] **Final Penpot link** — boards 05, 09 and 10 on the page `E28-D03 Hi-fi` (page id `b96edf38-8e58-8006-8008-e2420b3d490a`, `D03`:46), merged with R-1
 - [x] **Variants × States matrix** — table 1 = §D's CMP-254 list (11 stories) over D03 §9.1's three states × default, hover, focus-visible, changed and read-only
-- [ ] **Keyboard table** — PENDING — D05 §5.1 (KB rows): one Tab stop, arrows, Space toggles, the cell menu by Shift+F10; open until D05 F-03 (the bulk trigger, A-05, A-06) is applied (H-1)
+- [ ] **Keyboard table** — PENDING — D05 §5.1 (KB rows): one Tab stop, arrows, Space toggles, the cell menu by Shift+F10; a T2 cell keeps focus with `aria-disabled`, CMP-079 wraps it and the `lock` leads the one notice, a press re-shows it once (spec §7.2's T2 table, DR-01, DR-02); open until D05 F-03 (the bulk trigger, A-05, A-06) is applied (H-1)
 - [x] **Accessible name / role table** — a `gridcell` holding a checkbox named "{account}, {symbol}, {state}" (deck `e28.name.matrix_cell`; D05 §6)
-- [x] **Live data** — LR-08 and LR-10: polite, at most once a second for a staged bulk change; nothing per cell
+- [x] **Live data** — LR-08 and LR-10: polite, at most once every 2 s for a staged bulk change (`05`:185, D05 C-08), once per press on a T2 or blocked cell; nothing per cell
 - [x] **Motion pair** — M-7 (a cut in both modes); NA-6 (no cross-fade between states)
 - [ ] **Density notes** — PENDING — 32 × 32 comfortable, 24 × 24 compact (D03 §9.1); D05 F-02's `scroll-padding` (A-04) open (H-1)
 - [x] **Essential-exceptions log** — none
@@ -179,7 +179,7 @@ One block per component contract the six screens change (`16` §13.3 item 8). Ru
 
 ## Handoff checklist — CMP-044 ConfirmDialog (E28-D06, #842)
 
-- [ ] **Final Penpot link** — PENDING — boards 03, 04 and 05 on the page `E28-D03 Hi-fi` (page id `b96edf38-8e58-8006-8008-e2420b3d490a`, `D03`:46), merged with R-1; D05 F-19 (Cancel missing on board 05's confirms) open (H-1)
+- [ ] **Final Penpot link** — PENDING — boards 03, 04 and 05 on the page `E28-D03 Hi-fi` (page id `b96edf38-8e58-8006-8008-e2420b3d490a`, `D03`:46), merged with R-1; D05 F-19 (Cancel missing on board 05's confirms) open, a Low logged with its owner (spec §7.3; not H-1)
 - [x] **Variants × States matrix** — table 1 = §D's CMP-044 additions (2 stories): the diff summary, with a relaxing entry
 - [x] **Keyboard table** — focus on Cancel at open, `Esc` cancels, focus returns to the opener or D05 §4's target (F-11, A-17)
 - [x] **Accessible name / role table** — `alertdialog` for a confirm; the diff a list, "relaxing" in the text (D03 §9.8)
@@ -197,8 +197,8 @@ One block per component contract the six screens change (`16` §13.3 item 8). Ru
 
 - [x] **Final Penpot link** — boards 04 and 10 on the page `E28-D03 Hi-fi` (page id `b96edf38-8e58-8006-8008-e2420b3d490a`, `D03`:46), merged with R-1
 - [x] **Variants × States matrix** — table 1 = §D's CMP-050 additions (2 stories): template, not applicable
-- [x] **Keyboard table** — a radio card in a `radiogroup`: arrows move, Space selects; the not-applicable card is reached and never checked (D05 F-10, A-16)
-- [x] **Accessible name / role table** — `role="radio"`; the not-applicable reason is its description (deck `e28.template.demo_only`)
+- [ ] **Keyboard table** — PENDING — a radio card in a `radiogroup`: arrows move, Space selects; the not-applicable card is T2 (spec §7.2's T2 table, DR-07): reached, never checked, `aria-disabled`, the `lock` leading its full label, CMP-079 once its key is registered; open until D05 A-16, A-22, A-23 and A-29 are applied (F-10, a Medium logged with its owner)
+- [x] **Accessible name / role table** — `role="radio"`; the not-applicable reason is its second line by `aria-describedby` (deck `e28.template.demo_only`; DR-07)
 - [ ] **Live data** — N/A — static cards
 - [ ] **Motion pair** — N/A — none animated
 - [x] **Density notes** — cards keep comfortable inside the modal (D03 §5)

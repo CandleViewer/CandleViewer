@@ -44,8 +44,8 @@ Gates (each FAIL led by its name):
              template line in order, each `[x]` with evidence or `[ ]` with `N/A -` or
              `PENDING -` and a reason; keyboard, name and exceptions are never N/A.
   G-AROW     hand-off section C runs A-1 ... A-6; each anchor is its entry's last pointer line at
-             the base (re-found by content at the closing PR); each New line names its spec
-             section and is not in `14`.
+             the base and the anchors are the permitted list (CAT_ANCHORS); each New line names
+             its spec section and is not in `14` at the base.
   G-FILLED   no placeholder word in the spec or the hand-off.
   G-CITE     every cite in range, on a non-blank line, and equal to the pins file's hash, and
              every pin cited (at the deck stage, the deck's cites only).
@@ -56,7 +56,11 @@ Gates (each FAIL led by its name):
   G-HYGIENE  no closing keyword, local path, URL or host, agent name or deny word in the texts,
              this tool or the pins file; no unknown anchor.
   G-SCOPE    the diff against `git merge-base HEAD origin/main` touches only this ticket's files:
-             the deck, the tool and the pins at the deck stage; all five at the full stage.
+             the deck, the tool and the pins at the deck stage (`14`-strict); all five at the full
+             stage, and `14` at the listed anchors only: the working tree's `14` is the reference
+             `14` with each A-row's New line after its anchor (CAT_ANCHORS) and no other line
+             changed. The reference is the merge base, or BASE where the merge base predates it
+             (a stack on a main before #5482 carries #5482's six Hi-fi lines as `main` has them).
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e28_d06_handoff_audit.py --stage deck --check
@@ -71,6 +75,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import difflib
 import hashlib
 import json
 import re
@@ -117,6 +122,11 @@ PATHS: dict[str, str] = {
     "E17-D01": "docs/design/E17/E17-D01.md",
     "README": "docs/design/README.md",
 }
+CAT_REL = PATHS["14"]
+# The `14` anchors the full stage permits (the second review of #5800, minor g, as E25-D07's 1b):
+# this PR applies A-1 ... A-6, each one line after its screen's Hi-fi pointer line at BASE. A `14`
+# edit anywhere else fails G-SCOPE; G-AROW holds hand-off section C to this list.
+CAT_ANCHORS = {"A-1": 2760, "A-2": 2793, "A-3": 2807, "A-4": 2820, "A-5": 1532, "A-6": 1516}
 # a deck row's source may cite these only
 COPY_KEYS = ("D02", "D03", "D04", "D05", "14", "22", "E09-D09")
 CITE = re.compile(
@@ -249,6 +259,7 @@ class Texts:
     tool: str
     changed: list[str] | None
     memo: dict[str, str | None]
+    cat14: str = ""  # the working tree's `14` (the full stage), as this PR applied the A-rows
 
 
 Finding = tuple[str, str]
@@ -664,6 +675,9 @@ def g_arow(t: Texts) -> list[Finding]:
         new = c[3].strip('"')
         if f"§{SECTION_OF.get(c[1], '?')} " not in new or norm(new) in norm(cat):
             bad.append(("G-AROW", f"{c[0]}: the New line names another section or is applied"))
+    anchors = {c[0]: n for c in rows if len(c) > 2 and (n := next((k for _, k in cites(c[2])), 0))}
+    if anchors != CAT_ANCHORS:
+        bad.append(("G-AROW", f"section C's anchors {anchors} are not the list {CAT_ANCHORS}"))
     return bad
 
 
@@ -744,11 +758,53 @@ def g_hygiene(t: Texts, full: bool) -> list[Finding]:
     return bad
 
 
+def cat_ref() -> str | None:
+    """The merge base, or BASE where the merge base predates it."""
+    mb = git("merge-base", "HEAD", "origin/main")
+    if mb is None:
+        return None
+    mb = mb.strip()
+    return BASE if git("merge-base", "--is-ancestor", mb, BASE) is not None else mb
+
+
+def cat_scope(t: Texts) -> list[Finding]:
+    """The full stage's `14`: the reference's, with each A-row's New line on its own line after
+    its listed anchor (CAT_ANCHORS), bottom-up; any other difference is a stray edit."""
+    ref = cat_ref()
+    old = git("show", f"{ref}:{CAT_REL}") if ref else None
+    if old is None:
+        return [("G-SCOPE", "cannot read `14` at the reference (git failed)")]
+    ls = old.split("\n")
+    rows = [c for ln in section(t.hand or "", "## §C").split("\n") if (c := cells(ln))]
+    new_of = {c[0]: c[3] for c in rows if re.match(r"A-\d+$", c[0]) and len(c) > 3}
+    bad: list[Finding] = []
+    at_i: list[tuple[int, str]] = []
+    for aid, n in CAT_ANCHORS.items():
+        anchor, new = line(t, "14", n), new_of.get(aid, "")
+        if len(new) < 2 or not new[0] == new[-1] == '"':
+            bad.append(("G-SCOPE", f"{aid}: section C carries no quoted New line to apply"))
+            continue
+        hits = [i for i, x in enumerate(ls) if x == anchor]
+        if len(hits) != 1:
+            bad.append(("G-SCOPE", f"{aid}: its anchor `14`:{n} stands {len(hits)} times"))
+            continue
+        at_i.append((hits[0], new[1:-1]))
+    for i, new in sorted(at_i, reverse=True):
+        ls.insert(i + 1, new)
+    ops = difflib.SequenceMatcher(None, ls, t.cat14.split("\n"), autojunk=False).get_opcodes()
+    for op, _, _, j1, j2 in ops:
+        if op != "equal":
+            where = f"`14`:{j1 + 1}" if j2 > j1 else f"after `14`:{j1}"
+            bad.append(("G-SCOPE", f"{where}: {op} outside the anchors {sorted(CAT_ANCHORS)}"))
+    return bad
+
+
 def g_scope(t: Texts, full: bool) -> list[Finding]:
     if t.changed is None:
         return [("G-SCOPE", "git could not list the diff")]
-    own = OWN_FULL if full else OWN_DECK
-    return [("G-SCOPE", f"{p} is not this ticket's") for p in t.changed if p not in own]
+    own = (*OWN_FULL, CAT_REL) if full else OWN_DECK
+    bad = [("G-SCOPE", f"{p} is not this ticket's") for p in t.changed if p not in own]
+    return bad + (cat_scope(t) if full else [])
 
 
 # ------------------------------------------------------------------------------------------ runner
@@ -800,7 +856,14 @@ def changed_paths() -> list[str] | None:
 def load() -> Texts:
     tool = read(TOOL_REL) or ""
     return Texts(
-        read(SPEC_REL), read(HAND_REL), read(DECK_REL), read(PINS_REL), tool, changed_paths(), {}
+        read(SPEC_REL),
+        read(HAND_REL),
+        read(DECK_REL),
+        read(PINS_REL),
+        tool,
+        changed_paths(),
+        {},
+        read(CAT_REL) or "",
     )
 
 
@@ -836,6 +899,22 @@ def setter(field: str, value: Any) -> Callable[[dict[str, Any]], None]:
     return f
 
 
+def cat_sub(old: str, new: str) -> Callable[[Texts], Texts]:
+    """Edits the working tree's `14` only (the full stage's applied A-rows)."""
+
+    def f(t: Texts) -> Texts:
+        if t.cat14.count(old) != 1:
+            raise SystemExit(f"self-test: `14` carries {old[:50]!r} {t.cat14.count(old)} times")
+        return replace(t, cat14=t.cat14.replace(old, new))
+
+    return f
+
+
+A3_LINE = (
+    "- **Hand-off pack (E28-D06):** [E28-D06.md](../design/E28/E28-D06.md) §4.3 (owner approval"
+    " pending; the copy deck keyed by code, the bindings, the events and the sign-off checklist)"
+)
+
 MUTATIONS: list[tuple[str, str, Callable[[Texts], Texts]]] = [
     ("MU-1", "G-STAGE", lambda t: replace(t, deck=None)),
     ("MU-2", "G-DECK", deck_edit("e28.code.precision", setter("owner", "the copy owner"))),
@@ -845,7 +924,7 @@ MUTATIONS: list[tuple[str, str, Callable[[Texts], Texts]]] = [
     ("MU-6", "G-CODES", deck_edit("e28.code.version_conflict", setter("code", "conflict"))),
     ("MU-7", "G-FROZEN", deck_edit("e28.code.risk_limit_breached", setter("frozen", None))),
     ("MU-8", "G-HYGIENE", lambda t: replace(t, tool=t.tool + "\n# " + "flo" + "od\n")),
-    ("MU-9", "G-SCOPE", lambda t: replace(t, changed=[*(t.changed or []), PATHS["14"]])),
+    ("MU-9", "G-SCOPE", lambda t: replace(t, changed=[*(t.changed or []), PATHS["15"]])),
     ("MU-10", "G-DECK", deck_edit("e28.code.write_once", setter("id", "e28.code.write_ONCE"))),
     ("MU-11", "G-COMP", sub("spec", "| CMP-232 | LimitsChip", "| CMP-23x | LimitsChip")),
     ("MU-12", "G-BIND", sub("spec", "`updated_at` (`22`:20367)", "`updated_on` (`22`:20367)")),
@@ -898,6 +977,17 @@ MUTATIONS: list[tuple[str, str, Callable[[Texts], Texts]]] = [
         lambda t: replace(t, deck=(t.deck or "").replace('"aliases": {', '"x": {', 1)),
     ),
     ("MU-29", "G-STATUS", deck_edit("e28.busy.saving", setter("owner", "E28-D05"))),
+    # the `14` anchors (full stage): a stray edit, a dropped line, an anchor moved off its line
+    (
+        "MU-30",
+        "G-SCOPE",
+        cat_sub("allow/deny states are glyph + text", "allow/deny states are text"),
+    ),
+    ("MU-31", "G-SCOPE", cat_sub(f"{A3_LINE}\n", "")),
+    ("MU-34", "G-SCOPE", cat_sub(f"{A3_LINE}\n\n### SCR-133", f"\n{A3_LINE}\n### SCR-133")),
+    ("MU-32", "G-AROW", sub("hand", "| SCR-062 | `14`:1532", "| SCR-062 | `14`:1516")),
+    # the deck stage stays `14`-strict
+    ("MU-33", "G-SCOPE", lambda t: replace(t, changed=[*(t.changed or []), CAT_REL])),
 ]
 
 
@@ -913,7 +1003,8 @@ DECK_MUTATIONS: tuple[str, ...] = (
     "MU-9",
     "MU-10",
 )
-DECK_MUTATIONS += ("MU-23", "MU-25", "MU-28")
+DECK_MUTATIONS += ("MU-23", "MU-25", "MU-28", "MU-33")
+FULL_SKIP = ("MU-33",)  # `14` is permitted at the full stage, at the anchors only
 
 
 def self_test(t: Texts, full: bool) -> int:
@@ -926,13 +1017,20 @@ def self_test(t: Texts, full: bool) -> int:
     for mid, gate, mutate in MUTATIONS:
         if gate not in gates or (not full and mid not in DECK_MUTATIONS):
             continue
+        if full and mid in FULL_SKIP:
+            continue
         got = run(mutate(t), full)
         names = {g for g, _ in got}
         ok = names == {gate}
         failures += 0 if ok else 1
         print(f"{'ok  ' if ok else 'FAIL'} {mid} -> {gate}: {sorted(names) or 'no FAIL'}")
     on_disk = load()
-    same = (on_disk.spec, on_disk.hand, on_disk.deck) == (t.spec, t.hand, t.deck)
+    same = (on_disk.spec, on_disk.hand, on_disk.deck, on_disk.cat14) == (
+        t.spec,
+        t.hand,
+        t.deck,
+        t.cat14,
+    )
     if not same:
         print("FAIL the texts on disk changed")
         failures += 1
