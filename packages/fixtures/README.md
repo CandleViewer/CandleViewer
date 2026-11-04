@@ -21,7 +21,7 @@ TypeScript and Python test suites (CONSTITUTION.md C-13.5, `.claude/rules/40-tes
 - `scripts/verify.mjs` — the redaction gate: fails if any file under `raw/`,
   `golden/`, `bybit/`, `accounts/`, `oms/` or `webhook/` contains a credential-shaped string (API
   key, signature, `Authorization` header, PEM key block), or a bare
-  key-shaped token under `accounts/`, and runs the accounts pack checks. Every
+  key-shaped token under `accounts/` or `oms/`, and runs the accounts pack checks. Every
   new fixture must pass this before being committed (E02-X01 threat:
   "recorded fixture leaks credentials").
 - `scripts/accounts-pack.mjs` — the accounts pack's schema and structure checks,

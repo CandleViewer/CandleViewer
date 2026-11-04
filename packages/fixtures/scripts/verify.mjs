@@ -1,7 +1,7 @@
 // Redaction gate for packages/fixtures (E02-T03 placeholder; real fixtures
 // land in E08). Fails if any file under raw/, golden/, bybit/, accounts/, oms/ or webhook/
 // looks like it contains a credential (API key, signature, PEM block, bearer
-// token); accounts/ also gets the bare key-shape check and the pack checks,
+// token); accounts/ and oms/ also get the bare key-shape check, and accounts/ the pack checks,
 // the comparison with the E27 test plan's section 9.3 table included (E27-Q01).
 // This is the control named in the ticket's Security notes for the
 // "recorded fixture leaks credentials" threat (E02-X01).
@@ -20,10 +20,14 @@ const packageRoot = join(__dirname, "..");
 // E40-S03 (#1400): `webhook/` holds the synthetic webhook signing vectors (no key, no capture).
 const DATA_DIRS = ["raw", "golden", "bybit", "accounts", "oms", "webhook"];
 const PACK_DIR = "accounts";
+const OMS_PACK_DIR = "oms";
 export const SCAN_DIRS = DATA_DIRS.map((d) => join(packageRoot, d));
 // E27-Q01: a real Bybit key or secret is a bare 18-20 or 36 character alphanumeric token. The
-// pack's ids are hyphenated by rule, so this extra shape check runs where the rule holds.
-export const KEY_SHAPE_DIRS = [join(packageRoot, PACK_DIR)];
+// accounts pack's ids are hyphenated by rule, so this extra shape check runs where the rule holds.
+// E29-Q01: the OMS pack holds AC-15's templates, which feed the OMS what a key looks like, and its
+// ids are UUID-shaped or hyphenated too, so the same check covers it.
+const KEY_SHAPE_PACKS = [PACK_DIR, OMS_PACK_DIR];
+export const KEY_SHAPE_DIRS = KEY_SHAPE_PACKS.map((d) => join(packageRoot, d));
 
 const SECRET_PATTERNS = [
   { name: "PEM private key block", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
@@ -115,16 +119,16 @@ function packProblems(dir, planFile) {
 
 /**
  * Every finding for the package at `root`: the redaction gate over the data directories, the
- * bare key-shape rule and the pack checks over accounts/, against the test plan at `planFile`.
+ * bare key-shape rule over accounts/ and oms/, and the accounts pack checks, against the test plan
+ * at `planFile`.
  * Returns instead of exiting (tests).
  */
 export function runVerify(root = packageRoot, planFile = PLAN_FILE) {
-  const pack = join(root, PACK_DIR);
   const { files, findings } = verifyDirectories(
     DATA_DIRS.map((d) => join(root, d)),
-    [pack],
+    KEY_SHAPE_PACKS.map((d) => join(root, d)),
   );
-  return { files, findings, packProblems: packProblems(pack, planFile) };
+  return { files, findings, packProblems: packProblems(join(root, PACK_DIR), planFile) };
 }
 
 function main(root, planFile) {

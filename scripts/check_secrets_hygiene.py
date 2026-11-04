@@ -3,7 +3,8 @@
 Subcommands (all offline, deterministic, exit 1 on violation):
 
 * ``fixtures``  - no fixture holds a real-looking exchange key without ``DUMMY_PREFIX`` (SR-145),
-  and no file of the accounts fault-injection pack holds a bare key-shaped token (E27-Q01)
+  and no file of the accounts fault-injection pack or the OMS scenario pack holds a bare
+  key-shaped token (E27-Q01, E29-Q01)
 * ``dev-env``   - ``.env`` gitignored, ``.env.example`` free of secret values (SR-144)
 * ``workflows`` - no command tracing (``set -x``, ``set -v``, a ``DEBUG`` trap) / environment dump
   in workflows or the repository shell scripts their steps run, directly or through other scripts
@@ -43,12 +44,14 @@ _FIXTURE_DIRS = ("services/api/tests/fixtures", "packages/fixtures", "tests/fixt
 
 #: E27-Q01 (#833): an exchange API key is a bare 18-20 character alphanumeric token, a secret one of
 #: 36. The accounts pack hyphenates every id by rule (``fixture-<scenario>-NNNN``), so in the pack
-#: a bare token of that shape is a paste, whatever field or prose it sits in. The same rule as
+#: a bare token of that shape is a paste, whatever field or prose it sits in. E29-Q01 (#844): the
+#: OMS pack's ids are UUID-shaped or hyphenated too, and its AC-15 templates are where a key-shaped
+#: paste would hide, so the rule covers it. The same rule as
 #: ``packages/fixtures/scripts/accounts-pack.mjs`` (``findKeyShapedTokens``): a maximal run of
 #: ``[A-Za-z0-9_-]`` that is purely alphanumeric counts when it holds a digit, or, letters only,
 #: when it mixes at least ``_MIXED_CASE_MIN`` capitals and as many small letters. A tripwire for
 #: accidental pastes, not a complete control.
-_KEY_SHAPE_DIRS = ("packages/fixtures/accounts",)
+_KEY_SHAPE_DIRS = ("packages/fixtures/accounts", "packages/fixtures/oms")
 _BARE_RUN = re.compile(r"[A-Za-z0-9_-]+")
 _ALNUM = re.compile(r"[A-Za-z0-9]+")
 _MIXED_CASE_MIN = 6
@@ -121,7 +124,7 @@ def scan_key_shapes(text: str) -> list[str]:
 
 
 def _check_key_shapes(root: Path) -> list[str]:
-    """Every file of the accounts pack, whatever its suffix or name (plants live in tmp copies)."""
+    """Every file of the two packs, whatever its suffix or name (plants live in tmp copies)."""
     errors: list[str] = []
     for d in _KEY_SHAPE_DIRS:
         base = root / d

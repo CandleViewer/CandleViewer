@@ -410,7 +410,7 @@ describe("the accounts pack", () => {
   it("is inside the package redaction gate, and the gate passes over the whole package", () => {
     const { files, findings } = verifyDirectories(SCAN_DIRS, KEY_SHAPE_DIRS);
     expect(findings).toEqual([]);
-    expect(KEY_SHAPE_DIRS).toEqual([ACCOUNTS_DIR]);
+    expect(KEY_SHAPE_DIRS).toEqual([ACCOUNTS_DIR, join(packageRoot, "oms")]); // E29-Q01 joined
     expect(files).toContain(join(ACCOUNTS_DIR, "compliant", "manifest.json"));
     expect(files).toContain(join(ACCOUNTS_DIR, "_base", "query_api.json"));
   });

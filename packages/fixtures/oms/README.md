@@ -149,11 +149,14 @@ refuse only part of it. `verify.mjs` refuses a field named `sign`, `signature`, 
 a value of 16 or more letters, digits or `+/=_-`, a `Bearer` token of 20 or more letters, digits or
 `._-`, a PEM private-key header and an `X-BAPI-API-KEY` or `X-BAPI-SIGN` header with 16 or more
 letters and digits. The hygiene check refuses the `api_key`, `apiKey` and `api_secret` fields from 16
-characters, a signature from 32 hex digits, a PEM header and those two headers. Neither refuses a bare
-key or signature in prose, in an `auth` frame's `args`, in a signed URL, in an error text or under a
-field of another name. The bare-key rule that `accounts/` has joins `oms/` in the PR of #844 that adds
-the first template; until then the field-by-field review under R-4 is the control for those shapes
-(gitleaks runs its own rules over them as well). The form, built with the scenarios:
+characters, a signature from 32 hex digits, a PEM header and those two headers. Neither refuses a
+signature of another shape or a key it cannot see as a token. The bare-key rule that `accounts/` has
+covers `oms/` as well, in both gates (`KEY_SHAPE_DIRS` in `verify.mjs`, `_KEY_SHAPE_DIRS` in the
+hygiene check): a bare token of 18 to 20 or of 36 letters and digits is refused wherever it sits, in
+prose, in an `auth` frame's `args`, in a signed URL, in an error text or under a field of any name. It
+is a tripwire for a paste, not a complete control: a key split by a JSON escape or joined to a hyphen
+is not a bare token, so the field-by-field review under R-4 stays the control for those shapes
+(gitleaks runs its own rules over them as well). The form:
 
 - A **template** is a derived file in which every secret-shaped value is a placeholder, a whole JSON
   string value or a token inside a longer text. The committed file parses without its seed and passes
@@ -173,8 +176,8 @@ the first template; until then the field-by-field review under R-4 is the contro
 
 | Where                                                                | Runs                                                                                                                         |
 | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm --filter @candleviewer/fixtures lint` (`scripts/verify.mjs`)   | The redaction gate over `raw/`, `golden/`, `bybit/`, `accounts/` and `oms/` (js lane, `lint` job)                            |
-| `python scripts/check_secrets_hygiene.py fixtures` (repo root)       | The field-name rules over every fixture directory (security lane)                                                            |
+| `pnpm --filter @candleviewer/fixtures lint` (`scripts/verify.mjs`)   | The redaction gate over `raw/`, `golden/`, `bybit/`, `accounts/`, `oms/`; the bare-key rule over the last two (js lane)      |
+| `python scripts/check_secrets_hygiene.py fixtures` (repo root)       | The field-name rules over every fixture directory; the bare-key rule over `accounts/` and `oms/` (security lane)             |
 | `tests/unit/fixtures_corpus/test_oms_pack_smoke.py` (`services/api`) | Per scenario: the schema, every file parses, `derived_from` exists, the evidence class, two byte-identical loads, no network |
 
 The smoke test reads the scenario directories by name: adding one adds its checks. There is no check
