@@ -2622,7 +2622,8 @@ class OmsRuntime:
         closed, so the check reads `ok` only once the lane has confirmed the start. Never
         `readiness` itself, which `placeOrder` reads (the orchestrator's Q3): one unprotected
         position never refuses every entry. `degraded` too once the closed-PnL sync's task has
-        ended unasked (E29-S06), as it never restarts itself. Read from a worker thread; the
+        ended unasked (E29-S06, the orchestrator's ruling of 2026-11-04), as it never restarts
+        itself; its end is paged once (the sync's `on_ended`). Read from a worker thread; the
         detail names no account."""
         state, parts = self.readiness, self._parts
         if state != "ok" or parts is None:
@@ -3433,13 +3434,16 @@ class OmsRuntime:
             # its day UTC's until E29-S06's resolver; started once `ready`. Each fill either write
             # path stores asks it for a read, and so does each `resyncing`, ahead of the jobs'
             # request; a stand-in stays bare, so still announced. No flag (C-4.13): it writes only
-            # records nothing serves yet.
+            # records nothing serves yet. Its task, ended other than by its stop, is paged once and
+            # degrades `readyz` (24 Sec.8.12 "Readiness"); it never restarts itself.
             sync: ClosedPnlSync | None = None
             requests: ReconciliationRequests | None = None if reconcile is None else reconcile.jobs
             if stores.closed_pnl is not None:
+                ended = functools.partial(_page, self._pager, "oms_closed_pnl_sync_ended")
                 sync = ClosedPnlSync(
                     accounts=accounts, router=router, records=stores.closed_pnl,
                     closes=stores.executions, snapshots=snapshot_rows, metrics=metrics, now=wall,
+                    on_ended=ended,
                 )  # fmt: skip
                 fills.bind_stored(sync.stored)
                 if requests is not None:

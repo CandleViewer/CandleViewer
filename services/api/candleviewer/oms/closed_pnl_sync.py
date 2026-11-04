@@ -30,13 +30,13 @@ while the account holds a record within the reach that is not final and whose or
 (21 Sec.13.1 row 56), or while a stored fill waits for a read that starts `SETTLE_POLL_S` after it
 and succeeds. A record with no `orderId`, or whose order has no row, keeps no poll.
 
-**Placement.** One owned task (`start`, `stop`; `fault` once it ends unasked) on the loop that
-makes every call, reading the due accounts one at a time: one read is in flight per account, and a
-request made meanwhile is folded into the account's next read. The requests are a queue of at most
-`MAX_ACCOUNTS` accounts, one coalesced entry each: a request that would add an account past it is
-dropped and logged at ERROR, as no process trades that many (C-2.18). Every external await is
-bounded and a cancel is never swallowed. Each read is timed in `oms_closed_pnl_fetch_seconds`.
-Logs carry ids and kinds only, never a figure (C-12.6).
+**Placement.** One owned task (`start`, `stop`; `fault` once it ends unasked, which `on_ended` is
+told once) on the loop that makes every call, reading the due accounts one at a time: one read is
+in flight per account, and a request made meanwhile is folded into the account's next read. The
+requests are a queue of at most `MAX_ACCOUNTS` accounts, one coalesced entry each: a request that
+would add an account past it is dropped and logged at ERROR, as no process trades that many
+(C-2.18). Every external await is bounded and a cancel is never swallowed. Each read is timed in
+`oms_closed_pnl_fetch_seconds`. Logs carry ids and kinds only, never a figure (C-12.6).
 """
 
 from __future__ import annotations
@@ -227,16 +227,19 @@ class _Account:
 
 class ClosedPnlSync:
     """`now` is the wall clock a read's window takes; `day_start` the day's start for an instant,
-    00:00 UTC until E29-S06's resolver slice passes its own."""
+    00:00 UTC until E29-S06's resolver slice passes its own; `on_ended` what is told, once, on the
+    task's loop, that the task ended other than by `stop()` (the runtime's page): it must not
+    raise."""
 
     def __init__(
         self, *, accounts: TradingAccounts, router: ReadRouter, records: ClosedPnlRecords,
         closes: StoredCloses, snapshots: SnapshotWrites, metrics: Metrics,
-        now: Callable[[], datetime], day_start: Callable[[datetime], datetime] = utc_day_start,
+        now: Callable[[], datetime], on_ended: Callable[[], None],
+        day_start: Callable[[datetime], datetime] = utc_day_start,
     ) -> None:  # fmt: skip
         self._accounts, self._router, self._records = accounts, router, records
         self._closes, self._snapshots = closes, snapshots
-        self._now, self._day_start = now, day_start
+        self._now, self._day_start, self._on_ended = now, day_start, on_ended
         spec = next(spec for spec in CATALOGUE if spec.name == FETCH_SECONDS)
         self._seconds = metrics.histogram(
             spec.name, spec.help, spec.labels, buckets=spec.buckets or (),
@@ -257,7 +260,7 @@ class ClosedPnlSync:
         for account_id in accounts:
             self._ask(account_id, 0.0)
         self._task = spawn(self._run(), name="oms-closed-pnl-sync")
-        self._task.add_done_callback(_ended)
+        self._task.add_done_callback(self._ended)
         return True
 
     async def stop(self, timeout_s: float = PORT_TIMEOUT_S) -> None:
@@ -275,6 +278,18 @@ class ClosedPnlSync:
         task = self._task
         ended = task is not None and task.done() and not self._stopped
         return "the closed-PnL sync task ended" if ended else None
+
+    def _ended(self, task: asyncio.Task[None]) -> None:
+        """An end other than a cancel, by an error or a return, is logged at ERROR by its kind,
+        and, unless `stop()` asked for it, told to `on_ended`: once, as a task ends once. A stop's
+        cancel is no fault, nor is the lane's at its end. The error is retrieved either way."""
+        if task.cancelled():
+            return
+        error = task.exception()
+        kind = "returned" if error is None else type(error).__name__
+        _log().error("closed_pnl_sync_ended", kind=kind)
+        if not self._stopped:
+            self._on_ended()
 
     def stored(self, execution: NewExecution) -> None:
         """A fill the store took: one of a trade type keeps the poll until a read that starts
@@ -438,8 +453,3 @@ class ClosedPnlSync:
         if await _bounded(closed, PORT_TIMEOUT_S) != row.qty:
             return False
         return await _bounded(self._records.finalize(account_id, row.id), PORT_TIMEOUT_S)
-
-
-def _ended(task: asyncio.Task[None]) -> None:
-    if not task.cancelled() and (exc := task.exception()) is not None:
-        _log().error("closed_pnl_sync_ended", kind=type(exc).__name__)

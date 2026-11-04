@@ -1,8 +1,8 @@
 """E29-S06 #981 slice 3b: the closed-PnL sync (24 Sec.8.13) in the OMS runtime (20 Sec.6.2), on
 the runtime's own rig (`test_oms_runtime`): built from the runtime's parts, started once `ready`
-is set, stopped before what it reads through closes; its two seams, which only enqueue; and a sync
-that fails, which holds neither `ready` nor a fill. The venue is the fake port: no network, no
-sleeps."""
+is set, stopped before what it reads through closes; its two seams, which only enqueue; a sync
+that fails, which holds neither `ready` nor a fill; and its task's end, paged once unless its stop
+asked for it. The venue is the fake port: no network, no sleeps."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from uuid import UUID
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.app import _oms_state
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.models import PrivateStreamStatus
 from candleviewer.oms.closed_pnl_sync import DEBOUNCE_S, PORT_TIMEOUT_S, ClosedPnlSync
@@ -66,6 +67,11 @@ def _reads(world: World) -> list[tuple[UUID, str]]:
     """Each closed-PnL read the venue was asked for, its account and lane: the sync's alone."""
     calls = [c for port in world.venue.ports for c in port.calls if c.method == "closed_pnl"]
     return [(c.account_id, c.lane) for c in calls]
+
+
+def _sync_pages(world: World) -> list[str]:
+    """The pages the runtime raised for the sync: its start's and its task's end."""
+    return [call for call in world.pager.calls if call.startswith("oms_closed_pnl_sync_")]
 
 
 async def test_the_sync_is_built_from_the_runtimes_parts_and_starts_once_ready(
@@ -129,6 +135,7 @@ async def test_the_stop_ends_the_sync_before_anything_it_reads_through_closes(
     assert world.log.index("closed_pnl_sync.stopped") < world.log.index("stop_gate.close")
     assert task is not None and task.cancelled() and sync.fault is None
     assert "oms-closed-pnl-sync" not in {t.get_name() for t in asyncio.all_tasks()}
+    assert _sync_pages(world) == []  # the stop it was asked for pages nothing
 
 
 async def test_a_fill_the_composed_facade_commits_reaches_the_syncs_stored(
@@ -232,11 +239,12 @@ async def test_a_sync_that_cannot_start_is_paged_and_ready_stands(
     assert unstarted == [("RuntimeError", "critical")]
 
 
-async def test_a_sync_whose_task_ended_unasked_degrades_readyz_and_never_order_entry(
+async def test_a_sync_whose_task_ended_unasked_is_paged_once_and_degrades_readyz_alone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Its task never restarts itself, so `/readyz`'s `oms` check reads `degraded` once it has
-    ended unasked (`fault`); what `placeOrder` and the exits read stays `ok`."""
+    """Its task never restarts itself, so once it has ended unasked (`fault`) it is paged once and
+    `/readyz`'s `oms` check reads `degraded` (24 Sec.8.12 "Readiness", the orchestrator's ruling of
+    2026-11-04); what `placeOrder` and the exits read stays `ok`, and the stop pages no more."""
 
     async def ended(self: ClosedPnlSync) -> None:
         raise RuntimeError("the sync's task")
@@ -246,8 +254,10 @@ async def test_a_sync_whose_task_ended_unasked_degrades_readyz_and_never_order_e
     async with started(world.runtime()) as runtime:
         sync = runtime._composed().closed_pnl
         assert sync is not None
-        await until(lambda: sync.fault is not None)
-        assert (runtime.state, runtime.readiness, runtime.readyz) == ("ok", "ok", "degraded")
+        await until(lambda: "oms_closed_pnl_sync_ended" in world.pager.calls)
+        assert sync.fault is not None
+        assert (runtime.state, runtime.readiness, _oms_state(runtime)) == ("ok", "ok", "degraded")
+    assert _sync_pages(world) == ["oms_closed_pnl_sync_ended"]
 
 
 @virtual

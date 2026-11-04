@@ -209,6 +209,7 @@ class Rig:
     store: Store
     metrics: Metrics
     sync: ClosedPnlSync
+    told: list[str]  # each end `on_ended` was told of
 
     def times(self) -> list[float]:
         return [round(at, 6) for at, _, _ in self.venue.reads]
@@ -220,11 +221,13 @@ class Rig:
 
 def rig(at: datetime = T0, resolve: Any = None, **venue: Any) -> Rig:
     v, store, metrics, loop = Venue(**venue), Store(), Metrics("demo"), asyncio.get_running_loop()
+    told = list[str]()
     sync = ClosedPnlSync(
         accounts=Accounts(resolve), router=v, records=store, closes=store, snapshots=store,
         metrics=metrics, now=lambda: at + timedelta(seconds=loop.time()),
+        on_ended=lambda: told.append("ended"),
     )  # fmt: skip
-    return Rig(v, store, metrics, sync)
+    return Rig(v, store, metrics, sync, told)
 
 
 # --- triggers, the poll and its end (24 Sec.8.13 "The sync") -------------------------------------
@@ -396,6 +399,58 @@ async def test_stop_ends_the_task_and_a_later_request_reads_nothing() -> None:
     r.sync.reconnected(ACCOUNT_A)
     await asyncio.sleep(100)
     assert r.times() == [0] and r.sync.fault is None and not r.sync.start([ACCOUNT_A])
+
+
+@pytest.mark.parametrize("end", ["raises", "returns"])
+@virtual
+async def test_a_task_that_ends_unasked_is_logged_and_told_once(
+    end: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An end other than by `stop()`, an error or a return its loop never makes, is logged at
+    ERROR by its kind and told to `on_ended` once (the runtime's page); a later stop adds none."""
+
+    async def ended(self: ClosedPnlSync) -> None:
+        if end == "raises":
+            raise RuntimeError("the sync's task")
+
+    monkeypatch.setattr(ClosedPnlSync, "_run", ended)
+    r = rig()
+    with capture_logs() as logs:
+        assert r.sync.start([ACCOUNT_A])
+        await asyncio.sleep(1)
+        assert r.sync.fault is not None
+        await r.sync.stop()
+    kinds = [(e["kind"], e["log_level"]) for e in logs if e["event"] == "closed_pnl_sync_ended"]
+    assert kinds == [("RuntimeError" if end == "raises" else "returned", "error")]
+    assert r.told == ["ended"]
+
+
+@pytest.mark.parametrize("on_cancel", ["ends", "raises"])
+@virtual
+async def test_a_stop_it_was_asked_for_is_told_to_no_one(
+    on_cancel: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A requested `stop()` never pages: its cancel ends the task, and a task that raises as it
+    ends is logged, never told."""
+
+    async def run(self: ClosedPnlSync) -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            if on_cancel == "raises":
+                raise RuntimeError("its cancel") from None
+            raise
+
+    monkeypatch.setattr(ClosedPnlSync, "_run", run)
+    r = rig()
+    with capture_logs() as logs:
+        r.sync.start([ACCOUNT_A])
+        await asyncio.sleep(1)
+        await r.sync.stop()
+        await asyncio.sleep(0)  # the task's callbacks have run
+    ended = [e["kind"] for e in logs if e["event"] == "closed_pnl_sync_ended"]
+    assert (r.told, ended) == ([], ["RuntimeError"] if on_cancel == "raises" else [])
+    assert r.sync.fault is None
 
 
 @virtual
@@ -598,7 +653,7 @@ def test_a_fill_the_store_took_before_the_start_asks_for_nothing(
     store = Store()
     sync = ClosedPnlSync(
         accounts=Accounts(), router=Venue(), records=store, closes=store, snapshots=store,
-        metrics=Metrics("demo"), now=lambda: T0,
+        metrics=Metrics("demo"), now=lambda: T0, on_ended=lambda: None,
     )  # fmt: skip
     sync.stored(_fill(closed_size))
     sync.reconnected(ACCOUNT_A)
