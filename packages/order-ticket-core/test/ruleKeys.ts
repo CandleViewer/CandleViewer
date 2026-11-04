@@ -11,6 +11,7 @@ type Outcome = DeckKey | typeof PENDING_ROW;
 
 export const RULE_KEYS = {
   symbol_not_trading: [PENDING_ROW],
+  account_not_targeted: [PENDING_ROW],
   side_invalid: [PENDING_ROW],
   price_invalid: [PENDING_ROW],
   tick_size: ["ticket.order.v.price.tick"],
