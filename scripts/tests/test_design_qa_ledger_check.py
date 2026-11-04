@@ -102,6 +102,11 @@ def test_headers_and_malformed_rows_fail() -> None:
     assert "E_FINDINGS" in _run(_fx("complete.csv"), bad)
     odd = bad.replace("P9,open", "P2,parked")
     assert "E_FINDINGS" in _run(_fx("complete.csv"), odd)
+    for row in ("DQA-0001,P2,wontfix", "DQA-0001,P1,open", "X-1,P2,open"):  # BQ-1, BQ-2 riders
+        assert "E_FINDINGS" in _run(_fx("complete.csv"), f"{bad[:44]}{row},SCR-002,2026-11-04\n")
+    assert "E_FINDINGS" not in _run(
+        _fx("complete.csv"), f"{bad[:44]}#42,P1,open,SCR-002,2026-11-04\n"
+    )
 
 
 def test_order_puts_the_first_tier_then_weight_then_id() -> None:

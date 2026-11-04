@@ -2,15 +2,16 @@
 
 **Ticket:** E49-D01 (#1330) · Task · Sprint 23 · labels `type/chore`, `area/design-system`, `design`,
 `design-qa`, `a11y`, `priority/p1` · parent E49 · **Status: Draft — owner approval pending; BQ-0 … BQ-9 are
-the defaults built, ruling pending (§2).** Branch `design/e49-design-qa-protocol`. **Slice: PR 1 of 2** —
+RULED (§2).** Branch `design/e49-design-qa-protocol`. **Slice: PR 1 of 2** —
 this protocol, its self-check `scripts/design_qa_ledger_check.py`, the fixture ledgers under
 `tests/fixtures/design_qa/` and one cross-link line in `16` §12. PR 2 (the closing slice) commits the two
 ledgers and the pilot results after E47-X01 (#1326) lands. Both PRs carry `Refs #1330` and `Partial:`.
 
-**Base.** Every cite is to `main` at `a53a5b438`, the base this slice was written on; every cited line
-was re-read unchanged at `c71daa3d3`, the base of this fold (the BQ list was posted at `2132de8db`).
-Blockers: E47-K01, E47-T01, E47-T02 and E47-T03 are merged; E47-X01 (#1326) is open and non-gating
-for authoring (orchestrator ruling, 2026-11-04): DR-1 holds its place until it lands. E47-D01 (#1300) is authored in parallel; it is cited "if it merges as is" (DR-2).
+**Base.** Every cite is to `main` at `aa0a02b8c`, the base of the ruling fold, where every cited line was
+re-read unchanged (written at `a53a5b438`; the BQ list was posted at `2132de8db`). The shared helper is
+imported at its `main` blob `15793f79cf92` (G-HELPER). Blockers: E47-K01, E47-T01, E47-T02 and E47-T03 are
+merged; E47-X01 (#1326) is open and non-gating for authoring (orchestrator ruling, 2026-11-04): DR-1 holds its
+place until it lands. E47-D01 (#1300) is authored in parallel; it is cited "if it merges as is" (DR-2).
 
 **Honest scope.** Agent-authored. Nothing in this slice audits a screen, and no participant, reviewer or
 timing is claimed. Every number is PROPOSED unless RULED; every pilot finding will be labelled
@@ -30,65 +31,74 @@ never edited into a spec, a catalogue or a build (ticket Out of scope "Fixing an
 | DoD 2 | ledger committed; self-check green in CI                            | PR 2  | the ledger in PR 2; CI wiring is Deviation V-3                              |
 | DoD 3 | 10-screen pilot run, findings filed, actionable rate recorded       | PR 2  | §13                                                                         |
 | DoD 4 | calibrated effort figures size E49-S04                              | PR 2  | §13; a comment on #1384                                                     |
-| DoD 5 | severity mapping agreed with QA and recorded                        | owner | §7 (PROPOSED); walkthrough item 1                                           |
+| DoD 5 | severity mapping agreed with QA and recorded                        | owner | §7 (RULED as amended); walkthrough item 1                                   |
 | DoD 6 | `16` §12 cross-links the protocol                                   | done  | one line after the checklist (BQ-1)                                         |
 | DoD 7 | design sign-off recorded on the ticket                              | owner | §18                                                                         |
 | DoD 8 | pilot findings walked through at Sprint Review                      | PR 2  | §18's session protocol                                                      |
 | DoD 9 | merged via merge queue with required approvals                      | open  | the orchestrator merges after two approving reviews (C-10.1)                |
 
-## 2. The questions BQ-0 … BQ-9 — defaults built; ruling pending (comment 6634720626)
+## 2. The questions BQ-0 … BQ-9 — RULED (comment 6637510034)
 
-The list is comment 6634720626 on #1330. Each bullet below is the ORCH-default as built; it flips to RULED
-when the ruling of record lands.
+The list is comment 6634720626 on #1330; its ruling of record, comment 6637510034, replaces BQ-4's default.
 
-- **BQ-0 — standing rules.** Built as: text first, `Refs #1330` + `Partial:` while E47-X01 is open; the
-  E09-D09 T2 standing gate (`.claude/rules/32-design-specs.md`) applies to every gated control the protocol
-  names; findings routed, never fixed; demo env and fixture symbols only (C-2.11); ≤ 1,500 counted lines
-  per PR (C-4.8); the shared helper imported, never copied; E47-D04 (focus) and E47-D09 (keys) outrank this
-  protocol (a disagreement is an F-row); the ≤ 10-item checklist (§18) is posted at READY.
-- **BQ-1 — one procedure, not two.** Built as: E09-D11 §16 (PS-1..PS-10) is the spine (§5); this protocol
-  adds the screen layer; ONE cross-link line in `16` §12 supersedes E09-D11's A-1; the five groups of `16`
-  §12 are copied, not four (§4); PR 1 = protocol + self-check + fixtures, PR 2 = ledgers + pilot.
-- **BQ-2 — two ledgers, no exporter change.** Built as: `e49-design-qa-ledger.csv` stays the finding
-  ledger in the exporter's five columns; `e49-design-qa-screens.csv` is the per-screen ledger; the
-  self-check cross-checks them (§11). Both land in PR 2, whose body states that its merge starts the
-  failing push run until the owner provisions the secret and a transport (walkthrough item 3).
-- **BQ-3 — the row set and E47's verdicts.** Built as: 149 rows (the `### SCR-` headings); the ten
-  reserved ids are named (§11) and rejected; two added columns `e47_verdict` and `e47_ref` are read from
-  the E47-D02 register, never retyped; the owning epic is derived from each screen's stories, ties listed.
-- **BQ-4 — one severity scale.** Built as: P0..P3 only (§7); P0 only for `03`'s P0 class; PS-7 and the
-  E47 labels mapped onto it; any WCAG 2.2 AA failure ≥ P2; Info → notes, never a finding row. PROPOSED;
-  "agreed with QA" is walkthrough item 1.
-- **BQ-5 — the audit order.** Built as: the first tier by NAME = SCR-030, SCR-050, SCR-060, SCR-063,
-  SCR-074; then by Must-story weight from `18` §2, ties by id, computed by the tool (§6); chart sampling
-  keeps the ticket's 030..054 range at three SYNTHETIC densities (§9).
-- **BQ-6 — the evidence standard.** Built as: Penpot boards (page name + id only) vs Storybook or fixture
-  builds; demo env and fixture symbols only; a written N/A per missing cell; the reference-machine,
-  `balanced`-profile and diagnostics checks are an owner-run leg (§8); text-only legs draw no boards.
-- **BQ-7 — the pilot.** Built as: the top ten of §6's order that are built at the base (§6.2);
-  "actionable" judged by the two independent review lenses against §10's six fields, rate `(agent-run)`;
-  filing per PS-9; effort as measured agent wall time beside the 15 / 45-minute seeds, never converted.
-- **BQ-8 — exceptions and near-duplicates.** Built as: the follow-up key is an existing backlog key or a
-  `post-ga` issue number, validated by the self-check; this PR files none; near-duplicates go to `15` as
-  A-rows to the catalogue owner, never a new id (§12).
-- **BQ-9 — the self-check.** Built as: `scripts/design_qa_ledger_check.py` with fixtures under
-  `tests/fixtures/design_qa/`; it imports the shared helper by path; `--check` / `--self-test` in the
-  E09-D12 shape; pytest under `scripts/tests/`; CI wiring is Deviation V-3 (§20).
+- **BQ-0 — standing rules.** RULED: AGREE +rider. Built as: text first, `Refs #1330` + `Partial:` while
+  E47-X01 is open; the E09-D09 T2 standing gate (`.claude/rules/32-design-specs.md`) applies to every gated
+  control the protocol names; findings routed, never fixed; demo env and fixture symbols only (C-2.11); ≤
+  1,500 counted lines per PR (C-4.8); the shared helper imported, never copied; E47-D04 (focus) and E47-D09
+  (keys) outrank this protocol (a disagreement is an F-row); the ≤ 10-item checklist (§18) is posted at READY.
+  Rider: the helper is pinned by its git blob (Base); the walkthrough, the export's transport, the agreement
+  with QA and the delegated sign-off stay owner items (§18).
+- **BQ-1 — one procedure, not two.** RULED: AGREE +rider. Built as: E09-D11 §16 (PS-1..PS-10) is the spine
+  (§5); this protocol adds the screen layer; ONE cross-link line in `16` §12 supersedes E09-D11's A-1; the
+  five groups of `16` §12 are copied, not four (§4, V-5); PR 1 = protocol + self-check + fixtures, PR 2 =
+  ledgers + pilot. Rider: §11.1 maps PS-6's classes, the verdicts and the finding statuses, one row per
+  E49-S04 resolution, `wontfix` refused; DQ-BS-2 applies through `14` §0.5 rule 5 and G-T2 (§8.2).
+- **BQ-2 — two ledgers, no exporter change.** RULED: AGREE +rider. Built as: `e49-design-qa-ledger.csv` stays
+  the finding ledger in the exporter's five columns; `e49-design-qa-screens.csv` is the per-screen ledger; the
+  self-check cross-checks them (§11). Both land in PR 2, whose body states that its merge starts the failing
+  push run until the owner provisions the secret and a transport (walkthrough item 3). Rider: §11 names the
+  file each consumer reads (C-1, C-2) and makes `finding_id` a resolvable reference.
+- **BQ-3 — the row set and E47's verdicts.** RULED: AGREE +rider. Built as: 149 rows (the `### SCR-`
+  headings); the ten reserved ids are named (§11) and rejected; two added columns `e47_verdict` and `e47_ref`
+  are read from the E47-D02 register, never retyped; the owning epic is derived from each screen's stories,
+  ties listed. Rider: the register is read at its pinned blob; the epic comes from `14`'s `Stories:` lines
+  (§11); V-6.
+- **BQ-4 — one severity scale.** RULED: AMEND. Built as: the amended map (§7): P0..P3, the four anchors and
+  PS-7 stand; an E47 row takes the register's own priority (T01 rows), and a review row takes P0 for a task
+  not completable by keyboard and screen reader (`05` :282), else the ruled SC rule (e47-t01-sweep.md :512);
+  P0 for a non-a11y row stays `03`'s class; "agreed with QA" is walkthrough item 1.
+- **BQ-5 — the audit order.** RULED: AGREE +rider. Built as: the first tier by NAME = SCR-030, SCR-050,
+  SCR-060, SCR-063, SCR-074; then by Must-story weight from `18` §2, ties by id, computed by the tool (§6);
+  chart sampling keeps the ticket's 030..054 range at three SYNTHETIC densities (§9). Rider: the re-check row
+  goes to E18's QA ticket (§9); the id corrections are V-7.
+- **BQ-6 — the evidence standard.** RULED: AGREE +rider. Built as: Penpot boards (page name + id only) vs
+  Storybook or fixture builds; demo env and fixture symbols only; a written N/A per missing cell; the
+  reference-machine, `balanced`-profile and diagnostics checks are an owner-run leg (§8); text-only legs draw
+  no boards. Rider: boards by page name and id only (R7); pilot captures are embedded in the PR body (§8).
+- **BQ-7 — the pilot.** RULED: AGREE +rider. Built as: the top ten of §6's order that are built at the base
+  (§6.2); "actionable" judged by the two independent review lenses against §10's six fields, rate
+  `(agent-run)`; filing per PS-9; effort as measured agent wall time beside the 15 / 45-minute seeds, never
+  converted. Rider: never an unbuilt row (§6.2); a security-shaped row goes privately to the orchestrator
+  (DQ-6).
+- **BQ-8 — exceptions and near-duplicates.** RULED: AGREE. Built as: the follow-up key is an existing backlog
+  key or a `post-ga` issue number, checked by form only (no network call); this PR files none; near-duplicates
+  go to `15` as A-rows to the catalogue owner, never a new id (§12).
+- **BQ-9 — the self-check.** RULED: AGREE +rider. Built as: `scripts/design_qa_ledger_check.py` with fixtures
+  under `tests/fixtures/design_qa/`; it imports the shared helper by path; `--check` / `--self-test` in the
+  E09-D12 shape; pytest under `scripts/tests/`; CI wiring is Deviation V-3 (§20). Rider: the SCR ids come from
+  `catalogue.py`'s `parse_screens`, loaded by path; V-3 names the `governance` job as the home.
 
 ## 3. Method
 
-1. **Spine.** E09-D11 §16 (E09-D11 :515–526) is the merged design-QA procedure for later epics (RULED BQ-25
-   there). This protocol takes PS-1..PS-10 unchanged (§5) and adds what a screen sweep needs: the clause
-   list, the order, the severity map, the evidence cells, the sampling rule, the record, the two ledgers
-   and the exception rule.
+1. **Spine.** E09-D11 §16 (E09-D11 :515–526, RULED BQ-25 there) is the merged design-QA procedure; its
+   PS-1..PS-10 apply unchanged (§5) and this protocol adds the screen layer (§4 to §12).
 2. **Clauses.** The checklist of `16` §12 (`16` :686–724) is copied item by item into §4; the self-check
    compares each row with the base, so a reworded clause fails.
-3. **Inputs read, not retyped.** The screen list from `14` (149 headings, `14` :13–35 for the bands), the
-   story weights from `18` §2 (`18` :44), the E47 verdicts from `docs/plan/a11y/47-audit-register.json`
-   (catalogue: 47-audit-catalogue.md :5), the severity taxonomy from `03` §11.3 (`03` :320–327) and the
-   exporter's header from `tools/ga_defects/ledger.py` (ledger.py :17).
-4. **Precedents for form.** E05-D05 (component-library QA, E05-D05 :1), E09-D11 (auth surfaces),
-   E12-D13 (fixture-only captures, E12-D13 :3) and E08-D14.
+3. **Inputs read, not retyped.** The screen list from `14` by `catalogue.py`'s `parse_screens` (149 headings,
+   `14` :13–35 for the bands), the story weights from `18` §2 (`18` :44), the E47 verdicts from
+   `docs/plan/a11y/47-audit-register.json` at its pinned blob (catalogue: 47-audit-catalogue.md :5), the
+   severity taxonomy from `03` §11.3 (`03` :320–327) and the exporter's header from
+   `tools/ga_defects/ledger.py` (ledger.py :17).
 
 ## 4. The clauses (the five groups of `16` §12, verbatim)
 
@@ -140,8 +150,9 @@ PS-1..PS-10 of E09-D11 §16 apply unchanged. The screen layer adds DQ-1..DQ-8:
   it never replaces E47's verdict (ticket Out of scope "The WCAG audit itself").
 - **DQ-5 Write rows (PS-5, PS-6).** One finding, one record (§10), one severity (§7); a known record cited
   by id, not restated.
-- **DQ-6 Route (PS-9).** P0, P1 and security rows: an issue by id, class and clause; the rest: the finding
-  ledger and a comment on the open owner ticket. Never a fix in the QA PR (PS-10).
+- **DQ-6 Route (PS-9).** P0 and P1 rows: an issue by id, class and clause; a security-shaped row: to the
+  orchestrator privately, in the ledger by id and class only; the rest: the finding ledger and a comment
+  on the open owner ticket. Never a fix in the QA PR (PS-10).
 - **DQ-7 Ledger row.** Verdict, counts, bug keys and notes per §11; the self-check must stay green.
 - **DQ-8 Time.** Record the wall time per screen for §13's effort model.
 
@@ -169,7 +180,8 @@ ties by id. The tool computes the order (`--order`); nobody hand-orders it.
 
 The top ten of the order whose E47-D02 coverage is built (`covered`, `partial` or `unreachable: built, not
 mounted`); a screen that is not built is skipped for the next built one. Coverage is E47-D02's at its
-audited sha; PR 2 re-computes the ten at its own base. Of the first tier only SCR-030 is built.
+audited sha; PR 2 re-computes the ten at its own base. Of the first tier only SCR-030 is built: the
+pilot says so and takes the next built screens, never an unbuilt row.
 
 | #   | SCR     | Name                                            | Rank | Must stories | E47 coverage                    |
 | --- | ------- | ----------------------------------------------- | ---- | ------------ | ------------------------------- |
@@ -184,30 +196,35 @@ audited sha; PR 2 re-computes the ten at its own base. Of the first tier only SC
 | 9   | SCR-014 | Notification centre (right-rail drawer)         | 49   | 2            | partial                         |
 | 10  | SCR-015 | Global toast host                               | 50   | 2            | covered                         |
 
-## 7. The severity map (PROPOSED)
+## 7. The severity map (RULED as amended; QA agreement pending)
 
 The ledger records P0..P3 only (`03` :320–327). The ticket's four anchors stand verbatim in the rule column.
+An E47-sourced row takes the register's own priority where it has one: a T01 row its `priority`
+(`docs/plan/a11y/findings.json`). A D02 review row has no level or priority in the register: it takes P0
+when it is a task that cannot be completed by keyboard and screen reader (`05` :282), and otherwise the
+ruled rule read from its SC (e47-t01-sweep.md :512). P0 for a non-a11y row stays `03` §11.3's own class.
 
-| Source label                                                                                     | Ledger | Rule                                                                                                 |
-| ------------------------------------------------------------------------------------------------ | ------ | ---------------------------------------------------------------------------------------------------- |
-| a secret shown, or a safety-clause breach that can send an order in the wrong env or unconfirmed | P0     | `03`'s P0 class only; an issue at once (PS-9)                                                        |
-| PS-7 Blocking                                                                                    | P1     | a frozen string, a focus-map regression, a task not completable by keyboard (a keyboard trap is one) |
-| E47 blocker                                                                                      | P1     | recorded from the register, never re-derived                                                         |
-| token drift that changes a trading signal's meaning                                              | P1     | ticket anchor                                                                                        |
-| PS-7 Major                                                                                       | P2     | —                                                                                                    |
-| E47 major                                                                                        | P2     | —                                                                                                    |
-| missing designed empty/error state                                                               | P2     | ticket anchor                                                                                        |
-| a11y AA violation                                                                                | P2     | ticket anchor: P2 minimum, whatever its source label                                                 |
-| PS-7 Minor                                                                                       | P3     | raised to P2 when the clause is an Accessibility clause                                              |
-| E47 minor                                                                                        | P3     | raised to P2 when it is a WCAG 2.2 AA failure                                                        |
-| wrong-but-readable spacing                                                                       | P3     | ticket anchor                                                                                        |
-| PS-7 Info, E47 info                                                                              | notes  | never a finding row                                                                                  |
+| Source label                                                                                     | Ledger         | Rule                                                                                                 |
+| ------------------------------------------------------------------------------------------------ | -------------- | ---------------------------------------------------------------------------------------------------- |
+| a secret shown, or a safety-clause breach that can send an order in the wrong env or unconfirmed | P0             | `03`'s P0 class only (a non-a11y row); an issue at once (PS-9)                                       |
+| PS-7 Blocking                                                                                    | P1             | a frozen string, a focus-map regression, a task not completable by keyboard (a keyboard trap is one) |
+| token drift that changes a trading signal's meaning                                              | P1             | ticket anchor                                                                                        |
+| E47 T01 row                                                                                      | its `priority` | the T01 register's own, recorded, never re-derived                                                   |
+| E47 review row: a task not completable by keyboard and screen reader                             | P0             | `05` :282                                                                                            |
+| E47 review row: Level A                                                                          | P0 or P1       | P0 if it blocks a `05` §8.2 task or any operation on the screen, else P1                             |
+| E47 review row: AA                                                                               | P2 or P1       | P1 on a money-moving or authentication path                                                          |
+| PS-7 Major                                                                                       | P2             | —                                                                                                    |
+| missing designed empty/error state                                                               | P2             | ticket anchor                                                                                        |
+| a11y AA violation                                                                                | P2             | ticket anchor: P2 minimum, whatever its source label                                                 |
+| PS-7 Minor                                                                                       | P3             | raised to P2 when the clause is an Accessibility clause                                              |
+| wrong-but-readable spacing                                                                       | P3             | ticket anchor                                                                                        |
+| PS-7 Info, E47 info                                                                              | notes          | never a finding row                                                                                  |
 
 ## 8. The evidence standard
 
 **Cells.** Each audited screen is compared in six cells: dark, light and high-contrast × compact and
 comfortable (`16` :693). The reference is the screen's Penpot boards (page name + id, never a host or file
-reference); the build is its Storybook stories or a fixture build. A missing cell carries its written N/A
+reference, R7); the build is its Storybook stories or a fixture build. A missing cell carries its written N/A
 reason in the record (AC 5's "Or" arm), for example "no high-contrast board drawn: the text is binding".
 
 **Hard rule (C-2.11, ticket Security notes).** Captures use the demo environment and fixture symbols only:
@@ -222,8 +239,9 @@ build; the agent run names this leg and its hardware class and never claims it.
 its default one (DQ-AX-4); a screen whose state is carried by colour adds a forced-colours capture. Each
 takes the same written-N/A rule as a missing cell.
 
-**Files.** Capture PNGs ride in PR 2 under `qa/evidence/e49/design-qa/` and count under the C-4.8 note;
-text-only legs draw no boards.
+**Files.** A PR that embeds pilot captures embeds them in its body (`docs/design/README.md` :44–57); the
+PNGs and any pilot run record beyond §13 go under `docs/qa/`, in no new directory, and count under the
+C-4.8 note; text-only legs draw no boards.
 
 ### 8.1 Evidence per clause
 
@@ -255,7 +273,9 @@ the same artefact as its §10 field 6.
 ### 8.2 The T2 checks for DQ-BS-2
 
 The E09-D09 T2 standing gate (`.claude/rules/32-design-specs.md`) is read, not restated: each line below
-names its check, and a miss is a DQ-BS-2 finding at P2.
+names its check, and a miss is a DQ-BS-2 finding at P2. DQ-BS-2 copies `16` :700 and applies through
+`14` §0.5 rule 5 (`14` :85): a hidden admin affordance (step 1) or a server refusal (step 2) is never
+recorded as a missing disabled-with-reason.
 
 | Check   | What the auditor confirms on the build                                       | Evidence                   |
 | ------- | ---------------------------------------------------------------------------- | -------------------------- |
@@ -272,8 +292,8 @@ names its check, and a miss is a DQ-BS-2 finding at P2.
 SCR-030 … SCR-054 (the ticket's range; `14` §3 is 030..049 and 050..059 is order flow, F-3) are audited at
 three data densities — sparse, typical and extreme footprint density — each a labelled SYNTHETIC sample from
 the seeded chart-engine bench generators (`packages/chart-engine/bench/fixtures/`). No recorded symbol-day
-exists; a re-check row for E49-S04 names the screens to repeat once a capture does. DQ-AX-3's mirror and
-table view are checked at every density, the extreme one included.
+exists; a re-check row for E18's QA ticket (as #497 ruled) names the screens to repeat once one does.
+DQ-AX-3's mirror and table view are checked at every density, the extreme one included.
 
 ## 10. The finding record (AC 2)
 
@@ -294,46 +314,68 @@ owner ticket, and the reproduction note.
 ## 11. The two ledgers and the self-check
 
 **Finding ledger** `docs/plan/backlog/artifacts/e49-design-qa-ledger.csv` — the exporter's header
-`finding_id,severity,status,component,opened` (ledger.py :17): `finding_id` is `DQA-nnnn`, `severity`
-P0..P3, `status` open|in-progress|fixed|accepted|wontfix, `component` the screen id, `opened` an ISO date.
-This schema is owned here (ledger.py :1); the exporter is unchanged.
+`finding_id,severity,status,component,opened` (ledger.py :17, :3–4): `finding_id` is a resolvable
+reference — an issue `#N` for a P0, P1 or security row, an E47 register id (`A11Y-…`) for an E47 row, else
+a `DQA-nnnn` id minted in this file — so the ledger indexes issues and never replaces them; `severity`
+P0..P3, `status` open|in-progress|fixed|accepted (no `wontfix`, §11.1), `component` the screen id,
+`opened` an ISO date. This schema is owned here (ledger.py :1); the exporter is unchanged, and the path is
+the one run.py :21 reads and the export watches (design-qa-ledger-export.yml :10–11).
 
-**Screen ledger** `docs/plan/backlog/artifacts/e49-design-qa-screens.csv` — one row per `### SCR-` heading:
+**Screen ledger** `docs/plan/backlog/artifacts/e49-design-qa-screens.csv`, a path the export does not
+watch — one row per `### SCR-` heading, 149, the number `14` and `18` both carry:
 `screen_id,screen_name,owning_epic,auditor,audit_date,verdict,p0,p1,p2,p3,bug_keys,notes,e47_verdict,e47_ref`.
 The verdict is `pass`, `findings`, `accepted-exception` or `not-applicable`, or empty while the screen is
-unaudited. Reserved ids (never rows): SCR-007, SCR-008, SCR-009, SCR-105, SCR-106, SCR-107, SCR-108,
-SCR-109, SCR-138, SCR-139.
+unaudited. `owning_epic` comes from the screen's `Stories:` lines in `14`, ties listed (`Enn;Enn`), never
+guessed; `e47_verdict` and `e47_ref` are read from the register's `screens[]` at its pinned blob, as
+`catalogue.py` pins its inputs. Reserved ids (never rows): SCR-007, SCR-008, SCR-009, SCR-105, SCR-106,
+SCR-107, SCR-108, SCR-109, SCR-138, SCR-139.
+
+**Who reads which file.** The exporter reads the finding ledger; per-screen verdicts (E49-D05, E49-S04)
+read the screen ledger, not the exporter's path both tickets name (C-1, C-2). PR 2's body states that
+merging the finding file starts one failing push run (run.py :24, exit 2) until walkthrough item 3 is done.
 
 **Self-check rules** (`scripts/design_qa_ledger_check.py --ledger SCREENS FINDINGS`):
 
-| Code          | Fails when                                                                                                                                                        |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `E_HEADER`    | the screen ledger's header is not the one above                                                                                                                   |
-| `E_MISSING`   | a catalogue id has no row (AC 1)                                                                                                                                  |
-| `E_EXTRA`     | a row's id is not a catalogue heading; `E_RESERVED` when it is a reserved id                                                                                      |
-| `E_DUP`       | an id appears twice                                                                                                                                               |
-| `E_NAME`      | a row's name differs from its catalogue heading                                                                                                                   |
-| `E_VERDICT`   | the verdict is outside the four words and empty                                                                                                                   |
-| `E_AUDIT`     | an audited row lacks auditor or ISO date, or an unaudited row carries either, a count or a key                                                                    |
-| `E_COUNTS`    | a count is not a whole number; `pass` with a finding; `findings` with none                                                                                        |
-| `E_BUGKEY`    | a `findings` row has no bug key, or a key is not `#N`, a backlog key or a `DQA-nnnn` id                                                                           |
-| `E_EXCEPTION` | an `accepted-exception` row lacks `owner:` or `reason:` in its notes, or a follow-up key (AC 4); or its notes name DQ-AX-n, DQ-BS-2 or DQ-TS-1 without `control:` |
-| `E_NA`        | a `not-applicable` row lacks `reason:` in its notes                                                                                                               |
-| `E_EPIC`      | the owning epic is not `Enn`, or `Enn;Enn` for a tie                                                                                                              |
-| `E_E47`       | `e47_verdict` differs from the register's verdict, or `e47_ref` from its audited sha (9 hex)                                                                      |
-| `E_FINDINGS`  | the finding ledger fails the exporter's parser or has a malformed row                                                                                             |
-| `E_CROSS`     | a row's four counts differ from its screen's finding rows, or a `DQA-` key names no finding row                                                                   |
+| Code          | Fails when                                                                                                                                                                        |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `E_HEADER`    | the screen ledger's header is not the one above                                                                                                                                   |
+| `E_MISSING`   | a catalogue id has no row (AC 1)                                                                                                                                                  |
+| `E_EXTRA`     | a row's id is not a catalogue heading; `E_RESERVED` when it is a reserved id                                                                                                      |
+| `E_DUP`       | an id appears twice                                                                                                                                                               |
+| `E_NAME`      | a row's name differs from its catalogue heading                                                                                                                                   |
+| `E_VERDICT`   | the verdict is outside the four words and empty                                                                                                                                   |
+| `E_AUDIT`     | an audited row lacks auditor or ISO date, or an unaudited row carries either, a count or a key                                                                                    |
+| `E_COUNTS`    | a count is not a whole number; `pass` with a finding; `findings` with none                                                                                                        |
+| `E_BUGKEY`    | a `findings` row has no bug key, or a key is not `#N`, a backlog key or a finding ledger id                                                                                       |
+| `E_EXCEPTION` | an `accepted-exception` row lacks `owner:` or `reason:` in its notes, or a follow-up key (AC 4); or its notes name DQ-AX-n, DQ-BS-2 or DQ-TS-1 without `control:`                 |
+| `E_NA`        | a `not-applicable` row lacks `reason:` in its notes                                                                                                                               |
+| `E_EPIC`      | the owning epic is not `Enn`, or `Enn;Enn` for a tie                                                                                                                              |
+| `E_E47`       | `e47_verdict` differs from the register's verdict, or `e47_ref` from its audited sha (9 hex)                                                                                      |
+| `E_FINDINGS`  | the finding ledger fails the exporter's parser, has a malformed row or a `wontfix` status, or a `finding_id` that is not a resolvable reference (a P0 or P1 row minted as `DQA-`) |
+| `E_CROSS`     | a row's four counts differ from its screen's finding rows, or a `DQA-` key names no finding row                                                                                   |
+
+### 11.1 Classes, verdicts, statuses and resolutions
+
+One row per E49-S04 resolution; `wontfix` is not a design-QA resolution before GA (the epic's bar is
+pass-or-accepted), and the self-check refuses it.
+
+| PS-6 class            | Screen verdict       | Finding status | E49-S04 resolution   |
+| --------------------- | -------------------- | -------------- | -------------------- |
+| implementation defect | `findings`           | `fixed`        | `fixed`              |
+| specification gap     | `findings`           | `fixed`        | `spec-corrected`     |
+| accepted divergence   | `accepted-exception` | `accepted`     | `accepted-exception` |
 
 ## 12. Accepted exceptions and near-duplicates
 
 An `accepted-exception` row carries `owner: <ticket key or the owner>; reason: <text>` in its notes and its
-follow-up key in `bug_keys`: an existing backlog key or a `#N` issue labelled `post-ga` (plan-first: no new
-follow-up tickets; an exception that needs one is a question to the orchestrator). The E49-T03 inventory
-(#1342) holds the owner-dated risks; an exception that is a risk is cited there, not restated. An exception on
-an Accessibility clause, DQ-BS-2 or DQ-TS-1 names that clause in its notes and adds `control: <the compensating control>` (`05` :360, the essential exception at `05` :104), citing the E47
-limitation or the E49-T03 row it rests on; the self-check fails it without `control:`. A
-near-duplicate component found in the pilot is an A-row to `15` for the catalogue owner; no new `CMP-` or
-`SCR-` id is created (ticket Out of scope).
+follow-up key in `bug_keys`: an existing backlog key or a `#N` issue labelled `post-ga`, checked by form only
+(plan-first: no new follow-up tickets; an exception that needs one is a question to the orchestrator). The
+E49-T03 inventory (#1342) holds the owner-dated risks; an exception that is a risk is cited there, not
+restated. An exception on an Accessibility clause, DQ-BS-2 or DQ-TS-1 names that clause in its notes and adds
+`control: <the compensating control>` (`05` :360, the essential exception at `05` :104), citing the E47
+limitation or the E49-T03 row it rests on; the self-check fails it without `control:`. A near-duplicate
+component found in the pilot is an A-row to `15` for the catalogue owner; no new `CMP-` or `SCR-` id is
+created (ticket Out of scope).
 
 ## 13. The pilot and the effort model (PR 2)
 
@@ -359,7 +401,7 @@ screen gets a screen-reader spot check (`05` §8.2), its time is recorded as a s
 | F-8  | most screens are not built, so the evidence standard cannot be met for them yet               | 47-audit-catalogue.md :16, :18                   | E49-S04 #1384 (comment)        |
 | F-9  | the ticket body's sprint (S22) is stale; the JSON's is Sprint 23                              | the ticket Context; `docs/plan/backlog/E49.json` | E49 plan JSON (the owner)      |
 | F-10 | the export's push target is unprovisioned and the pushgateway binds to the loopback interface | design-qa-ledger-export.yml :36–41               | the owner (walkthrough item 3) |
-| F-11 | there is no `docs` CI job to wire the self-check into                                         | `.github/workflows/pr.yml` path filter `docs`    | E49-T01 #1340 (comment)        |
+| F-11 | there is no `docs` CI job to wire the self-check into                                         | pr.yml :297–299 (a path filter)                  | E49-T01 #1340 (comment)        |
 
 All eleven are documentary (read from the repository), not `(heuristic)`.
 
@@ -398,7 +440,6 @@ No third-party screenshot or product capture is used.
 | OQ-1 | is the severity map agreed with QA as written (DoD 5)?                                    | the owner     |
 | OQ-2 | which transport carries the export to the pushgateway without publishing it (C-12.9)?     | the owner     |
 | OQ-3 | does E47-X01's threat model add an evidence rule for a11y mirrors or live regions (DR-1)? | E47-X01 #1326 |
-| OQ-4 | which CI job runs the self-check once a `docs` lane exists (V-3)?                         | E49-T01 #1340 |
 
 ## 18. Owner session protocol and walkthrough
 
@@ -421,14 +462,19 @@ rate and any step to revise. Nothing is claimed for the session until the owner 
 
 ## 19. Delta rows and deviations
 
-| Row  | Kind      | Text                                                                                                              |
-| ---- | --------- | ----------------------------------------------------------------------------------------------------------------- |
-| DR-1 | delta     | E47-X01 (#1326) is open; its outcome is cited here when it lands; PR 2 waits for it                               |
-| DR-2 | delta     | E47-D01 (#1300) is cited "if it merges as is": its findings map 1:1 onto E47-D02's severities, so §7 holds        |
-| V-1  | deviation | the PR title is a conventional commit (`docs(design-system): …`); the ticket's "E49-D01: …" form is not (C-4.10)  |
-| V-2  | deviation | the brief's `apps/web` paths and pnpm commands do not apply: no `apps/web` change                                 |
-| V-3  | deviation | no `docs` CI job exists; the self-check runs in the governance unit tests and its local `--check` is the evidence |
-| V-4  | deviation | the protocol uses Penpot for the ticket's Figma (agent-delivery adaptation)                                       |
+| Row  | Kind      | Text                                                                                                                                                                                                                                 |
+| ---- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| DR-1 | delta     | E47-X01 (#1326) is open; its outcome is cited here when it lands; PR 2 waits for it                                                                                                                                                  |
+| DR-2 | delta     | E47-D01 (#1300) is cited "if it merges as is": its findings map 1:1 onto E47-D02's severities, so §7 holds                                                                                                                           |
+| V-1  | deviation | the PR title is a conventional commit (`docs(design-system): …`); the ticket's "E49-D01: …" form is not (C-4.10)                                                                                                                     |
+| V-2  | deviation | the brief's `apps/web` paths and pnpm commands do not apply: no `apps/web` change                                                                                                                                                    |
+| V-3  | deviation | DoD 2's "green in CI": the home is a step in the `governance` job (GOV-008, governance.yml :107–108), named in the comment to E49-T01; a workflow edit is a C-10.2 path, so it is not made here; the local `--check` is the evidence |
+| V-4  | deviation | the protocol uses Penpot for the ticket's Figma (agent-delivery adaptation)                                                                                                                                                          |
+| V-5  | deviation | the ticket says four checklist groups; `16` §12 has five (`16` :690–718)                                                                                                                                                             |
+| V-6  | deviation | the ticket's "SCR-001 … SCR-159" is 149 rows: ten ids are reserved                                                                                                                                                                   |
+| V-7  | deviation | the ticket's first-tier ids SCR-051 and SCR-070 are corrected to SCR-063 by name (§6.1)                                                                                                                                              |
+| C-1  | contract  | to E49-D05 #1394 (comment): per-screen verdicts are read from the screen ledger, not the finding path                                                                                                                                |
+| C-2  | contract  | to E49-S04 #1384 (comment): the same, and its resolutions map by §11.1                                                                                                                                                               |
 
 ## 20. The self-check of this pack
 
@@ -448,37 +494,39 @@ its own gate and no other; `--fill` writes §6's tables and §20.3; `--order` pr
 
 ### 20.2 Gates
 
-G-CITE, G-KEYCITE, G-CLAUSES, G-EVIDENCE, G-SEVERITY, G-ORDER, G-RESERVED, G-FIXTURES, G-LEDGER, G-AC,
-G-BQ, G-DECISIONS, G-OQ, G-WALK, G-NOCLOSE, G-PUBLIC, G-HYGIENE, G-HELPER, G-UNTOUCHED and G-MUTLIST.
+G-CITE, G-KEYCITE, G-CLAUSES, G-EVIDENCE, G-SEVERITY, G-ORDER, G-RESERVED, G-FIXTURES, G-LEDGER, G-AC, G-BQ,
+G-RESOLUTIONS, G-DECISIONS, G-OQ, G-WALK, G-NOCLOSE, G-PUBLIC, G-HYGIENE, G-HELPER, G-UNTOUCHED and G-MUTLIST.
 
 ### 20.3 Mutations
 
-| M    | Gate        | Mutation                             |
-| ---- | ----------- | ------------------------------------ |
-| M-01 | G-CITE      | a cite past the end of ledger.py     |
-| M-02 | G-KEYCITE   | a pinned line reworded               |
-| M-03 | G-CLAUSES   | a clause reworded                    |
-| M-04 | G-CLAUSES   | a safety floor lowered               |
-| M-05 | G-SEVERITY  | Blocking mapped to P2                |
-| M-06 | G-ORDER     | SCR-051 put in the first tier        |
-| M-07 | G-ORDER     | a pilot rank drifts                  |
-| M-08 | G-RESERVED  | a reserved id dropped                |
-| M-09 | G-FIXTURES  | the complete fixture loses a row     |
-| M-10 | G-FIXTURES  | the fixture table drifts             |
-| M-11 | G-LEDGER    | no ledgers outside slice PR 1        |
-| M-12 | G-AC        | an AC state outside the vocabulary   |
-| M-13 | G-BQ        | the BQ heading names another comment |
-| M-14 | G-BQ        | a default without its built line     |
-| M-15 | G-DECISIONS | an owner ticket with the wrong issue |
-| M-16 | G-OQ        | an open question owned by nobody     |
-| M-17 | G-WALK      | an eleventh walkthrough item         |
-| M-18 | G-NOCLOSE   | a closing keyword                    |
-| M-19 | G-PUBLIC    | a URL                                |
-| M-20 | G-PUBLIC    | a stray HTML comment                 |
-| M-21 | G-HYGIENE   | trailing whitespace                  |
-| M-22 | G-HELPER    | the helper edited                    |
-| M-23 | G-UNTOUCHED | an owner document edited             |
-| M-24 | G-UNTOUCHED | the cross-link grows                 |
-| M-25 | G-MUTLIST   | the list drifts                      |
-| M-26 | G-EVIDENCE  | a clause without its evidence row    |
-| M-27 | G-EVIDENCE  | a T2 check dropped                   |
+| M    | Gate          | Mutation                             |
+| ---- | ------------- | ------------------------------------ |
+| M-01 | G-CITE        | a cite past the end of ledger.py     |
+| M-02 | G-KEYCITE     | a pinned line reworded               |
+| M-03 | G-CLAUSES     | a clause reworded                    |
+| M-04 | G-CLAUSES     | a safety floor lowered               |
+| M-05 | G-SEVERITY    | Blocking mapped to P2                |
+| M-06 | G-ORDER       | SCR-051 put in the first tier        |
+| M-07 | G-ORDER       | a pilot rank drifts                  |
+| M-08 | G-RESERVED    | a reserved id dropped                |
+| M-09 | G-FIXTURES    | the complete fixture loses a row     |
+| M-10 | G-FIXTURES    | the fixture table drifts             |
+| M-11 | G-LEDGER      | no ledgers outside slice PR 1        |
+| M-12 | G-AC          | an AC state outside the vocabulary   |
+| M-13 | G-BQ          | the heading loses its ruling         |
+| M-14 | G-BQ          | a default without its built line     |
+| M-15 | G-DECISIONS   | an owner ticket with the wrong issue |
+| M-16 | G-OQ          | an open question owned by nobody     |
+| M-17 | G-WALK        | an eleventh walkthrough item         |
+| M-18 | G-NOCLOSE     | a closing keyword                    |
+| M-19 | G-PUBLIC      | a URL                                |
+| M-20 | G-PUBLIC      | a stray HTML comment                 |
+| M-21 | G-HYGIENE     | trailing whitespace                  |
+| M-22 | G-HELPER      | the helper edited                    |
+| M-23 | G-UNTOUCHED   | an owner document edited             |
+| M-24 | G-UNTOUCHED   | the cross-link grows                 |
+| M-25 | G-MUTLIST     | the list drifts                      |
+| M-26 | G-EVIDENCE    | a clause without its evidence row    |
+| M-27 | G-EVIDENCE    | a T2 check dropped                   |
+| M-28 | G-BQ          | the AMEND ruled as AGREE             |
+| M-29 | G-RESOLUTIONS | wontfix as a resolution              |

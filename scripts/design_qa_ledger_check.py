@@ -3,7 +3,7 @@
 
 Offline and default-deny. The shared gates (git, cites, closing keywords, public text, hygiene,
 G-UNTOUCHED, the runner and the mutation harness) live in `docs/design/_tools/spec_audit_lib.py`,
-imported by path, never copied (G-HELPER pins its sha256). This file keeps only E49-D01's rows:
+imported by path, never copied (G-HELPER pins its git blob). This file keeps only E49-D01's rows:
 the clause list of `16` section 12, the severity map, the audit order, the reserved ids, the
 ledger rules and their fixtures. Every plan document is read AS TEXT at the pinned base.
 
@@ -24,7 +24,6 @@ import argparse
 import csv
 import dataclasses
 import functools
-import hashlib
 import importlib.util
 import io
 import json
@@ -34,14 +33,20 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import ModuleType
+from typing import cast
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "docs" / "design" / "_tools"))
-import spec_audit_lib as L  # noqa: E402 - sys.path first: the shared helper, never copied
+# mypy cannot follow the sys.path insert (the helper sits outside every package), so `L` is Any and
+# each gate below narrows what it returns from it.
+import spec_audit_lib as L  # type: ignore[import-not-found]  # noqa: E402 - the shared helper
 
-BASE = "a53a5b438"  # origin/main where every cite was read
+BASE = "aa0a02b8c"  # origin/main where every cite was read
 BQ_LIST = "6634720626"  # the BQ list on #1330
-HELPER_SHA = "62b56d6446b218cd"  # sha256[:16] of the shared helper as landed
+RULING = "6637510034"  # the orchestrator's ruling of record on it
+HELPER_BLOB = "15793f79cf92"  # git blob of the shared helper on main (BQ-0 rider)
+REGISTER_BLOB = "357f13f3bc8b"  # the E47-D02 register, read by blob (BQ-3 rider)
+CATALOGUE_PY = "docs/plan/a11y/_tools/catalogue.py"  # its parse_screens reads the SCR ids
 
 SPEC_REL = "docs/plan/backlog/artifacts/e49-design-qa-protocol.md"
 TOOL_REL = "scripts/design_qa_ledger_check.py"
@@ -50,7 +55,6 @@ LIB_REL = "docs/design/_tools/spec_audit_lib.py"
 GA_LEDGER_REL = "tools/ga_defects/ledger.py"
 SCREENS_REL = "docs/plan/backlog/artifacts/e49-design-qa-screens.csv"
 FINDINGS_REL = "docs/plan/backlog/artifacts/e49-design-qa-ledger.csv"
-REGISTER_REL = "docs/plan/a11y/47-audit-register.json"
 TICKETS_REL = "docs/plan/backlog/all-tickets.json"
 PUBLISHED_REL = "docs/plan/backlog/_tools/published.json"
 FX_DIR = "tests/fixtures/design_qa"
@@ -100,6 +104,10 @@ KEYED = {
     "run.py": L.DocRef("tools/ga_defects/run.py", BASE),
     "design-qa-ledger-export.yml": L.DocRef(".github/workflows/design-qa-ledger-export.yml", BASE),
     "47-audit-catalogue.md": L.DocRef("docs/plan/a11y/47-audit-catalogue.md", BASE),
+    "e47-t01-sweep.md": L.DocRef("docs/qa/a11y/e47-t01-sweep.md", BASE),
+    "governance.yml": L.DocRef(".github/workflows/governance.yml", BASE),
+    "pr.yml": L.DocRef(".github/workflows/pr.yml", BASE),
+    "docs/design/README.md": L.DocRef("docs/design/README.md", BASE),
 }
 KEY_CITES = (
     L.KeyCite("16", 686, "## 12. Design QA checklist"),
@@ -119,6 +127,13 @@ KEY_CITES = (
     L.KeyCite("ledger.py", 17, "HEADER = "),
     L.KeyCite("run.py", 21, "LEDGER_PATH"),
     L.KeyCite("47-audit-catalogue.md", 18, "not built is not auditable"),
+    L.KeyCite("05", 282, "**Defect severity bar**"),
+    L.KeyCite("14", 85, "**RBAC denies server-side; the UI presents.**"),
+    L.KeyCite("e47-t01-sweep.md", 512, "Priority (BQ-14)"),
+    L.KeyCite("ledger.py", 3, "CSV header"),
+    L.KeyCite("run.py", 24, "EXIT_NO_PUSH = 2"),
+    L.KeyCite("governance.yml", 107, "(GOV-008"),
+    L.KeyCite("pr.yml", 297, "docs:"),
 )
 CITE_RE = L.cite_regex(KEYED, ranges=True, spaced=True)
 
@@ -133,17 +148,23 @@ SEVERITY_MAP = (
     ("a secret shown, or a safety-clause breach that can send an order in the wrong env or "
      "unconfirmed", "P0"),
     ("PS-7 Blocking", "P1"),
-    ("E47 blocker", "P1"),
     ("token drift that changes a trading signal's meaning", "P1"),
+    ("E47 T01 row", "its `priority`"),
+    ("E47 review row: a task not completable by keyboard and screen reader", "P0"),
+    ("E47 review row: Level A", "P0 or P1"),
+    ("E47 review row: AA", "P2 or P1"),
     ("PS-7 Major", "P2"),
-    ("E47 major", "P2"),
     ("missing designed empty/error state", "P2"),
     ("a11y AA violation", "P2"),
     ("PS-7 Minor", "P3"),
-    ("E47 minor", "P3"),
     ("wrong-but-readable spacing", "P3"),
     ("PS-7 Info, E47 info", "notes"),
 )  # fmt: skip
+RESOLUTIONS = (  # PS-6 class -> verdict -> finding status -> E49-S04 resolution (BQ-1 rider)
+    ("implementation defect", "findings", "fixed", "fixed"),
+    ("specification gap", "findings", "fixed", "spec-corrected"),
+    ("accepted divergence", "accepted-exception", "accepted", "accepted-exception"),
+)
 FIRST_TIER = ("SCR-030", "SCR-050", "SCR-060", "SCR-063", "SCR-074")
 BUILT = frozenset({"covered", "partial", "unreachable: built, not mounted"})
 RESERVED = tuple(f"SCR-{n:03d}" for n in (7, 8, 9, 105, 106, 107, 108, 109, 138, 139))
@@ -154,10 +175,10 @@ SCREEN_HEADER = (
     "p0", "p1", "p2", "p3", "bug_keys", "notes", "e47_verdict", "e47_ref",
 )  # fmt: skip
 VERDICTS = frozenset({"", "pass", "findings", "accepted-exception", "not-applicable"})
-HEADING_RE = re.compile(r"^### (SCR-\d{3}) — (.+?)\s*$", re.MULTILINE)
 EPIC_RE = re.compile(r"E\d\d(?:;E\d\d)*")
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
-KEY_RE = re.compile(r"#\d+|E\d\d-[A-Z]\d\d|DQA-\d{4}")
+KEY_RE = re.compile(r"#\d+|E\d\d-[A-Z]\d\d|DQA-\d{4}|A11Y-[A-Z0-9-]+")
+FINDING_ID_RE = re.compile(r"#\d+|A11Y-[A-Z0-9-]+|DQA-\d{4}")  # issue, E47 register id, minted
 BACKLOG_RE = re.compile(r"E\d\d-[A-Z]\d\d")
 OWNER_RE = re.compile(r"(?:^|;\s*)owner:\s*\S")
 REASON_RE = re.compile(r"(?:^|;\s*)reason:\s*\S")
@@ -167,7 +188,8 @@ T2_CHECKS = ("G-T2.1a", "G-T2.1b", "G-T2.1c", "G-T2.1d", "G-T2.2", "G-T2.3", "G-
 TICKET_RE = re.compile(r"(E\d\d-[A-Z]\d\d) #(\d+)")
 AC_ROWS = tuple(f"AC {n}" for n in range(1, 6)) + tuple(f"DoD {n}" for n in range(1, 10))
 AC_STATES = frozenset({"done", "PR 2", "owner", "open"})
-BQ_HEADING = f"## 2. The questions BQ-0 … BQ-9 — defaults built; ruling pending (comment {BQ_LIST})"
+BQ_HEADING = f"## 2. The questions BQ-0 … BQ-9 — RULED (comment {RULING})"
+RULED_AS = ("AGREE +rider",) * 4 + ("AMEND",) + ("AGREE +rider",) * 3 + ("AGREE", "AGREE +rider")
 SLICE_MARK = "**Slice: PR 1 of 2**"
 
 
@@ -181,7 +203,7 @@ def at_base(rel: str) -> str:
     text = repo().show(BASE, rel)
     if text is None:
         raise L.AuditError(f"{rel} is not readable at {BASE}")
-    return text
+    return str(text)
 
 
 @functools.cache
@@ -206,8 +228,14 @@ def docs(t: L.Tree) -> L.Docs:
     return d
 
 
+@functools.cache
+def a11y_catalogue() -> ModuleType:
+    return cast(ModuleType, L.load_module(ROOT, CATALOGUE_PY, "a11y_catalogue"))
+
+
 def catalogue(text: str) -> list[tuple[str, str]]:
-    return HEADING_RE.findall(text)
+    """The SCR headings by E47-D02's own parser (BQ-9 rider), never a third regex."""
+    return [(i, s["name"]) for i, s in a11y_catalogue().parse_screens(text).items()]
 
 
 def must_weights(matrix: str) -> Counter[str]:
@@ -229,7 +257,7 @@ def audit_order(cat: Sequence[tuple[str, str]], weights: Counter[str]) -> list[s
 
 @functools.cache
 def base_inputs() -> tuple[list[tuple[str, str]], Counter[str], dict[str, object]]:
-    register = json.loads(at_base(REGISTER_REL))
+    register = json.loads(repo().git("cat-file", "-p", REGISTER_BLOB))
     return catalogue(at_base(PLAN["14"])), must_weights(at_base(PLAN["18"])), register
 
 
@@ -274,8 +302,12 @@ def finding_rows(text: str) -> tuple[list[dict[str, str]], list[str]]:
         d = dict(zip(ga.HEADER, (c.strip() for c in r), strict=False))
         if len(r) != len(ga.HEADER) or d["severity"] not in ga.SEVERITIES:
             bad.append(f"E_FINDINGS {r[0]}: malformed")
-        elif d["status"] not in statuses:
+        elif d["status"] not in statuses - {"wontfix"}:
             bad.append(f"E_FINDINGS {r[0]}: status {d['status']!r}")
+        elif not FINDING_ID_RE.fullmatch(d["finding_id"]) or (
+            d["severity"] in ("P0", "P1") and d["finding_id"].startswith("DQA-")
+        ):
+            bad.append(f"E_FINDINGS {r[0]}: not a resolvable reference")
         else:
             out.append(d)
     return out, bad
@@ -387,7 +419,7 @@ def codes(messages: Sequence[str]) -> frozenset[str]:
 
 # ---------- gates over the pack -------------------------------------------------------------------
 def spec(t: L.Tree) -> str:
-    return t.text("spec")
+    return str(t.text("spec"))
 
 
 def g_cite(t: L.Tree) -> list[str]:
@@ -395,13 +427,13 @@ def g_cite(t: L.Tree) -> list[str]:
     cites = L.extract_cites(L.strip_fences(spec(t)), CITE_RE)
     d = docs(t)
     ends = [c for c in cites if not all((d.line(c.doc, n) or "").strip() for n in (c.lo, c.hi))]
-    return L.check_cites(cites, d, nonblank=False, min_count=30) + [
+    return list(L.check_cites(cites, d, nonblank=False, min_count=30)) + [
         f"{c.raw} (a blank end line)" for c in ends
     ]
 
 
 def g_keycite(t: L.Tree) -> list[str]:
-    return L.check_key_cites(KEY_CITES, docs(t))
+    return list(L.check_key_cites(KEY_CITES, docs(t)))
 
 
 def _plain(s: str) -> str:
@@ -486,12 +518,23 @@ def g_ac(t: L.Tree) -> list[str]:
 
 
 def g_bq(t: L.Tree) -> list[str]:
-    if BQ_HEADING not in spec(t).split("\n"):
-        return ["the BQ heading is not the pending stamp"]
-    bullets = L.bq_bullets(spec(t), BQ_HEADING)
-    ids = [m.group(1) for b in bullets if (m := re.match(r"- \*\*(BQ-\d+) ", b))]
-    bad = [] if ids == [f"BQ-{n}" for n in range(10)] else [f"BQ ids {ids}"]
-    return bad + [f"{b[:12]} lacks 'Built as:'" for b in bullets if "Built as:" not in b]
+    return list(
+        L.check_ruling(
+            spec(t),
+            heading_line=BQ_HEADING,
+            list_ref=f"comment {BQ_LIST}",
+            count=10,
+            verdict=lambda n: f"RULED: {RULED_AS[n]}.",
+            need=("Built as:",),
+            forbid=("ruling pending",),
+            heading="## 2. The questions",
+        )
+    )
+
+
+def g_resolutions(t: L.Tree) -> list[str]:
+    rows = [tuple(c.strip("`") for c in r) for r in L.table_rows(L.section(spec(t), "### 11.1"))]
+    return [] if rows == list(RESOLUTIONS) else ["section 11.1 differs from the tool's map"]
 
 
 def _ticket_ok(cell: str) -> bool:
@@ -522,35 +565,35 @@ def _own(t: L.Tree) -> list[tuple[str, str]]:
 
 
 def g_noclose(t: L.Tree) -> list[str]:
-    return L.closing_keywords(_own(t))
+    return list(L.closing_keywords(_own(t)))
 
 
 def g_public(t: L.Tree) -> list[str]:
-    return L.scan_public(_own(t)) + L.comment_findings(_own(t))
+    return list(L.scan_public(_own(t))) + list(L.comment_findings(_own(t)))
 
 
 def g_hygiene(t: L.Tree) -> list[str]:
-    return L.whitespace_hygiene([(k, v) for k, v in _own(t) if v])
+    return list(L.whitespace_hygiene([(k, v) for k, v in _own(t) if v]))
 
 
 def g_helper(t: L.Tree) -> list[str]:
-    got = hashlib.sha256(t.text("lib").encode("utf-8")).hexdigest()
-    return [] if got.startswith(HELPER_SHA) else [f"{LIB_REL} is {got[:16]}, not {HELPER_SHA}"]
+    got = str(a11y_catalogue().blob_sha(t.text("lib").encode("utf-8")))
+    return [] if got.startswith(HELPER_BLOB) else [f"{LIB_REL} is blob {got[:12]}"]
 
 
 def g_untouched(t: L.Tree) -> list[str]:
-    return L.untouched(t.changed, OWN, budgets=BUDGETS, numstat=t.numstat)
+    return list(L.untouched(t.changed, OWN, budgets=BUDGETS, numstat=t.numstat))
 
 
 def g_mutlist(t: L.Tree) -> list[str]:
-    return L.check_mutlist(spec(t), "### 20.3", MUTATIONS)
+    return list(L.check_mutlist(spec(t), "### 20.3", MUTATIONS))
 
 
 # fmt: off
 GATES = tuple(L.Gate("G-" + f.__name__[2:].upper(), f) for f in (
     g_cite, g_keycite, g_clauses, g_evidence, g_severity, g_order, g_reserved, g_fixtures,
-    g_ledger, g_ac, g_bq, g_decisions, g_oq, g_walk, g_noclose, g_public, g_hygiene, g_helper,
-    g_untouched, g_mutlist,
+    g_ledger, g_ac, g_bq, g_resolutions, g_decisions, g_oq, g_walk, g_noclose, g_public,
+    g_hygiene, g_helper, g_untouched, g_mutlist,
 ))
 # fmt: on
 
@@ -588,14 +631,14 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "**Slice: PR 2 of 2**"),
     _M("M-12", "G-AC", "an AC state outside the vocabulary", _S,
        r"(\| AC 3 +\|[^|]+\| )PR 2", r"\1maybe", regex=True),
-    _M("M-13", "G-BQ", "the BQ heading names another comment", _S,
-       f"ruling pending (comment {BQ_LIST})", "ruling pending (comment 6634720625)"),
+    _M("M-13", "G-BQ", "the heading loses its ruling", _S, f"— RULED (comment {RULING})",
+       f"— ruling pending (comment {RULING})"),
     _M("M-14", "G-BQ", "a default without its built line", _S,
-       "- **BQ-5 — the audit order.** Built as:", "- **BQ-5 — the audit order.** As:"),
+       "AGREE +rider. Built as: the first tier", "AGREE +rider. As: the first tier"),
     _M("M-15", "G-DECISIONS", "an owner ticket with the wrong issue", _S,
        r"(\| AD-9 [^\n]*)E49-T03 #1342", r"\1E49-T03 #1343", regex=True),
     _M("M-16", "G-OQ", "an open question owned by nobody", _S,
-       r"(\| OQ-4 [^\n]*\| )E49-T01 #1340", r"\1a reviewer   ", regex=True),
+       r"(\| OQ-3 [^\n]*\| )E47-X01 #1326", r"\1a reviewer   ", regex=True),
     _M("M-17", "G-WALK", "an eleventh walkthrough item", _S,
        "10. Comment `approved`", "10. One more pass.\n11. Comment `approved`"),
     _M("M-18", "G-NOCLOSE", "a closing keyword", _S, "this PR files none;",
@@ -617,6 +660,9 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        r"\n\| DQ-AX-2 \| the tree's[^\n]*", "", regex=True),
     _M("M-27", "G-EVIDENCE", "a T2 check dropped", _S, r"\n\| G-T2\.1b \|[^\n]*", "",
        regex=True),
+    _M("M-28", "G-BQ", "the AMEND ruled as AGREE", _S, "RULED: AMEND.", "RULED: AGREE."),
+    _M("M-29", "G-RESOLUTIONS", "wontfix as a resolution", _S,
+       r"(\| specification gap +\| `findings` +\| )`fixed`", r"\1`wontfix`", regex=True),
 )
 # fmt: on
 
@@ -646,12 +692,12 @@ def read_tree(changed: tuple[str, ...] | None = None) -> L.Tree:
 
 
 def check() -> int:
-    return L.report(L.run_gates(GATES, read_tree()))
+    return int(L.report(L.run_gates(GATES, read_tree())))
 
 
 def self_test(changed: tuple[str, ...] | None = None) -> int:
     disk = [ROOT / rel for rel in OWN]
-    return L.self_test(read_tree(changed), GATES, MUTATIONS, disk, namespace=globals())
+    return int(L.self_test(read_tree(changed), GATES, MUTATIONS, disk, namespace=globals()))
 
 
 def replace_table(text: str, heading: str, rows: Sequence[Sequence[str]]) -> str:
@@ -685,7 +731,7 @@ def print_order() -> int:
 
 
 def ledger_mode(screens: Path, findings: Path) -> int:
-    register = json.loads(_disk(REGISTER_REL))
+    _, _, register = base_inputs()  # the register by its pinned blob, never the working copy
     keys = frozenset(t["key"] for t in json.loads(_disk(TICKETS_REL)))
     bad = check_ledger(
         screens.read_text(encoding="utf-8"),
@@ -708,7 +754,7 @@ def main(argv: Sequence[str]) -> int:
         args = ap.parse_args(list(argv[1:]))
         return ledger_mode(args.screens, args.findings)
     modes = {"check": check, "self-test": self_test, "fill": fill, "order": print_order}
-    return L.cli(argv, modes, __doc__)
+    return int(L.cli(argv, modes, __doc__))
 
 
 if __name__ == "__main__":
