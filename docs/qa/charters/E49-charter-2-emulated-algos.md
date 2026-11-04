@@ -1,6 +1,6 @@
 # E49-C2 Charter: Emulated algos
 
-- Ticket: E49-Q02 (#1336) · Format: session-based, 90 min (45 QA alone, 45 paired with a domain engineer) · Status: run 1 (2026-11-01): route level only (its screens are stubs)
+- Ticket: E49-Q02 (#1336) · Format: session-based, 90 min (45 QA alone, 45 paired with a domain engineer) · Status: run 1 (2026-11-01): route level only (its screens are stubs) · refreshed 2026-11-04 to `fdad0285f`: parked: no algo screen or runtime
 - Cites: 03 §11.2 (OMS / order-path edge cases), §9 (WS disconnect private, rate limit 10018), §7 Trading-demo suite (emulated OCO / iceberg / TWAP / chase)
 - Mission: leave an emulated algo with a live child order and no parent, or a parent that believes a child it does not have.
 - Areas:
@@ -20,12 +20,14 @@
   only, behind the egress guard (C-13.5); Demo environment flag; test accounts only.
 - Automated neighbours: E33 algo suites once built, the statechart contract tests of `tests/xstate_contract/`.
 
-## Explorable at `origin/main` (2026-11-01)
+## Explorable at the GA-candidate pin `fdad0285f` (2026-11-04)
 
-| Surface              | State                                                                       |
-| -------------------- | --------------------------------------------------------------------------- |
-| Algo UI and runtime  | not built (E33 #65)                                                         |
-| Statechart contracts | catalogue entries of `28-statechart-catalogue.md` (the four emulated algos) |
+Re-verified against the code at the pin. A parked row names its owning ticket and the trigger that unparks it; the trigger is always that the route renders a body, not `StubRoute` (`apps/web/src/routes/tree.tsx:82-83`).
+
+| Surface              | State                                                                                                                  | Evidence                                                             |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Algo UI and runtime  | parked: not built (E33 #65); no route and no OMS module for the four algos. Unparks when an algo screen renders a body | `services/api/candleviewer/oms/` (no algo module)                    |
+| Statechart contracts | catalogue entries B4 to B7 (OCO, iceberg, TWAP, chase) as JSON contracts only                                          | `services/api/candleviewer/statechart/machines/B04.oco.machine.json` |
 
 ## Debrief (one block per session)
 
@@ -34,3 +36,4 @@ run record) · areas not reached · keyboard-only screens and dead ends · time 
 
 - Run 1 (2026-11-01, agent baseline, tier A): no algo route or screen exists (E33 #65), so none of the
   oracles above was applied. Not reached: every area above. Finding: E49-R1-09 (unbuilt, not a defect).
+- Session sheet: one `E49-session-sheet.md` copy per session; this block keeps the summary line only.

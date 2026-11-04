@@ -1,6 +1,6 @@
 # E49-C4 Charter: Fan-out edges
 
-- Ticket: E49-Q02 (#1336) · Format: session-based, 90 min (45 QA alone, 45 paired with a domain engineer) · Status: run 1 (2026-11-01): route level only (its screens are stubs)
+- Ticket: E49-Q02 (#1336) · Format: session-based, 90 min (45 QA alone, 45 paired with a domain engineer) · Status: run 1 (2026-11-01): route level only (its screens are stubs) · refreshed 2026-11-04 to `fdad0285f`: parked: its screens are stubs; the backend half runs in-process only
 - Cites: 03 §11.2 (multi-account fan-out edge cases), §7 Multi-account suite, §9 (partial fan-out failure, rate limit 10018), §11.4 (native SL on every fanned-out order); RSK-016
 - Mission: make a trade group leave any account exposed: unprotected, over its cap, or silently skipped.
 - Areas:
@@ -19,12 +19,16 @@
   only, behind the egress guard (C-13.5); Demo environment flag; test accounts only.
 - Automated neighbours: the E34 fan-out suites, chaos "partial fan-out failure" and "rate limit 10018" of 03 §9.
 
-## Explorable at `origin/main` (2026-11-01)
+## Explorable at the GA-candidate pin `fdad0285f` (2026-11-04)
 
-| Surface                                      | State                                                                         |
-| -------------------------------------------- | ----------------------------------------------------------------------------- |
-| Trade groups R-140..R-142, risk R-150..R-151 | stub routes (manifest owner label E12; build epics E28 #57, E34 #58, E39 #59) |
-| Fan-out, governor                            | backend (E34); fake trading port in-process                                   |
+Re-verified against the code at the pin. A parked row names its owning ticket and the trigger that unparks it; the trigger is always that the route renders a body, not `StubRoute` (`apps/web/src/routes/tree.tsx:82-83`).
+
+| Surface                                      | State                                                                                                                    | Evidence                                                                                        |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| Trade groups R-140..R-142, risk R-150..R-151 | parked: stub routes (manifest owner label E12; build epics E28 #57, E34 #58, E39 #59). Unparks when R-140 renders a body | `apps/web/src/routes/manifest.ts:57-63`, `apps/web/src/routes/tree.tsx:82-83`                   |
+| Fan-out plan and guard                       | backend (E34); fake trading port in-process; no exchange key on the seeded stack                                         | `services/api/candleviewer/oms/fanout/`, `services/api/candleviewer/exchange/base/fakes.py:290` |
+
+The binding rule stays for when it unparks: the debrief states the native-stop-loss answer for each injected fault, and a miss is P0.
 
 ## Debrief (one block per session)
 
@@ -35,3 +39,4 @@ run record) · areas not reached · keyboard-only screens and dead ends · time 
   stub heading and the environment badge (C8 sweep); no order, rule, group or replay path exists to
   probe, so none of the oracles above was applied. Not reached: every area above. Findings: E49-R1-05
   (the stub headings name the wrong epics), E49-R1-09 (unbuilt, not a defect).
+- Session sheet: one `E49-session-sheet.md` copy per session; this block keeps the summary line only.
