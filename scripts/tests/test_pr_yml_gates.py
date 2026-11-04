@@ -329,8 +329,10 @@ def _legs(axis: object, inputs: dict[str, object]) -> int:
     # vr job in fourteen shards (+4): 5 / 33 / 33 / 67. E10-Q02 runs `e2e-electron` on every e2e call
     # (C-9.1 #8), not on release/* heads only (+1): 5 / 33 / 33 / 68. E03-T14 adds the bench lane's
     # `route` job beside its `bench` job (+1): 5 / 33 / 33 / 69. #5697 splits the history sweeps
-    # out of `gitleaks` into `gitleaks-history` (+1): 5 / 34 / 34 / 70.
-    [("docs", 5), ("py", 34), ("py,infra", 34), ("all", 70)],
+    # out of `gitleaks` into `gitleaks-history` (+1): 5 / 34 / 34 / 70. #5505 splits the rest lane
+    # into rest-heavy-4 and rest-heavy-5 (+2): 5 / 36 / 36 / 72, and `tests/security/auth` out of
+    # contract-security-2 as contract-security-4 (+1): 5 / 37 / 37 / 73.
+    [("docs", 5), ("py", 37), ("py,infra", 37), ("all", 73)],
 )
 def test_executed_job_count_per_change_class(change: str, count: int) -> None:
     on = set(JOBS["changed-paths"]["outputs"]) if change == "all" else set(change.split(","))

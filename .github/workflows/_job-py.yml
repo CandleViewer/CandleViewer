@@ -10,8 +10,8 @@ name: _job-py
 #     -> ruff check + ruff format --check -> mypy --strict -> rule IR schema
 #     drift -> alert rules, promtool, amtool -> Grafana dashboard lint
 #     -> import-linter architecture contract (its own `architecture` check)
-#   py-tests: one job per lane of tools/ci/py-test-lanes.json, all at once (sixteen since #3881:
-#     the four heavy matrices sharded; docs/ci-runbook.md section 10 has the measured lane times):
+#   py-tests: one job per lane of tools/ci/py-test-lanes.json, all at once (sixteen since #3881, nineteen since #5505:
+#     the four heavy matrices sharded, the rest lane split twice, contract-security-4 split out; docs/ci-runbook.md section 10 has the measured lane times):
 #     pytest -m "not exchange_smoke ..." --cov on the lane's paths
 #     (network-guarded, ADR-0012/SR-140) -> upload the lane's raw coverage data
 #   py (after both): coverage combine -> coverage.xml + term report -> the
@@ -168,7 +168,7 @@ jobs:
     name: py-tests (${{ matrix.lane }})
     runs-on: ubuntu-latest
     # The py-only variable (#2185, #2426), so tuning the shared CV_CI_TIMEOUT_MINUTES for other
-    # lanes cannot shrink it. A lane is about a sixteenth of the suite since #3881, against about
+    # lanes cannot shrink it. A lane is about a nineteenth of the suite since #5505 (a sixteenth since #3881), against about
     # a quarter with four lanes (13-16 min on a slow shared runner, #3751) and 24-30 min when one
     # job ran it all (ADR-0013's Validation): the default stays a ceiling, not an expectation.
     timeout-minutes: ${{ fromJSON(vars.CV_CI_PY_TIMEOUT_MINUTES || 30) }}
@@ -192,9 +192,12 @@ jobs:
           - contract-security-1
           - contract-security-2
           - contract-security-3
+          - contract-security-4
           - rest-heavy-1
           - rest-heavy-2
           - rest-heavy-3
+          - rest-heavy-4
+          - rest-heavy-5
           - rest
     defaults:
       run:
@@ -234,10 +237,24 @@ jobs:
           lane_args=$(python ../../tools/ci/py_test_lanes.py pytest-args "$LANE")
           read -ra lane_paths <<< "$lane_args"
           status=0
+          started=$(date +%s)
           uv run pytest -p no:cacheprovider -m "not exchange_smoke and not (chaos and integration) and not roundtrip and not fuzz and not harness and not perf and not flaky" \
             --durations=10 --cov --cov-report= --cov-fail-under=0 "${lane_paths[@]}" || status=$?
+          echo $(( $(date +%s) - started )) > "$RUNNER_TEMP/py-lane-pytest-seconds" || true
           if [ -f .coverage ]; then mv .coverage "py-lane-$LANE.coverage"; fi
           exit "$status"
+
+      # #5505: a soft budget. The lane's pytest wall time (measured in the step above) against
+      # lane_budget_seconds in tools/ci/py-test-lanes.json: a `::warning::` annotation past it,
+      # never a failure: the script exits 0 and the call ends in `|| true`, so the step cannot change
+      # the job's result (and it carries no continue-on-error).
+      - name: Warn when this lane passed its soft time budget
+        if: always()
+        env:
+          LANE: ${{ matrix.lane }}
+        run: |
+          [ -s "$RUNNER_TEMP/py-lane-pytest-seconds" ] || exit 0
+          python ../../tools/ci/py_test_lanes.py budget "$LANE" "$(cat "$RUNNER_TEMP/py-lane-pytest-seconds")" || true
 
       - name: Upload this lane's raw coverage data (the py job combines every lane)
         if: ${{ !cancelled() }}
