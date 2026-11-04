@@ -6,8 +6,9 @@ import { deriveShellMode, sameShellMode, type ShellModeResult } from "./shellMod
 /**
  * The store → `deriveShellMode` (E10-S01 S8, #304). Pure and module-level: every consumer reads
  * the same store facts, including the store's `everLive` latch, so a component that mounts
- * mid-outage reads `disconnected` like one mounted before it. `frozen`, `lockout` and `viewAs` are
- * `false`: the store has no source for them (#304 gap 13; see `shellMode.ts`).
+ * mid-outage reads `disconnected` like one mounted before it. `frozen` and `lockout` are `false`:
+ * the store has no source for them (#304 gap 13; see `shellMode.ts`). `viewAs` is the view-as
+ * context the server says the session holds, live or ended (E42-S03, `lib/auth/viewAsContext.ts`).
  */
 export const selectShellMode = (s: ShellState): ShellModeResult =>
   deriveShellMode({
@@ -17,7 +18,7 @@ export const selectShellMode = (s: ShellState): ShellModeResult =>
     frozen: false,
     lockout: false,
     role: s.me?.role ?? null,
-    viewAs: false,
+    viewAs: s.viewAs.kind === "held",
   });
 
 /**

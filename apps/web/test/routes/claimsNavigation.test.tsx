@@ -15,6 +15,7 @@ import type { MeClaims, Role } from "../../src/routes/rbac";
 import { buildRoutes } from "../../src/routes/tree";
 import { REFRESH_PATH, REFRESH_SENT_KEY, accessToken } from "../../src/lib/auth/accessToken";
 import { runBootstrap } from "../../src/shell/bootstrap/bootstrap";
+import { VIEW_AS_PATH } from "../../src/lib/auth/viewAsContext";
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -149,6 +150,7 @@ describe("#5405 a stale bearer, then a rail click", () => {
     );
     let stale = false;
     const fetchImpl = vi.fn(async (path: RequestInfo | URL) => {
+      if (String(path) === VIEW_AS_PATH) return new Response(null, { status: 204 }); // E42-S03
       if (String(path) !== "/api/v1/me") return json({});
       return stale ? json({ code: "token_expired" }, 401) : json(ME_BODY);
     });

@@ -69,6 +69,8 @@ const REST: Readonly<Record<string, unknown>> = {
   },
   "/api/v1/me/preferences": {},
   "/api/v1/me/keymap": { bindings: [] },
+  // E42-S03: the fourth boot read, beside /me; `204` (null): the owner views as no one
+  "/api/v1/auth/session/view-as": null,
   "/api/v1/settings": SETTINGS,
   "/api/v1/auth/session": sessionInfo("owner"),
   "/api/v1/health/live": { status: "ok" },

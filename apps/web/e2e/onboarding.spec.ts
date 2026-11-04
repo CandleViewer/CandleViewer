@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { stubNoViewAs } from "./support/api";
 
 // E09-S06: first sign-in lands in the terminal and shows the SCR-019 card; axe clean.
 const items = ["tailscale", "totp", "sub_account", "api_key", "profile_limits", "demo_session"].map(
@@ -30,6 +31,7 @@ async function signIn(page: import("@playwright/test").Page): Promise<void> {
   );
   await page.route("**/api/v1/me/preferences", (r) => r.fulfill(ok({})));
   await page.route("**/api/v1/me/keymap", (r) => r.fulfill(ok({ bindings: [] })));
+  await stubNoViewAs(page); // E42-S03: the fourth boot read
 }
 
 test("SCR-019 card renders on first sign-in; axe clean with tour open", async ({ page }) => {

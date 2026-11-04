@@ -6,6 +6,7 @@
  * just the REST half without needing a live WS in tests.
  */
 import { accessToken } from "../lib/auth/accessToken.js";
+import { startViewAsSync } from "../lib/auth/viewAsContext.js";
 import { recordDecode } from "../lib/telemetry/aggregator.js";
 import type { TokenSource } from "../lib/ws/api.js";
 import { setActiveClient } from "../lib/ws/client/activeClient.js";
@@ -78,11 +79,14 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
   const unwatchGpu = watchGpu();
   // E08-S09: SCR-102's instrument index, read once `/me` has answered and a workspace has bound an opener, then hourly
   const stopSearch = startSymbolSearch();
+  // E42-S03: the view-as context's re-reads (a sibling's start or exit, its expiry, the socket closing)
+  const stopViewAs = startViewAsSync({ fetchImpl: options.fetchImpl });
   const teardown = (): void => {
     liveness.stop();
     unwatchGpu();
     uninstallCrash();
     stopSearch();
+    stopViewAs();
   };
   // ADR-0020: a page load re-derives the access token from the refresh cookie, once, before the bootstrap's first call.
   // `refresh` stops waiting after REFRESH_WAIT_MS (another tab may hold the lock), so the first paint does too.

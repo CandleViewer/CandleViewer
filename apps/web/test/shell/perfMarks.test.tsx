@@ -4,6 +4,7 @@ import { RouterProvider } from "react-router/dom";
 import { beforeEach, describe, expect, it } from "vitest";
 import { SHELL_PERF_MARKS, createShellPerfMarks } from "../../src/shell/perfMarks.js";
 import { runBootstrap } from "../../src/shell/bootstrap/bootstrap.js";
+import { VIEW_AS_PATH } from "../../src/lib/auth/viewAsContext.js";
 import { resetShellState, setShellState } from "../../src/shell/bootstrap/store.js";
 import { resetMeClaims, setMeClaims } from "../../src/lib/auth/meCache.js";
 import { buildRoutes } from "../../src/routes/tree.js";
@@ -67,13 +68,15 @@ const ME = {
   session: { session_id: "s1", environment: "demo", elevated_until: null },
 };
 
-/** `/me` answers ME; preferences and keymap answer empty bodies. */
+/** `/me` answers ME; preferences and keymap answer empty bodies; the view-as read `204` (E42-S03). */
 const fetchImpl: typeof fetch = (input) =>
   Promise.resolve(
-    new Response(JSON.stringify(input === "/api/v1/me" ? ME : {}), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    }),
+    input === VIEW_AS_PATH
+      ? new Response(null, { status: 204 })
+      : new Response(JSON.stringify(input === "/api/v1/me" ? ME : {}), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
   );
 
 describe("the shell's boot marks the stages on the page's timeline", () => {

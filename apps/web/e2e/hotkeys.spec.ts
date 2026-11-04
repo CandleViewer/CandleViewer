@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { stubNoViewAs } from "./support/api";
 
 // E49-S07 e2e. Session stubs are network-layer (same pattern as onboarding.spec.ts); app code is
 // not mocked, so /settings/hotkeys passes the real auth guard and every conflict class runs.
@@ -31,6 +32,7 @@ async function signIn(page: Page): Promise<void> {
   );
   await page.route("**/api/v1/me/preferences", (r) => r.fulfill(ok({})));
   await page.route("**/api/v1/me/keymap", (r) => r.fulfill(ok({ bindings: [] })));
+  await stubNoViewAs(page); // E42-S03: the fourth boot read
 }
 
 /**

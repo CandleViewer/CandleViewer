@@ -22,6 +22,7 @@ import {
   resetShellState,
   setShellState,
   type ConnectionState,
+  type HeldViewAs,
   type Me,
 } from "../../../src/shell/bootstrap/store.js";
 import type { CvBridge } from "../../../src/shell/ElectronShellAdapter.js";
@@ -226,6 +227,32 @@ describe("useShellMode", () => {
     set({ degraded: FEED_DOWN });
     expect(probe()).toBe("degraded:role");
     set({ connection: retry(1) });
+    expect(probe()).toBe("disconnected:role");
+  });
+
+  // E42-S03: the server's view-as context is the overlay's source, live or held, under every mode
+  it("reads a held view-as context from the store as the view-as overlay, live or ended", () => {
+    const held: HeldViewAs = {
+      kind: "held",
+      targetId: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002",
+      targetName: "alex",
+      startedAtMs: 0,
+      expiresAtMs: 1_800_000,
+      state: "active",
+      offsetMs: 0,
+    };
+    set({ connection: LIVE, me: me("viewer") });
+    render(<ModeProbe />);
+    expect(probe()).toBe("read-only:role");
+    set({ viewAs: held });
+    expect(probe()).toBe("read-only:view-as");
+    set({ viewAs: { ...held, state: "expired" } });
+    expect(probe()).toBe("read-only:view-as");
+    set({ connection: retry(1) });
+    expect(probe()).toBe("disconnected:view-as");
+    set({ viewAs: { kind: "none" } });
+    expect(probe()).toBe("disconnected:role");
+    set({ viewAs: { kind: "unknown" } });
     expect(probe()).toBe("disconnected:role");
   });
 });

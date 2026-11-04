@@ -17,7 +17,7 @@ import { getShellState } from "../../shell/bootstrap/store";
 import { readString } from "../../shell/crash/redact";
 import { reportCrash } from "../../shell/crash/reportCrash";
 import { ScreenRoot } from "../app-shell/ScreenRoot";
-import { bootDiverted, isUnreachableBoot, resumeBoot } from "./bootOffline";
+import { bootDiverted, isUnreachableBoot, resumeBoot, takeResumePath } from "./bootOffline";
 import { BOOT_CHECKS, CHECK_GLYPHS, OFFLINE_COPY, SCR159_COPY } from "./copy";
 import { OfflinePage } from "./OfflinePage";
 
@@ -110,6 +110,13 @@ export function BackendUnreachable(): JSX.Element {
       return;
     }
     markReachable(); // the server answered: the probe's verdict goes with the takeover
+    // E42-S03 V-8: the server holds a view-as context it ended and refuses `/me` meanwhile. Only a
+    // full load boots the held page, whose Exit leads on (`main.tsx`); the router's own navigation
+    // would land on /login, where nothing ends the hold
+    if (getShellState().bootstrap.kind === "held") {
+      window.location.replace(takeResumePath());
+      return;
+    }
     const ready = getShellState().bootstrap.kind === "ready";
     navigate(resumeBoot(ready), { replace: true });
   }, [navigate]);

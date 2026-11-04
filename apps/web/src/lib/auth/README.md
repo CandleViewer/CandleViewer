@@ -24,6 +24,14 @@ route tree, auth/RBAC guards and env badge are E10's scope.
   left); the claims go unauthenticated and the guard sends the user to sign-in
   with the destination as `next`. Any other failed read keeps the old claims;
   the server stays the boundary.
+- `viewAsContext.ts` (E42-S03): the shell's one view-as source. It reads
+  `GET /auth/session/view-as` beside `/me` at boot, and a read that fails fails
+  the boot closed; it keeps the answer in the shell store (`ShellState.viewAs`,
+  which only it writes). It re-reads on a `cv.view-as` broadcast, at
+  `expires_at` on the server's clock (backing off while the server still says
+  live), when the socket leaves live and on a server's `view_as_*` refusal; a
+  re-read in another scope reloads the page, once. `stopViewAsSync` stops it
+  when the page leaves on its own (Exit). It names the target only.
 
 Known gap, server-side (#2712 changes no server code):
 

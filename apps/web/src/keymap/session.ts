@@ -6,11 +6,17 @@
  * avoids sending what it would refuse. The keymap's one read of the session claims and of `/me`'s user.
  */
 import { getMeClaims } from "../lib/auth/meCache";
+import { isViewing } from "../lib/auth/viewAsContext";
 import { getShellState, subscribeShellState, type Me } from "../shell/bootstrap/store";
 
-/** `/me`'s user id; null before sign-in, and for a `/me` without a user (a stub's), which then keeps nothing. */
-// View-as (E42-S03 #1134): while a view-as context is live this must return null, with a test (#304 gap 13).
+/**
+ * `/me`'s user id; null before sign-in, and for a `/me` without a user (a stub's), which then keeps nothing.
+ * Null too while a view-as context is held, live or ended (E42-S03; #304 gap 13): `/me` then names the target, so a
+ * remap applies to the page only, and nothing is stored under the target's key or anyone's, adopted from the device's
+ * legacy profile, written to a server store or queued for audit.
+ */
 export function keymapUser(): string | null {
+  if (isViewing()) return null;
   const user: Partial<Me["user"]> | undefined = getShellState().me?.user;
   return typeof user?.id === "string" && user.id !== "" ? user.id : null;
 }

@@ -17,9 +17,9 @@
  *    orthogonal"; D03 §1.3 orders the legs view-as first.
  * 6. `normal`.
  *
- * `frozen`, `lockout` and `viewAs` have no client source yet (#304 gap 13; the store holds no
- * kill-switch, B20 or view-as fact): callers pass `false` until E39 (kill switch, lockout) and the
- * view-as context (23 §9.6) land. They are never inferred from other inputs.
+ * `frozen` and `lockout` have no client source yet (#304 gap 13; the store holds no kill-switch or
+ * B20 fact): callers pass `false` until E39 lands. `viewAs` is the server's view-as context
+ * (E42-S03, `GET /auth/session/view-as`). None is ever inferred from other inputs.
  */
 import type { ConnectionState, Me } from "../../shell/bootstrap/store.js";
 
@@ -39,7 +39,7 @@ export interface ShellModeInputs {
   /** A B20 risk lockout holds. `false` until E39 supplies the fact (#304 gap 13). */
   readonly lockout: boolean;
   readonly role: Me["role"] | null;
-  /** A view-as session. `false` until the client holds the view-as context (23 §9.6). */
+  /** The session holds a view-as context, live or ended (`22` `getViewAs`; 23 §9.6). */
   readonly viewAs: boolean;
 }
 

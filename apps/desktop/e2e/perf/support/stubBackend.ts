@@ -145,7 +145,7 @@ export function gatewayReplies(f: Frame, version: string, now: () => number): Fr
 export interface StubOptions {
   /** The built web app (`apps/web/dist`). */
   readonly webRoot: string;
-  /** REST answers by exact pathname, any method. */
+  /** REST answers by exact pathname, any method: a `200` with the JSON body, `null` a `204`. */
   readonly rest: Readonly<Record<string, unknown>>;
   /** `welcome.server_version`: the web build's version, so no version-skew band shows. */
   readonly version: string;
@@ -168,8 +168,14 @@ export async function startStubBackend(opts: StubOptions): Promise<StubBackend> 
   const server = http.createServer((req, res) => {
     const { pathname } = new URL(req.url ?? "/", "http://127.0.0.1");
     if (Object.hasOwn(opts.rest, pathname)) {
+      const body = opts.rest[pathname];
+      // `null`: no content, as `GET /auth/session/view-as` answers a session that views as no one
+      if (body === null) {
+        res.writeHead(204).end();
+        return;
+      }
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(opts.rest[pathname]));
+      res.end(JSON.stringify(body));
       return;
     }
     if (pathname.startsWith("/api/")) {

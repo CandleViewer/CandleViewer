@@ -8,6 +8,8 @@
  * Holds:
  *  - bootstrap phase (`/me`, `/me/preferences`, `/me/keymap`) and any
  *    non-fatal warnings from the optional calls;
+ *  - the session's view-as context (`GET /auth/session/view-as`, the fourth boot read), which
+ *    `lib/auth/viewAsContext.ts` alone writes (E42-S03);
  *  - the environment (DEMO/LIVE/testnet), which is **never defaulted** —
  *    `"unknown"` until `/me` (or a `system` WS frame) says otherwise;
  *  - the latest `SystemUpdate` per `kind`, since the WS topic carries
@@ -44,12 +46,39 @@ export type Keymap = {
 export type SystemUpdate = generated.ws.System;
 export type Environment = generated.rest.components["schemas"]["Environment"];
 
+/**
+ * A view-as context the session holds (E42-S03, SCR-124; `22` `getViewAs`), as the server answered
+ * it. Its target is `targetName` (`target_display_name`, else `target_username`); `offsetMs` is the
+ * answer's `Date` header minus the client clock at receipt, so the countdown runs on the server's.
+ */
+export interface HeldViewAs {
+  readonly kind: "held";
+  readonly targetId: string;
+  readonly targetName: string;
+  readonly startedAtMs: number;
+  readonly expiresAtMs: number;
+  /** `active` while live; `expired` once the server ended it, held until `DELETE` clears it. */
+  readonly state: generated.rest.components["schemas"]["ViewAsContext"]["state"];
+  readonly offsetMs: number;
+}
+
+/**
+ * `unknown` until the bootstrap reads `GET /auth/session/view-as`, which runs beside `/me`, then
+ * `none` (`204`) or `held`. Written only by `lib/auth/viewAsContext.ts`.
+ */
+export type ViewAsState = { readonly kind: "unknown" } | { readonly kind: "none" } | HeldViewAs;
+
 export type BootstrapPhase =
   | { readonly kind: "loading" }
   | { readonly kind: "slow" }
   | { readonly kind: "ready" }
   /** `/me` found the session idle-locked (a reload while locked): SCR-005 first, not /login (#1640). */
   | { readonly kind: "locked" }
+  /**
+   * The session holds a view-as context the server ended (E42-S03 V-8), which refuses `/me` itself:
+   * SCR-124's banner with Exit first, never /login.
+   */
+  | { readonly kind: "held" }
   | {
       readonly kind: "failed";
       readonly reason: "timeout" | "http_error" | "unknown";
@@ -97,6 +126,8 @@ export interface ShellState {
   readonly updateDeferred: boolean;
   /** SCR-157's Continue read-only: the build (`incompatibleBuild`) it answered, till it changes. */
   readonly continuedFor: string | undefined;
+  /** The session's view-as context (E42-S03): server truth, never inferred or extended here. */
+  readonly viewAs: ViewAsState;
 }
 
 const INITIAL_BOOTSTRAP: BootstrapPhase = { kind: "loading" };
@@ -121,6 +152,7 @@ export const INITIAL_SHELL_STATE: ShellState = Object.freeze({
   serverVersion: undefined,
   updateDeferred: false,
   continuedFor: undefined,
+  viewAs: Object.freeze({ kind: "unknown" }),
 });
 
 let state: ShellState = INITIAL_SHELL_STATE;

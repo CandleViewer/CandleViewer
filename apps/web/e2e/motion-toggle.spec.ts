@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { stubNoViewAs } from "./support/api";
 
 // E47-S04 AC3 e2e (#1318), ruling BQ-1 (a): Ctrl+Shift+M flips the resolved motion to an explicit
 // on/off, persists it as SCR-117 does (the theme store's localStorage record, `cv.theme.v1`; no
@@ -25,6 +26,7 @@ test.beforeEach(async ({ page }) => {
   );
   await page.route("**/api/v1/me/preferences", (r) => r.fulfill(json({})));
   await page.route("**/api/v1/me/keymap", (r) => r.fulfill(json({ bindings: [] })));
+  await stubNoViewAs(page); // E42-S03: the fourth boot read
   await page.goto("/terminal");
   await expect(page).toHaveURL(/\/terminal\/last$/);
 });

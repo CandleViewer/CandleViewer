@@ -2,6 +2,8 @@
  * Shell slots (E10-S01 S1, #304). The contract for content that later slices put into the shell
  * chrome without editing it:
  *
+ * - `ShellViewAsSlot`: SCR-124's view-as banner (E42-S03), the frame's first row, before the skip
+ *   link and above the top bar (E42-D03 D24); 0 px while the session views as no one.
  * - `ShellBannerSlot`: one full-width row between the top bar and the canvas (D03 §2, 0 px when
  *   empty). It has no landmark of its own; a banner brings its own role (`status` / `alert`).
  *   #306 fills it with `ShellBanner`: the CMP-077 connection region (SCR-152), then CMP-092, then
@@ -26,12 +28,16 @@
 import type { JSX } from "react";
 import type { MeClaims } from "../../routes/rbac";
 import { OfflineOverlay } from "../system-states/OfflineOverlay";
+import { ViewAsBanner } from "../view-as/ViewAsBanner";
 import { ShellBanner } from "./banner";
 import { ConnectionStatusSlot } from "./ConnectionStatusSlot";
 import { StatusBar } from "./StatusBar";
 
 /** A shell slot: a prop-less component that renders its content or nothing. */
 export type ShellSlot = () => JSX.Element | null;
+
+/** E42-S03: SCR-124's banner while the session holds a view-as context, live or ended. */
+export const ShellViewAsSlot: ShellSlot = ViewAsBanner;
 
 /** #306: the CMP-077 region, the CMP-092 degraded banner, then the SCR-157 band (`ShellBanner`). */
 export const ShellBannerSlot: ShellSlot = ShellBanner;

@@ -11,6 +11,7 @@ import { ROUTE_MANIFEST } from "../../../src/routes/manifest";
 import { resetMeClaims, setMeClaims } from "../../../src/lib/auth/meCache";
 import type { Role } from "../../../src/routes/rbac";
 import { PreferencesProvider } from "../../../src/features/a11y-preferences/PreferencesContext";
+import { resetShellState, setShellState } from "../../../src/shell/bootstrap/store";
 
 // axe-core is a transitive dependency of @axe-core/playwright (already a devDependency).
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
@@ -107,6 +108,50 @@ describe("E10-S01 S1: ShellLayout landmarks and one main per route", () => {
   });
 });
 
+// E42-S03 (SCR-124; E42-D03 D24): the view-as banner is the frame's first row, before the skip
+// link and above the TopBar, outside the scrolling canvas, with no live region; Exit is the first
+// Tab stop.
+describe("E42-S03: the view-as row", () => {
+  afterEach(() => act(() => resetShellState()));
+
+  it("puts a held context's banner first, before the skip link, and Exit as the first Tab stop", async () => {
+    signIn("owner");
+    act(() =>
+      setShellState({
+        viewAs: {
+          kind: "held",
+          targetId: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002",
+          targetName: "alex",
+          startedAtMs: Date.now(),
+          expiresAtMs: Date.now() + 1_800_000,
+          state: "active",
+          offsetMs: 0,
+        },
+      }),
+    );
+    renderAt("/risk");
+    await screen.findByRole("heading", { name: /R-150/ });
+    const slot = document.querySelector<HTMLElement>('[data-shell-slot="view-as"]');
+    const region = screen.getByRole("region", { name: "View-as" });
+    expect(slot?.parentElement?.firstElementChild).toBe(slot);
+    expect(slot?.contains(region)).toBe(true);
+    const skip = screen.getByRole("link", { name: "Skip to main content" });
+    expect(region.compareDocumentPosition(skip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      region.compareDocumentPosition(screen.getByRole("banner")) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(tabStops()[0]).toBe(within(region).getByRole("button", { name: "Exit view-as" }));
+    expect(tabStops()[1]).toBe(skip);
+    // outside the canvas, and no live region of its own: an inert-exempt live region inside the
+    // canvas keeps the scrolling canvas live under a modal, which a real browser's axe fails
+    expect(document.querySelector("[data-shell-canvas]")?.contains(region)).toBe(false);
+    expect(
+      slot?.querySelector('[aria-live]:not([aria-live="off"]), [role="status"], [role="alert"]'),
+    ).toBeNull();
+    expect(slot).toHaveAttribute("data-cv-inert-exempt");
+  });
+});
+
 describe("E10-S01 S1: skip link and route focus", () => {
   it("makes the skip link the first Tab stop, and activating it focuses main", async () => {
     signIn("owner");
@@ -168,7 +213,7 @@ describe("E10-S01 S1: shell slots", () => {
     if (connection !== null) {
       expect(within(connection).getByRole("button", { name: /^Connection: / })).toBeInTheDocument();
     }
-    for (const slot of ["canvas-overlay"]) {
+    for (const slot of ["canvas-overlay", "view-as"]) {
       const el = document.querySelector(`[data-shell-slot="${slot}"]`);
       expect(el, slot).not.toBeNull();
       expect(el?.childNodes.length, slot).toBe(0);

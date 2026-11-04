@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import { stubNoViewAs } from "./support/api";
 
 // E47-S08 slice 7 (US-SET-001 "Settings are fully operable from the keyboard"): the settings band with the
 // keyboard only. Nothing here clicks; every move is Tab, an arrow, Enter, Space, or Esc. Session and settings
@@ -28,6 +29,7 @@ async function signIn(page: Page): Promise<void> {
   );
   await page.route("**/api/v1/me/preferences", (r) => r.fulfill(ok({})));
   await page.route("**/api/v1/me/keymap", (r) => r.fulfill(ok({ bindings: [] })));
+  await stubNoViewAs(page); // E42-S03: the fourth boot read
   await page.route("**/api/v1/settings", (r) => r.fulfill(ok({})));
 }
 

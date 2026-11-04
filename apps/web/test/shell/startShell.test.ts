@@ -20,6 +20,7 @@ import {
   type Me,
 } from "../../src/shell/bootstrap/store.js";
 import { accessToken, REFRESH_PATH, REFRESH_WAIT_MS } from "../../src/lib/auth/accessToken.js";
+import { VIEW_AS_PATH, resetViewAs } from "../../src/lib/auth/viewAsContext.js";
 import { startShell, toConnectionState } from "../../src/shell/startShell.js";
 import { REVISION_QUIET_MS } from "../../src/features/symbol-search/revisionReread.js";
 import {
@@ -70,6 +71,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", refreshMock);
 });
 afterEach(() => {
+  resetViewAs();
   accessToken.clear();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(window, "cv");
@@ -84,6 +86,26 @@ describe("startShell", () => {
     await handle.ready;
     expect(fetchImpl).toHaveBeenCalled();
     handle.stop();
+  });
+
+  it("re-reads the view-as context while the shell runs, and no more once it stops (E42-S03)", async () => {
+    const fetchImpl = vi.fn(async (path: RequestInfo | URL) =>
+      String(path) === VIEW_AS_PATH ? new Response(null, { status: 204 }) : jsonResponse({}),
+    );
+    const handle = startShell({ wsUrl: WS_URL, fetchImpl, port: new FakePort() });
+    await handle.ready;
+    const reads = (): number =>
+      fetchImpl.mock.calls.filter(([p]) => String(p) === VIEW_AS_PATH).length;
+    expect(reads()).toBe(1); // the boot read
+    setShellState({ connection: { kind: "offline", cause: "backend_unreachable" } });
+    await vi.waitFor(() => expect(reads()).toBe(2));
+    handle.stop();
+    await Promise.resolve();
+    const stopped = reads();
+    setShellState({ connection: { kind: "live" } });
+    setShellState({ connection: { kind: "offline", cause: "tailnet_unreachable" } });
+    await Promise.resolve();
+    expect(reads()).toBe(stopped);
   });
 
   it("gives SCR-102 its instrument index with the shell and takes it back on stop() (E08-S09)", () => {
@@ -323,7 +345,8 @@ describe("startShell", () => {
     await vi.waitFor(() => expect(port.of("token")).toHaveLength(1));
     expect(order[0]).toBe(REFRESH_PATH);
     expect(order.filter((path) => path === REFRESH_PATH)).toHaveLength(1);
-    expect(sent).toEqual([`Bearer ${token}`, `Bearer ${token}`, `Bearer ${token}`]);
+    // the four boot reads (E42-S03: the view-as context's too) each carry the bearer
+    expect(sent).toEqual(Array.from({ length: 4 }, () => `Bearer ${token}`));
     expect(port.of("token")[0]).toMatchObject({ result: { kind: "ok", accessToken: token } });
     handle.stop();
   });

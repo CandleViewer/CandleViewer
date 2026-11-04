@@ -15,12 +15,17 @@
  *
  * Bodies must be replayable (string / ArrayBuffer / Blob / URLSearchParams): a `ReadableStream` body
  * is refused up front because it cannot be retried.
+ *
+ * View-as (E42-S03): while the session holds a view-as context, `apiFetch` asks the request guard
+ * (`viewAsGuard.ts`) first, and a request the server would refuse is answered there with the same
+ * `403`, unsent. The viewer's own operations and the protective writes always pass (C-2.6).
  */
 
 import { ERROR_META } from "@candleviewer/protocol";
 import { accessToken } from "../auth/accessToken";
 import { CSRF_HEADER, readCsrfCookie } from "./csrfCookie";
 import { isSameOrigin } from "./sameOrigin";
+import { methodOf, noteServerAnswer, viewAsRefusal } from "./viewAsGuard";
 
 export { CSRF_COOKIE, CSRF_HEADER, readCsrfCookie } from "./csrfCookie";
 export { isSameOrigin } from "./sameOrigin";
@@ -63,11 +68,13 @@ export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Prom
   if (input instanceof Request && input.body !== null) {
     return Promise.reject(new TypeError("apiFetch: pass the body in init, not in a Request"));
   }
-  return accessToken.send(input, init, (sent) => csrfFetch(input, sent));
+  const refused = viewAsRefusal(input, methodOf(input, init));
+  if (refused !== null) return Promise.resolve(refused);
+  return accessToken.send(input, init, (sent) => csrfFetch(input, sent)).then(noteServerAnswer);
 }
 
 async function csrfFetch(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
-  const method = (init.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+  const method = methodOf(input, init);
   if (SAFE.has(method) || !isSameOrigin(input)) return fetch(input, init);
   if (typeof ReadableStream !== "undefined" && init.body instanceof ReadableStream) {
     throw new TypeError("apiFetch: streaming bodies cannot be retried; pass a replayable body");

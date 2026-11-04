@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { AXE_GATE_TAGS } from "./a11y/tags";
-import { stubSessionsList } from "./support/api";
+import { stubNoViewAs, stubSessionsList } from "./support/api";
 
 // E09-Q04: axe-core over all twelve E09 audit screens (WCAG 2.2 AA tags).
 // Network is stubbed at the transport layer; no live calls. Screens whose real UI has not
@@ -83,6 +83,7 @@ async function stub(page: Page): Promise<void> {
   );
   await page.route("**/api/v1/me/preferences", (r) => r.fulfill(json({})));
   await page.route("**/api/v1/me/keymap", (r) => r.fulfill(json({ bindings: [] })));
+  await stubNoViewAs(page); // E42-S03: the fourth boot read
   await stubSessionsList(page);
   await page.route("**/api/v1/onboarding/checklist", (r) =>
     r.fulfill(

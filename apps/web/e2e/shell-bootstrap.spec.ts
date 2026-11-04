@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { stubNoViewAs } from "./support/api";
 
 // E10-T04-B1 (#1725): the real app (main.tsx -> startShell) loads the session
 // from /me, so an authenticated route renders instead of redirecting to /login.
@@ -23,6 +24,7 @@ test("authenticated session reaches /terminal without redirect to /login", async
   });
   await page.route("**/api/v1/me/preferences", (r) => r.fulfill(json({})));
   await page.route("**/api/v1/me/keymap", (r) => r.fulfill(json({ bindings: [] })));
+  await stubNoViewAs(page); // E42-S03: the fourth boot read
   await page.goto("/terminal");
   // R-100 `/terminal` redirects to the last-used layout (`12-sitemap.md` R-100).
   await expect(page).toHaveURL(/\/terminal\/last$/);
@@ -58,6 +60,7 @@ test("stored theme and chart colour mode are applied to the root", async ({ page
     r.fulfill(json({ appearance: { theme: "light" } })),
   );
   await page.route("**/api/v1/me/keymap", (r) => r.fulfill(json({ bindings: [] })));
+  await stubNoViewAs(page); // E42-S03: the fourth boot read
   await page.goto("/terminal");
   const root = page.locator("html");
   await expect(root).toHaveAttribute("data-theme", "light");
@@ -88,6 +91,7 @@ test("server appearance reaches the root through the runtime and the built CSS a
     ),
   );
   await page.route("**/api/v1/me/keymap", (r) => r.fulfill(json({ bindings: [] })));
+  await stubNoViewAs(page); // E42-S03: the fourth boot read
   await page.goto("/terminal");
   const root = page.locator("html");
   await expect(root).toHaveAttribute("data-theme", "light");

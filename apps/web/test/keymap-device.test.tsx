@@ -401,3 +401,82 @@ describe("SEC-305B-02: a record the server refuses for good is parked, and the o
     expect(read.mock.calls.map(([key]) => key)).not.toContain(OUTBOX);
   });
 });
+
+/**
+ * E42-S03 (#304 gap 13): while a view-as context is held, `/me` names the target. A remap still applies, as WCAG
+ * 2.1.4 needs, but to the page only: nothing is stored under the target's key or anyone's, the device's legacy
+ * profile is not adopted, no profile write goes to a server store and no audit is queued or sent.
+ */
+describe("E42-S03: a view-as context keeps no keymap for anyone (#304 gap 13)", () => {
+  const TARGET = "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002";
+  /** The boot under a context: the context reaches the store before `/me`, which names the target. */
+  function viewAsTarget(state: "active" | "expired" = "active"): void {
+    act(() =>
+      m.setShellState({
+        viewAs: {
+          kind: "held",
+          targetId: TARGET,
+          targetName: "alex",
+          startedAtMs: Date.parse("2026-09-14T10:00:00Z"),
+          expiresAtMs: Date.parse("2026-09-14T10:30:00Z"),
+          state,
+          offsetMs: 0,
+        },
+      }),
+    );
+    signIn(TARGET, "manager");
+  }
+
+  it.each(["active", "expired"] as const)(
+    "names no keymap user while a context is held (%s), and the target's id after none",
+    (state) => {
+      viewAsTarget(state);
+      expect(m.keymapUser()).toBeNull();
+      act(() => m.setShellState({ viewAs: { kind: "none" } }));
+      expect(m.keymapUser()).toBe(TARGET);
+    },
+  );
+
+  it("a remap applies to the page: nothing stored, no profile write, no audit queued or POSTed", async () => {
+    const posts = stubServer();
+    const store = { read: vi.fn(async () => null), write: vi.fn(), flush: vi.fn(async () => {}) };
+    m.setProfileStore(store);
+    m.setAuditSink(m.recordAudit);
+    viewAsTarget();
+    const { HotkeyEditor, KeymapHost } = m;
+    render(
+      <>
+        <KeymapHost />
+        <HotkeyEditor />
+      </>,
+    );
+    bind(CANCEL_ALL, "Q", ["Ctrl", "Alt"]);
+    expect(m.getBindings().get("dom.cancel_all")).toBe("Ctrl+Alt+Q");
+    act(() => m.recordAudit(record("dom.cancel_all", "Ctrl+Alt+Q")));
+    await act(() => m.flushAuditOutbox());
+    expect([posts, m.auditOutbox(), store.write.mock.calls]).toEqual([[], [], []]);
+    expect(window.localStorage.length).toBe(0);
+  });
+
+  it("does not adopt the device's legacy unkeyed profile for the target", () => {
+    window.localStorage.setItem(PROFILE, JSON.stringify({ "dom.zoom_in": "J" }));
+    viewAsTarget();
+    expect(m.getBindings().get("dom.zoom_in")).toBe("+");
+    expect([stored(PROFILE), stored(`${PROFILE}:${TARGET}`)]).toEqual([
+      { "dom.zoom_in": "J" },
+      null,
+    ]);
+  });
+
+  it("loads the owner's own profile back once the context ends", () => {
+    window.localStorage.setItem(`${PROFILE}:u-owner`, JSON.stringify({ "dom.zoom_in": "J" }));
+    signIn("u-owner", "owner");
+    expect(m.getBindings().get("dom.zoom_in")).toBe("J");
+    viewAsTarget();
+    expect(m.getBindings().get("dom.zoom_in")).toBe("+");
+    act(() => m.setShellState({ viewAs: { kind: "none" } }));
+    signIn("u-owner", "owner");
+    expect(m.getBindings().get("dom.zoom_in")).toBe("J");
+    expect(stored(`${PROFILE}:${TARGET}`)).toBeNull();
+  });
+});
