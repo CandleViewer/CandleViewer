@@ -84,6 +84,7 @@ from candleviewer.alerts.lifecycle import AlertCharts
 from candleviewer.alerts.outbox import TOPIC_ALERT_DELIVER, alert_deliver_dedup_key
 from candleviewer.alerts.owners import OwnerGate
 from candleviewer.alerts.ports import FiringStore, WakingFiringStore
+from candleviewer.alerts.render import registry_titles
 from candleviewer.alerts.service import AlertsService
 from candleviewer.api import (
     make_audit_router,
@@ -3894,6 +3895,7 @@ def _alert_evaluator_factory(
         return AlertEvaluator(
             store, source, owners=OwnerGate(SqlAlchemyIdentityProvider(pg)),
             charts=AlertCharts(feed=feed), audit=audit, metrics=AlertMetrics(metric),
+            metric_title=registry_titles(ctx.rules.registry()),  # CC-1's display names
         )  # fmt: skip
 
     return _make

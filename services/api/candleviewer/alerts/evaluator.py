@@ -41,6 +41,7 @@ from candleviewer.alerts.ports import (
     FiringStore,
     MetricChildLike,
 )
+from candleviewer.alerts.render import FiringFacts, TitleOf, clean_text, default_title, render_body
 from candleviewer.observability import spawn
 from candleviewer.rules.evaluator import MetricSource, SnapshotBuilder
 from candleviewer.rules.evaluator.nodes import (
@@ -50,7 +51,7 @@ from candleviewer.rules.evaluator.nodes import (
     referenced_metrics,
 )
 from candleviewer.rules.evaluator.snapshot import Value
-from candleviewer.rules.ir.models import MetricRef
+from candleviewer.rules.ir.models import ConditionNode, MetricRef
 
 
 def _log() -> Any:
@@ -90,6 +91,7 @@ class _Storm:
     alert_id: str
     count: int = 0
     symbols: dict[str, None] = field(default_factory=dict)
+    first_ms: int = 0  # the first held firing: the summary's window start (CC-7)
 
 
 class AlertMetrics:
@@ -198,6 +200,7 @@ class AlertEvaluator:
         storm: StormSuppressor | None = None,
         muted: Muted = _never,
         critical_override: Muted = _never,
+        metric_title: TitleOf = default_title,
         clock: Callable[[], int] = _wall_ms,
         perf: Callable[[], float] = time.perf_counter,
         queue_bound: int = QUEUE_BOUND,
@@ -207,6 +210,7 @@ class AlertEvaluator:
         self.metrics = metrics or AlertMetrics()
         self.storm = storm or StormSuppressor()
         self._muted, self._override = muted, critical_override
+        self._metric_title = metric_title
         self._clock, self._perf = clock, perf
         self.alerts: dict[str, AlertState] = {}
         self.subscriptions: dict[str, _Subscription] = {}
@@ -345,7 +349,7 @@ class AlertEvaluator:
                 continue
             values = {k: _jsonable(v) for k, v in ctx.metric_values.items()}
             for a in await self._active(members):
-                await self._candidate(a, tick, now, values, start)
+                await self._candidate(a, tick, now, values, start, sub.condition.conditions)
 
     async def _active(self, members: list[AlertState]) -> list[AlertState]:
         """The members whose owner is active (#3349, UL-F8), asked once the condition holds or a
@@ -359,7 +363,13 @@ class AlertEvaluator:
         return [a for a in members if a.owner_user_id not in skipped]
 
     async def _candidate(
-        self, a: AlertState, tick: AlertTick, now: int, values: dict[str, Any], start: float
+        self,
+        a: AlertState,
+        tick: AlertTick,
+        now: int,
+        values: dict[str, Any],
+        start: float,
+        condition: ConditionNode,
     ) -> None:
         async with self._lock:  # gate + commit atomically w.r.t. this process
             r = gate(a, now, tick.event_ts_ms, self.storm,
@@ -370,7 +380,7 @@ class AlertEvaluator:
                 "values": values, "bar_open_ms": r.bar_open, "gates": list(r.checked),
             }  # fmt: skip
             if r.storm:
-                await self._suppress(a, now, context)
+                await self._suppress(a, now, context, self._body(a, tick, now, values, condition))
                 return
             if not r.passed:
                 if r.reason in _SUPPRESS_REASON:
@@ -380,18 +390,37 @@ class AlertEvaluator:
                     # the API presents it as Triggered/Expired instead of it vanishing.
                     self._retire(a)
                 return
-            await self._fire(a, now, context, r.bar_open, start)
+            body = self._body(a, tick, now, values, condition)
+            await self._fire(a, now, context, r.bar_open, start, body)
 
-    def _title(self, a: AlertState) -> str:
-        return a.message_template or a.name
+    def _body(
+        self,
+        a: AlertState,
+        tick: AlertTick,
+        now: int,
+        values: dict[str, Any],
+        condition: ConditionNode,
+    ) -> str:
+        """CC-1: the message rendered at firing (the title is the alert's name)."""
+        facts = FiringFacts(
+            alert_id=a.id, name=a.name, severity=a.severity, symbol=tick.symbol or a.symbol,
+            timeframe=a.timeframe, fired_at_ms=now, values=values,
+        )  # fmt: skip
+        return render_body(a.message_template or "", condition, facts, self._metric_title)
 
     async def _fire(
-        self, a: AlertState, now: int, context: dict[str, Any], bar: int | None, start: float
+        self,
+        a: AlertState,
+        now: int,
+        context: dict[str, Any],
+        bar: int | None,
+        start: float,
+        body: str,
     ) -> None:
         once = a.trigger_mode == "once"
         ids = await self._store.record_firing(
             alert_id=a.id, user_id=a.owner_user_id, channels=a.channels, status="queued",
-            title=self._title(a), body="", context=context, fired_at=_dt(now),
+            title=clean_text(a.name), body=body, context=context, fired_at=_dt(now),
             once=once, bump=True,
         )  # fmt: skip
         if ids is None:  # `once` lost the conditional-update race: discard this firing
@@ -434,14 +463,14 @@ class AlertEvaluator:
 
     # --- storm suppression ----------------------------------------------------------
 
-    async def _suppress(self, a: AlertState, now: int, context: dict[str, Any]) -> None:
+    async def _suppress(self, a: AlertState, now: int, context: dict[str, Any], body: str) -> None:
         """Excess firing: recorded individually as `suppressed` (history keeps all of
         them), no outbox row, trigger-mode memory still advances (a suppressed `once`
         still disarms), and it is folded into the user's one summary delivery."""
         once = a.trigger_mode == "once"
         ids = await self._store.record_firing(
             alert_id=a.id, user_id=a.owner_user_id, channels=(SUMMARY_CHANNEL,),
-            status="suppressed", title=self._title(a), body="",
+            status="suppressed", title=clean_text(a.name), body=body,
             context=context | {"suppressed_reason": "storm"}, fired_at=_dt(now),
             once=once, bump=True,
         )  # fmt: skip
@@ -454,9 +483,9 @@ class AlertEvaluator:
             a.remember_bar(int(context["bar_open_ms"]))
         self.metrics.inc("cv_alert_suppressed_total", "storm")
         end = self.storm.window_end(a.owner_user_id, now)
-        st = self._storms.setdefault(a.owner_user_id, _Storm(end, a.id))
+        st = self._storms.setdefault(a.owner_user_id, _Storm(end, a.id, first_ms=now))
         st.count += 1
-        st.symbols[str(context.get("symbol") or a.symbol or a.name)] = None
+        st.symbols[clean_text(str(context.get("symbol") or a.symbol or a.name))] = None
         if self._charts is not None:
             await self._charts.suppressed(a.id, end, owner=a.owner_user_id)
         if once:
@@ -481,7 +510,8 @@ class AlertEvaluator:
                 alert_id=st.alert_id, user_id=user, channels=(SUMMARY_CHANNEL,),
                 status="queued", title=self.summary_title(st), body="",
                 context={"storm_summary": True, "suppressed": st.count,
-                         "symbols": list(st.symbols)},
+                         "symbols": list(st.symbols), "window_start_ms": st.first_ms,
+                         "window_end_ms": st.window_end_ms},
                 fired_at=_dt(now), once=False, bump=False,
             )  # fmt: skip
             if self._charts is not None:
