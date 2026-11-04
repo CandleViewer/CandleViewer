@@ -35,7 +35,7 @@ APPLIES_TO = ("any", "account", "open_positions", "pending_orders")
 ENTITIES: Final[tuple[EntityKind, ...]] = ("open_position", "pending_order", "account")
 #: The entities an action of a rule on each `applies_to` may touch (E35-S04's design note: an
 #: `open_positions` rule must not cancel a pending order); any other is a genuine mismatch.
-ALLOWED: Final[dict[str, frozenset[str]]] = {
+MAY_TOUCH: Final[dict[str, frozenset[str]]] = {
     "any": frozenset(ENTITIES),
     "account": frozenset(ENTITIES),
     "open_positions": frozenset({"open_position"}),
@@ -86,7 +86,7 @@ def test_check_action_known_entity_is_refused_only_outside_applies_to(
     """A genuine mismatch: the entity an action touches lies outside the rule's `applies_to`."""
     resolver = ScopeResolver(FakeState(), _noop)
     sc = scope(account_ids=[str(A)], applies_to=applies_to)
-    mismatch = entity not in ALLOWED[applies_to]
+    mismatch = entity not in MAY_TOUCH[applies_to]
     answer = resolver.check_action(sc, OWNER, "demo", IN_SCOPE, entity)
     assert answer == ("applies_to" if mismatch else None)
     assert resolver.suppressions_total == Counter({"applies_to": 1} if mismatch else {})
@@ -163,5 +163,5 @@ def test_gate_answers_as_check_action_for_the_entity_its_instance_stands_for(
     assert gated.suppressions_total == checked.suppressions_total
     for entity in ENTITIES:
         known = ScopeResolver(state, _noop).check_action(sc, OWNER, environment, _ref(key), entity)
-        mismatch = answer is None and entity not in ALLOWED[sc.applies_to]
+        mismatch = answer is None and entity not in MAY_TOUCH[sc.applies_to]
         assert known == ("applies_to" if mismatch else answer)

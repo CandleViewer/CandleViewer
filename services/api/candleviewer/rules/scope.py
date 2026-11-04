@@ -14,7 +14,7 @@ from typing import Final, Literal, Protocol
 from uuid import UUID
 
 from candleviewer.rules.errors import ScopeForbiddenError
-from candleviewer.rules.evaluator.engine import parse_instance, scope_instance
+from candleviewer.rules.evaluator.engine import EvaluationResult, parse_instance, scope_instance
 from candleviewer.rules.ir.models import Action, RuleScope
 
 SKIPPED_REASON = "scope"
@@ -44,6 +44,9 @@ _INSTANCE_ENTITY: Final[Mapping[str, EntityKind]] = MappingProxyType(
         "any": "account",
     }
 )
+#: The evaluator's skips decided before its scope gate runs: they say nothing of the gate, so they
+#: neither open nor end an episode of its refusals (`DenialEpisodes`).
+_BEFORE_GATE: Final = frozenset({"disabled", "paused"})
 #: The modes the evaluator runs a rule in (`rules.manager` imports it from here). A rule's mode is
 #: its stored row's, never the IR's own `mode` field, which can be stale (E35-S03, BQ-12).
 EvaluableMode = Literal["simulate", "armed"]
@@ -170,10 +173,11 @@ class ScopeResolver:
         """Second resolution, before each action. None = allowed, else suppression reason.
 
         `entity` is the kind of entity the action touches, judged against `applies_to`. A check
-        that knows none (`None`) judges the entity the scope instance stands for
-        (`instance_entity`): the tick's gate, which runs before the rule has an action, and a
-        re-check of an action whose targets are not resolved yet. So an instance of the rule is
-        never refused for its own `applies_to`, and a known entity outside it is (#5817)."""
+        that names none (`None`) judges the entity the scope instance stands for
+        (`instance_entity`): the tick's gate, which runs before the rule has an action, and the
+        re-checks of an action's instance before its dispatch and before its retry. So an
+        instance of the rule is never refused for its own `applies_to`, and a known entity
+        outside it is (#5817)."""
         if entity is None:
             entity = instance_entity(scope)
         reason: Reason | None
@@ -343,6 +347,34 @@ class ActionRequest:
 
 
 ActionSink = Callable[[ActionRequest], Awaitable[None]]
+
+
+class DenialEpisodes:
+    """The tick gate's refusals of each (rule, instance), recorded once per episode (#5817).
+
+    A refusal opens an episode, which its first evaluation records; the same refusal on the
+    instance's later evaluations holds it: counted as every refusal is, and not recorded again. A
+    refusal for another reason, or under another version of the rule, opens a new episode, and an
+    evaluation the gate passes ends it. A skip decided before the gate (`_BEFORE_GATE`) neither
+    opens nor ends one."""
+
+    def __init__(self) -> None:
+        #: (rule id, instance) -> (rule version, reason) of its open episode.
+        self._open: dict[tuple[str, str], tuple[int, str]] = {}
+
+    def first(self, result: EvaluationResult) -> bool:
+        """Whether `result` opens an episode of the gate's refusals, so its refusal is recorded."""
+        if result.skipped_reason in _BEFORE_GATE:
+            return False
+        key = (result.rule_id, result.scope_instance)
+        if result.scope_refusal is None:
+            self._open.pop(key, None)  # the gate passed the instance: its episode ends
+            return False
+        episode = (result.rule_version, result.scope_refusal)
+        if self._open.get(key) == episode:
+            return False
+        self._open[key] = episode
+        return True
 
 
 class ScopedActionEmitter:

@@ -149,6 +149,14 @@ def _dispatch_tasks() -> list[asyncio.Task[Any]]:
     return [t for t in asyncio.all_tasks() if t.get_name().startswith("rule-dispatch")]
 
 
+def _refused_anew(rig: DispatchRig, account: uuid.UUID, tick: int) -> None:
+    """The grant on `account` withdrawn on an odd tick and frozen on an even one: each tick refuses
+    the rule's instance for another reason, so it opens an episode whose records it offers (a held
+    refusal is recorded once per episode, #5817)."""
+    other = A if account == B else B
+    rig.source.grants = [(other, True, False), *([(account, True, True)] if tick % 2 == 0 else [])]
+
+
 def _pages(logs: list[MutableMapping[str, Any]]) -> int:
     page = {"event": "rules.dispatch_backpressure", "log_level": "critical", "cv_page": True}
     return sum(1 for e in logs if e == page)
@@ -288,6 +296,7 @@ async def test_a_scope_skipped_fire_is_audited_per_action_and_never_dispatched(
         return gate(*args, **kwargs)
 
     monkeypatch.setattr(resolver, "check_action", lenient)
+    _refused_anew(rig, A, 2)  # frozen now: a new reason, so its records are offered again
     await rig.fire()
     await rig.settle()
     assert passed == [rid, rid] and len(rig.audits) == 2  # re-checked per action, nothing denied
@@ -361,9 +370,9 @@ async def test_scope_skipped_audits_do_not_take_fire_slots(
     rig = await start()
     await rig.add("armed", accounts=(B,))  # skipped `scope` once the grant on B is withdrawn
     healthy = await rig.add("armed")
-    rig.source.grants = [(A, True, False)]
     rig.sink.gate(AUDIT)  # an audit write never returns
     for n in (1, 2, 3):  # an audit-only job each: job 1 is held in its write, 2 waits, 3 is shed
+        _refused_anew(rig, B, n)
         await rig.fire()
         await rig.sink.reached(n)  # and a fire of `healthy`, accepted
         await rig.sink.until(lambda: len(rig.audits) == 1)
@@ -383,12 +392,13 @@ async def test_a_shed_scope_audit_is_counted_under_scope(
     monkeypatch.setattr(dispatch, "AUDIT_QUEUE_BOUND", 1)
     rig = await start()
     rid = await rig.add("armed", actions=_actions("a1", "a2"))
-    rig.source.grants = [(B, True, False)]  # the grant on the rule's account is withdrawn
+    _refused_anew(rig, A, 1)  # the grant on the rule's account is withdrawn
     rig.sink.gate(AUDIT)
     await rig.fire()
     await rig.sink.until(lambda: len(rig.audits) == 1)  # job 1 is held in its first audit write
     with capture_logs() as logs:
-        for _ in range(3):
+        for tick in (2, 3, 4):
+            _refused_anew(rig, A, tick)
             await rig.fire()  # job 2 waits; jobs 3 and 4 are shed
     assert rig.counted.blocked() == {"scope": 8} and rig.counted.shed() == {"scope_denial": 2}
     shed = {"event": "rules.records_shed", "log_level": "warning", "rule_id": rid}

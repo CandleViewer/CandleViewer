@@ -47,6 +47,10 @@ class EvaluationResult:
     #: ref the rule names (`ScopeBindingError`), not because the tick's scope gate refused it.
     #: The first is an evaluation skip; only the second refuses the rule's actions.
     binding_refused: bool = False
+    #: Internal marker, never recorded: why the tick's scope gate refused the instance (a
+    #: `rules.scope` reason), beside `skipped_reason` ``scope``; None when the gate passed it or did
+    #: not run. The offer of its records reads it (`rules.scope.DenialEpisodes`).
+    scope_refusal: str | None = None
 
 
 @dataclass(slots=True)
@@ -129,12 +133,19 @@ class Evaluator:
         self._consecutive_errors = 0
 
     def _skip(
-        self, inst: str, trig: str, now: int, reason: str, *, binding: bool = False
+        self,
+        inst: str,
+        trig: str,
+        now: int,
+        reason: str,
+        *,
+        binding: bool = False,
+        refusal: str | None = None,
     ) -> EvaluationResult:
         self.stats.skipped[reason] = self.stats.skipped.get(reason, 0) + 1
         return EvaluationResult(
             str(self.rule.rule_id), self.rule.version, inst, trig, now, False, reason,
-            binding_refused=binding,
+            binding_refused=binding, scope_refusal=refusal,
         )  # fmt: skip
 
     def _limit_reason(self, st: _Instance, now: int) -> str | None:
@@ -165,8 +176,9 @@ class Evaluator:
         if self.paused:
             self.stats.missed_triggers += 1
             return self._skip(instance, trigger_type, now, "paused")
-        if self._scope_gate is not None and self._scope_gate(instance) is not None:
-            return self._skip(instance, trigger_type, now, "scope")
+        refusal = None if self._scope_gate is None else self._scope_gate(instance)
+        if refusal is not None:
+            return self._skip(instance, trigger_type, now, "scope", refusal=refusal)
         st = self._instances.setdefault(instance, _Instance())
         deb = self.rule.trigger.debounce_ms
         if deb and st.last_trigger_ms is not None and now - st.last_trigger_ms < deb:

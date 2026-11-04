@@ -43,7 +43,7 @@ from candleviewer.rules.runner import (
     RuleEvaluationRunner,
     default_clocks,
 )
-from candleviewer.rules.scope import ActionRequest, EvaluableMode, instance_ref
+from candleviewer.rules.scope import ActionRequest, DenialEpisodes, EvaluableMode, instance_ref
 from candleviewer.rules.vocabulary import MetricRegistry, default_registry
 
 #: Bound on a dispatch's re-read of the rule's row (24 §11.5 check 1), the 2 s the manager gives
@@ -355,6 +355,8 @@ class RulesService:
         dispatch.start()
         audits.start()
 
+        denials = DenialEpisodes()  # the tick gate's refusals, recorded once per episode
+
         #: (rule id, instance) -> the version of its open binding episode (`_on_fire`).
         binding_episodes: dict[tuple[str, str], int] = {}
 
@@ -381,12 +383,14 @@ class RulesService:
             result the tick's scope gate skipped go through the audit-only one, on the audit
             queue: audited per action, never dispatched, whatever the emitter's re-check finds,
             and never in a fire's slot or lane. The gate refused them, so each counts under
-            `scope` as it is offered, written or shed (BQ-5). A binding refusal is an evaluation
-            skip, not a gate refusal (`EvaluationResult.binding_refused`): no action is refused
-            or counted, and only its episode's first offers one record-only job, which names the
-            cause and the instance (`ScopedActionEmitter.binding_skipped`)."""
+            `scope` on every evaluation (BQ-5); only the evaluation that opens a (rule, instance,
+            reason) episode offers their records (`DenialEpisodes`), written or shed. A binding
+            refusal is an evaluation skip, not a gate refusal (`EvaluationResult.binding_refused`):
+            no action is refused or counted, and only its episode's first offers one record-only
+            job, which names the cause and the instance (`ScopedActionEmitter.binding_skipped`)."""
             if emitter is None or audit_only is None or env is None:
                 return
+            first_denial = denials.first(result)  # each result the gate saw opens, holds or ends
             kind: JobKind
             first_binding = _binding_episode(result)
             emit: Callable[[ActionRequest], Awaitable[object]]
@@ -402,6 +406,11 @@ class RulesService:
             owner = _owner_uuid(rule)
             if owner is None:
                 return  # fail closed: no owner => no scope to resolve => no action
+            if kind == "scope_denial" and not first_binding:
+                for action in rule.actions:
+                    self._metrics.refused(action.type, "scope")
+                if not first_denial:
+                    return  # held: counted, and recorded by its episode's first evaluation
             ref = instance_ref(result.scope_instance)
             run_id = uuid4()  # the fire's id: its actions share it (24 §11.9)
             actions = rule.actions[:1] if first_binding else rule.actions  # one record
@@ -414,9 +423,6 @@ class RulesService:
                 )
                 for action in actions
             )  # fmt: skip
-            if kind == "scope_denial" and not first_binding:
-                for req in reqs:
-                    self._metrics.refused(req.action_type, "scope")
             queue.offer(
                 Fire(
                     str(rule.rule_id), run_id, reqs, emit, kind=kind, version_id=item.version_id,
