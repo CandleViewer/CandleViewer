@@ -175,9 +175,14 @@ describe("the reserved keys (`05` §3.3 rule 3; AC4; D2; BQ-7)", () => {
     });
   });
 
-  it("D2: the palette and both Esc commands are the only ones not remappable (AC4)", () => {
+  it("D2: the palette and the Esc commands are the only ones not remappable (AC4)", () => {
     const locked = KEYMAP.filter((c) => commandMeta(c.id)?.remappable === false).map((c) => c.id);
-    expect(locked.sort()).toEqual(["chart.cancel_drawing", "global.palette", "ticket.clear"]);
+    expect(locked.sort()).toEqual([
+      "chart.cancel_drawing",
+      "global.palette",
+      "tape.cancel",
+      "ticket.clear",
+    ]);
   });
 
   it("D2: the palette cannot move off Ctrl+K; binding its own key changes nothing", () => {

@@ -93,6 +93,7 @@
       - option "Positions"
       - option "Rules"
       - option "Replay"
+      - option "Tape"
     - button "Print list"
     - table "Current key bindings by context":
       - caption: Current key bindings by context
@@ -1512,6 +1513,147 @@
             - textbox "Key for Next bookmark"
             - button "Record Next bookmark"
             - button "Save Next bookmark" [disabled]
+        - row "Tape Pause / resume the tape P Unbind Pause / resume the tape Reset Pause / resume the tape Ctrl for Pause / resume the tape Alt for Pause / resume the tape Shift for Pause / resume the tape Key for Pause / resume the tape Record Pause / resume the tape Save Pause / resume the tape":
+          - cell "Tape"
+          - rowheader "Pause / resume the tape"
+          - cell "P Unbind Pause / resume the tape Reset Pause / resume the tape":
+            - text: P
+            - button "Unbind Pause / resume the tape"
+            - button "Reset Pause / resume the tape" [disabled]
+          - cell "Ctrl for Pause / resume the tape Alt for Pause / resume the tape Shift for Pause / resume the tape Key for Pause / resume the tape Record Pause / resume the tape Save Pause / resume the tape":
+            - checkbox "Ctrl for Pause / resume the tape"
+            - text: Ctrl for Pause / resume the tape
+            - checkbox "Alt for Pause / resume the tape"
+            - text: Alt for Pause / resume the tape
+            - checkbox "Shift for Pause / resume the tape"
+            - text: Shift for Pause / resume the tape Key for Pause / resume the tape
+            - textbox "Key for Pause / resume the tape"
+            - button "Record Pause / resume the tape"
+            - button "Save Pause / resume the tape" [disabled]
+        - row "Tape Previous print ↑ Unbind Previous print Reset Previous print Ctrl for Previous print Alt for Previous print Shift for Previous print Key for Previous print Record Previous print Save Previous print":
+          - cell "Tape"
+          - rowheader "Previous print"
+          - cell "↑ Unbind Previous print Reset Previous print":
+            - text: ↑
+            - button "Unbind Previous print"
+            - button "Reset Previous print" [disabled]
+          - cell "Ctrl for Previous print Alt for Previous print Shift for Previous print Key for Previous print Record Previous print Save Previous print":
+            - checkbox "Ctrl for Previous print"
+            - text: Ctrl for Previous print
+            - checkbox "Alt for Previous print"
+            - text: Alt for Previous print
+            - checkbox "Shift for Previous print"
+            - text: Shift for Previous print Key for Previous print
+            - textbox "Key for Previous print"
+            - button "Record Previous print"
+            - button "Save Previous print" [disabled]
+        - row "Tape Next print ↓ Unbind Next print Reset Next print Ctrl for Next print Alt for Next print Shift for Next print Key for Next print Record Next print Save Next print":
+          - cell "Tape"
+          - rowheader "Next print"
+          - cell "↓ Unbind Next print Reset Next print":
+            - text: ↓
+            - button "Unbind Next print"
+            - button "Reset Next print" [disabled]
+          - cell "Ctrl for Next print Alt for Next print Shift for Next print Key for Next print Record Next print Save Next print":
+            - checkbox "Ctrl for Next print"
+            - text: Ctrl for Next print
+            - checkbox "Alt for Next print"
+            - text: Alt for Next print
+            - checkbox "Shift for Next print"
+            - text: Shift for Next print Key for Next print
+            - textbox "Key for Next print"
+            - button "Record Next print"
+            - button "Save Next print" [disabled]
+        - row "Tape First cell of the print Home Unbind First cell of the print Reset First cell of the print Ctrl for First cell of the print Alt for First cell of the print Shift for First cell of the print Key for First cell of the print Record First cell of the print Save First cell of the print":
+          - cell "Tape"
+          - rowheader "First cell of the print"
+          - cell "Home Unbind First cell of the print Reset First cell of the print":
+            - text: Home
+            - button "Unbind First cell of the print"
+            - button "Reset First cell of the print" [disabled]
+          - cell "Ctrl for First cell of the print Alt for First cell of the print Shift for First cell of the print Key for First cell of the print Record First cell of the print Save First cell of the print":
+            - checkbox "Ctrl for First cell of the print"
+            - text: Ctrl for First cell of the print
+            - checkbox "Alt for First cell of the print"
+            - text: Alt for First cell of the print
+            - checkbox "Shift for First cell of the print"
+            - text: Shift for First cell of the print Key for First cell of the print
+            - textbox "Key for First cell of the print"
+            - button "Record First cell of the print"
+            - button "Save First cell of the print" [disabled]
+        - row "Tape Last cell of the print End Unbind Last cell of the print Reset Last cell of the print Ctrl for Last cell of the print Alt for Last cell of the print Shift for Last cell of the print Key for Last cell of the print Record Last cell of the print Save Last cell of the print":
+          - cell "Tape"
+          - rowheader "Last cell of the print"
+          - cell "End Unbind Last cell of the print Reset Last cell of the print":
+            - text: End
+            - button "Unbind Last cell of the print"
+            - button "Reset Last cell of the print" [disabled]
+          - cell "Ctrl for Last cell of the print Alt for Last cell of the print Shift for Last cell of the print Key for Last cell of the print Record Last cell of the print Save Last cell of the print":
+            - checkbox "Ctrl for Last cell of the print"
+            - text: Ctrl for Last cell of the print
+            - checkbox "Alt for Last cell of the print"
+            - text: Alt for Last cell of the print
+            - checkbox "Shift for Last cell of the print"
+            - text: Shift for Last cell of the print Key for Last cell of the print
+            - textbox "Key for Last cell of the print"
+            - button "Record Last cell of the print"
+            - button "Save Last cell of the print" [disabled]
+        - row "Tape Jump to live (newest print) Ctrl+Home Unbind Jump to live (newest print) Reset Jump to live (newest print) Ctrl for Jump to live (newest print) Alt for Jump to live (newest print) Shift for Jump to live (newest print) Key for Jump to live (newest print) Record Jump to live (newest print) Save Jump to live (newest print)":
+          - cell "Tape"
+          - rowheader "Jump to live (newest print)"
+          - cell "Ctrl+Home Unbind Jump to live (newest print) Reset Jump to live (newest print)":
+            - text: Ctrl+Home
+            - button "Unbind Jump to live (newest print)"
+            - button "Reset Jump to live (newest print)" [disabled]
+          - cell "Ctrl for Jump to live (newest print) Alt for Jump to live (newest print) Shift for Jump to live (newest print) Key for Jump to live (newest print) Record Jump to live (newest print) Save Jump to live (newest print)":
+            - checkbox "Ctrl for Jump to live (newest print)"
+            - text: Ctrl for Jump to live (newest print)
+            - checkbox "Alt for Jump to live (newest print)"
+            - text: Alt for Jump to live (newest print)
+            - checkbox "Shift for Jump to live (newest print)"
+            - text: Shift for Jump to live (newest print) Key for Jump to live (newest print)
+            - textbox "Key for Jump to live (newest print)"
+            - button "Record Jump to live (newest print)"
+            - button "Save Jump to live (newest print)" [disabled]
+        - row "Tape Oldest print Ctrl+End Unbind Oldest print Reset Oldest print Ctrl for Oldest print Alt for Oldest print Shift for Oldest print Key for Oldest print Record Oldest print Save Oldest print":
+          - cell "Tape"
+          - rowheader "Oldest print"
+          - cell "Ctrl+End Unbind Oldest print Reset Oldest print":
+            - text: Ctrl+End
+            - button "Unbind Oldest print"
+            - button "Reset Oldest print" [disabled]
+          - cell "Ctrl for Oldest print Alt for Oldest print Shift for Oldest print Key for Oldest print Record Oldest print Save Oldest print":
+            - checkbox "Ctrl for Oldest print"
+            - text: Ctrl for Oldest print
+            - checkbox "Alt for Oldest print"
+            - text: Alt for Oldest print
+            - checkbox "Shift for Oldest print"
+            - text: Shift for Oldest print Key for Oldest print
+            - textbox "Key for Oldest print"
+            - button "Record Oldest print"
+            - button "Save Oldest print" [disabled]
+        - row "Tape Locate the print on synced charts Enter Unbind Locate the print on synced charts Reset Locate the print on synced charts Ctrl for Locate the print on synced charts Alt for Locate the print on synced charts Shift for Locate the print on synced charts Key for Locate the print on synced charts Record Locate the print on synced charts Save Locate the print on synced charts":
+          - cell "Tape"
+          - rowheader "Locate the print on synced charts"
+          - cell "Enter Unbind Locate the print on synced charts Reset Locate the print on synced charts":
+            - text: Enter
+            - button "Unbind Locate the print on synced charts"
+            - button "Reset Locate the print on synced charts" [disabled]
+          - cell "Ctrl for Locate the print on synced charts Alt for Locate the print on synced charts Shift for Locate the print on synced charts Key for Locate the print on synced charts Record Locate the print on synced charts Save Locate the print on synced charts":
+            - checkbox "Ctrl for Locate the print on synced charts"
+            - text: Ctrl for Locate the print on synced charts
+            - checkbox "Alt for Locate the print on synced charts"
+            - text: Alt for Locate the print on synced charts
+            - checkbox "Shift for Locate the print on synced charts"
+            - text: Shift for Locate the print on synced charts Key for Locate the print on synced charts
+            - textbox "Key for Locate the print on synced charts"
+            - button "Record Locate the print on synced charts"
+            - button "Save Locate the print on synced charts" [disabled]
+        - row "Tape Resume the tape or release the selection Esc not remappable":
+          - cell "Tape"
+          - rowheader "Resume the tape or release the selection"
+          - cell "Esc"
+          - cell "not remappable"
     - button "Reset all"
     - text: Import keymap (JSON)
     - textbox "Import keymap (JSON)"

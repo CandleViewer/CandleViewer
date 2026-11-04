@@ -32,7 +32,6 @@ const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
   "rule-builder-graph":
     "E47-S03 (#1317): the pure keyboard / screen-reader core; E37-S05 (#1071) wires it into SCR-082",
   "symbol-info": "E08-S10 (#4704): the data layer only; mounted by #4704 PR 3 (after #5335)",
-  tape: "E22-S01 (#714) PR-A: the SCR-053 model only; PR-B mounts the panel behind its flag",
   "confirm-policy":
     "E47-S08 (#1322): resolver and hook for the confirm surfaces (SCR-029/072/076/129), unbuilt (BQ-8)",
 };

@@ -38,6 +38,8 @@ export interface TapeFeedHandle {
   readonly symbol: string;
   readonly ring: TapeRing;
   readonly store: TapeStore;
+  /** Read-only for the panel: its seam log and counters (PR-B). */
+  readonly ingest: TapeIngest;
   /** Called once per animation frame, after the ingest: the writer's hook (PR-B). */
   onFrame(listener: FrameListener): () => void;
   setVisibility(visibility: PaneVisibility): void;
@@ -108,6 +110,7 @@ export function startTapeFeed(
     symbol,
     ring,
     store,
+    ingest,
     onFrame: (listener) => {
       listeners.add(listener);
       return () => void listeners.delete(listener);
