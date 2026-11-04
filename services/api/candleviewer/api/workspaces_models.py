@@ -5,10 +5,11 @@ definition of "a valid workspace/layout". No I/O, router or storage import lives
 rules are unit- and property-tested exhaustively and reused unchanged by POST and PUT.
 
 Security posture (C-12.1, ticket Security notes): every model is closed and frozen; names are
-length-checked raw and sanitised (control/bidi characters removed) before storage; ``icon_token``
-is a closed allow-list, never a URL; ``pane_config`` is bounded (<=32 keys, <=4096 bytes, scalars
-only) so a pane cannot become a blob store. Existence and ownership of referenced rows is the
-router's job. ``sanitize_text`` comes from ``drawings_models`` (one definition); the router imports
+length-checked raw and sanitised (control, bidi, zero-width and BOM characters removed) before
+storage; ``icon_token`` is a closed allow-list, never a URL; ``pane_config`` is bounded (<=32 keys,
+<=4096 bytes, scalars only) so a pane cannot become a blob store. Existence and ownership of
+referenced rows, and the instrument catalogue's verdict on a pane symbol, are the router's job.
+``sanitize_text`` comes from ``drawings_models`` (one definition); the router imports
 ``format_errors`` and ``MAX_JSON_DEPTH`` from there directly.
 """
 
@@ -87,10 +88,17 @@ _SETTING_KEY_RE: Final = re.compile(r"[a-z][a-z0-9_]{0,31}")
 _CFG: Final = ConfigDict(frozen=True, extra="forbid")
 
 
+#: Zero-width space, non-joiner and joiner, and the BOM (zero-width no-break space): a stored name
+#: holds no invisible code point, so two names that read the same are the same name (#5449).
+#: Stripped on top of `sanitize_text`'s control, separator and bidi set, before the trim.
+_INVISIBLE: Final = dict.fromkeys((0x200B, 0x200C, 0x200D, 0xFEFF))
+
+
 def sanitize_name(value: str) -> str:
-    """Sanitise then trim (D8). WHY the trim: names are identifiers with case-insensitive
-    uniqueness, so "Scalping" and "Scalping " must not both exist."""
-    return sanitize_text(value, allow_newline=False).strip()
+    """Sanitise, drop the zero-width and BOM code points, then trim (D8). WHY the trim: names are
+    identifiers with case-insensitive uniqueness, so "Scalping" and "Scalping " must not both
+    exist, nor two that differ only by an invisible code point."""
+    return sanitize_text(value, allow_newline=False).translate(_INVISIBLE).strip()
 
 
 def canonical_json(value: object) -> str:

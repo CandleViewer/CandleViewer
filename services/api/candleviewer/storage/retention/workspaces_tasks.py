@@ -45,6 +45,7 @@ class WorkspacesMetrics:
     users: BoundedMetric  # cv_workspace_users{bucket}
     purged: BoundedMetric  # cv_workspaces_purged_total{kind}
     request_seconds: BoundedMetric  # cv_workspace_request_seconds{operation}
+    rate_limited: BoundedMetric | None = None  # cv_workspace_rate_limited_total{resource}
 
 
 class _Purger(Protocol):

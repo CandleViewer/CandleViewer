@@ -238,6 +238,7 @@
 ["cv_wallet_sizing_old_snapshot_total", "counter", [], "live", "E27"]
 ["cv_wallet_snapshot_age_seconds", "gauge", [], "live", "E27"]
 ["cv_workspace_conflicts_total", "counter", ["resource"], "planned", "E15"]
+["cv_workspace_rate_limited_total", "counter", ["resource"], "planned", "E15"]
 ["cv_workspace_request_seconds", "histogram", ["operation"], "planned", "E15"]
 ["cv_workspace_users", "gauge", ["bucket"], "planned", "E15"]
 ["cv_workspaces_purged_total", "counter", ["kind"], "planned", "E15"]

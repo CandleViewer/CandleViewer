@@ -3631,6 +3631,10 @@ def create_app(
             ("operation",), buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
             max_series=len(OPERATIONS),
         ),
+        rate_limited=metrics_facade.counter(  # #5449: SR-E15-04 write-bucket refusals
+            "cv_workspace_rate_limited_total", "Workspace/layout writes refused 429.",
+            ("resource",), max_series=2,
+        ),
     )  # fmt: skip
     # E15-T01: owner-scoped /workspaces; callers from the session (`audit_resolver`, as for
     # /admin/audit; None without an identity store -> 401), RBAC via `auth.scopes.enforce`.
@@ -3657,6 +3661,10 @@ def create_app(
             lambda: app.state.workspaces_repository,
             audit_resolver,
             _LazyAuditEmitter(ctx.audit),
+            # #5449: pane symbols judged by the catalogue `/watchlists` judges by (None: 503)
+            catalogue=lambda: (
+                None if ctx.ingestion.instruments is None else ctx.ingestion.instruments.snapshot()
+            ),
             metrics=app.state.workspaces_metrics,
         )
     )

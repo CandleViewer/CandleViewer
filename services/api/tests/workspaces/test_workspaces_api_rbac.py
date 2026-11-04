@@ -7,7 +7,7 @@ from typing import Any
 
 import _workspaces_api_env as fakes
 import pytest
-from _workspaces_api_env import MISSING, SID, USER_A, USER_B, VIEWER, Env, wire
+from _workspaces_api_env import CATALOGUE, MISSING, SID, USER_A, USER_B, VIEWER, Env, wire
 from fastapi.testclient import TestClient
 
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -83,7 +83,11 @@ def test_store_unavailable_is_503(method: str, path: str, body: Any, fault: Any)
         from candleviewer.api.workspaces import make_workspaces_router
 
         app = FastAPI()
-        app.include_router(make_workspaces_router(lambda: None, _resolver(env), env.audit))
+        app.include_router(
+            make_workspaces_router(
+                lambda: None, _resolver(env), env.audit, catalogue=lambda: CATALOGUE
+            )
+        )
         env.c = TestClient(app)
     else:
 

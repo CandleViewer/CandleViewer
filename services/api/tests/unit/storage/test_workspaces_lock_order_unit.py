@@ -20,8 +20,11 @@ from sqlalchemy.exc import IntegrityError
 from candleviewer.storage.errors import StorageConstraintViolated
 from candleviewer.storage.repositories import workspaces_sqlalchemy as mod
 from candleviewer.storage.repositories.workspaces import (
+    MAX_DELETED_LAYOUTS,
+    MAX_DELETED_WORKSPACES,
     LayoutFields,
     WorkspaceConflictError,
+    WorkspaceDeletion,
     WorkspaceFields,
     WorkspaceNotFoundError,
 )
@@ -147,19 +150,24 @@ async def test_a_refused_write_is_typed_and_chains_nothing(
         assert (err.value.sqlstate, err.value.constraint) == ("23505", constraint)
 
 
+async def _no_record(_deletion: WorkspaceDeletion) -> None:
+    return None
+
+
 async def test_workspace_soft_delete_locks_its_layouts_in_id_order_before_any_write() -> None:
     rel = _Rel({"_WS_LOCK": [_WS], "_WS_COUNT": [{"n": 2}], "_LAYS_LOCK": [{"id": "a"}],
                 "_WS_SOFT_DELETE": [{"ts": _T}], "_LAYS_SOFT_DELETE": [{"id": "a"}]})  # fmt: skip
-    await _repo(rel).soft_delete_workspace("o", "w")
+    await _repo(rel).soft_delete_workspace("o", "w", write_ahead=_no_record)
     assert rel.names() == ["_LOCK_USER", "_WS_LOCK", "_WS_COUNT", "_LAYS_LOCK", "_WS_SOFT_DELETE",
-                           "_LAYS_SOFT_DELETE", "_DRAWINGS_SOFT_DELETE"]  # fmt: skip
+                           "_LAYS_SOFT_DELETE", "_DRAWINGS_SOFT_DELETE", "_PURGE_EARLY_WORKSPACES",
+                           "_PURGE_EARLY_LAYOUTS"]  # fmt: skip
     assert rel.calls[3][1] == {"wid": "w", "owner": "o"} and rel.commits == 1
 
 
 async def test_last_workspace_refusal_locks_no_layout() -> None:
     rel = _Rel({"_WS_LOCK": [_WS], "_WS_COUNT": [{"n": 1}]})
     with pytest.raises(WorkspaceConflictError):
-        await _repo(rel).soft_delete_workspace("o", "w")
+        await _repo(rel).soft_delete_workspace("o", "w", write_ahead=_no_record)
     assert rel.names() == ["_LOCK_USER", "_WS_LOCK", "_WS_COUNT"] and rel.commits == 0
 
 
@@ -183,3 +191,46 @@ async def test_replace_of_a_missing_layout_is_a_404_before_any_read(locked: Rows
     with pytest.raises(WorkspaceNotFoundError):
         await _repo(rel).replace_layout("o", "w", "l1", _fields(True), if_match=None)
     assert rel.names() == ["_WS_LOCK", "_LAY_REPLACE_LOCK"] and rel.commits == 0
+
+
+async def test_workspace_delete_purges_past_the_deleted_bounds_then_awaits_its_record() -> None:
+    """SR-E15-05 and C-2.9: the purge statements run in the deleting transaction with the
+    caller's bounds, and the record sees their counts before anything commits; `purged_layouts`
+    counts the layouts a purged workspace takes with it as well as those purged on their own."""
+    rel = _Rel({"_WS_LOCK": [_WS], "_WS_COUNT": [{"n": 2}], "_LAYS_LOCK": [{"id": "b"}],
+                "_WS_SOFT_DELETE": [{"ts": _T}], "_LAYS_SOFT_DELETE": [{"id": "b"}, {"id": "a"}],
+                "_PURGE_EARLY_WORKSPACES": [{"id": "old", "layouts": 3}],
+                "_PURGE_EARLY_LAYOUTS": [{"id": "x"}, {"id": "y"}]})  # fmt: skip
+    seen: list[tuple[WorkspaceDeletion, int, int]] = []
+
+    async def record(d: WorkspaceDeletion) -> None:
+        seen.append((d, len(rel.calls), rel.commits))
+
+    done = await _repo(rel).soft_delete_workspace("o", "w", write_ahead=record)
+    assert done == WorkspaceDeletion("w", ("a", "b"), 0, 1, 5)
+    assert seen == [(done, len(rel.calls), 0)] and rel.commits == 1
+    params = dict(rel.calls[-2:])
+    assert params == {
+        "_PURGE_EARLY_WORKSPACES": {"owner": "o", "keep": MAX_DELETED_WORKSPACES},
+        "_PURGE_EARLY_LAYOUTS": {"owner": "o", "keep": MAX_DELETED_LAYOUTS},
+    }
+
+
+async def test_workspace_delete_whose_record_raises_never_commits() -> None:
+    rel = _Rel({"_WS_LOCK": [_WS], "_WS_COUNT": [{"n": 2}], "_WS_SOFT_DELETE": [{"ts": _T}]})
+
+    async def refused(_d: WorkspaceDeletion) -> None:
+        raise RuntimeError("no audit writer")
+
+    with pytest.raises(RuntimeError):
+        await _repo(rel).soft_delete_workspace("o", "w", write_ahead=refused)
+    assert rel.commits == 0
+
+
+async def test_layout_delete_takes_the_user_lock_and_purges_past_the_deleted_bound() -> None:
+    rel = _Rel({"_WS_LOCK": [_WS], "_LAY_LOCK": [{"id": "l1"}], "_LAY_SOFT_DELETE": [{"ts": _T}],
+                "_PURGE_EARLY_LAYOUTS": [{"id": "x"}, {"id": "y"}]})  # fmt: skip
+    assert await _repo(rel).soft_delete_layout("o", "w", "l1") == 2  # the early-purge count
+    assert rel.names() == ["_LOCK_USER", "_WS_LOCK", "_LAY_LOCK", "_LAY_SOFT_DELETE",
+                           "_DRAWINGS_SOFT_DELETE", "_PURGE_EARLY_LAYOUTS"]  # fmt: skip
+    assert rel.calls[-1][1] == {"owner": "o", "keep": MAX_DELETED_LAYOUTS} and rel.commits == 1

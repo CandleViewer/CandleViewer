@@ -244,7 +244,7 @@ def test_logs_never_carry_workspace_names(env: Env) -> None:
 
 def test_router_requires_an_audit_emitter() -> None:
     with pytest.raises(TypeError, match="audit emitter"):
-        make_workspaces_router(lambda: FakeWorkspaceRepo(), None, None)  # type: ignore[arg-type]  # the guard under test
+        make_workspaces_router(lambda: FakeWorkspaceRepo(), None, None, catalogue=lambda: None)  # type: ignore[arg-type]  # the guard under test
     assert WorkspaceFields("a", False, "workspace.default", 0)  # keeps the import honest
 
 

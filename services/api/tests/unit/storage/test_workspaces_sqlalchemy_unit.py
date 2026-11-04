@@ -27,6 +27,7 @@ def test_the_statement_set_is_pinned() -> None:
         "_LAY_INSERT", "_LAY_UPDATE", "_LAY_GET", "_LAY_LIST", "_PANES", "_PANES_DELETE",
         "_PANES_INSERT", "_IS_LIVE_LAYOUT", "_EXISTS_OTHER_WS", "_EXISTS_OTHER_LAY",
         "_CHART_OPEN", "_CHART_SYMBOLS", "_PURGE_LAYOUTS", "_PURGE_WORKSPACES", "_USERS_BY_BUCKET",
+        "_PURGE_EARLY_WORKSPACES", "_PURGE_EARLY_LAYOUTS",
     }  # fmt: skip
 
 
@@ -112,3 +113,19 @@ def test_purges_skip_parents_that_still_have_live_children() -> None:
         "AND NOT EXISTS (SELECT 1 FROM layouts l WHERE l.workspace_id = workspaces.id) "
         "ORDER BY deleted_at LIMIT :limit"
     ) in ws
+
+
+@pytest.mark.parametrize("name", ["_PURGE_EARLY_WORKSPACES", "_PURGE_EARLY_LAYOUTS"])
+def test_early_purges_keep_the_newest_and_skip_rows_with_anything_live_below(name: str) -> None:
+    """SR-E15-05: owner-scoped, oldest purged first (the newest `:keep` stay), and the D21
+    defence in depth of the retention purge: a row with a live child is never purged."""
+    text = " ".join(str(_STATEMENTS[name]).split())
+    assert "deleted_at IS NOT NULL" in text and "d.deleted_at IS NULL" in text
+    assert "deleted_at DESC," in text and "id DESC OFFSET :keep" in text
+    if name == "_PURGE_EARLY_WORKSPACES":
+        assert "l.deleted_at IS NULL OR EXISTS" in text
+        # the cascaded layouts are counted, owner-scoped, from the statement's own snapshot
+        assert text.count("= CAST(:owner AS uuid)") == 3
+        assert "RETURNING id) SELECT gone.id::text AS id, (SELECT count(*) FROM layouts c " in text
+    else:
+        assert text.count("= CAST(:owner AS uuid)") == 2

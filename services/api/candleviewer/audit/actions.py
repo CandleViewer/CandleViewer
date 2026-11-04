@@ -302,6 +302,11 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # `failed`, from its `on_done` hook (24 Sec.15.5).
         "instruments.refresh.requested",
         "instruments.refresh.completed",
+        # #5449 (SR-E15-17): a workspace delete, written ahead (durable before the deleting
+        # transaction commits), with `object_kind` `workspace` and the ids and counts of the
+        # layouts and drawings it stamped deleted, never a name or content (24 Sec.15.5). Other
+        # workspace writes: analytics (D20).
+        "workspace.deleted",
         "recorder.start",
         "recorder.stop",
         # #2188 (orchestrator ruling): `update_manual` changed a manual entry's streams or depth.

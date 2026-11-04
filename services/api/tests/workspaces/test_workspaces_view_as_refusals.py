@@ -136,7 +136,9 @@ def test_workspaces_write_routes_each_have_a_view_as_refusal_test() -> None:
     contract declares: a new write route fails here until it has its own refusal test."""
     mounted = {
         (method, route.path)
-        for route in make_workspaces_router(lambda: None, None, Audit()).routes
+        for route in make_workspaces_router(
+            lambda: None, None, Audit(), catalogue=lambda: None
+        ).routes
         if isinstance(route, APIRoute) and route.path.startswith("/workspaces")
         for method in (route.methods or set()) - _SAFE
     }

@@ -68,7 +68,11 @@ class _ViewingPrincipal:
 
 def _workspaces_while_viewing(env: WorkspacesEnv) -> TestClient:
     app = FastAPI()
-    app.include_router(make_workspaces_router(lambda: env.repo, _ViewingPrincipal(), env.audit))
+    app.include_router(
+        make_workspaces_router(
+            lambda: env.repo, _ViewingPrincipal(), env.audit, catalogue=lambda: None
+        )
+    )
     return TestClient(app)
 
 

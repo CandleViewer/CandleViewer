@@ -28,9 +28,12 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 from candleviewer.storage.repositories.workspaces import (
+    MAX_DELETED_LAYOUTS,
+    MAX_DELETED_WORKSPACES,
     LayoutFields,
     PaneFields,
     WorkspaceConflictError,
+    WorkspaceDeletion,
     WorkspaceFields,
     WorkspaceNotFoundError,
     WorkspaceVersionConflictError,
@@ -42,6 +45,10 @@ pytestmark = pytest.mark.integration
 _ROOT = Path(__file__).resolve().parents[3]
 _KINDS = ("chart", "dom", "tape", "positions")
 _SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT", None)
+
+
+async def _no_record(_deletion: WorkspaceDeletion) -> None:
+    """The write-ahead hook a store-level test passes: the record is the router's test."""
 
 
 def _alembic(dsn: str, *args: str) -> None:
@@ -300,7 +307,7 @@ async def test_idor_matrix_other_owner_sees_and_changes_nothing(
     with pytest.raises(WorkspaceNotFoundError):
         await repo.soft_delete_layout(b, wid, lid)
     with pytest.raises(WorkspaceNotFoundError):
-        await repo.soft_delete_workspace(b, wid)
+        await repo.soft_delete_workspace(b, wid, write_ahead=_no_record)
     assert await repo.exists_for_other_owner(b, "workspace", wid)
     assert await repo.exists_for_other_owner(b, "layout", lid)
     assert not await repo.exists_for_other_owner(a, "layout", lid)
@@ -336,7 +343,7 @@ async def test_last_workspace_is_protected(
     a = _user(pg_dsn)
     wid = await _new_ws(repo, a)
     with pytest.raises(WorkspaceConflictError) as exc:
-        await repo.soft_delete_workspace(a, wid)
+        await repo.soft_delete_workspace(a, wid, write_ahead=_no_record)
     assert (exc.value.rule, exc.value.field) == ("last_workspace", "workspaceId")
     assert [r.id for r in await repo.list_workspaces(a, after=None, limit=10)] == [wid]
 
@@ -347,10 +354,14 @@ async def test_concurrent_delete_of_the_last_two_gives_one_204_and_one_409(
     a = _user(pg_dsn)
     w1, w2 = await _new_ws(repo, a), await _new_ws(repo, a)
     results = await asyncio.gather(
-        repo.soft_delete_workspace(a, w1), repo.soft_delete_workspace(a, w2), return_exceptions=True
+        repo.soft_delete_workspace(a, w1, write_ahead=_no_record),
+        repo.soft_delete_workspace(a, w2, write_ahead=_no_record),
+        return_exceptions=True,
     )
     conflicts = [r for r in results if isinstance(r, WorkspaceConflictError)]
-    assert len(conflicts) == 1 and results.count(None) == 1, results
+    deleted = [r for r in results if isinstance(r, WorkspaceDeletion)]
+    assert len(conflicts) == 1 and len(deleted) == 1, results
+    assert conflicts[0].rule == "last_workspace"
     assert len(await repo.list_workspaces(a, after=None, limit=10)) == 1
 
 
@@ -369,7 +380,7 @@ async def test_soft_delete_cascades_and_purge_hard_deletes_panes_and_drawings(
             "VALUES (%s, %s, 'BTCUSDT', %s, 'trendline', %s::jsonb)",
             (did, a, lids[0], json.dumps({"points": []})),
         )
-    await repo.soft_delete_workspace(a, gone)
+    await repo.soft_delete_workspace(a, gone, write_ahead=_no_record)
     assert await repo.get_workspace_detail(a, gone) is None
     assert await repo.list_layouts(a, gone, after_id=None, limit=10) is None
     assert not await repo.is_live_layout(a, lids[0])
@@ -403,7 +414,7 @@ async def test_purge_never_touches_another_owners_rows(
     la, lb = str(uuid.uuid4()), str(uuid.uuid4())
     await repo.create_layout(a, wa, la, _lay(None, 2))
     await repo.create_layout(b, wb, lb, _lay(None, 2))
-    await repo.soft_delete_workspace(b, wb)
+    await repo.soft_delete_workspace(b, wb, write_ahead=_no_record)
     with _sync(pg_dsn) as c:
         c.execute(
             "UPDATE workspaces SET deleted_at = now() - interval '2 days' WHERE id = %s", (wb,)
@@ -588,7 +599,8 @@ async def test_users_by_workspace_bucket_counts_live_rows_of_every_owner(
     for _ in range(3):
         await _new_ws(repo, three)
     ids = [await _new_ws(repo, five) for _ in range(6)]
-    await repo.soft_delete_workspace(five, ids[0])  # 5 live -> bucket 5-8, deleted rows ignored
+    # 5 live -> bucket 5-8, deleted rows ignored
+    await repo.soft_delete_workspace(five, ids[0], write_ahead=_no_record)
     after = await repo.count_users_by_workspace_bucket()
     delta = {b: after.get(b, 0) - before.get(b, 0) for b in ("1", "2-4", "5-8", "9-16", "17-32")}
     assert delta == {"1": 1, "2-4": 1, "5-8": 1, "9-16": 0, "17-32": 0}
@@ -601,7 +613,7 @@ async def test_purge_counts_split_layouts_from_workspaces(
     await _new_ws(repo, a)
     gone = await _new_ws(repo, a)
     await repo.create_layout(a, gone, str(uuid.uuid4()), _lay(None, 1))
-    await repo.soft_delete_workspace(a, gone)
+    await repo.soft_delete_workspace(a, gone, write_ahead=_no_record)
     with _sync(pg_dsn) as c:
         c.execute(
             "UPDATE workspaces SET deleted_at = now() - interval '2 days' WHERE id = %s", (gone,)
@@ -657,7 +669,7 @@ async def test_the_layout_purge_counter_is_exact_when_a_batch_splits_a_workspace
     gone = await _new_ws(repo, a)
     for _ in range(2):
         await repo.create_layout(a, gone, str(uuid.uuid4()), _lay(None, 0))
-    await repo.soft_delete_workspace(a, gone)
+    await repo.soft_delete_workspace(a, gone, write_ahead=_no_record)
     with _sync(pg_dsn) as c:
         c.execute(
             "UPDATE workspaces SET deleted_at = now() - interval '2 days' WHERE id = %s", (gone,)
@@ -667,3 +679,80 @@ async def test_the_layout_purge_counter_is_exact_when_a_batch_splits_a_workspace
             (gone,),
         )
     assert [await repo.purge_deleted_counts(1, 1) for _ in range(3)] == [(1, 0), (1, 1), (0, 0)]
+
+
+_DELETED_IDS = {
+    "workspaces": "SELECT id::text FROM workspaces WHERE user_id = %s "
+    "AND deleted_at IS NOT NULL ORDER BY deleted_at, id",
+    "layouts": "SELECT id::text FROM layouts WHERE owner_user_id = %s "
+    "AND deleted_at IS NOT NULL ORDER BY deleted_at, id",
+}
+
+
+def _deleted(dsn: str, table: str, owner: str) -> list[str]:
+    """The owner's soft-deleted ids in `table`, oldest first."""
+    with _sync(dsn) as c:
+        rows = c.execute(_DELETED_IDS[table], (owner,)).fetchall()
+    return [str(r[0]) for r in rows]
+
+
+async def test_soft_deleted_layouts_past_the_bound_purge_oldest_first_in_the_delete(
+    repo: SqlAlchemyWorkspaceRepository, pg_dsn: str
+) -> None:
+    """SR-E15-05: a user keeps at most `MAX_DELETED_LAYOUTS` soft-deleted layouts; each delete
+    past it hard-deletes the oldest in its own transaction, and is never refused."""
+    a = _user(pg_dsn)
+    wid = await _new_ws(repo, a)
+    made: list[str] = []
+    purged: list[int] = []
+    for _ in range(MAX_DELETED_LAYOUTS + 2):
+        lid = str(uuid.uuid4())
+        await repo.create_layout(a, wid, lid, _lay(None, 1))
+        purged.append(await repo.soft_delete_layout(a, wid, lid))
+        made.append(lid)
+    assert _deleted(pg_dsn, "layouts", a) == made[2:]
+    assert purged == [0] * MAX_DELETED_LAYOUTS + [1, 1]  # each delete's early-purge count
+
+
+async def test_soft_deleted_workspaces_past_the_bound_purge_oldest_first_and_count_it(
+    repo: SqlAlchemyWorkspaceRepository, pg_dsn: str
+) -> None:
+    """SR-E15-05: past `MAX_DELETED_WORKSPACES` the deleting transaction purges the oldest
+    soft-deleted workspace (its soft-deleted layouts by cascade) and its record counts both."""
+    a = _user(pg_dsn)
+    await _new_ws(repo, a)  # the live one a delete always leaves
+    made: list[str] = []
+    seen: list[WorkspaceDeletion] = []
+
+    async def record(d: WorkspaceDeletion) -> None:
+        seen.append(d)
+
+    for i in range(MAX_DELETED_WORKSPACES + 1):
+        wid = await _new_ws(repo, a)
+        if i == 0:
+            await repo.create_layout(a, wid, str(uuid.uuid4()), _lay(None, 1))
+        await repo.soft_delete_workspace(a, wid, write_ahead=record)
+        made.append(wid)
+    assert _deleted(pg_dsn, "workspaces", a) == made[1:]
+    assert _deleted(pg_dsn, "layouts", a) == []  # gone with its workspace
+    assert [d.purged_workspaces for d in seen] == [0] * MAX_DELETED_WORKSPACES + [1]
+    assert [d.purged_layouts for d in seen] == [0] * MAX_DELETED_WORKSPACES + [1]  # cascaded
+    assert len(seen[0].layout_ids) == 1
+
+
+async def test_a_workspace_delete_whose_record_raises_changes_nothing(
+    repo: SqlAlchemyWorkspaceRepository, pg_dsn: str
+) -> None:
+    """C-2.9: the record is awaited before the commit; one that is not written rolls back."""
+    a = _user(pg_dsn)
+    await _new_ws(repo, a)
+    wid = await _new_ws(repo, a)
+    lid = str(uuid.uuid4())
+    await repo.create_layout(a, wid, lid, _lay(None, 1))
+
+    async def refused(_d: WorkspaceDeletion) -> None:
+        raise RuntimeError("no audit writer")
+
+    with pytest.raises(RuntimeError):
+        await repo.soft_delete_workspace(a, wid, write_ahead=refused)
+    assert await repo.get_layout(a, wid, lid) is not None

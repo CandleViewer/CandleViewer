@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, Literal
@@ -13,13 +13,20 @@ from fastapi.testclient import TestClient
 
 from candleviewer.api._generated import openapi_models
 from candleviewer.api.alert_deliveries import DenialBudget
+from candleviewer.api.drawings_limiter import DrawingsWriteLimiter
 from candleviewer.api.workspaces import make_workspaces_router
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.errors import SessionNotFound
+from candleviewer.storage.repositories.user_roles_sqlalchemy import (
+    WRITE_AHEAD_TIMEOUT_S,
+    bounded_write_ahead,
+)
 from candleviewer.storage.repositories.workspaces import (
     LayoutFields,
     LayoutRow,
     WorkspaceConflictError,
+    WorkspaceDeleteWriteAhead,
+    WorkspaceDeletion,
     WorkspaceDetailRow,
     WorkspaceFields,
     WorkspaceNotFoundError,
@@ -28,6 +35,30 @@ from candleviewer.storage.repositories.workspaces import (
     WriteResult,
 )  # fmt: skip
 from tests.unit.auth.auth_fakes import MFA_PROVED_AT
+
+
+@dataclass(frozen=True, slots=True)
+class _Listing:
+    """The three fields `is_trading_usdt_perpetual` reads of a catalogue entry."""
+
+    status: str = "trading"
+    quote_coin: str = "USDT"
+    settle_coin: str = "USDT"
+
+
+class ListedSymbols:
+    """`InstrumentLookup` double: the symbols these tests' layouts hold, each a trading USDT
+    perpetual. The catalogue tests (`test_workspaces_hardening.py`) judge against the recorded
+    instruments page instead."""
+
+    def __init__(self, *symbols: str) -> None:
+        self._listed = {symbol: _Listing() for symbol in symbols}
+
+    def get(self, symbol: str) -> Any:
+        return self._listed.get(symbol)
+
+
+CATALOGUE = ListedSymbols("BTCUSDT", "ETHUSDT", "SOLUSDT")
 
 USER_A = uuid.UUID("00000000-0000-4000-8000-00000000000a")
 USER_B = uuid.UUID("00000000-0000-4000-8000-00000000000b")
@@ -84,6 +115,10 @@ class FakeWorkspaceRepo:
         self.layouts: dict[str, LayoutRow] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.tick = 0
+        self.drawings_under: dict[str, int] = {}  # live drawings per workspace, for the record
+        self.write_ahead_timeout_s = WRITE_AHEAD_TIMEOUT_S  # the SQL store's bound on the record
+        self.purge_early = 0  # soft-deleted layouts a layout delete purges past the bound
+        self.purge_early_workspace = (0, 0)  # (workspaces, layouts) a workspace delete purges
 
     def _call(self, name: str, **kw: Any) -> None:
         self.calls.append((name, kw))
@@ -178,11 +213,13 @@ class FakeWorkspaceRepo:
             raise WorkspaceConflictError("name_taken", "name")
         return WriteResult(self._put_layout(owner, wid, lid, f, row.created_at), True)
 
-    async def soft_delete_layout(self, owner: str, wid: str, lid: str) -> None:
+    async def soft_delete_layout(self, owner: str, wid: str, lid: str) -> int:
+        """As the SQL store; answers `purge_early` as the count of layouts it purged early."""
         self._call("soft_delete_layout", owner=owner, wid=wid, lid=lid)
         if self._lay(owner, lid, wid) is None:
             raise WorkspaceNotFoundError("layout")
         self.deleted.add(lid)
+        return self.purge_early
 
     async def exists_for_other_owner(
         self, owner: str, kind: Literal["workspace", "layout"], object_id: str
@@ -228,13 +265,23 @@ class FakeWorkspaceRepo:
         self._clear_default(owner, fields, keep=wid)
         return WriteResult(self._put(owner, wid, fields, row.created_at), True)
 
-    async def soft_delete_workspace(self, owner: str, wid: str) -> None:
+    async def soft_delete_workspace(
+        self, owner: str, wid: str, *, write_ahead: WorkspaceDeleteWriteAhead
+    ) -> WorkspaceDeletion:
+        """As the SQL store: stamps, then the write-ahead record, then the change is kept (a
+        record that raises leaves nothing deleted)."""
         self._call("soft_delete_workspace", owner=owner, wid=wid)
         if self._live(owner, wid) is None:
             raise WorkspaceNotFoundError("workspace")
         if len(self._live_of(owner)) == 1:
             raise WorkspaceConflictError("last_workspace", "workspaceId")
-        self.deleted.add(wid)
+        layouts = tuple(r.id for r in self.layouts_of(owner, wid))
+        done = WorkspaceDeletion(
+            wid, layouts, self.drawings_under.get(wid, 0), *self.purge_early_workspace
+        )
+        await bounded_write_ahead(write_ahead(done), self.write_ahead_timeout_s)
+        self.deleted.update((wid, *layouts))
+        return done
 
 
 class Audit:
@@ -251,9 +298,20 @@ class Audit:
 class Env:
     """Router-only app with a fake repository; `user` is the caller (None = no session)."""
 
-    def __init__(self, *, wired: bool = True, denials: DenialBudget | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        wired: bool = True,
+        denials: DenialBudget | None = None,
+        limiter: DrawingsWriteLimiter | None = None,
+        metrics: Any = None,
+    ) -> None:
         self.repo, self.audit = FakeWorkspaceRepo(), Audit()
         self.user: uuid.UUID | None = USER_A
+        self.catalogue: Any = CATALOGUE  # None: no catalogue loaded
+        # The cap and pagination tests write past the SR-E15-04 burst: a roomy bucket unless a
+        # test passes its own (`test_workspaces_hardening.py` uses the shipped values).
+        limiter = DrawingsWriteLimiter(burst=10_000) if limiter is None else limiter
         env = self
 
         class _Resolver:  # async, like the session-backed `SessionAuditPrincipalResolver`
@@ -266,7 +324,13 @@ class Env:
         app = FastAPI()
         app.include_router(
             make_workspaces_router(
-                lambda: self.repo, _Resolver() if wired else None, self.audit, denials=denials
+                lambda: self.repo,
+                _Resolver() if wired else None,
+                self.audit,
+                catalogue=lambda: self.catalogue,
+                denials=denials,
+                write_limiter=limiter,
+                metrics=metrics,
             )
         )
         self.c = TestClient(app)

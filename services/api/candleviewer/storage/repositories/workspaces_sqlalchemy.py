@@ -16,6 +16,14 @@ No-op detection compares type-preserving canonical JSON (`1`, `1.0` and `true` d
 Every UPDATE bumps `updated_at` strictly monotonically (D12), so a token never repeats.
 Uniqueness is decided by the unique indexes, never by a pre-check; the rollback keeps the
 stored pane set intact when a write fails late.
+
+SR-E15-05: a soft delete also hard-deletes the caller's oldest soft-deleted rows past
+`MAX_DELETED_WORKSPACES` / `MAX_DELETED_LAYOUTS`, in the deleting transaction, under the user's
+advisory lock (both deletes take it), with the retention purge's defence in depth: a row with
+anything live below it is never purged. A workspace delete awaits its write-ahead audit record
+(C-2.9) after its statements and before its commit; a record that is not written rolls it back.
+The bounds hold per user, so a user's soft-deleted rows stay a small set: the owner-scoped purge
+statements need no further index.
 """
 
 from __future__ import annotations
@@ -33,11 +41,19 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     query_failure,
     sqlstate_of,
 )
+from candleviewer.storage.repositories.user_roles_sqlalchemy import (
+    WRITE_AHEAD_TIMEOUT_S,
+    bounded_write_ahead,
+)
 from candleviewer.storage.repositories.workspaces import (
+    MAX_DELETED_LAYOUTS,
+    MAX_DELETED_WORKSPACES,
     LayoutFields,
     LayoutRow,
     PaneFields,
     WorkspaceConflictError,
+    WorkspaceDeleteWriteAhead,
+    WorkspaceDeletion,
     WorkspaceDetailRow,
     WorkspaceFields,
     WorkspaceNotFoundError,
@@ -131,6 +147,30 @@ _DRAWINGS_SOFT_DELETE = sa.text(
     "updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond') "
     "WHERE layout_id = ANY(CAST(:ids AS uuid[])) AND owner_user_id = CAST(:owner AS uuid) "
     "AND deleted_at IS NULL"
+)
+# SR-E15-05: the caller's soft-deleted rows past the newest `:keep`, oldest first, hard-deleted
+# (FKs cascade to panes and soft-deleted drawings). As the retention purge (D21), a row with
+# anything live below it stays: a workspace waits for every layout under it to be soft-deleted
+# with no live drawing, a layout for its drawings.
+_PURGE_EARLY_WORKSPACES = sa.text(
+    "WITH gone AS (DELETE FROM workspaces WHERE id IN (SELECT w.id FROM workspaces w "
+    "WHERE w.user_id = CAST(:owner AS uuid) AND w.deleted_at IS NOT NULL "
+    "AND NOT EXISTS (SELECT 1 FROM layouts l WHERE l.workspace_id = w.id "
+    "AND (l.deleted_at IS NULL OR EXISTS (SELECT 1 FROM drawings d WHERE d.layout_id = l.id "
+    "AND d.owner_user_id = CAST(:owner AS uuid) AND d.deleted_at IS NULL))) "
+    "ORDER BY w.deleted_at DESC, w.id DESC OFFSET :keep) RETURNING id) "
+    # each purged workspace with the soft-deleted layouts its FK cascade removes (the statement's
+    # snapshot still holds them), so `purged_layouts` counts every layout removed
+    "SELECT gone.id::text AS id, (SELECT count(*) FROM layouts c "
+    "WHERE c.workspace_id = gone.id AND c.owner_user_id = CAST(:owner AS uuid)) AS layouts "
+    "FROM gone ORDER BY gone.id"
+)
+_PURGE_EARLY_LAYOUTS = sa.text(
+    "DELETE FROM layouts WHERE id IN (SELECT l.id FROM layouts l "
+    "WHERE l.owner_user_id = CAST(:owner AS uuid) AND l.deleted_at IS NOT NULL "
+    "AND NOT EXISTS (SELECT 1 FROM drawings d WHERE d.layout_id = l.id "
+    "AND d.owner_user_id = CAST(:owner AS uuid) AND d.deleted_at IS NULL) "
+    "ORDER BY l.deleted_at DESC, l.id DESC OFFSET :keep) RETURNING id::text AS id"
 )
 _WS_LIVE = sa.text(
     "SELECT 1 FROM workspaces WHERE id = CAST(:wid AS uuid) "
@@ -438,7 +478,9 @@ class SqlAlchemyWorkspaceRepository:
             raise mapped or query_failure(sqlstate_of(exc), constraint_of(exc)) from None
         return WriteResult(row, True)
 
-    async def soft_delete_workspace(self, owner: str, workspace_id: str) -> None:
+    async def soft_delete_workspace(
+        self, owner: str, workspace_id: str, *, write_ahead: WorkspaceDeleteWriteAhead
+    ) -> WorkspaceDeletion:
         async with self._relational.unit_of_work() as uow:
             await uow.session.execute(_LOCK_USER, {"owner": owner})
             await self._lock_workspace(uow, owner, workspace_id)
@@ -449,11 +491,26 @@ class SqlAlchemyWorkspaceRepository:
             ts: datetime = (await uow.session.execute(_WS_SOFT_DELETE, ids)).scalar_one()
             gone = await uow.session.execute(_LAYS_SOFT_DELETE, {**ids, "ts": ts})
             layout_ids: list[str] = list(gone.scalars().all())
+            drawings = 0
             if layout_ids:
-                await uow.session.execute(
+                stamped = await uow.session.execute(
                     _DRAWINGS_SOFT_DELETE, {"ids": layout_ids, "owner": owner, "ts": ts}
                 )
+                drawings = _rowcount(stamped)
+            keep_ws = {"owner": owner, "keep": MAX_DELETED_WORKSPACES}
+            purged_ws = (await uow.session.execute(_PURGE_EARLY_WORKSPACES, keep_ws)).all()
+            cascaded = sum(int(n) for _, n in purged_ws)
+            purged_lay = cascaded + await self._purge_early_layouts(uow, owner)
+            deletion = WorkspaceDeletion(
+                workspace_id, tuple(sorted(layout_ids)), drawings, len(purged_ws), purged_lay,
+            )  # fmt: skip
+            await bounded_write_ahead(write_ahead(deletion), WRITE_AHEAD_TIMEOUT_S)
             await uow.commit()
+        return deletion
+
+    async def _purge_early_layouts(self, uow: SqlAlchemyUnitOfWork, owner: str) -> int:
+        keep = {"owner": owner, "keep": MAX_DELETED_LAYOUTS}
+        return len((await uow.session.execute(_PURGE_EARLY_LAYOUTS, keep)).scalars().all())
 
     # ---- layout writes -------------------------------------------------------------------
     async def create_layout(
@@ -526,9 +583,10 @@ class SqlAlchemyWorkspaceRepository:
             raise WorkspaceNotFoundError("layout")
         return WriteResult(row, True)
 
-    async def soft_delete_layout(self, owner: str, workspace_id: str, layout_id: str) -> None:
+    async def soft_delete_layout(self, owner: str, workspace_id: str, layout_id: str) -> int:
         ids = {"wid": workspace_id, "owner": owner, "lid": layout_id}
         async with self._relational.unit_of_work() as uow:
+            await uow.session.execute(_LOCK_USER, {"owner": owner})  # serialises the purge below
             await self._lock_workspace(uow, owner, workspace_id)
             if (await uow.session.execute(_LAY_LOCK, ids)).first() is None:
                 raise WorkspaceNotFoundError("layout")
@@ -536,7 +594,9 @@ class SqlAlchemyWorkspaceRepository:
             await uow.session.execute(
                 _DRAWINGS_SOFT_DELETE, {"ids": [layout_id], "owner": owner, "ts": ts}
             )
+            purged = await self._purge_early_layouts(uow, owner)
             await uow.commit()
+        return purged
 
     # ---- retention -----------------------------------------------------------------------
     async def purge_deleted(self, older_than_days: int, limit: int) -> int:
@@ -559,6 +619,12 @@ class SqlAlchemyWorkspaceRepository:
         async with self._relational.unit_of_work() as uow:
             res = await uow.session.execute(_USERS_BY_BUCKET)
             return {str(r["bucket"]): int(r["users"]) for r in res.mappings()}
+
+
+def _rowcount(result: Any) -> int:
+    """Rows an UPDATE touched (0 when the driver does not say)."""
+    count = getattr(result, "rowcount", 0)
+    return count if isinstance(count, int) and count > 0 else 0
 
 
 __all__ = ["MAX_PURGE_BATCH", "UNSCOPED", "SqlAlchemyWorkspaceRepository"]

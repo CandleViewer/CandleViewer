@@ -4838,7 +4838,7 @@ class LayoutPaneInput(BaseModel):
     symbol: Annotated[
         str | None,
         Field(
-            description="Bound symbol, market panes only: a Bybit USDT linear perpetual symbol of at most 20 characters (the DB `symbol_code` domain). It is not checked against the instrument catalogue. A non-null symbol on a live layout counts as chart-open for auto-recording.",
+            description="Bound symbol, market panes only: a Bybit USDT linear perpetual symbol of at most 20 characters (the DB `symbol_code` domain). A write checks it against the instrument catalogue (a listed, trading USDT perpetual), else `422 validation_failed` rule `unknown_symbol` naming `panes.<i>.symbol`; while no catalogue is loaded the write is `503 instrument_cache_unavailable`. A replace judges only the symbols its stored layout does not hold yet. A non-null symbol on a live layout counts as chart-open for auto-recording.",
             pattern="^[A-Z0-9]{2,16}USDT$",
         ),
     ] = None
