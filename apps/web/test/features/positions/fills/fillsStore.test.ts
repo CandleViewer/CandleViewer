@@ -582,6 +582,18 @@ describe("revocation and narrowing (SR-E29-11, E29-D05 F-02)", () => {
     expect(accountsOf(store).has(SUB2)).toBe(false);
   });
 
+  it("a later equal sub_ok withdraws no one again: a dismissed line stays dismissed", () => {
+    const store = started(); // Sub-2 stays in the directory and leaves the subscription
+    store.applyFrames([snap(snapshotBody())]);
+    store.setEffective({ exchange_account_ids: [MAIN, SUB1] });
+    store.commit();
+    store.dismissWithdrawn(SUB2);
+    store.setEffective({ exchange_account_ids: [MAIN, SUB1] }); // equal, a new object
+    const atOnce = store.commit(true); // the dismissal waits for the 200 ms window
+    store.commit();
+    expect([atOnce, store.getSnapshot().withdrawn]).toEqual([false, []]);
+  });
+
   it("after a revocation, dismissing a line keeps the account out past Retry", () => {
     const store = started();
     store.applyFrames([snap(snapshotBody()), reset("revoked")]);
