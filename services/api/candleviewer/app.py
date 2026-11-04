@@ -3271,6 +3271,7 @@ def create_app(
         )  # fmt: skip
         runtime = recorder.runtime
         ctx.recorder.attach_runtime(runtime)
+        feature_flags.recorder.bind(recorder.pause)  # #5629: maintenance's recorder hold
         app.state.recording_ready = lambda: runtime.startup_complete
         register_recorder_probe(health_registry, ctx.recorder.health)
     app.state.recorder = recorder
