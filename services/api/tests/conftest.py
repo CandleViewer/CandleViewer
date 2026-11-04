@@ -224,15 +224,19 @@ def pytest_make_collect_report(
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Tag the E09 and E08 regression packs so `pytest -m e09_regression` (#2148) and
-    `pytest -m e08_regression` (#283) select them, and give the tests that need it a bound other
-    than the suite's per-test default (#4777, tests/_suite_timeout.py)."""
+    """Tag the E09, E08 and E40 regression packs so `pytest -m e09_regression` (#2148),
+    `pytest -m e08_regression` (#283) and `pytest -m e40_regression` (#1203) select them, and
+    give the tests that need it a bound other than the suite's per-test default (#4777,
+    tests/_suite_timeout.py).
+    """
     from tests._e08_regression_pack import tag_pack as tag_e08_pack
     from tests._e09_regression_pack import tag_pack as tag_e09_pack
+    from tests._e40_regression_pack import tag_pack as tag_e40_pack
     from tests._suite_timeout import suite_default_s, timeout_override
 
     tag_e09_pack(items)
     tag_e08_pack(items)
+    tag_e40_pack(items)
     # With pytest-timeout off (`-p no:timeout`) its `timeout` mark isn't registered: add none.
     if not items or not items[0].config.pluginmanager.hasplugin("timeout"):
         return
