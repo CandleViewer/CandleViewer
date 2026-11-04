@@ -92,7 +92,9 @@ def test_the_api_boots_on_demo_with_the_account_fixture_in_pack_mode() -> None:
         and '"$CV_ACCOUNT_FIXTURE_DIR/order_lane.json"' in sh
     )
     text = (WORKFLOWS / NAME).read_text(encoding="utf-8")
-    assert not re.search(r"^\s*(export )?CV_BYBIT_API_\w*[:=]", text, re.MULTILINE)
+    for line in text.splitlines():
+        if not line.lstrip().startswith("#"):
+            assert not re.search(r"CV_BYBIT_API_\w*\s*[:=]", line), line
     assert "CV_TEST_CLOCK" not in text
     assert _job()["env"]["CV_E29_FIXTURE_STACK"] == "1"
 
@@ -101,6 +103,12 @@ def test_the_seed_step_runs_on_testnet_because_the_seeder_refuses_anything_else(
     seed = _step("Migrate")
     assert seed["env"]["CV_ENVIRONMENT"] == "testnet"
     assert "scripts/seed_fixture_user.py" in seed["run"]
+
+
+def test_no_workflow_expression_is_interpolated_into_a_run_script() -> None:
+    for job in _wf(NAME)["jobs"].values():
+        for step in job.get("steps", []):
+            assert "${{" not in step.get("run", ""), step.get("name")
 
 
 def test_every_run_credential_is_masked() -> None:
