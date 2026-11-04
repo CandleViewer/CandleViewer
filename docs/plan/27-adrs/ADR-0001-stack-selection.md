@@ -43,6 +43,25 @@ Concrete stack:
 | Data | `numpy` for vectorised aggregation; SQLAlchemy 2.0 + Alembic for Postgres; QuestDB ILP client; DuckDB for cold analytics |
 | Packaging | `uv` + Hatch (Python), pnpm + Turborepo (JS), docker compose (runtime) |
 
+### Amendment 2026-11-02 — the web app's state and data layer as built
+
+The "Web app" row above named Zustand (UI state), Jotai (high-frequency atoms) and TanStack Query (REST);
+`AGENTS.md` §5.1 and `.claude/rules/30-frontend-react.md` added RxJS stream coalescing. The application
+adopted none of them. As of `main` on 2026-11-02 `apps/web`'s runtime dependencies are `react`, `react-dom`
+and `react-router` only; its stores are plain external stores read through React's `useSyncExternalStore`
+(21 files call the hook — stores, hooks and components) with selectors and no stored derived state; WS
+ingestion is coalesced by the transport layer (rAF / timer batches) before it touches React; REST reads are
+per-feature typed fetch helpers (for example `features/auth/authApi.ts`) over `packages/protocol`'s generated
+types, with `react-router` loaders used for guards and redirects. E22-S01 (#5288) recorded the choice in
+code as its local constraint "C-69: no Jotai, RxJS or Zustand in `apps/web`" (a BQ-list id, not a
+Constitution rule); the delivery orchestrator kept it for new stores on E14-T02 (#400 BQ-01, decided
+2026-11-02 under the owner's 2026-10-29 delegation; the owner's veto window is open on #2701). **Rule from
+this amendment:** new `apps/web` state builds on `useSyncExternalStore`; adding Zustand, Jotai, RxJS or
+TanStack Query (or any state / data library) needs an amendment to this ADR under the dependency policy
+(C-12.3: justification, allowlisted licence, CODEOWNER review), never a per-feature `package.json` change.
+Status of the decision is unchanged; the plan and agent documents that name the web app's state layer
+point here (C-16.5).
+
 ### Consequences
 
 Positive:

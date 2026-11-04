@@ -56,7 +56,7 @@ CandleViewer/
 ├─ ✅ .github/              # CODEOWNERS, ISSUE_TEMPLATE/, PULL_REQUEST_TEMPLATE.md (workflows: pending)
 ├─ ✅ docs/plan/            # all planning docs, ADRs, backlog/ (ticket JSON + _tools/validate.py)
 ├─ ✅ docs/research/        # xstate verification rounds + gate (docs/research/xstate/gate/run_gate.py)
-├─ apps/web/               # React SPA (Vite): routes, feature slices, ws client, Zustand/Jotai, e2e/
+├─ apps/web/               # React SPA (Vite): routes, feature slices, ws client, external stores, e2e/
 ├─ apps/desktop/           # Electron shell — NO business logic (main, preload IPC allow-list, e2e/)
 ├─ packages/chart-engine/  # custom WebGL2 engine: core, gl, layers, text (SDF), worker, plugins, bench/
 ├─ packages/ui/            # design system: tokens, primitives, trading components (Storybook)
@@ -165,7 +165,7 @@ Full flow: `AGENTS.md` §3 (flowchart) and `docs/plan/01-sdlc-and-branching.md` 
 
 - **TypeScript/React:** `strict: true` (plus `noUncheckedIndexedAccess` etc. per §5.1), ESLint flat
   config + Prettier, `--max-warnings=0`; workspace-alias imports, no deep imports, no cycles
-  (dependency-cruiser). UI state in Zustand, high-frequency data in Jotai. Chart engine: no React/DOM
+  (dependency-cruiser). State in plain external stores via `useSyncExternalStore` (ADR-0001 amendment 2026-11-02). Chart engine: no React/DOM
   framework/`fetch`/singletons, explicit `dispose()`, pooled GPU resources, every API change benchmarked.
 - **Python:** 3.12+, **asyncio only** (no blocking calls on the loop, every task tracked, every queue
   bounded — C-2.18), Ruff (lint and `ruff format`, 100 cols) + `mypy --strict`, **Pydantic v2** at every boundary,

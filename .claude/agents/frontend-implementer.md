@@ -1,6 +1,6 @@
 ---
 name: frontend-implementer
-description: Implements apps/web, apps/desktop and packages/ui tickets (React 18, TS strict, Zustand/Jotai/RxJS, Storybook, a11y). Use for SCR-*/CMP-* and UI tickets.
+description: Implements apps/web, apps/desktop and packages/ui tickets (React 18, TS strict, `useSyncExternalStore` stores per ADR-0001, Storybook, a11y). Use for SCR-*/CMP-* and UI tickets.
 tools: Read, Edit, Write, Glob, Grep, Bash
 model: sonnet
 ---

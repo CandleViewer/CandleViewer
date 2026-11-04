@@ -97,7 +97,7 @@ CandleViewer/
 │  │  ├─ src/app/             # shell, routing, providers
 │  │  ├─ src/features/        # feature-sliced: chart, dom, ticket, positions, risk,
 │  │  │                       #   rules, journal, alerts, replay, admin, settings
-│  │  ├─ src/state/           # Jotai atoms (high-frequency) + Zustand stores (global UI)
+│  │  ├─ src/state/           # external stores read via `useSyncExternalStore` (ADR-0001 amendment 2026-11-02)
 │  │  ├─ src/transport/       # REST client + WS client (uses packages/protocol)
 │  │  └─ tests/               # vitest unit + RTL component tests
 │  └─ desktop/                # Electron shell ONLY: windows, GPU flags, updater, deep links
@@ -458,8 +458,10 @@ too; on a red one, or if anything else lands on `main` meanwhile, stop and rebui
 - **React**: function components only; no class components. Derive, don't duplicate state. Keep effects
   rare and justified — data flows through the transport layer into stores, not through ad-hoc `useEffect`
   fetches. Memoise only with evidence (a profile or a benchmark). Keys must be stable domain ids.
-  High-frequency values live in **Jotai atoms**; global UI state in **Zustand**; WS ingestion is batched
-  (rAF/`bufferTime`) before it touches React. Never render more than ~16 ms of work per frame.
+  State lives in plain external stores read through React's **`useSyncExternalStore`** (selectors, no stored
+  derived state) — no Zustand, Jotai, RxJS or TanStack Query in `apps/web` (ADR-0001, amendment 2026-11-02);
+  WS ingestion is coalesced by the transport layer (rAF / timer batches) before it touches React — never set
+  state per WS message. Never render more than ~16 ms of work per frame.
 - **Chart engine**: no React, no DOM framework, no `fetch`, no global singletons; explicit
   `dispose()` for every resource; all GPU resources pooled; every public API change benchmarked.
 - **Imports**: absolute via workspace aliases (`@candleviewer/ui`), no deep imports into another package's
