@@ -6,11 +6,12 @@ leaves it out (`not nightly`), and the nightly job, slice 4's, selects it
 (`-m "chaos and integration and nightly"`).
 
 **The node** (`node`): testcontainers' Postgres 16, published on loopback only (as
-`tests/integration/_refused.py` publishes its own) at a port picked here, so the node stopped and
-started again keeps its address (`Node.stop`, `Node.start`); set up as production is, as
-`test_submission_pipeline_pg.pg_dsn` sets it up: the roles (`pg_bootstrap.sql`), then the
-migrations at head as `cv_owner`. Each test clones the migrated database (`fresh`), so a sweep
-meets its own test's orders alone, with its account and the user who trades it.
+`tests/integration/_refused.py` publishes its own) at a port picked here (`free_port`, outside the
+kernel's ephemeral range), so the node stopped and started again keeps its address (`Node.stop`,
+`Node.start`); set up as production is, as `test_submission_pipeline_pg.pg_dsn` sets it up: the
+roles (`pg_bootstrap.sql`), then the migrations at head as `cv_owner`. Each test clones the
+migrated database (`fresh`), so a sweep meets its own test's orders alone, with its account and the
+user who trades it.
 
 **A process** (`running`): the runtime over `pg_stores` on the test's database, its order lane on
 a thread of its own, the environment's lock, the fencing grace, the startup sweep and the startup
@@ -112,6 +113,7 @@ READY_S: Final = 30.0
 #: The node's database, migrated once; each test's is a clone of it.
 TEMPLATE: Final = "candleviewer"
 _END_US: Final = 2**62  # the executions read's end: after every fill the venue stamped
+_EPHEMERAL: Final = Path("/proc/sys/net/ipv4/ip_local_port_range")
 _ORDER_IDS: Final = "SELECT id FROM orders WHERE exchange_account_id = %s ORDER BY created_ts, id"
 
 
@@ -147,11 +149,32 @@ class Node:
         ready.with_startup_timeout(int(WAIT_S)).wait_until_ready(self.container)
 
 
-def _free_port() -> int:
-    """A loopback port nothing listens on now, for the node to keep across a restart."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
+def ephemeral_range() -> tuple[int, int]:
+    """The kernel's range for an outgoing connection's own port, as it is set here (Linux's
+    default where it cannot be read)."""
+    try:
+        low, high = _EPHEMERAL.read_text().split()
+        return int(low), int(high)
+    except (OSError, ValueError):
+        return 32768, 60999
+
+
+def free_port(ephemeral: tuple[int, int] | None = None) -> int:
+    """A loopback port nothing listens on now, for the node to keep across a restart, and outside
+    the ephemeral range (`ephemeral_range`) so that no outgoing connection takes it while the node
+    is stopped: above the range, else below it, else the kernel's pick. The scan above it starts at
+    a place of the process's own (its pid), so two nodes starting at once do not meet."""
+    low, high = ephemeral if ephemeral is not None else ephemeral_range()
+    above = list(range(high + 1, 65536))
+    turn = os.getpid() % len(above) if above else 0
+    for port in [*above[turn:], *above[:turn], *range(1024, low)] or [0]:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                continue  # taken: the next
+            return int(probe.getsockname()[1])
+    raise RuntimeError("every loopback port outside the ephemeral range is taken")
 
 
 def _bootstrap(dsn: str) -> None:
@@ -174,7 +197,7 @@ def node() -> Iterator[Node]:
     """The module's Postgres 16 (module docstring), its database at head the template each test
     clones (`fresh`); its bootstrap and migrations each bounded, as the precedent's are."""
     container = PostgresContainer("postgres:16-alpine", dbname=TEMPLATE)
-    port, ports = _free_port(), container.ports
+    port, ports = free_port(), container.ports
     published: dict[Any, Any] = ports
     published[5432] = ("127.0.0.1", port)  # loopback only, and the same port after a restart
     with container:

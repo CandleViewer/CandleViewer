@@ -5,7 +5,8 @@ parks there: the venue's state handed over (`HANDED`, in the host directory), `p
 stdout, then its order lane stopped where it is until the SIGKILL. The parent's order (the DSN,
 the account, the user, the point and the host directory) comes on stdin, never in argv, the
 environment or a file; once it is read, the child's stderr, its logs among it, goes to `LOG` in
-the host directory, so its stdout says `parked` alone.
+the host directory, so its stdout says `parked` alone. The stdin pipe stays open: it is the child's
+lifeline (`watch_parent`), and once it is closed, the parent done or gone, the child exits.
 
 The points, each on the order lane:
 - `door`: the order `submitting`, its create at the venue's door when the process went down:
@@ -24,9 +25,10 @@ import os
 import signal
 import sys
 import threading
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Final, NoReturn
+from typing import Any, Final, NoReturn, TextIO
 
 import structlog
 
@@ -85,11 +87,26 @@ async def run(order: dict[str, str]) -> None:
         await world.on_lane(filled(port))
 
 
+def watch_parent(pipe: TextIO, leave: Callable[[int], object] = os._exit) -> threading.Thread:
+    """The parent's pipe is the child's lifeline: once it is closed, the parent done or gone, the
+    child `leave`s (parked or not), so none outlives its test or its killed parent."""
+
+    def until_closed() -> None:
+        with pipe:
+            pipe.read()  # the order came first: this returns at the pipe's end
+        leave(1)
+
+    watcher = threading.Thread(target=until_closed, name="parent-pipe", daemon=True)
+    watcher.start()
+    return watcher
+
+
 def main() -> None:
     order = json.loads(sys.stdin.readline())
     with (Path(order["host"]) / LOG).open("ab") as log:
         os.dup2(log.fileno(), sys.stderr.fileno())
     structlog.configure(logger_factory=structlog.PrintLoggerFactory(sys.stderr))
+    watch_parent(sys.stdin)
     asyncio.run(run(order))
 
 
@@ -117,6 +134,7 @@ async def killed(db: _pg.Db, host: Path, point: str) -> dict[str, Any]:
         with contextlib.suppress(ProcessLookupError):
             child.kill()
         await child.wait()
+        child.stdin.close()  # the lifeline's end, released here and not left to the GC
     assert child.returncode == -signal.SIGKILL
     return _handed(host)
 

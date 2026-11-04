@@ -6,7 +6,9 @@ the tier and the merge group's integration step leaves it out."""
 
 from __future__ import annotations
 
+import io
 import json
+import threading
 from decimal import Decimal
 from pathlib import Path
 from types import ModuleType
@@ -17,7 +19,7 @@ import pytest
 
 from candleviewer.exchange.base.errors import DuplicateClientIdError
 from candleviewer.exchange.base.models import PlaceOrderRequest
-from tests.chaos.oms import _pg, test_s14_process_killed, test_s16_postgres_outage
+from tests.chaos.oms import _child, _pg, test_s14_process_killed, test_s16_postgres_outage
 from tests.chaos.oms._venue import Venue
 from tests.chaos.oms._world import PRICE, REF, unchecked
 from tests.unit.oms.command_rig import link
@@ -74,3 +76,24 @@ async def test_a_pg_world_is_one_the_oracle_must_check_like_any_other(tmp_path: 
 def test_every_postgres_scenario_is_marked_for_the_nightly_job(scenarios: ModuleType) -> None:
     carried = {mark.name for mark in scenarios.pytestmark}
     assert {"chaos", "integration", "nightly"} <= carried
+
+
+def test_the_nodes_port_is_one_no_outgoing_connection_can_take() -> None:
+    assert not 32768 <= _pg.free_port((32768, 60999)) <= 60999  # above the range, never in it
+    assert _pg.free_port((1024, 65535)) > 0  # no port outside it: the kernel's pick, as before
+
+
+def test_the_child_leaves_once_its_parents_pipe_is_closed() -> None:
+    reading, closed, left = threading.Event(), threading.Event(), list[int]()
+
+    class Pipe(io.StringIO):
+        def read(self, size: int | None = -1) -> str:
+            reading.set()
+            closed.wait(_pg.WAIT_S)  # the parent's end, open until the test closes it
+            return ""
+
+    watcher = _child.watch_parent(Pipe(), left.append)
+    assert reading.wait(_pg.WAIT_S) and not left  # an open pipe holds it
+    closed.set()  # the parent is done, or gone
+    watcher.join(_pg.WAIT_S)
+    assert left == [1]
