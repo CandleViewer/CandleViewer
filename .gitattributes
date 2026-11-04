@@ -58,3 +58,6 @@ docs/plan/spikes/E15-K01-results.json linguist-generated=true
 # E05-Q02: per-cell a11y audit results written by the committed drivers (docs/plan/a11y/_tools/e05-q02-*);
 # regenerate with them, never hand-edit. Hidden from PR diffs.
 docs/qa/a11y/e05-q02-design-system-v1-results/*.json.gz linguist-generated=true
+
+# E18-D04 (#498): figure A, written from the spec stop table by e18_d04_motion_a11y_audit.py --figure.
+docs/design/E18/img/E18-D04-figA-focus-order.svg linguist-generated=true
