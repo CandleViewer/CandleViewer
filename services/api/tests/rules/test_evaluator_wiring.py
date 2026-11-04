@@ -77,7 +77,10 @@ async def test_create_rule_feed_snapshot_evaluator_records_result() -> None:
         created = await mgr.create(_ir(), OWNER)
         rid = created["id"]
         await mgr.set_mode(rid, "simulate", OWNER, "k-sim")
-        ref = MetricRef.model_validate({"metric": "price", "params": {"n": 14}})
+        # The rule's ref names no symbol: its BTCUSDT instance reads the BTCUSDT key (E6).
+        ref = MetricRef.model_validate(
+            {"metric": "price", "params": {"n": 14}, "symbol": "BTCUSDT"}
+        )
         src = ctx.rules.metric_source
         assert src is not None
         src.push(ref, Decimal("150"), time.time_ns() // 1_000_000)
@@ -153,3 +156,42 @@ async def test_evaluator_error_is_reported_not_swallowed() -> None:
     await _until(lambda: bool(errors))
     await r.stop()
     assert isinstance(errors[0], RuntimeError)
+
+
+async def test_service_scope_table_binds_account_metric_and_leaves_global_unbound() -> None:
+    """E35-T15 (#5745): the service's scope table is the registry's own scope per metric, so an
+    instance of account A reads `account_equity` bound to A (not to its symbol) and the global
+    `replay_speed` unbound."""
+    account = "00000000-0000-4000-8000-00000000000a"
+    ctx = create_app(Settings(rules_evaluator_enabled=True)).state.app_context
+    ctx.rules.bind(store=InMemoryRuleStore(), audit=_no_hook, broadcast=_no_hook)
+    await ctx.rules.start(ctx)
+    try:
+        mgr, runner, src = ctx.rules.manager(), ctx.rules.runner, ctx.rules.metric_source
+        assert mgr is not None and runner is not None and src is not None
+        ir = _ir()
+        ir["scope"] = {"level": "account", "account_ids": [account], "symbols": ["BTCUSDT"]}
+        ir["conditions"] = {
+            "node_id": "c1", "op": "all_of", "children": [
+                {"node_id": "c2", "op": "gt", "left": {"metric": "account_equity"},
+                 "right": {"const": 100}},
+                {"node_id": "c3", "op": "gt", "left": {"metric": "replay_speed"},
+                 "right": {"const": 1}},
+            ],
+        }  # fmt: skip
+        ir["graph_layout"] = {n: {"x": 0, "y": 0} for n in ("c1", "c2", "c3")}
+        rid = (await mgr.create(ir, OWNER))["id"]
+        await mgr.set_mode(rid, "simulate", OWNER, "k-sim")
+        asked: list[str] = []
+        read = src.read
+
+        def recording(ref: MetricRef) -> Any:
+            asked.append(f"{ref.metric}|{ref.symbol or ''}|{ref.account_id or ''}")
+            return read(ref)
+
+        src.read = recording  # type: ignore[method-assign]  # records each key the snapshot asks
+        assert ctx.rules.submit_tick("on_price_update", "BTCUSDT")
+        await _until(lambda: runner.processed >= 1 and not ctx.rules._tasks)
+        assert sorted(asked) == [f"account_equity||{account}", "replay_speed||"]
+    finally:
+        await ctx.rules.stop(1.0)

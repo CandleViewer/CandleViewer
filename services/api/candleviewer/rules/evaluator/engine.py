@@ -18,7 +18,7 @@ from candleviewer.rules.evaluator.nodes import (
     evaluate,
     referenced_metrics,
 )
-from candleviewer.rules.evaluator.snapshot import SnapshotBuilder, Value
+from candleviewer.rules.evaluator.snapshot import ScopeBindingError, SnapshotBuilder, Value
 from candleviewer.rules.ir.models import Rule
 
 Clock = Callable[[], int]  # milliseconds (wall for windows, monotonic for deadlines)
@@ -43,6 +43,10 @@ class EvaluationResult:
     condition_trace: tuple[NodeTrace, ...] = ()
     metric_values: dict[str, Value] = field(default_factory=dict)
     error: str | None = None
+    #: Internal marker, never recorded: a ``scope`` skip because the instance may not read a
+    #: ref the rule names (`ScopeBindingError`), not because the tick's scope gate refused it.
+    #: The first is an evaluation skip; only the second refuses the rule's actions.
+    binding_refused: bool = False
 
 
 @dataclass(slots=True)
@@ -64,8 +68,14 @@ class _Instance:
 
 
 def scope_instance(symbol: str | None, account: str | None) -> str:
-    """``"BTCUSDT@acct-3f2a"`` (E6); global-scoped parts are ``*``."""
+    """``"BTCUSDT@<account uuid>"`` (E6); global-scoped parts are ``*``."""
     return f"{symbol or '*'}@{account or '*'}"
+
+
+def parse_instance(instance: str) -> tuple[str | None, str | None]:
+    """The inverse of `scope_instance`: ``(symbol, account)``, a ``*`` part as None."""
+    sym, _, acct = instance.partition("@")
+    return (None if sym in ("", "*") else sym), (None if acct in ("", "*") else acct)
 
 
 class Evaluator:
@@ -118,11 +128,14 @@ class Evaluator:
         self.disabled_reason = None
         self._consecutive_errors = 0
 
-    def _skip(self, inst: str, trig: str, now: int, reason: str) -> EvaluationResult:
+    def _skip(
+        self, inst: str, trig: str, now: int, reason: str, *, binding: bool = False
+    ) -> EvaluationResult:
         self.stats.skipped[reason] = self.stats.skipped.get(reason, 0) + 1
         return EvaluationResult(
-            str(self.rule.rule_id), self.rule.version, inst, trig, now, False, reason
-        )
+            str(self.rule.rule_id), self.rule.version, inst, trig, now, False, reason,
+            binding_refused=binding,
+        )  # fmt: skip
 
     def _limit_reason(self, st: _Instance, now: int) -> str | None:
         lim = self.rule.limits
@@ -167,7 +180,9 @@ class Evaluator:
 
         ctx: EvalContext | None = None
         try:
-            snap = self._snapshots.build(self._refs, now)
+            # E6: the instance, not the author's omission, decides the key of an open ref.
+            sym, acct = parse_instance(instance)
+            snap = self._snapshots.build(self._refs, now, symbol=sym, account=acct)
             checkpoint()
             if snap.stale_keys():
                 return self._skip(instance, trigger_type, now, "stale_data")
@@ -177,6 +192,8 @@ class Evaluator:
             ctx = EvalContext(snap, st.state, now, checkpoint)
             fired = evaluate(self.rule.conditions, ctx)
             checkpoint()
+        except ScopeBindingError:  # fail closed: the instance may not read the ref (C-12.4)
+            return self._skip(instance, trigger_type, now, "scope", binding=True)
         except EvaluationTimeout:
             return self._error(instance, trigger_type, now, ctx, "evaluation_timeout")
         except Exception as exc:  # every failure feeds the error budget (E8)

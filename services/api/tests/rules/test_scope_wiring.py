@@ -255,8 +255,8 @@ async def _e2e(target: uuid.UUID) -> tuple[list[str], list[Any]]:
         await mgr.set_mode(rid, "simulate", actor, "k")
         src = ctx.rules.metric_source
         assert src is not None
-        src.push(
-            MetricRef.model_validate({"metric": "price", "params": {"n": 14}}),
+        src.push(  # the instance binds the rule's symbol-less ref to BTCUSDT (E6)
+            MetricRef.model_validate({"metric": "price", "params": {"n": 14}, "symbol": "BTCUSDT"}),
             Decimal("150"), time.time_ns() // 1_000_000,
         )  # fmt: skip
         # Fake snapshot: the evaluator's scope instance is forced onto `target`.
