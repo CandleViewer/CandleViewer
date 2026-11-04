@@ -178,6 +178,60 @@ class MarketEvent(DomainEvent):
 `NOTIFICATION_NAMESPACE = UUID("2def8b5c-e7e2-4686-af54-02c04b8c6a78")`, identical in every service (22-api-openapi.yaml,
 `Notification.x-cv-uuid5-namespace`).
 
+### 1.7 Drawing geometry (E14, ADR-0045)
+
+The per-tool schema of a chart drawing's `geometry`, the as-built contract of `candleviewer/api/drawings_models.py`
+(`POINT_COUNTS`, `_TEXT_TOOLS`, `_LEVEL_TOOLS`, `_BAND_TOOLS`) and `22-api-openapi.yaml` (`DrawingTool`, `DrawingPoint`,
+`DrawingGeometry`); the decision record is `27-adrs/ADR-0045-drawing-persistence-and-geometry.md` (Decision 3). A
+unit test (`services/api/tests/contract/test_drawing_tool_schemas_contract.py`) parses the two tables below and fails
+on drift from the code and from `22`. Geometry is chart space (time and price, never pixels). It is one closed shape
+(`extra="forbid"`); the tool decides only the point count and which optional keys are allowed. Any other combination is
+`422` rule `property_not_allowed_for_tool` (a wrong point count is `tool_point_count`, a missing `text` is
+`text_required`). Server validation of all 25 tools is shipped (#357). Which tools the first client release draws is a
+client matter (E14-S04 to S06) and is not recorded here.
+
+| Field          | Type and bound                                                                                | Allowed on                                         |
+| -------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `points`       | array of `{t, p}`, 1..500 items; the per-tool count below is the rule                         | every tool (required)                              |
+| `points[].t`   | RFC 3339 UTC instant with `Z`, at most millisecond precision, years 2000 to 2099              | every point                                        |
+| `points[].p`   | decimal string, at most 15 integer and 12 fractional digits, may be negative, stored verbatim | every point                                        |
+| `extend_left`  | boolean                                                                                       | every tool                                         |
+| `extend_right` | boolean                                                                                       | every tool                                         |
+| `levels`       | 1..24 unique numbers in [-1000, 1000]; a non-zero value has \|x\| at least 1e-6               | `fib_retracement`, `fib_extension`, `fib_timezone` |
+| `bands`        | 1..3 unique integers from {1, 2, 3}                                                           | `anchored_vwap`                                    |
+| `text`         | 1..1000 code points after control-character stripping (LF kept); required where allowed       | `text`, `callout`                                  |
+
+An optional key is omitted, never `null`. A horizontal ray is a `horizontal_line` with `extend_left: false` and
+`extend_right: true`. There is no channel-width field and no separate entry, stop or target field: they are the points.
+
+| Tool               | Points | `text` | `levels` | `bands` | Point roles                                                                                |
+| ------------------ | ------ | ------ | -------- | ------- | ------------------------------------------------------------------------------------------ |
+| `trendline`        | 2      | no     | no       | no      |                                                                                            |
+| `horizontal_line`  | 1      | no     | no       | no      |                                                                                            |
+| `vertical_line`    | 1      | no     | no       | no      |                                                                                            |
+| `ray`              | 2      | no     | no       | no      |                                                                                            |
+| `extended_line`    | 2      | no     | no       | no      |                                                                                            |
+| `parallel_channel` | 3      | no     | no       | no      | third point sets the width (offset of the second rail through it); there is no width field |
+| `rectangle`        | 2      | no     | no       | no      |                                                                                            |
+| `ellipse`          | 2      | no     | no       | no      |                                                                                            |
+| `triangle`         | 3      | no     | no       | no      |                                                                                            |
+| `fib_retracement`  | 2      | no     | yes      | no      |                                                                                            |
+| `fib_extension`    | 3      | no     | yes      | no      |                                                                                            |
+| `fib_timezone`     | 2      | no     | yes      | no      |                                                                                            |
+| `pitchfork`        | 3      | no     | no       | no      |                                                                                            |
+| `gann_fan`         | 2      | no     | no       | no      |                                                                                            |
+| `text`             | 1      | yes    | no       | no      |                                                                                            |
+| `arrow`            | 2      | no     | no       | no      |                                                                                            |
+| `callout`          | 2      | yes    | no       | no      |                                                                                            |
+| `measure`          | 2      | no     | no       | no      |                                                                                            |
+| `long_position`    | 3      | no     | no       | no      | entry, stop, target (placement order)                                                      |
+| `short_position`   | 3      | no     | no       | no      | entry, stop, target (placement order)                                                      |
+| `price_range`      | 2      | no     | no       | no      |                                                                                            |
+| `date_range`       | 2      | no     | no       | no      |                                                                                            |
+| `brush`            | 2..500 | no     | no       | no      | freehand path, at most 500 points                                                          |
+| `polyline`         | 2..100 | no     | no       | no      | vertices, at most 100 points                                                               |
+| `anchored_vwap`    | 1      | no     | no       | yes     |                                                                                            |
+
 ---
 
 ## 2. Normalized market-data events
@@ -6808,3 +6862,10 @@ This is the number the orchestrator assigned on 2026-11-03 (02:42Z); it keeps it
 
 - §9.2 gains "Snapshot bound (#3969)", **PROPOSED**: a leg's `profile_snapshot` has its own bound, `PROFILE_SNAPSHOT_MAX_CHARS` = 32,768 (PROPOSED), because the test's maximal `AccountProfile` dumps to 26,337 characters (the two symbol lists alone are 1,000 × (21 + 3) = 24,000; a rung's `r` has no digit cap, and the 6,431 headroom covers a longer one), over the 16,384 of `exchange_payload.MAX_PAYLOAD_CHARS` (PROPOSED as the bound it is set against), which `algo_params` keeps.
 - No migration and no CHECK: `trade_group_legs` carries no size CHECK and the profile's own caps (`SymbolList` 500, `Ladder` 10, `name` 80) stay the one limit on its size. No REST operation, WS frame, chart or `machine_hash` change.
+
+### 19.119 2026-11-03 — §1.7: the per-tool geometry schemas of a drawing (E14-C01, #540)
+
+Number assigned by the orchestrator (#540, comment 6615130246).
+
+- §1.7 records the 25 drawing tools with their point counts, optional geometry keys (`text`, `levels`, `bands`, `extend_left`, `extend_right`) and bounds, taken from the as-built `drawings_models.py` and `22` `DrawingTool` / `DrawingGeometry`, as ADR-0045 Decision 3 requires. `services/api/tests/contract/test_drawing_tool_schemas_contract.py` fails when the tables drift from the code or from `22`.
+- No code, `22`, WS, table, column or migration change.
