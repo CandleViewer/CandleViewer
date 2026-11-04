@@ -72,8 +72,21 @@ _SQL_SOURCES = (
 
 
 def _settings(name: str) -> dict[str, str]:
+    """Every `-c name=value` of the postgres command. Any other token fails the test, so a setting
+    written another way (`-cname=value`, `--name=value`, a second flag) is never skipped."""
     command = _postgres(name).get("command") or ["postgres"]
-    return dict(value.split("=", 1) for value in command[2::2])
+    assert isinstance(command, list), f"{name}: write the postgres command as a list"
+    assert command[:1] == ["postgres"], f"{name}: the command starts with `postgres`"
+    settings: dict[str, str] = {}
+    tokens = iter(command[1:])
+    for flag in tokens:
+        assert flag == "-c", f"{name}: unrecognised postgres argument {flag!r}"
+        value = next(tokens, None)
+        assert isinstance(value, str), f"{name}: `-c` needs a `name=value` after it"
+        key, sep, setting = value.partition("=")
+        assert sep and key.strip(), f"{name}: `-c {value}` is not a `name=value` pair"
+        settings[key.strip().lower()] = setting
+    return settings
 
 
 @pytest.mark.parametrize("name", ["docker-compose.yml", *_OVERRIDES])

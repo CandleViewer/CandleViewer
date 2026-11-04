@@ -96,7 +96,7 @@ an allowed call is its own control row in §1.2.
 | DELETE /me/sessions/{sessionId} | self | own-session check → 404, denial recorded | — | api/sessions.py:1733 | M:1017 exec | HOLDS |
 | POST /users | users:write | E / rbac.denied | users (handler) | api/invites.py:312 | M:1624 exec | HOLDS; the MFA field known, routed to #3086 (AD-F10) |
 | GET /users/invites | users:write | E | — | api/invites.py:352 | M:1630 exec | HOLDS |
-| GET /users/{userId} | users:read | E (before lookup) | — | api/users.py:1227 | M:1636 exec | HOLDS |
+| GET /users/{userId} | users:read | E | — | api/users.py:1227 | M:1636 exec | HOLDS |
 | PATCH /users/{userId} | users:write | E | users (handler) | api/users.py:1279 | M:1648 exec | HOLDS |
 | DELETE /users/{userId} | users:write | E | users (handler) | api/users.py:905 | M:1642 exec | HOLDS |
 | GET /users/{userId}/account-access | users:read | E | — | api/users.py:783 | M:1654 exec | HOLDS |
@@ -161,11 +161,11 @@ row; SCR-149's window is retired under D8 (ruled: per-action step-up, #2701 ledg
 | E-3b A client expiry in a header or a cookie changes nothing; the decision comes from the row (`api/step_up.py:396-436`, :794-829) | HOLDS (this PR) | `security/admin/test_elevation_client_expiry.py:49` (`test_x02_a_client_supplied_expiry_changes_nothing_and_the_lapsed_write_is_challenged`), real `create_app()` stack, fixed clock | SR-025 | AD-T10 |
 | E-4 The next dangerous write after the window lapses is `403 step_up_required` and recorded as `auth.step_up_required` (`api/step_up.py:426-427`; `auth/step_up.py:616-624`; `statechart/bindings/b16_session.py:380-390`) | HOLDS | `test_step_up_router.py:283`; `test_cells_stale.py:18`, :30; `test_elevation_client_expiry.py:49` (one new record, class `users`); M:1624 | SR-025 | AD-E12, AD-S05 |
 | E-5a `POST /auth/session/extend` moves only the idle deadline, never `expires_at`, never lifts a lock (`api/sessions.py:1358-1381`; `auth/session_service.py:808-822`) | HOLDS | `test_extend.py:24`, :111; M:432 | SR-024 | AD-S05 |
-| E-5b Extend leaves the step-up grace unchanged (`storage/repositories/sessions_sqlalchemy.py:152-155` sets `last_seen_at` only) | HOLDS over HTTP (this PR) | `test_elevation_client_expiry.py:49`: a mutant whose session touch re-stamps the elevations turns it red. The test runs on the in-memory store; the SQL statement's own pin (`unit/storage/test_sessions_sqlalchemy.py:310`) is a carry | SR-024, SR-025 | AD-S05 |
+| E-5b Extend leaves the step-up grace unchanged (`storage/repositories/sessions_sqlalchemy.py:152-155` sets `last_seen_at` only) | HOLDS over HTTP (this PR) | `test_elevation_client_expiry.py:49`: a mutant whose session touch re-stamps the elevations turns it red. The test runs on the in-memory store; the SQL statement is pinned by `unit/storage/test_sessions_sqlalchemy.py:310` | SR-024, SR-025 | AD-S05 |
 | E-6 The admin area's `reauth_age_s` is observability only, never a gate (`admin/http.py:26-35`) | HOLDS | `test_admin_http.py:288`; M admin rows | SR-E42-12 | AD-E01 |
-| O-1 `auth_stepup_failures_total` exists, is scraped and goes up by one per failed step-up (`auth/metrics.py:161-164`; `auth/step_up.py:560`) | HOLDS | `test_observability.py:203`; `test_admin_abuse_cases.py:150` | SR-125 | AD-S02, AD-D10 |
-| O-1b An alert on `auth_stepup_failures_total` | known, routed to #2746 (the lockout alert stands in, TM :1016) | `test_observability.py:41` records the gap | SR-125 | AD-D10 |
-| O-2 `authz_denied_total{permission}` is counted before the record by the admin guard (`admin/http.py:156`) and by `enforce`, with an alert and a missing-series guard (`infra/prometheus/alerts/system_ticket.yml:252-253`; `metric_guards.yml:337-338`) | HOLDS | `test_admin_http.py:160`; `test_observability.py:184`; `test_admin_abuse_cases.py:625`; `test_cells_stale.py:37` | SR-125 | AD-D06 |
+| O-1 `auth_stepup_failures_total` exists, is scraped and goes up by one per failed step-up (`auth/metrics.py:161-164`; `auth/step_up.py:560`) | HOLDS | `security/auth/test_observability.py:203`; `test_admin_abuse_cases.py:150` | SR-125 | AD-S02, AD-D10 |
+| O-1b An alert on `auth_stepup_failures_total` | known, routed to #2746 (the lockout alert stands in, TM :1016) | `security/auth/test_observability.py:41` records the gap | SR-125 | AD-D10 |
+| O-2 `authz_denied_total{permission}` is counted before the record by the admin guard (`admin/http.py:156`) and by `enforce`, with an alert and a missing-series guard (`infra/prometheus/alerts/system_ticket.yml:252-253`; `metric_guards.yml:337-338`) | HOLDS | `test_admin_http.py:160`; `security/auth/test_observability.py:184`; `test_admin_abuse_cases.py:625`; `test_cells_stale.py:37` | SR-125 | AD-D06 |
 | O-3 `admin.access_denied` is `admin.area_entered` with outcome `denied` (`admin/http.py:9-13`) | HOLDS | `test_admin_http.py:94`; M admin rows | SR-062, SR-125 | AD-D06 |
 | O-4 A `403 step_up_required` is counted by no metric | known, accepted (X03-F3, #1026 decision D6) | — | SR-125 | X03-F3 |
 
@@ -182,7 +182,7 @@ Findings: E42-R-03 (Low, 2 The elevation model, open, #2799) falls in this area;
 | Export is range-limited: a 31-day window, row and byte caps | HOLDS | `test_audit_export_route.py:385` (`over_31_days`); `test_export_job.py:197`; `test_export_writer.py:265`, :275; M:37-41 | SR-E42-08 | AD-D03 |
 | Export is rate-limited: 5 starts an hour, single flight, 20 downloads an hour | HOLDS; the measured cross-check WAITING (blocked on #1216) | `test_audit_export_route.py:354`, :255, :340; `test_audit_export_download.py:313`, :294; M:37-46 | SR-E42-08 | AD-D03, AD-I09 |
 | Redaction at write time, preserved on export | HOLDS | `test_redact_actions_access.py:47`, :65; `integration/audit/test_audit_repository.py:99` (CI shard 4); `test_export_writer.py:170` (each exported line recomputes to the stored `entry_hash`) | SR-069 | AD-I02 |
-| On-demand verify: span cap, per-user rate, single-flight slot, deadline and `admin.audit_verify` records (`api/audit.py:744-861`) | HOLDS (AD-F04's verify part built) | `test_audit_router.py:595`; M:55 | SR-E42-08 | AD-R07, AD-D04 |
+| On-demand verify: span cap, per-user rate, single-flight slot, deadline and `admin.audit_verify` records (`api/audit.py:744-861`) | HOLDS (AD-F04's verify part built) | `test_audit_router.py:473` (span cap), :1589 (hourly limit and the run deadline), :1608 (single flight), :1438 (records), :1489 (a stopped run); M:55 | SR-E42-08 | AD-R07, AD-D04 |
 | E42-R-13 | FINDING: Low, 3 The audit read side, open | n/a | n/a | n/a |
 
 Findings: E42-R-06, E42-R-08, E42-R-09 (Low, open, private record) fall in this area; this pass filed E42-R-13
@@ -201,7 +201,7 @@ statement targets, accepted under the sign-off (ruling BQ-10); AD-F08's alert (#
 | Append-only as `cv_app`: UPDATE, DELETE and TRUNCATE refused by grant, rows unchanged (a real session as the role) | HOLDS | `integration/audit/test_audit_guard_cv_app.py:353` (cv_app holds exactly SELECT and INSERT), :427; `test_audit_repository.py:132`; CI shards 2 and 4 | SR-066; C-5.7 | AD-T01 |
 | Append-only via privileged roles: the trigger refuses | HOLDS | `integration/audit/test_audit_guard_privileged_role.py:97` (a privileged role that is not the owner; the TM's owed case, now met); the owner case `_assert_guard_enforces` run by `test_audit_guard_cv_app.py:448`, :464, :473; `test_audit_repository.py:126` (`test_truncate_refused_even_for_owner`); CI shards 2 and 4 | SR-066 | AD-T01 |
 | The owner role or a superuser removes the trigger layer | known, accepted residual AD-F14, routed to #1238 | detection only: `test_audit_repository.py:112` (`test_superuser_tamper_is_located`) | SR-068 | AD-T02 |
-| The refused statement is recorded: every compose file keeps the ERROR and STATEMENT lines (`log_min_messages`, `log_min_error_statement` at most `error`; `infra/compose/docker-compose.yml:60-61`), none turns off the postgres log output, no migration or bootstrap SQL sets a server log level | HOLDS (this PR) | `unit/storage/test_postgres_server_log.py:80`, :90, :96, with :30 and :52; a mutant adding `log_min_error_statement=panic` to the base compose file turns :80 red | SR-066 | AD-T01 (BQ-10), AD-F08 (#3196) |
+| The refused statement is recorded: every compose file keeps the ERROR and STATEMENT lines (neither `log_min_messages` nor `log_min_error_statement` is set, so the defaults keep both lines (`warning`, `error`)), none turns off the postgres log output, no migration or bootstrap SQL sets a server log level | HOLDS (this PR) | `unit/storage/test_postgres_server_log.py:93`, :103, :109, with :30 and :52; a mutant adding `log_min_error_statement=panic` to the base compose file turns :93 red | SR-066 | AD-T01 (BQ-10), AD-F08 (#3196) |
 | Chain order under concurrent inserts | HOLDS | `integration/audit/test_audit_repository.py:263` (`test_two_connection_inserts_link_in_id_order`, 1,000 inserts on two connections, one raw), :244, :252, :314, :338; CI shard 4 (job 126548559204) | SR-063, SR-E42-10 | AD-R04 |
 
 Locking argument for chain order (a held control). Every insert into `audit_log` runs the BEFORE INSERT trigger
@@ -224,17 +224,16 @@ Findings: none in this area.
 | A definition declaring a security-gating category is refused when built (`admin/flags/registry.py:105`, :130; `DENIED` :59) | HOLDS | `unit/admin/test_flag_registry.py::test_the_denied_category_truth_table`, `::test_registry_rechecks_every_spec_at_startup`; `test_flag_create_app_refusal.py::test_every_security_category_is_denied`; mutants dropping RBAC from `DENIED`, or emptying it, are killed | SR-E42-07; C-4.14 | AD-E03, AD-F09 |
 | Startup fails: `create_app` refuses such a definition (`flags_wiring.py:270`; `main.py:400`) | HOLDS | `test_flag_create_app_refusal.py::test_create_app_refuses_a_denied_flag` (×8) with the control `::test_the_same_definition_with_an_allowed_category_boots`; `security/admin/test_admin_abuse_cases.py::test_ac_adm_13_create_app_refuses_a_flag_that_gates_authentication`; two mutants killed (the recheck removed: 10 red; bad specs dropped and booting: 8 red) | SR-E42-07 | AD-E03, AC-ADM-13 |
 | Semgrep `cv-admin-no-flag-lookup`: the fixtures pass | HOLDS | `tools/ci/check_semgrep_rule_tests.py` at CI's pinned Semgrep: 0 failures over 35 `ruleid` lines; CI job 126548559980; `unit/admin/test_flag_lookup_rule.py` holds the rule's key list to the catalogue | SR-E42-07, SR-156 | AD-E03, AC-ADM-14 |
-| Same rule: 0 hits on `main` | HOLDS | scan of `services/api/candleviewer` at the pin: 191 files in scope, 0 results, 0 errors | SR-E42-07 | AC-ADM-14 |
-| Same rule: a planted violation turns it red | HOLDS | in a scratch copy, one import added to `admin/http.py` and one flag read added to `auth/step_up.py`: exit 1, exactly the 2 planted lines reported; the unmodified copy exits 0 | SR-E42-07 | AC-ADM-14 |
+| Same rule: 0 hits on `main` | HOLDS | scan of `services/api/candleviewer` at the pin: 0 results, 0 errors | SR-E42-07 | AC-ADM-14 |
+| Same rule: a planted violation turns it red | HOLDS | in a scratch copy, two planted violations: exit 1, exactly the 2 planted lines reported; the unmodified copy exits 0 | SR-E42-07 | AC-ADM-14 |
 | No auth, RBAC or audit module reads a flag (as enforced) | FINDING: E42-R-07 (Low, open); E42-R-10 (Medium, open) | — | SR-E42-07 | AD-E03, AD-F09, N5 |
 | Maintenance mode is step-up gated: release needs the no-grace `killswitch` class, engage needs `flags` (`admin/flags/policy.py:24`; `writes.py:184-185`; `api/step_up.py:680-682`) | HOLDS | `test_flag_policy.py::test_one_step_up_class_from_the_key_and_the_row_as_stored`; `test_flag_writes.py::test_a_release_refused_at_the_gate_records_and_writes_nothing`, `::test_a_release_is_judged_on_the_locked_row_not_a_cached_or_earlier_read`; `test_admin_abuse_cases.py::test_ac_adm_07_…`; two mutants killed; M:130 | SR-E42-01, SR-E42-02 | AD-D02, AD-E02, AC-ADM-07 |
 | Maintenance mode fails closed: starts engaged, an unknown reading engages, a dead poll latches it (`admin/flags/maintenance.py:68`, :140, :83-88) | HOLDS | `test_flag_maintenance.py::test_the_gate_starts_engaged_and_opens_once_both_flags_are_read`, `::test_a_fail_closed_reading_engages_the_gate_without_side_effects`; `test_flag_wiring_poll_supervision.py::test_a_poll_that_dies_latches_the_gate_closed_counts_and_logs_its_class`; `unit/test_order_entry_gate_wiring.py`; three mutants killed | SR-E42-02 | AD-D02 |
 
-Sanctioned reads: the CSRF module reads the `desktop.backend_connection` state per request (`api/csrf.py:182`); the
-flag only adds headers, under ADR-0038 (accepted), known, routed to #3931 (the flag's removal).
-`trading.oms_enabled` gates OMS admission in the restrictive direction (ruling Q3 on #913), known, routed to #4227
-(its removal). SR-E42-07 stands as: the rule and the boot-refusal test are on `main` (AC-ADM-13 met; AC-ADM-14's
-fixtures and zero hits met); SR-E42-07 stays open on E42-R-07 and E42-R-10.
+Sanctioned reads: `desktop.backend_connection` only adds headers, under ADR-0038 (accepted), known, routed to #3931
+(the flag's removal). `trading.oms_enabled` gates OMS admission in the restrictive direction (ruling Q3 on #913),
+known, routed to #4227 (its removal). SR-E42-07 stands as: the rule and the boot-refusal test are on `main`
+(AC-ADM-13 met; AC-ADM-14's fixtures and zero hits met); SR-E42-07 stays open on E42-R-07 and E42-R-10.
 
 Findings: E42-R-07 (Low, open, private record); this pass filed E42-R-10 (Medium, open, private record).
 
@@ -539,7 +538,7 @@ Triage of the annotations under `services/api/candleviewer/{admin,auth,audit,api
 | Append-only, chain order and the last-owner races on a real Postgres session | CI integration lane, shards 1–4 | green at the pin (run 41821199189) |
 | The disable-user drill (SR-029) | `security/auth/test_disable_user_drill.py` | green |
 | The restore drill | `test_restore_drill.py:204` | consistency only; D7's cases WAITING on #3084 |
-| This PR's new pins, each mutation-checked | `security/admin/test_elevation_client_expiry.py:49`; `unit/storage/test_postgres_server_log.py:80`, :90, :96 | green; each named mutant turns it red (§1.3, §1.5) |
+| This PR's new pins, each mutation-checked | `security/admin/test_elevation_client_expiry.py:49`; `unit/storage/test_postgres_server_log.py:93`, :103, :109 | green; each named mutant turns it red (§1.3, §1.5) |
 | The staged DAST pass and the pen-test | E43 | out of scope; this record is its input |
 
 Carries to the abuse-case owner (E42-X03, #1026; `AC` is not edited here):
@@ -548,14 +547,6 @@ Carries to the abuse-case owner (E42-X03, #1026; `AC` is not edited here):
 - UL-AC12, UL-AC13: met by #2650 (`test_user_purge_pg.py::test_users_anonymise_ahead`,
   `::test_reenable_racing_reaper_keeps_user`; `test_user_purge.py::test_reenable_racing_reaper_keeps_user`).
 - UL-AC15: the unbind's open-order count still needs an owner after #2648 closed (UL-F9).
-
-Public-safe pins proposed by the areas, all for guarantees that hold (none is in this PR): a generated-table test
-that every served `/admin`, `/users`, `/invites`, `/me/sessions`, `/auth/step-up`, `/auth/session/view-as` and
-`/health` operation has an `M` row matching its `x-rbac`; G-router membership by route list; a static lock-order
-check over the owner-only lifecycle store methods; `PATCH`, `PUT /roles` and `DELETE` refusing a self-target
-before any store call; the restore guard refusing with maintenance off even when every acknowledgement is sent;
-a backup link presented with another user's bearer is unknown and unspent; the import of `candleviewer.main`
-failing on a denied flag definition; the flag rule's `paths.include` scope pinned.
 
 ## 7. Residuals and re-ratings
 
