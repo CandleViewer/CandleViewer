@@ -82,7 +82,7 @@ _PATHS = {
     "fixture": "packages/fixtures/bybit/2026-10-05/rest/instruments_before.json",
 }
 _MD5 = {
-    "spec": "6cf5556d912d774a869a38494078f881",
+    "spec": "5f60e8018b85c0936bcd84190040eb2b",
     "d03": "928db4e4b68dafe97694c6ec9a718c7b",
     "d02": "1299df3b853121295e018bed3b819262",
     "prim": "b5e4756938646d98fa8c4ba2d5322b4a",

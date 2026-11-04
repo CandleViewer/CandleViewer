@@ -7,7 +7,7 @@ needs `CV_REPO` naming a checkout and writes to the sibling `E19-D05-cap/` and `
 
 ## Sources (md5-pinned in `DOCS`; the kit refuses drifted bytes)
 
-- The spec, by repo-relative path in this checkout only (md5 `6cf5556d`, the text with §0 and §16 recording the
+- The spec, by repo-relative path in this checkout only (md5 `5f60e801`, the text with §0 and §16 recording the
   boards as drawn). §0's board table and not-drawn line,
   §2's motion table, §3's matrix, §4.1 / §4.2's tables, §8.1's flash table and §8.3's copy deck are parsed, never
   typed; every drawn word passes `k.S` (verbatim in the spec, D03 or D02, markdown marks dropped) or is a `copy_gap`

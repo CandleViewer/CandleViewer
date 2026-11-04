@@ -10,8 +10,8 @@ Board 01 of ten (§0 L106: SCR-038/motion-cases-dark: §2's ten rows as a sheet)
 
 ## Validator and size
 
-- `01-case-table.json: 0 errors, 0 warnings, 14 sections, 51434 bytes` (exit 0)
-- 14 sections, 51434 bytes
+- `01-case-table.json: 0 errors, 0 warnings, 14 sections, 51444 bytes` (exit 0)
+- 14 sections, 51444 bytes
 
 ## Live checks (4)
 
@@ -44,9 +44,9 @@ Board 01 of ten (§0 L106: SCR-038/motion-cases-dark: §2's ten rows as a sheet)
 
 ## Sources (5)
 
-- spec E19-D05.md md5 6cf5556d in this checkout (§0 L106; BQ-13 RULED: ACCEPT; no hand-off file, BQ-1)
+- spec E19-D05.md md5 5f60e801 in this checkout (§0 L106; BQ-13 RULED: ACCEPT; no hand-off file, BQ-1)
 - D03 E19-D03.md md5 928db4e4 at 35032f521 (read via git show 35032f521; re-pinned when its PR merges)
-- D02 E19-D02.md md5 1299df3b at 3619e95c5 (read via checkout; re-pinned when its PR merges)
+- D02 E19-D02.md md5 1299df3b at 3619e95c5 (read via git show 3619e95c5; re-pinned when its PR merges)
 - PRIM packages/ui/tokens/primitives.tokens.json md5 b5e47569 (motion durations and easings only)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a (tick size and qty step only)
 

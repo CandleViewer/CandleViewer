@@ -11,8 +11,8 @@ Board 09 of ten (§0 L114: SCR-038/suppression-matrix-dark, SCR-038/suppression-
 
 ## Validator and size
 
-- `09-suppression-matrix.json: 0 errors, 1 warnings, 24 sections, 62206 bytes` (exit 0)
-- 24 sections, 62206 bytes
+- `09-suppression-matrix.json: 0 errors, 1 warnings, 24 sections, 62216 bytes` (exit 0)
+- 24 sections, 62216 bytes
 
 ## Live checks (7)
 
@@ -48,9 +48,9 @@ Board 09 of ten (§0 L114: SCR-038/suppression-matrix-dark, SCR-038/suppression-
 
 ## Sources (5)
 
-- spec E19-D05.md md5 6cf5556d in this checkout (§0 L114; BQ-13 RULED: ACCEPT; no hand-off file, BQ-1)
+- spec E19-D05.md md5 5f60e801 in this checkout (§0 L114; BQ-13 RULED: ACCEPT; no hand-off file, BQ-1)
 - D03 E19-D03.md md5 928db4e4 at 35032f521 (read via git show 35032f521; re-pinned when its PR merges)
-- D02 E19-D02.md md5 1299df3b at 3619e95c5 (read via checkout; re-pinned when its PR merges)
+- D02 E19-D02.md md5 1299df3b at 3619e95c5 (read via git show 3619e95c5; re-pinned when its PR merges)
 - PRIM packages/ui/tokens/primitives.tokens.json md5 b5e47569 (motion durations and easings only)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a (tick size and qty step only)
 
