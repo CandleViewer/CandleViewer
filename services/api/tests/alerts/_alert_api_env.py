@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from candleviewer.api.alerts import make_alerts_router
+from candleviewer.api.idempotency import IdempotencyCache
 from candleviewer.audit.actions import validate_action
 from candleviewer.rules.manager import Actor
 from candleviewer.rules.vocabulary import default_registry
@@ -161,7 +162,7 @@ class Env:
     """App with two users: `user` is the caller, `perms` its permissions, `granted` its account
     grants and `owner` whether it holds the Owner role."""
 
-    def __init__(self, *, wired: bool = True) -> None:
+    def __init__(self, *, wired: bool = True, idempotency: IdempotencyCache | None = None) -> None:
         self.repo, self.audit = FakeAlertRepo(), Audit()
         self.user: str | None = USER_A
         self.perms = frozenset({"alerts:read", "alerts:write"})
@@ -184,6 +185,7 @@ class Env:
                 self.audit,
                 on_compile=lambda s, reason: self.compiles.append(reason),
                 clock=lambda: NOW,
+                idempotency=idempotency,
             )
         )
         self.c = TestClient(app)

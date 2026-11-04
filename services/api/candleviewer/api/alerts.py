@@ -32,6 +32,14 @@ from candleviewer.alerts.errors import AlertIrInvalid
 from candleviewer.api.alerts_http import Problem as _Problem
 from candleviewer.api.alerts_http import ProblemRoute as _ProblemRoute
 from candleviewer.api.alerts_http import caller
+from candleviewer.api.idempotency import (
+    IdempotencyCache,
+    IdempotencyKeyReuse,
+    idempotency_key,
+    remember,
+    replay,
+    request_fingerprint,
+)
 from candleviewer.api.view_as_subject import acting_user
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.domain.text import refuse_unstorable_text
@@ -202,8 +210,12 @@ def make_alerts_router(
     on_compile: OnCompile = lambda seconds, reason: None,
     on_change: OnChange = _no_change,
     clock: Clock = _utc_now,
+    idempotency: IdempotencyCache | None = None,
 ) -> APIRouter:
+    """`idempotency`: this router's own `Idempotency-Key` replay store for `createAlert` (#1851;
+    the shared helper of `api/idempotency.py`, a new instance if None)."""
     d = _Deps(repo_provider, registry_provider, actor_resolver, audit, on_compile, on_change, clock)
+    cache = IdempotencyCache() if idempotency is None else idempotency
     router = APIRouter(tags=["alerts"], route_class=_ProblemRoute)
 
     def need(
@@ -342,8 +354,30 @@ def make_alerts_router(
                 "count": len(items)}  # fmt: skip
         return JSONResponse({"items": items, "meta": meta})
 
+    def keyed(request: Request, owner: str, raw: bytes) -> tuple[str | None, str, Response | None]:
+        """C4 (#1851): the optional key (not a UUID: 422), the method + path + body fingerprint
+        and the stored 2xx to replay; the key with another fingerprint is a 409."""
+        try:
+            key = idempotency_key(request, "createAlert")
+        except ValueError:
+            msg = "Idempotency-Key must be a UUID."
+            raise _Problem(422, "validation_failed", "Invalid alert", msg,
+                           errors=[{"field": "Idempotency-Key", "rule": "uuid_parsing",
+                                    "message": msg}]) from None  # fmt: skip
+        digest = request_fingerprint(request.method, request.url.path, raw)
+        try:
+            return key, digest, replay(cache, owner, key, digest)
+        except IdempotencyKeyReuse:
+            raise _Problem(409, "idempotency_key_reuse",
+                           "Idempotency-Key reused with a different request payload",
+                           "The key was first used with another request.") from None  # fmt: skip
+
     @router.post("/alerts")
     async def create_alert(request: Request, actor: Annotated[Actor, Depends(writer)]) -> Response:
+        # The key lookup stays after the write token and body bound, ahead of parse (#1851).
+        key, digest, hit = keyed(request, actor.user_id, await request.body())
+        if hit is not None:
+            return hit  # the stored 201: nothing re-created, nothing re-audited
         alert_id = str(uuid4())  # before parsing: a refused create is audited against this id
         body, compiled = await parse(request, actor, alert_id, "create")
         # Write-ahead (C-2.9): the audit record lands first; if it fails nothing is persisted.
@@ -361,7 +395,8 @@ def make_alerts_router(
                 raise  # any other constraint error is a defect: a 500
             raise refused_row() from None
         await d.on_change(row.id)
-        return d.respond(row, 201, estimated_metrics=list(compiled.estimated_metrics))
+        out = d.respond(row, 201, estimated_metrics=list(compiled.estimated_metrics))
+        return remember(cache, actor.user_id, key, digest, out)  # a 2xx only
 
     @router.get("/alerts/{alertId}")
     async def get_alert(got: Annotated[tuple[Actor, AlertRow], Depends(owned_r)]) -> Response:
