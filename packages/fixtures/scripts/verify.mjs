@@ -1,5 +1,5 @@
 // Redaction gate for packages/fixtures (E02-T03 placeholder; real fixtures
-// land in E08). Fails if any file under raw/, golden/, bybit/ or accounts/
+// land in E08). Fails if any file under raw/, golden/, bybit/, accounts/ or oms/
 // looks like it contains a credential (API key, signature, PEM block, bearer
 // token); accounts/ also gets the bare key-shape check and the pack checks,
 // the comparison with the E27 test plan's section 9.3 table included (E27-Q01).
@@ -16,7 +16,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(__dirname, "..");
 // E08-T05: `bybit/` is the shared recorded corpus (packages/fixtures/bybit/<date>/).
 // E27-Q01: `accounts/` is the accounts and key-vault fault-injection pack.
-const DATA_DIRS = ["raw", "golden", "bybit", "accounts"];
+// E29-Q01: `oms/` is the OMS scenario pack (derived files and manifests that point at the corpus).
+const DATA_DIRS = ["raw", "golden", "bybit", "accounts", "oms"];
 const PACK_DIR = "accounts";
 export const SCAN_DIRS = DATA_DIRS.map((d) => join(packageRoot, d));
 // E27-Q01: a real Bybit key or secret is a bare 18-20 or 36 character alphanumeric token. The

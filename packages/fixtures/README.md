@@ -11,8 +11,11 @@ TypeScript and Python test suites (CONSTITUTION.md C-13.5, `.claude/rules/40-tes
   regression comparisons.
 - `accounts/` — the E27 accounts and key-vault fault-injection pack: one
   directory per scenario with a `manifest.json` (see `accounts/README.md`).
+- `oms/` — the E29 OMS scenario pack (E29-Q01): one directory per scenario with
+  a `manifest.json` that points at corpus files or holds derived ones (see
+  `oms/README.md`).
 - `scripts/verify.mjs` — the redaction gate: fails if any file under `raw/`,
-  `golden/`, `bybit/` or `accounts/` contains a credential-shaped string (API
+  `golden/`, `bybit/`, `accounts/` or `oms/` contains a credential-shaped string (API
   key, signature, `Authorization` header, PEM key block), or a bare
   key-shaped token under `accounts/`, and runs the accounts pack checks. Every
   new fixture must pass this before being committed (E02-X01 threat:
