@@ -16,6 +16,15 @@ export interface FundingPaneProps {
   /** The engine's linked sub-pane, drawn from `snapshot.series`; until it exists the slot is empty. */
   readonly plot?: ReactNode;
   readonly visible?: { readonly fromMs: number; readonly toMs: number } | undefined;
+  /**
+   * Slice 2: CMP-126 on the symbol's one countdown entry, in the legend (D02 §5.3 "… · next in 03:12:44"). The
+   * header renders the same entry, so both show one value. Absent while the instrument is unavailable (S54-39).
+   */
+  readonly countdown?: ReactNode;
+  /** The ticker's staleness (D02 §9): on the region, and said in a legend line (F6). */
+  readonly stale?:
+    | { readonly tier: "t1" | "t2"; readonly ageS: number; readonly lastTsMs: number | null }
+    | undefined;
   /** The group's A-03 "Show tables" state (and `accessibility.always_show_tables`), from the SCR-054 group. */
   readonly showTables?: boolean;
   /** The pane label's level in its host's outline (default 3); the band's heading is one below. */
@@ -112,6 +121,8 @@ export function FundingPane({
   onRetry,
   plot,
   visible,
+  countdown,
+  stale,
   showTables = false,
   headingLevel = 3,
   density = "compact",
@@ -135,16 +146,25 @@ export function FundingPane({
       className="cv-funding-pane"
       aria-label={copy.regionName(symbol)}
       data-cmp="CMP-186"
+      data-stale={stale?.tier}
       data-density={density}
     >
       <div className="cv-funding-pane__legend">
         <Heading ref={heading} tabIndex={-1} className="cv-funding-pane__title">
           {copy.PANE_LABEL}
         </Heading>
+        {stale === undefined ? null : (
+          <span className="cv-funding-pane__caption">
+            {copy.staleLine(stale.ageS, stale.lastTsMs)}
+          </span>
+        )}
         {!answered ? null : (
           <span className="cv-funding-pane__caption">
             {minutes === null ? copy.INTERVAL_UNKNOWN : copy.settlesEvery(minutes)}
           </span>
+        )}
+        {unavailable || countdown === undefined ? null : (
+          <span className="cv-funding-pane__countdown">{countdown}</span>
         )}
         {history.phase === "ready" && history.truncated ? (
           <span className="cv-funding-pane__caption">{copy.TRUNCATED}</span>

@@ -1,6 +1,6 @@
 // E24-S03 (#778) slice 1: the stepped series' width comes from the served interval, never the spacing.
 import { describe, expect, it } from "vitest";
-import { buildFundingSeries } from "../../../src/features/funding/series";
+import { buildFundingSeries, mergeSettled } from "../../../src/features/funding/series";
 import { recordedSettled } from "./support/fundingFixtures";
 
 const points = (which: "BTCUSDT_8h" | "ETHUSDT_4h") =>
@@ -44,5 +44,13 @@ describe("funding series", () => {
     const s = build([], 480, { coverage });
     expect(s.gaps).toEqual([gap]);
     expect(s.steps).toEqual([]);
+  });
+  it("merges a newer read unique by time and says whether it added a settlement", () => {
+    const all = points("BTCUSDT_8h");
+    const first = mergeSettled(all.slice(0, 3), all.slice(2, 3));
+    expect(first.added).toBe(false);
+    const next = mergeSettled(all.slice(0, 3), all.slice(2));
+    expect(next.added).toBe(true);
+    expect(next.points.map((p) => p.tMs)).toEqual(all.map((p) => p.tMs));
   });
 });

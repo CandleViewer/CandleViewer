@@ -2,8 +2,13 @@
 // `useSyncExternalStore` (as E24-S01: `apps/web` carries no RxJS or Jotai). A failed read keeps the last good
 // series and `last_success_at` (D02 §4), so the pane shows a retry band, never a blank chart.
 import { useSyncExternalStore } from "react";
-import type { FundingHistoryRequest, FundingHistoryResult } from "./history";
-import { buildFundingSeries, EMPTY_SERIES, type FundingSeriesModel } from "./series";
+import type {
+  FundingClock,
+  FundingHistoryOk,
+  FundingHistoryRequest,
+  FundingHistoryResult,
+} from "./history";
+import { buildFundingSeries, EMPTY_SERIES, mergeSettled, type FundingSeriesModel } from "./series";
 
 /** BQ 6: what an empty window means, from `meta.coverage`; `unknown` while it is not served. */
 export type CoverageWord = "covered" | "not-recorded" | "unknown";
@@ -32,7 +37,13 @@ export interface FundingFeedOptions {
   /** Wall-clock epoch ms for `last_success_at`. */
   readonly wallNow?: (() => number) | undefined;
   readonly onFailed?: ((status: number | null, code: string | null) => void) | undefined;
+  /** Slice 2: the exchange-synced clock for the settlement poll's `to` (default `Date.now`). */
+  readonly now?: (() => number) | undefined;
+  readonly timers?: FundingClock | undefined;
 }
+
+/** BQ 5 ruling (6610230823): one poll at the settlement, then 1 / 2 / 4 / 8 s, at most five attempts. */
+export const SETTLE_BACKOFF_MS: readonly number[] = [1_000, 2_000, 4_000, 8_000];
 
 export interface FundingFeedHandle {
   readonly symbol: string;
@@ -40,6 +51,11 @@ export interface FundingFeedHandle {
   subscribe(listener: () => void): () => void;
   /** The retry band's action. */
   retry(): void;
+  /**
+   * The countdown reached `deadlineMs` (BQ 5): read `to = now` until the settlement it names is stored, and
+   * append it; a newer call replaces a running one.
+   */
+  settle(deadlineMs: number): void;
   /** Aborts the read and drops the listeners. Idempotent. */
   stop(): void;
 }
@@ -64,6 +80,13 @@ export function startFundingFeed(options: FundingFeedOptions): FundingFeedHandle
   let snapshot = INITIAL_FUNDING_SNAPSHOT;
   let abort: AbortController | null = null;
   let stopped = false;
+  let cancelPoll = (): void => undefined;
+  const now = options.now ?? Date.now;
+  const timers: FundingClock = options.timers ?? {
+    setTimeout: (run, ms) => setTimeout(run, ms),
+    // `id` is what this clock's `setTimeout` returned; the cast only restores that type.
+    clearTimeout: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
+  };
 
   const publish = (next: FundingSnapshot): void => {
     snapshot = next;
@@ -109,6 +132,63 @@ export function startFundingFeed(options: FundingFeedOptions): FundingFeedHandle
       });
   };
 
+  /** Appends a newer read's settlements; `true` once the one at `deadlineMs` is stored. */
+  const append = (r: FundingHistoryOk, deadlineMs: number): boolean => {
+    const { points, added } = mergeSettled(snapshot.series.settled, r.settled);
+    if (added) {
+      const was = snapshot.history;
+      const minutes =
+        snapshot.series.intervalMs === null ? null : snapshot.series.intervalMs / 60_000;
+      const series = buildFundingSeries({
+        settled: points,
+        intervalMinutes: r.intervalMinutes ?? minutes,
+        coverage: null,
+      });
+      publish({
+        // a failed or unavailable window keeps its band: the poll is not the full read the retry makes
+        history:
+          was.phase === "ready" || was.phase === "loading"
+            ? {
+                phase: "ready",
+                empty: false,
+                coverage: was.phase === "ready" ? was.coverage : "unknown",
+                truncated: was.phase === "ready" && was.truncated,
+              }
+            : was,
+        // the gaps stay the full read's: a short `to = now` read reports none of the window's
+        series: { ...series, gaps: snapshot.series.gaps },
+        lastSuccessAtMs: wallNow(),
+      });
+    }
+    return points.some((p) => p.tMs >= deadlineMs);
+  };
+
+  const settle = (deadlineMs: number): void => {
+    cancelPoll();
+    const call = new AbortController();
+    const fromMs = snapshot.series.settled.at(-1)?.tMs ?? window.fromMs;
+    let attempt = 0;
+    let timer: unknown;
+    const run = (): void => {
+      attempt += 1;
+      const req = { symbol, fromMs, toMs: now() + 1, signal: call.signal };
+      void Promise.resolve()
+        .then(() => options.loadHistory(req))
+        .catch((): FundingHistoryResult => ({ kind: "failed", status: null, code: "exception" }))
+        .then((r) => {
+          if (stopped || call.signal.aborted) return;
+          if (r.kind === "ok" && append(r, deadlineMs)) return;
+          const wait = SETTLE_BACKOFF_MS[attempt - 1];
+          if (wait !== undefined) timer = timers.setTimeout(run, wait);
+        });
+    };
+    cancelPoll = () => {
+      call.abort();
+      if (timer !== undefined) timers.clearTimeout(timer);
+    };
+    run();
+  };
+
   load();
 
   return {
@@ -121,10 +201,14 @@ export function startFundingFeed(options: FundingFeedOptions): FundingFeedHandle
     retry: () => {
       if (!stopped) load();
     },
+    settle: (deadlineMs) => {
+      if (!stopped) settle(deadlineMs);
+    },
     stop: () => {
       if (stopped) return;
       stopped = true;
       abort?.abort();
+      cancelPoll();
       listeners.clear();
     },
   };
