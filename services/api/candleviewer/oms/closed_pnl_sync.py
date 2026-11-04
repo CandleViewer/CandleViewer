@@ -28,7 +28,10 @@ stated `closed_size` above 0) within `DEBOUNCE_S`, so the fills of one close in 
 read once. A read is made again `SETTLE_POLL_S` after the last one started while that read failed,
 while the account holds a record within the reach that is not final and whose order has a row
 (21 Sec.13.1 row 56), or while a stored fill waits for a read that starts `SETTLE_POLL_S` after it
-and succeeds. A record with no `orderId`, or whose order has no row, keeps no poll.
+and succeeds. A record with no `orderId`, or whose order has no row, keeps no poll. A read the
+account binding refuses outright (`_refused`: the account missing, deleted, another environment's
+or holding no active key) ends both the failed read's poll and the fills' wait, so the account is
+not resolved every `SETTLE_POLL_S` until a restart: its next stored fill or reconnect asks again.
 
 **Placement.** One owned task (`start`, `stop`; `fault` once it ends unasked, which `on_ended` is
 told once) on the loop that makes every call, reading the due accounts one at a time: one read is
@@ -62,6 +65,7 @@ from candleviewer.storage.repositories.executions import NewExecution
 from candleviewer.storage.repositories.oms_reads import CLOSING_EXEC_TYPES, TERMINAL_STATES
 from candleviewer.storage.repositories.positions import MAX_FUTURE_SKEW, NewPositionSnapshot
 
+from .errors import AccountScopeDenied, OrderEntryRefused
 from .ports import RateReading, TradingAccounts
 
 #: 24 Sec.8.13, both PROPOSED there: the poll's period, and how far before the day's start a read
@@ -76,6 +80,8 @@ READ_TIMEOUT_S: Final = 30.0  # one read, all its pages, as reconciliation's fet
 PENDING_LIMIT: Final = 200  # the records one poll reads (row 56); the rest wait for the next
 MAX_ACCOUNTS: Final = 256
 FETCH_SECONDS: Final = "oms_closed_pnl_fetch_seconds"
+#: The order-entry gate's reason for an account with no usable key, as `commands` reads it.
+_NO_ACTIVE_KEY: Final = "no_active_key"
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _ANY_FLAT: Final = datetime.max.replace(tzinfo=UTC)  # row 57's bound that finds a key's last flat
 #: The merge's sums are exact here; its one division rounds to the columns' 18 places.
@@ -133,6 +139,14 @@ def utc_day_start(at: datetime) -> datetime:
     """00:00 UTC of `at`'s day: offset 0, the instant the order path reads until E29-S06's resolver
     slice wires `risk_policy.day_boundary_utc_offset_minutes` (24 Sec.8.13, Sec.9.3.6)."""
     return at.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _refused(error: Exception) -> bool:
+    """The account binding's refusal outright (`TradingAccountsBinding`): the account missing,
+    soft-deleted or another environment's (`AccountScopeDenied`), or holding no active key."""
+    if isinstance(error, OrderEntryRefused):
+        return error.reason == _NO_ACTIVE_KEY
+    return isinstance(error, AccountScopeDenied)
 
 
 def merged(records: Iterable[ClosedPnl]) -> list[ClosedPnl]:
@@ -347,10 +361,12 @@ class ClosedPnlSync:
         state.due = None  # a request made from here on is the next read's
         try:
             state.keep = await self._pass(account_id, state)
-        except Exception as exc:  # a failed read keeps the poll until one succeeds
+        except Exception as exc:  # a failed read keeps the poll until one succeeds, a refusal not
             _log().warning("closed_pnl_read_failed", account_id=str(account_id),
                            kind=type(exc).__name__)  # fmt: skip
-            state.keep, ok = True, False
+            state.keep, ok = not _refused(exc), False
+            if not state.keep:  # nor the fills' wait: its next stored fill or `resyncing` asks
+                state.fills_until = None
         else:
             ok = True
             if state.fills_until is not None and started >= state.fills_until:
