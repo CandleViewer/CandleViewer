@@ -19,8 +19,8 @@ states at size 0, for a key (account, symbol, `position_idx`) that holds no conf
 a confirmed flat dated by the reading's `updatedTime` (`exchange_updated_ts`, 21 Sec.3.3.7), so
 the key's next position has a walk (24 Sec.8.13 step 3). Only what the venue states: never a
 non-zero reading, a missing one or a flat inferred from local fills (Choice 1), and none dated
-past the store's skew. A seed that fails is tried again at the next read; the records are kept
-all the same.
+past the store's skew of the clock read after the positions. A seed that fails, as one reading
+another account does (C-2.11), is tried again at the next read; the records are kept all the same.
 
 **Triggers.** Startup (`start`) and a private-stream reconnect (`reconnected`) ask for a read at
 once; a stored trade fill (`stored`) asks for one within `SETTLE_POLL_S`, and a closing one (a
@@ -126,7 +126,7 @@ class _NoHeadroom(Exception):
 
 
 class _OtherAccount(Exception):
-    """The resolve, or a record, names another account (C-2.11)."""
+    """The resolve, a record or a position reading names another account (C-2.11)."""
 
 
 def utc_day_start(at: datetime) -> datetime:
@@ -326,7 +326,7 @@ class ClosedPnlSync:
                 await asyncio.wait_for(self._wake.wait(), timeout)
 
     async def read(self, account_id: AccountId) -> bool:
-        """One read of the account, as the task makes it; True when it succeeded."""
+        """The task's read of one account, True when it succeeded; public for the tests alone."""
         started = asyncio.get_running_loop().time()
         state = self._state.setdefault(account_id, _Account())
         state.due = None  # a request made from here on is the next read's
@@ -346,23 +346,24 @@ class ClosedPnlSync:
         return ok
 
     async def _pass(self, account_id: AccountId, state: _Account) -> bool:
-        """The read, the records' writes, then row 56's poll: whether a record is left to poll."""
+        """The read, the records' writes and row 56's poll, then the seed, last so a slow one
+        delays none of them: whether a record is left to poll."""
         now = self._now()
         reach = self._day_start(now) - CLOSED_PNL_LOOKBACK
         account, records = await self._fetch(account_id, reach, now)
-        if not state.seeded:
-            try:
-                await self._seed(account, now)
-                state.seeded = True
-            except Exception as exc:  # tried again at the next read; the records go on
-                _log().warning("closed_pnl_flat_seed_failed", account_id=str(account_id),
-                               kind=type(exc).__name__)  # fmt: skip
         for record in merged(records):
             await self._settle(record)
         pending = self._records.pending(account_id, reach, PENDING_LIMIT)
         left = False
         for item in await _bounded(pending, PORT_TIMEOUT_S):
             left = not await self._finalized(account_id, item) or left
+        if not state.seeded:
+            try:
+                await self._seed(account)
+                state.seeded = True
+            except Exception as exc:  # tried again at the next read; the records are kept
+                _log().warning("closed_pnl_flat_seed_failed", account_id=str(account_id),
+                               kind=type(exc).__name__)  # fmt: skip
         return left
 
     async def _fetch(
@@ -387,18 +388,20 @@ class ClosedPnlSync:
         self._seconds.labels("ok").observe(clock() - began)
         return account, records
 
-    async def _seed(self, account: AccountRef, now: datetime) -> None:
+    async def _seed(self, account: AccountRef) -> None:
         """The ruled seed (module docstring): each key the venue states at size 0 and that holds
         no confirmed flat gets that reading stored as one, dated by its `updatedTime`."""
         if not self._router.headroom(account, LANE).available:
             raise _NoHeadroom
         port = self._router.port_for(account.environment)
         readings = await _bounded(port.positions(account), READ_TIMEOUT_S)
-        horizon, account_id = now + MAX_FUTURE_SKEW, account.account_id
+        horizon, account_id = self._now() + MAX_FUTURE_SKEW, account.account_id  # after the read
+        if any(p.account_id != account_id for p in readings):
+            raise _OtherAccount  # the seed fails, as a record fails the read, and is tried again
         for p in readings:
             at = _at(p.updated_at)
-            if p.account_id != account_id or p.qty != 0 or at > horizon:
-                continue  # only a size 0 the venue states for this account, dated in reach
+            if p.qty != 0 or at > horizon:
+                continue  # only a size 0 the venue states, dated in reach
             flats = self._records.walk_flats(account_id, p.symbol, p.position_idx, _ANY_FLAT, 1)
             if await _bounded(flats, PORT_TIMEOUT_S):
                 continue  # a key holding a confirmed flat gets no second one
