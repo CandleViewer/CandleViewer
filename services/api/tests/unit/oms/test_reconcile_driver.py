@@ -268,6 +268,37 @@ async def test_a_trigger_while_a_pass_runs_is_skipped_never_queued(
         await driver.stop()
 
 
+async def test_a_reconnect_that_finds_the_pass_backing_off_is_skipped_so_no_synced_follows(
+    job: Job, timers: Timers
+) -> None:
+    """E29-S07 (23 Sec.15.9's `synced` rule): an outage starves the periodic pass's fetch, so B19
+    backs off; the stream comes back first, and its resync's `reconnect` request is skipped, never
+    queued. The retried pass carries `periodic`, so it opens no episode and sends no
+    `oms.account_synced`: that resync's `oms.account_resyncing` holds until a later one."""
+    driver = _driver(job, timers)
+    await driver.start([])
+    _starve(job)
+    try:
+        await driver.trigger(ACCOUNT, "periodic")
+        assert await _resting(driver) == "backing_off"
+        with capture_logs() as logs:
+            await driver.request_reconciliation(ACCOUNT, reason="reconnected")
+        skipped = [
+            (e["trigger"], e["state"], e["reason"])
+            for e in logs
+            if e["event"] == "reconcile_trigger_skipped"
+        ]
+        assert skipped == [("reconnect", "backing_off", "running")]
+        _starve(job, False)
+        await timers.release()  # RETRY_DUE (and the cadence's first tick)
+        assert await _until(driver, "idle") == "idle"
+        records = [(r[2]["trigger"], r[2]["result"]) for r in job.records.rows]
+        assert records == [("periodic", "clean")]
+        assert job.notices.published == []
+    finally:
+        await driver.stop()
+
+
 async def test_divergent_takes_every_trigger_as_sweep_due_carrying_it(
     job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -184,6 +184,7 @@ from candleviewer.api.position_reverse import make_position_reverse_router
 from candleviewer.api.preview_limiter import PreviewLimiter
 from candleviewer.api.profile_writes import SaveMeasures, make_profile_writes_router
 from candleviewer.api.profiles import make_profiles_router
+from candleviewer.api.reconciliation_digest import make_reconciliation_digest_router
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
 from candleviewer.api.recorder_purge import make_recorder_purge_router
 from candleviewer.api.recording_reports import make_recording_reports_router
@@ -363,10 +364,12 @@ from candleviewer.observability.support_bundle import filter_config
 from candleviewer.observability.support_bundle_wiring import build_support_bundle_service
 from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySink
 from candleviewer.oi_wiring import OiRuntime, wire_open_interest
+from candleviewer.oms.reconcile_digest import ReconcileDigests
 from candleviewer.oms.reconcile_standing import ReconcileStanding
 from candleviewer.oms.service import OmsService
 from candleviewer.oms.ws_topics import FAMILIES as OMS_FAMILIES
 from candleviewer.oms_reads_wiring import oms_reads, order_versions
+from candleviewer.oms_stream_wiring import AccountNoticeStates, StatesBroadcast
 from candleviewer.oms_wiring import (
     HaltingKillSwitch,
     InterimKillSwitch,
@@ -1994,6 +1997,10 @@ def create_app(
     # E17-T03 (#412): every connection's outbound budget, from the `CV_WS_*` budget settings
     # (the one outbound path since #2409 removed its flag).
     ws_backpressure = BackpressureConfig.from_settings(resolved)
+    # E29-S07 (#1028, 23 Sec.15.9): each account's latest reconciliation notice, kept as the OMS's
+    # notice bindings broadcast it (`StatesBroadcast`, below), and the standing's locks once it is
+    # bound (below), replayed after a first `auth_ok`. Read and written on this loop only.
+    account_states = AccountNoticeStates()
     include_ws_router(  # #3907: `/ws` and, under the server base, `/api/v1/ws`
         app,
         make_ws_router(
@@ -2010,8 +2017,13 @@ def create_app(
             server_version=resolved.version,
             git_sha=resolved.git_sha,
             kill_switch=kill_switch.snapshot,
-            # After a first `auth_ok`: the read-only gate, then an unresolved break-glass (O4).
-            system_notices=lambda: _gate_notices(ctx) + ctx.auth.break_glass_notice.notices(),
+            # After a first `auth_ok`, in this order: the read-only gate's notice, an unresolved
+            # break-glass (O4), then each account's reconciliation state (E29-S07).
+            system_notices=lambda: (
+                _gate_notices(ctx)
+                + ctx.auth.break_glass_notice.notices()
+                + account_states.notices()
+            ),
             # §15.9 (E42-T03): a Manager or Viewer learns a flag key only as the registry's
             # `visibility` admits; a key the registry does not define reaches the Owner alone.
             flag_visible=default_registry().visible_to,
@@ -2693,6 +2705,10 @@ def create_app(
     # operator's unlock (BQ-5), read in place; the OMS runtime's jobs set it. Protective paths
     # never reach this gate (C-2.6).
     app.state.reconcile_standing = reconcile_standing = ReconcileStanding()
+    account_states.bind_standing(reconcile_standing)  # E29-S07: a restored lock is replayed too
+    # E29-S07 (#1028, 24 Sec.8.5 "The digest"): each account's latest reconciliation pass, kept by
+    # the OMS runtime's jobs once its record is written, served by `getReconciliationDigest`.
+    app.state.reconcile_digests = reconcile_digests = ReconcileDigests()
     app.state.order_entry_gate = feature_flags.compose_order_entry_gate(
         account_health.order_entry_check, reconcile_standing
     )
@@ -2754,8 +2770,10 @@ def create_app(
         lane_signing=bundle.lane_signing,
         lane_transport=None if account_fixture is None else account_fixture.lane_rest_transport,
         health=account_health,
-        hub=ws_hub,
+        # E29-S07: each notice the runtime publishes is kept for the replay, then broadcast
+        hub=StatesBroadcast(account_states, ws_hub),
         standing=reconcile_standing,
+        digests=reconcile_digests,
         topics=ws_oms,  # E29-T13 (#4207): its WS topics, published from its lane
         trade_groups=ws_trade_groups,
         kill_switch=kill_switch_port,  # #2904: the halt's port, shared (G-79)
@@ -2841,6 +2859,14 @@ def create_app(
             audit=_LazyAuditEmitter(ctx.audit),
             auth=ctx.auth,
             versions=order_versions(lambda: oms_runtime_of(app.state)),
+        )
+    )
+    # E29-S07 (#1028): `getReconciliationDigest`, in the caller's grants, over the digests above.
+    # The fake backend composes no identity, so no principal source: it answers 501, as
+    # `placeOrder` does (a test-injected `principal_resolver` serves it).
+    app.include_router(
+        make_reconciliation_digest_router(
+            order_principals, reconcile_digests, audit=_LazyAuditEmitter(ctx.audit), auth=ctx.auth
         )
     )
     # E29-T07 #915 PR 2: `setPositionLeverage`, its position read in scope on the reads above and

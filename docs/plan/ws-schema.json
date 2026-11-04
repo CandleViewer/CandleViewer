@@ -3575,6 +3575,9 @@
             "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid"
           }
         },
+        "changed_at_ms": {
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+        },
         "closing_in_ms": {
           "type": "integer"
         },

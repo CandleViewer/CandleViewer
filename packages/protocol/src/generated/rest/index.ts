@@ -3111,6 +3111,52 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/exchange-accounts/{accountId}/reconciliation/latest": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        accountId: components["parameters"]["AccountId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Read the account's latest reconciliation pass, as a digest
+     * @description E29-S07 (#1028, BQ-9): what the account's last reported reconciliation pass
+     *     (`24-internal-schemas.md` §8.5, "The report" and "The digest") corrected, adopted or left
+     *     for the Owner, for the "while you were offline" summary (SCR-152) and the account's line,
+     *     so a client never infers a correction from its own cache. The server holds the latest
+     *     digest per account, keyed by the account's id (C-2.11), in memory: each pass's replaces
+     *     it once the pass's `oms.reconcile` record is written (§15.5), and none is held after a
+     *     restart until the next pass reports. A pass whose reads were lost confirmed nothing and
+     *     keeps no digest, so the account's last one stands.
+     *
+     *     **Scope.** `orders:read` and `positions:read`, both required, on the account (a grant that
+     *     can view it): a caller without either is `403 forbidden`, audited `rbac.denied`, before
+     *     any account is read. An account outside the caller's grants, one that does not exist,
+     *     one this process's environment does not serve (C-2.11) and one with no pass reported
+     *     since the process started get the same `404 not_found`, byte for byte, so the answer is
+     *     no existence oracle (SR-E29-13); a Manager's or Viewer's request for an account outside its
+     *     grants, foreign or absent alike, is audited `rbac.denied` naming the account asked for. Under
+     *     a view-as context the read answers as the target, in the target's grants (the View-as
+     *     session section of `info.description`).
+     *
+     *     **Content.** Ids, symbols and `exec_id`s only, as the report lists them: never a
+     *     credential, an exchange message or a payload (C-12.6). Each list holds at most 256
+     *     entries, the first the pass listed, and `counts` gives each list's full length.
+     *     `confirmed_at`, the end of `gap_window`, is when the pass read the exchange: the server's
+     *     last exchange confirmation of the account's orders, positions and stops. A read writes
+     *     no audit record of its own and is answered with `Cache-Control: no-store`.
+     */
+    get: operations["getReconciliationDigest"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/executions": {
     parameters: {
       query?: never;
@@ -10705,6 +10751,67 @@ export interface components {
       /** Format: date-time */
       ts?: string;
     };
+    /** @description `getReconciliationDigest`'s answer (E29-S07, #1028): the account's latest reported pass (`24-internal-schemas.md` §8.5, "The digest"), its lists as the report holds them, each cut to its first 256 entries. Order lists name the order's `order_link_id`, `unpaired` its fills' `exec_id`, and the stop lists, `position_drift` and `unprotected` the position's symbol. **Open-ended for readers:** a client tolerates a member it does not know (C-6.3). */
+    ReconciliationDigest: {
+      abandoned: components["schemas"]["ReconciliationDigestIds"];
+      anomalies: components["schemas"]["ReconciliationDigestIds"];
+      /**
+       * Format: date-time
+       * @description When the pass read the exchange (`gap_window.to`): the server's last exchange confirmation of the account's orders, positions and stops.
+       */
+      confirmed_at: string;
+      corrected: components["schemas"]["ReconciliationDigestIds"];
+      /** @description Each list's full length, by its name, before the 256-entry cut. */
+      counts: {
+        [key: string]: number;
+      };
+      /** Format: uuid */
+      exchange_account_id: string;
+      foreign_stops: components["schemas"]["ReconciliationDigestIds"];
+      /** @description The window the pass's execution read covered (24 §8.5 `gap_window`). */
+      gap_window: {
+        /** Format: date-time */
+        from: string;
+        /** Format: date-time */
+        to: string;
+      };
+      held: components["schemas"]["ReconciliationDigestIds"];
+      newly_unknown: components["schemas"]["ReconciliationDigestIds"];
+      /** Format: uuid */
+      pass_id: string;
+      /** @description Step 4's corrections, each with the side and size held before and the exchange's. */
+      position_drift: {
+        /** @enum {integer} */
+        position_idx: 0 | 1 | 2;
+        qty_after: components["schemas"]["Decimal"];
+        qty_before: components["schemas"]["Decimal"] | null;
+        /** @enum {string|null} */
+        side_after: "buy" | "sell" | null;
+        /** @enum {string|null} */
+        side_before: "buy" | "sell" | null;
+        symbol: components["schemas"]["Symbol"];
+      }[];
+      resolved_from_history: components["schemas"]["ReconciliationDigestIds"];
+      /**
+       * @description The first that holds, in this order: `divergent` when the pass left an item for the Owner, `errored` when it listed an error, `corrected` when it applied a correction, else `clean`; so a pass that corrected and listed an error is `errored`.
+       * @enum {string}
+       */
+      result: "clean" | "corrected" | "divergent" | "errored";
+      sl_repaired: components["schemas"]["ReconciliationDigestIds"];
+      sl_restore_refused: components["schemas"]["ReconciliationDigestIds"];
+      sl_restored: components["schemas"]["ReconciliationDigestIds"];
+      sl_tighter: components["schemas"]["ReconciliationDigestIds"];
+      /**
+       * @description What started the pass (24 §8.5's trigger table).
+       * @enum {string}
+       */
+      trigger: "startup" | "reconnect" | "periodic" | "manual" | "unknown";
+      unpaired: components["schemas"]["ReconciliationDigestIds"];
+      /** @description Open positions the pass found with no exchange-side stop and no recorded stop in force (its `errors` of kind `no_record_in_force`, step 5, BQ-9 of #914), by symbol. */
+      unprotected: components["schemas"]["ReconciliationDigestIds"];
+      untracked: components["schemas"]["ReconciliationDigestIds"];
+    };
+    ReconciliationDigestIds: string[];
     /** @description `reconcileAccount`'s answer (E29-T06, #914): the pass the request started, or the one already running for the account (`joined`). Its outcome is its `oms.reconcile` record (`24-internal-schemas.md` §15.5), never this answer. */
     ReconciliationPass: {
       /** Format: uuid */
@@ -17864,6 +17971,33 @@ export interface operations {
       };
       428: components["responses"]["PreconditionRequired"];
       503: components["responses"]["ProfileSaveUnavailable"];
+    };
+  };
+  getReconciliationDigest: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        accountId: components["parameters"]["AccountId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The digest of the account's latest reported pass. */
+      200: {
+        headers: {
+          "Cache-Control"?: "no-store";
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReconciliationDigest"];
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listExecutions: {

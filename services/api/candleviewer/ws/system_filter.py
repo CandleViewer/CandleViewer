@@ -60,7 +60,7 @@ NEUTRAL_FIELDS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
         "degraded_data": _BASE | {"degraded_topics", "affected_symbols"},
         "clock_drift": _BASE | {"clock_offset_ms"},
         "notice": _BASE | {"reason"},
-        _ACCOUNT_NOTICE: _BASE | {"reason", _ACCOUNTS},
+        _ACCOUNT_NOTICE: _BASE | {"reason", _ACCOUNTS, "changed_at_ms"},
     }
 )
 #: The fields of a health component a Manager or Viewer receives.

@@ -1881,7 +1881,7 @@ its private stream: the Owner and a Manager granted that account receive the fra
 Manager granted only account `…0001` receives nothing, and its `system` `s` does not move.
 
 ```jsonc
-S→C {"t":"d","ch":"system","s":23,"ts":1789133300000,"e":"j","p":{"kind":"account_notice","severity":"warning","reason":"oms.account_resyncing","message":"An account is resynchronising; its orders and positions are being verified.","exchange_account_ids":["a1000000-0000-4000-8000-000000000002"]}}
+S→C {"t":"d","ch":"system","s":23,"ts":1789133300000,"e":"j","p":{"kind":"account_notice","severity":"warning","reason":"oms.account_resyncing","message":"An account is resynchronising; its orders and positions are being verified.","exchange_account_ids":["a1000000-0000-4000-8000-000000000002"],"changed_at_ms":1789133300000}}
 ```
 
 ### 12.6 Subscribing to a symbol with no recorded history
@@ -4394,6 +4394,7 @@ with it. `refusal` and `write_gate_reason` are open-ended for readers (C-6.3).
       "minItems": 1,
       "items": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" }
     },
+    "changed_at_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
     "closing_in_ms": { "type": "integer" },
     "expected_downtime_ms": { "type": "integer" },
     "clock_offset_ms": { "type": "integer" },
@@ -4506,7 +4507,7 @@ the last two are left out of every connection but the Owner's.
 | `degraded_data`      | `degraded_topics`, `affected_symbols`                                                                                                                                                                                                |
 | `clock_drift`        | `clock_offset_ms`                                                                                                                                                                                                                    |
 | `notice`             | `reason`                                                                                                                                                                                                                             |
-| `account_notice`     | `reason`, `exchange_account_ids` (cut to the connection's `account_scope`; a frame left with none is not sent, and one whose list names no account goes to the Owner only, counted as `invalid_body`)                                |
+| `account_notice`     | `reason`, `changed_at_ms`, `exchange_account_ids` (cut to the connection's `account_scope`; a frame left with none is not sent, and one whose list names no account goes to the Owner only, counted as `invalid_body`)               |
 
 So who engaged the kill switch (`engaged_by`, `engaged_by_username`), its free-text `reason`, the
 `actions` counts, the accounts outside the connection's scope, the `owner_only` flag keys and any
@@ -4530,7 +4531,8 @@ and is left out for a connection whose principal holds no role (the field is opt
 `kind: "account_notice"` and of no other kind, the kill switch aside, which keeps the accounts it
 covers in its own `kill_switch.exchange_account_ids` (above); the frame names an account only in its
 `exchange_account_ids`. The frame carries `severity`, `message`, `reason` and
-`exchange_account_ids` (the accounts it concerns, at least one) and no other field. `reason` is a
+`exchange_account_ids` (the accounts it concerns, at least one), a frame of the `oms.` family also
+`changed_at_ms` (below), and no other field. `reason` is a
 machine code from an **open** set; current values are `oms.account_resyncing` (the account's private
 stream was lost and its orders and positions are being re-read, E29-T05), `oms.account_desync`
 (reconciliation found a difference and is correcting it, E29-T06), `oms.account_stale`
@@ -4557,7 +4559,8 @@ counted, as for a `feature_flags` frame left with no key. An `account_notice` wh
 `exchange_account_ids`, go to the Owner only, counted as `invalid_body`. The cut is made when the
 frame is queued, as for every `system` frame: a grant withdrawn or added applies to every later
 frame, a frame already queued when a grant is withdrawn is not recalled (§9.5), and a connection
-that authenticates or gains a grant later is not sent the notices before it. The new kind and the
+that authenticates or gains a grant later is not sent the notices before it, the `oms.` family's
+replay at a first authentication (below) aside. The new kind and the
 new field are additive (C-6.3): `system.kind` is an open enum (§16.5), so a client ignores a
 `kind` it does not know.
 
@@ -4579,8 +4582,52 @@ producer's table pins them once its wiring lands:
 When E29-T06's rows fire (the orchestrator's ruling of record on #914, BQ-6 and BQ-9; `24-internal-schemas.md` §8.5):
 
 - `oms.account_desync` is sent once per pass that applied at least one correction to tracked state, never once per row. A correction is a step sent to an order, a position corrected, or a stop attached or restored. It is `critical` for a pass that found an open position with no exchange-side stop and no recorded stop in force: that pass pages P1, lists the position in its report, and leaves the attach to E32-T02. A pass whose only finding is such a position sends it at `critical` too, though it applied no correction (BQ-9 and BQ-6).
-- `oms.account_stale` is sent once per episode, when the 2-minute window of failed fetches ends and the account's reconciliation job locks (`stale_lockout`), so its order entry is refused with `account_stale`.
-- `oms.account_synced` is sent once, on the first clean pass after a desync or stale episode, never on every clean pass. A clean pass applied no correction, left nothing for the Owner and listed no error, so a pass that found such a naked position is never clean. A stale episode ends only by the operator's decision (`resolveReconciliation`), so its `synced` follows the first clean pass after it.
+- `oms.account_stale` is sent once per episode, when the 2-minute window of failed fetches ends and the account's reconciliation job locks (`stale_lockout`), so its order entry is refused with `account_stale`. That once is B19's notice: the standing's untimed broadcast of the same lock comes first (the replay at connect, below).
+- `oms.account_synced` is sent once, on the first clean pass after a desync or stale episode, never on every clean pass. A clean pass applied no correction, left nothing for the Owner and listed no error, so a pass that found such a naked position is never clean. A stale episode ends only by the operator's decision (`resolveReconciliation`), so its `synced` follows the first clean pass after it. A pass the private stream's resync requests (the `reconnect` trigger) opens an episode too (E29-S07, the orchestrator's ruling of 2026-11-03), so its clean pass, or the first clean pass after it, sends `oms.account_synced`, which ends the resync's `oms.account_resyncing`. A resync whose `reconnect` request finds the account's pass running or backing off gets no pass of its own, so its `oms.account_resyncing` holds until the account's next resync whose pass runs, a desync or lock episode's `synced`, or a restart; a resync during a running `reconnect` pass ends at that pass's `synced`. The stream's first connection and a rejected frame also request a `reconnect` pass, with no `oms.account_resyncing` before it, so `oms.account_synced` may name an account the client holds no state for, and such a frame starts and ends no episode.
+
+**Replay at connect (E29-S07, #1028).** While an account's latest notice of the `oms.` family is
+not `oms.account_synced`, that notice is pushed right after `auth_ok` and the `system` snap (§12.1)
+on a **first** authentication, as the read-only notice is (E27-T02, above), with the
+`changed_at_ms` it was sent with. A lock is replayed from the reconciliation standing
+(`24-internal-schemas.md` §8.5, the stale rule), which B19's restored state rebuilds after a
+restart, and never from a notice alone: while the standing holds the account, its frame is
+`oms.account_stale`, with the time of the lock's notice when this process sent it and with no
+`changed_at_ms` otherwise, never a restart's time; once the standing no longer holds it, its last
+`oms.account_stale` is not replayed. A lock the standing gains with no notice of its own, one
+B19's restored state rebuilds after a restart or one set ahead of B19's notice, is broadcast at
+once as `oms.account_stale` with no `changed_at_ms`, one frame per account, so a socket that
+authenticated before the lock learns it too; B19's notice, when one follows, gives the lock its
+time. Only the lock is read from the standing: every other state of the family is the notice as
+the server keeps it in memory, so after a restart a desync or a resync is not replayed until the
+account's next notice. A resync ends as every state of the family does, at `oms.account_synced`,
+which the clean pass the resync requests sends (above): a socket open during the drop is sent it
+live, and a later first authentication replays nothing for the account. A resync whose request
+finds the account's pass running or backing off is replayed until that `synced` comes, as the
+`synced` rule above says (its next resync whose pass runs, a desync or lock episode, or a
+restart).
+Each frame names one account, its state keyed by the account
+id, so no state crosses environments (C-2.11). It is cut as every `account_notice` is: the Owner
+receives it whole, a Manager or Viewer only for the accounts its `account_scope` lists, and nothing
+when none remains. It is not repeated on an in-place re-auth. A grant gained in place (§9.5) is not
+replayed: until the account's next notice or the client's next connection its state is unknown to
+the client, which shows E29-D03's interim for it (§4.1: refusals turn its controls T2). A view-as
+switch (§9.6) reconnects the socket, so its first `auth_ok` replays the target's accounts, cut to
+the target's scope. The client keeps a replayed frame as state, like any other frame of the family,
+and keys it on the account, `reason` and `changed_at_ms` or its absence: a frame equal in all three
+to the state it holds is that state again, never a new episode, so reconnecting shows one state.
+A frame for the same account and `reason` that adds a time to the state the client holds is that
+state with its time, never a new episode: the standing's untimed `oms.account_stale` and B19's
+timed one that follows are one lock.
+
+**The transition time (E29-S07, #1028).** A frame of the `oms.` family carries `changed_at_ms`
+(epoch ms, the server's clock): when the account entered the state its `reason` names. Every live
+notice of the family carries it, and a notice sent again for the same state (a later pass's
+`oms.account_desync`) carries its own time. A lock broadcast as the standing gains it (above)
+carries none until B19's notice gives it one, a restored lock's replay carries none, and a notice
+whose clock cannot be read is sent without it rather than not at all. No
+other family carries it, so a `profiles.changed` frame never does. It names no account and counts
+nothing, so a Manager or Viewer receives it with the rest of its cut (the table above). The field
+is optional and additive (C-6.3): a reader ignores a field it does not know (§2.3).
 
 ### 15.10 `MachineStateUpdate`
 
@@ -4828,6 +4875,19 @@ desync's severity is `critical` for a pass that found an open position with no s
 in force, the one reason whose severity its producer chooses. This is additive (C-6.3): `reason`
 is an open set, the frame's fields and its cut are unchanged, and no producer sends these rows
 until E29-T06's wiring lands. It is the orchestrator's ruling of record on #914 (BQ-6, BQ-9).
+
+**Contract change, 2026-11-02 (#1028).** An `account_notice` of the `oms.` family gains an optional
+`changed_at_ms` (`epochMs`, §15.9): when the account entered the state its `reason` names. A first
+authentication is sent each account's state of the family right after the `system` snap (the
+replay at connect, §15.9), cut as every `account_notice` is; a lock the reconciliation standing
+gains with no notice of its own is broadcast at once without the field; and the clean pass a
+resync requests sends `oms.account_synced`, which ends the resync. This is additive (C-6.3): the
+field is optional and a reader ignores a field it does not know (§2.3); a client keeps a replayed
+frame as the state it holds, keyed on the account, `reason` and `changed_at_ms`; and the
+`oms.account_synced` a resync's pass sends means what that reason always meant, so no frame a
+client already handles changes meaning. It is the orchestrator's ruling of record on #1028 (BQ-6 (a) with its riders) and,
+for the resync's end, its ruling of 2026-11-03; a lock gained after a socket's `auth_ok` is this
+change's own decision.
 
 ### 16.2 Limits summary
 

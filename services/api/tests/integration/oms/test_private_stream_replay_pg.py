@@ -443,7 +443,10 @@ async def test_a_private_session_replayed_across_a_mid_sequence_disconnect_misse
     assert (after.lifecycle_state, after.cum_exec_qty) == ("filled", qty)
     assert _snapshots(pg_dsn, rig.account) == 1
     frames = [(f["reason"], f["exchange_account_ids"]) for f in parts.hub.frames]
-    assert frames == [(RESYNCING, [str(rig.account)])]
+    # The clean pass the resync requested ends it with `oms.account_synced` (23 §15.9): the second
+    # resync's request found that pass running, so it ends at the same `synced`.
+    synced = ("oms.account_synced", [str(rig.account)])
+    assert frames == [(RESYNCING, [str(rig.account)]), synced]
     labels = {"env": "demo", "stage": "consumer", "outcome": "reconciliation_unavailable"}
     refused = parts.metrics.registry.get_sample_value("oms_stream_outcomes_total", labels)
     assert (refused, parts.pager.calls) == (0.0, [])  # each request taken: nothing paged

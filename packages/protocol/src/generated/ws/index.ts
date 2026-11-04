@@ -1857,6 +1857,10 @@ export interface System {
    * @minItems 1
    */
   exchange_account_ids?: [string, ...string[]];
+  /**
+   * Epoch milliseconds, UTC.
+   */
+  changed_at_ms?: number;
   closing_in_ms?: number;
   expected_downtime_ms?: number;
   clock_offset_ms?: number;

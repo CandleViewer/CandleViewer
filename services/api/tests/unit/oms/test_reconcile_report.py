@@ -23,6 +23,7 @@ from candleviewer.oms.reconcile_report import (
     UNTRACKED_FILLS_UNREAD,
     Notice,
     PassError,
+    PassNotices,
     PositionDrift,
     ReconcileMetrics,
     ReconcileReport,
@@ -112,6 +113,32 @@ def test_synced_is_sent_once_on_the_first_clean_pass_of_an_episode() -> None:
     second = pass_notices(report(), episode_open=first.episode_open)
     assert (first.notices, first.episode_open) == ((Notice("oms.account_synced", "info"),), False)
     assert (second.notices, second.episode_open) == ((), False)
+
+
+def test_a_clean_pass_a_resync_requested_sends_synced_once() -> None:
+    """E29-S07 (23 Sec.15.9, the orchestrator's ruling of 2026-11-03): a pass the private
+    stream's resync requests (`reconnect`) opens an episode itself, so when it is clean it sends
+    `oms.account_synced`, which ends the resync's `oms.account_resyncing`; the clean passes after
+    it send nothing, and a clean pass of any other trigger opens no episode."""
+    first = pass_notices(report(trigger="reconnect"), episode_open=False)
+    second = pass_notices(report(), episode_open=first.episode_open)
+    assert (first.notices, first.episode_open) == ((Notice("oms.account_synced", "info"),), False)
+    assert (second.notices, second.episode_open) == ((), False)
+    for trigger in ("startup", "periodic", "manual", "unknown"):
+        assert pass_notices(report(trigger=trigger), episode_open=False) == PassNotices((), False)
+
+
+def test_a_resync_pass_that_is_not_clean_keeps_its_episode_open_for_the_next_clean_one() -> None:
+    """A resync's pass that leaves an error sends nothing and keeps the episode open; the next
+    clean pass, whatever its trigger, sends `oms.account_synced`. One that corrects sends the
+    desync row as before."""
+    left = pass_notices(report(trigger="reconnect", errors=(PassError("3b", "TimeoutError"),)),
+                        episode_open=False)  # fmt: skip
+    after = pass_notices(report(), episode_open=left.episode_open)
+    assert (left.notices, left.episode_open) == ((), True)
+    assert (after.notices, after.episode_open) == ((Notice("oms.account_synced", "info"),), False)
+    corrected = pass_notices(report(trigger="reconnect", corrected=("l1",)), episode_open=False)
+    assert corrected == PassNotices((Notice("oms.account_desync", "warning"),), True)
 
 
 @pytest.mark.parametrize("field", [*OWNER_FIELDS, "errors"])
