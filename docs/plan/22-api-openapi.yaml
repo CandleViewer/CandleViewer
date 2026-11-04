@@ -18627,9 +18627,10 @@ components:
                 }
     UnprocessableEntity:
       description: >
-        Semantically invalid request. The `nativeStop` and `riskCap` examples predate the
-        registry statuses (#2088): the order routes answer `validation_failed` with `400` and
-        `risk_limit_breached` with `403`.
+        Semantically invalid request: a well-formed body that fails semantic validation is
+        `422 validation_failed` (`Problem` states the convention). The `nativeStop` and `riskCap`
+        examples predate the registry statuses (#2088), which the order routes keep: they answer
+        `validation_failed` with `400` and `risk_limit_breached` with `403`.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
