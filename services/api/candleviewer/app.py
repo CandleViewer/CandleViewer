@@ -2859,6 +2859,7 @@ def create_app(
             audit=_LazyAuditEmitter(ctx.audit),
             auth=ctx.auth,
             versions=order_versions(lambda: oms_runtime_of(app.state)),
+            tickers=lambda symbol: _latest_ticker(ctx, symbol),  # E24-S03 #778 funding_estimate
         )
     )
     # E29-S07 (#1028): `getReconciliationDigest`, in the caller's grants, over the digests above.
@@ -4020,6 +4021,13 @@ def _catalogue_min_size_floor(ctx: AppContext, symbol: str) -> Decimal | None:
         return None
     size = notional_size(inst.min_notional, _reference_price(ctx, symbol), inst.qty_step)
     return min_size_floor(inst.min_order_qty, size)
+
+
+def _latest_ticker(ctx: AppContext, symbol: str) -> TickerEvent | None:
+    """The symbol's latest ticker in the stream (a position's `funding_estimate`, #778), or None:
+    the live public stream, so a demo position is priced at the live rate (22 `FundingEstimate`)."""
+    tickers = ctx.ingestion.tickers
+    return tickers.latest(symbol) if tickers is not None else None
 
 
 def _reference_price(ctx: AppContext, symbol: str) -> Decimal | None:

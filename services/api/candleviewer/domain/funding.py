@@ -18,10 +18,14 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Final, Literal, Protocol
 
+from pydantic import BaseModel, ConfigDict
+
 #: Minutes in a 365-day year. The annualisation numerator (not an interval).
 MINUTES_PER_YEAR: Final[int] = 525_600
 #: 22 `getFundingHistory`: `annualised_pct` is served at 6 fractional digits, `ROUND_HALF_UP`.
 ANNUALISED_PCT_QUANTUM: Final = Decimal("0.000001")
+#: 22 `FundingEstimate.amount` / 24 §1.5 funding payments: 8 dp, `ROUND_HALF_UP`.
+ESTIMATE_QUANTUM: Final = Decimal("0.00000001")
 #: 22 `FundingPageMeta.coverage.gaps`: `maxItems`.
 GAP_CAP: Final[int] = 64
 _US_PER_MIN: Final[int] = 60_000_000
@@ -150,6 +154,53 @@ def funding_gaps(
     return tuple(gaps)
 
 
+class FundingEstimate(BaseModel):
+    """24 §19.110 / 22 `FundingEstimate`: one position's estimated charge at the next settlement.
+    Server-computed only (C-2.12); `None` on the position, never a zero amount, is "no charge"."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    amount: Decimal
+    direction: Literal["pay", "receive", "none"]
+    funding_rate: Decimal
+    settles_at: int
+    computed_at: int
+
+
+def estimate_funding(
+    *,
+    side: Literal["long", "short"] | None,
+    size: Decimal,
+    mark_price: Decimal | None,
+    funding_rate: Decimal | None,
+    settles_at_us: int | None,
+    computed_at_us: int,
+) -> FundingEstimate | None:
+    """|size x mark x rate| at 8 dp `ROUND_HALF_UP`; a long pays and a short receives when the
+    rate is positive, the reverse when negative, `none` at exactly zero. `None` when the position
+    is flat or the mark, the rate or the settlement time is not held."""
+    if side is None or size <= 0:
+        return None
+    if mark_price is None or funding_rate is None or settles_at_us is None:
+        return None
+    raw = size * mark_price * funding_rate
+    amount = abs(raw).quantize(ESTIMATE_QUANTUM, rounding=ROUND_HALF_UP)
+    direction: Literal["pay", "receive", "none"]
+    if funding_rate == 0:
+        direction = "none"
+    elif (funding_rate > 0) == (side == "long"):
+        direction = "pay"
+    else:
+        direction = "receive"
+    return FundingEstimate(
+        amount=amount,
+        direction=direction,
+        funding_rate=funding_rate,
+        settles_at=settles_at_us,
+        computed_at=computed_at_us,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class FundingSettlement:
     """A normalised settled-history print as the adapter returns it: the
@@ -196,11 +247,13 @@ def settle(symbol: str, ts_us: int, funding_rate: Decimal, interval_min: int) ->
 
 __all__ = [
     "ANNUALISED_PCT_QUANTUM",
+    "ESTIMATE_QUANTUM",
     "GAP_CAP",
     "MAX_INTERVAL_MIN",
     "MINUTES_PER_YEAR",
     "MIN_INTERVAL_MIN",
     "SOURCE_HISTORY",
+    "FundingEstimate",
     "FundingIntervalUnknown",
     "FundingSettlement",
     "HasFundingInterval",
@@ -208,6 +261,7 @@ __all__ = [
     "PredictedFundingRefused",
     "SettledFunding",
     "annualised_pct",
+    "estimate_funding",
     "fixed_point",
     "funding_gaps",
     "resolve_funding_interval_minutes",

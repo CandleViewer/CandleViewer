@@ -31,15 +31,23 @@ time, and on `getOrder` its fills and, with `include_events`, its events without
 (SR-E29-09), with the order's `ETag` when the OMS knows its version; a position with 22's
 vocabulary (a member the row lacks is absent, never invented); a fill. No log line carries a value
 of a row (C-12.6).
+
+A position read in scope also carries `funding_estimate` (22 `FundingEstimate`, E24-S03 #778,
+ruling 6612964585 Q3/Q4), computed here and nowhere else (C-2.12) from the row's size and side and
+the symbol's latest ticker (its mark, its accruing `funding_rate`, its `next_funding_time`, and
+`ts_ingest` as `computed_at`, the instant the server read them): `null` when the position is flat or
+no ticker, mark, rate or settlement time is held, never a zero. It rides only these two reads, so
+its scope is theirs: a position out of scope is the 404 above and no estimate is computed for it.
+With no ticker source composed the member is absent, as 22 reads "not served yet".
 """
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Annotated, Any, Final, get_args
+from typing import Annotated, Any, Final, Literal, Protocol, get_args
 
 import structlog
 from fastapi import APIRouter, Path, Request
@@ -75,6 +83,7 @@ from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.metrics import count_authz_denial
 from candleviewer.auth.scopes import ForbiddenError, account_scope, enforce
+from candleviewer.domain.funding import FundingEstimate, estimate_funding
 from candleviewer.domain.primitives import Environment
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.oms.errors import AccountScopeDenied, FieldError, StoreUnavailable
@@ -85,7 +94,7 @@ from candleviewer.storage.repositories.oms_reads import Keyset, ListedExecution,
 from candleviewer.storage.repositories.orders import MAX_EVENT_PAGE, OrderEventRow, OutOfScope
 from candleviewer.storage.repositories.positions import PositionRow
 
-__all__ = ["flag_param", "make_oms_reads_router"]
+__all__ = ["flag_param", "funding_estimate", "make_oms_reads_router"]
 
 _LIST_ORDERS: Final = "listOrders"
 _LIST_EXECUTIONS: Final = "listExecutions"
@@ -104,6 +113,23 @@ _EXEC_TYPES: Final = frozenset(get_args(ExecType)) - {"SessionSettlePnl"}
 _POSITION_SIDES: Final = {"Buy": "long", "Sell": "short"}
 
 type Body = dict[str, object]
+
+
+class FundingTicker(Protocol):
+    """What the estimate reads of the symbol's latest ticker (`TickerEvent`)."""
+
+    @property
+    def mark_price(self) -> Decimal | None: ...
+    @property
+    def funding_rate(self) -> Decimal | None: ...
+    @property
+    def next_funding_time(self) -> int | None: ...
+    @property
+    def ts_ingest(self) -> int: ...
+
+
+#: The symbol's latest ticker, None when none is held.
+type FundingTickers = Callable[[str], FundingTicker | None]
 
 
 def _log() -> Any:
@@ -191,6 +217,36 @@ def position_document(row: PositionRow) -> Body:
     return _present(body, *(name for name in body if name not in nullable))
 
 
+def _at_us(us: int) -> str:
+    return _at(datetime(1970, 1, 1, tzinfo=UTC) + timedelta(microseconds=us))  # exact, no float
+
+
+def funding_estimate(row: PositionRow, tickers: FundingTickers) -> FundingEstimate | None:
+    """The position's charge at the next settlement (module docstring), or None: no charge."""
+    side: Literal["long", "short"] | None
+    side = "long" if row.side == "Buy" else "short" if row.side == "Sell" else None
+    if side is None or row.size <= 0:
+        return None
+    tick = tickers(row.symbol)
+    if tick is None:
+        return None
+    return estimate_funding(
+        side=side, size=row.size, mark_price=tick.mark_price, funding_rate=tick.funding_rate,
+        settles_at_us=tick.next_funding_time, computed_at_us=tick.ts_ingest,
+    )  # fmt: skip
+
+
+def funding_document(found: FundingEstimate | None) -> Body | None:
+    """22 `FundingEstimate`, or `null`."""
+    if found is None:
+        return None
+    return {
+        "amount": format(found.amount, "f"), "direction": found.direction,
+        "funding_rate": format(found.funding_rate, "f"),
+        "settles_at": _at_us(found.settles_at), "computed_at": _at_us(found.computed_at),
+    }  # fmt: skip
+
+
 def aggregate_document(found: AggregatePosition) -> Body:
     """22 `AggregatePosition`, its per-account breakdown in `accounts`."""
     legs = [
@@ -232,10 +288,18 @@ def make_oms_reads_router(
     principals: OrderPrincipals | None, reads: OmsReads | None, *, audit: AuditEmitter,
     auth: SessionsLike | None = None, versions: Callable[[uuid.UUID], int | None] | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    tickers: FundingTickers | None = None,
 ) -> APIRouter:  # fmt: skip
     """The seven reads (module docstring). `reads` is None on the fake backend (503 after RBAC);
-    `versions` gives an order's version for `getOrder`'s `ETag`, None when the OMS knows none."""
+    `versions` gives an order's version for `getOrder`'s `ETag`, None when the OMS knows none;
+    `tickers` the latest ticker for a position's `funding_estimate` (absent when None)."""
     router = APIRouter()
+
+    def served(row: PositionRow) -> Body:
+        body = position_document(row)
+        if tickers is not None:
+            body["funding_estimate"] = funding_document(funding_estimate(row, tickers))
+        return body
 
     async def denied(
         principal: TradingPrincipal, request: Request, operation: str, reason: str,
@@ -490,7 +554,7 @@ def make_oms_reads_router(
         except (AccountScopeDenied, StoreUnavailable) as exc:
             return await scoped_failure(exc, principal, request, operation, query.accounts)
         found = aggregate_positions(rows) if aggregate else ()
-        items = [position_document(row) for row in rows]
+        items = [served(row) for row in rows]
         return JSONResponse({"items": items, "aggregates": [aggregate_document(a) for a in found]})
 
     @router.get("/positions/{positionId}", tags=["positions"])
@@ -512,7 +576,7 @@ def make_oms_reads_router(
         if not isinstance(found, PositionRow):
             holder = found.account_id
             return await missing(principal, request, operation, "position", position_id, holder)
-        return JSONResponse(position_document(found))
+        return JSONResponse(served(found))
 
     return router
 
