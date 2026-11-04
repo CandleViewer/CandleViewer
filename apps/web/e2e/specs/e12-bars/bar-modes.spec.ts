@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { axeFindings, goldenBars, openChart, patient } from "./bars-harness";
-import { BLOCKED } from "./blockers";
+import { BLOCKED, blockedBy } from "./blockers";
 import { COPY } from "./chart-probe";
 
 // E12-Q03 (#419), US-CHART-003: E12-TC-E02, E06, F02. Tick and volume bars over the conformance
@@ -8,9 +8,7 @@ import { COPY } from "./chart-probe";
 const TICK = goldenBars("btcusdt-2026-09-01", "tick:1000");
 const VOLUME = goldenBars("btcusdt-2026-09-01", "vol:50");
 
-test.describe("tick and volume bar modes (US-CHART-003)", () => {
-  test.fixme(true, `blocked: ${BLOCKED.barModes}`);
-
+test.describe("tick and volume bar modes (US-CHART-003)", blockedBy(BLOCKED.barModes), () => {
   test("tick 1000 from SCR-041 by keyboard: the bar count and the partial-history marker", async ({
     page,
   }) => {

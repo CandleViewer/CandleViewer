@@ -19,16 +19,39 @@ export const COPY = {
   chartType: "Chart type",
   /** d05:W-1 — CMP-220's bar-mode control. */
   barMode: "Bar mode",
-  /** d05:W-2 — the CMP-222 options, in toolbar order. */
-  seriesTypes: ["Candles", "Bars (OHLC)", "Hollow candles", "Line", "Area", "Baseline"] as const,
+  /**
+   * d05:W-2 — the nine CMP-222 options, in toolbar order: one radio group, Heikin-Ashi among them
+   * (the #419 BQ-4 ruling), never a checkbox.
+   */
+  seriesTypes: [
+    "Candles",
+    "Bars (OHLC)",
+    "Hollow candles",
+    "Line",
+    "Area",
+    "Baseline",
+    "Heikin-Ashi",
+    "Equi-volume",
+    "Delta-volume",
+  ] as const,
   heikinAshi: "Heikin-Ashi",
+  /** CMP-222's footprint overlay: the one `aria-pressed` toggle beside the group (`15` CMP-222). */
+  footprint: /^Footprint/u,
   /** d03:C-33 — the partial-history marker's sentence head. */
   recordingStart: /^Bars start where recording started/u,
   /** d03:C-22 — the message line after a cancelled build. */
   buildCancelled: /^Build of .+ cancelled at \d+ %; showing .+\.$/u,
-  /** d05:W-5 — the Heikin-Ashi plus footprint guard's two choices. */
-  keepType: /^Keep /u,
+  /** d05:W-5 — the CMP-028 callout for Heikin-Ashi with footprint, D02:279 verbatim. */
+  haFootprint:
+    "Footprint needs a real-price bar type. Heikin-Ashi recomputes each bar's open and close, so footprint cells would not line up with traded prices.",
+  /** d05:W-5 — "Keep {current type}", the safe default. */
+  keepType: (type: string) => `Keep ${type}`,
   haTurnFootprintOff: "Use Heikin-Ashi, turn footprint off",
+  /** d05:W-6 — the same callout for Heikin-Ashi on a non-time bar mode. */
+  haTimeOnly: "Heikin-Ashi is drawn on time bars only.",
+  switchToTime: "Switch to time bars",
+  /** d05:W-6 — "Keep {mode}". */
+  keepMode: /^Keep /u,
   /** d08:W-3 — SCR-047 naming the first available timestamp. */
   historyStarts: /^History starts \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC — recording began then\.$/u,
   /** d08:W-13 — SCR-048's data-feed cause. */
@@ -36,9 +59,14 @@ export const COPY = {
   retry: /^Retry/u,
 } as const;
 
+/**
+ * SCR-046's probe island, v1 as the #419 BQ-8 ruling sets it (PROPOSED; carried by E11-T07 #523,
+ * if its head merges as is): test builds only, compiled out of production.
+ */
 export interface Diagnostics {
   readonly version: number;
   readonly glContextId: string;
+  readonly visibleRange: { readonly fromUs: number; readonly toUs: number };
 }
 
 export class ChartProbe {
@@ -82,6 +110,12 @@ export class ChartProbe {
   seriesType(name: string): Locator {
     return this.chartType.getByRole("radio", { name, exact: true });
   }
+  get heikinAshi(): Locator {
+    return this.seriesType(COPY.heikinAshi);
+  }
+  get footprint(): Locator {
+    return this.page.getByRole("button", { name: COPY.footprint });
+  }
   get quickSwitcher(): Locator {
     return this.page.getByRole("dialog", { name: COPY.quickSwitcher });
   }
@@ -121,7 +155,15 @@ async function captionOf(probe: ChartProbe): Promise<string> {
 function isDiagnostics(v: unknown): v is Diagnostics {
   if (typeof v !== "object" || v === null) return false;
   const o = v as Record<string, unknown>;
-  return typeof o["version"] === "number" && typeof o["glContextId"] === "string";
+  const range = o["visibleRange"];
+  if (typeof range !== "object" || range === null) return false;
+  const r = range as Record<string, unknown>;
+  return (
+    typeof o["version"] === "number" &&
+    typeof o["glContextId"] === "string" &&
+    typeof r["fromUs"] === "number" &&
+    typeof r["toUs"] === "number"
+  );
 }
 
 function escape(text: string): string {

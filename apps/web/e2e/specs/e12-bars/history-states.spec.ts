@@ -1,14 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { axeFindings, openChart, patient } from "./bars-harness";
-import { BLOCKED } from "./blockers";
+import { BLOCKED, blockedBy } from "./blockers";
 import { NO_BARS } from "../../../src/chart/a11y/copy";
 import { COPY } from "./chart-probe";
 
 // E12-Q03 (#419), US-CHART-010 and US-MKT-008: E12-TC-A06, F02 and the SCR-048 failure scenario.
 
-test.describe("history states (US-CHART-010, US-MKT-008)", () => {
-  test.fixme(true, `blocked: ${BLOCKED.states}`);
-
+test.describe("history states (US-CHART-010, US-MKT-008)", blockedBy(BLOCKED.states), () => {
   test("503 on the market read shows SCR-048 with its cause and a keyboard retry", async ({
     page,
   }) => {

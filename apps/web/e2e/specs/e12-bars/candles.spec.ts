@@ -1,16 +1,15 @@
 import { expect, test } from "@playwright/test";
 import { displayDecimal, formatBarTime } from "../../../src/chart/a11y/format";
 import { axeFindings, goldenBars, openChart, patient } from "./bars-harness";
-import { BLOCKED } from "./blockers";
+import { BLOCKED, blockedBy } from "./blockers";
 
-// E12-Q03 (#419), US-CHART-001: E12-TC-A04, A06 (plan `qa/plans/e12-bars-and-series-test-plan.md`).
+// E12-Q03 (#419), US-CHART-001: E12-TC-A06 (plan `qa/plans/e12-bars-and-series-test-plan.md`). The
+// forming-bar case, E12-TC-A04, is held back until `sendBars` has its sender on `main` (BQ-7).
 const BARS = goldenBars("btcusdt-2026-09-01", "time:1");
 const ONE_MINUTE = 60_000;
 const us = (t: string): number => Date.parse(t) * 1_000;
 
-test.describe("candles (US-CHART-001)", () => {
-  test.fixme(true, `blocked: ${BLOCKED.table}`);
-
+test.describe("candles (US-CHART-001)", blockedBy(BLOCKED.table), () => {
   test("BTCUSDT 1m: the data table's first and last bars match the served klines", async ({
     page,
   }) => {
@@ -29,7 +28,7 @@ test.describe("candles (US-CHART-001)", () => {
       await expect(row).toContainText(displayDecimal(bar.o));
       await expect(row).toContainText(displayDecimal(bar.c));
     }
-    expect(backend.refused).toEqual([]);
+    expect(backend.refused()).toEqual([]);
     expect(await axeFindings(page)).toEqual([]);
   });
 
@@ -40,24 +39,5 @@ test.describe("candles (US-CHART-001)", () => {
     await page.keyboard.press("Escape");
     await expect(probe.dataTable).toHaveCount(0);
     await expect(probe.chartButton).toHaveAttribute("aria-pressed", "true");
-  });
-});
-
-test.describe("forming bar (E12-TC-A04)", () => {
-  test.fixme(true, `blocked: ${BLOCKED.forming}`);
-
-  test("a trade into the forming bar updates its row in place, without a reload", async ({
-    page,
-  }) => {
-    const { probe, backend } = await openChart(page, "BTCUSDT 1m", {
-      symbol: "BTCUSDT",
-      bars: BARS,
-    });
-    await probe.openTableByKey();
-    const before = await probe.barsLoaded();
-    const reads = backend.marketReads.length;
-    // The bars-topic sender lands with the blocker; the update is asserted on the table only.
-    await patient.poll(() => probe.barsLoaded()).toBe(before);
-    expect(backend.marketReads).toHaveLength(reads);
   });
 });

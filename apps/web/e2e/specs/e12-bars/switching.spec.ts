@@ -1,15 +1,15 @@
 import { expect, test } from "@playwright/test";
 import { axeFindings, goldenBars, openChart, patient } from "./bars-harness";
-import { BLOCKED } from "./blockers";
+import { BLOCKED, blockedBy } from "./blockers";
 import { ChartProbe } from "./chart-probe";
 
-// E12-Q03 (#419), US-CHART-005: E12-TC-E01, E04.
+// E12-Q03 (#419), US-CHART-005: E12-TC-E04 and the timeframe switch. The visible-window centre check
+// (E12-TC-E01) is held back until the E11-T07 #523 head emits `visibleRange` (the BQ-8 ruling); the
+// timeframe case asserts the populated panel and the 5m bar count only.
 const BTC_1M = goldenBars("btcusdt-2026-09-01", "time:1");
 const BTC_5M = goldenBars("btcusdt-2026-09-01", "time:5");
 
-test.describe("symbol switch (US-CHART-005)", () => {
-  test.fixme(true, `blocked: ${BLOCKED.probe}`);
-
+test.describe("symbol switch (US-CHART-005)", blockedBy(BLOCKED.probe), () => {
   test("BTCUSDT to ETHUSDT from SCR-041 keeps the GL context and never shows an empty grid", async ({
     page,
   }) => {
@@ -31,9 +31,7 @@ test.describe("symbol switch (US-CHART-005)", () => {
   });
 });
 
-test.describe("timeframe switch (US-CHART-005)", () => {
-  test.fixme(true, `blocked: ${BLOCKED.barModes}`);
-
+test.describe("timeframe switch (US-CHART-005)", blockedBy(BLOCKED.barModes), () => {
   test("the 5m hotkey keeps the panel populated and loads 5m bars", async ({ page }) => {
     const { probe, backend } = await openChart(page, "BTCUSDT 1m", {
       symbol: "BTCUSDT",

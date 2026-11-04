@@ -3,18 +3,23 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, type Page } from "@playwright/test";
 import type { generated } from "@candleviewer/protocol";
-import { json, stubSession } from "../../support/api";
+import { guardContextEgress } from "@candleviewer/fixtures/e2e";
+import { json, stubSession } from "@candleviewer/fixtures/e2e/stubs";
 import { seriousAxe } from "../../support/axe";
 import { startWsHarness, type WsHarness } from "../../support/wsHarness";
 import { ChartProbe } from "./chart-probe";
 
 // E12-Q03 (#419): the fixture-backed backend the e12-bars specs share. `/market/klines` and
-// `/market/bars` are answered from the E12-Q02 conformance goldens (synthetic, public market-data
-// shape, no account field), every other host is refused, and the page clock runs from the real time.
+// `/market/bars` are answered from the E12-Q02 conformance goldens (synthetic stand-ins under
+// exception #1778 A until E16's recorder captures replace them; public market-data shape, no account
+// field), the shared E10-Q02 egress guard refuses every non-loopback request, and the page clock
+// runs from the real time.
 
 type Schemas = generated.rest.components["schemas"];
 type Bar = Schemas["Bar"];
 type KlineResponse = Schemas["KlineResponse"];
+/** A `bars.{symbol}.{bar_type}.{param}` payload (23 §6.1, `BarsBatch`). */
+export type BarsBatch = generated.ws.BarsSymbolBarTypeParam;
 
 export const patient = expect.configure({ timeout: 15_000 });
 
@@ -24,7 +29,10 @@ const GOLDENS = path.resolve(
   "../../../../../packages/fixtures/golden/bars/conformance/goldens",
 );
 
-/** The route a chart panel opens on. PROPOSED (BQ-1): the first route that mounts a chart panel. */
+/**
+ * The route a chart panel opens on: R-100 `/terminal` (to R-101 `/terminal/last`) for now, per the
+ * #419 BQ-2 ruling; the slice that turns ready sets it to the route E15-S02 #435 mounts the panes on.
+ */
 export const CHART_ROUTE = "/terminal";
 
 /** Tapes in the conformance bank (`MANIFEST.toml`); `-gap` holds a recording gap. */
@@ -98,28 +106,21 @@ export interface Backend {
   readonly harness: WsHarness;
   /** Every `/market/klines` or `/market/bars` request, in order. */
   readonly marketReads: readonly string[];
-  /** Requests to any host but the preview server, which were refused. */
-  readonly refused: readonly string[];
+  /** Origins of the non-loopback requests the egress guard refused (C-13.5). */
+  refused(): readonly string[];
   serve(served: Served): void;
 }
 
 const MARKET = /\/api\/v1\/market\/(klines|bars)(\?|$)/u;
 
 /**
- * Signs an owner in on stubs, starts the fixture WS gateway, refuses every off-host request and
- * answers the market reads from `served`. Call before `goto`.
+ * Signs an owner in on stubs, starts the fixture WS gateway, guards the context's egress and answers
+ * the market reads from `served`. Call before `goto`.
  */
 export async function fixtureBackend(page: Page, served: Served): Promise<Backend> {
   let current = served;
   const marketReads: string[] = [];
-  const refused: string[] = [];
-  await page.route(
-    (url) => url.hostname !== "127.0.0.1",
-    (route) => {
-      refused.push(route.request().url());
-      return route.abort("blockedbyclient");
-    },
-  );
+  const guard = await guardContextEgress(page.context());
   await stubSession(page, { role: "owner" });
   const harness = await startWsHarness(page);
   await page.route(MARKET, (route) => {
@@ -133,9 +134,23 @@ export async function fixtureBackend(page: Page, served: Served): Promise<Backen
   return {
     harness,
     marketReads,
-    refused,
+    refused: guard.hits,
     serve: (next) => void (current = next),
   };
+}
+
+/** The data-frame sender of the WS fixture gateway: `sendData` as PR #5797 adds it, if it merges as is. */
+export interface DataSender {
+  sendData(ch: string, p: Readonly<Record<string, unknown>>): void;
+}
+
+/**
+ * The bars-topic sender (the #419 BQ-7 ruling): a thin typed wrapper over the gateway's one data
+ * sender, never a second one, in the JSON encoding the harness answers with. The forming-bar case
+ * (E12-TC-A04) that calls it is held back until #5797's `sendData` is on `main`.
+ */
+export function sendBars(gateway: DataSender, batch: BarsBatch): void {
+  gateway.sendData(`bars.${batch.symbol}.${batch.bar_type}.${batch.param}`, { ...batch });
 }
 
 /**
@@ -146,7 +161,10 @@ export async function realTimeClock(page: Page): Promise<void> {
   await page.clock.install();
 }
 
-/** Serious and critical axe findings, with the clock running: axe schedules with `setTimeout(0)`. */
+/**
+ * Serious and critical axe findings, with the clock running: axe schedules with `setTimeout(0)`.
+ * The one place the page clock is resumed for a scan (the #419 BQ-6 ruling).
+ */
 export async function axeFindings(page: Page): Promise<string[]> {
   await page.clock.resume();
   return seriousAxe(page);
