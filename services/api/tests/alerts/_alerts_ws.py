@@ -133,13 +133,14 @@ class FakeReader:
         finally:
             self.reading -= 1
 
-    async def unacked_count(self, user_id: str) -> int:
+    async def unacked_count(self, user_id: str, *, in_app_only: bool = True) -> int:
         self.calls.append(("unacked_count", user_id))
         self._check("unacked_count")
         return sum(
             r.user_id == user_id and r.status == "sent" and r.acked_at is None
+            and (r.channel == "in_app" or not in_app_only)
             for r in self.rows.values()
-        )
+        )  # fmt: skip
 
     async def get_many(self, delivery_ids: Sequence[int]) -> list[DeliveryRow]:
         self.calls.append(("get_many", tuple(delivery_ids)))

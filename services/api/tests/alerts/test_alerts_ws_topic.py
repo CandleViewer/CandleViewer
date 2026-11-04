@@ -626,5 +626,6 @@ def test_an_item_never_carries_a_withheld_field() -> None:
     row = w.reader.add(USER_A, context={"symbol": "BTCUSDT", "webhook_url_enc": "x"})
     item = delivery_item(row)
     assert set(item) == {"id", "alert_id", "channel", "status", "severity", "title", "message",
-                         "symbol", "fired_at_ms", "acked_at_ms", "error"}  # fmt: skip
+                         "symbol", "fired_at_ms", "acked_at_ms", "error", "kind",
+                         "summary", "silenced"}  # fmt: skip
     assert item["alert_id"] == ALERT_A and "context" not in item

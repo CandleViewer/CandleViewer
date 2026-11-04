@@ -18,7 +18,8 @@ notice, row 34b's one exception). A system `message` passes the shared redaction
 `Notification.id` is `uuid5(namespace, source_table + source_id)` (24-internal-schemas.md §1.6),
 so one source row always maps to one id. `source_id` stays contract-typed (a uuid, C-6.1): the
 same scheme over `<source_table>:<event id>`, never a raw bigint; the raw parent ids (alert, rule,
-order) travel only in `route`. `read_at` is `acked_at` for an alert delivery and null for the
+order) travel only in `route`; an alert row's own delivery id is `delivery_id` (E40-D02 CC-20),
+the id the inbox routes already take. `read_at` is `acked_at` for an alert delivery and null for the
 other sources until their owners define read state.
 """
 
@@ -145,6 +146,7 @@ def dump(r: NotificationRow) -> dict[str, Any]:
         "created_at": r.ts.isoformat(),
         "read_at": None if r.read_at is None else r.read_at.isoformat(),
         "symbol": symbol, "exchange_account_id": r.account_id,
+        "delivery_id": r.src_id if r.nkind == "alert" else None,  # CC-20
         "source_id": source_id(r.src, r.src_id),
         "route": None if route is None or r.source_uuid is None else route.format(r.source_uuid),
     }  # fmt: skip

@@ -75,6 +75,16 @@ def test_ack_alert_delivery_200_and_404(env: Env) -> None:
     _check("/alerts/deliveries/{deliveryId}/ack", "post", r.status_code, r.json())
 
 
+def test_storm_summary_list_item_validates(env: Env) -> None:
+    env.store.add(context={"storm_summary": True, "suppressed": 4, "symbols": ["A"],
+                           "window_start_ms": 1, "window_end_ms": 60_001})  # fmt: skip
+    r = env.c.get("/alerts/deliveries", params={"limit": 1})
+    _check("/alerts/deliveries", "get", r.status_code, r.json())
+    (item,) = r.json()["items"]
+    assert item["kind"] == "storm_summary" and item["summary"]["count"] == 4
+    api.AlertDelivery.model_validate(item)
+
+
 def test_ack_all_200(env: Env) -> None:
     r = env.c.post("/alerts/deliveries/ack-all")
     _check("/alerts/deliveries/ack-all", "post", r.status_code, r.json())
@@ -137,6 +147,8 @@ def test_list_notifications_200() -> None:
     _check("/notifications", "get", r.status_code, r.json())
     for item in r.json()["items"]:
         api.Notification.model_validate(item)
+    by_kind = {i["kind"]: i["delivery_id"] for i in r.json()["items"]}
+    assert by_kind == {"alert": 4471, "rule": None, "order": None, "system": None}  # CC-20
 
 
 def test_list_notifications_503() -> None:

@@ -172,6 +172,8 @@ SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
                     "status": "queued",
                     "message": "m",
                     "fired_at_ms": 1,
+                    "kind": "firing",
+                    "summary": None,
                 }
             ]
         },

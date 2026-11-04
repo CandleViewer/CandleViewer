@@ -304,7 +304,7 @@ def test_alert_row_dump() -> None:
         "id": notification_id(1, 4471), "kind": "alert", "severity": "warning",
         "title": "BTC reclaims 64k", "body": "BTCUSDT crossed 64000",
         "created_at": T0.isoformat(), "read_at": T0.isoformat(), "symbol": "BTCUSDT",
-        "exchange_account_id": None, "source_id": source_id(1, 4471),
+        "exchange_account_id": None, "delivery_id": 4471, "source_id": source_id(1, 4471),
         "route": f"/alerts/{ALERT}",
     }  # fmt: skip
 
@@ -336,6 +336,7 @@ def test_order_row_title_and_severity(
     d = dump(r)
     assert (d["title"], d["severity"]) == (title, severity)
     assert d["route"] == f"/positions/order/{ORDER}" and d["source_id"] == source_id(3, 11)
+    assert d["delivery_id"] is None  # CC-20: alert rows only
 
 
 def test_system_row_has_no_route_but_a_source_id() -> None:
@@ -381,7 +382,6 @@ def test_every_answer_is_exactly_the_contracts_notification(env: Env) -> None:
                                                       ("system", 4))]  # fmt: skip
     items = env.c.get("/notifications").json()["items"]
     declared = set(load_openapi_spec()["components"]["schemas"]["Notification"]["properties"])
-    declared -= {"delivery_id"}  # E40-S02: served from slice 2 of #1130, which drops this
     assert len(items) == 4 and all(set(i) == declared for i in items)
 
 
