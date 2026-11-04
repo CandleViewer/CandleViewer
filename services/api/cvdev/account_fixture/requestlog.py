@@ -18,7 +18,9 @@ Neither the directory, however it is spelled, nor the file is opened through a s
 (`O_NOFOLLOW`; Settings refuses one above the directory). The file is a regular file of this user
 with one link, mode 0600, rotated at `max_bytes` into `backups` older files. The log needs
 `CV_ACCOUNT_FIXTURE_DIR` (fail closed). Writes are synchronous: one short append per answer, on a
-dev-only path that is not hot. Nothing here imports `candleviewer.secrets` or `candleviewer.audit`.
+dev-only path that is not hot. One lock serialises every write, rotation and close, so the log is
+safe from more than one thread, each running its own event loop (the serving loop and the order
+lane's, #977). Nothing here imports `candleviewer.secrets` or `candleviewer.audit`.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ import json
 import os
 import re
 import stat
+import threading
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -240,6 +243,8 @@ class RequestLog:
             )
         self._keys, self._process_env, self._clock = keys, process_env.value, clock
         self._max_bytes, self._backups, self._fd = max_bytes, backups, -1
+        #: Held for each write's stamp, size check, rotation and append, and for `close`.
+        self._lock = threading.Lock()
         self._dir_fd = _open_directory(directory)
         try:
             self._fd = self._open_file()
@@ -267,15 +272,15 @@ class RequestLog:
         code_unconfirmed: bool | None = None,
         order: OrderFields | None = None,
     ) -> None:
-        """Append one line for one answer or refusal; a field outside its rule writes nothing."""
-        if self._fd < 0:
-            raise RequestLogFileError("the request log is closed")
+        """Append one line for one answer or refusal; a field outside its rule writes nothing.
+        Safe from any thread: the stamp and the append are taken under the log's lock, so lines
+        land in stamp order and no write meets a descriptor a rotation or `close` let go."""
         if signing_key_id is not None and signing_key_id not in self._keys:
             raise RequestLogFieldError(
                 "signing_key_id must be a pack key id; log any other key as key_class=non_fixture"
             )
         line: dict[str, object] = {
-            "ts": self._timestamp(),
+            "ts": None,
             "host": _text("host", host, _HOST),
             "host_env": _choice("host_env", host_env, get_args(HostEnv)),
             "process_env": self._process_env,
@@ -295,22 +300,27 @@ class RequestLog:
             "order": _order(order),
         }
         _check_against_the_guards(line)
-        data = (json.dumps(line, separators=(",", ":"), allow_nan=False) + "\n").encode("ascii")
-        if len(data) > MAX_LINE_BYTES:
-            raise RequestLogFieldError(f"a line must fit in {MAX_LINE_BYTES} bytes")
-        size = os.fstat(self._fd).st_size  # the file's own, so another appender counts too
-        if size and size + len(data) > self._max_bytes:
-            self._rotate()
-        view = memoryview(data)
-        while view:
-            view = view[os.write(self._fd, view) :]
+        with self._lock:
+            if self._fd < 0:
+                raise RequestLogFileError("the request log is closed")
+            line["ts"] = self._timestamp()
+            data = json.dumps(line, separators=(",", ":"), allow_nan=False) + "\n"
+            if len(encoded := data.encode("ascii")) > MAX_LINE_BYTES:
+                raise RequestLogFieldError(f"a line must fit in {MAX_LINE_BYTES} bytes")
+            size = os.fstat(self._fd).st_size  # the file's own, so another appender counts too
+            if size and size + len(encoded) > self._max_bytes:
+                self._rotate()
+            view = memoryview(encoded)
+            while view:
+                view = view[os.write(self._fd, view) :]
 
     def close(self) -> None:
-        """Close the file and the directory; idempotent."""
-        for fd in (self._fd, self._dir_fd):
-            if fd >= 0:
-                os.close(fd)
-        self._fd = self._dir_fd = -1
+        """Close the file and the directory; idempotent, and safe from any thread."""
+        with self._lock:
+            for fd in (self._fd, self._dir_fd):
+                if fd >= 0:
+                    os.close(fd)
+            self._fd = self._dir_fd = -1
 
     def __enter__(self) -> RequestLog:
         return self
