@@ -33,10 +33,10 @@ function bars(flags?: Uint8Array, series = 0, N = 60): void {
 const view = (from: number, to: number): void =>
   cmd({ k: "setViewport", timeStart: from * 60e6, timeEnd: to * 60e6 });
 const drawn = (fn: () => void): string[] => {
-  const before = gl.draws.length;
+  const before = gl.intDraws().length;
   fn();
   frame();
-  return gl.draws.slice(before);
+  return gl.intDraws().slice(before);
 };
 const states = (): string[] =>
   out.filter((m) => m.t === "dataState").map((m) => (m as { state: string }).state);
@@ -142,17 +142,17 @@ describe("a theme switch (AC 7)", () => {
     bars(flags);
     view(0, 40);
     frame();
-    const writes = gl.writes.length;
-    const before = gl.draws.length;
+    const writes = gl.intWrites().length;
+    const before = gl.intDraws().length;
     const palettes = (): number[][] =>
       gl.uniforms.filter((u) => u[0] === "u_palette") as number[][];
     const seen = palettes().length;
     cmd({ k: "setTheme", theme: { ...THEME, "color.candle.up": "#00ff00" } });
     frame();
-    expect(gl.writes.length - writes).toBe(0);
-    expect(gl.draws.length - before).toBeGreaterThanOrEqual(3); // stem, ticks, seam still drawn
+    expect(gl.intWrites().length - writes).toBe(0);
+    expect(gl.intDraws().length - before).toBeGreaterThanOrEqual(3); // stem, ticks, seam still drawn
     const fresh = palettes().slice(seen);
-    expect(fresh).toHaveLength(gl.draws.length - before); // every batch, the seam's too
+    expect(fresh).toHaveLength(gl.intDraws().length - before); // every batch, the seam's too
     expect(fresh.every((u) => u.slice(1, 5).join() === "0,1,0,1")).toBe(true);
   });
 });

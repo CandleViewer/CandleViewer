@@ -76,14 +76,19 @@ describe("the price scale through the runtime", () => {
     bars([0, 0.5]);
     frame();
     const posted = out.length;
+    const ints = gl.intWrites().length;
     const writes = gl.writes.length;
     scale({ mode: "log" });
     frame();
     const after = out.slice(posted);
-    // No data request, no buffer upload: a viewport report and a frame with 0 bytes uploaded.
-    expect(after.map((m) => m.t).sort()).toEqual(["frame", "viewport"]);
-    expect(after.find((m) => m.t === "frame")).toMatchObject({ uploadedBytes: 0 });
+    // No data request and no buffer upload: a viewport report and a frame; the relabelled axes
+    // post `axes` (E11-S06). This chart has no bars in view, so its grid is hidden (BQ-9) and
+    // nothing is written at all; test/worker/runtime-grid.test.ts covers a drawn grid (C-66).
+    expect(after.map((m) => m.t).sort()).toEqual(["axes", "frame", "viewport"]);
+    expect(gl.intWrites().length).toBe(ints); // the series half: exactly 0 writes
     expect(gl.writes.length).toBe(writes);
+    const bytes = after.find((m) => m.t === "frame");
+    expect(bytes?.t === "frame" && bytes.uploadedBytes).toBe(0);
     expect(viewports().at(-1)).toMatchObject({ mode: "log", requestedMode: "log" });
   });
 
