@@ -295,7 +295,8 @@ _DOCS_SHAPES: dict[str, tuple[str, str, str, str]] = {
 #: E29-Q01 (#844, ruling R2 as above): four more rows of the same error table (its `UTA` section,
 #: code and text only), read at the same docs commit on 2026-11-04. E29-K01's follow-up capture may
 #: replace 110017 and 110025; no demo run provokes 10006 or 110020, so they stay transcribed.
-#: name -> (the route the row answers, its code)
+#: name -> (the call the OMS suite stubs the row on, its code). The call is our label, not a
+#: documented fact: the error table names no call, and 10006 can answer any.
 _ERROR_ROWS_READ = "2026-11-04"
 _DOCS_ERROR_ROWS: dict[str, tuple[str, int]] = {
     "trading-error-10006": ("POST /v5/order/create", 10006),

@@ -127,9 +127,11 @@ cover those parsers.
 E29-Q01 (#844) added four more error-table rows, read from the same page on 2026-11-04 (`10006`,
 `110017`, `110020`, `110025`: the table's `UTA` section, code and text only). Their source file,
 `docs/v5/error.mdx`, holds the same four rows at the commit above and at the docs repository's head
-(`76aa20a4a479`). Each answers the route its `stream` names: `POST /v5/order/create` for the first
-three, `POST /v5/position/switch-mode` for `110025`. E29-K01's follow-up capture may replace `110017`
-and `110025`; no demo run provokes `10006` or `110020`, so those two stay transcribed.
+(`76aa20a4a479`). The error table names no call for a code, so each `stream` label is the call the
+OMS suite stubs the row on, a convention of this corpus and not a documented fact (`10006` can answer
+any call): `POST /v5/order/create` for the first three, `POST /v5/position/switch-mode` for `110025`.
+E29-K01's follow-up capture may replace `110017` and `110025`; no demo run provokes `10006` or
+`110020`, so those two stay transcribed.
 
 Licence: the upstream repository `bybit-exchange/docs` has no licence file at that commit, so no
 licence grants these examples. Each file reproduces one short documented example, used only to

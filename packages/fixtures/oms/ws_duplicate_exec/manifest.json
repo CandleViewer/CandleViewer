@@ -2,7 +2,7 @@
   "$schema": "../manifest.schema.json",
   "scenario": "ws_duplicate_exec",
   "origin": "ticket",
-  "description": "The private stream delivers one linear BTCUSDT fill twice: the same execution frame, with the same execId, as a redelivery after a reconnect would. The OMS counts the fill once.",
+  "description": "The private stream delivers one linear BTCUSDT fill twice: the same execution frame, with the same execId (an assumed redelivery; no recording shows one). The OMS counts the fill once.",
   "environment": "demo",
   "evidence": "derived",
   "rules": ["S4"],
