@@ -15,8 +15,10 @@ from typing import Any
 
 import jsonschema
 import pytest
+from pydantic import ValidationError
 
 from candleviewer.api import user_settings_models as settings_models
+from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.funding import serialize_series
 from candleviewer.domain.funding import PredictedFunding, SettledFunding
 from candleviewer.orderflow.funding import FundingSeries
@@ -120,6 +122,28 @@ def test_funding_200_examples_validate_and_show_the_new_members(
     assert case
     validate_example(pointer, value)
     assert "coverage" in value["meta"] and "upper_funding_rate" in value
+    assert all("annualised_pct" in item for item in value["items"])  # the predicted one too
+
+
+def test_every_funding_item_carries_the_servers_annualised_pct() -> None:
+    """#779 ruling 6618709412: a server-computed `Decimal` percentage on every item."""
+    item = _funding_body()["properties"]["items"]["items"]
+    member = item["properties"]["annualised_pct"]
+    assert member["$ref"] == "#/components/schemas/Decimal"
+    assert "annualised_pct" not in item.get("required", [])  # optional until served (C-6.1)
+    assert "Never computed by a client" in text(member["description"])
+    for phrase in (
+        "`annualised_pct`** (E24-S04, #779 ruling 6618709412) is on every item, the predicted one "
+        "included",
+        "the settlements per year from `funding_interval_minutes` (525 600 / "
+        "`funding_interval_minutes`)",
+        "a client displays it and never computes it",
+    ):
+        assert phrase in _FUNDING_DOC, phrase
+    example = _FUNDING["responses"]["200"]["content"]["application/json"]["examples"]["funding"]
+    for row in example["value"]["items"]:  # the example's arithmetic is the formula's
+        rate = Decimal(row["funding_rate"])
+        assert Decimal(row["annualised_pct"]) == rate * Decimal(525600) / Decimal(480) * 100
 
 
 def test_the_shipped_funding_answer_still_conforms() -> None:
@@ -176,6 +200,9 @@ def test_position_carries_a_server_computed_funding_estimate() -> None:
         assert phrase in doc, phrase
     amount = text(estimate["properties"]["amount"]["description"])
     assert "never negative" in amount
+    assert (
+        estimate["properties"]["amount"]["pattern"] == r"^[0-9]+(\.[0-9]+)?$"
+    )  # the nit: contract
     assert "Quantised to 8 dp, `ROUND_HALF_UP`, as funding payments are (24 §1.5)" in amount
     assert "| Funding payments        | 8 dp, `ROUND_HALF_UP`  |" in _RAW_24
     member_doc = text(member["description"])
@@ -229,18 +256,25 @@ def test_only_position_references_the_estimate() -> None:
 
 
 _DERIV = {
+    "oi_mode": ["absolute", "delta"],  # the ruling on #777 (6618708569), with the next one
+    "oi_quadrant_colouring": None,
     "funding_style": ["line", "bars"],
     "funding_annualised": None,
     "basis_source": ["last", "mark"],  # the ruling on #783 (6612480577)
+    "liq_mode": ["bars", "heatmap"],  # 6612964585 Q1, with the next two
+    "liq_min_notional_usd": "decimal",
+    "zones_enabled": None,
 }
+_NOTIONAL_PATTERN = r"^((0|[1-9][0-9]{0,8})(\.[0-9]{1,2})?|1000000000(\.0{1,2})?)$"
 
 
 def test_settings_gain_the_deriv_group() -> None:
-    """G1: the funding keys and the basis source (6612480577), one level deep, closed."""
+    """G1: eight of D02 section 10's nine keys (6618708569, 6612480577, 6612964585 Q1), one level
+    deep, closed; `basis_annualised` is the one dropped."""
     group = _SCHEMAS["Settings"]["properties"]["deriv"]
     assert group["additionalProperties"] is False
     assert (
-        "refuses an undeclared key or a value outside a leaf's enum or type with "
+        "refuses an undeclared key or a value outside a leaf's enum, type or range with "
         "`422 validation_failed`" in text(group["description"])
     )
     assert "a money amount (`FundingEstimate.amount`) is never annualised on the client" in text(
@@ -251,27 +285,54 @@ def test_settings_gain_the_deriv_group() -> None:
     for leaf, enum in _DERIV.items():
         if enum is None:
             assert leaves[leaf]["type"] == "boolean", leaf
+        elif enum == "decimal":
+            assert leaves[leaf]["$ref"] == "#/components/schemas/Decimal", leaf
+            assert leaves[leaf]["pattern"] == _NOTIONAL_PATTERN, leaf
         else:
             assert leaves[leaf] == {**leaves[leaf], "type": "string", "enum": enum}, leaf
         assert "client default" in leaves[leaf]["description"], leaf
     assert "client default `last`" in leaves["basis_source"]["description"]
+    assert 'client default `"0"`' in leaves["liq_min_notional_usd"]["description"]
+    assert "client default `bars`" in leaves["liq_mode"]["description"]
+    assert "client default `false`" in leaves["zones_enabled"]["description"]
+    assert "client default `absolute`" in leaves["oi_mode"]["description"]
+    assert "client default `true`" in leaves["oi_quadrant_colouring"]["description"]
+    assert "basis_annualised" not in leaves
 
 
 def test_the_settings_leaf_table_takes_the_deriv_leaves() -> None:
     """`/settings` reads its leaves off the regenerated models, so the group is writable."""
     assert {f"deriv.{leaf}" for leaf in _DERIV} <= set(settings_models.LEAVES)
     patch = settings_models.judge_patch(
-        b'{"deriv": {"funding_style": "bars", "funding_annualised": true, "basis_source": null}}'
+        b'{"deriv": {"funding_style": "bars", "funding_annualised": true, "basis_source": null,'
+        b' "liq_mode": "heatmap", "liq_min_notional_usd": "50000.5", "zones_enabled": true,'
+        b' "oi_mode": "delta", "oi_quadrant_colouring": false}}'
     )
     assert patch == {
+        "deriv.oi_mode": "delta",
+        "deriv.oi_quadrant_colouring": False,
         "deriv.funding_style": "bars",
         "deriv.funding_annualised": True,
         "deriv.basis_source": None,
+        "deriv.liq_mode": "heatmap",
+        "deriv.liq_min_notional_usd": "50000.5",
+        "deriv.zones_enabled": True,
     }
+    for edge in ("0", "1000000000", "1000000000.00", "999999999.99"):
+        body = b'{"deriv": {"liq_min_notional_usd": "%s"}}' % edge.encode()
+        assert settings_models.judge_patch(body) == {"deriv.liq_min_notional_usd": edge}
     for refused in (
+        b'{"deriv": {"liq_min_notional_usd": "1000000000.01"}}',  # over the range
+        b'{"deriv": {"liq_min_notional_usd": "-1"}}',  # negative
+        b'{"deriv": {"liq_min_notional_usd": "1.234"}}',  # three fractional digits
+        b'{"deriv": {"liq_min_notional_usd": "007"}}',  # padded
+        b'{"deriv": {"liq_min_notional_usd": 50000}}',  # a JSON number, not the Decimal string
+        b'{"deriv": {"liq_mode": "dots"}}',
+        b'{"deriv": {"liq_zones_enabled": true}}',  # spelled `zones_enabled`, as ruled
         b'{"deriv": {"funding_style": "area"}}',
         b'{"deriv": {"basis_annualised": true}}',
-        b'{"deriv": {"oi_mode": "delta"}}',
+        b'{"deriv": {"oi_mode": "relative"}}',  # outside the enum
+        b'{"deriv": {"oi_quadrant_colouring": "on"}}',  # not a boolean
     ):
         with pytest.raises(settings_models.PatchRefused):
             settings_models.judge_patch(refused)
@@ -288,7 +349,19 @@ def test_the_change_log_names_the_change() -> None:
     for phrase in (
         "Assigned by the orchestrator on #778 (6610230823)",
         "BQ items 3, 6, 7 and 8 as recommended, scope D02 §16 rec. 9",
-        "the basis key follows the ruling on #783 (6612480577)",
+        "the basis key follows the ruling on #783 (6612480577), and the liquidation keys",
+        "follow the ruling 6612964585 (Q1",
+        "`liq_mode` (`bars | heatmap`, client default `bars`)",
+        "`zones_enabled` (client default `false`)",
+        "`liq_min_notional_usd` meets D02 §10's \"number, USDT\", and supersedes E24-D03's "
+        "PROPOSED integer row (D03-G3",
+        "gains `minimum: 1`, a response-side narrowing",
+        "the OI keys follow the ruling on #777 (6618708569)",
+        "items gain `annualised_pct` (the ruling on #779, 6618709412)",
+        "a client displays it and never computes it",
+        "eight leaves: `oi_mode` (`absolute | delta`, client default `absolute`)",
+        "`deriv.basis.annualised` (dropped by 6612480577) is the one key of D02 §10's nine not "
+        "in it",
         "§1 `InstrumentInfo`'s `upper_funding_rate` / `lower_funding_rate` become "
         "`Decimal | None` (PROPOSED)",
         "(`exchange/bybit/instruments.py:202-210`) is the serving slice's to change",
@@ -304,6 +377,46 @@ def test_the_change_log_names_the_change() -> None:
         "No WS frame, table, column, chart or `machine_hash` change, and no migration.",
     ):
         assert phrase in entry, phrase
+    block = _RAW_24.split(title, 1)[1].split("\n### ", 1)[0]
+    assert "class FundingEstimate(BaseModel):" in block
+    for field in (
+        "amount: Decimal          # >= 0",
+        'direction: Literal["pay", "receive", "none"]',
+        "settles_at: TsUs",
+        "computed_at: TsUs",
+        "Position.funding_estimate: FundingEstimate | None",
+    ):
+        assert field in block, field
+    assert "the three `deriv.liq.*` keys are not in it" not in entry
     numbered = [int(n) for n in re.findall(r"^### 19\.(\d+) ", _RAW_24, re.MULTILINE)]
     assert numbered == sorted(set(numbered))  # unique and increasing, by number
     assert 110 in numbered
+
+
+@pytest.mark.parametrize(
+    ("amount", "valid"),
+    [("0", True), ("12.40", True), ("-12.40", False), ("1e3", False), ("+1", False)],
+)
+def test_the_estimate_amount_is_never_negative_by_contract(amount: str, valid: bool) -> None:
+    """The nit: "never negative" is the schema's, not only prose."""
+    sample = {
+        "amount": amount,
+        "direction": "pay",
+        "funding_rate": "0.0001",
+        "settles_at": "2026-09-14T16:00:00Z",
+        "computed_at": "2026-09-14T15:55:48Z",
+    }
+    # Against the spec itself (`$ref` with a sibling `pattern`, OpenAPI 3.1), not `deref`, which
+    # inlines a `$ref` and drops its siblings.
+    pointer = "/components/schemas/FundingEstimate"
+    if valid:
+        validate_example(pointer, sample)
+    else:
+        with pytest.raises(jsonschema.ValidationError):
+            validate_example(pointer, sample)
+    model = api.FundingEstimate
+    if valid:
+        model.model_validate(sample)
+    else:
+        with pytest.raises(ValidationError):
+            model.model_validate(sample)
