@@ -1,0 +1,120 @@
+"""Build every board twice and check the set (python3 -I -B check_all.py; CV_CHECKOUT names the checkout unless the
+kit sits in one). Gates: the kit self-test; every generator exits 0 (validator exit 0 inside); the rebuild is
+byte-identical (raw sheets, .md, packed); per board: 0 inst nodes, only the local icons, no boolean wrap, no banned
+string (raw, .md, packed outside compactOf), table cells padded 8 px a side (>= 16 px between texts), a "state: <id>"
+caption per frame, no "/" in the root name after the prefix, md line 3, the packed sheet's source sha256 = the raw
+sheet's and mkcall4 count = its sections, greyscale only (every bound colour token is in k.GREY); the source md5
+pins; every AD's line on the board that illustrates it (k.AD_DRAWN); a PROPOSED stamp on every board that shows a
+recommendation (02-07)."""
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+KIT = Path(__file__).resolve().parent
+sys.path.insert(0, str(KIT))
+import e21d01kit as k  # noqa: E402
+
+FAILS: list[str] = []
+
+
+def check(ok: bool, what: str) -> None:
+    print(("PASS " if ok else "FAIL ") + what)
+    if not ok:
+        FAILS.append(what)
+
+
+def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([sys.executable, "-I", "-B", *args], capture_output=True, text=True, timeout=900,
+                          check=False)
+
+
+def digest() -> dict[str, str]:
+    out = {}
+    for d in (k.CAP_DIR, k.V4_DIR, *((KIT,) if k.IN_REPO else ())):
+        for p in sorted(d.glob("[0-9][0-9]-*")):
+            if p.suffix in (".json", ".md"):
+                out[f"{d.name}/{p.name}"] = hashlib.sha256(p.read_bytes()).hexdigest()
+    return out
+
+
+def build_all() -> None:
+    for nn in sorted(k.BOARDS):
+        r = run([str(KIT / "gen" / f"gen_{nn:02d}.py")])
+        check(r.returncode == 0, f"gen_{nn:02d}: {(r.stdout + r.stderr).strip().splitlines()[-1][:160]}")
+
+
+def scan(nn: int) -> None:
+    b = k.BOARDS[nn]
+    raw_p, md_p, pk_p = k.CAP_DIR / b.sheet, k.CAP_DIR / (b.sheet[:-5] + ".md"), k.V4_DIR / b.sheet
+    raw = json.loads(raw_p.read_text(encoding="utf-8"))
+    pk = json.loads(pk_p.read_text(encoding="utf-8"))
+    nodes = [n for s in raw["sections"] for _p, n in k.walk(s["node"])]
+    pnodes = json.dumps(pk["sections"], ensure_ascii=False)
+    check(not any(n["t"] == "inst" for n in nodes) and '"t":"inst"' not in pnodes.replace(" ", ""),
+          f"{nn:02d}: 0 inst nodes ({len(nodes)} shapes)")
+    bad_icons = sorted({n["icon"] for n in nodes if n["t"] == "icon"} - k.ICONS_OK)
+    check(not bad_icons, f"{nn:02d}: icons in the local set {bad_icons}")
+    check(all((n.get("o") or {}).get("wrap", "nowrap") in ("wrap", "nowrap") for n in nodes), f"{nn:02d}: no boolean wrap")
+    banned = k._scan_banned(raw) + k._scan_banned({x: y for x, y in pk.items() if x != "compactOf"})
+    banned += sorted({m.group(0) for m in k.BANNED.finditer(md_p.read_text(encoding="utf-8"))})
+    check(not banned, f"{nn:02d}: no forbidden strings {banned}")
+    cells = [(p, n) for s in raw["sections"] for p, n in k.walk(s["node"], s["into"])
+             if n["t"] == "board" and re.search(r"/(header row|row · \d+)/[^/]+$", p, re.DOTALL)]
+    check(all((n.get("o") or {}).get("padX") == k.INSET_SM for _p, n in cells),
+          f"{nn:02d}: {len(cells)} table cells, 8 px a side (>= 16 px between texts)")
+    caps = {n["chars"] for n in nodes if n["t"] == "text" and n["name"].startswith("caption ")}
+    check(all(f"state: {f}" in caps for f in b.frames), f"{nn:02d}: a caption on each of {len(b.frames)} frames")
+    check("/" not in raw["board"]["name"].split(f"{k.KEY} / {nn:02d} ", 1)[1], f"{nn:02d}: no '/' after the prefix")
+    l3 = md_p.read_text(encoding="utf-8").split("\n")[2]
+    check(l3 == k.md_line3(nn), f"{nn:02d}: md line 3")
+    src = raw_p.name if k.IN_REPO else str(raw_p.resolve())  # a checkout's v4/ carries the bare name
+    check(pk["compactOf"] == {"file": src, "sha256": hashlib.sha256(raw_p.read_bytes()).hexdigest()},
+          f"{nn:02d}: packed source sha256 = raw")
+    probe = k.CAP_DIR / f"{raw_p.stem}.count-probe.json"  # mkcall4 reads the pack source by its absolute path
+    probe.write_text(json.dumps(dict(pk, compactOf=dict(pk["compactOf"], file=str(raw_p.resolve()))),
+                                ensure_ascii=False), encoding="utf-8")
+    c = run([str(k.MKCALL), str(probe), "count"])
+    probe.unlink()
+    check(c.returncode == 0 and c.stdout.strip() == str(len(pk["sections"])), f"{nn:02d}: mkcall4 count "
+          f"{c.stdout.strip()} = {len(pk['sections'])} sections")
+    cols = {v for n in nodes for key, v in [*(n.get("o") or {}).items(), ("color", n.get("color"))]
+            if isinstance(v, str) and v.startswith("color.")}
+    check(cols <= k.GREY, f"{nn:02d}: greyscale only ({len(cols)} colour tokens; hue {sorted(cols - k.GREY)})")
+    prods = sorted({re.split(r" — | DeepDOM| DOM", c[0])[0] for _i, c in k.table("## 5. Competitive review")
+                    if not c[0].startswith("Unsourced")} | {"DeepDOM"})
+    blob = (raw_p.read_text(encoding="utf-8") + md_p.read_text(encoding="utf-8")).lower()
+    check(not [p_ for p_ in prods if p_.lower() in blob], f"{nn:02d}: no third-party product name ({', '.join(prods)})")
+    if 2 <= nn <= 7:
+        check(any(n["name"] == "stamp · PROPOSED" for n in nodes), f"{nn:02d}: PROPOSED stamp drawn")
+    texts = " ".join(n.get("chars", "") for n in nodes if n["t"] == "text")
+    ads = [a for a, b_ in k.AD_DRAWN.items() if b_ == nn]
+    check(all(k.ad_line(a) in texts for a in ads), f"{nn:02d}: illustrates {ads or 'no AD'} (annotation lines)")
+    v = k.validate(raw_p)
+    check(v[0] == 0, f"{nn:02d}: {v[1].splitlines()[-1]}")
+
+
+def main() -> int:
+    r = run([str(KIT / "e21d01kit.py"), "selftest"])
+    check(r.returncode == 0, f"kit self-test: {r.stdout.strip().splitlines()[-1]}")
+    check(all(k.spec_md5_ok().values()), "memo / fixture md5 pins: " +
+          ", ".join(f"{x} {m[:8]}" for x, (_p, m) in k.DOCS.items()))
+    build_all()
+    first = digest()
+    build_all()
+    second = digest()
+    diff = sorted(x for x in set(first) | set(second) if first.get(x) != second.get(x))
+    check(not diff and len(first) == (4 if k.IN_REPO else 3) * len(k.BOARDS), f"rebuild byte-identical ({len(first)} files; differing {diff[:4]})")
+    for nn in sorted(k.BOARDS):
+        scan(nn)
+    print(f"{'OK' if not FAILS else 'FAILED'}: {len(FAILS)} failures")
+    return 1 if FAILS else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

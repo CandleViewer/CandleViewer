@@ -9,7 +9,7 @@ published issue map; it reads the same paths at `origin/main` for G-VERSION; the
 
 Default-deny: a cite key the tool does not declare, an id nobody defines, a section heading the
 tool does not expect, an HTML comment, a URL outside the competitive review, a changed path outside
-this PR's three files and a `14` edit other than the one pure SCR-050 pointer line all FAIL.
+the boards PR's files, any `14` edit and a missing or altered SCR-050 pointer line all FAIL.
 
 Gates:
   G-SECTIONS  the H2 headings, in order (the BQ heading in its RULED form only).
@@ -39,13 +39,17 @@ Gates:
               the owner, never an agent.
   G-KILL      every kill-list row has a number and a verdict; the heading names #1 and #14.
   G-FLAG      the flag state names both flags and routes the undefined one to a G row.
-  G-BOARDS    at most eight research boards, each PENDING, named `E21-D01 / NN slug`.
+  G-BOARDS    at most eight research boards, named `E21-D01 / NN slug`, each PENDING or drawn
+              with its own PNG under docs/design/research/img/ at the stated size; once all
+              are drawn the section 0 heading no longer says PENDING.
   G-WALK      the owner walkthrough has one to ten items and ends on `approved` on #417.
   G-PUBLIC    no local path, host, worker name or secret-shaped string; no URL outside the
               competitive review; no image embed (no third-party screenshot).
-  G-UNTOUCHED only the memo, this tool and `14` differ from the merge base; `14` gains exactly
-              the exact pure SCR-050 pointer line (POINTER_LINE) after its DES-HEATMAP-01
-              line; a pointer that carries a decision or a requirement FAILs.
+  G-UNTOUCHED only the boards PR's files differ from the merge base with `origin/main` (the
+              memo, this tool, the E21-D01 board PNGs, the board kit, its MANIFEST lines and
+              its `.prettierignore` entry); `14` is not edited and still holds the text PR's
+              pure SCR-050 pointer line (POINTER_LINE) once, after its DES-HEATMAP-01 line; a
+              pointer that carries a decision or a requirement FAILs.
 
 `--check` runs the gates on the working tree; `--self-test` first requires FAIL 0, then applies
 every mutation in MUTATIONS in memory (texts, `origin/main` copies and the changed-path list) and
@@ -56,10 +60,10 @@ The report is ASCII, every line at most 100 characters.
 from __future__ import annotations
 
 import argparse
-import difflib
 import hashlib
 import json
 import re
+import struct
 import subprocess
 import sys
 import unicodedata
@@ -81,7 +85,14 @@ BQ_COMMENT = "6563728077"
 RULING_COMMENT = "6563817374"
 AMEND_KEYS = frozenset({"12", "13", "14", "24"})
 QUOTE_MIN = 12
-ALLOWED_PATHS = frozenset({MEMO_REL, TOOL_REL, CAT_REL})
+IMG_REL = "docs/design/research/img/"
+KIT_REL = "docs/design/_tools/sheets/e21-d01/"
+# The boards PR's files: the memo, this tool, the board PNGs, the kit, its MANIFEST lines and ignore entry.
+ALLOWED_PATHS = frozenset(
+    {MEMO_REL, TOOL_REL, ".prettierignore", "docs/design/_tools/sheets/MANIFEST.sha256"}
+)
+ALLOWED_PREFIXES = (IMG_REL + "E21-D01-", KIT_REL)
+DRAWN_RE = re.compile(r"drawn — `(E21-D01-(\d{2})-[a-z0-9-]+\.png)`, (\d+) × (\d+), \d+ frames?")
 
 CITE_KEYS: dict[str, str] = {
     "02": "docs/plan/02-definition-of-ready-done.md",
@@ -111,7 +122,7 @@ H2_EXPECTED: tuple[str, ...] = (
     r"Acceptance-criteria trace \(E21-D01, issue #417\)",
     r"Deviations",
     r"BQ list — RULED \(comment \d+\)",
-    r"0\. Research boards \(Penpot\)(?: — PENDING)?",
+    r"0\. Research boards \(Penpot\)(?: — PENDING| — drawn \(As built: §14\))?",
     r"1\. Method note \(agent-delivery adaptation, owner decision 2026-09-25\)",
     r"2\. Research questions and pre-registered hypotheses",
     r"3\. Heuristic evaluation \(every finding `\(heuristic\)`\)",
@@ -125,6 +136,7 @@ H2_EXPECTED: tuple[str, ...] = (
     r"11\. Owner walkthrough checklist",
     r"12\. Contradictions, gaps and open questions",
     r"13\. References",
+    r"14\. As built — the eight research boards \(\d{4}-\d{2}-\d{2}\)",
 )
 
 SCENARIOS: tuple[str, ...] = (
@@ -714,14 +726,42 @@ def g_flag(t: Texts) -> list[Finding]:
 
 def g_boards(t: Texts) -> list[Finding]:
     rows = data_rows(section(t.memo, "0. Research boards"))
+    heading = next((h for h in h2_list(t.memo) if h.startswith("0. Research boards")), "")
     out: list[Finding] = []
     if not 1 <= len(rows) <= 8:
         out.append(Finding("G-BOARDS", f"{len(rows)} boards; the research cap is 8"))
     for i, row in enumerate(rows, 1):
-        if not re.fullmatch(rf"`E21-D01 / {i:02d} [a-z0-9-]+`", row[1] if len(row) > 1 else ""):
+        name = row[1] if len(row) > 1 else ""
+        if not re.fullmatch(rf"`E21-D01 / {i:02d} [a-z0-9-]+`", name):
             out.append(Finding("G-BOARDS", f"board {i:02d} is not named E21-D01 / NN slug"))
-        if row[-1] != "PENDING":
-            out.append(Finding("G-BOARDS", f"board {i:02d} is not PENDING in the text PR"))
+        if row[-1] == "PENDING":
+            continue
+        m = DRAWN_RE.fullmatch(row[-1])
+        if not m:
+            out.append(
+                Finding("G-BOARDS", f"board {i:02d} is neither PENDING nor drawn with its PNG")
+            )
+            continue
+        png, nn, w, h = m.group(1), m.group(2), int(m.group(3)), int(m.group(4))
+        slug = name.strip("`").split(" ", 3)[-1]
+        if (
+            nn != f"{i:02d}"
+            or png != f"E21-D01-{i:02d}-{slug}.png"
+            or not (ROOT / IMG_REL / png).is_file()
+        ):
+            out.append(
+                Finding("G-BOARDS", f"board {i:02d}: no PNG {ascii_clip(png, 50)} of its own")
+            )
+            continue
+        head = (ROOT / IMG_REL / png).read_bytes()[:24]
+        if head[:8] != b"\x89PNG\r\n\x1a\n" or struct.unpack(">II", head[16:24]) != (w, h):
+            out.append(
+                Finding("G-BOARDS", f"board {i:02d}: {ascii_clip(png, 50)} is not {w} x {h}")
+            )
+    if rows and all(r[-1] != "PENDING" for r in rows) and "PENDING" in heading:
+        out.append(
+            Finding("G-BOARDS", "every board is drawn but the section 0 heading says PENDING")
+        )
     return out
 
 
@@ -760,20 +800,16 @@ def g_untouched(t: Texts) -> list[Finding]:
         return [Finding("G-UNTOUCHED", "git merge-base or diff failed; cannot prove the scope")]
     out: list[Finding] = []
     for path in t.changed:
-        if path not in ALLOWED_PATHS:
+        if path not in ALLOWED_PATHS and not path.startswith(ALLOWED_PREFIXES):
             out.append(Finding("G-UNTOUCHED", f"out-of-scope change: {ascii_clip(path)}"))
-    old, new = t.cat_base.split("\n"), t.cat_work.split("\n")
-    ops = [op for op in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes()]
-    edits = [op for op in ops if op[0] != "equal"]
-    if CAT_REL not in t.changed:
-        out.append(Finding("G-UNTOUCHED", "the SCR-050 pointer line is missing from 14"))
+    new = t.cat_work.split("\n")
+    hits = [i for i, ln in enumerate(new) if "e21-dom-heatmap.md" in ln]
+    if len(hits) != 1:
+        out.append(Finding("G-UNTOUCHED", f"14 names the memo {len(hits)} times, not once"))
         return out
-    if len(edits) != 1 or edits[0][0] != "insert" or edits[0][4] - edits[0][3] != 1:
-        out.append(Finding("G-UNTOUCHED", "14 differs by more than one inserted line"))
-        return out
-    j = edits[0][3]
+    j = hits[0]
     if not POINTER_RE.match(new[j]):
-        out.append(Finding("G-UNTOUCHED", "the inserted 14 line is not the E21-D01 pointer"))
+        out.append(Finding("G-UNTOUCHED", "the 14 line naming the memo is not the E21-D01 pointer"))
     if j == 0 or not new[j - 1].startswith(PRE_POINTER):
         out.append(Finding("G-UNTOUCHED", "the pointer is not after the DES-HEATMAP-01 line"))
     heads = [ln for ln in new[:j] if ln.startswith("### SCR-")]
@@ -1021,9 +1057,9 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         memo_mut(lambda m: sub1(m, "and in no plan doc (G1)", "and in no plan doc")),
     ),
     (
-        "M27 a board marked drawn",
+        "M27 a board marked drawn without its PNG",
         "G-BOARDS",
-        memo_mut(lambda m: resub1(m, r"\| PENDING \|$", "| DRAWN |")),
+        memo_mut(lambda m: resub1(m, r"\| drawn — `E21-D01-03-[^|]*\|$", "| DRAWN |")),
     ),
     (
         "M28 an out-of-scope path",
@@ -1031,6 +1067,16 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         lambda t: replace(t, changed=tuple(sorted({*t.changed, "apps/web/src/x.ts"}))),
     ),
     ("M29 the 14 pointer twice", "G-UNTOUCHED", pointer_twice),
+    (
+        "M29b 14 edited in the boards PR",
+        "G-UNTOUCHED",
+        lambda t: replace(t, changed=tuple(sorted({*t.changed, CAT_REL}))),
+    ),
+    (
+        "M29c another ticket's board PNG",
+        "G-UNTOUCHED",
+        lambda t: replace(t, changed=tuple(sorted({*t.changed, IMG_REL + "E21-D02-01-x.png"}))),
+    ),
     (
         "M30 the BQ heading back to pending",
         "G-BQ",
@@ -1091,6 +1137,27 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
         "M39 C5 drops the wire default",
         "G-TESTABLE",
         memo_mut(lambda m: sub1(m, ", wire default 900 (`23`:752),", ",")),
+    ),
+    (
+        "M40 a drawn board's size misstated",
+        "G-BOARDS",
+        memo_mut(lambda m: sub1(m, "1760 × 2364, 3 frames", "1760 × 2365, 3 frames")),
+    ),
+    (
+        "M41 a drawn board names another board's PNG",
+        "G-BOARDS",
+        memo_mut(
+            lambda m: sub1(
+                m,
+                "drawn — `E21-D01-02-centring-modes.png`",
+                "drawn — `E21-D01-02-tiers-and-shed.png`",
+            )
+        ),
+    ),
+    (
+        "M42 the section 0 heading back to PENDING",
+        "G-BOARDS",
+        memo_mut(lambda m: sub1(m, "(Penpot) — drawn (As built: §14)", "(Penpot) — PENDING")),
     ),
 )
 

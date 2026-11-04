@@ -115,6 +115,9 @@ docs/design/_tools/sheets/e42-d04/v4/
 # docs/design/_tools/sheets/e42-d03/v4: the packed (compact) E42-D03 sheets the boards were rendered from, kept
 # byte-identical apart from compactOf.file
 docs/design/_tools/sheets/e42-d03/v4/
+# docs/design/_tools/sheets/e21-d01/v4: the packed (compact) E21-D01 sheets, the rendered set with the live check
+# folded in, as the kit writes them (compactOf.file the bare raw-sheet name; e21-d01/BUILD.md rebuilds them)
+docs/design/_tools/sheets/e21-d01/v4/
 # docs/design/_tools/sheets/e12-d07/v4: the packed (compact) E12-D07 sheets the boards were rendered from, kept
 # byte-identical apart from compactOf.file (the bare raw-sheet name; e12-d07/BUILD.md rebuilds them)
 docs/design/_tools/sheets/e12-d07/v4/
