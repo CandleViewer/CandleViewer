@@ -26,7 +26,13 @@ from candleviewer.rules.vocabulary import (
     undescribed_metrics,
 )
 from candleviewer.rules.vocabulary import build as vbuild
-from candleviewer.rules.vocabulary.catalogue import ACTIONS, OPERATORS, RETIRED_ACTIONS, TRIGGERS
+from candleviewer.rules.vocabulary.catalogue import (
+    ACTIONS,
+    OPERATORS,
+    RETIRED_ACTIONS,
+    TRIGGERS,
+    ActionSpec,
+)
 from candleviewer.rules.vocabulary.metrics import kernel_params_schema
 from candleviewer.rules.vocabulary.registry import DuplicateMetricError
 from tests.rules._check_limiter import unthrottled
@@ -177,6 +183,15 @@ def test_vocabulary_places_orders_is_read_from_the_catalogue(
     served = {a["id"]: a["places_orders"] for a in _vocab()["actions"]}
     assert served == {a.type: a.places_orders for a in flipped}
     assert {t for t, placing in served.items() if not placing} == PLACES_ORDERS
+
+
+def test_action_spec_states_permissions_and_places_orders() -> None:
+    """A spec that leaves `places_orders` (or `permissions`) out fails to build: the flag has no
+    default, so a new order-placing type is never served as one that places no orders."""
+    with pytest.raises(TypeError, match="places_orders"):
+        ActionSpec("new_type", "New type", {}, ())  # type: ignore[call-arg]  # the omission under test
+    with pytest.raises(TypeError, match="permissions"):
+        ActionSpec("new_type", "New type", {})  # type: ignore[call-arg]  # the omission under test
 
 
 def test_no_action_offers_to_loosen_a_stop() -> None:
