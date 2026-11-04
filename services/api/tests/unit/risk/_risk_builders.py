@@ -9,17 +9,9 @@ from typing import Any
 from uuid import UUID
 
 from candleviewer.domain.primitives import AccountId, UserId
-from candleviewer.risk import (
-    ManagerCaps,
-    PolicyCaps,
-    ProfileCaps,
-    ResolvedCaps,
-    RiskEvaluation,
-    RiskFigures,
-    RiskOrder,
-    evaluate,
-    resolve_caps,
-)
+from candleviewer.risk.caps import ManagerCaps, PolicyCaps, ProfileCaps, ResolvedCaps, resolve_caps
+from candleviewer.risk.evaluator import RiskEvaluation, evaluate
+from candleviewer.risk.inputs import RiskFigures, RiskOrder
 
 NOW = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 D = Decimal

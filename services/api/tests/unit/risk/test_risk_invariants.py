@@ -15,7 +15,7 @@ from typing import Any
 from hypothesis import given
 from hypothesis import strategies as st
 
-from candleviewer.risk import ManagerCaps
+from candleviewer.risk.caps import ManagerCaps
 from tests.unit.risk._risk_builders import D, caps, close_order, figures, order, run
 
 _money = st.decimals(min_value=0, max_value=10**7, places=8)

@@ -12,7 +12,9 @@ from decimal import Decimal
 from hypothesis import given
 from hypothesis import strategies as st
 
-from candleviewer.risk import CapSource, ManagerCaps, RiskOrder, RiskRefusal, resolve_caps
+from candleviewer.risk.caps import CapSource, ManagerCaps, resolve_caps
+from candleviewer.risk.inputs import RiskOrder
+from candleviewer.risk.models import RiskRefusal
 from tests.unit.risk._risk_builders import D, caps, figures, policy, profile, run
 
 
@@ -45,6 +47,15 @@ def test_resolve_caps_null_layers_set_no_limit() -> None:
     assert "max_position_notional_usd" not in c.caps and c.get("max_consecutive_losses") is None
     assert c.caps["max_open_positions"].source is CapSource.POLICY
     assert c.caps["max_leverage"].limit == D(100)
+
+
+def test_resolve_caps_policy_orders_per_minute_alone_blocks() -> None:
+    c = caps(pol={"max_orders_per_minute": 5})
+    cap = c.get("max_orders_per_minute")
+    assert cap is not None and (cap.limit, cap.source) == (D(5), CapSource.POLICY)
+    assert run(f=figures(orders_last_minute=4), c=c).decision.allowed
+    decision = run(f=figures(orders_last_minute=5), c=c).decision
+    assert (decision.cap, decision.limit) == ("max_orders_per_minute", D(5))
 
 
 def test_resolve_caps_profile_leverage_cap_maps_to_max_leverage() -> None:

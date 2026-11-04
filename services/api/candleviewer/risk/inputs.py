@@ -53,8 +53,9 @@ class RiskFigures:
 
     `daily_figure` is the day's blocking PnL figure (realised today plus the unrealised loss, never
     an unrealised gain; E39-K01 §5): a loss is negative. `day_peak_figure` is its high this day key,
-    the drawdown's reference. `symbol_notional` is the gross open notional per symbol. `as_of` is
-    stamped by the same injected clock that gives `evaluate` its `now`.
+    the drawdown's reference. `symbol_notional` is the gross open notional per symbol, frozen only
+    shallowly: the caller hands over a mapping it no longer mutates. `as_of` is stamped by the same
+    injected clock that gives `evaluate` its `now`.
     """
 
     as_of: datetime

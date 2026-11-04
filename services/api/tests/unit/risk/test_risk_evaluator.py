@@ -13,14 +13,9 @@ from typing import Any
 
 import pytest
 
-from candleviewer.risk import (
-    CHECK_ORDER,
-    ManagerCaps,
-    ResolvedCaps,
-    RiskRefusal,
-    RiskWarning,
-    evaluate,
-)
+from candleviewer.risk.caps import ManagerCaps, ResolvedCaps
+from candleviewer.risk.evaluator import CHECK_ORDER, RiskWarning, evaluate
+from candleviewer.risk.models import RiskRefusal
 from tests.unit.risk._risk_builders import NOW, D, caps, close_order, figures, order, run
 
 # cap: (layer, limit, figure, values at {under, at, over}, measured). A projected cap admits an
@@ -159,6 +154,8 @@ def test_a_reverse_counts_as_opening(effect: dict[str, bool]) -> None:  # SR-E39
         {"equity": D(0)},
         {"day_start_equity": None},
         {"day_start_equity": D(-1)},
+        {"day_start_equity": D(0)},
+        {"day_start_equity": D("-0")},
     ],
 )
 def test_stale_state_refuses_entries_but_not_closes(fields: dict[str, Any]) -> None:  # SR-E39-02
@@ -372,6 +369,11 @@ _MALFORMED: tuple[tuple[str, dict[str, Any]], ...] = (
     ("f", {"as_of": datetime(2026, 11, 4, 12, 0)}),
     ("c", {"max_position_notional_usd": D("NaN")}),
     ("c", {"max_position_notional_usd": D(-1)}),
+    # Finite but past +/-100 orders of magnitude: a ratio of them would overflow, not refuse.
+    ("f", {"equity": D("1E-999999")}),
+    ("o", {"notional": D("9E+999998")}),
+    ("f", {"daily_figure": D("-1E+101")}),
+    ("c", {"max_position_notional_usd": D("1E-101")}),
 )
 
 
@@ -388,6 +390,11 @@ def test_evaluate_refuses_malformed_inputs_closed(part: str, fields: dict[str, A
 def test_evaluate_refuses_a_malformed_warn_threshold() -> None:
     c = caps(pol={"max_leverage": D("NaN"), "breach_behaviour": {"max_leverage": _WARN}})
     assert run(c=c).decision.code is RiskRefusal.RISK_STATE_UNAVAILABLE
+
+
+def test_evaluate_admits_figures_at_the_magnitude_bound() -> None:
+    f = figures(equity=D("1E+100"), day_start_equity=D("1E+100"), day_peak_figure=D("1E-100"))
+    assert run(f=f).decision.allowed
 
 
 def test_evaluate_tz_naive_now_is_a_programmer_error() -> None:

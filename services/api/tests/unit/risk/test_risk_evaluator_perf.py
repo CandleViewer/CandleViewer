@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from candleviewer.risk import ManagerCaps
+from candleviewer.risk.caps import ManagerCaps
 from tests.unit.risk._risk_builders import D, caps, figures, order, run
 
 pytestmark = pytest.mark.perf

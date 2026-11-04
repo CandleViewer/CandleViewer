@@ -7,7 +7,8 @@ on breach) and, independently, the policy's `warn` threshold (a `RiskWarning`), 
 threshold never disables a blocking limit (`caps.py`).
 
 Malformed figures never raise and never admit: a non-finite `Decimal` (NaN, an infinity), a negative
-quantity, price, notional, held notional or counter, a negative or non-finite cap limit, or a
+quantity, price, notional, held notional or counter, a negative or non-finite cap limit, a figure or
+limit whose decimal exponent (`adjusted()`) is beyond +/-100, so no ratio can overflow, or a
 tz-naive `as_of` refuses `risk_state_unavailable`. An exception out of `evaluate` is a programmer
 error only (a tz-naive `now`), never a verdict. `figures.as_of` and `now` must come from the same
 injected clock, or freshness is judged across two clocks.
@@ -62,6 +63,9 @@ _ZERO: Final = Decimal(0)
 _PRECISION: Final = 80
 #: A reported ratio (`actual`, the message) is display only, never compared: 28 digits.
 _DISPLAY: Final = Context(prec=28)
+#: The widest `Decimal.adjusted()` a figure may have: far past `numeric(38,18)`, and a ratio or
+#: product of two such figures stays far inside the context's exponent range (no `Overflow`).
+_MAX_EXPONENT: Final = 100
 
 
 def _ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
@@ -99,8 +103,13 @@ def _aware(value: datetime) -> bool:
     return value.tzinfo is not None and value.utcoffset() is not None
 
 
+def _in_range(value: Decimal) -> bool:
+    """Finite and within `_MAX_EXPONENT` orders of magnitude, so no ratio overflows."""
+    return value.is_finite() and abs(value.adjusted()) <= _MAX_EXPONENT
+
+
 def _well_formed(order: RiskOrder, figures: RiskFigures, caps: ResolvedCaps) -> bool:
-    """Every figure finite, every amount and counter non-negative, `as_of` tz-aware."""
+    """Every figure in range, every amount and counter non-negative, `as_of` tz-aware."""
     signed = (figures.daily_figure, figures.day_peak_figure)
     unsigned = [order.qty, order.reference_price, order.notional]
     unsigned += figures.symbol_notional.values()
@@ -115,8 +124,8 @@ def _well_formed(order: RiskOrder, figures: RiskFigures, caps: ResolvedCaps) -> 
     )
     return (
         _aware(figures.as_of)
-        and all(v.is_finite() for v in signed)
-        and all(v.is_finite() and v >= _ZERO for v in unsigned)
+        and all(_in_range(v) for v in signed)
+        and all(_in_range(v) and v >= _ZERO for v in unsigned)
         and min(counters) >= 0
     )
 
