@@ -53,7 +53,7 @@ export const UnderOneHour: Story = {
   },
 };
 
-/** Under 5 minutes: "settles in" after a warning glyph; the words carry it, not the colour. */
+/** Under 5 minutes: "settles in" after a clock glyph and the warning border; the words carry it, not the colour. */
 export const Settling: Story = {
   args: { nextFundingTimeMs: at(4 * 60_000 + 12_000) },
   play: async ({ canvasElement }) => {
@@ -131,3 +131,43 @@ export const ClockAlarmUnknownOffset: Story = {
 export const Positive: Story = { args: { rate: "0.0100%" } };
 export const Negative: Story = { args: { rate: "−0.0050%" } };
 export const Zero: Story = { args: { rate: "0.0000%" } };
+
+/** E24-S03 (#778): D02 §5.2's < 5 min rungs: the warning border, and a charge line only where a position exists. */
+const imminent = at(4 * 60_000 + 12_000);
+const demoPay = {
+  accountLabel: "Demo 1",
+  env: "DEMO",
+  direction: "pay",
+  amountUsdt: "12.40",
+} as const;
+
+export const ImminentPay: Story = {
+  args: { nextFundingTimeMs: imminent, charges: [demoPay] },
+  play: async ({ canvasElement }) => {
+    await expect(
+      within(canvasElement).getByText("— you pay ≈ 12.40 USDT on Demo 1 · DEMO"),
+    ).toBeTruthy();
+  },
+};
+export const ImminentReceive: Story = {
+  args: { nextFundingTimeMs: imminent, charges: [{ ...demoPay, direction: "receive" }] },
+};
+/** No position: no charge line, never a zero (BQ 4). */
+export const ImminentNoPosition: Story = { args: { nextFundingTimeMs: imminent, charges: [] } };
+/** One line per environment, never summed (C-2.11). */
+export const ImminentDemoAndLive: Story = {
+  args: {
+    nextFundingTimeMs: imminent,
+    charges: [demoPay, { ...demoPay, accountLabel: "Sub-1", env: "LIVE" }],
+  },
+};
+/** D03 S54-31: the estimate is stale; the countdown keeps running. */
+export const ImminentStale: Story = {
+  args: {
+    nextFundingTimeMs: imminent,
+    charges: [{ ...demoPay, staleNote: "Stale 7s · last 15:55:41" }],
+  },
+};
+export const ImminentUnderOneMinute: Story = {
+  args: { nextFundingTimeMs: at(59_000), charges: [demoPay] },
+};

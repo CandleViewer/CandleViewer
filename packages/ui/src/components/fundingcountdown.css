@@ -1,7 +1,8 @@
 /*
  * CMP-126 FundingCountdown (E08-D06 §7). Static: the digits swap once a second with no fade and no colour step.
- * The rate takes buy / sell only on its own text, whose sign is a character, so colour is never the signal; the
- * under-5-minutes state is a glyph plus the words "settles in", in color.status.warning.strong.
+ * The rate is color.text.primary with its sign as a character, never a side hue (E24-D03 §5.1, C4, A-3); the
+ * under-5-minutes state is a clock glyph plus the words "settles in", in color.status.warning.strong.
+ * The warning border's room is reserved in every state (a transparent hairline), so the row never shifts.
  */
 .cv-funding {
   display: inline-flex;
@@ -9,6 +10,8 @@
   align-items: baseline;
   gap: var(--space-inset-xs);
   min-width: 0;
+  padding-inline: var(--space-inset-xs);
+  border: calc(var(--border-hairline) * 1px) solid transparent;
 }
 
 /* Wraps at the "·" for 200 % zoom (R1): each part stays whole, the two may stack. */
@@ -33,17 +36,26 @@
   color: var(--color-status-warning-strong);
 }
 
-.cv-funding .cv-funding__rate[data-sign="positive"] {
-  color: var(--color-buy-default);
+.cv-funding .cv-funding__rate {
+  color: var(--color-text-primary);
 }
 
-.cv-funding .cv-funding__rate[data-sign="negative"] {
-  color: var(--color-sell-default);
+/*
+ * E24-S03 (#778): the < 5 min warning is the words plus a 1 px color.status.warning.default border (D03 §5.2,
+ * decorative: the sentence carries it). Each charge line is its own row so a line per environment never runs on.
+ */
+.cv-funding[data-state="settling"] {
+  border-color: var(--color-status-warning-default);
 }
 
-.cv-funding .cv-funding__rate[data-sign="zero"] {
-  color: var(--color-neutral-default);
+.cv-funding__charge {
+  display: inline-flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  gap: var(--space-inset-xs);
 }
+
+/* D03 S54-31: a stale estimate's ink at 0.85 waits on its token (D03 §11.4); the marker text says it. */
 
 /* A sentence, not a number: it wraps at 200 % zoom rather than clipping. */
 .cv-funding__note,
@@ -64,5 +76,9 @@
   .cv-funding__warn,
   .cv-funding__note {
     color: CanvasText;
+  }
+
+  .cv-funding[data-state="settling"] {
+    border-color: CanvasText;
   }
 }
