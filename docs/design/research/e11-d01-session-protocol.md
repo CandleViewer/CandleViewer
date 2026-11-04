@@ -77,7 +77,7 @@ session is timed against the participant; time-on-task is a measurement of the d
   trackpad zoom gesture is tried once so the `ctrlKey` collision (report Q1-b) is observed on the actual machine: did page zoom fire, did the chart
   zoom price, did both? Then, with the prototype's armed state shown: zoom price with the plain wheel over the price axis (report Q1-k — the only price-zoom wheel since the 2026-10-20 ruling dropped `Alt+wheel`);
   then, as a hazard probe only, hold `Alt`, wheel over the price axis, move onto the plot and click without releasing `Alt` — record whether anything
-  other than the market order's own arm-gated path reacted (report Q1-b: the prototype binds nothing to `Alt+wheel`, so any reaction is a slip the
+  other than the market order's own arm-gated path reacted (report Q1-b: the prototype binds nothing to `Alt+wheel` (**Superseded 2026-11-03 by #5645: the engine has no `Alt` wheel binding and `Alt+wheel` falls through to the plain wheel, so it zooms time**), so any reaction is a slip the
   design must never reintroduce). **Electron check (only when the prototype runs in the shell build):** tap `Alt` alone and
   release, then press `→` — did the menu bar take focus, did the arrow leave the chart? Repeat as hold `Alt`, wheel over the price axis, release `Alt`,
   press `→` (report O13: the condition for the shipped `Alt` chords and the `Alt+G` candidate — `Alt+wheel` itself is dropped). S4 does T2–T3 here with their own input device.
@@ -188,7 +188,7 @@ Q4 also records each participant's seven-card needs order from the T4 sort **and
       state with its chip, has stub row actions, the header entry and `Alt+T`, and switches cadence presets
 - [ ] Run the pilot (§2) with a non-participant where possible and fix card wording and timings from it
 - [ ] T1 on a wheel mouse, then on a trackpad: write down what the wheel did _before_ reading D1; note which bar stayed put while zooming; try
-      the plain wheel over the price axis and over the time axis (report Q1-k), `Shift+wheel`, then `Ctrl+wheel` and `Alt+wheel` over the price axis and over the plot (both unbound since the 2026-10-20 ruling — did anything move?), a horizontal wheel tilt or two-finger swipe, a trackpad zoom
+      the plain wheel over the price axis and over the time axis (report Q1-k), `Shift+wheel`, then `Ctrl+wheel` and `Alt+wheel` over the price axis and over the plot (both unbound since the 2026-10-20 ruling — did anything move? **Superseded 2026-11-03 by #5645: `Ctrl+wheel` is the plain wheel, a trackpad pinch, and `Alt+wheel` falls through to it; over the plot both zoom time; over the price axis the plain path scales price and engages the lock (`gestures.ts` `wheel`), so "moved" is the expected result**), a horizontal wheel tilt or two-finger swipe, a trackpad zoom
       gesture (did page zoom fire?), a double-click on the plot, beside a drawing (report Q1-d), on the price axis and the time axis, a drag that expects a region zoom, and a wheel at
       the zoom limit (did it stop dead?); scroll back past the loaded history and note what the left edge showed; with the armed state shown, hold
       `Alt`, wheel over the axis, move onto the plot and click (did anything but the armed path react?)
@@ -223,7 +223,7 @@ and ends "Report: `docs/design/research/e11-chart-navigation-research.md` §Deci
 
 - **E11-S04 #385 (D1):** Wheel over the plot = zoom time at the cursor; the plain wheel over the price axis = zoom price (engages the lock) and over
   the time axis = bar spacing (Q1-k, the modifier-free primary path); `Shift+wheel` and a horizontal wheel delta (`deltaX`, dominant axis per batch) = pan;
-  no modifier+wheel for price — `Alt+wheel` is dropped and `Ctrl+wheel` stays unbound on the plot (ruled 2026-10-20: one path per action, the
+  no modifier+wheel for price — `Alt+wheel` is dropped and `Ctrl+wheel` stays unbound on the plot (**Superseded 2026-11-03 by #5645: `Ctrl+wheel` is the plain wheel, a trackpad pinch**; ruled 2026-10-20: one path per action, the
   TV/Bookmap precedent, the Electron menu-bar hazard; keyboard parity is E11-S06's axis-focused `Up/Down`; the shell's application menu, O13, still
   gates the shipped `Alt` chords). Double-click: price axis auto-fit, time axis reset bar spacing, plot auto-scale + latest bar only
   when no drawing, order line or handle is within pick tolerance (Q1-d). A vertical plot drag is inert while autoscale is on (Q2; ruled 2026-10-20). Edges: hard stop at the `barSpacing` clamp (no bounce); `rightOffset` kept while following, default offset on `End`/`>`; `End`, `Home` and
@@ -281,7 +281,7 @@ and ends "Report: `docs/design/research/e11-chart-navigation-research.md` §Deci
 4. The crosshair addresses price levels; snapping to open/high/low/close is a choice, never the default.
 5. The data table is a place to work, not a copy to read: the same bars, actions on every row, the primary columns fit at 200 %.
 6. Aggregation is disclosed with its ratio and its guarantee; it is never phrased as confidence or staleness.
-7. A trading modifier is never also a free navigation gesture at the same pointer position; where they would share a key the navigation binding yields (`Alt+wheel` dropped), and never a timer.
+7. A trading modifier is never also a free navigation gesture at the same pointer position; where they would share a key the navigation binding yields (`Alt+wheel` dropped; 2026-11-03, #5645: the engine's fall-through makes `Alt+wheel` zoom over the plot, routed to E11-S04 / E31, no new decision), and never a timer.
 8. Linked charts share time, never price: a neighbour's crosshair is a dashed line at the same moment, and your scale, your lock and your readout stay your own.
 9. Every jump has a way back: a jump lands the target in the centre, marks it, says "Paused at …", and `End` returns to live.
 10. TradingView habits are matched where cheap (`Shift+wheel` pans, double-click resets) and every divergence is named (arrows move a cursor, `Ctrl+↑/↓` unbound).
