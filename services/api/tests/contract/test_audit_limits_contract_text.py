@@ -112,7 +112,7 @@ _SCHEMAS: dict[str, Any] = SPEC["components"]["schemas"]
 def _format() -> str:
     """24 §15.7, read on a test's first call: renumbering it fails only the tests that read it."""
     doc = (ROOT / "docs/plan/24-internal-schemas.md").read_text(encoding="utf-8")
-    return doc.split("\n### 15.7 ", 1)[1].split("\n---\n", 1)[0]
+    return doc.split("\n### 15.7 ", 1)[1].split("\n---\n", 1)[0].split("\n### ", 1)[0]
 
 
 def _example(path: str, name: str) -> Any:
