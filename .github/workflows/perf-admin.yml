@@ -1,0 +1,245 @@
+name: perf-admin
+# E42-Q03 (#1216) part 1: the SCR-135 audit query profile against AUDIT-10M, on the self-hosted
+# bench runner cv-bench-01, as perf-ws-load.yml runs there. Dispatch only: never on a PR or a
+# schedule (a self-hosted runner never runs a PR's code), and not a required check (C-9.2) [BQ-3].
+# Postgres 16 (E42-K01's settings) and QuestDB from the compose file's pinned images, on loopback
+# only, labelled cv.lane=perf-admin; the dataset in its own `_test` database (bench/admin/
+# datasets.py); three testnet Owners; the real API on the host with every limiter at its default;
+# then k6 through bench/admin/run.py, which checks the target, the database and the environment
+# before anything starts and judges the runs. [BQ-1] Two rows fail by design until #1710 and #1711
+# land, so a dispatch today ends red, the table saying why. `dataset: chained` is plan 3.4's control.
+# The first step refuses to start while a 24 h soak (perf-pack-full, or a bars memory `leg`) is
+# queued or running, as perf-ws-load.yml does, and fails closed when the API does not answer.
+# The API gets a port of its own (58000, no compose file's): the run refuses to start when anything
+# listens there, and after /healthz answers requires the listener to be the API it started
+# (bench/admin/api_up.py), so no sign-in or audit row reaches another stack on this host.
+# Every credential is made here, per run, masked and never echoed; no repository secret is read.
+# k6 is perf-ws-load.yml's pinned release, sha256 checked twice; every input is validated first.
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "audit: the 14 SCR-135 combinations, page 1 and 90 % deep, N=20 a run"
+        type: choice
+        options: [audit]
+        default: audit
+      dataset:
+        description: "bulk (the query budgets) or chained (the chain-check control, plan 3.4)"
+        type: choice
+        options: [bulk, chained]
+        default: bulk
+      runs:
+        description: "Runs of the profile; the figure of record is the median of 3"
+        type: choice
+        options: ["1", "2", "3"]
+        default: "3"
+      rows:
+        description: "Rows to load: empty for the dataset's own (10 M bulk, 1 M chained); 100000 is a dry run"
+        type: string
+        default: ""
+permissions:
+  actions: read # the guard lists the soak's jobs
+  contents: read
+concurrency:
+  group: perf-admin
+  cancel-in-progress: false
+jobs:
+  admin-perf:
+    runs-on: [self-hosted, Linux, X64, bench]
+    timeout-minutes: 300
+    env:
+      K6_VERSION: v2.3.0
+      # sha256 of k6-v2.3.0-linux-amd64.tar.gz, as perf-ws-load.yml pins it
+      K6_SHA256: 39c3117b6af817592dcd0ce4242105c0a7af10948c2a425306f0be8f7a8a8ab1
+      K6_NO_USAGE_REPORT: "true"
+      K6_AUTO_EXTENSION_RESOLUTION: "false"
+      # infra/compose/docker-compose.yml's pins (the harness guard tests keep them equal)
+      PG_IMAGE: postgres:16.4@sha256:e62fbf9d3e2b49816a32c400ed2dba83e3b361e6833e624024309c35d334b412
+      QDB_IMAGE: questdb/questdb:8.1.1@sha256:82ef61a3919f4014e2aae1216f2803288b176a54c197d0933863bdc8c04a2e03
+      OWNERS: "3" # one per run, so no run carries another's audit-record budget
+      CV_ENVIRONMENT: testnet
+      CV_BIND_PORT: "58000" # the run's own: no compose file or other workflow binds it
+    steps:
+      - name: Refuse to start while a 24 h soak (ingestion pack or bars memory leg) is queued or running on the bench runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          command -v gh >/dev/null || { echo "gh is not installed on this runner" >&2; exit 1; }
+          busy=""
+          for soak in perf-ingestion-nightly.yml:perf-pack-full perf-bars-memdiag.yml:leg; do
+            wf=${soak%%:*} job=${soak#*:} n=0
+            for status in in_progress queued; do
+              ids=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?status=${status}&per_page=50" --paginate --jq '.workflow_runs[].id')
+              for id in $ids; do
+                c=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/jobs?per_page=100" --jq "[.jobs[] | select(.name == \"${job}\" and (.status == \"in_progress\" or .status == \"queued\"))] | length")
+                n=$((n + c))
+              done
+            done
+            [ "$n" -eq 0 ] || busy="${busy:+$busy, }${wf} (job ${job})"
+          done
+          if [ -n "$busy" ]; then
+            echo "::error::refusing to start: a 24 h soak is queued or running on the bench runner: ${busy}; dispatch again when it has finished" >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: Check the inputs
+        env:
+          DATASET: ${{ inputs.dataset }}
+          RUNS: ${{ inputs.runs }}
+          ROWS: ${{ inputs.rows }}
+        run: |
+          set -euo pipefail
+          [[ "$DATASET" =~ ^(bulk|chained)$ ]] || { echo "dataset must be bulk or chained" >&2; exit 2; }
+          [[ "$RUNS" =~ ^[1-3]$ ]] || { echo "runs must be 1, 2 or 3" >&2; exit 2; }
+          if [ -z "$ROWS" ]; then ROWS=$([ "$DATASET" = bulk ] && echo 10000000 || echo 1000000); fi
+          [[ "$ROWS" =~ ^[1-9][0-9]{0,7}$ ]] && [ "$ROWS" -le 10000000 ] || { echo "rows must be 1 to 10000000" >&2; exit 2; }
+          db=$([ "$DATASET" = bulk ] && echo admin_perf_test || echo admin_perf1m_test)
+          { echo "DATASET=$DATASET"; echo "RUNS=$RUNS"; echo "ROWS=$ROWS"; echo "PERF_DB=$db"; } >> "$GITHUB_ENV"
+      - name: Install the pinned k6 (sha256 verified twice)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/k6"
+          mkdir -p "$dir"
+          cd "$dir"
+          tarball="k6-${K6_VERSION}-linux-amd64.tar.gz"
+          gh release download "$K6_VERSION" -R grafana/k6 -p "$tarball" -p "k6-${K6_VERSION}-checksums.txt" --clobber
+          echo "${K6_SHA256}  ${tarball}" | sha256sum -c -
+          grep " ${tarball}\$" "k6-${K6_VERSION}-checksums.txt" | sha256sum -c -
+          tar -xzf "$tarball" --strip-components=1 "k6-${K6_VERSION}-linux-amd64/k6"
+          ./k6 version | grep -F "k6 ${K6_VERSION} "
+          echo "K6_BIN=$dir/k6" >> "$GITHUB_ENV"
+      - name: Make this run's synthetic credentials (masked, never echoed)
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane" "$RUNNER_TEMP/cv-kek"
+          gen() { v=$(openssl rand -hex 32); echo "::add-mask::$v"; echo "$1=$v" >> "$GITHUB_ENV"; }
+          for name in POSTGRES_PASSWORD CV_AUTH_PEPPER CV_AUTH_TOTP_KEY_HEX \
+            CV_AUTH_RECOVERY_HMAC_KEY_HEX CV_AUTH_CSRF_KEY_HEX CV_ADMIN_PASSWORD; do gen "$name"; done
+          (umask 277 && openssl rand -hex 32 > "$RUNNER_TEMP/cv-lane/lane.key")
+          echo "::add-mask::$(cat "$RUNNER_TEMP/cv-lane/lane.key")"
+          (umask 277 && openssl rand 32 > "$RUNNER_TEMP/cv-kek/kek")
+      - name: Start Postgres (E42-K01's settings) and QuestDB, loopback only
+        run: |
+          set -euo pipefail
+          docker run -d --rm --name cv-perf-admin-pg --label cv.lane=perf-admin --shm-size=1g \
+            -e POSTGRES_USER=cv -e POSTGRES_PASSWORD -e POSTGRES_DB="$PERF_DB" -p 127.0.0.1:55432:5432 \
+            "$PG_IMAGE" postgres -c shared_buffers=2GB -c maintenance_work_mem=1GB -c work_mem=64MB \
+            -c log_error_verbosity=terse -c log_parameter_max_length_on_error=0
+          docker run -d --rm --name cv-perf-admin-qdb --label cv.lane=perf-admin \
+            -p 127.0.0.1:58812:8812 -p 127.0.0.1:59009:9009 -p 127.0.0.1:59000:9000 "$QDB_IMAGE"
+          for _ in $(seq 60); do
+            if docker exec cv-perf-admin-pg pg_isready -q -U cv -d "$PERF_DB" &&
+              curl -fsS --max-time 5 -o /dev/null "http://127.0.0.1:59000/exec?query=select%201"; then exit 0; fi
+            sleep 2
+          done
+          echo "::error title=perf-admin::Postgres or QuestDB did not come up" >&2
+          exit 1
+      - name: Migrate, load the dataset, seed the Owners (testnet)
+        working-directory: services/api
+        timeout-minutes: 60
+        run: |
+          set -euo pipefail
+          umask 077
+          uv sync --frozen
+          export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:55432/${PERF_DB}"
+          uv run --frozen alembic upgrade head
+          CV_ADMIN_PERF_DSN="postgresql://cv:${POSTGRES_PASSWORD}@127.0.0.1:55432/${PERF_DB}" \
+            uv run --frozen python -m bench.admin.datasets load --mode "$DATASET" --rows "$ROWS"
+          suffix=$(openssl rand -hex 4)
+          for i in $(seq "$OWNERS"); do
+            CV_SEED_USERNAME="perf-$suffix-$i" CV_SEED_PASSWORD="$CV_ADMIN_PASSWORD" \
+              uv run --frozen python scripts/seed_fixture_user.py --totp-secret-out "$RUNNER_TEMP/cv/perf-$i.totp"
+            echo "::add-mask::$(cat "$RUNNER_TEMP/cv/perf-$i.totp")"
+          done
+          python3 -I - "$RUNNER_TEMP/cv" "$suffix" "$OWNERS" > "$RUNNER_TEMP/cv/users.json" <<'PY'
+          import json, pathlib, sys
+          d, suffix, n = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+          print(json.dumps([{"identifier": f"perf-{suffix}-{i}", "totp_file": str(d / f"perf-{i}.totp")}
+                            for i in range(1, n + 1)]))
+          PY
+      - name: Start the API (testnet, real storage backend, synthetic feed, loopback)
+        working-directory: services/api
+        env:
+          CV_STORAGE_BACKEND: real
+          CV_FEED: synthetic
+          CV_QUESTDB_PG: 127.0.0.1:58812
+          CV_QUESTDB_ILP: 127.0.0.1:59009
+          CV_BIND_HOST: 127.0.0.1
+          CV_METRICS_BIND: 127.0.0.1:9108
+          CV_KEK_SOURCE: file
+          CV_KEK_HANDLE: ${{ runner.temp }}/cv-kek/kek
+          CV_KEK_VERSION: "1"
+        run: |
+          set -euo pipefail
+          export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:55432/${PERF_DB}"
+          export CV_AUDIT_LANE_KEY_FILE="$RUNNER_TEMP/cv-lane/lane.key"
+          export CV_AUDIT_WAL_PATH="$RUNNER_TEMP/cv/audit/audit.wal"
+          export CV_PARQUET_ROOT="$RUNNER_TEMP/cv/data/parquet" CV_BACKUP_ROOT="$RUNNER_TEMP/cv/data/backups"
+          mkdir -p -m 700 "$RUNNER_TEMP/cv/audit" "$RUNNER_TEMP/cv/data" "$CV_PARQUET_ROOT" "$CV_BACKUP_ROOT"
+          python3 -I bench/admin/api_up.py free --port "$CV_BIND_PORT"
+          nohup uv run --frozen python -m candleviewer.server > "$RUNNER_TEMP/cv/api.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/cv/api.pid"
+          if python3 -I bench/admin/api_up.py wait --port "$CV_BIND_PORT" --pid "$(cat "$RUNNER_TEMP/cv/api.pid")"; then exit 0; fi
+          echo "::error title=perf-admin::the started API did not answer /healthz on its own port; the last of its log follows" >&2
+          tail -n 200 "$RUNNER_TEMP/cv/api.log"
+          exit 1
+      - name: Admin perf (${{ inputs.profile }}, ${{ inputs.dataset }}, ${{ inputs.runs }} run(s))
+        working-directory: services/api
+        env:
+          PROFILE: ${{ inputs.profile }}
+        run: |
+          set -euo pipefail
+          [[ "$PROFILE" =~ ^audit$ ]] || { echo "unknown profile" >&2; exit 2; }
+          CV_ADMIN_PERF_DSN="postgresql://cv:${POSTGRES_PASSWORD}@127.0.0.1:55432/${PERF_DB}" \
+          CV_ADMIN_USERS_FILE="$RUNNER_TEMP/cv/users.json" \
+            uv run --frozen python -m bench.admin.run "$PROFILE" --runs "$RUNS" --rows "$ROWS" \
+            --base-url "http://127.0.0.1:${CV_BIND_PORT}" --out "$GITHUB_WORKSPACE/admin-perf"
+      - name: Keep the API's log with the results
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p admin-perf
+          if [ -f "$RUNNER_TEMP/cv/api.log" ]; then cp "$RUNNER_TEMP/cv/api.log" admin-perf/api.log; fi
+      - name: No credential of this run in the artefacts (else nothing is uploaded)
+        id: scrub
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          other=$(find admin-perf -type f ! -name '*.json' ! -name '*.md' ! -name '*.log' | sed -n '1,5p')
+          if [ -n "$other" ]; then
+            echo "::error title=perf-admin::a file the check cannot read is in the artefact: ${other//$'\n'/, }"
+            exit 1
+          fi
+          python3 -I security/zap/check_artefact_secrets.py --env-dir "$RUNNER_TEMP/cv-no-session-files" \
+            --env CV_ADMIN_PASSWORD --env POSTGRES_PASSWORD --env CV_AUTH_PEPPER \
+            --env CV_AUTH_TOTP_KEY_HEX --env CV_AUTH_RECOVERY_HMAC_KEY_HEX --env CV_AUTH_CSRF_KEY_HEX \
+            --secret-file "$RUNNER_TEMP/cv/*.totp" --secret-file "$RUNNER_TEMP/cv-lane/lane.key" \
+            --title perf-admin admin-perf
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() && steps.scrub.outcome == 'success' }}
+        with:
+          name: admin-perf-${{ inputs.profile }}-${{ inputs.dataset }}
+          path: admin-perf/
+          if-no-files-found: ignore
+      - name: Tear down (the API and its children, the containers by their literal names and label, the run's credentials with their directories)
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/cv/api.pid" ]; then
+            pid=$(cat "$RUNNER_TEMP/cv/api.pid")
+            if [ "$(ps -o comm= -p "$pid" 2>/dev/null)" = uv ]; then # a reused pid is not ours
+              pkill -TERM -P "$pid" 2>/dev/null || true # the server is uv's child
+              kill "$pid" 2>/dev/null || true
+              for _ in $(seq 15); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+            fi
+          fi
+          for name in cv-perf-admin-pg cv-perf-admin-qdb; do # a Created one too, when run failed
+            id=$(docker ps -aq --filter "name=^${name}\$" --filter label=cv.lane=perf-admin)
+            if [ -n "$id" ]; then docker rm -f "$id" || true; fi
+          done
+          rm -rf "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane" "$RUNNER_TEMP/cv-kek" "$RUNNER_TEMP/k6" || true
