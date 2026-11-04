@@ -64,6 +64,12 @@ class Instrument(BaseModel):
     fetched_at: TsUs
 
 
+#: `DomainEvent.source` (24 §1.4). `synthetic` is the dev fixture stack's synthetic ticker
+#: (E29-Q03): it stays inside that stream and is published on no bus, so no recorder, replay
+#: or process-bus consumer sees it.
+EventSource = Literal["live", "replay", "paper", "backfill", "synthetic"]
+
+
 def uuid7(ts_ms: int) -> uuid.UUID:
     """RFC 9562 UUIDv7 (time-sortable); `uuid.uuid7` is absent before py3.14."""
     value = (ts_ms & 0xFFFFFFFFFFFF) << 80 | int.from_bytes(os.urandom(10), "big")
@@ -81,7 +87,7 @@ class DomainEvent(BaseModel):
     event_id: EventId
     ts_event: TsUs
     ts_ingest: TsUs
-    source: Literal["live", "replay", "paper", "backfill"]
+    source: EventSource
 
 
 class MarketEvent(DomainEvent):

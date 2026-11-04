@@ -150,7 +150,7 @@ class DomainEvent(BaseModel):
     event_id: EventId
     ts_event: TsUs                # exchange-stamped
     ts_ingest: TsUs               # our receipt; difference = feed latency
-    source: Literal["live", "replay", "paper", "backfill"]
+    source: Literal["live", "replay", "paper", "backfill", "synthetic"]  # EventSource
 
 class MarketEvent(DomainEvent):
     exchange: Exchange = "bybit"
@@ -159,6 +159,8 @@ class MarketEvent(DomainEvent):
 ```
 
 `ts_event` is **never** synthesized. Where a record lacks its own timestamp the adapter uses the containing push envelope's `ts` and sets `ts_estimated=True` on the subtype that declares that field.
+
+`source="synthetic"` (E29-Q03) is the dev fixture stack's synthetic ticker alone (`cvdev`, in no wheel, sdist or image): its `TickerEvent`s stay inside that stream, read through `latest()`, and are published on no bus, so no recorder, replay, bar or WS delta consumer sees one (C-2.15). It is no venue, so its `ts_event` is its receipt time, the one exception to the rule above.
 
 ### 1.5 Decimal quantization table
 
@@ -6847,3 +6849,11 @@ This is the number the orchestrator assigned on 2026-11-03 (02:42Z); it keeps it
 
 - §9.2 gains "Snapshot bound (#3969)", **PROPOSED**: a leg's `profile_snapshot` has its own bound, `PROFILE_SNAPSHOT_MAX_CHARS` = 32,768 (PROPOSED), because the test's maximal `AccountProfile` dumps to 26,337 characters (the two symbol lists alone are 1,000 × (21 + 3) = 24,000; a rung's `r` has no digit cap, and the 6,431 headroom covers a longer one), over the 16,384 of `exchange_payload.MAX_PAYLOAD_CHARS` (PROPOSED as the bound it is set against), which `algo_params` keeps.
 - No migration and no CHECK: `trade_group_legs` carries no size CHECK and the profile's own caps (`SymbolList` 500, `Ladder` 10, `name` 80) stay the one limit on its size. No REST operation, WS frame, chart or `machine_hash` change.
+
+### 19.133 2026-11-04 — §1.4 `DomainEvent.source` gains `synthetic` (E29-Q03, #977)
+
+This is the number the orchestrator assigned on 2026-11-04 (20:13Z); it keeps it through its rebases.
+
+- §1.4: `DomainEvent.source` (`candleviewer.domain.events.EventSource`) gains a fifth value, `synthetic`, which only the dev fixture stack's synthetic ticker (`cvdev.account_fixture.synthetic_ticker`, dev-only) stamps; `ticker_event` takes the source as a keyword, `live` by default, so the venue merger and the venue-wide snapshot are unchanged.
+- Reach: the stream publishes its events on no bus, so the recorder, replay and every process-bus consumer never see a `synthetic` event; no consumer matches the value set exhaustively, and the filters on `source` (`replay` only) pass it over. Its `ts_event` is its receipt time, noted under §1.4.
+- `source` is not serialized: the WS `ticker` item (23 §14.8) and REST answers carry no `source`, so no REST operation, WS frame, generated type, table, migration, chart or `machine_hash` changes.
