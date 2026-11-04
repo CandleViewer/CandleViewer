@@ -11,12 +11,17 @@ describe("fundingcountdown.css contract", () => {
     expect(find(normal, ".cv-funding__warn", "color")).toContain("--color-status-warning-strong");
   });
 
-  it("the rate takes buy, sell and neutral by its sign attribute, on its own text only", () => {
-    expect(find(normal, '.cv-funding .cv-funding__rate[data-sign="positive"]', "color")).toContain(
-      "--color-buy-default",
+  it("the rate is color.text.primary with its sign as text, never a side hue (E24-D03 §5.1, C4, A-3)", () => {
+    expect(find(normal, ".cv-funding .cv-funding__rate", "color")).toContain(
+      "--color-text-primary",
     );
-    expect(find(normal, '.cv-funding .cv-funding__rate[data-sign="negative"]', "color")).toContain(
-      "--color-sell-default",
+    expect(css.all).not.toMatch(/data-sign|--color-buy|--color-sell/);
+  });
+
+  it("the < 5 min border is reserved in every state and coloured only when settling (no shift)", () => {
+    expect(find(normal, ".cv-funding", "border")).toContain("transparent");
+    expect(find(normal, '.cv-funding[data-state="settling"]', "border-color")).toContain(
+      "--color-status-warning-default",
     );
   });
 

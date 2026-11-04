@@ -282,7 +282,10 @@ export {
   fundingRateSign,
   spokenFundingCount,
 } from "./FundingCountdown.js";
+export { createSecondTick, systemSecondTick } from "./secondTick.js";
+export type { SecondTick, SecondTickClock } from "./secondTick.js";
 export type {
+  FundingCharge,
   FundingCountdownProps,
   FundingCountdownState,
   FundingRateSign,
