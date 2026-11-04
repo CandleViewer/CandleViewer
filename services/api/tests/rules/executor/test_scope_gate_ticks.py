@@ -13,7 +13,7 @@ import pytest
 from candleviewer.rules.manager import RuleRow
 from tests.rules.executor.test_dispatch import DispatchRig, rig, start
 from tests.rules.test_scope_applies_to import APPLIES_TO
-from tests.rules.test_scope_wiring import A
+from tests.rules.test_scope_wiring import A, B
 
 __all__ = ["rig", "start"]  # the fixtures, imported
 
@@ -36,3 +36,21 @@ async def test_tick_rule_on_each_applies_to_fires_and_its_action_runs(
     assert [(r.rule_id, r.instance.account_id) for r in reached] == [(rid, A)]
     assert rig.audits == []  # no scope denial recorded
     assert rig.counted.blocked() == {}  # and none counted
+
+
+@pytest.mark.parametrize("applies_to", APPLIES_TO)
+async def test_tick_rule_on_each_applies_to_is_still_refused_for_a_withdrawn_grant(
+    rig: DispatchRig, applies_to: str
+) -> None:
+    """The gate keeps its refusal for a genuine mismatch: the rule's grant on B is withdrawn, so
+    its instance is skipped `scope`, recorded with that reason and counted, and nothing runs."""
+    rid = await rig.add("armed", accounts=(B,))
+    _applying(await rig.row(rid), applies_to)
+    rig.source.grants = [(A, True, False)]
+    await rig.fire()
+    await rig.settle()
+    assert rig.sink.entered == []
+    assert [(e, d["reason"]) for e, d in rig.audits] == [
+        ("rule_action_scope_denied", "grant_revoked")
+    ]
+    assert rig.counted.blocked() == {"scope": 1}
