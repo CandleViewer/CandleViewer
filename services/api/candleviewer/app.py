@@ -3495,6 +3495,7 @@ def create_app(
             ),
             on_rate_limited=rule_telemetry.on_rate_limited,
             on_cap_refused=rule_telemetry.on_cap_refused,
+            producer_gaps=ctx.rules.producer_gaps,
         )
     )
     # E35-S01: rule store / versions / active-version / mode routes (fail-closed 501

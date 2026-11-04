@@ -1226,6 +1226,7 @@ source_modules =
     candleviewer.replay.regroup
     candleviewer.replay.runner
     candleviewer.rules.producers
+    candleviewer.rules_producers_wiring
 forbidden_modules =
     candleviewer.statechart
     xstate_statemachine
