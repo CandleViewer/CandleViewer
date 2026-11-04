@@ -182,13 +182,15 @@ would retire its exception.
 - **Protects:** 24 section 14.2 rule 3 and section 17.4 L2 ("capabilities drive behaviour, not
   conditionals"); C-2.11; OM-E03.
 - **Matches,** in OMS modules: an environment compared with one of its values (`==`, `!=`, `is`,
-  `is not` against `"live"`, `"demo"` or `"testnet"`, or a member `LIVE`, `DEMO` or `TESTNET` of an
-  enum whose name holds `Env`, also inside a call such as `Environment("live")`), membership of an
-  environment-named value (`env`, `environment`, `self._env`, `order.environment`, and an
-  environment's `.value`: `settings.environment.value`) in a constant (`env not in _NOT_LIVE`) or in
-  a literal collection, and membership of any value in a literal collection of environment values;
-  in an `if`, a `while`, a conditional expression, a comprehension or an assignment alike. Fix: read a
-  field of `ExchangeCapabilities` or of another record the composition root builds.
+  `is not`, or `operator.eq`, `ne`, `is_` or `is_not` under any import name, against `"live"`,
+  `"demo"` or `"testnet"` in any letter case (`env.name == "LIVE"`), or a member `LIVE`, `DEMO` or
+  `TESTNET` of an enum whose name holds `Env`, also inside a call such as `Environment("live")`),
+  membership of an environment-named value (`env`, `environment`, `self._env`, `order.environment`,
+  and an environment's `.value` or `.name`: `settings.environment.value`) in a constant
+  (`env not in _NOT_LIVE`) or in a literal collection, and membership of any value in a literal
+  collection of environment values; in an `if`, a `while`, a conditional expression, a comprehension
+  or an assignment alike. Fix: read a field of `ExchangeCapabilities` or of another record the
+  composition root builds.
 - **Exemption:** a test whose `if` body is a single `raise` of a class, bare or called with a message
   (a string, an f-string or a name), and that has no `else` or `elif`, a fail-closed self-check. Seven
   pass on `main` without an annotation:
@@ -202,13 +204,15 @@ would retire its exception.
   each.
 - **Does not match:** a comparison of two environment values (C-2.11's isolation checks:
   `account.environment != self._environment`, `Validator.check_route`), an execution mode
-  (`mode == "paper"`), another enum's `LIVE` (`ViewAsPhase.LIVE`).
+  (`mode == "paper"`), another enum's `LIVE` (`ViewAsPhase.LIVE`; its name as a string,
+  `phase.name == "LIVE"`, fires).
 - **Not seen:** `match`/`case`, a table keyed by the environment (`ENV_LETTER[environment]`, data as
   `ExchangeCapabilities` is), a boolean computed elsewhere (`is_live`), an environment under a name
   the pattern lacks, an environment enum imported under a name without `Env` (`PE.LIVE`), a value
-  tested for membership in the environment (`"live" in env`). In a raise-only `if`: an exception used
-  as control flow (`raise _UseTradeSocket`, which an `except` one frame up answers with the live
-  work) and an exception whose constructor does work, both of which read as a bare raise.
+  tested for membership in the environment (`"live" in env`), `operator.contains`. In a raise-only
+  `if`: an exception used as control flow (`raise _UseTradeSocket`, which an `except` one frame up
+  answers with the live work) and an exception whose constructor does work, both of which read as a
+  bare raise.
 - **Fixture:** `.semgrep/tests/cv-oms-env-branch/`, with the annotated statement that proves the marker
   placement the four exceptions use.
 

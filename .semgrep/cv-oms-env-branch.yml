@@ -24,9 +24,10 @@ rules:
         - docs/security/threat-models/E29-oms.md OM-E03
         - docs/plan/security/ci-gates-e29.md
     pattern-either:
-      # A comparison with an environment's value. A pattern, not a regex, for the literals: in a file
-      # with PEP 695 syntax a string metavariable's text loses its quotes (#3549). Exempt: an `if`
-      # whose own condition holds that value and whose body only raises.
+      # A comparison with an environment's value, in any case (`env.name == "LIVE"`), also through
+      # `operator.eq` and its kin. A string pattern, not a regex on the text, for the literals: in a
+      # file with PEP 695 syntax a string metavariable's text loses its quotes (#3549). Exempt: an
+      # `if` whose own condition holds that value and whose body only raises.
       - patterns:
           - pattern-either:
               - pattern: $X == $VALUE
@@ -35,12 +36,15 @@ rules:
               - pattern: $VALUE != $X
               - pattern: $X is $VALUE
               - pattern: $X is not $VALUE
+              - patterns:
+                  - pattern: operator.$OP(..., $VALUE, ...)
+                  - metavariable-regex:
+                      metavariable: $OP
+                      regex: ^(?:eq|ne|is_|is_not)$
           - metavariable-pattern:
               metavariable: $VALUE
               pattern-either:
-                - pattern: '"live"'
-                - pattern: '"demo"'
-                - pattern: '"testnet"'
+                - pattern: '"=~/^(?i:live|demo|testnet)$/"'
                 - patterns:
                     - pattern-either:
                         - pattern: $ENUM.LIVE
@@ -60,7 +64,7 @@ rules:
               - pattern: $ENV not in $SET
           - metavariable-regex:
               metavariable: $ENV
-              regex: ^(?:.*[._])?_?env(?:ironment)?(?:\.value)?$
+              regex: ^(?:.*[._])?_?env(?:ironment)?(?:\.(?:value|name))?$
           - metavariable-regex:
               metavariable: $SET
               regex: (?s)^(?:(?:\w+\.)*_?[A-Z][A-Z0-9_]*$|[\[({]|(?:frozen)?set\()
@@ -78,9 +82,18 @@ rules:
           - metavariable-regex:
               metavariable: $SET
               regex: (?s)^[\[({]|^(?:frozen)?set\(
-          - metavariable-regex:
+          - metavariable-pattern:
               metavariable: $SET
-              regex: (?s).*(?:["'](?:live|demo|testnet)["']|\w*Env\w*\.(?:LIVE|DEMO|TESTNET))
+              pattern-either:
+                - pattern: '"=~/^(?i:live|demo|testnet)$/"'
+                - patterns:
+                    - pattern-either:
+                        - pattern: $ENUM.LIVE
+                        - pattern: $ENUM.DEMO
+                        - pattern: $ENUM.TESTNET
+                    - metavariable-regex:
+                        metavariable: $ENUM
+                        regex: ^(?:\w+\.)*\w*Env\w*$
           - pattern-not-inside: |
               if <... $X in $SET ...>:
                   raise ...
@@ -121,9 +134,7 @@ rules:
           - metavariable-pattern:
               metavariable: $COND
               pattern-either:
-                - pattern: '"live"'
-                - pattern: '"demo"'
-                - pattern: '"testnet"'
+                - pattern: '"=~/^(?i:live|demo|testnet)$/"'
                 - patterns:
                     - pattern-either:
                         - pattern: $ENUM.LIVE
@@ -138,7 +149,7 @@ rules:
                         - pattern: $ENV not in $SET
                     - metavariable-regex:
                         metavariable: $ENV
-                        regex: ^(?:.*[._])?_?env(?:ironment)?(?:\.value)?$
+                        regex: ^(?:.*[._])?_?env(?:ironment)?(?:\.(?:value|name))?$
                     - metavariable-regex:
                         metavariable: $SET
                         regex: (?s)^(?:(?:\w+\.)*_?[A-Z][A-Z0-9_]*$|[\[({]|(?:frozen)?set\()

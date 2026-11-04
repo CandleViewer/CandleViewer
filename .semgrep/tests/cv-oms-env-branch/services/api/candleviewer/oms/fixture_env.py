@@ -2,11 +2,14 @@
 # module; fail-closed self-checks that only raise, C-2.11's comparisons of two environments and
 # look-alikes stay quiet. A marker sits on the comparison's line, or on the `if`'s for a raise that
 # does more than raise.
+import operator
+
 from candleviewer.config import ProcessEnvironment
 from candleviewer.domain.primitives import Environment
 
 _NOT_LIVE = frozenset({"demo", "testnet"})
 _LIVE = frozenset({"live"})
+_NOT_LIVE_NAMES = frozenset({"DEMO", "TESTNET"})
 
 
 def branches(env, environment, order, settings, accounts, served, unserved):
@@ -33,6 +36,14 @@ def branches(env, environment, order, settings, accounts, served, unserved):
     if environment == "live":  # ruleid: cv-oms-env-branch
         unserved()
         raise ValueError("live")
+    if env.name == "LIVE":  # ruleid: cv-oms-env-branch
+        served()
+    if operator.eq(env, "demo"):  # ruleid: cv-oms-env-branch
+        served()
+    if order.route in (Environment.TESTNET, order.fallback):  # ruleid: cv-oms-env-branch
+        served()
+    if order.route in ['Demo']:  # ruleid: cv-oms-env-branch
+        served()
     return [a for a in accounts if a.mode in ("live", "demo")], figures, live  # ruleid: cv-oms-env-branch
 
 
@@ -48,6 +59,12 @@ def values(settings, environment, order, served, unserved):
     if order.value in _NOT_LIVE:  # ok: cv-oms-env-branch
         served()
     if settings.environment.value in order.router.ports:  # ok: cv-oms-env-branch
+        served()
+    if settings.environment.name not in _NOT_LIVE_NAMES:  # ruleid: cv-oms-env-branch
+        served()
+    if environment.name in _NOT_LIVE_NAMES:  # ruleid: cv-oms-env-branch
+        raise ValueError("demo or testnet")
+    else:
         served()
     return figures
 
@@ -83,6 +100,12 @@ def isolation(account, route_environment, order, mode, phase, ViewAsPhase, serve
     if phase is not ViewAsPhase.LIVE:  # ok: cv-oms-env-branch
         served()
     if order.environment in order.router.ports:  # ok: cv-oms-env-branch
+        served()
+    if order.side in ("Buy", "Sell"):  # ok: cv-oms-env-branch
+        served()
+    if phase in (ViewAsPhase.LIVE, ViewAsPhase.PAUSED):  # ok: cv-oms-env-branch
+        served()
+    if order.source == "live-replay":  # ok: cv-oms-env-branch
         served()
 
 
