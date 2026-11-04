@@ -134,9 +134,9 @@ would retire its exception.
   place (`row["payload"].update(...)`) unless by such a call, and an `INSERT ... SELECT`
   (`.from_select(...)`), whose payload the database picks; in any module, an insert or update of
   `<module>.order_events` whose `.values(payload=...)` is not that call; and text SQL that writes the
-  table (an `INSERT INTO`, `UPDATE ... SET` or `COPY` of `order_events`), which would skip the
-  redaction that runs in Python before the bind. Scope: `services/api/candleviewer/**`, not
-  migrations. Fix: write
+  table (an `INSERT INTO`, a SQL comment between the two words too, `UPDATE ... SET` or `COPY` of
+  `order_events`), which would skip the redaction that runs in Python before the bind. Scope:
+  `services/api/candleviewer/**`, not migrations. Fix: write
   `"payload": redact_exchange_payload(event.payload)` through the Core builder, as
   `orders_sqlalchemy._event_values` does.
 - **Does not match:** a `payload` in a module that writes no `order_events` row (a WS frame's, a
@@ -150,9 +150,10 @@ would retire its exception.
   read where the helper is, as `_event_values`' is); a dict held in a variable then passed to
   `.values(rows)`; a payload changed through a name (`p = values["payload"]; p["sign"] = ...`) or by
   `|=`; text SQL with an alias between the table and its columns
-  (`INSERT INTO order_events AS oe (...)`); a statement split across string literals. The in-memory
-  fake (`oms/fakes.py`) redacts the same way, proven by its own tests. The threat model's record-type
-  form (section 6 item 4) waits for closed payload schemas (SR-E29-08 item 3, G-1):
+  (`INSERT INTO order_events AS oe (...)`), or with a SQL comment other than between `INSERT` and
+  `INTO` (`INSERT INTO /* tag */ order_events`); a statement split across string literals. The
+  in-memory fake (`oms/fakes.py`) redacts the same way, proven by its own tests. The threat model's
+  record-type form (section 6 item 4) waits for closed payload schemas (SR-E29-08 item 3, G-1):
   `NewOrderEvent.payload` is a plain `Mapping` today.
 - **Fixture:** `.semgrep/tests/cv-oms-order-events-unredacted/`.
 

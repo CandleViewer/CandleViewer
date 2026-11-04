@@ -78,7 +78,7 @@ rules:
           - pattern-not: $SA.$WRITE($MODULE.order_events).values(..., payload=$REDACTOR.redact_exchange_payload(...), ...)
           - focus-metavariable: $VALUE
       - pattern-regex: >-
-          (?i)\b(?:insert\s+into\s+(?:\w+\.)?"?order_events"?\s*(?:\(|select\b|values\b|default\b)|update\s+(?:only\s+)?(?:\w+\.)?"?order_events"?(?:\s+(?:as\s+)?\w+)?\s+set\b|copy\s+(?:\w+\.)?"?order_events"?\s*(?:\(|from\b))
+          (?i)\b(?:insert(?:\s|/\*(?:[^*]|\*(?!/))*+\*/|--[^\n]*+)++into\s+(?:\w+\.)?"?order_events"?\s*(?:\(|select\b|values\b|default\b)|update\s+(?:only\s+)?(?:\w+\.)?"?order_events"?(?:\s+(?:as\s+)?\w+)?\s+set\b|copy\s+(?:\w+\.)?"?order_events"?\s*(?:\(|from\b))
     paths:
       include:
         - "services/api/candleviewer/**"
