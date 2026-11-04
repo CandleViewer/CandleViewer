@@ -26,6 +26,7 @@ from candleviewer.oms.errors import StoreUnavailable, problem_for
 from candleviewer.oms.order_machine import OrderMachines
 from tests.chaos.oms import _pg
 from tests.chaos.oms._oracle import check
+from tests.integration.oms.test_submission_pipeline_pg import _held
 
 pytestmark = [pytest.mark.chaos, pytest.mark.integration, pytest.mark.nightly]
 node = _pg.node  # the module's Postgres 16; each test clones its database at head
@@ -74,6 +75,8 @@ async def test_s16_an_outage_of_the_node_at_the_validate_commit_sends_nothing(
         steps = [e["step"] for e in logs if e["event"] == "oms_submit_refused"]
         assert (failed, steps) == (["VALIDATE"], ["persist"])  # the commit the outage met
         assert sorted(world.creates().values()) == [1]  # nothing sent for it
+        # orders, anchors, groups, legs and stops: the first request's alone, none for the refused
+        assert await asyncio.to_thread(_held, db.su, db.account, db.user) == (1, 1, 1, 1, 2)
         await world.pager.paged("oms_environment_lock_lost")  # fenced: the lock went with the node
         await check(world)  # the first order's row is its venue order's; the refused one has none
     async with _pg.running(db, tmp_path, venue) as again:  # the restart, the way back
@@ -81,6 +84,8 @@ async def test_s16_an_outage_of_the_node_at_the_validate_commit_sends_nothing(
         retried = await again.submit(key=SECOND)
         assert (retried.status, retried.lifecycle) == (202, "submitted")
         assert sorted(again.creates().values()) == [1, 1]  # its key unspent: sent once
+        # the retry's own rows added to the first request's
+        assert await asyncio.to_thread(_held, db.su, db.account, db.user) == (2, 2, 2, 2, 4)
         await check(again)
 
 
