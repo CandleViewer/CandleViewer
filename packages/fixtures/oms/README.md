@@ -36,7 +36,7 @@ oms/
 
 | Class              | Meaning                                                                  | Lives in                                          | Today                       |
 | ------------------ | ------------------------------------------------------------------------ | ------------------------------------------------- | --------------------------- |
-| `recorded`         | Captured from the Bybit demo environment, redacted                       | the corpus                                        | none (E29-K01 records them) |
+| `recorded`         | Captured, redacted: private data on demo, market data on the public host | the corpus                                        | none (E29-K01 records them) |
 | `docs-transcribed` | A documentation example, keys and values unchanged                       | the corpus: `rest/trading-*.json`, `ws/private-*` | the order path's files      |
 | `derived`          | Built from the two above: a composed sequence, a repeat, a changed value | a scenario directory, each file with its sources  | `ws_duplicate_exec`         |
 
@@ -119,7 +119,9 @@ not a server). A call no stub answers is a test failure, never a silent success.
 
 Nothing is committed before it passes these; each rule names its owner.
 
-1. **R-1 Demo only.** Nothing comes from live (C-13.5, the ticket's security notes).
+1. **R-1 Private data from demo only.** Nothing private comes from live (C-13.5, the ticket's security
+   notes). Public market data, with no key and no account, may come from the public host: demo has no
+   public feed of its own (C-2.11).
 2. **R-2 The recorder scrubs first.** E29-K01's harness replaces identifier values with per-run tokens,
    drops headers, signatures, `args` and `auth` frames, and refuses a final text that still holds a
    registered secret.
@@ -141,14 +143,26 @@ Nothing is committed before it passes these; each rule names its owner.
 
 The threat model's AC-15 (`docs/security/threat-models/E29-oms.md`) feeds the OMS what a venue or a
 user could make it echo: auth headers, an `auth` frame, a signed URL, an error text that repeats a key,
-keys under field names no redactor knows. Text of that shape is never committed: the gates above would
-refuse it, rightly. The form, built with the scenarios:
+keys under field names no redactor knows. Text of that shape is never committed, and the gates above
+refuse only part of it. `verify.mjs` refuses a field named `sign`, `signature`, `api_key`, `apiKey` or
+`api_secret` with a value of 8 characters or more, a field named `secret`, `token` or `password` with
+a value of 16 or more letters, digits or `+/=_-`, a `Bearer` token of 20 or more letters, digits or
+`._-`, a PEM private-key header and an `X-BAPI-API-KEY` or `X-BAPI-SIGN` header with 16 or more
+letters and digits. The hygiene check refuses the `api_key`, `apiKey` and `api_secret` fields from 16
+characters, a signature from 32 hex digits, a PEM header and those two headers. Neither refuses a bare
+key or signature in prose, in an `auth` frame's `args`, in a signed URL, in an error text or under a
+field of another name. The bare-key rule that `accounts/` has joins `oms/` in the PR of #844 that adds
+the first template; until then the review under R-4 and gitleaks' own rules are what stop those
+shapes. The form, built with the scenarios:
 
 - A **template** is a derived file in which every secret-shaped value is a placeholder, a whole JSON
   string value or a token inside a longer text. The committed file parses without its seed and passes
   every gate as committed, so the placeholder's spelling is chosen to satisfy them: `verify.mjs` flags
   eight characters or more as the value of a field named `sign`, `signature`, `api_key`, `apiKey` or
-  `api_secret`, so those fields take a shorter one.
+  `api_secret`, so those fields take a shorter one. `secret`, `token` and `password` are flagged from
+  16 letters, digits or `+/=_-`, so they take a placeholder shorter than that or holding a character
+  outside the set (`{{SLOT_1}}`, `<slot-1>` and `***` pass there; `PLACEHOLDER_SECRET_01` is flagged),
+  and a field flagged from 8 characters takes `<sig>` or `***`.
 - The manifest names each slot. At test time a seed fills the slots: each value is generated in memory
   from the seed alone, in the exact shape the case needs (a bare key, a signature, a header value), and
   is never written to disk, logged or put in a failure message.

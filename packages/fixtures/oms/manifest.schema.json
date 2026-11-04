@@ -34,7 +34,7 @@
       "const": "demo"
     },
     "evidence": {
-      "description": "The weakest class of what the scenario delivers: recorded (a demo capture), docs-transcribed (a documentation example) or derived (built from either; never a capture, never evidence of what the venue does). Checked against the corpus manifest.",
+      "description": "The weakest class of what the scenario delivers: recorded (a capture: private data on demo, market data on the public host), docs-transcribed (a documentation example) or derived (built from either; never a capture, never evidence of what the venue does). Checked against the corpus manifest.",
       "enum": ["recorded", "docs-transcribed", "derived"]
     },
     "rules": {
