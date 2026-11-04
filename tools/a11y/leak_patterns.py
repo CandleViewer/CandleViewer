@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import re
 
+#: Any scheme (`ftp://`, `wss://`), a scheme-relative `//name`, and the named host forms; any case.
 URL_RE = re.compile(
-    r"https?://|www\.|/home/|localhost|\.local\b|\b[a-z0-9-]+\.(?:com|io|org|net)\b"
+    r"\b[a-z][a-z0-9+.-]*://|(?<![\w:/])//[a-z0-9]|www\.|/home/|localhost|\.local\b"
+    r"|\b[a-z0-9-]+\.(?:com|io|org|net)\b",
+    re.IGNORECASE,
 )
 KEYLIKE_RE = re.compile(r"[A-Za-z0-9+/=_-]{24,}")
 IMAGE_RE = re.compile(r"!\[|<img|\.png\b|\.svg\b", re.IGNORECASE)
@@ -28,15 +31,18 @@ FILE_SUFFIXES = (
     "json|md|mdx|py|pyi|ts|tsx|js|jsx|mjs|cjs|yml|yaml|toml|txt|lock|css|scss|html|htm|sh|sql|"
     "csv|xml|ini|cfg|log|pdf|map|snap|rs|go|ipynb|tf|conf|env|gz|zip"
 )
-#: A dotted name ending in letters: any top-level domain (`example.dev`, `a.b.example.zone`).
+#: A dotted name ending in letters: any top-level domain (`example.dev`, `a.b.example.zone`), any case.
 HOST_RE = re.compile(
-    rf"(?<![\w@./-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+(?!(?:{FILE_SUFFIXES})\b)[a-z]{{2,}}(?![\w-])"
+    rf"(?<![\w@./-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+(?!(?:{FILE_SUFFIXES})\b)[a-z]{{2,}}(?![\w-])",
+    re.IGNORECASE,
 )
 
 #: Host, address, key-like or id strings (a sign-off name is checked against all of them).
+#: Each part keeps its own case rule (a scoped flag group), so the join matches what the parts do.
 LEAK_RE = re.compile(
     "|".join(
-        r.pattern for r in (URL_RE, HOST_RE, EMAIL_RE, IPV4_RE, IPV6_RE, KEYLIKE_RE, IDLIKE_RE)
+        f"(?{'i' if r.flags & re.IGNORECASE else ''}:{r.pattern})"
+        for r in (URL_RE, HOST_RE, EMAIL_RE, IPV4_RE, IPV6_RE, KEYLIKE_RE, IDLIKE_RE)
     )
 )
 #: (pattern, what it found), for a content scan of free text.

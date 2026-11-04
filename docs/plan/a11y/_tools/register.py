@@ -64,19 +64,18 @@ SCREEN_KEYS = ("id", "name", "coverage", "owningTicket", "states", "evidence", "
 SIGN_OFF_VERDICTS = ("signed", "declined")
 
 
-def _conformance() -> Any:
+def _leak_patterns() -> Any:
     """tools/a11y/leak_patterns.py, loaded by path: the one home of the host / address / key / id patterns."""
     path = Path(__file__).resolve().parents[4] / "tools" / "a11y" / "leak_patterns.py"
     spec = importlib.util.spec_from_file_location("a11y_leak_patterns_reg", path)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod  # dataclasses read it
     spec.loader.exec_module(mod)
     return mod
 
 
 # The sign-off name is published in the matrix: no host, id or key-like string (E47-D13 §6.5).
-SIGN_OFF_LEAK = _conformance().LEAK_RE
+SIGN_OFF_LEAK = _leak_patterns().LEAK_RE
 EVIDENCE_KEYS = ("automated", "keyboard", "deep", "sr")
 FINDING_KEYS = ("id", "screenId", "level", "severity", "owningTicket", "status")
 

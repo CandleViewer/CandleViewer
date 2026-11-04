@@ -311,19 +311,22 @@ def test_acceptance_expiring_today_is_not_yet_expired(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "text",
+    ("text", "value"),
     [
-        "see example.com for details",
-        "visit https://host/x",
-        "key AbCdEfGhIjKlMnOpQrStUvWxYz12",
-        "UID 1234567",
+        ("see example.com for details", "example.com"),
+        ("visit https://host/x", "https://host/x"),
+        ("key AbCdEfGhIjKlMnOpQrStUvWxYz12", "AbCdEfGhIjKlMnOpQrStUvWxYz12"),
+        ("UID 1234567", "1234567"),
     ],
 )
-def test_content_check_rejects_hosts_ids_and_key_material(tmp_path: Path, text: str) -> None:
+def test_content_check_rejects_hosts_ids_and_key_material(
+    tmp_path: Path, text: str, value: str
+) -> None:
     root = _tree(tmp_path)
     _edit_limits(root, lambda d: d["limitations"][1].update(plain=text))
     lines, rc = _run(root, "fill")
     assert rc == 1 and any(ln.startswith("FAIL G-CONTENT") and ".plain" in ln for ln in lines)
+    assert not any(value in ln for ln in lines), lines
 
 
 def test_content_check_covers_exception_fields(tmp_path: Path) -> None:
@@ -579,7 +582,10 @@ def test_matrix_rejects_unknown_sign_off_keys_and_leaky_names(extra: dict[str, s
         "date": "2026-11-03",
         **extra,
     }
-    assert any("signOff" in e for e in regpy.validate(bad))
+    errors = regpy.validate(bad)
+    assert any("signOff" in e for e in errors)
+    if "by" in extra:
+        assert not any(extra["by"] in e for e in errors), errors
 
 
 def test_matrix_rejects_a_malformed_sign_off() -> None:
@@ -692,6 +698,22 @@ def _probe(kind: str) -> str:
     return "".join(parts[kind])
 
 
+def _content_case(n: int) -> str:
+    """Further leak-shaped strings, built at run time like `_probe`."""
+    cases = {
+        1: ["TOOLS", DOT, "INTERNAL", DOT, "DEV"],
+        2: ["Checker", DOT, "App"],
+        3: ["HTTPS", "://", "host", "/x"],
+        4: ["ftp", "://", "buildbox", "/x"],
+        5: ["wss", "://", "gateway", "/feed"],
+        6: ["/", "/", "buildbox", "/x"],
+    }
+    return "".join(cases[n])
+
+
+CONTENT_CASES = [1, 2, 3, 4, 5, 6]
+
+
 LEAK_KINDS = [
     "email",
     "email-long",
@@ -735,6 +757,32 @@ def test_leak_patterns_refuse_each_class_in_a_sign_off_name(kind: str) -> None:
 def test_leak_patterns_refuse_each_class_in_a_limitations_leaf(tmp_path: Path, kind: str) -> None:
     root = _tree(tmp_path)
     value = _probe(kind)
+    _edit_limits(root, lambda d: d["limitations"][1].update(workaround=f"Ask {value}"))
+    lines, rc = _run(root, "check")
+    assert rc == 1 and any("G-CONTENT" in ln and "workaround" in ln for ln in lines), lines
+    assert not any(value in ln for ln in lines), lines
+
+
+@pytest.mark.parametrize("n", CONTENT_CASES)
+def test_content_pattern_case_refused_in_a_sign_off_name_without_echo(n: int) -> None:
+    doc = _register_doc()
+    value = _content_case(n)
+    doc["screens"][_screen_without_open_findings(doc)]["signOff"] = {
+        "verdict": "signed",
+        "by": f"the Owner {value}",
+        "date": "2026-11-03",
+    }
+    errors = regpy.validate(doc)
+    assert any("signOff" in e for e in errors), errors
+    assert not any(value in e for e in errors), errors
+
+
+@pytest.mark.parametrize("n", CONTENT_CASES)
+def test_content_pattern_case_refused_in_a_limitations_leaf_without_echo(
+    tmp_path: Path, n: int
+) -> None:
+    root = _tree(tmp_path)
+    value = _content_case(n)
     _edit_limits(root, lambda d: d["limitations"][1].update(workaround=f"Ask {value}"))
     lines, rc = _run(root, "check")
     assert rc == 1 and any("G-CONTENT" in ln and "workaround" in ln for ln in lines), lines
