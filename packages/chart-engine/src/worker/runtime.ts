@@ -41,7 +41,7 @@ import {
 } from "../layers/candle/series.js";
 import type { HostDeps, HostTheme } from "../layers/host.js";
 import type { BatchUniforms } from "../gl/submit.js";
-import { type BarBatch, BarStore } from "../model/BarStore.js";
+import { BAR_FLAG, type BarBatch, BarStore } from "../model/BarStore.js";
 import { ModelRejection, type MutationRange, RangeSlot } from "../model/counters.js";
 import { plotWidthOf } from "../interaction/wheel.js";
 import * as scene from "../scene/index.js";
@@ -752,6 +752,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       }
       c.ring.nodes.length = 0;
       c.seams.nodes.length = 0;
+      c.marks.nodes.length = 0;
       inst.candles.splice(inst.candles.indexOf(c), 1);
       inst.graph.markTheme();
       touch(inst);
@@ -798,8 +799,24 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       else if (op === "prepend") r = store.prepend(b);
       else r = patchAt(store, b);
       s.ring.sync(store, r);
-      for (const h of s.candle.hosts) inst.graph.markData(h.id);
+      const hs = s.candle.hosts;
+      const dirty = s.candle.dirtyHosts();
+      for (let p = 0; p < hs.length; p += 1) {
+        if ((dirty & (1 << p)) !== 0) inst.graph.markData((hs[p] as { id: string }).id);
+      }
+      const marks = s.candle.marks;
+      const changed = marks.takeEvents();
       if (sid !== inst.main) return;
+      for (let e = 0; e < changed; e += 1) {
+        const bits = marks.eventBits[e] as number;
+        deps.post({
+          t: "barStateChanged",
+          id: inst.id,
+          time: marks.eventTimes[e] as number,
+          forming: (bits & BAR_FLAG.forming) !== 0,
+          amended: (bits & BAR_FLAG.amended) !== 0,
+        });
+      }
       inst.objects.onMutation(r);
       inst.viewportDirty = true; // the map's length moved: the time range may have too
       moved(inst, inst.viewport.setPriceInfo(0, store.priceOrigin, store.tickSize));

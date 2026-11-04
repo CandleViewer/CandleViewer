@@ -154,13 +154,15 @@ describe("BarSeries / CandleSeries per frame", () => {
       "series.candle.wick",
       "series.candle.body",
       "series.candle.seam",
+      "series.candle.marks",
     ]);
     expect(series("bars").c.blocks.map((b) => b.label)).toEqual([
       "series.ohlc.stem",
       "series.ohlc.ticks",
       "series.ohlc.seam",
+      "series.ohlc.marks",
     ]);
-    expect(SERIES_PARTS.bars.map(([, p]) => p)).toEqual([STEM, TICKS, SEAM]);
+    expect(SERIES_PARTS.bars.map(([, p]) => p)).toEqual([STEM, TICKS, SEAM, CANDLE_PART.marks]);
   });
 
   it("OHLC from 5 CSS px: stem (4 vertices) and ticks (10); below it the candle mark", () => {

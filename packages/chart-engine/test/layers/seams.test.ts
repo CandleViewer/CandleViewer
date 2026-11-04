@@ -37,7 +37,7 @@ function setup() {
     patch: (id: string, r: MutationRange) => void patches.push([id, r.from, r.to]),
   });
   const seams = new SeamRing(ring);
-  ring.seams = seams;
+  ring.follower = seams;
   seams.nodes.push("seam");
   return { ring, seams, patches };
 }

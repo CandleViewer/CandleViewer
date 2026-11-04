@@ -7,9 +7,13 @@
 // subtracted before any float (BQ-75); y is bar-cell's log1p / series mix (BQ-113). `u_batch` =
 // (part, head, mask, n), part as `CANDLE_PART`: 0 wick, 1 body, 2 OHLC ticks, 3 OHLC stem, 4 the
 // gap seam, 5 / 6 the hollow wick and body (E12-S07, D06 §4.2: placed as 0 / 1; `a_meta` bit 8
-// hollow, bit 9 colour-up, `CANDLE_META`). `u_geom[0]` = (body, hairline, tick) device px and
-// spacing CSS px; `u_geom[1]` = (DPR, plot top, plot bottom) in device px; the seam spans top to
-// bottom. Mirrors `src/layers/candle/geometry.ts` line for line.
+// hollow, bit 9 colour-up, `CANDLE_META`), 7 the marks (E12-S10, D06 §7: an entry is [slot,
+// high, low, open, kind | dir << 4 | heavy << 6] of the drawn bar, Heikin-Ashi's when on; kind 2
+// the forming ring, 1 hairline dashed 2 / 2 around the mark 1 hairline out, kind 8 the corrected
+// 3-hairline square 2 above the high; heavy: the drawn wick is 2 hairlines; the numbers are
+// `MARK`'s). `u_geom[0]` = (body, hairline, tick) device px and spacing CSS px; `u_geom[1]` =
+// (DPR, plot top, plot bottom) in device px; the seam spans top to bottom. Mirrors
+// `src/layers/candle/geometry.ts` line for line.
 // `u_palette` = up, down, wick, up tint, down tint, neutral (E12-D06 §2-§4, §9).
 export const CANDLE = {
   name: "candle",
@@ -49,7 +53,7 @@ float yOf(int tick) {
 void main() {
   int part = u_batch.x;
   int base = part == 5 ? 0 : part == 6 ? 1 : part; // the hollow parts place as wick and body
-  int i = ((part == 4 ? a_ohlc.x : gl_InstanceID) - u_batch.y) & u_batch.z;
+  int i = ((part == 4 || part == 7 ? a_ohlc.x : gl_InstanceID) - u_batch.y) & u_batch.z;
   int vid = gl_VertexID;
   int sub = 0;
   if (part == 2) {
@@ -79,6 +83,39 @@ void main() {
     w = h;
     y1 = u_geom[1].z > 0.0 ? u_geom[1].z : u_viewport.y;
     y0 = u_geom[1].z > 0.0 ? u_geom[1].y : 0.0;
+  } else if (part == 7) {
+    float left = floor(centre - body * 0.5 + 0.5);
+    float stem = left + floor((body - h) * 0.5);
+    if ((a_meta & 2) != 0) {
+      // The ring's outer rect: the wick and body union (a doji / zero-range body around the open).
+      float bw = dir == 3 ? max(body, floor(3.0 * u_geom[1].x + 0.5)) : body;
+      float bx = left + floor((body - bw) * 0.5);
+      float weight = (a_meta & 64) != 0 ? 2.0 * h : h; // the drawn wick's (hollow: colour-down, 2 hairlines)
+      float wl = yOf(a_ohlc.z);
+      float wh = yOf(a_ohlc.y);
+      float top = min(wl, wh);
+      float bottom = max(max(wl, wh), top + h);
+      if (dir >= 2) {
+        float tall = dir == 2 && u_geom[0].w < 8.0 ? h : 2.0 * h;
+        float b0 = floor(yOf(a_ohlc.w) - tall * 0.5 + 0.5);
+        top = min(top, b0);
+        bottom = max(bottom, b0 + tall);
+      }
+      float pad = 2.0 * h; // ring offset 1 + weight 1
+      x0 = min(bx, stem) - pad;
+      w = max(bx + bw, stem + weight) - min(bx, stem) + 2.0 * pad;
+      y0 = floor(top) - pad;
+      y1 = ceil(bottom) + pad;
+      v_outline = 3;
+    } else {
+      float side = 3.0 * h;
+      float yh = yOf(a_ohlc.y);
+      float at = floor(yh + 0.5);
+      x0 = stem - (side - h) * 0.5;
+      w = side;
+      y0 = yh <= yOf(a_ohlc.z) ? at - 2.0 * h - side : at + 2.0 * h;
+      y1 = y0 + side;
+    }
   } else {
     float left = floor(centre - body * 0.5 + 0.5);
     float weight = part == 5 && dir != 3 ? (colourUp ? h : 2.0 * h) : (dir == 1 ? 2.0 * h : h);
@@ -114,9 +151,9 @@ void main() {
       y1 = yOf(a_ohlc.y);
     }
   }
-  // partColor: the wicks and the seam neutral; the hollow body (a doji's too, D06 §9) by
-  // colour-up; else doji and zero-range neutral, up or down.
-  int row = base == 0 || part == 4
+  // partColor: the wicks, the seam and the marks neutral; the hollow body (a doji's too, D06 §9)
+  // by colour-up; else doji and zero-range neutral, up or down.
+  int row = base == 0 || part == 4 || part == 7
     ? 2
     : part == 6 && dir != 3 ? (colourUp ? 0 : 1) : dir >= 2 ? 2 : dir;
   v_color = u_palette[row];
@@ -138,15 +175,33 @@ void main() {
 }`,
   fragment: `#version 300 es
 precision highp float; // u_geom is shared with the vertex stage: one precision (ESSL 3.00 link)
+precision highp int;
 uniform vec4 u_geom[2];
 in vec4 v_color;
 in vec4 v_fill;
-in vec2 v_local;
-in vec2 v_size;
+in highp vec2 v_local;
+in highp vec2 v_size;
 flat in int v_outline;
 out vec4 o_color;
 void main() {
   float h = u_geom[0].y;
+  if (v_outline == 3) {
+    // The forming ring (ringOn): a 1-hairline band, dashed 2 / 2 hairlines clockwise from the
+    // top-left corner (top, right, bottom, left at the corners), whole pixels of the snapped rect.
+    ivec2 q = ivec2(floor(v_local));
+    int W = int(v_size.x + 0.5);
+    int H = int(v_size.y + 0.5);
+    int t = int(h + 0.5);
+    int s;
+    if (q.y < t) s = q.x;
+    else if (q.x >= W - t) s = W + q.y;
+    else if (q.y >= H - t) s = 2 * W + H - 1 - q.x;
+    else if (q.x < t) s = 2 * W + 2 * H - 1 - q.y;
+    else discard;
+    if (((s / (2 * t)) & 1) != 0) discard;
+    o_color = v_color;
+    return;
+  }
   int mode = v_outline & 3;
   bool edgeY = v_local.y < h || v_local.y > v_size.y - h;
   bool edgeX = mode == 2 && (v_local.x < h || v_local.x > v_size.x - h);

@@ -8,6 +8,9 @@
 // E12-S07: two derived modes, switched in place (`setMode`, one rewrite of the same array): the
 // hollow bits (`CANDLE_META`), whose colour bit reads the previous close, so a write extends by
 // the next bar; and Heikin-Ashi (`HaRing`), whose recurrence runs from the first mutated bar on.
+// E12-S10: `meta` carries the forming (bit 1) and amended (bit 3) flags to the shader, and every
+// sync (and `setMode`) hands its written range to the follower after the write, so the marks
+// read the drawn values (Heikin-Ashi's, when on).
 import type { VertexSource } from "../../scene/gpu-types.js";
 import type { BarStore } from "../../model/BarStore.js";
 import { type MutationRange, RangeSlot } from "../../model/counters.js";
@@ -56,7 +59,7 @@ export interface RingTransform {
   ): void;
 }
 
-/** A source that follows the ring's syncs (the gap seams): `rewrite` when the ring re-linearised. */
+/** A source that follows the ring's syncs (seams, marks): `rewrite` when the ring re-linearised. */
 export interface RingFollower {
   sync(store: BarStore, r: MutationRange, rewrite: boolean): void;
 }
@@ -77,8 +80,11 @@ export class CandleRing implements VertexSource {
   lastTo = 0;
   /** Nodes that draw this ring: each sync patches their batches. */
   readonly nodes: string[] = [];
-  /** The series' gap seams (BQ-8), kept in step with every sync; null draws none. */
-  seams: RingFollower | null = null;
+  /**
+   * What follows every sync: a series' gap seams (BQ-8) and forming / amended marks (E12-S10),
+   * one object behind one call site (`CandleSeries`); null follows nothing.
+   */
+  follower: RingFollower | null = null;
   /** E12-S07 (`setMode` only): the hollow bits are written, a write extended by the next bar. */
   hollow = false;
   /** E12-S07 (BQ-3; `setMode` only): the Heikin-Ashi transform (`HaRing`) while on, else null. */
@@ -111,7 +117,6 @@ export class CandleRing implements VertexSource {
     this.length = store.length;
     let range = r;
     const rewrite = cols !== this.of || store.capacity !== this.cap;
-    this.seams?.sync(store, r, rewrite);
     if (rewrite) {
       this.cap = store.capacity;
       this.ints = new Int32Array(this.cap * CANDLE_STRIDE);
@@ -126,6 +131,9 @@ export class CandleRing implements VertexSource {
       this.derive(store, Math.max(0, r.from), Math.min(r.to, this.length));
       range = this.span.set(r.op, this.lastFrom, this.lastTo, r.indexShift);
     } else this.write(store, Math.max(0, r.from), Math.min(r.to, this.length));
+    // After the write: the marks read the drawn words, over what was written (a derived write
+    // runs past the mutation: HA to the end, hollow one bar on).
+    this.follower?.sync(store, range, rewrite);
     if (this.sink === null || range.to <= range.from) return;
     for (let i = 0; i < this.nodes.length; i += 1) this.sink.patch(this.nodes[i] as string, range);
   }
@@ -149,6 +157,7 @@ export class CandleRing implements VertexSource {
     }
     if (this.derived) this.derive(store, 0, this.length);
     else this.write(store, 0, this.length);
+    this.follower?.sync(store, all, false); // E12-S10: the marks follow the drawn words
     if (this.sink === null || this.length === 0) return;
     for (let i = 0; i < this.nodes.length; i += 1) this.sink.patch(this.nodes[i] as string, all);
   }

@@ -3,7 +3,16 @@
 // its shader's affine (src/gl/shaders), so both backends place an instance on the same pixels.
 // The pane block (`PaneUniforms`, E11-S03) is the only projection used: no price or time maths here.
 import type { BatchUniforms } from "../gl/submit.js";
-import { CANDLE_PART, candleRect, fullOutline, GEOM } from "../layers/candle/geometry.js";
+import {
+  CANDLE_PART,
+  candleRect,
+  fullOutline,
+  GEOM,
+  MARK_GEOM,
+  markRect,
+} from "../layers/candle/geometry.js";
+import { MARK_BITS } from "../layers/candle/marks.js";
+import { BAR_FLAG } from "../model/BarStore.js";
 import { CANDLE_STRIDE } from "../layers/candle/ring.js";
 import { attributeOffset, PROGRAM } from "../scene/instance-layout.js";
 import { projectRel, type PaneUniforms } from "../viewport/transform.js";
@@ -87,7 +96,8 @@ const RECT_OUT = new Float64Array(4);
  * `u_viewport` px then scaled to the backing store. For a body, `sub` 1 is an up body's tint: the
  * rect inset by a hairline on every side from 3 CSS px wide, else top and bottom only; a hollow
  * body's `sub` 1 is its outline alone (E12-S07, D06 §4.2), the same edges, the interior unpainted.
- * For the OHLC ticks `sub` is the tick (0 open, 1 close). A seam instance names its bar's slot.
+ * For the OHLC ticks `sub` is the tick (0 open, 1 close). A seam or mark instance names its bar's
+ * slot; a mark (E12-S10) is the geometry twin's `markRect`, the ring as its dashes (`paintRing`).
  */
 export function paintCandle(ctx: Ctx2DLike, a: PaintArgs): void {
   const b = a.block;
@@ -96,8 +106,13 @@ export function paintCandle(ctx: Ctx2DLike, a: PaintArgs): void {
   const at = a.at;
   const part = blk.ints[0] ?? 0;
   const v = a.ints;
-  const slot = part === CANDLE_PART.seam ? (v[at] ?? 0) : at / CANDLE_STRIDE;
+  const own = part === CANDLE_PART.seam || part === CANDLE_PART.marks; // entries name a slot
+  const slot = own ? (v[at] ?? 0) : at / CANDLE_STRIDE;
   const i = (slot - (blk.ints[1] ?? 0)) & (blk.ints[2] ?? 0);
+  if (part === CANDLE_PART.marks) {
+    paintMark(ctx, a, blk, i, b);
+    return;
+  }
   const o = v[at] ?? 0;
   const hi = v[at + 1] ?? 0;
   const lo = v[at + 2] ?? 0;
@@ -138,6 +153,96 @@ export function paintCandle(ctx: Ctx2DLike, a: PaintArgs): void {
   }
   if (w <= 0 || h <= 0) return;
   ctx.rect(x * sx, y * sy, w * sx, h * sy);
+}
+
+/** A mark entry ([slot, high, low, open, kind | dir << 4 | heavy]): the square, or the ring. */
+function paintMark(
+  ctx: Ctx2DLike,
+  a: PaintArgs,
+  blk: BatchUniforms,
+  i: number,
+  b: PaneUniforms,
+): void {
+  const v = a.ints;
+  const at = a.at;
+  const meta = v[at + 4] ?? 0;
+  const k = b.floats;
+  const r = RECT_OUT;
+  const hi = v[at + 1] ?? 0;
+  const lo = v[at + 2] ?? 0;
+  const o = v[at + 3] ?? 0;
+  markRect(meta & MARK_BITS, i, hi, lo, o, meta, k, b.ints[0] ?? 0, b.ints[1] ?? 0, blk.geom, r);
+  const sx = scaleX(a);
+  const sy = scaleY(a);
+  const x = r[0] ?? 0;
+  const y = r[1] ?? 0;
+  const w = r[2] ?? 0;
+  const h = r[3] ?? 0;
+  if ((meta & BAR_FLAG.forming) === 0) ctx.rect(x * sx, y * sy, w * sx, h * sy);
+  else paintRing(ctx, x, y, w, h, blk.geom[GEOM.hair] ?? 1, sx, sy);
+}
+
+/**
+ * The ring's inked pixels as rects, exactly `ringOn`'s set: per band (top, right, bottom, left,
+ * the corner priority of the shader), each run of perimeter positions whose dash is on.
+ */
+function paintRing(
+  ctx: Ctx2DLike,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  hair: number,
+  sx: number,
+  sy: number,
+): void {
+  const t = MARK_GEOM.ringWeight * hair;
+  const d = MARK_GEOM.dash * hair;
+  // [along from, along to, perimeter at `from`, +1 / -1, horizontal, fixed offset, fixed length]
+  run(ctx, 0, w, 0, 1, true, y, t, x, d, sx, sy);
+  run(ctx, t, h, w + t, 1, false, x + w - t, t, y, d, sx, sy);
+  run(
+    ctx,
+    0,
+    w - t,
+    2 * w + h - 1,
+    -1,
+    true,
+    y + Math.max(t, h - t),
+    h - Math.max(t, h - t),
+    x,
+    d,
+    sx,
+    sy,
+  );
+  run(ctx, t, h - t, 2 * w + 2 * h - 1 - t, -1, false, x, Math.min(t, w - t), y, d, sx, sy);
+}
+
+/** One band: positions [from, to) along it, perimeter `s0 + dir * (p - from)`, on-runs as rects. */
+function run(
+  ctx: Ctx2DLike,
+  from: number,
+  to: number,
+  s0: number,
+  dir: number,
+  horizontal: boolean,
+  fixed: number,
+  thick: number,
+  base: number,
+  d: number,
+  sx: number,
+  sy: number,
+): void {
+  if (thick <= 0) return;
+  let start = -1;
+  for (let p = from; p <= to; p += 1) {
+    const on = p < to && Math.floor((s0 + dir * (p - from)) / d) % 2 === 0;
+    if (on && start < 0) start = p;
+    if (on || start < 0) continue;
+    if (horizontal) ctx.rect((base + start) * sx, fixed * sy, (p - start) * sx, thick * sy);
+    else ctx.rect(fixed * sx, (base + start) * sy, thick * sx, (p - start) * sy);
+    start = -1;
+  }
 }
 
 /** Indexed by `PROGRAM`; `sdf-text` has none: the 2D path cannot rebuild strings (BQ-88). */
