@@ -46,6 +46,7 @@
     "contract-security-4": ["tests/security/auth"],
     "rest-heavy-1": [
       "tests/qa/test_e08_regression_pack.py",
+      "tests/qa/test_e40_regression_pack.py",
       "tests/unit/architecture",
       "tests/unit/book"
     ],

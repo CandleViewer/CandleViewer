@@ -90,6 +90,22 @@ def test_gate_muted_but_critical_override_passes() -> None:
     assert run(st(), muted=True, critical=True).passed
 
 
+def test_gate_muted_follows_critical_override() -> None:
+    held = run(st(), muted=True, critical=False)
+    assert held.passed is False and held.reason == "muted"
+    assert run(st(), muted=True, critical=True).passed
+
+
+@pytest.mark.parametrize(
+    "closed", [g for g in GATE_ORDER if g in CLOSERS and g != "muted"] + ["storm"]
+)
+def test_gate_critical_override_does_not_reopen_other_closed_gates(closed: str) -> None:
+    """Critical override is consulted only by the muted gate; every other closed gate holds."""
+    r = run(st(**CLOSERS.get(closed, {})), full_storm() if closed == "storm" else None,
+            muted=True, critical=True)  # fmt: skip
+    assert r.passed is False and r.reason == closed
+
+
 def test_gate_cooldown_boundary_exactly_elapsed_reopens() -> None:
     assert run(st(last_fired_ms=NOW - 60_000)).passed
     assert run(st(last_fired_ms=NOW - 59_999)).reason == "cooldown"
