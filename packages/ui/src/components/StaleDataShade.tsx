@@ -7,6 +7,9 @@ export type StaleDataShadeState = "fresh" | "stale" | "escalated" | "stale-serve
 
 const pad = (n: number): string => String(n).padStart(2, "0");
 const finite = (ms: number): number => (Number.isFinite(ms) ? Math.max(0, ms) : 0);
+/** A time or age the component may draw: a finite number, else absent (never a made-up 0, C-2.12). */
+const known = (ms: number | undefined): number | undefined =>
+  ms !== undefined && Number.isFinite(ms) ? ms : undefined;
 
 /** "14:02:11": an epoch-ms instant as UTC wall time (the deck's "as of {time} UTC"). */
 function utcTime(epochMs: number): string {
@@ -37,7 +40,7 @@ export interface StaleDataShadeProps {
   readonly state: StaleDataShadeState;
   /** The id of the text node: the host's region names it in `aria-describedby` (E08-D03 §5). */
   readonly id: string;
-  /** The age of the last good value (stale, escalated, disconnected); absent means no age is drawn or read. */
+  /** The age of the last good value (stale, escalated, disconnected); absent or non-finite means no age is drawn or read. */
   readonly ageMs?: number;
   /** The last good value's time, epoch ms: the account-scope line's "as of" (E29-D03 §4.4). */
   readonly lastGoodTs?: number;
@@ -56,17 +59,21 @@ function lineOf(props: StaleDataShadeProps): string | null {
   const custom = props.label?.trim();
   if (props.state === "fresh") return null;
   if (custom !== undefined && custom !== "") return custom;
-  const age = props.ageMs;
+  const age = known(props.ageMs);
+  const lastGoodTs = known(props.lastGoodTs);
+  const sinceTs = known(props.sinceTs);
   switch (props.state) {
     case "stale":
     case "escalated":
       // No age given is no age drawn: never a fabricated 0 (C-2.12).
-      if (props.lastGoodTs !== undefined) return `Not up to date · ${staleAsOf(props.lastGoodTs)}`;
-      return age === undefined ? "Not up to date" : `Last update ${Math.floor(finite(age) / 1000)} s ago`;
+      if (lastGoodTs !== undefined) return `Not up to date · ${staleAsOf(lastGoodTs)}`;
+      return age === undefined
+        ? "Not up to date"
+        : `Last update ${Math.floor(finite(age) / 1000)} s ago`;
     case "stale-server":
-      return props.sinceTs === undefined
+      return sinceTs === undefined
         ? "Stale (server)"
-        : `Stale (server) — since ${utcTime(props.sinceTs)}`;
+        : `Stale (server) — since ${utcTime(sinceTs)}`;
     case "disconnected":
       return age === undefined ? "Disconnected" : `Disconnected — last data ${mmss(age)}`;
   }
@@ -95,7 +102,7 @@ export function StaleDataShade(props: StaleDataShadeProps): JSX.Element {
   const { state, id, children } = props;
   const line = lineOf(props);
   const fresh = state === "fresh";
-  const age = props.ageMs;
+  const age = known(props.ageMs);
   // The chip (CMP-239) carries an age: with none given there is no chip, never a "Stale 0s".
   const chip = (state === "stale" || state === "escalated") && age !== undefined;
   return (
@@ -122,7 +129,7 @@ export function StaleDataShade(props: StaleDataShadeProps): JSX.Element {
             <FreshnessMarker
               presentation="compact"
               state="stale"
-              lastUpdatedAgeMs={finite(age)}
+              lastUpdatedAgeMs={age}
               escalated={state === "escalated"}
             />
           ) : null}

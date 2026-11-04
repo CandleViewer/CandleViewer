@@ -91,18 +91,44 @@
 /*
  * In a CMP-049 table the row and its cells carry their own colours (zebra, hover, `text.primary`) and table.css
  * sorts after this file in the shipped bundle, so the variant raises its specificity on the table's own classes.
+ *
+ * Precedence (E29-S07 review; `15` CMP-078 "As built"): the user's own row state wins over the stale tint. A row
+ * that is `aria-selected` or `aria-current` keeps table.css's selected / current fill and its text colours at rest
+ * and on hover alike: the variant does not match it (the two `:not()`s), so no specificity or source order decides
+ * it. The state is still carried in words (the row's "as of" description and the shade's line), never by colour,
+ * and the forced-colours edge below still marks the row. Every other row keeps the tint over zebra and hover.
  */
-.cv-table__row.cv-stale-row.cv-stale-row--stale,
-.cv-table__row.cv-stale-row.cv-stale-row--escalated,
-.cv-table__row.cv-stale-row.cv-stale-row--stale-server,
-.cv-table__row.cv-stale-row.cv-stale-row--disconnected {
+.cv-table__row.cv-stale-row.cv-stale-row--stale:not([aria-selected="true"]):not(
+    [aria-current="true"]
+  ),
+.cv-table__row.cv-stale-row.cv-stale-row--escalated:not([aria-selected="true"]):not(
+    [aria-current="true"]
+  ),
+.cv-table__row.cv-stale-row.cv-stale-row--stale-server:not([aria-selected="true"]):not(
+    [aria-current="true"]
+  ),
+.cv-table__row.cv-stale-row.cv-stale-row--disconnected:not([aria-selected="true"]):not(
+    [aria-current="true"]
+  ) {
   background: var(--color-data-confidence-stale-surface);
 }
 
-.cv-table__row.cv-stale-row.cv-stale-row--stale > .cv-table__cell,
-.cv-table__row.cv-stale-row.cv-stale-row--escalated > .cv-table__cell,
-.cv-table__row.cv-stale-row.cv-stale-row--stale-server > .cv-table__cell,
-.cv-table__row.cv-stale-row.cv-stale-row--disconnected > .cv-table__cell {
+.cv-table__row.cv-stale-row.cv-stale-row--stale:not([aria-selected="true"]):not(
+    [aria-current="true"]
+  )
+  > .cv-table__cell,
+.cv-table__row.cv-stale-row.cv-stale-row--escalated:not([aria-selected="true"]):not(
+    [aria-current="true"]
+  )
+  > .cv-table__cell,
+.cv-table__row.cv-stale-row.cv-stale-row--stale-server:not([aria-selected="true"]):not(
+    [aria-current="true"]
+  )
+  > .cv-table__cell,
+.cv-table__row.cv-stale-row.cv-stale-row--disconnected:not([aria-selected="true"]):not(
+    [aria-current="true"]
+  )
+  > .cv-table__cell {
   color: var(--color-data-confidence-stale-text);
 }
 
