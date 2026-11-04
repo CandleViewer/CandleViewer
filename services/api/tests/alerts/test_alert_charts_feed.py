@@ -104,7 +104,8 @@ async def test_an_owner_the_feed_cannot_read_gets_no_entry_and_the_alert_still_f
 
 async def test_the_alert_factory_gives_the_evaluators_charts_the_feed() -> None:
     feed = Feed()
-    ctx = SimpleNamespace(rules=SimpleNamespace(metric_source=object()), audit=None)
+    rules = SimpleNamespace(metric_source=object(), registry=lambda: None)
+    ctx = SimpleNamespace(rules=rules, audit=None)
     metrics = Metrics("demo", registry=CollectorRegistry())
     evaluator = await _alert_evaluator_factory(ctx, object(), metrics, feed=feed.port)()
     assert evaluator is not None and evaluator._charts._feed is feed.port

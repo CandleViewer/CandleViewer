@@ -27,6 +27,7 @@ def test_app_dispatcher_has_an_owner_gate_and_the_four_skip_series_at_zero() -> 
 async def test_app_evaluator_factory_builds_the_evaluator_with_an_owner_gate() -> None:
     from candleviewer.app import _alert_evaluator_factory
 
-    ctx = SimpleNamespace(rules=SimpleNamespace(metric_source=Source()), audit=None)
+    rules = SimpleNamespace(metric_source=Source(), registry=lambda: None)
+    ctx = SimpleNamespace(rules=rules, audit=None)
     ev = await _alert_evaluator_factory(ctx, None, Metrics("dev"))()  # type: ignore[arg-type]  # lazy
     assert ev is not None and isinstance(ev._owners, OwnerGate)

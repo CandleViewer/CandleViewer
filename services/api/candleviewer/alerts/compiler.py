@@ -6,7 +6,8 @@
 1. Structural **allow-list** walk over the raw JSON - every object must classify as one of
    ``PERMITTED_KINDS`` with exactly that kind's keys. Anything else (an ``actions`` key, an
    action node nested in ``variables``, a renamed key, a unicode look-alike op) is refused by
-   construction; a deny-list would fail open the day E35 adds a node kind. Size/depth bounded.
+   construction; a deny-list would fail open the day E35 adds a node kind. Size, depth, list
+   length and constant width bounded, each before the value is read.
 2. Schema validation against ``AlertConditionIr`` (``extra="forbid"`` pydantic models).
 3. Trigger validation (``RuleTrigger`` per-type requirements, 5-field UTC cron, timeframe).
 4. Metric resolution against E35's ``MetricRegistry``: unknown -> offending ``node_id`` plus
@@ -24,17 +25,20 @@ from __future__ import annotations
 import difflib
 import re
 from collections.abc import Iterator
+from decimal import Decimal
 from typing import Any, get_args
 from uuid import UUID
 
 from pydantic import ValidationError
 
+from candleviewer.alerts.delivery_view import CONTEXT_TEXT_MAX
 from candleviewer.alerts.errors import AlertIrInvalid, AlertIssue, RejectReason
 from candleviewer.alerts.models import AlertCondition, CompiledAlert
+from candleviewer.domain.plain_decimal import MAX_PLAIN_WIDTH, PlainWidthError, plain_decimal
 from candleviewer.domain.primitives import RuleId
 from candleviewer.domain.text import escape_unpaired
 from candleviewer.rules.ir import Action, Rule, RuleLimits, RuleScope
-from candleviewer.rules.ir.canonical import IrValueError, condition_hash
+from candleviewer.rules.ir.canonical import OUT_OF_RANGE, IrValueError, condition_hash
 from candleviewer.rules.ir.models import (
     ActionType,
     ArithmeticOp,
@@ -47,6 +51,11 @@ from candleviewer.rules.vocabulary.registry import MetricRegistry
 
 MAX_NODES = 512
 MAX_DEPTH = 32
+#: The most values an `in_set` / `not_in_set` list may hold.
+MAX_SET_VALUES = 64
+#: The most characters a text constant or a listed value may hold (22's string bound). A number
+#: written as text is still held to the IR's plain width (`_const_width`).
+MAX_TEXT = CONTEXT_TEXT_MAX
 
 COMPARISON_OPS = frozenset(get_args(ComparisonOp))
 LOGICAL_OPS = frozenset(get_args(BooleanOp))
@@ -164,6 +173,8 @@ class _Walker:
         nid = o.get("node_id") if isinstance(o.get("node_id"), str) else parent
         self.enter(path, depth, nid)
         op = o.get("op") if isinstance(o.get("op"), str) else None
+        if "tolerance" in o:  # a number like any other: held to the plain width before use
+            _const_width(o["tolerance"], f"{path}.tolerance", nid, OUT_OF_RANGE)
         if op in LOGICAL_OPS:
             self.keys("logical", o, path, nid, "children")
             kids = o.get("children")
@@ -183,8 +194,16 @@ class _Walker:
                 if o.get(side) is not None:
                     self.operand(o[side], f"{path}.{side}", depth + 1, nid)
             sv = o.get("set_values", [])
-            if not isinstance(sv, list) or not all(isinstance(s, str) for s in sv):
+            if not isinstance(sv, list):
                 _not_permitted(f"{path}.set_values", "Expected a list of strings.", nid)
+                return
+            if len(sv) > MAX_SET_VALUES:  # counted before any entry is read
+                _reject("too_large", f"{path}.set_values", "too_large",
+                        f"A list may hold at most {MAX_SET_VALUES} values.", nid)  # fmt: skip
+            for i, s in enumerate(sv):
+                if not isinstance(s, str):
+                    _not_permitted(f"{path}.set_values", "Expected a list of strings.", nid)
+                _text_width(s, f"{path}.set_values[{i}]", nid)
         else:
             _not_permitted(path, f"'{op}' is not a condition an alert can use.", nid)
 
@@ -200,6 +219,7 @@ class _Walker:
                     _not_permitted(f"{path}.params.{k}", "Metric parameters are plain values.", nid)
         elif "const" in o:
             self.keys("operand:const", o, path, nid)
+            _const_width(o["const"], f"{path}.const", nid)
         elif isinstance(o.get("op"), str) and o["op"] in ARITHMETIC_OPS:
             self.keys("operand:arith", o, path, nid, "operands")
             ops = o.get("operands")
@@ -210,6 +230,49 @@ class _Walker:
                 self.operand(sub, f"{path}.operands[{i}]", depth + 1, nid)
         else:
             _not_permitted(path, "Only metrics, constants and arithmetic are allowed here.", nid)
+
+
+def _text_width(v: str, path: str, node_id: str | None) -> None:
+    if len(v) > MAX_TEXT:
+        msg = f"A text value may be at most {MAX_TEXT} characters."
+        _reject("schema", path, "schema_error", msg, node_id)
+
+
+#: Past this many bits an integer has more digits than any plain-width number: refused unread.
+_INT_BITS_MAX = MAX_PLAIN_WIDTH * 10 // 3 + 1
+
+
+def _const_width(v: Any, path: str, node_id: str | None, wide_msg: str | None = None) -> None:
+    """A number constant, or a number written as a string, is held to the IR's plain width
+    (`dec_str`), and a text constant to `MAX_TEXT` characters, each decided before the value is
+    converted: a long string or a large integer is refused on its length alone."""
+    if isinstance(v, bool):
+        return
+    if isinstance(v, str):
+        _text_width(v, path, node_id)
+        try:
+            d = Decimal(v)
+        except ArithmeticError:
+            return  # text, not a number
+    elif isinstance(v, int):
+        if v.bit_length() > _INT_BITS_MAX:
+            _too_wide(path, node_id, wide_msg)
+        d = Decimal(v)
+    elif isinstance(v, float):
+        d = Decimal(repr(v))
+    else:
+        return
+    if not d.is_finite():
+        return
+    try:
+        plain_decimal(d)
+    except PlainWidthError:
+        _too_wide(path, node_id, wide_msg)
+
+
+def _too_wide(path: str, node_id: str | None, msg: str | None = None) -> None:
+    msg = msg or f"A number may be at most {MAX_PLAIN_WIDTH} characters wide written out in full."
+    _reject("schema", path, "schema_error", msg, node_id)
 
 
 def _cron_ok(expr: str) -> bool:
@@ -362,5 +425,6 @@ def _is_trigger_error(exc: ValidationError) -> bool:
 
 
 __all__ = [
-    "MAX_DEPTH", "MAX_NODES", "PERMITTED_KINDS", "AlertCompiler", "validate_template",
+    "MAX_DEPTH", "MAX_NODES", "MAX_SET_VALUES", "MAX_TEXT", "PERMITTED_KINDS", "AlertCompiler",
+    "validate_template",
 ]  # fmt: skip

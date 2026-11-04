@@ -11,6 +11,7 @@ from typing import Any
 from candleviewer.alerts.compiler import AlertCompiler
 from candleviewer.alerts.evaluator import AlertEvaluator, AlertMetrics
 from candleviewer.alerts.gating import StormSuppressor
+from candleviewer.alerts.render import registry_titles
 from candleviewer.rules.evaluator import MetricValue, metric_key
 from candleviewer.rules.ir.models import MetricRef
 from candleviewer.rules.vocabulary import default_registry
@@ -64,6 +65,7 @@ class Delivery:
     status: str
     title: str
     context: dict[str, Any]
+    body: str = ""
 
 
 class FakeStore:
@@ -98,7 +100,8 @@ class FakeStore:
         self.rows[alert_id] = r
         ids = []
         for ch in channels:
-            d = Delivery(len(self.deliveries) + 1, alert_id, user_id, ch, status, title, context)
+            d = Delivery(len(self.deliveries) + 1, alert_id, user_id, ch, status, title, context,
+                         body)  # fmt: skip
             self.deliveries.append(d)
             ids.append(d.id)
             if status == "queued":
@@ -156,5 +159,6 @@ def make(*rows: Row, **kw: Any) -> tuple[AlertEvaluator, FakeStore, Source, Cloc
     store, src, clock, m = FakeStore(*rows), Source(), Clock(), Metrics()
     kw.setdefault("storm", StormSuppressor())
     kw.setdefault("owners", allow())
+    kw.setdefault("metric_title", registry_titles(default_registry()))
     ev = AlertEvaluator(store, src, metrics=AlertMetrics(m), clock=clock, **kw)
     return ev, store, src, clock, m
