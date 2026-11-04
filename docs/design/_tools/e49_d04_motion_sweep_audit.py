@@ -8,7 +8,8 @@ plan, design, register, lint and theme texts the pack cites and the token JSON, 
 working tree, the pack and itself. It runs no repo code.
 
 Gates: GATES below, listed in section 19.1; G-MUTLIST keeps section 19.2 equal to MUTATIONS. The BQ
-list 6642014735 is not ruled yet: G-BQ checks the "defaults built; ruling pending" form.
+list 6642014735 is ruled by comment 6643526580: G-BQ checks the RULED form (AMEND on BQ-2, 5, 6).
+G-DSET reads the motion audit tools and the delta set's motion tables at the base.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e49_d04_motion_sweep_audit.py --check | --self-test
@@ -27,9 +28,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "d5f2e0bc1"  # main at the first push; every cite is read here
-BQ_LIST = "6642014735"  # the BQ list on #1333; no ruling of record yet
-HEAD = "## The questions BQ-0 … BQ-9 — defaults built; ruling pending"
+BASE = "506c6e12f"  # main at the first push; every cite is read here
+BQ_LIST = "6642014735"  # the BQ list on #1333
+RULING = "6643526580"  # the ruling of record; BQ-2, BQ-5 and BQ-6 are AMEND
+AMEND = (2, 5, 6)
+HEAD = "## The questions BQ-0 … BQ-9 — RULED"
 
 SPEC_REL = "docs/design/E49/E49-D04.md"
 TOOL_REL = "docs/design/_tools/e49_d04_motion_sweep_audit.py"
@@ -47,6 +50,8 @@ _DS = "docs/design/"
 KEYED = {
     "D08": L.DocRef(_DS + "E47/E47-D08.md", BASE),
     "E05D03": L.DocRef(_DS + "E05/E05-D03.md", BASE),
+    "E08D10": L.DocRef(_DS + "E08/E08-D10.md", BASE),
+    "E09D08": L.DocRef(_DS + "E09/E09-D08.md", BASE),
     "E10D04": L.DocRef(_DS + "E10/E10-D04.md", BASE),
     "E17D02": L.DocRef(_DS + "E17/E17-D02.md", BASE),
     "E18D02": L.DocRef(_DS + "E18/E18-D02.md", BASE),
@@ -59,6 +64,7 @@ KEYED = {
     "E29D04": L.DocRef(_DS + "E29/E29-D04.md", BASE),
     "E30D04": L.DocRef(_DS + "E30/E30-D04.md", BASE),
     "E37D03": L.DocRef(_DS + "E37/E37-D03.md", BASE),
+    "E39D03": L.DocRef(_DS + "E39/E39-D03.md", BASE),
     "REG": L.DocRef("docs/qa/a11y/e47-motion-exception-register.md", BASE),
     "MSCAN": L.DocRef("packages/ui/test/theme/motion-scan.test.ts", BASE),
     "THEME": L.DocRef("packages/ui/src/theme/theme.css", BASE),
@@ -70,7 +76,7 @@ MIN_CITES = 200  # a broken grammar parses far fewer
 
 D08_ROWS = 41  # I-1 .. I-41, on D08 lines 141 .. 181
 D08_FIRST = 140
-DELTA_ROWS = 21  # X-1 .. X-21
+DELTA_ROWS = 10  # X-1 .. X-10
 CLASSES = 10  # MC-1 .. MC-10
 WORDS = ("removed", "instant", "cross-fade")
 WORD_RE = re.compile(r"^(removed|instant|cross-fade): \S.{9,}$")
@@ -93,29 +99,42 @@ V_MAP = {
     "V-4": ("finding", "DQ-AX-4 (P2)"),
     "V-5": ("finding", "DQ-AX-4 (P2)"),
 }
-EX_NEED = (
-    "elapsed hold",
-    "remaining hold",
-    "**Compensating rationale:**",
-    "never shortens",
-    "E29D04 :332",
-    "A-3",
-)
+HOLD_NEED = (  # BQ-5 AMEND: reduced, not exempt
+    '**No essential-motion exemption is claimed.**|carries the progress" (`15` :521)|elapsed hold'
+    "|remaining hold|never shortens|no register row and no `16` §11.4 entry|E29D04 :332|A-3"
+).split("|")
+# BQ-2 AMEND: the delta set, every other merged motion spec -> its motion table's heading at BASE
+DSET = {
+    "E09-D08": "## 3. The motion spec table",
+    "E10-D04": "## 4. The transition register",
+    "E12-D10": "## 2. The moments at a glance",
+    "E13-D04": "## 6. The motion spec table",
+    "E14-D09": "## 2. The motion table",
+    "E19-D05": "## 3. The suppression matrix",
+    "E24-D04": "## 2. The moments at a glance",
+    "E25-D03": "## 9. Motion pairs",
+    "E27-D04": "## 2. The choreography table",
+    "E28-D04": "## 2. The choreography table",
+    "E29-D04": "### 3.2 The motion table",
+    "E30-D04": "## 19. The motion spec table",
+    "E32-D06": "## 8. Motion: four transitions",
+    "E33-D04": "### 7.2 The motion table",
+    "E37-D03": "## 7. Motion pairs",
+}
+D08_SCOPE = ("E05-D03", "E08-D11", "E11-D06", "E15-D14", "E22-D04", "E47-D08")
+TOOL_RE = re.compile(r"^docs/design/_tools/e(\d\d)_d(\d\d)_\w*motion\w*_audit\.py$")
+ROSTER_RE = re.compile(r"\*\*Roster\.\*\* The (\d+) motion audit tools at the base: ([^.]+)\.")
+DSET_TOTAL = 219
 NUM_RULE = "any animated transition on the numeric value itself is a finding (V-4)"
 FLASHING = ("I-5", "I-16", "I-21", "I-22", "I-24", "I-6")  # `05` :252's list plus D08 §4.2
 PAUSE_D08 = (264, 265, 266, 267, 268)  # D08 §8's five auto-movers
 TS_IDS = tuple(f"TS-{n}" for n in range(1, 6))
 CLOCK_NEED = (
-    "`14` :756, :761",
-    "`15` :190, :199, :447",
-    "E08-D10's T-1 and T-2",
-    "E15-D12's boot and restore clocks",
-    "unifies none",
-    "#5877's A-9",
-    "no second A-row",
-)
+    "`14` :756, :761|E08D10 :244|`15` :190, :199, :447|E08-D10's T-1 and T-2|unifies none"
+    "|E15-D12's boot and restore clocks|#5877's A-9|no second A-row"
+).split("|")
 ROW_ID_RE = re.compile(r"\b(?:C|A|G|OQ)-\d+\b")
-OWNER_RE = re.compile(r"E\d\d-[A-Z]\d\d #\d+|the owner|catalogue owner")
+OWNER_RE = re.compile(r"E\d\d-[A-Z]\d\d #\d+|the owner|catalogue owner|design-system owner")
 TOKEN_RE = re.compile(
     r"`((?:color|space|size|type|font|opacity|border|motion|elevation|radius)"
     r"\.[A-Za-z0-9.*\-]+?)(\.\.\d+)?(\[\])?`"
@@ -225,11 +244,11 @@ def g_ac(t: L.Tree) -> list[str]:
 def g_bq(t: L.Tree) -> list[str]:
     return L.check_ruling(
         spec(t),
-        heading_line=f"{HEAD} (comment {BQ_LIST})",
-        list_ref=f"comment {BQ_LIST} on #1333; no ruling of record exists yet",
+        heading_line=f"{HEAD} (comment {RULING})",
+        list_ref=f"comment {BQ_LIST} on #1333; comment {RULING} is the ruling of record",
         count=10,
-        verdict=lambda n: "Default built:",
-        forbid=("RULED,",),
+        verdict=lambda n: "RULED, AMEND:" if n in AMEND else "RULED, AGREE + rider:",
+        forbid=("Default built",),
     )
 
 
@@ -302,16 +321,16 @@ def g_delta(t: L.Tree) -> list[str]:
     return bad
 
 
-def g_exception(t: L.Tree) -> list[str]:
-    s5 = sec(t, "## 5. The essential-motion exception")
-    bad = [f"lacks {p!r}" for p in EX_NEED if p not in s5]
-    found = re.findall(r"\*\*EX-\d+ ", spec(t))
-    bad += [] if found == ["**EX-1 "] else [f"{len(found)} exceptions; want EX-1 only"]
+def g_hold(t: L.Tree) -> list[str]:
+    """BQ-5 AMEND: the hold ring is reduced, not exempt; no exemption, no register row, A-3."""
+    s5 = " ".join(sec(t, "## 5. The hold ring").split())
+    bad = [f"lacks {p!r}" for p in HOLD_NEED if p not in s5]
+    bad += ["an exemption is claimed"] if re.search(r"\*\*EX-\d+ |MX-18", spec(t)) else []
     if classes(t).get("MC-9", ("", []))[1] != ["X-1"]:
         bad.append("MC-9 is not X-1 alone")
     a3 = [r for r in rows(t, "### 14.1") if r[0] == "A-3"]
-    if not a3 or "MX-18" not in a3[0][3] or a3[0][-1] != "E47-S04 #1318":
-        bad.append("A-3, the register row, is missing")
+    if not a3 or a3[0][1] != "`16` :119 (§2.6)" or a3[0][-1] != "design-system owner":
+        bad.append("A-3, the hold-confirm token to the design-system owner, is missing")
     return bad
 
 
@@ -353,10 +372,58 @@ def g_pause(t: L.Tree) -> list[str]:
 
 
 def g_clocks(t: L.Tree) -> list[str]:
-    s9 = sec(t, "## 9. The clocks of record")
+    s9 = " ".join(sec(t, "## 9. The clocks of record").split())
     bad = [f"lacks {p!r}" for p in CLOCK_NEED if p not in s9]
     own = [r[0] for r in rows(t, "### 14.1") if len(r) > 1 and "`16` :217" in r[1]]
     return bad + [f"{a} re-files #5877's A-9" for a in own]
+
+
+def g_walk(t: L.Tree) -> list[str]:
+    """BQ-6 AMEND: E49-D02's G-1 answered over L-1 .. L-11, a clock or "none" each, none minted."""
+    got = rows(t, "### 9.1")
+    bad = [] if [r[0] for r in got] == [f"L-{n}" for n in range(1, 12)] else ["L ids"]
+    for r in got:
+        clock = len(r) > 3 and bool(L.extract_cites(r[2], CITE_RE))
+        delay = len(r) > 3 and (
+            bool(L.extract_cites(r[3], CITE_RE)) or "G-4" in r[3] or r[3].startswith("none needed")
+        )
+        if not (clock and delay):
+            bad.append(f"{r[0]}: a clock of record, and a show-delay or its G-row")
+    s91 = " ".join(sec(t, "### 9.1").split())
+    return bad + ([] if "mints no threshold" in s91 and "A-4" in s91 else ["a threshold minted"])
+
+
+def owner_ids(key: str) -> list[str]:
+    text = repo().show(BASE, f"{_DS}{key[:3]}/{key}.md")
+    if text is None:
+        raise L.AuditError(f"{key} not readable at {BASE}")
+    return [r[0] for r in L.table_rows(L.section(text, DSET[key]))]
+
+
+def g_dset(t: L.Tree) -> list[str]:
+    """BQ-2 AMEND: the roster is the motion tools at the base; every tool is D08's scope or the
+    delta set; each delta spec's rows are its motion table's ids, in order, each with a word, a
+    verdict and, off V-1, a defined F-row."""
+    s43 = sec(t, "### 4.3")
+    listing = repo().git("ls-tree", "--name-only", BASE, _DS + "_tools/").split("\n")
+    tools = {f"E{m.group(1)}-D{m.group(2)}" for ln in listing if (m := TOOL_RE.match(ln))}
+    rm = ROSTER_RE.search(s43)
+    roster = set(re.findall(r"E\d\d-D\d\d", rm.group(2))) if rm else set()
+    bad = [] if rm and roster == tools and int(rm.group(1)) == len(tools) else ["the roster"]
+    bad += [f"{k}: in no scope" for k in sorted(tools) if k not in D08_SCOPE and k not in DSET]
+    got = rows(t, "### 4.3")
+    defined = {r[0] for r in rows(t, "## 12. Findings")}
+    for key in DSET:
+        mine = [r for r in got if r and r[0].split()[0] == key]
+        if [r[1] for r in mine if len(r) > 1] != owner_ids(key):
+            bad.append(f"{key}: not its motion table's ids")
+        for r in mine:
+            ok = len(r) > 4 and r[2] in ("removed", "instant") and r[3] in V_IDS
+            if not ok or (r[3] != "V-1" and r[4] not in defined) or r[4] not in defined | {"—"}:
+                bad.append(f"{key} {r[1] if len(r) > 1 else '?'}: word, verdict or finding")
+    if len(got) != DSET_TOTAL or f"{DSET_TOTAL} rows:" not in s43:
+        bad.append(f"{len(got)} delta-set rows; want {DSET_TOTAL}")
+    return bad
 
 
 def g_tokens(t: L.Tree) -> list[str]:
@@ -412,9 +479,9 @@ def g_mutlist(t: L.Tree) -> list[str]:
 
 # fmt: off
 GATES = tuple(L.Gate("G-" + f.__name__[2:].upper().replace("_", "-"), f) for f in (
-    g_cite, g_ac, g_bq, g_boards, g_t2, g_verdict, g_mapping, g_inventory, g_delta, g_exception,
-    g_numeric, g_flash, g_pause, g_clocks, g_tokens, g_rows, g_checklist, g_penpot, g_noclose,
-    g_public, g_untouched, g_mutlist,
+    g_cite, g_ac, g_bq, g_boards, g_t2, g_verdict, g_mapping, g_inventory, g_delta, g_hold,
+    g_numeric, g_flash, g_pause, g_clocks, g_walk, g_dset, g_tokens, g_rows, g_checklist, g_penpot,
+    g_noclose, g_public, g_untouched, g_mutlist,
 ))
 # fmt: on
 
@@ -428,11 +495,11 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-3", "G-CITE", "a cite past the end of `14`", "spec", "(`14` :1942)", "(`14` :99999)"),
     _M("M-4", "G-AC", "a scenario name reworded", "spec",
        'AC "Numeric readouts do not animate"', 'AC "Numbers do not animate"'),
-    _M("M-5", "G-BQ", "the heading claims a ruling", "spec",
-       "BQ-9 — defaults built; ruling pending (comment", "BQ-9 — RULED (comment"),
-    _M("M-6", "G-BQ", "a default not marked built", "spec",
-       "**BQ-5 — the essential-motion exception.** Default built:",
-       "**BQ-5 — the essential-motion exception.** RULED, AGREE:"),
+    _M("M-5", "G-BQ", "the heading reverts to pending", "spec",
+       "BQ-9 — RULED (comment", "BQ-9 — defaults built; ruling pending (comment"),
+    _M("M-6", "G-BQ", "an AMEND read as AGREE", "spec",
+       "**BQ-5 — the hold ring.** RULED, AMEND:",
+       "**BQ-5 — the hold ring.** RULED, AGREE + rider:"),
     _M("M-7", "G-BOARDS", "a board claimed drawn", "spec",
        r"(\| dark\s+\| )PENDING", r"\1drawn  ", regex=True),
     _M("M-8", "G-T2", "the opacity ban dropped", "spec",
@@ -449,31 +516,31 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-13", "G-INVENTORY", "a row's class is not its class", "spec",
        r"(\| I-23 +\|[^|]*\| )MC-8 ", r"\1MC-4 ", regex=True),
     _M("M-14", "G-DELTA", "a delta row with no owner cite", "spec",
-       r"(\| X-8 +\|[^|]*\| )E10D04 :160", r"\1the shell motion spec", regex=True),
+       r"(\| X-9 +\|[^|]*\| )E18D02 :936", r"\1the footprint spec", regex=True),
     _M("M-15", "G-DELTA", "a delta finding with no F-row", "spec",
-       "X-17 is F-10.", "X-17 is open."),
-    _M("M-16", "G-EXCEPTION", "the reduced ring loses the remaining hold", "spec",
-       "the remaining hold (100 % less it)", "the hold left (100 % less it)"),
-    _M("M-17", "G-EXCEPTION", "a second exception", "spec",
-       "Countdowns are\nnot exceptions", "**EX-2 — the spinner.** Countdowns are\nnot exceptions"),
+       "X-9 is F-12;", "X-9 is open;"),
+    _M("M-16", "G-HOLD", "the reduced ring loses the remaining hold", "spec",
+       r"(the elapsed hold \(the percentage\) and )the remaining hold", r"\1the hold left",
+       regex=True),
+    _M("M-17", "G-HOLD", "an exemption claimed", "spec",
+       "**No essential-motion exemption is claimed.**", "**EX-1 — the hold ring is exempt.**"),
     _M("M-18", "G-FLASH", "a flashing surface left out", "spec",
        r"\n\| I-24 liquidation flash [^\n]*", "", regex=True),
     _M("M-19", "G-PAUSE", "an auto-mover with no pause and no finding", "spec",
        "| none named (F-10, G-1)", "| none named            "),
     _M("M-20", "G-CLOCKS", "the shimmer's A-row filed twice", "spec",
        "\n\n### 14.2 C-rows",
-       "\n| A-5 | `16` :217 (skeleton) | looping | stops by 5 s | catalogue owner |"
+       "\n| A-7 | `16` :217 (skeleton) | looping | stops by 5 s | catalogue owner |"
        "\n\n### 14.2 C-rows"),
     _M("M-21", "G-CLOCKS", "a clock unified", "spec", "unifies none:", "unifies them:"),
     _M("M-22", "G-TOKENS", "an unshipped motion token", "spec",
-       "writes the same period as `motion.duration.slow`",
-       "writes the same period as `motion.duration.slower`"),
+       "tokens: `motion.duration.instant`,", "tokens: `motion.duration.instantly`,"),
     _M("M-23", "G-ROWS", "a finding routed to an undefined row", "spec",
        r"(\| F-11 [^\n]*\| )G-2(\s+\|)", r"\1G-9\2", regex=True),
     _M("M-24", "G-ROWS", "a decision owned by no ticket", "spec",
        r"(\| AD-4 [^\n]*\| )E49-S04 #1384", r"\1the QA lane  ", regex=True),
     _M("M-25", "G-ROWS", "a finding's floor lowered", "spec",
-       r"(\| F-4 [^\n]*\| )DQ-TS-1 \(P1\)", r"\1DQ-TS-1 (P3)", regex=True),
+       r"(\| F-10 [^\n]*\| )DQ-AX-4 \(P2\)", r"\1DQ-AX-4 (P3)", regex=True),
     _M("M-26", "G-CHECKLIST", "an eleventh walkthrough item", "spec",
        "\n\n## 18. Deviations", "\n11. one more item.\n\n## 18. Deviations"),
     _M("M-27", "G-PENPOT", "a Penpot file id", "spec",
@@ -487,6 +554,15 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "", "docs/plan/16-design-system-brief.md"),
     _M("M-31", "G-MUTLIST", "the list drifts", "spec",
        "| M-3  | G-CITE      |", "| M-3  | G-AC        |"),
+    _M("M-32", "G-WALK", "a show-delay minted for L-6", "spec",
+       r"(\| L-6 [^\n]*\| )none outside E08-D10: G-4", r"\1450 ms                   ", regex=True),
+    _M("M-33", "G-DSET", "a delta-set row dropped", "spec",
+       r"\n\| E33-D04 §7\.2 +\| Mo-4 [^\n]*", "", regex=True),
+    _M("M-34", "G-DSET", "a V-3 row with no finding", "spec",
+       r"(\| E10-D04 §4 +\| T-28 +\| removed +\| V-3 +\| )F-8", r"\1—  ", regex=True),
+    _M("M-35", "G-DSET", "the roster drops a tool", "spec", "E30-D04, E33-D04, ", "E30-D04, "),
+    _M("M-36", "G-DSET", "a delta row graded with a cross-fade", "spec",
+       r"(\| E12-D10 §2 +\| M-07 +\| )removed ", r"\1cross-fade ", regex=True),
 )
 # fmt: on
 
