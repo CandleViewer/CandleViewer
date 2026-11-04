@@ -39,8 +39,9 @@ import spec_audit_lib as L  # the shared helper sits beside this file
 ROOT = Path(__file__).resolve().parents[3]
 BASE = "b81479ab0"  # origin/main where the ruling fold re-read every cite
 D03_HEAD = "35032f521"  # #5517 (E19-D03, #438) head; re-pinned to its merge commit
-D04_HEAD = "b720bd97f"  # #5553 (E19-D04, #439) head; re-pinned to its merge commit
-D05_HEAD = "eacb7cce2"  # #5555 (E19-D05, #500) head; re-pinned to its merge commit
+D02_PIN = "98b3c51a2"  # #5587 (E19-D02's boards, #416) merge commit
+D04_PIN = "35465247d"  # #5553 (E19-D04, #439) merge commit, re-pinned from head b720bd97f
+D05_PIN = "7e9b06296"  # #5555 (E19-D05, #500) merge commit, re-pinned from head eacb7cce2
 BQ_LIST = "6598368330"  # the BQ list on #501
 RULING = "6608044786"  # its ruling of record
 AMENDED = frozenset({6, 7, 8, 12, 13, 14, 15})  # the rest AGREE
@@ -50,7 +51,7 @@ PIN_MARK = "# ruled-" + "pins:"  # the block --repin-ruled rewrites
 # fmt: off
 # ruled-pins:begin (sha256[:16] of each BQ bullet; written by --repin-ruled only)
 RULED_PINS = (
-    "BQ-0 e15b4ee159e64764", "BQ-1 1d531e6056af8027", "BQ-2 3bea5f26fab87a9e",
+    "BQ-0 e15b4ee159e64764", "BQ-1 5865cd9aafc259b7", "BQ-2 3bea5f26fab87a9e",
     "BQ-3 18b24acd51fde850", "BQ-4 94c62cc11354b579", "BQ-5 e17f624915c2ee08",
     "BQ-6 d1d88118077edfff", "BQ-7 00c19ce21a7a3c49", "BQ-8 b6995fd458810cbf",
     "BQ-9 2743dbd6cc066444", "BQ-10 1b5cf514e50b53a8", "BQ-11 4f3f5231422e5dbb",
@@ -81,10 +82,10 @@ PLAN = {k: f"docs/plan/{k}-{v}.md" for k, v in (
     ("24", "internal-schemas"),
 )}
 KEYED = {k: L.DocRef(path, pin) for k, path, pin in (
-    ("D02", "docs/design/E19/E19-D02.md", BASE), ("D03", "docs/design/E19/E19-D03.md", D03_HEAD),
+    ("D02", "docs/design/E19/E19-D02.md", D02_PIN), ("D03", "docs/design/E19/E19-D03.md", D03_HEAD),
     ("D03H", "docs/design/E19/E19-D03-handoff.md", D03_HEAD),
-    ("D04", "docs/design/E19/E19-D04.md", D04_HEAD),
-    ("D05", "docs/design/E19/E19-D05.md", D05_HEAD),
+    ("D04", "docs/design/E19/E19-D04.md", D04_PIN),
+    ("D05", "docs/design/E19/E19-D05.md", D05_PIN),
     ("M", "docs/design/research/e19-profiles.md", BASE),
     ("DS", ".claude/rules/32-design-specs.md", BASE), ("README", "docs/design/README.md", BASE),
     ("KM", "apps/web/src/keymap/keymap.json", BASE),
@@ -205,8 +206,7 @@ LR_RATES = ("the cadence", "≤ 1 per 5 s", "once", "once per press", "never")
 LR_SILENT_NEED = ("VAH or VAL", "print", "re-bucket", "patches", "reduce announcements")
 # fmt: off
 VERDICTS = (
-    "compliant if #5517 merges as is", "compliant if #5553 merges as is",
-    "compliant if #5555 merges as is", "compliant", "at risk", "non-compliant", "out of scope —",
+    "compliant if #5517 merges as is", "compliant", "at risk", "non-compliant", "out of scope —",
     "not yet decidable —",
 )
 # fmt: on
@@ -228,7 +228,7 @@ TABLE_NEED = (
 )
 # fmt: on
 HOLD = "**Hold:** #501 is not Done and E19-D07 (#502) does not start while a Blocking row stands"
-PARENT_RE = re.compile(r"#416 boards PR #5587|#438 boards PR|#439 boards PR|#500 boards PR")
+PARENT_RE = re.compile(r"#438 boards PR|#439 boards PR|#500 boards PR")
 STORY_RE = re.compile(r"#638|#639|#640|#642|#679|#680|#681|#747|#748")
 ENV_NEED = ("DEMO / LIVE", "global chrome", "REPLAY chip", '"replay of {date}"')
 ACCOUNT_WORDS = re.compile(r"\b(?:account|credential|balance|api key|secret)\b", re.IGNORECASE)
@@ -381,7 +381,7 @@ def g_keycite(t: L.Tree) -> list[str]:
 
 def g_version(t: L.Tree) -> list[str]:
     v = sec(t, "### 16.1 Version line")
-    need = (BASE, D03_HEAD, D04_HEAD, D05_HEAD, "re-pinned to its merge commit", HELPER_SHA)
+    need = (BASE, D02_PIN, D03_HEAD, D04_PIN, D05_PIN, "re-pinned to its merge commit", HELPER_SHA)
     miss = [n for n in need if n not in v]
     if f"Base `origin/main` `{BASE}`" not in spec(t):
         miss.append("Inputs pinned base")
@@ -740,7 +740,7 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _drift("M-02", "G-KEYCITE", "a pinned source line reworded",
            "14|1014|- **A11y:** the profile is read aloud."),
     _M("M-03", "G-VERSION", "the version line drops the re-pin", "spec",
-       "each re-pinned to its merge commit when it merges", "each kept when it merges"),
+       "D02 at #5587's merge commit `98b3c51a2`", "D02 at the base"),
     _M("M-04", "G-AC", "a scenario name reworded", "spec",
        'AC "A blocker stops sign-off"', 'AC "A blocker stops"'),
     _M("M-05", "G-INBOX", "an inbox row deferred", "spec",
