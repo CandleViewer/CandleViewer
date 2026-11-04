@@ -150,7 +150,7 @@ class DomainEvent(BaseModel):
     event_id: EventId
     ts_event: TsUs                # exchange-stamped
     ts_ingest: TsUs               # our receipt; difference = feed latency
-    source: Literal["live", "replay", "paper", "backfill"]
+    source: Literal["live", "replay", "paper", "backfill", "synthetic"]  # EventSource
 
 class MarketEvent(DomainEvent):
     exchange: Exchange = "bybit"
@@ -159,6 +159,8 @@ class MarketEvent(DomainEvent):
 ```
 
 `ts_event` is **never** synthesized. Where a record lacks its own timestamp the adapter uses the containing push envelope's `ts` and sets `ts_estimated=True` on the subtype that declares that field.
+
+`source="synthetic"` (E29-Q03) is the dev fixture stack's synthetic ticker alone (`cvdev`, in no wheel, sdist or image): its `TickerEvent`s stay inside that stream, read through `latest()`, and are published on no bus, so no recorder, replay, bar or WS delta consumer sees one (C-2.15). It is no venue, so its `ts_event` is its receipt time, the one exception to the rule above.
 
 ### 1.5 Decimal quantization table
 
@@ -7025,6 +7027,14 @@ The orchestrator assigned this number on 2026-11-03 (ruling of record on #1029, 
 - §9.4 rule 8 and §9.5: the pre-send intent pass (#3863's follow-up). As built, only `previewTradeGroup` runs it; the planner and the fan-out run none, and the submit is not built. Rule 8 no longer names E28-T05 (#909) as the pass's owner: it belongs in the planner both run, and no open ticket places it yet.
 - Beside this section, no contract changes: ADR-0006 Amendment 2 and Validation status, and ADR-0044 (v1 order entry is REST in every environment; the exchange's reject text is code-only to clients and stored redacted; its risks name the E30 and `11-user-stories.md` texts that still show the exchange's message); `20` §3.5, §5 (the planned layout drops `ws_trade.py`), §9, §10.2 and §13.2 (REST in every environment, the shipped interface names, rows for the stream consumer and the exit routes; the live 500 ms figure assumed a WS trade path) and §16; `21` §3.3.4 (automatic adoption only; the `exchange_updated_ts` note); `28` B1.6 (text only); `04` SR-057, SR-058, O8, row 17 and the E29 paragraph's tense; the E29 threat model's §2 (E3b) and §12.3 notes.
 - No migration, REST operation, WS frame, table, column, chart or `machine_hash` change.
+
+### 19.133 2026-11-04 — §1.4 `DomainEvent.source` gains `synthetic` (E29-Q03, #977)
+
+This is the number the orchestrator assigned on 2026-11-04 (20:13Z); it keeps it through its rebases.
+
+- §1.4: `DomainEvent.source` (`candleviewer.domain.events.EventSource`) gains a fifth value, `synthetic`, which only the dev fixture stack's synthetic ticker (`cvdev.account_fixture.synthetic_ticker`, dev-only) stamps; `ticker_event` takes the source as a keyword, `live` by default, so the venue merger and the venue-wide snapshot are unchanged.
+- Reach: the stream publishes its events on no bus, so the recorder, replay and every process-bus consumer never see a `synthetic` event; no consumer matches the value set exhaustively, and the filters on `source` (`replay` only) pass it over. Its `ts_event` is its receipt time, noted under §1.4.
+- `source` is not serialized: the WS `ticker` item (23 §14.8) and REST answers carry no `source`, so no REST operation, WS frame, generated type, table, migration, chart or `machine_hash` changes.
 
 ### 19.142 2026-11-05 — §7.2, §7.4: the moving averages' applied price and offset, the client-worker orders and `ma_ribbon` (E13-S02, #424)
 
