@@ -14,6 +14,9 @@ G-PUBLIC, G-UNTOUCHED and G-MUTLIST (section 15.2 equals this tool's list).
 Pins (G-RULED): each BQ bullet's sha256[:16] in `e19_d04_ruled_pins.txt`; `--repin-ruled` is the
 only writer. The BQ list 6582998807 is RULED by comment 6585044844: G-RULING checks the RULED form
 (ACCEPT, or OVERRIDE for BQ-4, BQ-8 and BQ-9) and G-WORDING the ruled words.
+PR 2 (the boards): G-BOARDS takes a section 0 Status cell that is PENDING or drawn with its own PNG(s)
+and its own themes' gates; G-UNTOUCHED also allows the sheet kit and its MANIFEST and
+.prettierignore lines; `--self-test` runs three probes of those after section 15.2's list.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e19_d04_flows_audit.py --check | --self-test | --repin-ruled
@@ -47,6 +50,28 @@ LIB_REL = "docs/design/_tools/spec_audit_lib.py"
 PIN_REL = "docs/design/_tools/e19_d04_ruled_pins.txt"
 CAT_REL = "docs/plan/14-screens-catalogue.md"
 OWN = (SPEC_REL, TOOL_REL, LIB_REL, PIN_REL)
+# PR 2 (the boards): the exports, the sheet kit and its MANIFEST / .prettierignore lines
+OWN_GLOBS = (
+    "docs/design/E19/img/E19-D04-*.png",
+    "docs/design/_tools/sheets/e19-d04/*",
+    "docs/design/_tools/sheets/MANIFEST.sha256",
+    ".prettierignore",
+)
+_GATE = r"gate PASS \(own [\d,]+ px, other [\d,]+ px\)"
+_IMG = r"`docs/design/E19/img/E19-D04-(?P<{0}>\d\d)-(?P<{1}>[a-z0-9-]+?){2}\.png` \(\d+ × \d+\)"
+# a drawn section 0 cell: the board id, its PNG and size, frames, nodes and the dark gate; a board
+# with a light twin frame adds its light export (`-light.png`) and that export's light gate
+DRAWN_CELL = re.compile(
+    r"drawn: board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
+    + _IMG.format("nn", "slug", "")
+    + r", \d+ frames?, [\d,]+ nodes; dark "
+    + _GATE
+    + r"(?:; light twin "
+    + _IMG.format("nn2", "slug2", "-light")
+    + r", light "
+    + _GATE
+    + r")?"
+)
 BACKLOG_REL = "docs/plan/backlog/E19.json"
 
 PLAN = {
@@ -330,8 +355,26 @@ def g_states(t: L.Tree) -> list[str]:
     return bad + [f"{d} has no state row" for d in sorted((drawn | undrawn) - frames)]
 
 
+def drawn_cell(r: list[str]) -> list[str]:
+    """A drawn section 0 cell names its own board's PNG and gates its own themes: dark alone, or
+    dark plus the light twin's own `-light.png` export."""
+    m = DRAWN_CELL.fullmatch(r[4])
+    name = re.fullmatch(r"`E19-D04 / (\d\d) ([a-z0-9-]+)`", r[1])
+    if not m or not name:
+        return [f"board {r[0]}: neither PENDING nor a drawn cell"]
+    own = (m["nn"], m["slug"]) == name.groups()
+    if "light" in r[3]:
+        own = own and (m["nn2"], m["slug2"]) == name.groups()
+    else:
+        own = own and m["nn2"] is None
+    return [] if own else [f"board {r[0]}: its drawn cell is not its own PNG and themes"]
+
+
 def g_boards(t: L.Tree) -> list[str]:
-    return L.board_cap(board_rows(t.text("spec")), "E19-D04", t.text("spec"))
+    brows = board_rows(t.text("spec"))
+    bad = [b for r in brows if len(r) > 4 and r[4] != "PENDING" for b in drawn_cell(r)]
+    cap = [r[:4] + ["PENDING"] + r[5:] if len(r) > 4 else r for r in brows]
+    return bad + L.board_cap(cap, "E19-D04", t.text("spec"))
 
 
 def g_t2(t: L.Tree) -> list[str]:
@@ -414,8 +457,7 @@ def g_public(t: L.Tree) -> list[str]:
 
 
 def g_untouched(t: L.Tree) -> list[str]:
-    globs = ("docs/design/E19/img/E19-D04-*.png",)
-    return L.untouched(t.changed, OWN, globs, {CAT_REL: (1, 0)}, t.numstat)
+    return L.untouched(t.changed, OWN, OWN_GLOBS, {CAT_REL: (1, 0)}, t.numstat)
 
 
 def g_mutlist(t: L.Tree) -> list[str]:
@@ -468,7 +510,7 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-15", "G-STATES", "a drawn frame loses its state row", "spec",
        "| `SCR-038/attached-dark`  ", "| `SCR-038/attach-done-dark`"),
     _M("M-16", "G-BOARDS", "a fourth light twin", "spec",
-       r"(`E19-D04 / 02 preset-save`[^\n]*\| )dark( +\| PENDING)", r"\1light twin\2",
+       r"(`E19-D04 / 02 preset-save`[^\n]*\| )dark( +\| drawn: )", r"\1light twin\2",
        regex=True),
     _M("M-17", "G-T2", "the T2 statement loses the opacity ban", "spec",
        "never `color.text.disabled`, never `opacity.disabled` on the label",
@@ -511,6 +553,18 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "for a Viewer there is no notice, so each item carries its own reason",
        "for a Viewer the same notice carries the reason, so no item carries its own reason"),
 )
+
+# PR 2: probes of the drawn section 0 cells and the boards' own paths (run by --self-test, kept out
+# of section 15.2's list)
+PROBES: tuple[L.Mutation, ...] = (
+    _M("P-1", "G-BOARDS", "board 01's drawn cell loses its PNG", "spec",
+       "`docs/design/E19/img/E19-D04-01-preset-menu.png` (3280 × 1878), ", ""),
+    _M("P-2", "G-BOARDS", "board 04's light twin dropped", "spec",
+       "; light twin `docs/design/E19/img/E19-D04-04-range-mode-light.png` (3280 × 1878)",
+       "; twin `docs/design/E19/img/E19-D04-04-range-mode-light.png` (3280 × 1878)"),
+    _M("P-3", "G-UNTOUCHED", "another ticket's sheet kit touched", "@changed",
+       "", "docs/design/_tools/sheets/e47-d08/BUILD.md"),
+)
 # fmt: on
 
 
@@ -535,7 +589,8 @@ def check() -> int:
 
 def self_test() -> int:
     disk = [ROOT / rel for rel in OWN]
-    return L.self_test(read_tree(), GATES, MUTATIONS, disk, namespace=globals())
+    rc = L.self_test(read_tree(), GATES, MUTATIONS, disk, namespace=globals())
+    return rc | L.self_test(read_tree(), GATES, PROBES, disk, namespace=globals())
 
 
 def repin() -> int:
