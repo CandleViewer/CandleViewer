@@ -9,7 +9,7 @@ import {
 } from "../../../../src/features/app-shell/announcer";
 import {
   SyncBusProvider,
-  announceSyncState,
+  createSyncAnnouncer,
 } from "../../../../src/features/workspace/sync/SyncBusProvider";
 import type { SyncBus } from "../../../../src/features/workspace/sync/syncBus";
 import type { SyncGroupId, SyncMember } from "../../../../src/features/workspace/sync/types";
@@ -109,9 +109,26 @@ describe("CMP-196 useMultiChartLinker", () => {
     expect(bus.devCounters().dispatches).toBe(0);
   });
 
+  it("keeps each announcer's queue and timer to itself", () => {
+    vi.useFakeTimers();
+    const first = createSyncAnnouncer();
+    const second = createSyncAnnouncer();
+    const view = render(<ShellAnnouncer />);
+    const said = (): (string | null)[] =>
+      [...view.container.querySelectorAll('[aria-live="polite"] p')].map((p) => p.textContent);
+    act(() => first("one"));
+    act(() => first("two")); // inside the budget: queued on `first` only
+    act(() => second("three")); // its own queue, not joined into `first`'s message
+    expect(said()).toEqual(["one"]);
+    act(() => void vi.advanceTimersByTime(REGION_BUDGET_MS));
+    expect(said()).toEqual(["two"]);
+    act(() => void vi.advanceTimersByTime(REGION_BUDGET_MS));
+    expect(said()).toEqual(["three"]);
+  });
+
   it("says each link change once, politely, within the region budget, axe-clean", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true }); // axe runs on real time
-    const { bus, frames } = busWithFrames({ announce: announceSyncState });
+    const { bus, frames } = busWithFrames({ announce: createSyncAnnouncer() });
     const members = [fakeMember("p1"), fakeMember("p2"), fakeMember("p3")];
     const grid = (group: SyncGroupId | null) => (
       <>

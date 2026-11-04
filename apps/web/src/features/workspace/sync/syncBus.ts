@@ -226,7 +226,25 @@ export function createSyncBus(options: SyncBusOptions = {}): SyncBus {
   };
   const notify = (): void => {
     version += 1;
-    for (const listener of [...listeners]) listener();
+    // Each listener is guarded on its own: one throwing does not skip the others. The first error
+    // is rethrown after the loop (the flush defers it with the others); nothing is allocated unless
+    // a listener throws.
+    let first: { error: unknown } | undefined;
+    for (const listener of [...listeners]) {
+      try {
+        listener();
+      } catch (error) {
+        first ??= { error };
+      }
+    }
+    if (first !== undefined) throw first.error;
+  };
+  const guarded = (run: () => void): void => {
+    try {
+      run();
+    } catch (error) {
+      thrown.push(error);
+    }
   };
   const schedule = (): void => {
     if (scheduled) return;
@@ -337,22 +355,27 @@ export function createSyncBus(options: SyncBusOptions = {}): SyncBus {
       counters.dispatches += count;
       counters.lastFrameDispatches = count;
     }
+    // Expire the previous flush's memory; one more frame expires this one's. Rotating comes first
+    // so a throwing listener or announcer cannot skip it; emptied inner maps are pruned so they
+    // do not schedule a no-op frame.
+    [aging, given] = [given, aging];
+    given.clear();
+    for (const [paneId, memory] of aging) if (memory.size === 0) aging.delete(paneId);
+    if (aging.size > 0) schedule();
     if (structural) {
       structural = false;
-      notify();
+      guarded(notify);
     }
     if (membershipChanged) {
       membershipChanged = false;
-      announceLinks();
+      guarded(announceLinks);
     }
-    // Expire the previous flush's memory; one more frame expires this one's.
-    [aging, given] = [given, aging];
-    given.clear();
-    if (aging.size > 0) schedule();
-    const errors = thrown.splice(0);
+    const failed = thrown.length > 0;
+    const error = thrown[0];
+    thrown.length = 0;
     const first = deferred[0];
     deferred.length = 0;
-    if (errors.length > 0) throw errors[0];
+    if (failed) throw error;
     if (first !== undefined) throw new SyncBusAssertionError(first);
   }
 
