@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import operator
+import statistics
 from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
@@ -37,9 +38,17 @@ from candleviewer.rules.evaluator.nodes import (
     evaluate,
     referenced_metrics,
 )
-from candleviewer.rules.ir import Literal_, MetricRef, Rule
-from candleviewer.rules.manager import Actor, InMemoryRuleStore, RulesManager, quarantine_path
+from candleviewer.rules.ir import Literal_, MetricRef, Rule, ir_hash
+from candleviewer.rules.ir.models import DECIMAL_TEXT, MAX_NUMBER_TEXT, decimal_text
+from candleviewer.rules.manager import (
+    Actor,
+    InMemoryRuleStore,
+    RuleError,
+    RulesManager,
+    quarantine_path,
+)
 from candleviewer.rules.vocabulary import default_registry
+from tests.rules.test_validator_endpoints import _PERF_SAMPLES, _assert_median_within, _sample_ms
 
 FIX = Path(__file__).parents[1] / "fixtures/rule_ir"
 OWNER = Actor("u1", "s1", frozenset({"rules:arm_live"}), is_owner=True, step_up_fresh=True)
@@ -130,7 +139,8 @@ async def test_a_fractional_threshold_fires() -> None:
 
 #: Constants no number reads as in a comparison that orders its operands.
 UNTYPABLE: list[Any] = [
-    "0.2x", "abc", "5%", "NaN", "Infinity", "1_000", " 0.2", "1E+99999", "", True,
+    "0.2x", "abc", "5%", "NaN", "Infinity", "1_000", " 0.2", "1E+99999", "1E+9999999999999999999",
+    "", True,
 ]  # fmt: skip
 
 
@@ -156,8 +166,11 @@ async def test_an_untypable_constant_is_refused_never_compared_as_text(const: An
             check_constants(Rule.model_validate(stored).conditions)
         assert await mgr.evaluable_rules() == []
         view = await mgr.get(rid, OWNER)
+        with pytest.raises(RuleError) as rearm:  # arming refuses it too
+            await mgr.set_mode(rid, "simulate", OWNER, "k-again")
     finally:
         await mgr.stop()
+    assert (rearm.value.status, rearm.value.code) == (422, "rule_invalid")
     assert refused.value.loc == ("conditions", "right", "const")
     assert refused.value.reason == NOT_A_NUMBER
     assert quarantine_path(stored) == "/conditions/right/const"
@@ -179,6 +192,9 @@ def _cmp(op: str, const: Any, left: dict[str, Any] | None = None) -> dict[str, A
 
 _WIDEST = "1" + "0" * 63  # a 64-character plain form: the widest number the IR holds
 _INDIC = chr(0x661) + chr(0x662)  # Arabic-Indic "12": `Decimal` reads it, the IR does not
+_HUGE, _TINY = "1E+9999999999999999999", "1E-9999999999999999999"  # past the `decimal` module
+_EXACT = "0.1" + "0" * 29 + "1"  # 31 significant digits: past the context's 28
+_PADDED = "1." + "0" * MAX_NUMBER_TEXT  # a number the IR holds, spelled past the read's bound
 
 
 @pytest.mark.parametrize(
@@ -188,23 +204,26 @@ _INDIC = chr(0x661) + chr(0x662)  # Arabic-Indic "12": `Decimal` reads it, the I
         ("0.2", Decimal("0.2")), ("-0.2", Decimal("-0.2")), ("2E-7", Decimal("2E-7")),
         ("-5e+3", Decimal(-5000)), ("1.50", Decimal("1.5")), ("+.5", Decimal("0.5")),
         ("5.", Decimal(5)), ("-0", Decimal(0)), (_WIDEST, Decimal(_WIDEST)),
+        (_EXACT, Decimal(_EXACT)),
         ("long", "long"), ("5%", "5%"), ("NaN", "NaN"), ("Infinity", "Infinity"),
         (" 0.2", " 0.2"), ("1_000", "1_000"), (_INDIC, _INDIC), ("1e", "1e"),
         (".", "."), ("", ""), (_WIDEST + "0", _WIDEST + "0"), ("1E+99999", "1E+99999"),
+        (_HUGE, _HUGE), (_TINY, _TINY), (_PADDED, _PADDED),
     ],
     ids=repr,
 )  # fmt: skip
 def test_literal_value_reads_a_number_as_a_decimal_and_other_text_as_itself(
     const: Any, value: Any
 ) -> None:
-    got = Literal_(const=const).value()
+    got = Literal_(const=const).value
     assert (got, type(got)) == (value, type(value))
 
 
 @pytest.mark.parametrize(
     ("op", "const"),
     [("eq", "long"), ("neq", "flat"), ("eq", True), ("changed", "up"), ("eq", "0.2"),
-     ("gt", "-5E-7"), ("gt", "+.5"), ("between", 3), ("crosses_above", Decimal("0.1"))],
+     ("gt", "-5E-7"), ("gt", "+.5"), ("between", 3), ("crosses_above", Decimal("0.1")),
+     ("eq", _PADDED)],  # past the bound, text is an enum value, never parsed
 )  # fmt: skip
 def test_check_constants_passes_a_constant_its_place_reads(op: str, const: Any) -> None:
     check_constants(_rule(_cmp(op, const)).conditions)
@@ -213,8 +232,9 @@ def test_check_constants_passes_a_constant_its_place_reads(op: str, const: Any) 
 @pytest.mark.parametrize(
     ("op", "const"),
     [("gte", "abc"), ("lt", False), ("lte", "0.2x"), ("between", "x"), ("outside", True),
-     ("crosses_above", "up"), ("crosses_below", "NaN"), ("eq", "5%"), ("neq", "NaN"),
-     ("eq", " 1"), ("changed", "Infinity"), ("eq", "1E+99999")],
+     ("crosses_above", "up"), ("crosses_below", "NaN"), ("crosses_below", "up"), ("eq", "5%"),
+     ("neq", "NaN"), ("eq", " 1"), ("changed", "Infinity"), ("eq", "1E+99999"), ("eq", _HUGE),
+     ("neq", _TINY), ("gt", _HUGE), ("gt", _PADDED)],
 )  # fmt: skip
 def test_check_constants_refuses_a_constant_its_place_cannot_read(op: str, const: Any) -> None:
     with pytest.raises(ConstantTypeError) as refused:
@@ -236,11 +256,30 @@ def test_check_constants_names_the_path_of_a_constant_deep_in_the_rule() -> None
     assert refused.value.args == (loc, NOT_A_NUMBER)
 
 
+_FIRST = {"node_id": "x1", "op": "mul", "operands": [{"const": "a"}, {"metric": "spread_bps"}]}
+
+
+@pytest.mark.parametrize(
+    ("conditions", "loc"),
+    [(_cmp("between", 1) | {"right2": {"const": "abc"}}, ("right2",)),
+     (_cmp("outside", 1) | {"right2": {"const": "5%"}}, ("right2",)),
+     (_cmp("eq", 1, _FIRST), ("left", "operands", 0))],
+    ids=["between-right2", "outside-right2", "first-operand"],
+)  # fmt: skip
+def test_check_constants_refuses_an_upper_bound_and_a_first_operand(
+    conditions: dict[str, Any], loc: tuple[str | int, ...]
+) -> None:
+    with pytest.raises(ConstantTypeError) as refused:
+        check_constants(_rule(conditions).conditions)
+    assert refused.value.loc == ("conditions", *loc, "const")
+
+
 @pytest.mark.parametrize(
     ("op", "const", "reading"),
     [("eq", '"0.3"', "0.3"), ("gte", '"0.1"', "0.1"), ("eq", "0.3", "0.3"),
      ("gt", '"0.1000000000000000001"', "0.1000000000000000002"),
-     ("lt", '"-0.1000000000000000002"', "-0.1000000000000000003")],
+     ("lt", '"-0.1000000000000000002"', "-0.1000000000000000003"),
+     ("lt", f'"{_EXACT}"', "0.1" + "0" * 30 + "5")],  # between it and its 28-digit rounding
 )  # fmt: skip
 async def test_a_saved_constant_compares_exactly_never_through_a_float(
     op: str, const: str, reading: str
@@ -301,3 +340,95 @@ async def test_save_load_evaluate_equals_evaluate_on_the_authored_rule(
     want = _evaluate(authored, str(reading))
     assert _evaluate(loaded, str(reading)) == want
     assert want.fired is _ORACLE[op](reading, const)
+
+
+async def test_a_constant_past_the_decimal_range_skips_only_its_own_rule() -> None:
+    """A stored constant the `decimal` module cannot construct quarantines its own rule; the work
+    list still holds the sound rule beside it."""
+    mgr = RulesManager(InMemoryRuleStore(), default_registry())
+    try:
+        ids = [(await mgr.create(_doc("0.2") | {"name": n}, OWNER))["id"] for n in ("a", "b")]
+        for rid in ids:
+            await mgr.set_mode(rid, "simulate", OWNER, f"k-{rid}")
+        row = await mgr._s.get(ids[1])
+        assert row is not None
+        row.versions[0].ir["conditions"]["right"]["const"] = _TINY
+        items = await mgr.evaluable_rules()
+    finally:
+        await mgr.stop()
+    assert [str(i.rule.rule_id) for i in items] == [str(ids[0])]
+
+
+async def test_a_loaded_constant_is_read_once_however_often_it_is_evaluated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A constant's read is bounded and done once per load: evaluating the loaded rule again, at
+    another reading and by another evaluator, reads nothing again."""
+    _, loaded = await _authored_and_loaded(_doc('"0.2"'))
+    reads: list[str] = []
+
+    def counting(text: str) -> Decimal | None:
+        reads.append(text)
+        return decimal_text(text)
+
+    monkeypatch.setattr("candleviewer.rules.ir.models.decimal_text", counting)
+    for reading in ("0.1", "0.3", "0.2"):
+        _evaluate(loaded, reading)
+    assert reads == ["0.2"]
+
+
+def test_reading_the_constants_leaves_the_dump_and_the_hash_as_they_were() -> None:
+    """The read is cached outside the model's fields: the dump, the content hash and equality are
+    the unread rule's, and a literal keeps its hash and stays frozen."""
+    doc = json.loads((FIX / "form_simple_0.json").read_text(encoding="utf-8"))
+    rule, unread = Rule.model_validate(doc), Rule.model_validate(doc)
+    check_constants(rule.conditions)  # reads, and caches, every constant
+    assert (rule.model_dump_json(), ir_hash(rule)) == (unread.model_dump_json(), ir_hash(unread))
+    assert rule == unread
+    lit = Literal_(const="0.2")
+    before = hash(lit)
+    assert (lit.value, hash(lit)) == (Decimal("0.2"), before)
+    with pytest.raises(ValueError, match="frozen"):  # read, and still frozen
+        lit.__setattr__("const", "0.3")
+
+
+def test_no_enum_value_of_the_vocabulary_is_decimal_text() -> None:
+    """An enum value compares as text, so none may spell a number the read would take; each one
+    passes the load check under `eq`."""
+    enums = [(d.name, v) for d in default_registry() for v in d.enum_values]
+    assert enums
+    for metric, v in enums:
+        assert decimal_text(v) is None, (metric, v)
+        check_constants(_rule(_cmp("eq", v, {"metric": metric})).conditions)
+
+
+#: An enum constant as long as a rule body holds (the body bound, 2,000,000 bytes, is the only bound
+#: on its length), digits and then a letter, so a read that scans it scans it to its end.
+_LONG = "1" * 1_990_000 + "x"
+
+
+@pytest.mark.perf
+def test_a_long_constant_is_read_within_the_perf_budget() -> None:
+    """A constant's read is bounded: the load check of a rule whose enum constant fills the body
+    costs at most twice the schema validation it starts with, plus 5 ms; the check of a fresh
+    load, and one evaluation of one (its first, which reads the constant), stay within 5 ms."""
+    ir = _rule(_cmp("eq", _LONG, {"metric": "imbalance_zone_side"})).model_dump(mode="json")
+    validate = statistics.median(_sample_ms(lambda: Rule.model_validate(ir)))
+    _assert_median_within(lambda: quarantine_path(ir), budget_ms=2 * validate + 5)
+    loads = [Rule.model_validate(ir) for _ in range(2 * (_PERF_SAMPLES + 1))]
+    _assert_median_within(lambda: check_constants(loads.pop().conditions), budget_ms=5)
+    _assert_median_within(lambda: _evaluate(loads.pop(), "1"), budget_ms=5)
+
+
+@pytest.mark.perf
+def test_the_decimal_text_match_never_backtracks() -> None:
+    """The bound caps one read and the match caps many: at the bound, text that fails at its last
+    character costs under three times what matching text does, so a rule of many constants at the
+    bound costs what one of numbers does."""
+
+    def cost(text: str) -> float:
+        work = [text] * 960
+        return statistics.median(_sample_ms(lambda: [DECIMAL_TEXT.fullmatch(t) for t in work]))
+
+    fails, matches = cost("1" * (MAX_NUMBER_TEXT - 1) + "x"), cost("1" * MAX_NUMBER_TEXT)
+    assert fails < 3 * matches, (fails, matches)

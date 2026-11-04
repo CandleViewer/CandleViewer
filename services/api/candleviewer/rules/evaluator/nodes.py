@@ -16,6 +16,8 @@ from typing import Any, Final
 from candleviewer.rules.errors import ConstantTypeError
 from candleviewer.rules.evaluator.snapshot import MetricSnapshot, Value
 from candleviewer.rules.ir.models import (
+    DECIMAL_TEXT,
+    MAX_NUMBER_TEXT,
     ArithmeticNode,
     BooleanNode,
     Comparison,
@@ -78,7 +80,7 @@ class EvalContext:
 
 def operand_value(op: Operand, ctx: EvalContext) -> Value:
     if isinstance(op, Literal_):
-        return op.value()  # a number as a Decimal, decimal text too (#5807)
+        return op.value  # read once per load: a number as a Decimal, decimal text too (#5807)
     if isinstance(op, MetricRef):
         mv = ctx.snapshot.get(op)
         ctx.metric_values[op.metric] = mv.value
@@ -305,9 +307,12 @@ NOT_A_NUMBER: Final = "Constant should be a decimal number"
 
 
 def _reads_as_number(text: str) -> bool:
-    """Text the rule validator reads as a number (`validator._const_unit`): a percentage, or any
-    text `Decimal` reads, `NaN` and `Infinity` among them."""
-    if text.endswith("%"):
+    """Text that spells a number `Literal_.value` leaves as text: decimal text past the IR's range
+    or the `decimal` module's, a percentage, or other text `Decimal` reads (`NaN`, `Infinity`,
+    `1_000`, ` 1`). Text longer than `MAX_NUMBER_TEXT` is an enum value, never parsed."""
+    if len(text) > MAX_NUMBER_TEXT:
+        return False
+    if text.endswith("%") or DECIMAL_TEXT.fullmatch(text) is not None:
         return True
     try:
         Decimal(text)
@@ -320,9 +325,10 @@ def check_constants(node: ConditionNode, loc: tuple[str | int, ...] = ("conditio
     """Refuse the first constant under `node` the evaluator cannot read as its place needs, with
     `ConstantTypeError` at its path (#5807): where a comparison orders its operands (`ORDERED_OPS`)
     or an arithmetic node computes, a constant must be a number (`Literal_.value` a `Decimal`), and
-    anywhere, text that reads as a number must be decimal text. A stored rule holding another is
-    refused at load (`manager.quarantine_path`) and never evaluated, so no number is compared as
-    text. Other text, in `eq`, `neq` or `changed`, is an enum value."""
+    anywhere, text that spells a number must be one `Literal_.value` reads (`_reads_as_number`). A
+    stored rule holding another is refused at load (`manager.quarantine_path`) and never
+    evaluated, so no number is compared as text. Other text, in `eq`, `neq` or `changed`, is an
+    enum value."""
     if isinstance(node, BooleanNode):
         for i, child in enumerate(node.children):
             check_constants(child, (*loc, "children", i))
@@ -340,7 +346,7 @@ def _check_operand(op: Operand, number: bool, loc: tuple[str | int, ...]) -> Non
         for i, child in enumerate(op.operands):
             _check_operand(child, True, (*loc, "operands", i))
     elif isinstance(op, Literal_):
-        value = op.value()
+        value = op.value
         if isinstance(value, Decimal):
             return
         if number or (isinstance(value, str) and _reads_as_number(value)):

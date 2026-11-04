@@ -10,7 +10,8 @@ from __future__ import annotations
 import math
 import re
 from decimal import Decimal, DecimalException
-from typing import Annotated, Any, Literal
+from functools import cached_property
+from typing import Annotated, Any, Final, Literal
 
 from pydantic import (
     AfterValidator,
@@ -75,16 +76,20 @@ def _plain_decimal(d: Decimal) -> str:
         return str(d)
 
 
+#: The longest text a constant's read looks at: longer text is never read as a number, so no read
+#: scans more. A number's stored text is far shorter (a fractional JSON number reaches the IR as a
+#: float, at most 17 digits, and ``plain_decimal`` bounds a number's plain form at 64 characters).
+MAX_NUMBER_TEXT: Final = 128
 #: Decimal text: ASCII digits with an optional sign, point and exponent. ``str(Decimal)`` writes
 #: every finite number so, and a stored version holds the IR's JSON-mode dump, where a ``Decimal``
-#: const is that text (``"0.2"``, ``"-5E-7"``).
-_DECIMAL_TEXT = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", re.ASCII)
+#: const is that text (``"0.2"``, ``"-5E-7"``). Possessive: a failed match never backtracks.
+DECIMAL_TEXT: Final = re.compile(r"[+-]?+(?:\d++(?:\.\d*+)?+|\.\d++)(?:[eE][+-]?+\d++)?+", re.ASCII)
 
 
 def decimal_text(text: str) -> Decimal | None:
     """The number ``text`` spells, exactly (never through a float), when it is decimal text whose
     number the IR can hold (``plain_decimal``'s range); else None."""
-    if _DECIMAL_TEXT.fullmatch(text) is None:
+    if len(text) > MAX_NUMBER_TEXT or DECIMAL_TEXT.fullmatch(text) is None:
         return None
     try:
         number = Decimal(text)
@@ -170,11 +175,13 @@ class Literal_(BaseModel):
     model_config = _CFG
     const: bool | int | Decimal | str
 
+    @cached_property
     def value(self) -> bool | Decimal | str:
         """The constant as the evaluator reads it (#5807): true or false as a bool, a number as a
         ``Decimal``, decimal text too (a stored version holds a ``Decimal`` const as its text), and
-        other text as itself, an enum value. ``const`` itself is never re-typed: the content hash
-        reads decimal text as text, so every hash stays as it is."""
+        other text as itself, an enum value. Read once per instance, so once per load. ``const``
+        itself is never re-typed, and the cached read sits outside the fields: equality, hashing,
+        the dumps and the content hash read ``const`` alone, so every hash stays as it is."""
         c = self.const
         if isinstance(c, bool | Decimal):
             return c
