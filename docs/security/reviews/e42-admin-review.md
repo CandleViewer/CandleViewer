@@ -388,6 +388,7 @@ Counts: Critical 0 · High 0 · Medium 1 · Low 16 · open 17. E42-R-10 and E42-
 AD-T02 / AD-F14 residual (routed to #1238), which it does not re-rate.
 
 Not rated, and not findings:
+
 - **Lead L-1** (the rules/server area): routed to E35-T11 as a binding precondition; the `ud.demotion` copy is
   re-verified when E35-T11 binds (§4).
 - **Observation O-1** (audit): a defence-in-depth note, held in the private record with no id.
@@ -405,6 +406,7 @@ maintenance) and already carry impact H; E27's raised band was for value leaving
 be set back, a restore, is already High and gated by D7 (#3084).
 
 Two overrides bind every rating in this record and in the TM:
+
 1. `SECURITY.md` :45: a finding in the P0 class (an RBAC failure, audit-log integrity broken, API-key
    confidentiality, the withdrawal-off invariant, a missing native stop, unauthorised order placement) is
    **Critical / P0 whatever its row's L×I**.
@@ -450,6 +452,7 @@ WAITING (blocked on #1023, #1134, #1135, #1024, #1137).
 
 Copy changes owed (the owners are the design tickets; A-copy-3 to A-copy-6 are the public form of E42-R-14 to
 E42-R-17):
+
 - **A-copy-1** (ruling, "Add"): `docs/plan/14-screens-catalogue.md` SCR-149, cited by the ruling at `:3062` and at
   the pin at `:3074-3084`. The Type line (`:3076`, "admin token is older than 15 minutes … unlock for 15 minutes
   of activity"), the A11y line (`:3078`, "for how long the resulting token is valid"), the Performance line
@@ -505,6 +508,7 @@ security-auth step with its suppression policy. Bandit runs with tests excluded 
 Triage of the annotations under `services/api/candleviewer/{admin,auth,audit,api}` (40 in all; there is no
 `users/` package, the user routes are `api/users.py`). No finding is suppressed without a reason, and there is no
 `# nosec` and no bare suppression in scope.
+
 - **Auth-pack `nosem:` (24)**, each with reason, owner and review date: `api/profile_writes.py:369`, :422, :474,
   :503; `api/profiles.py:199`, :219, :237; `api/exchange_accounts.py:466`, :603, :684, :915; `api/exchange_keys.py:335`,
   :398, :455; `api/scanner.py:443`, :451, :462; `api/indicator_presets.py:327`, :335, :346; `api/view_as.py:214`, :392;
@@ -542,6 +546,7 @@ Triage of the annotations under `services/api/candleviewer/{admin,auth,audit,api
 | The staged DAST pass and the pen-test | E43 | out of scope; this record is its input |
 
 Carries to the abuse-case owner (E42-X03, #1026; `AC` is not edited here):
+
 - AC-ADM-14: the fixtures and zero hits are met; its enforcement verdict follows E42-R-07 and E42-R-10.
 - AC-ADM-30: becomes "200; `test_admin_http.py:288` pins it" under D8 as ruled.
 - UL-AC12, UL-AC13: met by #2650 (`test_user_purge_pg.py::test_users_anonymise_ahead`,
@@ -596,6 +601,7 @@ PR (an Opus security lens and a `code-reviewer` pass, ruling BQ-7) are recorded 
 | Security sign-off comment on this ticket and the epic | PENDING | §8 |
 
 AC text amendments (notes; the plan JSON is the orchestrator's, who edits it when this record lands):
+
 - **Gherkin 2** (ruling BQ-10): "Given a direct database connection as the application role, When UPDATE and DELETE
   are attempted on audit_log, Then both fail on grants; And, as a privileged role that holds the privilege, both
   fail on the trigger; And the refused statement is recorded as the ERROR and STATEMENT lines of the Postgres
