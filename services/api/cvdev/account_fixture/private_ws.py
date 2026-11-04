@@ -52,6 +52,7 @@ from candleviewer.exchange.bybit.errors import FrameTooLarge
 from candleviewer.observability import spawn
 from cvdev.account_fixture import guards
 from cvdev.account_fixture.control import KeyStateError
+from cvdev.account_fixture.order_lane import AckBoard
 from cvdev.account_fixture.pack import PrivateWs, Scenario, WsReaction, merge_patch, payload
 from cvdev.account_fixture.requestlog import KeyClass, Outcome, RequestLogFileError, WsMethod
 from cvdev.account_fixture.transport import ClockInvalid, FixtureTransport, logger
@@ -104,13 +105,16 @@ class FixtureSockets:
         transport: FixtureTransport,
         *,
         sleep: Sleep = asyncio.sleep,
+        acks: AckBoard | None = None,
     ) -> None:
-        self._rest, self._sleep = transport, sleep
+        self._rest, self._sleep, self._acks = transport, sleep, acks
         refused = merge_patch(payload(transport.pack, _AUTH_REPLY), _REFUSED)
         self._refused_auth = json.dumps(refused, separators=(",", ":"))
 
     async def connect(self, url: str) -> FixtureSocket:
-        socket = FixtureSocket(self._rest, url, sleep=self._sleep, refused_auth=self._refused_auth)
+        socket = FixtureSocket(
+            self._rest, url, sleep=self._sleep, refused_auth=self._refused_auth, acks=self._acks
+        )
         if url != guards.DEMO_PRIVATE_WS:
             socket.refuse("WS:CONNECT", "refused_host", p0=True)
         if self._rest.latched:
@@ -137,8 +141,10 @@ class FixtureSocket:
         *,
         sleep: Sleep,
         refused_auth: str,
+        acks: AckBoard | None = None,
     ) -> None:
         self._rest, self._sleep, self._refused_auth = transport, sleep, refused_auth
+        self._acks = acks
         split = urlsplit(url)
         self._env = guards.ws_host_env(split.hostname)
         self._host = split.hostname if self._env else None
@@ -220,6 +226,12 @@ class FixtureSocket:
         if self._outbox:
             return self._outbox.popleft(), None
         waits = [(drop - now).total_seconds() for drop in drops if drop > now]
+        acks = None if self._authed is None or _timeline(ws, at_ms)[1] else self._acks
+        if acks is not None and self._key is not None:  # the lane's, before the script's (#977)
+            if (ack := acks.take(self._key, now)) is not None:
+                return ack, None
+            if (ack_due := acks.next_due_s(self._key, now)) is not None:
+                waits.append(ack_due)
         if self._authed is not None and not _timeline(ws, at_ms)[1]:
             since = _ms(now, self._authed)
             for index, push in enumerate(ws.after_auth):
@@ -265,6 +277,8 @@ class FixtureSocket:
             self._drop("served", scenario)
         elif not silent and self._react(scenario.ws.on_auth, scenario):
             self._authed, self._sent = now, {}
+            if self._acks is not None:  # the lane's ack frames for this key wake this socket
+                self._acks.watch(key, asyncio.get_running_loop(), self._wake)
 
     def _react(self, reaction: WsReaction, scenario: Scenario) -> bool:
         """The script's reaction: queue its reply, ignore, or close. True when it replied."""

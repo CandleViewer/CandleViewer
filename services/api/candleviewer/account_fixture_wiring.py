@@ -72,9 +72,9 @@ class AccountFixture(Protocol):
         """#913 L1d: a REST transport for the order lane's loop, which the root builds there and
         closes there, since no transport is shared across loops (L3b): a new one at each call,
         never `rest_transport`, which the adapter's `lane_trading_port` refuses. It refuses every
-        request, armed or not (L1d-1): the door's pair is built once a process (#4585), and its
-        request log is not safe from a second loop's thread, so a dev stack's lane is refused what
-        the adapter's door answers (20 Sec.6.2)."""
+        request unless the door's pair is built (the boot guard passed) and the fixture's dir
+        names the lane's pack mode (#977): then it answers through the pair's one transport, whose
+        request log is safe from both loops' threads, after the mode's delay."""
         ...
 
 

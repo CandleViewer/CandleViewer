@@ -41,7 +41,7 @@ from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import register_r0
 from candleviewer.observability.metrics_runtime import GcPauseTimer
 from candleviewer.settings import Environment, FeedMode, Settings
-from cvdev.account_fixture import boot, guards
+from cvdev.account_fixture import boot, guards, wiring
 from cvdev.account_fixture import pack as account_pack
 from cvdev.account_fixture.boot import StoredKey
 from cvdev.account_fixture.wiring import NOT_BUILDABLE
@@ -464,7 +464,9 @@ async def test_a_passed_guard_builds_the_fixture_pair_on_the_process_gate(
 
     async with _lifespan(app):
         armed = app.state.account_fixture.armed
-        assert armed is not None and armed.transport._gate is ctx.oms_read_only_gate
+        serving = None if armed is None else armed.transport._gate
+        assert isinstance(serving, wiring._ServingGate)  # #977: latched on the serving loop
+        assert serving.gate is ctx.oms_read_only_gate
 
 
 async def test_switched_on_without_its_handle_the_boot_is_refused_and_nothing_runs(
