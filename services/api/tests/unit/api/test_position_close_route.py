@@ -29,6 +29,7 @@ from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.errors import (
     ExchangeRejected,
+    IdempotencyKeyReuse,
     OmsNotReady,
     OrderEntryRefused,
     RiskRefused,
@@ -595,6 +596,48 @@ async def test_close_all_replay_the_same_key_is_answered_from_the_24h_record() -
     again = await flatten(world, key=key)
     assert again.json() == first.json() and again.headers["idempotency-replayed"] == "true"
     assert len(world.submitted()) == 2
+
+
+def effects(world: World) -> tuple[object, ...]:
+    """What a close-all can change: the closes and cancels sent, the sweeps, the records and the
+    audit trail written, and the 24 h record."""
+    return (
+        len(world.submitted()), len(world.cancel_all.runs), len(world.positions.sweeps),
+        len(world.positions.records), len(world.records.written), world.audit.actions(),
+        len(world.cache),
+    )  # fmt: skip
+
+
+async def test_close_all_replay_the_same_body_is_the_stored_answer_nothing_new() -> None:
+    """C-2.10 guard: the exact repeat is the first answer, `Idempotency-Replayed`, with no second
+    close or cancel and nothing new recorded or kept."""
+    world, key = World(), uuid.uuid4()
+    first = await flatten(world, key=key)
+    done = effects(world)
+    again = await flatten(world, key=key)
+    assert (again.status_code, again.json()) == (200, first.json())
+    assert again.headers["idempotency-replayed"] == "true"
+    assert effects(world) == done
+
+
+async def test_close_all_replay_another_body_under_the_key_is_409_key_reuse_nothing_new() -> None:
+    """22 `closeAllPositions` 409, as `closePosition`'s (C-2.10): a key first used with another
+    body is `idempotency_key_reuse`, never the redacted 500 of an error that escaped. Nothing is
+    sent, recorded or kept, and the first answer is still the key's."""
+    world, key = World(), uuid.uuid4()
+    first = await flatten(world, key=key)
+    done = effects(world)
+    reused = await flatten(world, {"symbol": "BTCUSDT"}, key=key)
+    assert reused.status_code == 409, reused.text
+    assert reused.headers["content-type"] == "application/problem+json"
+    problem = reused.json()
+    assert (problem["status"], problem["code"]) == (409, "idempotency_key_reuse")
+    assert problem["type"] == "https://candleviewer.local/errors/idempotency_key_reuse"
+    assert problem["detail"] == IdempotencyKeyReuse.default_detail
+    assert effects(world) == done
+    again = await flatten(world, key=key)  # the key's first body, once more
+    assert again.json() == first.json() and again.headers["idempotency-replayed"] == "true"
+    assert effects(world) == done
 
 
 @pytest.mark.parametrize(

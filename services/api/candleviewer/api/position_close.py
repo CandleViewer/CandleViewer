@@ -687,7 +687,10 @@ def make_position_close_router(
             return order_problem(exc)
         digest = request_fingerprint("POST", CLOSE_ALL_PATH, raw)
         held = replay_key(snapshot.user_id, _ALL_OPERATION, key)
-        cached = replay_cached(kept, held, digest)
+        try:
+            cached = replay_cached(kept, held, digest)
+        except OmsError as exc:  # another body under the key: 409 `idempotency_key_reuse`
+            return order_problem(exc, pager=paging)
         if cached is not None:
             return cached
         if held in running:
