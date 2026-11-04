@@ -706,9 +706,10 @@ def test_every_order_says_how_its_row_came_to_exist_and_every_execution_has_one(
         "push or in reconciliation, so that every execution has an order",
         "It decides nothing: an order or fill is OMS intent only through a row or a recorded stop",
     )
-    model = _INTERNAL_DOC.split("class Order(BaseModel):", 1)[1].split("```", 1)[0]
-    [declared] = re.findall(r'^    provenance: Literal\[([^\]]*)\] = "placed"', model, re.MULTILINE)
-    assert [value.strip('"') for value in declared.split(",")] == provenance
+    model = _INTERNAL_DOC.split("### 8.1 Order model", 1)[1].split("### 8.2 ", 1)[0]
+    [row] = re.findall(r"^\| `provenance` .*$", model, re.MULTILINE)
+    listed = ", ".join(f"`{value}`" for value in provenance[:-1]) + f" or `{provenance[-1]}`"
+    assert listed in row
     assert _SCHEMAS["Execution"]["properties"]["order_id"] == {"type": "string", "format": "uuid"}
     frame = _WS_SCHEMAS["cv://ws/v1/executions.schema.json"]["properties"]["executions"]["items"]
     assert "order_id" in frame["required"]

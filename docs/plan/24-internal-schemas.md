@@ -1370,6 +1370,8 @@ Normative expansion of `27-adrs/ADR-0006`. The OMS is the only module allowed to
 
 ### 8.1 Order model
 
+`OrderIntent` is what a caller asks for. As built it is not a class: the request bodies of `22-api-openapi.yaml` (`placeOrder`, `createTradeGroup`) carry it as they define it, its `origin` and `origin_ref` are server-only (`SubmitContext.origin`, §8.4), and `OrderIntent` in `services/api/candleviewer/storage/repositories/orders.py` is only the `purpose` vocabulary, stored as the `intent` column.
+
 ```python
 class OrderIntent(BaseModel):
     """What the user/rule asked for — pre-sizing, pre-validation, account-agnostic."""
@@ -1396,101 +1398,57 @@ class OrderIntent(BaseModel):
     origin_ref: str | None                        # rule_id, parent order id, hotkey name
     purpose: Literal["entry","stop_loss","take_profit","scale_in","scale_out",
                      "flatten","reverse","algo_child"] = "entry"
-
-class Order(BaseModel):
-    model_config = ConfigDict(frozen=False)       # OMS aggregate root — mutable
-    order_id: OrderId
-    order_link_id: OrderLinkId                    # idempotency key, §8.3
-    exchange_order_id: str | None                 # bound once, as §8.3 rule 7 lists: ack, full match,
-                                                  #   adoption or a recorded stop's materialisation
-    account_id: AccountId
-    trade_group_id: GroupId | None
-    trade_group_leg_id: UUID | None
-    parent_order_id: OrderId | None               # algo children, bracket legs
-    environment: Environment
-    symbol: Symbol
-    side: Side
-    order_type: Literal["market","limit"]
-    qty: Qty
-    price: Px | None
-    time_in_force: Literal["gtc","ioc","fok","post_only"]
-    reduce_only: bool
-    close_on_trigger: bool
-    position_idx: Literal[0, 1, 2]                # 0 one-way, 1 hedge-long, 2 hedge-short
-    trigger_price: Px | None
-    trigger_by: Literal["last","mark","index"] | None
-    trigger_direction: Literal["rise","fall"] | None
-    take_profit: Px | None
-    stop_loss: Px | None
-    tpsl_mode: Literal["full","partial"]
-    state: "OrderState"
-    filled_qty: Qty = Decimal(0)
-    leaves_qty: Qty
-    avg_fill_price: Px | None
-    cum_fee: Notional = Decimal(0)
-    fee_currency: str = "USDT"
-    reject_code: str | None                       # internal taxonomy code
-    reject_message: str | None                    # exchange text, verbatim
-    created_at: TsUs
-    submitted_at: TsUs | None
-    acked_at: TsUs | None
-    terminal_at: TsUs | None
-    last_exchange_update: TsUs | None
-    amend_seq: int = 0
-    submit_attempts: int = 0
-    purpose: Literal[...]                          # as OrderIntent.purpose
-    origin: Literal[...] | None                   # read as optional: NULL until its writer sets it,
-                                                  #   and only a rule's orders set it until the other
-                                                  #   writers set theirs (21 §3.3.4)
-    origin_ref: str | None
-    algo_id: UUID | None
-    provenance: Literal["placed","reconciliation","recorded_stop"] = "placed"  # how its row came to exist (21 §3.3.4)
 ```
 
-```python
-class Execution(BaseModel):        # immutable fill record
-    exec_id: str                   # exchange execId — dedupe key
-    exchange_order_id: str         # the exchange's orderId: B1 pairs a fill on it (SR-E29-03)
-    order_id: OrderId
-    order_link_id: OrderLinkId     # the paired row's id (§8.3 rule 7); the adapter's is a hint (§14.2 rule 11)
-    account_id: AccountId
-    symbol: Symbol
-    side: Side
-    price: Px
-    qty: Qty
-    fee: Notional
-    fee_rate: Decimal
-    fee_currency: str
-    is_maker: bool
-    exec_type: Literal["trade","funding","adl_trade","bust_trade","settle"]
-    closed_pnl: Notional | None    # present on reducing fills
-    ts_exec: TsUs
-    ts_ingest: TsUs
-    seq: int
+The OMS has no aggregate class of its own (`oms/models.py` is an empty scaffold). As built, an order is B1's machine context beside its stored row, written as a `NewOrder` and read as an `OrderRow`; a fill is a `NewExecution` (an `ExecutionRow` once inserted) and a position a `PositionState` (a `PositionRow`), all in `services/api/candleviewer/storage/repositories/`. `21-database-schema.md` §3.3.4, §3.3.6 and §3.3.7 own their names, types and constraints (C-16.5), so this section no longer restates them: money and quantities are `Decimal`s that their `numeric` column holds exactly, the columns that hold Bybit's vocabularies keep its casing (`Buy`/`Sell`, `Market`/`Limit`, `GTC`/`IOC`/`FOK`/`PostOnly`, `Full`/`Partial`), and a time is a timezone-aware `datetime`, not integer microseconds. The tables give the stored name wherever it differs from this section's first draft (2026-09-14), which called the three models `Order`, `Execution` and `Position`.
 
-class Position(BaseModel):
-    account_id: AccountId
-    symbol: Symbol
-    position_idx: Literal[0, 1, 2]
-    side: Side | None              # None when flat
-    qty: Qty
-    avg_entry_price: Px | None
-    mark_price: Px | None
-    liq_price: Px | None
-    bust_price: Px | None
-    leverage: Decimal
-    position_value: Notional
-    unrealised_pnl: Notional
-    cum_realised_pnl: Notional
-    take_profit: Px | None
-    stop_loss: Px | None
-    trailing_stop_distance: Px | None    # Bybit trailing is a PRICE DISTANCE, not %
-    trailing_active_price: Px | None
-    tpsl_mode: Literal["full","partial"]
-    adl_rank: int | None                 # 1..5
-    opened_at: TsUs | None
-    updated_at: TsUs
-```
+**`Order`, as built: `OrderRow`** (`orders`, `21` §3.3.4)
+
+| Stored field                            | Draft field                  | As built                                                                                                                                                                     |
+| --------------------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                                    | `order_id`                   |                                                                                                                                                                              |
+| `exchange_account_id`                   | `account_id`                 |                                                                                                                                                                              |
+| `intent`                                | `purpose`                    | the `order_intent` vocabulary                                                                                                                                                |
+| `cum_exec_qty`                          | `filled_qty`                 |                                                                                                                                                                              |
+| `avg_price`                             | `avg_fill_price`             |                                                                                                                                                                              |
+| `fee_paid`                              | `cum_fee`                    |                                                                                                                                                                              |
+| `created_ts`, `submitted_ts`            | `created_at`, `submitted_at` |                                                                                                                                                                              |
+| `exchange_updated_ts`                   | `last_exchange_update`       | the exchange's `updatedTime`, set when a reconciliation pass inserts an adopted row; S5's staleness mark is the facade's in-memory `last_update_ms` (`oms/order_machine.py`) |
+| `state`                                 | `state`                      | the stored `order_state` (§8.2); the chart's own state is beside it in `lifecycle_state`                                                                                     |
+| `reject_message`                        | `reject_message`             | the exchange's text, **redacted before it is stored** (`redact_exchange_text`, §8.6 "Code-only rule"), not "verbatim"                                                        |
+| `take_profit`, `stop_loss`, `tpsl_mode` | the same                     | the TP/SL attached on create (§8.8 rule 1)                                                                                                                                   |
+| `origin`, `origin_ref`                  | the same                     | NULL until a writer sets them: only a rule's orders do (§8.4, `21` §3.3.4)                                                                                                   |
+| `provenance`                            | the same                     | `placed`, `reconciliation` or `recorded_stop`: how its row came to exist (`21` §3.3.4, `22` `OrderProvenance`)                                                               |
+
+Not stored: `trade_group_id` (read through `trade_group_leg_id`, `trade_group_legs.trade_group_id`), `environment` (the account's, `exchange_accounts.env`; `is_paper` marks a paper order), `fee_currency` (an execution's), `acked_at` and `terminal_at` (the `event_ts` of the `ack` event and of the final step in `order_events`), `amend_seq` (an order's version is B1's `event_seq`, the `seq` of its last `order_events` row, which `amendOrder`'s `ETag` carries) and `algo_id` (an algo's children link through `parent_order_id` and `oco_group_ref`). Added: `oco_group_ref`, `cum_exec_value`, `idempotency_state`, `exchange_created_ts`, `last_reconciled_at`, `is_paper` and `lifecycle_state`.
+
+**`Execution`, as built: `NewExecution`** (`executions`, `21` §3.3.6)
+
+| Stored field                         | Draft field           | As built                                                                                     |
+| ------------------------------------ | --------------------- | -------------------------------------------------------------------------------------------- |
+| `exchange_account_id`                | `account_id`          |                                                                                              |
+| `exec_price`, `exec_qty`, `exec_fee` | `price`, `qty`, `fee` |                                                                                              |
+| `exec_ts`                            | `ts_exec`             |                                                                                              |
+| `exec_type`                          | `exec_type`           | Bybit's casing: `Trade`, `AdlTrade`, `Funding`, `BustTrade`, `Settle` and `SessionSettlePnl` |
+| `order_id`                           | `order_id`            | NULL for an execution that moves no order (§8.5 step 2: funding, ADL, bust, settle)          |
+
+Not stored: `exchange_order_id` (B1 pairs a fill on it before the insert, §8.3 rule 7) and `seq` (S5's ordering key, used in memory); `ts_ingest` is `recv_ts`, which the database assigns (an `ExecutionRow`'s). Added: `exec_value`, `trade_group_leg_id`, `mark_price`, `underlying_price`, `block_trade_id`, `position_idx` and `is_paper`.
+
+**`Position`, as built: `PositionState`** (`positions`, `21` §3.3.7)
+
+| Stored field          | Draft field              | As built                                                                            |
+| --------------------- | ------------------------ | ----------------------------------------------------------------------------------- |
+| `exchange_account_id` | `account_id`             |                                                                                     |
+| `size`                | `qty`                    |                                                                                     |
+| `avg_price`           | `avg_entry_price`        |                                                                                     |
+| `trailing_stop`       | `trailing_stop_distance` | still a price distance, never a percentage                                          |
+| `adl_rank_indicator`  | `adl_rank`               |                                                                                     |
+| `exchange_updated_ts` | `updated_at`             | the exchange's time; a `PositionRow` adds the database's `recv_ts` and `updated_at` |
+| `side`                | `side`                   | `Buy`, `Sell` or `None` (flat)                                                      |
+
+Not stored: `trailing_active_price` and `opened_at`. Added: `position_im`, `position_mm`, `cur_realised_pnl`, `auto_add_margin` and `is_paper`.
+
+**The adapter's reads keep the draft's names.** `Order`, `Execution` and `Position` in `exchange/base/models.py` are what `TradingPort` reads return, not rows: §14.4 lists `Order` and `Execution` field for field, and `Position` carries `account_id`, `symbol`, `position_idx`, `side`, `qty`, `avg_entry_price`, `mark_price`, `liq_price`, `leverage`, `unrealised_pnl`, `cum_realised_pnl`, `take_profit`, `stop_loss`, `trailing_stop_distance` and `updated_at`. The OMS maps each onto the stored names when it records it (`oms/reconciler.py` `new_execution`, `oms/positions.py` `row_state`).
 
 `Position.id` in `AccountConsequenceSummary` (`22-api-openapi.yaml`, E27-S04 #898) is derived, never a stored id: the UUIDv5 of (account, symbol, `position_idx`) in the fixed namespace `accounts.consequences.POSITION_NAMESPACE`, so one position keeps its id across reads.
 
@@ -1565,7 +1523,7 @@ stateDiagram-v2
   Quarantined --> Cancelled: reconciliation found cancelled
   Quarantined --> Held: the order under our id does not match the row
   Quarantined --> Unknown: a reconciliation pass found it nowhere (missing_remote, §8.5 step 3b)
-  Untracked --> Submitted: adopted under management (adoption_allowed, D6)
+  Untracked --> Submitted: adopted under management (adoption_allowed, D6, denied in v1)
   Untracked --> Cancelled: reconciliation found it cancelled, or 2 passes found nothing
   Untracked --> Untracked: one reconciliation pass found nothing
   Untracked --> Filled: reconciliation found it filled
@@ -1587,11 +1545,11 @@ stateDiagram-v2
 | S2  | An amend rejection leaves the prior order live and unchanged. The UI is told explicitly, because a user who believes a stop moved when it did not is in danger.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | S3  | A fill arriving for an order in `CancelPending` wins: cancel lost the race, state becomes `PartiallyFilled`/`Filled`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | S4  | Executions are deduped by `exec_id`; a repeated `exec_id` never double-counts `filled_qty`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| S5  | Out-of-order private-WS pushes are ordered by `(ts_exec, seq)`; a push describing a state older than `last_exchange_update` is ignored except for fills, which are always applied (they are additive and dedupe-protected) once they pair with their row through its bound `exchange_order_id`: a push or fill that comes before the bind waits for it (§8.3 rule 7).                                                                                                                                                                                                                            |
+| S5  | Out-of-order private-WS pushes are ordered by `(ts_exec, seq)`; a push describing a state older than the newest `orders` push the order took is ignored except for fills, which are applied (they are additive and dedupe-protected) once they pair with their row through its bound `exchange_order_id`: a push or fill that comes before the bind waits for it (§8.3 rule 7). Two exceptions: a held fill the store refuses for its own data is answered as hostile (OM-T04), and a held push a store outage refuses is dropped, paged, at its 8th release (§8.5 step 2 applies it again).     |
 | S6  | Terminal states are immutable. A post-terminal exchange push raises `ReconcileAnomaly`, is audited and alerted, and does not mutate the order.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | S7  | Postgres is authoritative. If Postgres is unavailable, order entry is blocked — we never accept an order we cannot durably record.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | S8  | Every transition writes an append-only `order_events` row before the in-memory state changes (write-ahead), so a crash mid-transition is recoverable.                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| S9  | `untracked` is a distinct state for exchange orders that no local row is bound to (manual Bybit-app order, pre-existing, ours whose row was lost, or one under an id a live row holds whose full match fails, §8.3 rule 3). They are displayed, adoptable by the user, but never auto-managed by rules.                                                                                                                                                                                                                                                                                          |
+| S9  | `untracked` is a distinct state for exchange orders that no local row is bound to (manual Bybit-app order, pre-existing, ours whose row was lost, or one under an id a live row holds whose full match fails, §8.3 rule 3). The reconciliation pass records each one itself (adopted automatically, audited as `order.adopted_untracked`, §8.5 step 3c); they are displayed and never managed, by a rule, an algo, a group or a user: no human adopt action exists in v1 and B1's `adoption_allowed` denies every `ADOPT` (D6, BQ-17).                                                           |
 | S10 | An event the current state does not handle (a fill while `Submitting` or `AmendPending` awaits the exchange) is deferred (`onUnhandled: "defer"`), up to the runtime's `DEFER_MAX` (1000 per machine); past it the oldest is evicted, which pages on the order lane (`CvErrorHooks`). Every delivered fill is applied, consumed with an audit record (a fill for a held or final order, S6), or still deferred. A command is never deferred: the facade judges it on the state B1 settled in, so B1 takes it at once or it is refused before it is sent (see below, §8.4 step 11, #4711, #4807). |
 | S11 | No action half-applies a transition: under `actionErrorPolicy: "rollback"` an action that raises (a failed `order_events` write included) aborts the step and restores the prior state and context (S7, S8), and pages.                                                                                                                                                                                                                                                                                                                                                                          |
 
@@ -1725,7 +1683,7 @@ sequenceDiagram
   OMS->>AD: place_order(request)
   AD->>RL: acquire(account_uid, "order.create", lane), waiting at most its factory's bound
   RL-->>AD: token | none within the bound
-  AD->>BY: POST /v5/order/create (or WS trade on live), with a token only
+  AD->>BY: POST /v5/order/create, with a token only (REST in every environment in v1, ADR-0044)
   alt retCode 0
     BY-->>AD: ack (orderId)
     AD-->>OMS: OrderAck
@@ -2288,7 +2246,7 @@ class OmsErrorCode(StrEnum):
 | `110089`           | #3005: exceeds the maximum risk limit level                               | `RISK_LIMIT_EXCEEDED` (filter `risk_limit_tier`)                                                | no                | Same as `110013`                                                                                                                                                                                                                                                             |
 | `170xxx`           | Spot-specific                                                             | `EXCHANGE_UNKNOWN`                                                                              | no                | Should be unreachable (linear-only); alert as a bug                                                                                                                                                                                                                          |
 | `3400139`          | #3005: positions+orders exceed the risk limit                             | `RISK_LIMIT_EXCEEDED` (filter `risk_limit_tier`)                                                | no                | Same as `110013`                                                                                                                                                                                                                                                             |
-| any other non-zero | —                                                                         | `EXCHANGE_UNKNOWN`                                                                              | no                | Reject, store `retCode` + `retMsg` verbatim, alert at `warning`, and open a ticket-worthy log entry                                                                                                                                                                          |
+| any other non-zero | —                                                                         | `EXCHANGE_UNKNOWN`                                                                              | no                | Reject, store `retCode` + `retMsg` redacted (the code-only rule below), alert at `warning`, and open a ticket-worthy log entry                                                                                                                                               |
 
 Transport-level: HTTP 403 → `IP_NOT_ALLOWED` (or geo-block); HTTP 429 → `RATE_LIMITED`; HTTP 5xx → `SERVICE_UNAVAILABLE`; `asyncio.TimeoutError`/connection reset after send → `TRANSPORT_ERROR` → order to `Unknown`.
 
@@ -2400,7 +2358,7 @@ Binding (owner decision; ADR-0008): **every position opened by CandleViewer carr
 
 ### 8.10 Order-entry gate — refusal reasons (closed set)
 
-_Added for E42-T03 and E27-T04 (#837 Q5)._ One composed synchronous gate is consulted at the single OMS submission choke point, before any OMS work, for every submission that opens or increases exposure: REST order and trade-group submits, rule and paper legs, and emulated-algo child orders. A trade-group submit consults it once per leg's account, as each leg is sent: a refused leg is a failed leg, so the group's `leg_failure_policy` applies (§9.5). An `all_or_none` unwind, like any reduce-only close, goes as the reduce-only MARKET close of §9.5.1 and B3 `reduce_only_close`, never as a gated `placeOrder`. Risk-increasing amends (quantity up, trigger re-armed, and the owner's loosened stop on `setPositionTpSl`, the one loosening §8.8 rule 5 allows; `amendOrder` and `amendTradeGroup` refuse a looser stop outright) are refused the same way. Cancels, `closePosition` and `closeAllPositions`, quantity-reducing amends and stop-tightening amends are never gated, so they keep working while order entry is paused (C-2.6). Attaching a missing native SL, tightening a stop, or re-arming a protective trigger is never gated; "trigger re-armed" means an exposure-increasing (entry) trigger. An amend with any risk-increasing component is gated. A take-profit change is never a risk-increasing component. The SL component of a `trading-stop` write is never refused when it adds, keeps or tightens protection; loosening or clearing it is classified like a stop-loosening amend. The operations that attach or re-arm a protective stop are `trading-stop` and the SL fields of an amend; a protective stop is never sent as a gated `placeOrder`. A `placeOrder` with `reduce_only` is a submission and is gated; closing goes through the close routes. The gate never inspects the order: `refusal(account_id)` sees only the account, and the caller classifies the operation. The gate runs after authentication, RBAC and account-scope resolution, so an account outside the caller's scope never reaches it and gets a `404`. The B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate; they too run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate. The gate's checks run in a fixed order, the global maintenance gate first, then the account checks; the first refusal wins. A check is synchronous and O(1), does no I/O and never queries an interpreter; it reads a plain bool or enum that its monitor publishes on transition (C-2.20). The gate is a safety invariant: no flag gates it (C-4.14).
+_Added for E42-T03 and E27-T04 (#837 Q5)._ One composed synchronous gate is consulted at the single OMS submission choke point, before any OMS work, for every submission that opens or increases exposure: REST order and trade-group submits, rule and paper legs, and emulated-algo child orders. A trade-group submit consults it once per leg's account, as each leg is sent: a refused leg is a failed leg, so the group's `leg_failure_policy` applies (§9.5). An `all_or_none` unwind, like any reduce-only close, goes as the reduce-only MARKET close of §9.5.1 and B3 `reduce_only_close`, never as a gated `placeOrder`. Risk-increasing amends (quantity up, trigger re-armed, and the owner's loosened stop on `setPositionTpSl`, the one loosening §8.8 rule 5 allows; `amendOrder` and `amendTradeGroup` refuse a looser stop outright) are refused the same way. Cancels, `closePosition` and `closeAllPositions`, quantity-reducing amends and stop-tightening amends are never gated, so they keep working while order entry is paused (C-2.6). Attaching a missing native SL, tightening a stop, or re-arming a protective trigger is never gated; "trigger re-armed" means an exposure-increasing (entry) trigger. An amend with any risk-increasing component is gated. A take-profit change is never a risk-increasing component. The SL component of a `trading-stop` write is never refused when it adds, keeps or tightens protection; loosening or clearing it is classified like a stop-loosening amend. The operations that attach or re-arm a protective stop are `trading-stop` and the SL fields of an amend; a protective stop is never sent as a gated `placeOrder`. A `placeOrder` with `reduce_only` is a submission and is gated; closing goes through the close routes. The gate never inspects the order: `refusal(account_id)` sees only the account, and the caller classifies the operation. The gate runs after authentication, RBAC and account-scope resolution, so an account outside the caller's scope never reaches it: an id route answers it as a missing id (`404`), and a request that names it in its body is refused with `403 account_scope_denied` (SR-E29-13). The B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate; they too run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate. The gate's checks run in a fixed order, the global maintenance gate first, then the account checks; the first refusal wins. A check is synchronous and O(1), does no I/O and never queries an interpreter; it reads a plain bool or enum that its monitor publishes on transition (C-2.20). The gate is a safety invariant: no flag gates it (C-4.14).
 
 A refusal is the `403 trading_disabled` problem with a `reason` extension member (`TradingDisabledProblem` in `22-api-openapi.yaml`). The set is closed; adding a reason is a contract change to this table and to `OrderEntryRefusalReason`:
 
@@ -2930,6 +2888,7 @@ Rules:
 5. **Every leg's entry carries an attached native SL** (§8.8). A leg that cannot attach one is aborted rather than opened naked.
 6. Legs are submitted independently; one leg's failure never blocks another's send unless the policy says so (§9.5).
 7. The group's `status` is derived: any leg open → `partially_open`; all legs open/filled → `open`; all terminal with ≥1 ok → `closed`; zero ok → `failed`.
+8. **The intent is judged before any leg is sent (SR-E29-01; #3863).** The request's `intent` is held against every leg's effect by `placeOrder`'s rule (`oms/classify.py` `intent_errors`): a reducing intent on an entry, an opening one on an order that is not an entry, and the server-assigned `reverse` and `algo_child` are `validation_failed` / `intent_mismatch`. The refusal is the whole request's, before the first send and whatever `leg_failure_policy` says (§9.5), never a per-leg failure: `previewTradeGroup`'s per-leg `rejection` has no `intent_mismatch` for that reason (`22-api-openapi.yaml`). **As built, only the preview runs it** (`api/trade_group_preview.py`, step 10: a group never reduces, so its `reduce_only` is `intent_mismatch` too). The planner `oms/fanout/plan.py` and its leg guard run no intent pass, and the submit that sends the legs is not built (E34-S02, #1110). It belongs in the planner both run (rule 1); no open ticket places it yet (E34-S02, #1110, builds the submit around the planner).
 
 ### 9.5 Leg failure policy
 
@@ -2940,6 +2899,8 @@ Rules:
 | `best_effort`    | Failed legs are recorded and reported; successful legs stay open.                                                                        | Default for manual tickets    |
 | `all_or_none`    | If any leg fails to reach `open`, all successfully opened legs are **unwound** by reduce-only market orders and the group ends `failed`. | Opt-in; correlated strategies |
 | `abort_on_first` | Stop submitting further legs after the first failure; already-open legs stay open (no unwind).                                           | Rule-originated groups        |
+
+Whatever the policy, the intent pass of §9.4 rule 8 runs before the first leg is sent and refuses the whole request, so no row above ever sees an intent mismatch as a leg failure. As built that pass is not in the fan-out yet (§9.4 rule 8).
 
 #### 9.5.1 `all_or_none` compensating-unwind algorithm (normative)
 
@@ -4696,8 +4657,8 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
     that carries one of our ids (`OUR_ID`) of another environment or account (`acct4`) is dropped
     and counted in `bybit_rows_refused_total` (`reason` `environment` or `account`), never raised
     (SR-E29-02). An execution row is read as an `Execution` when its type has an `exec_type`
-    (§14.4: `Trade`, `AdlTrade`, `BustTrade`, `Settle`, and 21 §3.3.6's `SessionSettlePnl`, which
-    §8.1 does not list), with the exchange's `orderId` and `feeRate`. A `Funding` fee, set aside
+    (§14.4: `Trade`, `AdlTrade`, `BustTrade`, `Settle`, and 21 §3.3.6's `SessionSettlePnl`), with
+    the exchange's `orderId` and `feeRate`. A `Funding` fee, set aside
     until E29-K01 records its row, and a classic account's `UNKNOWN` fill no order and are
     counted there as `not_a_fill`; every other documented type (a delisting's `Delivery`,
     `BlockTrade`, `MovePosition`, `FutureSpread` and the four stock-split types) has no
@@ -5015,7 +4976,7 @@ class OrderAck(BaseModel):
     transport: Literal["rest","ws"]
     record: ExchangeRecord | None = None   # SR-E29-08, below
 
-class Order(BaseModel):                    # a read's row (§8.5); the OMS aggregate is §8.1's
+class Order(BaseModel):                    # a read's row (§8.5); the stored row is §8.1's `OrderRow`
     order_id: OrderId | None = None        # the OMS's local id: an adapter cannot know it
     order_link_id: OrderLinkId             # normalised, §14.2 rule 11
     exchange_order_id: str                 # the exchange's orderId, never empty
@@ -5045,9 +5006,9 @@ class Order(BaseModel):                    # a read's row (§8.5); the OMS aggre
     exchange_placed: bool = False          # the exchange placed it (§8.10); only the change that
                                            # maps createType sets it, after E29-K01
 
-class Execution(BaseModel):                # a read's row: §8.1's fields, order_id aside
+class Execution(BaseModel):                # a read's row; the stored fill is §8.1's `NewExecution`
     exec_id: str
-    exchange_order_id: str                 # the exchange's orderId, never empty (§8.1)
+    exchange_order_id: str                 # the exchange's orderId, never empty (§8.3 rule 7)
     order_id: OrderId | None = None        # as on Order; ClosedPnl.order_id likewise
     order_link_id: OrderLinkId             # normalised, §14.2 rule 11
     account_id: AccountId
@@ -5060,7 +5021,7 @@ class Execution(BaseModel):                # a read's row: §8.1's fields, order
     fee_currency: str
     is_maker: bool
     exec_type: Literal["trade","funding","adl_trade","bust_trade","settle",
-                       "session_settle_pnl"]  # §8.1's five, and 21 §3.3.6's SessionSettlePnl
+                       "session_settle_pnl"]  # Bybit's five types, and 21 §3.3.6's SessionSettlePnl
     closed_pnl: Notional | None
     ts_exec: TsUs
     ts_ingest: TsUs
@@ -6915,3 +6876,14 @@ This is the number the orchestrator assigned on 2026-11-03 (08:03Z); it keeps it
 - 22 `createAlert`, `updateAlert` and `setAlertEnabled` gain `409 conflict` with `errors[].field` `enabled`, `errors[].rule` `limit_reached` and a message that names the cap, never a count (example `armedAlertCap`): a write that would leave the caller with more than 200 armed alerts (live and `enabled`, snoozed or not) is refused and nothing is written. A create arms when `enabled` is true (the default), a replace or `setAlertEnabled` when it turns a disabled alert's `enabled` true. Only arming is refused: disabling, snoozing, deleting and any write to an alert that is already armed never are. The cap is interim until the Owner ratifies it as a `LIMIT_CAPS` row (#2701).
 - The count and the write that it admits run in one transaction under a per-owner advisory lock, as the drawings quota does (#2727), so two writes at 199 never both pass. The write-ahead audit record of the write is unchanged and no action is registered or removed. A refusal is counted by `cv_alert_armed_cap_refused_total` (no labels; `20-architecture.md` §12.1).
 - No new `x-error-codes` entry, schema member or operation, so the `openapi_pending` baselines do not move; no WS, table, column, chart or `machine_hash` change, and no migration.
+
+### 19.107 2026-11-03 — §8.1, §8.2, §8.4, §8.6, §8.10, §9.4, §9.5, §14.2, §14.4, 20 §3.5 and §9, 21 §3.3.4, 28 B1.6, 04 SR-057 and SR-058: the OMS plan docs as built, slice 1 (E29-T09, #1029)
+
+The orchestrator assigned this number on 2026-11-03 (ruling of record on #1029, BQ-7); it keeps it through its rebases.
+
+- §8.1: the draft `Order`, `Execution` and `Position` blocks give way to as-built tables on the stored names (`OrderRow`, `NewExecution`, `PositionState`: nine, five and six renames; seven, three and two draft fields not stored; seven, seven and five added), with `21-database-schema.md` §3.3.4, §3.3.6 and §3.3.7 as the owners of the names. `OrderIntent` stays. The adapter's reads keep the draft's names (§14.4), whose block comments and §14.2's `exec_type` note now name the stored rows instead of the draft (comments only). `reject_message` is redacted before it is stored, where the draft said "verbatim"; §8.6's unknown-code row says so too. `exchange_updated_ts` is the exchange's `updatedTime`, set when a reconciliation pass inserts an adopted row; S5's staleness mark is the facade's in-memory `last_update_ms`, as §8.1's cell and `21` §3.3.4's note on the column now say. §8.4's sequence diagram drops its "or WS trade on live" branch (REST in every environment in v1, ADR-0044), and the E29 threat model's E3b reads "not built in v1" with it.
+- §8.2: S5's "always applied" gains its two exceptions (a held fill the store refuses for its data is answered as hostile; a held push a store outage refuses is dropped, paged, at its 8th release), its stale test reads "older than the newest `orders` push the order took" where it read `last_exchange_update`, S9 says `untracked` is adopted automatically and never managed, and the diagram's `ADOPT` edge is marked denied in v1 (D6, BQ-17).
+- §8.10: an account outside the caller's scope is a `404` on an id route and a `403 account_scope_denied` when a request's body names it, as `TradingDisabledProblem` says (SR-E29-13); the pinned copy in `tests/contract/test_admin_feature_flags_contract.py` ("gate") moves with it.
+- §9.4 rule 8 and §9.5: the pre-send intent pass (#3863's follow-up). As built, only `previewTradeGroup` runs it; the planner and the fan-out run none, and the submit is not built. Rule 8 no longer names E28-T05 (#909) as the pass's owner: it belongs in the planner both run, and no open ticket places it yet.
+- Beside this section, no contract changes: ADR-0006 Amendment 2 and Validation status, and ADR-0044 (v1 order entry is REST in every environment; the exchange's reject text is code-only to clients and stored redacted; its risks name the E30 and `11-user-stories.md` texts that still show the exchange's message); `20` §3.5, §5 (the planned layout drops `ws_trade.py`), §9, §10.2 and §13.2 (REST in every environment, the shipped interface names, rows for the stream consumer and the exit routes; the live 500 ms figure assumed a WS trade path) and §16; `21` §3.3.4 (automatic adoption only; the `exchange_updated_ts` note); `28` B1.6 (text only); `04` SR-057, SR-058, O8, row 17 and the E29 paragraph's tense; the E29 threat model's §2 (E3b) and §12.3 notes.
+- No migration, REST operation, WS frame, table, column, chart or `machine_hash` change.

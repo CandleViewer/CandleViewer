@@ -50,7 +50,7 @@ C4Context
     Rel(manager, cvweb, "Uses", "HTTPS/WSS over Tailscale")
     Rel(viewer, cvweb, "Uses", "HTTPS/WSS over Tailscale")
     Rel(cvweb, cvapi, "REST + WebSocket (JSON control, binary market-data frames)")
-    Rel(cvapi, bybit, "WS subscribe (public/private), REST order + reconciliation, WS trade (live only)")
+    Rel(cvapi, bybit, "WS subscribe (public/private), REST order + reconciliation (WS trade not used in v1, ADR-0044)")
     Rel(cvapi, ntp, "Clock offset check", "GET /v5/market/time fallback")
     Rel(cvapi, grafana, "Exposes /metrics (Prometheus scrape)")
     Rel(cvapi, notify, "Risk/health alerts")
@@ -66,7 +66,7 @@ C4Context
 | Bybit public WS              | `orderbook.{1,50,200,500}.{sym}`, `publicTrade.{sym}`, `tickers.{sym}`, `kline.{iv}.{sym}`, `allLiquidation.{sym}`          | All order-flow views degrade to stale     | Auto reconnect + resubscribe ≤10 topics/req, snapshot resync, staleness badge               |
 | Bybit private WS             | `order`, `execution` (`execution.fast` optional), `position`, `wallet` on `/v5/private` (live) and `stream-demo` (demo)     | OMS state goes stale; fills unknown       | REST reconciliation loop, heartbeat watchdog, native SL is the safety floor                 |
 | Bybit REST                   | order CRUD, `trading-stop`, `instruments-info`, `kline`, `position/list`, `order/realtime`, `execution/list`, `market/time` | No order entry, no reconciliation         | Per-UID token bucket off `X-Bapi-Limit-Status`, retry with jitter, idempotent `orderLinkId` |
-| Bybit WS trade (`/v5/trade`) | Low-latency order entry — **live only**                                                                                     | Falls back to REST                        | OMS adapter selects transport per environment (P9)                                          |
+| Bybit WS trade (`/v5/trade`) | Low-latency order entry — **live only; not used in v1** (ADR-0044)                                                          | None: every order goes over REST          | `TradingRouter.transport_for` answers REST for every environment                            |
 | Tailscale                    | Sole ingress for managers                                                                                                   | No remote access (local still works)      | Owner can operate locally; documented break-glass in `04-security-program.md`               |
 | NTP                          | `timestamp` inside `recv_window` (default 5000 ms)                                                                          | Bybit error 10002 on every signed request | chrony mandatory; `GET /v5/market/time` offset fallback; distinct 10002 alert               |
 
@@ -181,7 +181,7 @@ flowchart TB
 | C6  | Book Engine                         | Pure Python + `numpy` sorted arrays                                                                                                               | L2 reconstruction, sequence-gap detection, resync, top-N snapshots, depth aggregation                                                                                                         | Normalized book events                                | `BookSnapshot` / `BookDelta` on bus       | In-memory per (env, symbol); rebuildable                   |
 | C7  | Bar Builders                        | Pure Python                                                                                                                                       | Deterministic bar formation across 6 bar types; partial-bar emission                                                                                                                          | Trade + ticker events                                 | `BarOpen` / `BarUpdate` / `BarClose`      | In-memory ring + QuestDB persistence                       |
 | C8  | Order-Flow Engines                  | Python + `numpy`                                                                                                                                  | Footprint cells, volume/delta profile + TPO, CVD, imbalance stacks, heatmap columns, big trades, tape speed, iceberg/stop-run/regime heuristics                                               | Bars + book + trades                                  | Derived events on bus; QuestDB writes     | Per (env, symbol, bar-spec)                                |
-| C9  | OMS                                 | Python, Postgres-backed                                                                                                                           | Order lifecycle state machine, `orderLinkId` idempotency, trade-group fan-out, per-account profile application, native SL enforcement, emulated OCO/iceberg/TWAP/chase/scaled, reconciliation | REST/WS commands, private-stream events, rule actions | Bybit REST / WS trade, Postgres, bus      | Authoritative state in Postgres; in-memory cache           |
+| C9  | OMS                                 | Python, Postgres-backed                                                                                                                           | Order lifecycle state machine, `orderLinkId` idempotency, trade-group fan-out, per-account profile application, native SL enforcement, emulated OCO/iceberg/TWAP/chase/scaled, reconciliation | REST/WS commands, private-stream events, rule actions | Bybit REST, private WS, Postgres, bus     | Authoritative state in Postgres; in-memory cache           |
 | C10 | Rule Engine                         | Python interpreter over rule IR                                                                                                                   | Evaluate compiled rules against metric bindings; emit actions; simulate mode; per-rule audit                                                                                                  | Bus events, metric registry                           | OMS commands, notifications, journal tags | Rules in Postgres; evaluation state in memory + checkpoint |
 | C11 | Paper Matcher                       | Python                                                                                                                                            | Local fill simulation for `paper` accounts using live/recorded L2 plus a conservative model                                                                                                   | Orders from OMS (paper accounts), book/trade events   | Simulated executions to OMS               | Per paper account, in-memory + Postgres                    |
 | C12 | Recorder                            | Python + QuestDB ILP                                                                                                                              | Persist raw + derived streams for recorded symbols; retention, pinning, roll-off to Parquet, disk-budget reporting                                                                            | Bus raw events                                        | QuestDB, Parquet                          | Per recorded symbol                                        |
@@ -380,10 +380,9 @@ flowchart TB
     RISK --> GATES["Gates<br/>live, kill switch, order-entry gate,<br/>pre-flight rate reserve"]
     GATES --> LINK["orderLinkId + write-ahead persist<br/>(B1 VALIDATE)"]
     LINK --> ROUTE{"Account type"}
-    ROUTE -->|live| WSTRD["WS Trade adapter"]
-    ROUTE -->|demo| RESTA["REST adapter"]
+    ROUTE -->|live, demo| RESTA["REST adapter<br/>(REST in every environment in v1, ADR-0044)"]
     ROUTE -->|paper| PAPER["Paper Matcher"]
-    WSTRD & RESTA & PAPER --> SM["OrderStateMachine"]
+    RESTA & PAPER --> SM["OrderStateMachine"]
     SM --> STORE["Postgres (orders, executions, trade_groups)"]
     SM --> BUSP(["bus: oms.*"])
     PRIV["Private WS: order/execution/position/wallet, execution.fast optional"] --> SM
@@ -394,14 +393,18 @@ flowchart TB
 
 | Component           | Responsibility                                                                                                                                                                                                                                                                                                         | Interface                                |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `Validator`         | Instrument filters (tick size, lot size, min notional, leverage) on the sized, rounded order, profile limits (the environment match is made earlier, at the route step, before sizing). RBAC is enforced upstream at the API; risk caps and switches are the Risk gate and Gates nodes (`24-internal-schemas.md` §8.4) | `validate(cmd, ctx) -> ValidatedCommand` |
+| `Validator`         | Instrument filters (tick size, lot size, min notional, leverage) on the sized, rounded order, profile limits (the environment match is made earlier, at the route step, before sizing). RBAC is enforced upstream at the API; risk caps and switches are the Risk gate and Gates nodes (`24-internal-schemas.md` §8.4) | `Validator.check_*` (`oms/validator.py`) |
 | `TradeGroupFanout`  | Expands one ticket into N child orders (one per selected account), creates a `trade_group` row whose UUID is the `group22` segment of every child's `orderLinkId` (`24-internal-schemas.md` §8.3), budgets per-UID rate limits across the fan-out                                                                      | `fanout(cmd) -> list[ChildOrder]`        |
-| `Sizer`             | Applies per-account profile sizing rule; rounds to lot size; rejects if below min notional                                                                                                                                                                                                                             | `size(account, cmd) -> Decimal`          |
-| `NativeStopGuard`   | **Invariant P4**: refuses to submit any position-opening order that does not carry `stopLoss` (or an immediately-following `trading-stop` call); raises `NakedPositionAlert` and force-closes if an exchange-side SL is missing after `T_sl = 3 s`                                                                     | `ensure(child) -> child`                 |
-| `OrderStateMachine` | Canonical lifecycle; idempotent transitions keyed by `orderLinkId`; exchange facts pair through the bound `orderId` (`24-internal-schemas.md` §8.3 rule 7); reconciles optimistic local state with exchange truth                                                                                                      | `apply(event)`                           |
+| `Sizer`             | Applies per-account profile sizing rule; rounds to lot size; rejects if below min notional                                                                                                                                                                                                                             | `EntrySizer.size` (async)                |
+| `NativeStopGuard`   | **Invariant P4**: refuses to submit any position-opening order that does not carry `stopLoss` (or an immediately-following `trading-stop` call); raises `NakedPositionAlert` and force-closes if an exchange-side SL is missing after `T_sl = 3 s`                                                                     | `NativeStopGuard.admit`                  |
+| `OrderStateMachine` | Canonical lifecycle; idempotent transitions keyed by `orderLinkId`; exchange facts pair through the bound `orderId` (`24-internal-schemas.md` §8.3 rule 7); reconciles optimistic local state with exchange truth                                                                                                      | `OrderMachines` (`oms/order_machine.py`) |
 | `AlgoSupervisor`    | Emulated algos as small state machines: OCO (race two orders, cancel loser on fill), iceberg (client-side slicing), TWAP (timed slices), chase (cancel/replace to best ± offset, capped), scaled ladder (equal/linear/geometric), brackets (entry → TP/SL)                                                             | `start(algo_spec)`, `cancel(algo_id)`    |
-| `Reconciler`        | One B19 job per account, on startup, each private-WS reconnect, every 30 s and on demand (`24-internal-schemas.md` §8.5): reads on `poll`, pairs by bound `orderId`, else full match; 2 min of failed fetches refuse its entry (`account_stale`)                                                                       | `async reconcile(account)`               |
+| `Reconciler`        | One B19 job per account, on startup, each private-WS reconnect, every 30 s and on demand (`24-internal-schemas.md` §8.5): reads on `poll`, pairs by bound `orderId`, else full match; 2 min of failed fetches refuse its entry (`account_stale`)                                                                       | `ReconcileJobs` (`oms/reconcile_job.py`) |
+| `StreamConsumer`    | One consumer per account over its private stream (`order`, `execution`, `position`, `wallet`): pairs each push through the bound `orderId`, drives B1 through the one facade and the position and wallet stores, and asks for a reconciliation on every reconnect (`24-internal-schemas.md` §8.12)                     | `StreamConsumer`                         |
+| `OrderExits`        | Cancel and amend by `orderId`, and cancel-all: a cancel, a cancel-all and a protective amend are never gated (C-2.6); a risk-increasing amend meets the gate and the arm token of a submit (`24-internal-schemas.md` §8.4, §8.10)                                                                                      | `OrderExits`, `CancelAll`                |
 | `KillSwitch`        | Owner-level FREEZE per manager or global: blocks new orders, optionally cancels working orders and flattens                                                                                                                                                                                                            | `freeze(scope)`, `thaw(scope)`           |
+
+**Interfaces as built.** The call names this table drew in 2026-09 changed as the code was written (modules under `services/api/candleviewer/`): `Validator.check_order` judges the sized order (the read-only gate, the instrument filters, the profile's limits), `check_terms` an amend's terms and `check_route` an order's environment against its route's (C-2.11); `NativeStopGuard.admit` resolves an order's stop and judges it and the order's `intent` together, raising `OrderInvalid` with every rule that fails (`oms/classify.py`); `EntrySizer.size` is async (`oms/sizing.py`); `OrderMachines` is B1's facade and takes `command`, `push`, `kill` and `hydrate`. `TradeGroupFanout` is built only as the planner the preview runs (`oms/fanout/plan.py`): its submit is E34-S02's. The exit routes (`api/order_exits.py` and `api/order_cancel_all.py`, over `OrderExits` and `CancelAll`) and `StreamConsumer` (`oms/stream_consumer.py`) have rows of their own because they change an order once it is sent; `24-internal-schemas.md` §8.4 and §8.12 own them.
 
 **Step order of one child order.** The owner is `24-internal-schemas.md` §8.4 (the submission pipeline, implemented by `oms/submit.py` and B1's `VALIDATE`). The figure above draws that order, not a second statement of it; where they differ, §8.4 wins. Validation and risk judge the sized and rounded order, never the raw command.
 
@@ -412,7 +415,7 @@ stateDiagram-v2
     [*] --> Draft
     Draft --> Validated: validate ok
     Draft --> Rejected: validation error
-    Validated --> Submitting: send (REST or WS trade)
+    Validated --> Submitting: send (REST)
     Submitting --> Submitted: exchange ack (orderId bound)
     Submitting --> Rejected: exchange reject
     Submitting --> Unknown: timeout / transport error
@@ -434,7 +437,7 @@ stateDiagram-v2
     Rejected --> [*]
 ```
 
-`Unknown` is the critical state: any transport failure after send lands here and is resolved **only** by reconciliation, never by blind resubmission. Idempotency is guaranteed by `orderLinkId` (scheme: `24-internal-schemas.md` §8.3), generated before the first send attempt and reused on every retry.
+This is the original sketch of the states: B1 has 17 (it adds `triggered`, `quarantined`, `untracked`, `held`, `expired` and `killed`; `28-statechart-catalogue.md` §B1, persisted names in `24-internal-schemas.md` §8.2). `Unknown` is the critical state: any transport failure after send lands here and is resolved **only** by reconciliation, never by blind resubmission. Idempotency is guaranteed by `orderLinkId` (scheme: `24-internal-schemas.md` §8.3), generated before the first send attempt and reused on every retry.
 
 ### 3.6 Rule Engine
 
@@ -740,8 +743,8 @@ CandleViewer/
 │     │  ├─ bus/                  # topics, queue policies, conflation
 │     │  ├─ exchange/             # ports + adapters
 │     │  │  ├─ base.py            # ExchangeAdapter protocol (§9)
-│     │  │  └─ bybit/             # rest.py, ws_public.py, ws_private.py, ws_trade.py,
-│     │  │                        # normalize.py, errors.py, ratelimit.py, instruments.py
+│     │  │  └─ bybit/             # rest.py, ws_public.py, ws_private.py, normalize.py, errors.py,
+│     │  │                        # ratelimit.py, instruments.py; ws_trade.py is post-v1, not built (ADR-0044)
 │     │  ├─ ingestion/            # connection mgr, planner, watchdog, sequence tracker
 │     │  ├─ book/                 # state, resync, aggregation, liquidity tracker
 │     │  ├─ bars/                 # builders per kind, store
@@ -870,7 +873,7 @@ A store or audit failure retries with backoff, and `ready` is never set early. U
 | REST base              | `api.bybit.com`                           | `api-demo.bybit.com`                            | `api-testnet.bybit.com`                           |
 | WS public              | `wss://stream.bybit.com/v5/public/linear` | same as live (demo has no separate public feed) | `wss://stream-testnet.bybit.com/v5/public/linear` |
 | WS private             | `wss://stream.bybit.com/v5/private`       | `wss://stream-demo.bybit.com/v5/private`        | `wss://stream-testnet.bybit.com/v5/private`       |
-| WS trade (order entry) | **supported**                             | **not supported → REST only**                   | not used                                          |
+| WS trade (order entry) | **supported**; not used in v1 (ADR-0044)  | **not supported → REST only**                   | not used                                          |
 | Key set                | live keys                                 | demo keys                                       | testnet keys                                      |
 | Storage namespace      | `live`                                    | `demo`                                          | `testnet`                                         |
 | UI chrome              | red accent, "LIVE" badge                  | blue accent, "DEMO" badge                       | grey, "TESTNET" badge                             |
@@ -1165,7 +1168,7 @@ class RateHeadroomPort(Protocol):  # 24 §14.1: the lane's local rate budget, re
     def headroom(self, account: AccountRef, lane: str) -> RateHeadroom: ...
 
 class ExchangeCapabilities(Protocol):
-    supports_ws_order_entry: bool        # Bybit: True on live, False on demo
+    supports_ws_order_entry: bool        # what the venue offers (Bybit: True on live, False on demo); v1 never reads it to pick a transport (rule 7)
     supports_native_oco: bool            # Bybit: False (UI-only, spot)
     supports_native_iceberg: bool        # Bybit: False via public API
     supports_native_twap: bool           # Bybit: False
@@ -1184,7 +1187,7 @@ Rules for adapter authors:
 
 1. All exchange-specific error codes are mapped to the internal taxonomy: `AuthError`, `ClockDriftError` (Bybit 10002), `RateLimitError` (10018), `InsufficientMarginError`, `InstrumentFilterError`, `DuplicateClientIdError`, `NotFoundError`, `TransportError`, `UnknownStateError`.
 2. `place_order` **must** be idempotent on `order_link_id`; the adapter re-sends the same id on retry and raises `DuplicateClientIdError` on a duplicate rejection, which only a create can meet, never a success: the OMS, which holds the row, then looks the id up and adopts the order only after the full match with its persisted row (`24-internal-schemas.md` §8.3 rule 3; a mismatch holds the order), since adapters never persist (§14.2 rule 7 there). This is success-after-lookup (§14.2 rule 2 there). It never re-sends a create that has left the process: that result is ambiguous (`24-internal-schemas.md` §8.6, order creates), and so is a success reply without an `orderId` (G-8, #2877).
-3. Capabilities drive OMS behaviour. If `supports_native_oco` is false, `AlgoSupervisor` emulates it; if `supports_ws_order_entry` is false for the environment, the REST path is used. No `if exchange == "bybit"` outside the adapter package.
+3. Capabilities drive OMS behaviour. If `supports_native_oco` is false, `AlgoSupervisor` emulates it. `supports_ws_order_entry` is the one flag that does not choose a path: v1 sends every order over REST in every environment (ADR-0044; `TradingRouter.transport_for` in `oms/routing.py`). No `if exchange == "bybit"` outside the adapter package.
 4. Adapters publish normalized events only; raw payloads are retained in the recorder for forensic replay (secrets redacted).
 5. Every adapter ships a contract-test suite run against recorded fixtures plus an opt-in live smoke test (`pytest -m exchange_smoke`).
 6. **Trailing-stop unit translation is mandatory and lives in the OMS, not the UI.** Bybit's `POST /v5/position/trading-stop` accepts `trailingStop` as an **absolute price distance** in quote currency — _not_ a percentage (research digest 06; `docs/research/06-bybit-api.md` §trading-stop). The product exposes percentage-based and ATR-multiple trailing UX, so `TrailingStopSpec` carries `{unit: "price" | "percent" | "atr_mult", value, activation_price?, reference: "entry" | "mark" | "last"}` and `OMS.TrailingTranslator` converts it:
@@ -1193,7 +1196,7 @@ Rules for adapter authors:
    - `atr_mult` → `distance = atr(period, tf) × mult` sourced from the bar builders, resolved at arming time, same persistence rule.
    - Because Bybit re-evaluates the trail against its own high-water mark, a %-trail is **not** re-based when price moves: if the user wants a %-of-current-price trail, the rule engine (`AlgoSupervisor`) re-issues `set_trading_stop` on each new high-water bar close. That emulated behaviour is labelled `emulated_percent_trailing` in the UI and in `oms_emulated_algo_total{kind="trailing_percent"}`, so a user can always tell what the exchange itself is enforcing.
    - `capabilities.trailing_stop_unit != "percent"` is what triggers the translator. A future exchange that natively accepts percentages sets the field and the translator becomes a pass-through; no call site changes.
-7. Capability flags describe the **exchange**, never the product. Any product feature that exceeds a capability must be implemented in `AlgoSupervisor` as an explicitly-labelled emulation with its own metric, so the naked-position guarantee (P4) is always evaluated against real exchange-resident state.
+7. Capability flags describe the **exchange**, never the product. Any product feature that exceeds a capability must be implemented in `AlgoSupervisor` as an explicitly-labelled emulation with its own metric, so the naked-position guarantee (P4) is always evaluated against real exchange-resident state. `supports_ws_order_entry` says what the venue offers, not that a trade socket exists: v1 sends every order over REST in every environment (SR-040a, ADR-0044), and a WS trade path is post-v1 and not built.
 
 ---
 
@@ -1252,7 +1255,7 @@ sequenceDiagram
     participant FO as TradeGroupFanout
     participant RB as AccountRateBudget (per account, §4.3)
     participant SG as NativeStopGuard
-    participant BY as Bybit (WS trade live / REST demo)
+    participant BY as Bybit (REST, every environment in v1)
     participant PWS as Bybit private WS
     participant BUS as Bus
     participant PG as Postgres
@@ -1272,8 +1275,8 @@ sequenceDiagram
         RB-->>FO: admitted=[A,B], deferred=[C]
         par one task per ADMITTED account (no shared queue -> no head-of-line blocking)
             FO->>FO: apply per-account profile (leverage, sizing rule, SL/TP offsets), size and round
-            FO->>SG: ensure native SL attached (sl_cost already reserved)
-            SG-->>FO: child with stopLoss set
+            FO->>SG: ensure native SL attached via NativeStopGuard.admit, which judges the intent too (sl_cost already reserved)
+            SG-->>FO: the stop the order carries, or OrderInvalid
             FO->>OMS: validate the sized order, risk gate, switches, pre-flight rate reserve, orderLinkId + write-ahead persist (24-internal-schemas.md §8.4)
             FO->>BY: place_order(orderLinkId per 24-internal-schemas.md §8.3, reduceOnly=false, stopLoss=...)
             BY-->>FO: ack{orderId}
@@ -1876,9 +1879,13 @@ are per state, never per account.
 | WS frame decode in worker           | p95 ≤ 4 ms                                               |
 | Chart frame                         | ≤ 16.7 ms at 60 fps with 100k bars + footprint + heatmap |
 | Total tick → pixel                  | ≤ 250 ms                                                 |
-| Order click → exchange ack          | p99 ≤ 500 ms (live WS trade), ≤ 800 ms (demo REST)       |
+| Order click → exchange ack          | p99 ≤ 500 ms (live), ≤ 800 ms (demo); see the note below |
 | Fan-out of 5 accounts               | all legs submitted within 1.5 s                          |
 | Cold app start to first chart frame | ≤ 3 s (Electron), ≤ 4 s (browser)                        |
+
+The live figure of the order-click budget assumed a WS trade path; v1 has none (ADR-0044), so both environments are
+REST. `06-performance-and-load-standard.md` §5.2 states live as a p95 < 500 ms target until R4 (not a hard gate), and
+E29-K01 and E29-Q03 own the measured REST numbers.
 
 ### 13.3 Accessibility and internationalisation hooks
 
@@ -1941,7 +1948,7 @@ All ADRs live in `docs/plan/27-adrs/` in MADR format. Status values: `decided` (
 | [ADR-0003](27-adrs/ADR-0003-storage-tiers.md)                         | Three-tier storage                                            | decided                                   | QuestDB hot, Parquet/DuckDB cold, Postgres relational                                                                                                                                                                                                                     |
 | [ADR-0004](27-adrs/ADR-0004-modular-monolith.md)                      | Modular monolith with an internal bus                         | decided                                   | One process, bus-mediated modules, pre-designed split path                                                                                                                                                                                                                |
 | [ADR-0005](27-adrs/ADR-0005-ws-protocol-and-binary-encoding.md)       | WS protocol and binary encoding                               | decided (Amendment 2 conditional on #568) | Snapshot+delta with sequence numbers; JSON control frames, binary market-data frames                                                                                                                                                                                      |
-| [ADR-0006](27-adrs/ADR-0006-oms-state-machine.md)                     | OMS state machine and idempotency                             | decided                                   | Explicit states incl. `Unknown`; `orderLinkId` idempotency; reconciliation-only resolution                                                                                                                                                                                |
+| [ADR-0006](27-adrs/ADR-0006-oms-state-machine.md)                     | OMS state machine and idempotency                             | decided (rule 5, part of 6: ADR-0044)     | Explicit states incl. `Unknown`; `orderLinkId` idempotency; reconciliation-only resolution                                                                                                                                                                                |
 | [ADR-0007](27-adrs/ADR-0007-rule-ir.md)                               | Single rule IR for both editors                               | decided                                   | Form editor and node graph compile to one IR; round-trip guaranteed                                                                                                                                                                                                       |
 | [ADR-0008](27-adrs/ADR-0008-trade-group-fanout.md)                    | Trade-group fan-out model                                     | decided                                   | One ticket → N per-account children with profiles, group state, reserved rate headroom                                                                                                                                                                                    |
 | [ADR-0009](27-adrs/ADR-0009-secrets-and-key-management.md)            | Secrets and API-key management                                | decided                                   | Envelope encryption, KEK on the Windows host, rotation, withdrawal-off assertion                                                                                                                                                                                          |
@@ -1965,8 +1972,10 @@ All ADRs live in `docs/plan/27-adrs/` in MADR format. Status values: `decided` (
 | [ADR-0039](27-adrs/ADR-0039-audit-export-signing-key.md)              | Audit export signing key: custody and the injected signer     | accepted (by main-orchestrator, #2701)    | #889 D1: Ed25519 over `cv.audit.export.v1:` and the file's hex SHA-256; a key per environment, its seed DEK-wrapped under the KEK in M2; `audit` gets a signer minted in `admin.wiring`, no new edge; retired keys stay listed; Owner rotation, `keys` step-up            |
 | [ADR-0040][adr-0040]                                                  | Per-trade overrides and profile-change propagation            | accepted (by main-orchestrator, #2701)    | #968 E28-K01: the bound profile's caps and budget are the ceiling; 42 fields `never`/`narrow_only` under one comparator, refused not clamped; per-ticket overrides; `system` `account_notice` + REST re-fetch, no new topic; review state, stale submit refused           |
 | [ADR-0041](27-adrs/ADR-0041-backup-engine-and-artefact-key.md)        | Backup engine: sidecar, roles, age artefacts, restore latch   | proposed (ruled under delegation, #2701)  | #3319: the engine runs in the backup sidecar with a read-only `cv_backup` and a restore-only `cv_restore` role; the API holds no owner or restore DSN; age files to an offline X25519 key, delivered per job; v1 `pg_dump`, `config_bundle`; restore halt latch           |
+| [ADR-0044][adr-0044]                                                  | REST order entry in v1; the exchange's reject text code-only  | accepted (interim; #1029, veto on #2701)  | #1029: v1 sends every order over REST in every environment (SR-040a); the WS trade path is post-v1 and not built. A reject reaches clients as a code, its text stored redacted and read through audited diagnostics. Supersedes ADR-0006 rule 5 and part of rule 6        |
 
 [adr-0040]: 27-adrs/ADR-0040-per-trade-overrides-and-profile-propagation.md
+[adr-0044]: 27-adrs/ADR-0044-rest-order-entry-and-code-only-rejections.md
 
 **‡** ADR-0016 is **Accepted**, in full: every lifecycle in `28-statechart-catalogue.md` is specified as statechart JSON, implementations conform to it, hot paths are never statecharts, and the library `xstate-statemachine==0.9.1` (tag `v0.9.1` = `45bb7f3`, sha256 `d832d4d9a17b7b8003f61fa0714a8e57eaff316bcd5dd699d81d410362687162`, PEP 740 attested) is the sole executor, adopted completely per the owner decision of 2026-09-24 (`docs/research/xstate/79-r14-final-readiness-verdict.md`, `docs/plan/29-statechart-adoption-plan.md`).
 
