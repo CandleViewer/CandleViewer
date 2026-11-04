@@ -5,8 +5,10 @@ every merged owner AS TEXT at the base with `git show`, and the two unmerged spe
 their pushed PR heads (request rows RQ-1 and RQ-2), and the same specs with the A-rows applied by
 content (their blobs at the PR heads, "RQ-n landed"). It imports, never copies: `contrast_check.py`'s
 `contrast_ratio()`, `verify_tokens.py`'s resolver, `docs/research/_tools/cvd_simulate.py`'s
-`simulate()` and `delta_e76()`, and the E30-D04 audit's `over()` and `grey()`. Twelve gates, A to
-L, each FAIL led by its letter; the spec's section 15 describes each gate.
+`simulate()` and `delta_e76()`, and the E30-D04 audit's `over()` and `grey()`. PR 2 adds the
+drawn boards (RQ-5, RQ-6): their spec text and greyscale exports at their pushed heads, the PNGs
+decoded here (zlib, one channel, no image library). Fourteen gates, A to N, each FAIL led by its
+letter; the spec's section 15 describes each gate.
 
 usage: e34_d04_a11y_review_audit.py [--check | --self-test | --json | --tables | --write-tables
                                      | --repin]
@@ -15,11 +17,14 @@ usage: e34_d04_a11y_review_audit.py [--check | --self-test | --json | --tables |
 from __future__ import annotations
 
 import codecs
+import hashlib
 import importlib.util
 import json
 import re
+import struct
 import subprocess
 import sys
+import zlib
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -65,6 +70,23 @@ RQ_PINS = {
     "RQ-1": "docs/design/_tools/e34_d02_ruled_pins.txt",
     "RQ-2": "docs/design/_tools/e34_d03_ruled_pins.txt",
 }
+# PR 2: the drawn boards, each spec by content at its pushed PR head (RQ-5, RQ-6)
+BOARDS: dict[str, tuple[str, str, str, str]] = {
+    "D02": (
+        "#5728",
+        "b9bf0a142b8ac655d38875a56e53ef5fe71242d7",
+        "2ce1da817aad901022c2fd7d10c2a40bf1a0a81b",
+        "docs/design/E34/E34-D02.md",
+    ),
+    "D03": (
+        "#5729",
+        "ce852b1ceb0daba0a25102a006555ea6f6714aa5",
+        "b78e61ee3af04611b793421a5a12f445dfb55cf4",
+        "docs/design/E34/E34-D03.md",
+    ),
+}
+BOARD_RQ = {"D02": "RQ-1", "D03": "RQ-2"}  # the spec each boards PR draws
+IMG = "docs/design/E34/img/"
 FIX_FORWARD = "fix-forward slice after merge"
 THEMES = ("dark", "light", "high-contrast")
 BAR = {"text": 4.5, "non-text": 3.0}
@@ -72,6 +94,7 @@ SEVERITIES = ("Critical", "High", "Medium", "Low", "Info")
 SCREENS = ("SCR-061", "SCR-062")
 CT_B, CT_E = "<!-- ct:begin -->", "<!-- ct:end -->"
 CV_B, CV_E = "<!-- cv:begin -->", "<!-- cv:end -->"
+DG_B, DG_E = "<!-- dg:begin -->", "<!-- dg:end -->"
 DATE = "by 2027-01-14"  # the end of Sprint 16, before E34-D05's sprint (R-2)
 
 
@@ -188,9 +211,10 @@ CV = [
 CV-02|accepted / unknown|status.success.strong|status.info.strong|the words; tick against question in the ring
 CV-03|unknown / rejected|status.info.strong|status.danger.strong|the words; question against cross in the ring
 CV-04|WARN / blocked|status.warning.strong|status.danger.strong|the words; triangle against the blocked glyph
-CV-05|queued / sent; waiting / unwinding|text.secondary|text.secondary|the words alone (one glyph, one tone)
+CV-05|waiting / unwinding|status.warning.strong|status.warning.strong|the words alone (one glyph, one tone)
 CV-06|ready / WARN|status.success.strong|status.warning.strong|the words; check against triangle
-CV-07|partial-failure summary / unwind-incomplete banner|status.warning.subtle|status.danger.subtle|the sentence; triangle against the danger glyph""".splitlines()
+CV-07|partial-failure summary / unwind-incomplete banner|status.warning.subtle|status.danger.subtle|the sentence; triangle against the danger glyph
+CV-08|queued / sent|text.secondary|text.secondary|the words alone (one glyph, one tone)""".splitlines()
 ]
 DEFS = ("deuteranopia", "protanopia", "tritanopia")
 
@@ -228,18 +252,52 @@ class Texts(NamedTuple):
     rq: dict[str, str]  # RQ-n -> the text at its pushed head
     landed: dict[str, str]  # RQ-n -> the text with the A-rows applied, by content
     rq_pins: dict[str, str]  # RQ-n -> its own cite pins at its landed head
+    boards: dict[str, str]  # D02 / D03 -> the boards spec text at its pushed head (RQ-5, RQ-6)
+    board_blobs: dict[str, str]  # D02 / D03 -> that text's blob id, from git
+    pngs: dict[str, bytes]  # greyscale PNG name -> its bytes at its boards head
 
 
-def git_show(ref: str, rel: str) -> str:
+def git_bytes(ref: str, rel: str) -> bytes:
     r = subprocess.run(
         ["git", "-C", str(ROOT), "show", f"{ref}:{rel}" if rel else ref],
         capture_output=True,
-        text=True,
         check=False,
     )
     if r.returncode != 0:
         raise SystemExit(f"cannot read {rel} at {ref[:9]}: fetch it first")
     return r.stdout
+
+
+def git_rev(spec: str) -> str:
+    r = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", spec], capture_output=True, text=True, check=False
+    )
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def git_show(ref: str, rel: str) -> str:
+    return git_bytes(ref, rel).decode("utf-8")
+
+
+G_ROW = re.compile(
+    r"^\|\s*(G\d\d)\s*\|\s*`([^`]+\.png)`\s*\|[^|]+\|\s*`([0-9a-f]{64})`\s*\|", re.MULTILINE
+)
+
+
+def g_rows(board_text: str) -> dict[str, tuple[str, str]]:
+    """The boards' section 0.1 greyscale rows: G-id -> (PNG name, sha256)."""
+    return {g: (n, h) for g, n, h in G_ROW.findall(section(board_text, "### 0.1 ", "### 0.2 "))}
+
+
+def read_boards() -> tuple[dict[str, str], dict[str, str], dict[str, bytes]]:
+    texts = {k: git_show(head, path) for k, (_, head, _, path) in BOARDS.items()}
+    blobs = {k: git_rev(f"{head}:{path}") for k, (_, head, _, path) in BOARDS.items()}
+    pngs = {
+        n: git_bytes(BOARDS[k][1], IMG + n)
+        for k, text in texts.items()
+        for n, _ in g_rows(text).values()
+    }
+    return texts, blobs, pngs
 
 
 def read_texts() -> Texts:
@@ -250,6 +308,7 @@ def read_texts() -> Texts:
         {k: git_show(ref, p) for k, (p, ref) in RQ.items()},
         {k: git_show(blob, "") for k, (blob, _) in LANDED.items()},
         {k: git_show(LANDED[k][1], p) for k, p in RQ_PINS.items()},
+        *read_boards(),
     )
 
 
@@ -510,7 +569,7 @@ LOCAL = re.compile(
     "|".join(re.escape(codecs.decode(w, "rot13")) for w in ("/ubzr/", "/gzc/", "abgrf/"))
     + r"|https?:|www\.|\.local\b"
 )
-STAMPS = ("f", "a", "ct")
+STAMPS = ("f", "a", "ct", "dg")
 
 
 def g_hygiene(t: Texts, p: list[str]) -> dict[str, Any]:
@@ -702,6 +761,190 @@ def g_ruled(t: Texts, p: list[str]) -> dict[str, Any]:
     return {"names": len(named)}
 
 
+# ------------------------------------------------------------------ PR 2: drawn greyscale -----
+class GreyPng:
+    """An 8-bit RGB, non-interlaced PNG, decoded row by row on demand, channel 0 only.
+
+    The PNG filters work per channel (left, up and up-left of the same channel), so one channel
+    decodes alone; a greyscale export carries R = G = B.
+    """
+
+    def __init__(self, data: bytes) -> None:
+        if data[:8] != b"\x89PNG\r\n\x1a\n":
+            raise ValueError("not a PNG")
+        i, idat, head = 8, [], b""
+        while i < len(data):
+            (n,) = struct.unpack(">I", data[i : i + 4])
+            kind = data[i + 4 : i + 8]
+            if kind == b"IHDR":
+                head = data[i + 8 : i + 8 + n]
+            elif kind == b"IDAT":
+                idat.append(data[i + 8 : i + 8 + n])
+            i += 12 + n
+        self.w, self.h, depth, colour, _, _, lace = struct.unpack(">IIBBBBB", head)
+        if (depth, colour, lace) != (8, 2, 0):
+            raise ValueError("not 8-bit RGB, non-interlaced")
+        self.raw = zlib.decompress(b"".join(idat))
+        self.rows: list[bytes] = []
+
+    def level(self, x: int, y: int) -> int | None:
+        if not (0 <= x < self.w and 0 <= y < self.h):
+            return None
+        st, w = 3 * self.w + 1, self.w
+        while len(self.rows) <= y:
+            k = len(self.rows)
+            f, cur = self.raw[k * st], list(self.raw[k * st + 1 : (k + 1) * st : 3])
+            prev = self.rows[-1] if self.rows else bytes(w)
+            if f == 1:
+                for j in range(1, w):
+                    cur[j] = (cur[j] + cur[j - 1]) & 255
+            elif f == 2:
+                cur = [(a + b) & 255 for a, b in zip(cur, prev, strict=True)]
+            elif f == 3:
+                for j in range(w):
+                    cur[j] = (cur[j] + ((cur[j - 1] if j else 0) + prev[j]) // 2) & 255
+            elif f == 4:
+                for j in range(w):
+                    a, b, c = (cur[j - 1], prev[j], prev[j - 1]) if j else (0, prev[j], 0)
+                    pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                    cur[j] = (cur[j] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+            self.rows.append(bytes(cur))
+        return self.rows[y][x]
+
+
+_PNG: dict[int, GreyPng] = {}
+
+
+def png_level(data: bytes, x: int, y: int) -> int | None:
+    key = id(data)
+    if key not in _PNG:
+        _PNG[key] = GreyPng(data)
+    return _PNG[key].level(x, y)
+
+
+def grey_de(a: int, b: int) -> float:
+    return float(cvd.delta_e76("#" + f"{a:02X}" * 3, "#" + f"{b:02X}" * 3))
+
+
+DASH = "—"
+XY = re.compile(r"^(\d+), (\d+)$")
+LEVELS = re.compile(r"^(\d+) / (\d+)$")
+EXPORT = re.compile(r"^(D02|D03) (G\d\d)$")
+
+
+def dg_rows(spec: str) -> list[list[str]]:
+    return rows_of(section(spec, DG_B, DG_E), r"^\|\s*DG-\d+\s*\|")
+
+
+def export_shas(spec: str) -> dict[str, str]:
+    s16 = section(spec, "### 16.1 ", "### 16.2 ")
+    return {r[0]: r[4].strip("`") for r in rows_of(s16, r"^\|\s*D0[23] G\d\d\s*\|") if len(r) == 5}
+
+
+def g_drawn(t: Texts, p: list[str]) -> dict[str, Any]:
+    s16 = section(t.spec, "## 16. ", "## 17. ")
+    for k, (pr, head, blob, _) in BOARDS.items():
+        if f"{pr} at head `{head}`, if {pr} merges as is" not in s16:
+            p.append(f"[M] {k}'s boards head is not pinned in section 16 (R-4)")
+        if f"content `{blob}` at head `{head}`, if {pr} merges as is" not in t.spec:
+            p.append(f"[M] {k}'s boards content is not pinned in section 1.4")
+        if t.board_blobs[k] != blob:
+            p.append(f"[M] {k}'s boards text is not the pinned content")
+    listed = export_shas(t.spec)
+    for k, text in t.boards.items():
+        for g, (name, sha) in g_rows(text).items():
+            got = hashlib.sha256(t.pngs.get(name, b"")).hexdigest()
+            if got != sha:
+                p.append(f"[M] {k} {g}: the export's bytes are not its section 0.1 sha256")
+            if listed.get(f"{k} {g}") != sha:
+                p.append(f"[M] {k} {g}: section 16.1 does not give its sha256")
+    want = {(w[0], w[3]): w for w in compute_cv()}
+    chans = {r[0]: r[4] for r in CV}
+    covered, measured = set(), 0
+    for r in dg_rows(t.spec):
+        if len(r) != 12 or (r[1], r[2]) not in want:
+            p.append(f"[M] {r[0]}: not twelve cells with a CV pair and theme")
+            continue
+        covered.add((r[1], r[2]))
+        if r[9] != want[(r[1], r[2])][8]:
+            p.append(f"[M] {r[0]}: the computed cell is not section 10's")
+        if r[3] == DASH:
+            if any(c != DASH for c in (r[4], r[6], r[7], r[8], r[10])) or not r[11].startswith(
+                "not drawn"
+            ):
+                p.append(f"[M] {r[0]}: a pair not drawn carries a reading")
+            continue
+        measured += 1
+        m, a, b, lv = EXPORT.match(r[3]), XY.match(r[6]), XY.match(r[7]), LEVELS.match(r[8])
+        if not (m and a and b and lv):
+            p.append(f"[M] {r[0]}: an export, a place or a level is not readable")
+            continue
+        text = t.boards[m.group(1)]
+        name = g_rows(text).get(m.group(2), ("", ""))[0]
+        for fr in re.findall(r"`([^`]+)`", r[4]) or [""]:
+            if not fr or f"`{fr}`" not in text:
+                p.append(f"[M] {r[0]}: the frame {fr!r} is not in the boards' text")
+        read = [
+            png_level(t.pngs[name], int(xy.group(1)), int(xy.group(2))) if name else None
+            for xy in (a, b)
+        ]
+        levels = [int(lv.group(1)), int(lv.group(2))]
+        if read != levels:
+            p.append(f"[M] {r[0]}: the export reads {read}, not {levels}")
+        drawn = grey_de(*levels)
+        if r[10] != f"{drawn:.1f}":
+            p.append(f"[M] {r[0]}: the drawn cell is not the ΔE76 of its levels")
+        grade = f"Info (F-17): {chans[r[1]]}" if drawn < 5 else "compliant (5 or more)"
+        if r[11] != grade:
+            p.append(f"[M] {r[0]}: graded {r[11]!r}, the drawn value gives {grade!r}")
+    for key in sorted(set(want) - covered):
+        p.append(f"[M] {key[0]} {key[1]} has no section 16 row")
+    stamp = re.search(r"<!-- audit:dg=(\d+) -->", t.spec)
+    if not stamp or int(stamp.group(1)) != measured:
+        p.append(f"[M] the dg stamp does not equal {measured}")
+    return {"rows": len(covered), "drawn": measured, "exports": len(t.pngs)}
+
+
+SIGN_OPEN = "**Owner sign-off (C-10.1):** open"
+
+
+def g_signoff(t: Texts, p: list[str]) -> dict[str, Any]:
+    s17 = section(t.spec, "## 17. ", "\n## 18. ")
+    t1 = {r[0]: r for r in rows_of(section(s17, "### 17.1 ", "### 17.2 "), r"^\|\s*F-\d+\s*\|")}
+    t2 = {r[0]: r for r in rows_of(section(s17, "### 17.2 ", "### 17.3 "), r"^\|\s*F-\d+\s*\|")}
+    targets = {r[0]: r[1].split(" ")[0] for r in a_rows(t.spec) if len(r) == 6}
+    news = {r[0]: r[4][1:-1] for r in a_rows(t.spec) if len(r) == 6}
+    rq_board = {v: k for k, v in BOARD_RQ.items()}
+    for f in f_rows(t.spec):
+        if len(f) != 8:
+            continue
+        sev, arows = f[1], re.findall(r"A-\d+", f[7])
+        if sev in ("Critical", "High"):
+            row = t1.get(f[0])
+            if not row or re.findall(r"A-\d+", row[2]) != arows or row[4] != "applied":
+                p.append(f"[N] {f[0]}: a blocker not recorded applied with its own A-rows")
+                continue
+            for aid in arows:
+                rq, new = targets.get(aid, ""), news.get(aid, "")
+                if not rq or t.landed[rq].count(new) != 1:
+                    p.append(f"[N] {aid}: its New is not once in {rq} landed")
+                if not rq or t.boards[rq_board[rq]].count(new) != 1:
+                    p.append(f"[N] {aid}: its New is not once in the boards' content")
+        elif sev in ("Medium", "Low"):
+            row = t2.get(f[0])
+            owner = f[6].split(";")[0].replace(" · " + DATE, "")  # two owners are gate D's
+            if not row or len(row) != 6 or re.findall(r"A-\d+", row[2]) != arows:
+                p.append(f"[N] {f[0]}: a {sev} row not logged with its A-rows")
+            elif row[3] != owner or row[4] != DATE.removeprefix("by "):
+                p.append(f"[N] {f[0]}: logged without its owner or its date")
+    extra = (set(t1) | set(t2)) - {f[0] for f in f_rows(t.spec) if f[1] != "Info"}
+    for fid in sorted(extra):
+        p.append(f"[N] {fid}: recorded but not a Critical to Low row")
+    if SIGN_OPEN not in s17 or re.search(r"approved by|signed by", s17, flags=re.IGNORECASE):
+        p.append("[N] the owner's sign-off line is not left open")
+    return {"blockers": len(t1), "logged": len(t2)}
+
+
 GATES: list[tuple[str, Callable[[Texts, list[str]], dict[str, Any]]]] = [
     ("A", g_cites),
     ("B", g_contrast),
@@ -715,6 +958,8 @@ GATES: list[tuple[str, Callable[[Texts, list[str]], dict[str, Any]]]] = [
     ("J", g_names),
     ("K", g_rulings),
     ("L", g_ruled),
+    ("M", g_drawn),
+    ("N", g_signoff),
 ]
 
 
@@ -775,6 +1020,32 @@ def bare_alert_back(t: Texts) -> Texts:
     return t._replace(landed={**t.landed, "RQ-2": t.landed["RQ-2"] + extra})
 
 
+def sec_row_sub(head: str, rid: str, old: str, new: str) -> Callable[[Texts], Texts]:
+    """row_sub inside one section, for an id that also stands in an earlier table."""
+
+    def f(t: Texts) -> Texts:
+        body = section(t.spec, head, "\n## ")
+        row = next(ln for ln in body.splitlines() if re.match(rf"^\|\s*{rid}\s*\|", ln))
+        if old not in row:
+            raise SystemExit(f"self-test: {old!r} is not in {rid} under {head!r}")
+        return t._replace(spec=t.spec.replace(body, body.replace(row, row.replace(old, new, 1))))
+
+    return f
+
+
+def drop_row(rid: str) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        row = next(ln for ln in t.spec.splitlines() if re.match(rf"^\|\s*{rid}\s*\|", ln))
+        return t._replace(spec=t.spec.replace(row + "\n", "", 1))
+
+    return f
+
+
+def board_new_gone(t: Texts) -> Texts:
+    new = "the table holds the last preview at full opacity"
+    return t._replace(boards={**t.boards, "D02": t.boards["D02"].replace(new, "the table", 1)})
+
+
 MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
     ("A: a pin's words no longer on its line", pin_words_off),
     ("B: a measured contrast cell retyped", row_sub("CT-13", "PASS", "PASS?")),
@@ -816,6 +1087,25 @@ MUTATIONS: list[tuple[str, Callable[[Texts], Texts]]] = [
         "K: the protection sentence said first",
         sp("| SR-06 |", "| SR-06 | are open and protected |"),
     ),
+    ("M: a drawn level retyped", row_sub("DG-01", "172 / 184", "172 / 183")),
+    ("M: a place moved off its element", row_sub("DG-09", "563, 1455", "563, 1440")),
+    ("M: a drawn ΔE retyped", row_sub("DG-09", "| 9.9 ", "| 6.5 ")),
+    ("M: a computed cell retyped", row_sub("DG-18", "| 1.7 ", "| 1.8 ")),
+    ("M: a pair below 5 graded compliant", row_sub("DG-15", "Info (F-17): the words;", "x")),
+    ("M: a frame not on the boards", row_sub("DG-05", "/leg-unknown`", "/leg-lost`")),
+    ("M: an export's sha256 retyped", row_sub("D03 G07", "`eb4517b88", "`eb4517b89")),
+    ("M: a pair and theme left out", drop_row("DG-22")),
+    ("M: the dg stamp off by one", sp("audit:dg=17", "audit:dg=16")),
+    ("M: a boards head no longer as is", sp("if #5729 merges as is (", "if #5729 merges (")),
+    ("N: a blocker loses an A-row", sec_row_sub("### 17.1 ", "F-01", "A-01, A-02, ", "A-01, ")),
+    ("N: a blocker not applied", sec_row_sub("### 17.1 ", "F-04", "| applied", "| pending")),
+    ("N: a Medium row logged without its date", sec_row_sub("### 17.2 ", "F-12", "2027-", "2028-")),
+    (
+        "N: a Low row with another owner",
+        sec_row_sub("### 17.2 ", "F-16", "D03 (#997)", "Q05 (#1179)"),
+    ),
+    ("N: a New gone from the boards' content", board_new_gone),
+    ("N: the owner's line signed", sp("C-10.1):** open", "C-10.1):** approved by the owner")),
 ]
 
 
