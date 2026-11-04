@@ -788,6 +788,7 @@ Drag preview                Drop zones
 - **Handoff pack (E11-D09):** [E11-D09.md](../design/E11/E11-D09.md) — redlines, behaviour rules, key map, motion table, token mapping, state matrix, assets; hand-off tables in [E11-D09-handoff.md](../design/E11/E11-D09-handoff.md); Penpot page `E11-D09 Chart-engine handoff pack` (boards pending in a second PR); owner approval pending.
 - **A11y review (E12-D11):** [E12-D11.md](../design/E12/E12-D11.md) (E12-D11; the bar and series band's screen-reader script, keyboard map and announcement budget; Heikin-Ashi reads the real values first; owner approval pending).
 - **Hand-off pack (E12 bar series):** [E12-D12.md](../design/E12/E12-D12.md) v1 (E12-D12; owner approval pending).
+- **Motion:** `docs/design/E12/E12-D10.md` (the switch, the bar close, rebuild progress, the LOD change)
 
 ### SCR-031 — Chart settings dialog (general)
 

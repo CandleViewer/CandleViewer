@@ -290,6 +290,23 @@ glyph or geometry; announcements never wait for motion and no transition moves f
 < 5 min warning appears in the frame it is known. The heatmap's per-redraw decay is not motion: reduced motion leaves
 it unchanged, and only forced colours drops it.
 
+### 7.5 Chart bar-band motion (E12-D10; PROPOSED until the owner's run)
+
+Spec: `docs/design/E12/E12-D10.md` (the moments table §2, the reduced-motion walk §7, the budgets and the drop rule §8). Tokens used by name, none added: `motion.duration.{instant,normal}` and `motion.easing.standard`. Every canvas moment is a one-frame cut (E11-D06 D14); the one tween is CMP-023's fill in the DOM strip, never on the canvas.
+
+| Moment                                        | Enter                                                    | Reduce                           | Source                         |
+| --------------------------------------------- | -------------------------------------------------------- | -------------------------------- | ------------------------------ |
+| M-01 (a) interval, bar-mode or symbol switch  | a cut: the series is replaced                            | identical                        | E12-D10 M-01; E12-D02; E11-D06 |
+| M-02 (d) LOD step between L0, L1 and L2       | a cut: the marks change in one frame                     | identical                        | E12-D10 M-02; E11-D06          |
+| M-03 the countdown on time bars               | a cut: a text swap each second                           | identical                        | E12-D10 M-03; E11-D06          |
+| M-04 the forming ring                         | a cut: static                                            | identical                        | E12-D10 M-04; E12-D06          |
+| M-05 (b) the bar close (forming to closed)    | a cut: one frame                                         | identical                        | E12-D10 M-05; E11-D06          |
+| M-06 (c) rebuild progress phases              | a cut: phase thresholds                                  | identical                        | E12-D10 M-06; E12-D08; E12-D09 |
+| M-07 (c) the progress fill between updates    | `transform: scaleX` (CMP-023) over `normal` / `standard` | steps: the fill jumps per sample | E12-D10 M-07; `15`             |
+| M-08 (c) the swap at a build's end, or cancel | a cut: one frame                                         | identical                        | E12-D10 M-08; E12-D02; E12-D08 |
+
+Rules (E12-D10 §1.3): **R-2** the retained frame is a state rule, not an animation: on a switch the previous series stays drawn, labelled as the previous setting, until the new series paints in one frame; engineering never implements a fade from blank; **R-3** interruptible: a pan, a zoom, a key that moves the view, a second switch or a motion-mode change to `reduce` ends anything in flight where it is; **R-4** no information in motion: every moment's end state carries its meaning in text or a static mark, identical in both motion modes; **R-5** dropped, never queued: a transition that would start in a frame already over budget is skipped and its end state applied in that frame, never queued, stretched or replayed; **R-6** safety messages first: an error, a stale-data indicator or a rebuild failure appears in the frame it is known, in both motion modes, and no transition delays or covers it; **R-7** no account state in motion: no transition indicates order or position state; motion carries no data and no authority.
+
 ---
 
 ## 8. Layout grid, docking rules, responsive & minimum sizes (desktop-only)

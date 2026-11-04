@@ -4,8 +4,9 @@ and the LOD change.
 
 Standalone, offline, stdlib only; it runs no repo code and is run with `python3 -I`. It reads the
 spec and the pins file from the working tree, and every cited file AS TEXT with `git show` at the
-pinned base (`BASE`), except E12-D08, read at #5425's head (`D08_REF`) until #5425 merges (BQ-02).
-Default-deny: a gate that cannot read its input FAILs.
+pinned base (`BASE`), except E47-D08, read at #5444's merge (`E47_REF`). PR 2
+applies the A-rows (§15) to `16` and `14`; G-APPLIED reads those two from the working tree and their
+merge-base. Default-deny: a gate that cannot read its input FAILs.
 
 Gates (each FAIL led by its name):
   G-MOMENT   §2's rows M-01 ... M-08, in order, each complete: a property, a token or "a cut" in
@@ -22,8 +23,13 @@ Gates (each FAIL led by its name):
   G-HYGIENE  no closing keyword, local path, URL or host, agent name, double-brace slot or
              public-text deny word in the spec; no hard-coded `16` block number "§7.3" (BQ-18:
              numbered at PR 2's rebase); no unknown anchor key.
-  G-SCOPE    the diff against `git merge-base HEAD origin/main` touches only the spec, this tool
-             and the pins file.
+  G-APPLIED  the A-rows as applied (PR 2): `16` equals its merge-base text with one block inserted
+             after the last §7 block, numbered one past it (§15 records the number); its table is
+             §2 rendered row for row (Moment, Enter, Reduce, Source), its rules name R-2 ... R-7 by
+             their §1.3 titles; `14` equals its merge-base text with A-2's line added once, last in
+             the SCR-030 entry.
+  G-SCOPE    the diff against `git merge-base HEAD origin/main` touches only the spec, this tool,
+             the pins file, `14` and `16`.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e12_d10_motion_audit.py --check      (exit 1 on any FAIL)
@@ -49,9 +55,8 @@ ROOT = Path(__file__).resolve().parents[3]
 SPEC_REL = "docs/design/E12/E12-D10.md"
 TOOL_REL = "docs/design/_tools/e12_d10_motion_audit.py"
 PINS_REL = "docs/design/_tools/e12_d10_ruled_pins.txt"
-OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
-BASE = "90a710c4fdedd084ebf0c48a29f316aec7e253fe"  # origin/main when written (re-pinned by content)
-D08_REF = "d6b9d459af8c7563e34a41b45474d02f5ff6cb68"  # #5425's head (#243's boards PR, r4); re-pinned to main at its merge
+# origin/main at PR 2's rebase; every cite re-pinned there by content
+BASE = "3619e95c5b0c9ea7ff73d0a088930e15cbec756f"
 TOK_REL = "packages/ui/tokens/primitives.tokens.json"
 PATHS: dict[str, str] = {
     "05": "docs/plan/05-accessibility-standard.md",
@@ -72,23 +77,22 @@ PATHS: dict[str, str] = {
     "E05D03": "docs/design/E05/E05-D03.md",
     "E08D11": "docs/design/E08/E08-D11.md",
     "E47D08": "docs/design/E47/E47-D08.md",
+    "ADR33": "docs/plan/27-adrs/ADR-0033-renko-brick-sizing-and-series-rebuild.md",
 }
+A_PATHS = (PATHS["16"], PATHS["14"])  # the A-rows' targets (§15), applied in PR 2
+OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL, *A_PATHS)
 E47_REF = (
-    "e60fe7baa545758e729fd70e061f0869b636ab22"  # #5444's head; re-pinned at its merge
+    "1c5320c49fe521725ae9bb4814c2b49b49ef067c"  # #5444's merge; same blobs as its head e60fe7baa5
 )
-REF_OF = {"D08": D08_REF, "E47D08": E47_REF}  # every other key is read at BASE
+REF_OF = {"E47D08": E47_REF}  # every other key is read at BASE (D08 since #5425 merged)
 DASH = "\u2013"  # the en dash of a cited range
 CITE = re.compile(
-    r"`(\d\d|D0[2-9]|D1[0-3]|E11D06|E05D03|E08D11|E47D08)`:"
+    r"`(\d\d|D0[2-9]|D1[0-3]|E11D06|E05D03|E08D11|E47D08|ADR33)`:"
     r"(\d+(?:\u2013\d+)?(?:, :\d+(?:\u2013\d+)?)*)"
 )
 ANCHOR = re.compile(r"`?([^\s<|(`]+)`?<!--=([A-Z]+:[A-Za-z0-9.]+)-->")
-CLOSING = re.compile(
-    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE
-)
-LOCAL_PATH = re.compile(
-    "/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b"
-)  # assembled
+CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE)
+LOCAL_PATH = re.compile("/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b")  # assembled
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
 URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
 # assembled, so the list never spells the words it refuses
@@ -108,11 +112,26 @@ DENY = (
     "gh" + "sa",
     "pre-" + "auth",
 )
-MS_LITERAL = re.compile(
-    r"(?<![\w.>])\d[\d.,]*\s?ms\b"
-)  # an anchored value ends "-->" before " ms"
+MS_LITERAL = re.compile(r"(?<![\w.>])\d[\d.,]*\s?ms\b")  # an anchored value ends "-->" before " ms"
 MOMENTS = ("(a)", "(b)", "(c)", "(d)")
 T2_ROWS = ("M-06", "M-08")  # BQ-15: the rows that show `Retry` / `Cancel` under view-as
+BLOCK_HEAD = re.compile(
+    r"### 7\.(\d+) Chart bar-band motion \(E12-D10; PROPOSED until the owner's run\)"
+)
+BLOCK_LEAD = (
+    "Spec: `docs/design/E12/E12-D10.md` (the moments table §2, the reduced-motion walk §7, the"
+    " budgets and the drop rule §8). Tokens used by name, none added:"
+    " `motion.duration.{instant,normal}` and `motion.easing.standard`. Every canvas moment is a"
+    " one-frame cut (E11-D06 D14); the one tween is CMP-023's fill in the DOM strip, never on"
+    " the canvas."
+)
+BLOCK_COLS = ["Moment", "Enter", "Reduce", "Source"]
+DOC_NAME = {
+    "E11D06": "E11-D06",
+    "E05D03": "E05-D03",
+    "E08D11": "E08-D11",
+    "E47D08": "E47-D08",
+}
 
 
 @dataclass(frozen=True)
@@ -121,6 +140,8 @@ class Texts:
     pins: str
     changed: list[str] | None
     memo: dict[str, str | None]
+    tree: dict[str, str | None]  # the A-rows' targets in the working tree
+    mb: dict[str, str | None]  # ... and at the merge-base
 
 
 def git(*args: str) -> str | None:
@@ -207,9 +228,11 @@ def tokens(t: Texts) -> set[str]:
 def compute(t: Texts) -> dict[str, str]:
     v: dict[str, str] = {
         "SHA:BASE": BASE[:10],
-        "SHA:D08": D08_REF[:10],
         "SHA:E47D08": E47_REF[:10],
     }
+    nxt = next_block(t.mb.get(PATHS["16"]))
+    if nxt is not None:
+        v["APP:block"] = f"§7.{nxt}"
     dur = durations(t)
     for k, ms in dur.items():
         v[f"DUR:{k}"] = str(ms)
@@ -348,9 +371,7 @@ def g_cite(t: Texts, vals: dict[str, str]) -> list[str]:
     pinned = parse_pins(t.pins)
     for label, h in hashes.items():
         if label not in pinned:
-            bad.append(
-                f"cite {label} is unpinned: verify it by content, then --repin-ruled"
-            )
+            bad.append(f"cite {label} is unpinned: verify it by content, then --repin-ruled")
         elif pinned[label] != h:
             bad.append(
                 f"cite {label}: the line at its base is not the pinned content (moved or edited)"
@@ -385,6 +406,135 @@ def g_hygiene(t: Texts, vals: dict[str, str]) -> list[str]:
     return bad
 
 
+# ---------------------------------------------------------------------------- A-rows (PR 2)
+
+
+def next_block(mb16: str | None) -> int | None:
+    if mb16 is None:
+        return None
+    nums = [int(n) for n in re.findall(r"^### 7\.(\d+) ", mb16, re.MULTILINE)]
+    return max(nums, default=0) + 1
+
+
+def spec_rules(spec: str) -> dict[int, str]:
+    return {
+        int(n): title
+        for n, title in re.findall(r"^- \*\*R-(\d) ([^*]+?)\.\*\*", spec, re.MULTILINE)
+    }
+
+
+def source_names(cell: str) -> list[str]:
+    out: list[str] = []
+    for m in CITE.finditer(cell):
+        k = m[1]
+        name = DOC_NAME.get(k) or (f"E12-{k}" if k.startswith("D") else f"`{k}`")
+        if name not in out:
+            out.append(name)
+    return out
+
+
+def block_rows(spec: str) -> list[list[str]]:
+    """§2 condensed to Moment · Enter · Reduce · Source (A-1)."""
+    out = []
+    for r in table_rows(section(spec, "## 2."), "M-0"):
+        if len(r) != 9:
+            continue
+        mid, moment, prop, d, e, red, _carrier, _budget, src = r
+        if d == "`motion.duration.instant`":
+            enter = "a cut: " + prop.removeprefix("none: ")
+        else:
+            short = (d.strip("`").split(".")[-1], e.strip("`").split(".")[-1])
+            enter = f"{prop} over `{short[0]}` / `{short[1]}`"
+        reduce_ = "identical" if red == "identical, both modes" else red
+        source = "; ".join([f"E12-D10 {mid}", *source_names(src)])
+        out.append([f"{mid} {moment}", enter, reduce_, source])
+    return out
+
+
+def rules_line(spec: str) -> list[str]:
+    return [
+        f"**R-{n}** {title[0].lower()}{title[1:]}"
+        for n, title in sorted(spec_rules(spec).items())
+        if n >= 2
+    ]
+
+
+def pointer_line(spec: str) -> str | None:
+    m = re.search(r'one pointer line, "Motion: ([^"]+)"', spec)
+    return f"- **Motion:** {m[1]}" if m else None
+
+
+def split_block(text: str) -> tuple[int, int, int, list[str]] | None:
+    """The block's heading line, its end, its §7 number and the lines."""
+    ls = text.split("\n")
+    heads = [(i, m) for i, ln in enumerate(ls) if (m := BLOCK_HEAD.fullmatch(ln))]
+    if len(heads) != 1:
+        return None
+    i, m = heads[0]
+    j = next(
+        (k for k in range(i + 1, len(ls)) if ls[k] == "---" or ls[k].startswith("## ")),
+        len(ls),
+    )
+    return i, j, int(m[1]), ls
+
+
+def g_applied(t: Texts, vals: dict[str, str]) -> list[str]:
+    bad: list[str] = []
+    t16, m16 = t.tree.get(PATHS["16"]), t.mb.get(PATHS["16"])
+    t14, m14 = t.tree.get(PATHS["14"]), t.mb.get(PATHS["14"])
+    if t16 is None or m16 is None or t14 is None or m14 is None:
+        return ["cannot read `16` or `14` in the working tree or at the merge-base"]
+    got = split_block(t16)
+    if got is None:
+        return ["A-1: `16` does not carry exactly one 'Chart bar-band motion (E12-D10; ...)' block"]
+    i, j, n, ls = got
+    if ls[:i] + ls[j:] != m16.split("\n"):
+        bad.append(
+            "A-1: `16` differs from its merge-base outside the block,"
+            " or the block is not after the last §7 block"
+        )
+    if f"§7.{n}" != vals.get("APP:block"):
+        bad.append(
+            f"A-1: the block is §7.{n}; the next free number at the merge-base"
+            f" is {vals.get('APP:block')}"
+        )
+    body = ls[i + 1 : j]
+    if BLOCK_LEAD not in body:
+        bad.append("A-1: the block's Spec / Tokens line is not the tool's")
+    rows = [
+        [c.strip() for c in ln.strip().strip("|").split("|")] for ln in body if ln.startswith("| ")
+    ]
+    want = [BLOCK_COLS, *block_rows(t.spec)]
+    have = [r for r in rows if not all(set(c) <= {"-", ":"} for c in r)]
+    for k in range(max(len(want), len(have))):
+        w = want[k] if k < len(want) else None
+        h = have[k] if k < len(have) else None
+        if w != h:
+            bad.append(f"A-1: table row {k} reads {h}, §2 renders {w}")
+    rules = next((ln for ln in body if ln.startswith("Rules (E12-D10 §1.3")), "")
+    for r in rules_line(t.spec):
+        if r not in rules:
+            bad.append(f"A-1: the block's rules do not name {r!r}")
+    bad += anchor_problems(t, vals, "APP:")
+    ptr = pointer_line(t.spec)
+    m14l, t14l = m14.split("\n"), t14.split("\n")
+    if ptr is None:
+        bad.append("A-2: §15 carries no pointer line")
+    else:
+        a = next((k for k, ln in enumerate(m14l) if ln.startswith("### SCR-030 ")), None)
+        b = next((k for k, ln in enumerate(m14l) if ln.startswith("### SCR-031 ")), None)
+        if a is None or b is None:
+            bad.append("A-2: the SCR-030 entry is not found at the merge-base")
+        else:
+            last = max(k for k in range(a, b) if m14l[k].strip())
+            if t14l != [*m14l[: last + 1], ptr, *m14l[last + 1 :]]:
+                bad.append(
+                    "A-2: `14` is not its merge-base text with the pointer added once,"
+                    " last in SCR-030"
+                )
+    return bad
+
+
 def g_scope(t: Texts, vals: dict[str, str]) -> list[str]:
     if t.changed is None:
         return ["cannot list the changed paths (git failed)"]
@@ -409,6 +559,7 @@ GATES: dict[str, Callable[[Texts, dict[str, str]], list[str]]] = {
     "G-BUDGET": g_budget,
     "G-CITE": g_cite,
     "G-HYGIENE": g_hygiene,
+    "G-APPLIED": g_applied,
     "G-SCOPE": g_scope,
 }
 
@@ -439,20 +590,40 @@ def changed_paths() -> list[str] | None:
 
 def load() -> Texts:
     spec = (ROOT / SPEC_REL).read_text(encoding="utf-8")
-    pins = (
-        (ROOT / PINS_REL).read_text(encoding="utf-8")
-        if (ROOT / PINS_REL).exists()
-        else ""
-    )
-    return Texts(spec, pins, changed_paths(), {})
+    pins = (ROOT / PINS_REL).read_text(encoding="utf-8") if (ROOT / PINS_REL).exists() else ""
+    mb = (git("merge-base", "HEAD", "origin/main") or "").strip()
+    tree = {
+        p: (ROOT / p).read_text(encoding="utf-8") if (ROOT / p).exists() else None for p in A_PATHS
+    }
+    base = {p: (git("show", f"{mb}:{p}") if mb else None) for p in A_PATHS}
+    return Texts(spec, pins, changed_paths(), {}, tree, base)
+
+
+def tree_sub(rel: str, old: str, new: str, count: int = 1) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        text = t.tree.get(rel) or ""
+        if text.count(old) != count:
+            raise SystemExit(f"self-test: {rel} carries {old[:50]!r} {text.count(old)} times")
+        return replace(t, tree={**t.tree, rel: text.replace(old, new)})
+
+    return f
+
+
+def drop_tree_line(rel: str, lead: str) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        ls = (t.tree.get(rel) or "").split("\n")
+        return replace(
+            t,
+            tree={**t.tree, rel: "\n".join(ln for ln in ls if not ln.startswith(lead))},
+        )
+
+    return f
 
 
 def sub(old: str, new: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
         if t.spec.count(old) != 1:
-            raise SystemExit(
-                f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times"
-            )
+            raise SystemExit(f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times")
         return replace(t, spec=t.spec.replace(old, new))
 
     return f
@@ -493,10 +664,10 @@ def blank_cell(row: str, col: int) -> Callable[[Texts], Texts]:
 
 
 MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
-    ("G-MOMENT", "blank M-05's reduce cell", blank_cell("M-05", 5)),
-    ("G-MOMENT", "drop moment (d)'s row", drop_row("| M-02 ")),
+    ("G-MOMENT+G-APPLIED", "blank M-05's reduce cell", blank_cell("M-05", 5)),
+    ("G-MOMENT+G-APPLIED", "drop moment (d)'s row", drop_row("| M-02 ")),
     (
-        "G-TOKEN",
+        "G-TOKEN+G-APPLIED",
         "misspell a duration token",
         set_cell("M-07", 3, "`motion.duration.normel`"),
     ),
@@ -513,7 +684,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     (
         "G-CITE",
         "point a cite past the end of `14`",
-        sub("(`14`:1119, SCR-046)", "(`14`:99999, SCR-046)"),
+        sub("(`14`:1121, SCR-046)", "(`14`:99999, SCR-046)"),
     ),
     (
         "G-TOKEN",
@@ -526,12 +697,12 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     (
         "G-HYGIENE",
         "write a closing keyword against #245",
-        sub("carries the closing line.", "carries the closing line. Closes #245."),
+        sub("carries the closing line;", "carries the closing line, Closes #245;"),
     ),
     (
         "G-SCOPE",
-        "touch `16` in the diff",
-        lambda t: replace(t, changed=[*OWN_PATHS, PATHS["16"]]),
+        "touch `15` in the diff",
+        lambda t: replace(t, changed=[*OWN_PATHS, PATHS["15"]]),
     ),
     (
         "G-HYGIENE",
@@ -546,6 +717,56 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
             "; its `Cancel` is a read",
         ),
     ),
+    (
+        "G-APPLIED",
+        "edit M-07's Reduce cell in `16`",
+        tree_sub(PATHS["16"], "steps: the fill jumps per sample", "a fade per sample"),
+    ),
+    (
+        "G-APPLIED",
+        "number the block one past the next free one",
+        lambda t: tree_sub(
+            PATHS["16"],
+            f"### 7.{next_block(t.mb[PATHS['16']])} Chart bar-band",
+            f"### 7.{(next_block(t.mb[PATHS['16']]) or 0) + 1} Chart bar-band",
+        )(t),
+    ),
+    (
+        "G-APPLIED",
+        "record another number in §15",
+        lambda t: replace(
+            t, spec=re.sub(r"§7\.\d+<!--=APP:block-->", "§7.9<!--=APP:block-->", t.spec)
+        ),
+    ),
+    (
+        "G-APPLIED",
+        "drop R-5 from the block's rules",
+        tree_sub(PATHS["16"], "**R-5** dropped, never queued", "dropped, never queued"),
+    ),
+    (
+        "G-APPLIED",
+        "drop the SCR-030 pointer",
+        drop_tree_line(PATHS["14"], "- **Motion:** `docs/design/E12/E12-D10.md`"),
+    ),
+    (
+        "G-APPLIED",
+        "add the pointer twice",
+        lambda t: tree_sub(
+            PATHS["14"],
+            pointer_line(t.spec) or "?",
+            (pointer_line(t.spec) or "?") + "\n" + (pointer_line(t.spec) or "?"),
+        )(t),
+    ),
+    (
+        "G-APPLIED",
+        "edit a `16` line outside the block",
+        tree_sub(PATHS["16"], "### 7.3 Node-graph motion", "### 7.3 Node graph motion"),
+    ),
+    (
+        "G-APPLIED",
+        "drop M-08's row from the block",
+        drop_tree_line(PATHS["16"], "| M-08 "),
+    ),
 )
 
 
@@ -553,13 +774,11 @@ def selftest() -> tuple[bool, list[str]]:
     base = replace(load(), changed=list(OWN_PATHS))
     before = base.spec
     found = audit(base)
-    out = [f"self-test: baseline {len(found)} FAIL"] + [
-        f"  baseline {g}: {m}" for g, m in found
-    ]
+    out = [f"self-test: baseline {len(found)} FAIL"] + [f"  baseline {g}: {m}" for g, m in found]
     ok = not found
     for i, (gate, what, fn) in enumerate(MUTATIONS, 1):
         gates = sorted({g for g, _ in audit(fn(base))})
-        good = gates == [gate]
+        good = gates == sorted(gate.split("+"))  # a §2 edit also desyncs `16`'s rendered block
         ok &= good
         out.append(
             f"{'ok  ' if good else 'FAIL'} M-{i} {gate}: {what} -> {', '.join(gates) or 'none'}"
@@ -606,7 +825,7 @@ def main(argv: list[str]) -> int:
             json.dumps(
                 {
                     "base": BASE,
-                    "d08": D08_REF,
+                    "e47d08": E47_REF,
                     "values": compute(t),
                     "findings": [{"gate": g, "msg": m} for g, m in found],
                 },
