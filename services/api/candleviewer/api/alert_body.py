@@ -23,17 +23,18 @@ from candleviewer.api.alerts_http import Problem
 from candleviewer.api.rule_body import _TOO_LARGE, read_capped
 from candleviewer.ws.limits import json_depth_exceeds
 
-#: The body ceiling of the five alert writes (22: 256 KiB). A typical alert holds about 20 values
-#: in under 500 bytes, and one at the value bound fits with room for its strings.
-MAX_ALERT_BODY_BYTES: Final = 256 * 1024
+#: The body ceiling of the five alert writes (22: 64 KiB). A typical alert holds about 20 values
+#: in under 500 bytes, and one at the value bound fits with room for its strings. With the value
+#: bound it keeps the widest admissible alert's save under the loop budget (C-2.17).
+MAX_ALERT_BODY_BYTES: Final = 64 * 1024
 #: The deepest body the alert compiler takes: a variable's arithmetic chain down to its walker's
 #: `MAX_DEPTH`, ending in a metric with `params`. The body is level 1, `condition_ir` 2,
 #: `variables` 3 and the variable's operand (walker depth 1) 4; each arithmetic step adds two
 #: (`operands` and the operand), so walker depth `MAX_DEPTH` sits at `2 * MAX_DEPTH + 2` and its
 #: `params` one deeper. A condition's own nesting tops out two levels shallower.
 MAX_ALERT_JSON_DEPTH: Final = 2 * MAX_DEPTH + 3
-#: The values one alert body may hold (22: 4,096).
-MAX_ALERT_VALUES: Final = 4096
+#: The values one alert body may hold (22: 2,048).
+MAX_ALERT_VALUES: Final = 2048
 _INVALID: Final = "Invalid body"
 #: `cv_alert_write_refused_total{reason}`: the closed label set (the write rate's included).
 REFUSAL_REASONS: Final = ("body_too_large", "json_too_deep", "too_many_values", "rate_limited")

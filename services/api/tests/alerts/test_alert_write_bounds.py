@@ -2,31 +2,40 @@
 
 Gherkin "an alert write is bounded before any work": over the byte cap is the declared 413, nested
 past the depth cap or past the value bound the declared 422, decided before the body is decoded
-(depth) or validated (values), with nothing stored or recorded. Inputs come from the constants of
-`api/alert_body.py`, on the rule routes' template (#4197); the helpers are `_alert_write_env.py`'s.
+(depth) or validated (values), with nothing stored or recorded; the widest alert the bounds admit is
+saved within the loop budget (C-2.17). The byte cap and the value bound are 22's numbers, the
+depth `api/alert_body.py`'s, on the rule routes' template (#4197); the helpers are
+`_alert_write_env.py`'s.
 """
 
 from __future__ import annotations
 
+import asyncio
 import codecs
 import json
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 
-from candleviewer.alerts.compiler import MAX_DEPTH, AlertCompiler
+from candleviewer.alerts.compiler import MAX_DEPTH, AlertCompiler, validate_template
 from candleviewer.alerts.errors import AlertIrInvalid
 from candleviewer.api import alert_body
-from candleviewer.api.alert_body import MAX_ALERT_BODY_BYTES, MAX_ALERT_JSON_DEPTH, MAX_ALERT_VALUES
+from candleviewer.api.alert_body import MAX_ALERT_BODY_BYTES, MAX_ALERT_JSON_DEPTH
+from candleviewer.api.alerts import AlertInput
+from candleviewer.rules.compiler.common import count_values
+from candleviewer.rules.ir.accounts import collect_account_ids
 from candleviewer.rules.vocabulary import default_registry
 from tests.alerts._alert_api_env import PRICE_CROSS, USER_B
 from tests.alerts._alert_write_env import BODY_ROUTES, asgi, deep, padded, sized, target
+from tests.rules.test_validator_endpoints import _assert_median_within
 
-#: 22's "256 KiB (262,144 bytes)" as a literal: a test sized from the constant would follow it.
-CAP = 256 * 1024
+#: 22's "64 KiB (65,536 bytes)" and "2,048 values" as literals, which a moved constant fails.
+CAP, VALUES = 64 * 1024, 2048
 
 
 def rules(r: httpx.Response) -> list[str]:
@@ -92,7 +101,7 @@ async def test_alert_body_declared_length_over_the_cap_is_413_unread(op: str) ->
         pulled.append(1)
         yield json.dumps(t.body).encode()
 
-    too_large(await asgi(t, chunks(), {"content-length": str(MAX_ALERT_BODY_BYTES + 1)}))
+    too_large(await asgi(t, chunks(), {"content-length": str(CAP + 1)}))
     assert pulled == [] and t.env.refused == ["body_too_large"]
 
 
@@ -100,7 +109,7 @@ async def test_alert_body_streamed_past_the_cap_stops_one_chunk_past_it() -> Non
     """Gherkin "before parsing the body": with no length, the stream is read one chunk past the
     cap, never to its end (SR-E40-17)."""
     t, pulled = target("create"), []
-    parts = [json.dumps(t.body)[:-1].encode(), *[b" " * (MAX_ALERT_BODY_BYTES // 16)] * 32, b"}"]
+    parts = [json.dumps(t.body)[:-1].encode(), *[b" " * (CAP // 16)] * 32, b"}"]
 
     async def chunks() -> AsyncIterator[bytes]:
         for part in parts:
@@ -179,7 +188,7 @@ def test_alert_body_over_the_value_bound_is_422_before_validation_or_compile(
     validation or compile, nothing stored or recorded, counted (SR-E40-17)."""
     t = target(op)
     before = t.snapshot()
-    r = t.send(json.dumps(sized(t.body, shape, MAX_ALERT_VALUES + 1)).encode())
+    r = t.send(json.dumps(sized(t.body, shape, VALUES + 1)).encode())
     assert (r.status_code, rules(r)) == (422, ["too_many_values"]), r.text[:300]
     assert (t.snapshot(), t.env.refused) == (before, ["too_many_values"])
 
@@ -188,8 +197,53 @@ def test_alert_body_over_the_value_bound_is_422_before_validation_or_compile(
 def test_alert_body_at_the_value_bound_reaches_validation(op: str, shape: str) -> None:
     """At the value bound the reader passes the body to the route's own checks (SR-E40-17)."""
     t = target(op)
-    r = t.send(json.dumps(sized(t.body, shape, MAX_ALERT_VALUES)).encode())
+    r = t.send(json.dumps(sized(t.body, shape, VALUES)).encode())
     assert "too_many_values" not in r.text and t.env.refused == []
+
+
+def _widest(width: int, extra: int = 0) -> dict[str, Any]:
+    """The costliest admissible shape measured (#5696): 83 comparisons in groups of 32, each
+    metric with 16 decimal `params` (the first with *extra* more), keys *width* characters wide."""
+
+    def params(i: int) -> dict[str, float]:
+        n = 16 + (extra if i == 0 else 0)
+        return {f"k{i:03d}{j:04d}".ljust(width, "p"): j + 0.125 for j in range(n)}
+
+    comps = [{"node_id": f"c{i}", "op": "gt", "left": {"metric": "price", "params": params(i)},
+              "right": {"const": 1}} for i in range(83)]  # fmt: skip
+    groups = [{"node_id": f"g{g}", "op": "all_of", "children": comps[g : g + 32]}
+              for g in range(0, 83, 32)]  # fmt: skip
+    root = {"node_id": "root", "op": "all_of", "children": groups}
+    return PRICE_CROSS | {"condition_ir": {**PRICE_CROSS["condition_ir"], "conditions": root}}
+
+
+@pytest.mark.perf
+def test_alert_save_of_the_widest_admissible_body_is_within_the_loop_budget() -> None:
+    """C-2.17: the costliest alert measured at the byte cap and the value bound is saved (the
+    reader, the model, the compile with its `condition_hash`, the template and the account walk,
+    with no await once the body is read) in under 50 ms of CPU, the median of 7 (SR-E40-17)."""
+    extra, width = VALUES - count_values(_widest(8)), 8
+    while len(json.dumps(_widest(width + 1, extra))) <= CAP:
+        width += 1
+    raw = padded(_widest(width, extra), CAP)
+    assert count_values(json.loads(raw)) == VALUES and target("create").send(raw).status_code == 201
+    compiler, refused = AlertCompiler(default_registry()), list[str]()
+    scope = {"type": "http", "headers": [(b"content-length", str(CAP).encode())]}
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": raw}
+
+    with asyncio.Runner() as runner:
+
+        def save() -> None:
+            doc = runner.run(alert_body.read_alert_body(Request(scope, receive), refused.append))
+            body = AlertInput.model_validate(doc)
+            compiled = compiler.compile(body.condition_ir)
+            validate_template(body.message_template, compiled.metrics)
+            collect_account_ids(compiled.condition_ir)
+
+        _assert_median_within(save, budget_ms=50, clock=time.process_time)
+    assert refused == []
 
 
 @ROUTES
