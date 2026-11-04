@@ -165,6 +165,57 @@ describe("SyncBus loop suppression", () => {
     expect([versions, said.length, bus.devCounters().applyErrors]).toEqual([1, 1, 1]);
   });
 
+  it("schedules no extra frame for a memory map left empty by a held symbol", () => {
+    const { bus, frames } = busWithFrames();
+    const [, p2] = joinAll(bus, 2);
+    if (p2 !== undefined) p2.armed = true; // holds the symbol: its memory map is emptied
+    bus.publish("p1", { axis: "symbol", symbol: "ETHUSDT" });
+    expect(frames.run()).toBe(1);
+    expect(bus.devCounters().held).toBe(1);
+    expect(frames.pending).toBe(0);
+  });
+
+  it.each([
+    ["a throwing subscribe listener", true],
+    ["a throwing announcer", false],
+  ])("still rotates its echo memory past %s, then rethrows it", (_name, listener) => {
+    let armed = false;
+    const { bus, frames } = busWithFrames({
+      announce: () => {
+        if (armed && !listener) throw new Error("announce boom");
+      },
+    });
+    const [, p2] = joinAll(bus, 2);
+    frames.run();
+    bus.subscribe(() => {
+      if (armed && listener) throw new Error("listener boom");
+    });
+    armed = true;
+    bus.publish("p1", { axis: "symbol", symbol: "ETHUSDT" });
+    if (!listener) bus.setAxes("A", { ...ALL_ON, drawings: false }); // an announced change
+    expect(() => frames.run()).toThrow(listener ? "listener boom" : "announce boom");
+    expect(frames.pending).toBe(1); // the rotation ran: the memory is still aging
+    armed = false;
+    expect(() => frames.run()).not.toThrow();
+    expect(frames.pending).toBe(0);
+    expect(p2?.received).toHaveLength(1);
+  });
+
+  it("calls every subscribe listener even when an earlier one throws", () => {
+    const { bus, frames } = busWithFrames();
+    joinAll(bus, 2);
+    const seen: string[] = [];
+    bus.subscribe(() => {
+      seen.push("first");
+      throw new Error("first boom");
+    });
+    bus.subscribe(() => seen.push("second"));
+    seen.length = 0;
+    bus.publish("p1", { axis: "symbol", symbol: "ETHUSDT" }); // structural: listeners run in the flush
+    expect(() => frames.run()).toThrow("first boom");
+    expect(seen).toEqual(["first", "second"]);
+  });
+
   it("counts re-entrancy without throwing in production", () => {
     const frames = manualFrames();
     const bus = createSyncBus({ dev: false, requestFrame: frames.requestFrame });
