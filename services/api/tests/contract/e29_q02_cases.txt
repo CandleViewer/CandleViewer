@@ -33,6 +33,14 @@ tests/contract/test_e29_request_direction_contract.py::test_request_direction_a_
 tests/contract/test_e29_request_direction_contract.py::test_request_direction_a_missing_required_member_is_refused | the E29 writes with a required member | E29-TC-650, E29-TC-655
 tests/contract/test_e29_request_direction_contract.py::test_request_direction_more_account_ids_than_22_allows_is_refused | listOrders, listPositions, listExecutions, listClosedPnl | E29-TC-655
 
+# C2: Schemathesis over the E29 operations, in process (tests/contract/test_e29_oms_schemathesis_contract.py)
+tests/contract/test_e29_oms_schemathesis_contract.py::test_e29_reads_schemathesis_fuzz | the seven E29 reads, fuzzed (Schemathesis) | E29-TC-650, E29-TC-655
+tests/contract/test_e29_oms_schemathesis_contract.py::test_e29_writes_schemathesis_fuzz | the eight E29 writes, fuzzed (Schemathesis) | E29-TC-650, E29-TC-655
+tests/contract/test_e29_oms_schemathesis_contract.py::test_e29_every_operation_22_has_under_its_paths_is_driven_or_listed | the E29 operations | E29-TC-650
+tests/contract/test_e29_oms_schemathesis_contract.py::test_e29_the_one_operation_not_driven_is_not_mounted | setPositionTpSl: PUT /positions/{positionId}/tpsl | E29-TC-650
+tests/contract/test_e29_oms_schemathesis_contract.py::test_e29_the_hooks_supply_every_header_22_requires_of_a_write | the eight E29 writes | E29-TC-650
+tests/contract/test_e29_oms_schemathesis_contract.py::test_e29_the_arm_token_the_hooks_supply_is_the_one_a_live_account_takes | setPositionLeverage: PUT /positions/{positionId}/leverage | E29-TC-650
+
 # C3: the OMS's private WS payloads against 23 Sec.15, and a grant withdrawn mid-subscription
 # (tests/contract/ws/test_ws_oms_frames_contract.py, test_ws_oms_scope_revocation_contract.py)
 tests/contract/ws/test_ws_oms_frames_contract.py::test_orders_a_committed_step_of_every_kind_conforms_in_every_stored_state | WS orders deltas: step kind x state | E29-TC-450, E29-TC-751
