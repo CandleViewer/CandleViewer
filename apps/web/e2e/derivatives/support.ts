@@ -2,7 +2,7 @@
 // E08-Q05 fake gateway (`support/wsHarness.ts`) and stubbed REST reads; nothing reaches a backend or an exchange
 // (C-13.5). Every value comes from a fixture in `packages/fixtures`, never invented:
 // - OI history: `bybit/2026-10-05/rest/open_interest_BTCUSDT_5min_page{0,1}.json` (documented shape, exception
-//   #1778 A), mapped to `22` `OpenInterestPoint` as the E24-S01 unit tests map it (#5769 at c711730a5);
+//   #1778 A), mapped to `22` `OpenInterestPoint` as the E24-S01 unit tests map it (#5769 at d1bf47b29);
 // - live OI: `ws/recorded_tickers_BTCUSDT.jsonl` (recorded), the `openInterest` pair of each message;
 // - the per-bar delta and quadrant: the E24-T06 goldens `golden/derivatives/expected_<case>.json.gz` (the engine's
 //   output over the same corpus), served as `/market/metrics` series;
@@ -467,19 +467,20 @@ export async function shown(page: Page, target: Locator): Promise<void> {
 
 // --- locators: role and accessible name only (BQ 2), names from the stacks' `copy.ts` --------------------------------
 
-/** #5771 at 61eb73abf `copy.regionName`: the OI sub-pane's region. */
+/** #5771 at 6954e6ac7 `copy.regionName`: the OI sub-pane's region. */
 export const oiPane = (page: Page): Locator =>
   page.getByRole("region", { name: `Open interest, ${SYMBOL}`, exact: true });
 /** #5765 at a3380fb26 `copy.regionName`: the liquidation feed's region. */
 export const feedPane = (page: Page): Locator =>
   page.getByRole("region", { name: `Liquidations, ${SYMBOL}`, exact: true });
-/** #5768 at a6a69561e `copy.regionName`: the liquidation bars' region. */
+/** #5768 at fabcc2adf `copy.regionName`: the liquidation bars' region. */
 export const barsPane = (page: Page): Locator =>
   page.getByRole("region", { name: `Liquidation bars, ${SYMBOL}`, exact: true });
 
 /**
  * E24-D04 A-08: the OI mode toggle is a `switch` named "Open interest, delta per bar", off by default. BQ 3 (#772, as
- * amended): the designed contract, not the shipped shape; the drift is a finding on #5773 / #777 for E24-D06.
+ * amended): the designed contract, not the shipped shape; the drift is a finding on #5773 / #777 for E24-D06. At
+ * 17af9b002 #5773 draws its toggle only when the host passes both `mode` and `onModeChange` (BQ-1 ruling 6618708569).
  */
 export const oiModeSwitch = (page: Page): Locator =>
   oiPane(page).getByRole("switch", { name: "Open interest, delta per bar", exact: true });

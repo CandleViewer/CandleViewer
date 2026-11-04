@@ -1,6 +1,6 @@
 // E24-Q02 (#772) PR 1: the SCR-054 open-interest sub-pane, end to end (E24-D02 §4, §9, §11, §13; E24-D04 §9, §10).
-// Written against the E24-S01 / S02 stack before it merges: #5769 (c711730a5), #5770 (829bd0d80), #5771 (61eb73abf)
-// and #5773 (f30f87076). Every name below is that stack's `copy.ts`, except the mode switch, which is E24-D04 A-08's
+// Written against the E24-S01 / S02 stack before it merges: #5769 (d1bf47b29), #5770 (eb9411edd), #5771 (6954e6ac7)
+// and #5773 (17af9b002). Every name below is that stack's `copy.ts`, except the mode switch, which is E24-D04 A-08's
 // designed name (BQ 3); a re-pin that renames one fails here loudly.
 // Selectors are roles and accessible names (BQ 2); text is only ever asserted as content. The feed publishes only from
 // its animation-frame loop (#5770), so every history or stream assertion waits through `settle` / `shown`.

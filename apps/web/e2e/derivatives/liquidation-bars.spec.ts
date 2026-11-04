@@ -1,5 +1,5 @@
 // E24-Q02 (#772) PR 1: the SCR-054 liquidation bars, end to end (E24-D02 §6, §10, §11; E24-D04 A-16, A-25).
-// Written against the E24-S06 stack before it merges: #5767 (2bb21a070) and #5768 (a6a69561e), on #5763–#5766.
+// Written against the E24-S06 stack before it merges: #5767 (cf2a5a4b4) and #5768 (fabcc2adf), on #5763–#5766.
 // Names are that stack's `copy.ts`. The bars are `/market/metrics` `liquidation_notional` series (#5341's shape):
 // `"0"` for a bar without prints, so zero and unknown are told apart only by the feed's coverage (#5767 BQ-2). The
 // pane waits on that coverage, which the feed publishes from its animation-frame loop: every wait is `settle`/`shown`.
