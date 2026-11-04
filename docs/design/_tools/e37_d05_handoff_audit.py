@@ -29,7 +29,9 @@ Gates (each FAIL led by its name):
   G-SHEET   every component of the set has a sheet with Props, States, Tokens, Name and Owner
             story, a hand-off contract row and a Storybook row; every token a sheet names is in
             the token map; every hand-off A-row's Old text or anchor stands once in its file at
-            the base, and (the applied mode) its new text once in the working tree's `14` / `15`.
+            the base, and (the applied mode) its new text once in the working tree's `14` / `15`;
+            A-10, A-13 and A-16 carry the T2 clause, and so does the applied `15` entry of the
+            component each amends (G-T2.6 on the amendments, D02's one rule).
   G-DECK    the JSON Lines twin (one row per line) equals the deck tables and its slot samples
             section 8.4; every row has the nine fields and the `frozen` flag and no other; keys,
             kinds and statuses are from their sets (merged, RULED, PROPOSED); the head's caps are
@@ -55,8 +57,8 @@ Gates (each FAIL led by its name):
   G-STATUS  a deck row whose source line marks its string PROPOSED stays PROPOSED; a merged row's
             first cite is a merged file; a RULED row cites D03, D04 or its ruling; section 3.1
             keeps the `application` role PROPOSED until E37-Q05's run, never merged or RULED.
-  G-CHECKLIST section 13 holds DA-1 ... DA-17 in order: DA-1 ... DA-7 cite `14`'s seven boxes,
-            DA-8 ... DA-17 cite D04's SC-1 ... SC-10, each on the line that starts with its SC id.
+  G-CHECKLIST section 13 holds DA-1 ... DA-18 in order: DA-1 ... DA-7 cite `14`'s seven boxes,
+            DA-8 ... DA-18 cite D04's SC-1 ... SC-11, each on the line that starts with its SC id.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e37_d05_handoff_audit.py --stage deck --check   (exit 1 on any
@@ -137,6 +139,18 @@ COMPONENTS = (
 SHEET_FIELDS = ("Props", "States", "Tokens", "Name", "Owner story")
 # G-T2.6 (rule 32): FZ-5 is a T2 key, so every component list names both T2 parts
 T2_PARTS = (("CMP-079 RbacGate", r"CMP-079\b"), ("the CMP-019 `lock`", r"CMP-019\b[^\n]*`lock`"))
+# G-T2.6 on the amendments: the A-rows that amend a component whose controls D02 gates carry the
+# one T2 clause (D02's one rule), and the applied `15` entry of that component holds it too
+T2_ROWS = {"A-10": "CMP-153", "A-13": "CMP-236", "A-16": "CMP-257"}
+T2_CLAUSE = (
+    "T2 per E09-D09 " + SECT + "2.2 while viewing as, for a Viewer, while armed or while the"
+    " vocabulary is unavailable, as E37-D02 " + SECT + "3 gates it: it keeps its native role and"
+    ' its full label and carries `aria-disabled="true"`, never the `disabled` attribute, so it'
+    " stays in the Tab order and a menu item stays arrow-reachable; the CMP-019 `lock` glyph"
+    ' (`decorative=false`, accessible name "Not available") leads the full label; CMP-079'
+    " RbacGate wraps the role legs; `aria-describedby` points at the one notice"
+)
+DA_ROWS = 18  # section 13: `14`'s seven boxes, then D04's SC-1 ... SC-11
 FIELDS = (
     "key",
     "text",
@@ -748,6 +762,28 @@ def applied(t: Texts) -> list[str]:
     return bad
 
 
+def cat_entry(cat: str, cmp: str) -> str:
+    """A component's entry in the working tree's `15`: its heading up to the next heading."""
+    i = cat.find(f"\n### {cmp} ")
+    if i < 0:
+        return ""
+    j = cat.find("\n### ", i + 1)
+    return cat[i : j if j > 0 else len(cat)]
+
+
+def t2_clause(t: Texts) -> list[str]:
+    """G-T2.6 on the amendments: each T2 A-row's text carries the clause, and so does the applied
+    `15` entry of the component it amends."""
+    bad = []
+    wants = {aid: want for aid, _, want, _, _ in a_edits(t.hand)}
+    for aid, cmp in T2_ROWS.items():
+        if not any(T2_CLAUSE in w for w in wants.get(aid, [])):
+            bad.append(f"{aid}: its text for {cmp} carries no T2 clause (G-T2.6)")
+        if T2_CLAUSE not in cat_entry(t.cats[1], cmp):
+            bad.append(f"{cmp}: its applied `15` entry carries no T2 clause ({aid}, G-T2.6)")
+    return bad
+
+
 def g_sheet(t: Texts, vals: dict[str, str]) -> list[str]:
     bad = []
     three = section(t.spec, "## 3.")
@@ -790,7 +826,7 @@ def g_sheet(t: Texts, vals: dict[str, str]) -> list[str]:
              (f"hand-off {SECT}D", section(t.hand, f"## {SECT}D")))  # fmt: skip
     bad += [f"{where} does not name {name} (G-T2.6)"
             for where, text in lists for name, rx in T2_PARTS if not re.search(rx, text)]  # fmt: skip
-    return bad + applied(t) + anchor_problems(t, vals, "SHEET:")
+    return bad + t2_clause(t) + applied(t) + anchor_problems(t, vals, "SHEET:")
 
 
 def g_deck(t: Texts, vals: dict[str, str]) -> list[str]:
@@ -1114,9 +1150,9 @@ def g_status(t: Texts, vals: dict[str, str]) -> list[str]:
 def g_checklist(t: Texts, vals: dict[str, str]) -> list[str]:
     da = rows(section(t.spec, "## 13."), "DA")
     ids = [r[0] for r in da]
-    want = [f"DA-{n}" for n in range(1, 18)]
+    want = [f"DA-{n}" for n in range(1, DA_ROWS + 1)]
     if ids != want:
-        return [f"§13 holds {ids}, not DA-1 ... DA-17 in order"]
+        return [f"§13 holds {ids}, not DA-1 ... DA-{DA_ROWS} in order"]
     bad = []
     for n, r in enumerate(da, 1):
         if n <= 7:
@@ -1374,6 +1410,24 @@ def lift(aid: str) -> Mutation:
     return f
 
 
+def drop_t2(aid: str) -> Mutation:
+    """Drops the T2 clause from one A-row and from its applied `15` text alike, so the applied
+    mode still matches and only the T2 check can see it."""
+
+    def f(t: Texts) -> Texts:
+        i = t.hand.find(f"- **{aid} {ARROW} ")
+        end = t.hand.find("\n- **A-", i + 1)
+        j = t.hand.find(T2_CLAUSE, i)
+        k = t.cats[1].find(T2_CLAUSE, t.cats[1].find(f"\n### {T2_ROWS[aid]} "))
+        if i < 0 or j < 0 or k < 0 or (0 <= end < j):
+            raise SystemExit(f"self-test: {aid} or its `15` entry carries no T2 clause")
+        hand = t.hand[:j] + t.hand[j + len(T2_CLAUSE) :]
+        cat = t.cats[1][:k] + t.cats[1][k + len(T2_CLAUSE) :]
+        return replace(t, hand=hand, cats=(t.cats[0], cat))
+
+    return f
+
+
 def drop_row(lead: str) -> Mutation:
     def f(t: Texts) -> Texts:
         ls = t.spec.split("\n")
@@ -1447,6 +1501,8 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
              '`gateType: "AND"|"OR"|"NOT"`')),
     ("G-SHEET", "A-18's pointer line above its anchor in `14`",
      lift("A-18")),
+    ("G-SHEET", "A-13's T2 clause dropped, in its row and its applied `15` text", drop_t2("A-13")),
+    ("G-CHECKLIST", "DA-18 dropped", drop_row("DA-18")),
 )
 
 # deck-only mode: the twin alone, so every mutation edits the JSON Lines rows or head
