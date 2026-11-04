@@ -156,4 +156,21 @@ describe("Typography stories", () => {
     const host = await mount(<Story />);
     expect(host.querySelector("[data-cmp='CMP-020']")).not.toBeNull();
   });
+
+  // E05-Q02 F-3 (axe `heading-order`, a moderate finding the story gate does not fail on): a
+  // story's headings never skip a level, so HeadingLevelVsStyle's h1 -> h4 jump cannot return.
+  it.each(Object.entries(composeStories(stories)))(
+    "%s never skips a heading level",
+    async (_n, Story) => {
+      const host = await mount(<Story />);
+      const levels = within(host)
+        .queryAllByRole("heading")
+        .map((h) => Number(h.tagName.slice(1)));
+      levels.slice(1).forEach((level, i) => {
+        expect(level, `heading ${i + 2} after h${levels[i]}`).toBeLessThanOrEqual(
+          (levels[i] ?? 0) + 1,
+        );
+      });
+    },
+  );
 });
