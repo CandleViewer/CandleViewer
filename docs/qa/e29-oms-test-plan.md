@@ -385,7 +385,7 @@ restating them. C5 adds the reconnect storm around a partial close; E49-C1 stops
 | C3 | [Cancel exactly at fill](charters/E29-charter-3-cancel-at-fill.md) | S3; `110001` on a cancel; `already_terminal` then reconcile; S-36 | T5 | Q06 |
 | C4 | [Manager scope probing](charters/E29-charter-4-manager-scope-probing.md) | S-08, S-22; AC-06; E29-X02's matrix is the server oracle | T1, T5 | Q06, X02 |
 | C5 | [Reconnect storm while a partial close is in flight](charters/E29-charter-5-reconnect-storm-partial-close.md) | S1, S4, S5; S03 with T05 and T06 | T5 | Q06 |
-| C6 | [Keyboard only](charters/E29-charter-6-keyboard-only.md) | E29-D05 K-01 to K-16 | T1, T2 | Q06, Q05 |
+| C6 | [Keyboard only](charters/E29-charter-6-kbd-only.md) | E29-D05 K-01 to K-16 | T1, T2 | Q06, Q05 |
 | C7 | [Screen reader](charters/E29-charter-7-screen-reader.md) | E29-D05 §14 SR-01 to SR-13 | owner-run | Q05, Q06 |
 
 ## 6. Cases
