@@ -197,7 +197,7 @@ noted in `CHANGELOG.md` under _Security_.
 ## 5. Dependency and supply-chain policy
 
 - Licences must be on the allowlist in `CONSTITUTION.md` §9 #14 (the single source — it also carries the
-  clause for the two vendored typefaces); the denylist and "unknown licence fails CI" live there too.
+  clauses for the two vendored typefaces and the backup image's PostgreSQL client packages); the denylist and "unknown licence fails CI" live there too.
 - Lockfiles are committed; CI installs frozen. Container base images are pinned by digest and rebuilt
   weekly.
 - CI gates: CodeQL + Semgrep + Bandit (`sast`), `pip-audit` + `npm audit` + the Dependabot alert
