@@ -54,7 +54,11 @@ _ROUTES = {
 }
 _MISSING = UUID("0e000000-0000-4000-8000-0000000000ee")  # no order, no account
 _SENT_HEADERS = frozenset({"retry-after", "idempotency-replayed", "etag"})
-_GONE, _RATE, _VENUE, _no = er._GONE, er._RATE, er._VENUE, er._no
+# The unit tests' private names this module drives, bound once: a rename there fails here, at
+# import, and not at a use site below.
+_GONE, _RATE, _VENUE, _no, _TRADE = er._GONE, er._RATE, er._VENUE, er._no, er._TRADE
+_CUT, _claimed = am._CUT, am._claimed
+_full, _refused, _row, _stored = ca._full, ca._refused, ca._row, ca._stored
 Drive = Callable[[], Awaitable[httpx.Response]]
 
 
@@ -137,7 +141,7 @@ async def _cancel(
 
 
 async def _amend(
-    held: str | None = "submitted", *settles: str, body: object = am._CUT, who: str = "owner",
+    held: str | None = "submitted", *settles: str, body: object = _CUT, who: str = "owner",
     order: str = "row", stale: bool = False, change: Callable[[er.World], None] | None = None,
     refuse: BaseException | None = None, **over: Any,
 ) -> httpx.Response:  # fmt: skip
@@ -203,7 +207,7 @@ _AMEND: dict[str, Case] = {
     "401": ("unauthenticated", partial(_amend, who="nobody")),
     "403": ("forbidden", partial(_amend, who="viewer")),
     "404": ("not_found", partial(_amend, order="missing")),
-    "409": ("idempotency_in_flight", partial(_amend, change=am._claimed(KEY))),  # E29-TC-111
+    "409": ("idempotency_in_flight", partial(_amend, change=_claimed(KEY))),  # E29-TC-111
     "412": ("version_conflict", partial(_amend, stale=True)),  # E29-TC-111, E29-TC-509
     "422": ("order_not_amendable", partial(_amend, "cancel_pending")),  # E29-TC-509
     "429": ("exchange_rate_limited", partial(_amend, "submitted", "submitted", answer=_NO_TOKEN)),
@@ -217,8 +221,8 @@ _CANCEL_ALL: dict[str, Case] = {
     "400": ("validation_failed", partial(_cancel_all, body={"accounts": []})),
     "401": ("unauthenticated", partial(_cancel_all, who="nobody")),
     "403": ("forbidden", partial(_cancel_all, who="viewer")),
-    "409": ("idempotency_key_reuse", partial(_cancel_all, change=ca._stored)),
-    "429": ("rate_limited", partial(_cancel_all, change=ca._full)),  # the guard holds all its keys
+    "409": ("idempotency_key_reuse", partial(_cancel_all, change=_stored)),
+    "429": ("rate_limited", partial(_cancel_all, change=_full)),  # the guard holds all its keys
     "500": (
         "internal_error",
         partial(_cancel_all, change=lambda w: setattr(w.oms, "broken", True)),
@@ -391,10 +395,10 @@ async def test_cancel_all_orders_failing_two_of_five_accounts_is_200_with_a_resu
     """E29-TC-105: an account's failure is its result, never a status; `requested`, `succeeded`."""
     world, accounts = ca.World(), [UUID(int=0xA000 + n) for n in range(5)]
     world.oms.exits.accounts = tuple(accounts)
-    world.oms.store.rows = [ca._row(n, account) for n, account in enumerate(accounts, 1)]
+    world.oms.store.rows = [_row(n, account) for n, account in enumerate(accounts, 1)]
     world.oms.exits.outcomes = {
-        UUID(int=2): ca._refused("exchange_error", 502, ret_code=110017),
-        UUID(int=4): ca._refused("store_unavailable", 503),
+        UUID(int=2): _refused("exchange_error", 502, ret_code=110017),
+        UUID(int=4): _refused("store_unavailable", 503),
     }  # fmt: skip
     answer = await ca.post(world)
     body = conforms("cancelAllOrders", answer)
@@ -412,7 +416,7 @@ def _managing(*accounts: UUID) -> Callable[[ca.World], None]:
 
     def grant(world: ca.World) -> None:
         rows = tuple(AccountGrant(account, True, True, False) for account in accounts)
-        snapshot = PrincipalSnapshot(MANAGER, frozenset({"manager"}), er._TRADE, rows)
+        snapshot = PrincipalSnapshot(MANAGER, frozenset({"manager"}), _TRADE, rows)
         assert world.principals is not None
         world.principals.tokens["manager"] = TradingPrincipal(SESSION, snapshot)
         world.oms.exits.grants[MANAGER] = rows
@@ -457,10 +461,10 @@ async def test_cancel_all_orders_counts_in_affected_only_the_orders_its_selectio
     never a recorded stop's row, never an order whose amend is in flight (C-2.6)."""
     world = ca.World()
     world.oms.store.rows = [
-        ca._row(1),
-        ca._row(2, intent="take_profit", reduce_only=True),
-        ca._row(3, provenance="recorded_stop", intent="stop_loss", reduce_only=True),
-        ca._row(4, intent="take_profit", reduce_only=True, lifecycle_state="amend_pending"),
+        _row(1),
+        _row(2, intent="take_profit", reduce_only=True),
+        _row(3, provenance="recorded_stop", intent="stop_loss", reduce_only=True),
+        _row(4, intent="take_profit", reduce_only=True, lifecycle_state="amend_pending"),
     ]  # fmt: skip
     affected = []
     for exclude, key in ((True, KEY), (False, ca.OTHER_KEY)):
