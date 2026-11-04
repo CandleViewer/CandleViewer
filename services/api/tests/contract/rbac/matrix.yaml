@@ -292,8 +292,8 @@ operations:
     permissions: ['alerts:read']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml at a PROPOSED path; slice 2 of #1130 (E40-S02) mounts it
+    state: executed
+    reason: a delivery not owned by the caller is a handler-level 404 (E40-S02, #1130; a PROPOSED path)
     request:
       path: {deliveryId: '1'}
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}

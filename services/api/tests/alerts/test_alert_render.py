@@ -18,7 +18,9 @@ from candleviewer.alerts.compiler import AlertCompiler
 from candleviewer.alerts.delivery_view import (
     CONTEXT_SYMBOLS_MAX,
     CONTEXT_TEXT_MAX,
+    CONTEXT_VALUES_MAX,
     delivery_kind,
+    public_context,
     silenced,
     storm_summary,
 )
@@ -337,7 +339,7 @@ def test_render_body_is_bounded_and_total(template: str, values: dict[str, str])
     assert clean_text(out) == out
 
 
-# --- CC-7: the kind and the summary -----------------------------------------------
+# --- CC-7: the kind, the summary and the served context -----------------------------------
 
 
 def test_delivery_kind_flags_must_be_true_booleans() -> None:
@@ -360,6 +362,43 @@ def test_storm_summary_symbols_are_bounded() -> None:
     assert len(got.symbols[0]) == CONTEXT_TEXT_MAX
 
 
+def test_public_context_never_serves_internal_keys() -> None:
+    assert public_context({"condition_hash": "h", "gates": [], "symbol": "X"}) == {"symbol": "X"}
+    assert public_context(None) == {}
+
+
+def any_metric(_name: str) -> MetricInfo:
+    return MetricInfo("t", False, "symbol")
+
+
+def test_public_context_drops_negative_counts_and_non_finite_numbers() -> None:
+    got = public_context({"suppressed": -1, "failed_delivery_id": -7,
+                          "values": {"a": float("nan"), "b": float("inf"), "c": 1.5}},
+                         any_metric)  # fmt: skip
+    assert got == {"values": {"c": 1.5}}
+
+
+def test_public_context_drops_a_values_key_past_64_characters() -> None:
+    got = public_context({"values": {"k" * 65: "1", "k" * 64: "2"}}, any_metric)
+    assert got == {"values": {"k" * 64: "2"}}
+
+
+def test_public_context_is_bounded() -> None:
+    ctx = {"values": {f"m{i}": "x" * 5000 for i in range(500)},
+           "symbols": [f"S{i}USDT" for i in range(500)], "reason": "r" * 5000}  # fmt: skip
+    got = public_context(ctx, any_metric)
+    assert len(got["values"]) == CONTEXT_VALUES_MAX
+    assert all(len(v) == CONTEXT_TEXT_MAX for v in got["values"].values())
+    assert len(got["symbols"]) == CONTEXT_SYMBOLS_MAX and len(got["reason"]) == CONTEXT_TEXT_MAX
+
+
+@pytest.mark.parametrize("key", ["suppressed_reason", "suppression_reason"])
+def test_public_context_serves_only_contract_suppression_reasons(key: str) -> None:
+    assert public_context({key: "storm"}) == {key: "storm"}
+    assert public_context({key: "desktop_off"}) == {key: "desktop_off"}
+    assert public_context({key: "made_up"}) == {}
+
+
 @pytest.mark.parametrize(
     ("context", "reason"),
     [({"silenced": "muted_symbol"}, "muted_symbol"), ({"silenced": "quiet_hours"}, "quiet_hours"),
@@ -369,6 +408,8 @@ def test_silenced_reads_only_the_two_reasons(
     context: dict[str, Any] | None, reason: str | None
 ) -> None:
     assert silenced(context) == reason
+    if context:
+        assert ("silenced" in public_context(context)) is (reason is not None)
 
 
 # --- the evaluator writes it ----------------------------------------------------------------
