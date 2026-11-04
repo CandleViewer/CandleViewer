@@ -55,6 +55,9 @@ describe("RecordedByPriceToggle", () => {
     expect(sw.getAttribute("aria-disabled")).toBe("true");
     expect(sw.hasAttribute("disabled")).toBe(false);
     expect(sw.getAttribute("aria-describedby")).toContain("notice");
+    // the notice form (one notice, many pointers) draws CMP-019 `lock` decoratively: the host's notice names the reason
+    expect(sw.closest(".cv-choice")?.querySelector(".cv-choice__lock svg")).not.toBeNull();
+    expect(screen.getAllByText("Read-only while viewing as alex.")).toHaveLength(1);
     sw.focus();
     expect(document.activeElement).toBe(sw);
     fireEvent.click(sw);
@@ -91,6 +94,13 @@ describe("ByPriceLegendRow", () => {
     expect(legend().textContent).toContain("No history before 06:30 UTC. Bybit publishes no");
   });
 
+  it("says a refused answer inside the polite status region", () => {
+    render(stories.Refused.render());
+    expect(within(legend()).getByRole("status").textContent).toBe(
+      "The server's answer could not be read, so nothing is drawn.",
+    );
+  });
+
   it.each([
     ["NotRecorded", "Not recorded before 15 Sep 08:00 UTC — this is not 'no liquidations'"],
     ["NeverRecorded", "No liquidation history for BTCUSDT. Bybit publishes none"],
@@ -105,11 +115,18 @@ describe("ByPriceLegendRow", () => {
 
   it("says stale in its status, offers Retry when failed, and renders nothing while off", () => {
     const { unmount } = render(stories.Stale.render());
-    expect(within(legend()).getByRole("status").textContent).toBe("Stale · last 10:59:00 UTC");
+    expect(within(legend()).getByRole("status").textContent).toBe("Stale 60s · last 10:59:00");
     unmount();
     const retry = vi.fn();
     const failed = render(stories.Failed.render());
-    expect(within(legend()).getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(
+      within(legend()).getByRole("button", {
+        name: "Retry loading recorded liquidations by price",
+      }),
+    ).toBeTruthy();
+    expect(within(legend()).getByRole("status").textContent).toBe(
+      "Couldn't load recorded liquidations by price",
+    );
     failed.unmount();
     const off = stories.viewOf(null, { phase: "off", retry });
     const { container } = render(<ByPriceLegendRow view={off} nowMs={0} />);

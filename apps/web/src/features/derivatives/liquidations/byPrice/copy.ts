@@ -45,9 +45,16 @@ export const COL_PRINTS = "Prints";
 export const LOADING = "Loading recorded liquidations by price…";
 export const RETRY_TITLE = "Couldn't load recorded liquidations by price";
 export const RETRY = "Retry";
+/** PROPOSED: the Retry button's accessible name; the visible label stays "Retry". */
+export const RETRY_LABEL = "Retry loading recorded liquidations by price";
 /** PROPOSED: an answer without its `estimated` flag, or of another shape, is refused and draws nothing (BQ 7). */
 export const REFUSED = "The server's answer could not be read, so nothing is drawn.";
-export const stale = (when: string): string => `Stale · last ${when}`;
+/**
+ * The merged deck's stale chip form (`derivatives.chip.stale.t1`: "Stale 7s · last 13:42:05"): seconds since the last
+ * good read, then its time. The time is UTC, as the deck's HH:MM:SS is; the form carries no zone word.
+ */
+export const stale = (seconds: number, when: string): string =>
+  `Stale ${String(seconds)}s · last ${when}`;
 
 const pad = (n: number): string => String(n).padStart(2, "0");
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

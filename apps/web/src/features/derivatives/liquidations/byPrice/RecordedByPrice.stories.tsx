@@ -32,6 +32,7 @@ export const viewOf = (
 });
 
 const Row = ({ view }: { readonly view: ByPriceView }): JSX.Element => (
+  // "Price pane legend" is story-local, not deck copy: the CMP-199 host owns the real list's name
   <ul aria-label="Price pane legend">
     <ByPriceLegendRow view={view} nowMs={NOW} />
   </ul>
