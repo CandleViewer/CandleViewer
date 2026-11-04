@@ -1,0 +1,384 @@
+"""#3319 B1b (ADR-0041 sections 1 and 3; 24 §15.8): the sidecar's ops against a real backup root
+under `tmp_path`, its own record and its floor. `plan` mints, `verify` checks the location its
+record holds on one descriptor and records the outcome, `remove` quarantines (never the newest
+of a kind), `run` and `restore` answer until B1c and B2."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import uuid
+from datetime import timedelta
+from pathlib import Path
+from typing import Any, cast
+
+import pytest
+
+from cvbackup import age_format, protocol, tasks
+from cvbackup.ledger import FILE, Ledger, timestamp
+from cvbackup.ops import OpError
+from cvbackup.paths import LEDGER_DIR, QUARANTINE_DIR, Root
+from tests.unit.backup_sidecar._sidecar import (
+    T0,
+    Sidecar,
+    age_bytes,
+    build,
+    config,
+    exists,
+    mode,
+    read,
+    recipient,
+    write,
+)
+
+
+async def _sidecar(tmp_path: Path, sock: str, **changes: Any) -> Sidecar:
+    return await build(config(tmp_path, sock, **changes))
+
+
+async def _refused(sidecar: Sidecar, op: str, **args: str) -> str:
+    with pytest.raises(OpError) as refused:
+        await sidecar.handle(op, **args)
+    return refused.value.code
+
+
+def _entries(sidecar: Sidecar) -> list[dict[str, Any]]:
+    lines = read(Path(sidecar.root.path, LEDGER_DIR, FILE)).splitlines()
+    return [cast(dict[str, Any], protocol.loads(line)) for line in lines]
+
+
+# -- plan ------------------------------------------------------------------------------------
+
+
+async def test_plan_mints_location_under_root_for_kind(tmp_path: Path, sock: str) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    for kind in ("pg_dump", "config_bundle"):
+        result = await sidecar.handle("plan", kind=kind)
+        location = str(result["location"])
+        assert protocol.is_location(location) and sidecar.root.relative(location) is not None
+        assert location.startswith(f"{sidecar.root.path}/{kind}/")
+        assert result["encrypted"] is True
+        assert result["encryption_ref"] == age_format.fingerprint(sidecar.config.recipient)
+    assert _entries(sidecar) == []  # a plan records nothing and spends no run
+
+
+async def test_plan_unsupported_kind_is_kind_not_supported(tmp_path: Path, sock: str) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    for kind in ("pg_basebackup", "questdb_snapshot", "parquet_sync"):
+        assert await _refused(sidecar, "plan", kind=kind) == "kind_not_supported"
+
+
+async def test_plan_recipient_not_matching_pin_is_recipient_mismatch(
+    tmp_path: Path, sock: str
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock, pin=age_format.fingerprint(recipient()))
+    assert await _refused(sidecar, "plan", kind="pg_dump") == "recipient_mismatch"
+
+
+async def test_floor_runs_over_cap_in_window_are_runs_capped(tmp_path: Path, sock: str) -> None:
+    sidecar = await _sidecar(tmp_path, sock, run_cap=2, run_window=timedelta(hours=1))
+    for _ in range(2):
+        await sidecar.ledger.append("started", str(uuid.uuid4()), kind="pg_dump")
+    assert await _refused(sidecar, "plan", kind="pg_dump") == "runs_capped"
+    sidecar.clock.advance(hours=1)  # the window rolls past both
+    assert (await sidecar.handle("plan", kind="config_bundle"))["encrypted"] is True
+
+
+async def test_floor_run_cap_survives_restart(tmp_path: Path, sock: str) -> None:
+    sidecar = await _sidecar(tmp_path, sock, run_cap=1)
+    await sidecar.ledger.append("started", str(uuid.uuid4()), kind="pg_dump")
+    sidecar.ledger.close()
+    restarted = await build(sidecar.config, sidecar.clock)
+    assert restarted.ledger.readable
+    assert await _refused(restarted, "plan", kind="pg_dump") == "runs_capped"
+
+
+async def test_plan_with_an_unreadable_record_is_ledger_unreadable(
+    tmp_path: Path, sock: str
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    write(Path(sidecar.root.path, LEDGER_DIR, FILE), b"not a record\n")
+    await sidecar.ledger.load()
+    assert await _refused(sidecar, "plan", kind="pg_dump") == "ledger_unreadable"
+
+
+# -- run and restore (B1c, B2) ---------------------------------------------------------------
+
+
+async def test_run_checks_its_request_then_answers_tool_failed_in_b1b(
+    tmp_path: Path, sock: str
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    location = str((await sidecar.handle("plan", kind="pg_dump"))["location"])
+    fresh = {"backup_id": str(uuid.uuid4()), "kind": "pg_dump", "location": location}
+    assert await _refused(sidecar, "run", **fresh) == "tool_failed"
+    assert _entries(sidecar) == [] and not exists(location)  # no run spent, no file
+    other_kind = {**fresh, "kind": "config_bundle"}
+    assert await _refused(sidecar, "run", **other_kind) == "bad_request"
+    assert await _refused(sidecar, "run", **{**fresh, "kind": "pg_basebackup"}) == (
+        "kind_not_supported"
+    )
+    outside = location.replace(sidecar.root.path, str(tmp_path / "elsewhere"))
+    assert await _refused(sidecar, "run", **{**fresh, "location": outside}) == "bad_request"
+    backup_id, existing, _ = await sidecar.finished()
+    assert await _refused(sidecar, "run", **{**fresh, "backup_id": backup_id}) == (
+        "location_mismatch"
+    )
+    assert await _refused(sidecar, "run", **{**fresh, "location": existing}) == (
+        "location_mismatch"
+    )
+
+
+async def test_restore_is_validated_and_answered_restore_not_available(
+    tmp_path: Path, sock: str
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    backup_id, location, digest = await sidecar.finished()
+    args = {"job_id": str(uuid.uuid4()), "backup_id": backup_id, "location": location,
+            "digest": digest}  # fmt: skip
+    assert await _refused(sidecar, "restore", **args) == "restore_not_available"
+
+
+# -- verify ----------------------------------------------------------------------------------
+
+
+async def test_verify_hashes_and_checks_one_descriptor_and_records_it(
+    tmp_path: Path, sock: str
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    backup_id, location, digest = await sidecar.finished()
+    result = await sidecar.handle("verify", backup_id=backup_id, location=location)
+    assert result == {"method": "checksum", "checksum_sha256": digest}
+    checked = _entries(sidecar)[-1]
+    assert (checked["e"], checked["outcome"], checked["digest"]) == ("checked", "ok", digest)
+
+
+async def test_verify_digest_is_of_the_descriptor_opened_not_a_file_swapped_in(
+    tmp_path: Path, sock: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    backup_id, location, digest = await sidecar.finished()
+    real = Root.open_artefact
+
+    def open_then_swap(root: Root, where: str) -> tuple[int, int]:
+        opened = real(root, where)
+        swap = Path(where + ".swap")
+        swap.write_bytes(age_bytes(seed=99))
+        os.replace(swap, where)  # a different file now has the name
+        return opened
+
+    monkeypatch.setattr(Root, "open_artefact", open_then_swap)
+    result = await sidecar.handle("verify", backup_id=backup_id, location=location)
+    assert result["checksum_sha256"] == digest
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(age_bytes(stanzas=("X25519", "X25519")), id="two-stanzas"),
+        pytest.param(age_bytes(stanzas=("ssh-ed25519",)), id="other-type"),
+        pytest.param(age_bytes(pad=4096), id="over-4kib"),
+    ],
+)
+async def test_verify_header_malformed_is_recorded_and_refused(
+    tmp_path: Path, sock: str, data: bytes
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    backup_id, location, _ = await sidecar.finished(content=data)
+    assert await _refused(sidecar, "verify", backup_id=backup_id, location=location) == (
+        "header_malformed"
+    )
+    assert _entries(sidecar)[-1]["outcome"] == "header_malformed"
+
+
+async def test_verify_bytes_changed_since_the_run_are_digest_mismatch(
+    tmp_path: Path, sock: str
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    backup_id, location, _ = await sidecar.finished()
+    data = bytearray(read(location))
+    data[-1] ^= 1
+    write(location, bytes(data))
+    assert await _refused(sidecar, "verify", backup_id=backup_id, location=location) == (
+        "digest_mismatch"
+    )
+    assert _entries(sidecar)[-1]["outcome"] == "digest_mismatch"
+
+
+async def test_verify_only_the_location_its_record_holds(tmp_path: Path, sock: str) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    backup_id, location, _ = await sidecar.finished()
+    _, other, _ = await sidecar.finished()
+    assert await _refused(sidecar, "verify", backup_id=backup_id, location=other) == (
+        "location_mismatch"
+    )
+    assert await _refused(sidecar, "verify", backup_id=str(uuid.uuid4()), location=location) == (
+        "unknown_backup"
+    )
+
+
+@pytest.mark.parametrize("how", ["deleted", "symlink"])
+async def test_verify_a_missing_or_linked_artefact_is_artefact_missing(
+    tmp_path: Path, sock: str, how: str
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    backup_id, location, _ = await sidecar.finished()
+    moved = tmp_path / "moved.age"
+    os.replace(location, moved)
+    if how == "symlink":
+        os.symlink(moved, location)
+    assert await _refused(sidecar, "verify", backup_id=backup_id, location=location) == (
+        "artefact_missing"
+    )
+    assert _entries(sidecar)[-1]["outcome"] == "artefact_missing"
+
+
+async def test_verify_one_at_a_time_is_busy(tmp_path: Path, sock: str) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    backup_id, location, _ = await sidecar.finished()
+    async with sidecar.ops._verifying:
+        assert await _refused(sidecar, "verify", backup_id=backup_id, location=location) == ("busy")
+
+
+async def test_verify_and_remove_with_an_unreadable_record_are_ledger_unreadable(
+    tmp_path: Path, sock: str
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    backup_id, location, _ = await sidecar.finished()
+    write(Path(sidecar.root.path, LEDGER_DIR, FILE), b'{"torn":', append=True)
+    await sidecar.ledger.load()
+    for op in ("verify", "remove"):
+        assert await _refused(sidecar, op, backup_id=backup_id, location=location) == (
+            "ledger_unreadable"
+        )
+    assert exists(location)
+
+
+# -- remove and the floor ----------------------------------------------------------------------
+
+
+async def test_remove_renames_to_quarantine_at_once_and_keeps_bytes(
+    tmp_path: Path, sock: str
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    older, location, _ = await sidecar.finished()
+    await sidecar.finished()
+    data = read(location)
+    result = await sidecar.handle("remove", backup_id=older, location=location)
+    assert result == {"state": "quarantined", "purge_after": timestamp(T0 + timedelta(days=7))}
+    kept = Path(sidecar.root.path, QUARANTINE_DIR, f"{older}.age")
+    assert not exists(location) and read(kept) == data
+    assert mode(kept) == 0o600
+    again = await sidecar.handle("remove", backup_id=older, location=location)
+    assert again == {"state": "already_removed", "purge_after": result["purge_after"]}
+
+
+async def test_floor_remove_newest_finished_of_kind_is_refused_newest_artefact(
+    tmp_path: Path, sock: str
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    only, location, _ = await sidecar.finished("config_bundle")
+    assert await _refused(sidecar, "remove", backup_id=only, location=location) == (
+        "newest_artefact"
+    )
+    assert exists(location)
+
+
+async def test_floor_newest_is_judged_from_ledger_order_not_request_or_covers(
+    tmp_path: Path, sock: str
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    older, older_at, _ = await sidecar.finished(covers_to=T0 + timedelta(days=1))
+    newest, newest_at, _ = await sidecar.finished(covers_to=T0)  # finished later, covers less
+    assert await _refused(sidecar, "remove", backup_id=newest, location=newest_at) == (
+        "newest_artefact"
+    )
+    assert (await sidecar.handle("remove", backup_id=older, location=older_at))["state"] == (
+        "quarantined"
+    )
+
+
+async def test_remove_location_not_in_ledger_is_location_mismatch(
+    tmp_path: Path, sock: str
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    older, _, _ = await sidecar.finished()
+    _, newest_at, _ = await sidecar.finished()
+    assert await _refused(sidecar, "remove", backup_id=older, location=newest_at) == (
+        "location_mismatch"
+    )
+    assert exists(newest_at)
+
+
+async def test_remove_of_a_file_already_gone_is_already_removed_and_recorded(
+    tmp_path: Path, sock: str
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    older, location, _ = await sidecar.finished()
+    await sidecar.finished()
+    os.unlink(location)
+    result = await sidecar.handle("remove", backup_id=older, location=location)
+    assert result == {"state": "already_removed", "purge_after": timestamp(T0)}
+    assert _entries(sidecar)[-1]["e"] == "purged"
+
+
+async def test_remove_purges_only_after_grace_period(tmp_path: Path, sock: str) -> None:
+    sidecar = await _sidecar(tmp_path, sock, grace=timedelta(hours=2))
+    older, location, _ = await sidecar.finished()
+    await sidecar.finished()
+    await sidecar.handle("remove", backup_id=older, location=location)
+    kept = Path(sidecar.root.path, QUARANTINE_DIR, f"{older}.age")
+    sidecar.clock.advance(hours=2, microseconds=-1)
+    assert await sidecar.ops.sweep() == 0 and exists(kept)
+    sidecar.clock.advance(microseconds=1)
+    assert await sidecar.ops.sweep() == 1 and not exists(kept)
+    assert _entries(sidecar)[-1]["e"] == "purged"
+    assert await sidecar.ops.sweep() == 0
+    again = await sidecar.handle("remove", backup_id=older, location=location)
+    assert again["state"] == "already_removed"
+
+
+async def test_a_cancelled_removal_still_lands_whole(tmp_path: Path, sock: str) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    older, location, _ = await sidecar.finished()
+    await sidecar.finished()
+    removing = asyncio.ensure_future(sidecar.handle("remove", backup_id=older, location=location))
+    await asyncio.sleep(0)  # started: it holds the lock and is renaming in a worker thread
+    removing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await removing
+    while tasks.running():  # the removal, and its entry, run on to their end
+        await asyncio.wait(tasks.running())
+    assert sidecar.ledger.get(older).state == "quarantined"
+    assert not exists(location)
+
+
+async def test_uninterrupted_work_finishes_after_its_caller_is_cancelled() -> None:
+    gate, done = asyncio.Event(), list[bool]()
+
+    async def work() -> int:
+        await gate.wait()
+        done.append(True)
+        return 1
+
+    caller = asyncio.ensure_future(tasks.uninterrupted(work(), name="test"))
+    await asyncio.sleep(0)
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    gate.set()
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert done == [True]
+
+
+async def test_a_ledger_replays_after_a_restart_with_every_state(tmp_path: Path, sock: str) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    older, location, _ = await sidecar.finished()
+    newest, _, _ = await sidecar.finished()
+    await sidecar.handle("remove", backup_id=older, location=location)
+    restarted = Ledger(sidecar.root, sidecar.clock)
+    await restarted.load()
+    assert restarted.readable and restarted.get(older).state == "quarantined"
+    assert restarted.newest("pg_dump") == newest
+    restarted.close()

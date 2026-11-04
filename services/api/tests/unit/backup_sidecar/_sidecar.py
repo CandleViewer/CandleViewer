@@ -1,13 +1,28 @@
 """Test support for the backup sidecar (#3319 B1b): generated age recipients and well-formed age
-headers (no key, no crypto: a header's stanza values are random bytes). Every value is
-generated per test; no network, nothing outside `tmp_path`."""
+headers (no key, no crypto: a header's stanza values are random bytes), a fake UTC clock, a
+configuration under `tmp_path` and an in-process sidecar built on it. Every value is generated per
+test; no network, nothing outside `tmp_path`."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import os
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
 
+from cvbackup import age_format, protocol
+from cvbackup.config import SidecarConfig
+from cvbackup.floor import Floor
+from cvbackup.ledger import Ledger, timestamp
+from cvbackup.ops import KINDS, Ops
+from cvbackup.paths import LEDGER_DIR, QUARANTINE_DIR, Root
+
+T0 = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
 _CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 
 
@@ -60,3 +75,99 @@ def age_bytes(
         lines.append(_b64(32, rng))
     lines.append(b"--- " + _b64(32, rng))
     return b"\n".join(lines) + b"\n" + rng.take(payload)
+
+
+def _write(location: str, data: bytes) -> None:
+    fd = os.open(location, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+
+
+def exists(path: str | Path) -> bool:
+    return os.path.lexists(path)
+
+
+def read(path: str | Path) -> bytes:
+    return Path(path).read_bytes()
+
+
+def write(path: str | Path, data: bytes, *, append: bool = False) -> None:
+    with Path(path).open("ab" if append else "wb") as out:
+        out.write(data)
+
+
+def mode(path: str | Path) -> int:
+    return os.stat(path).st_mode & 0o7777
+
+
+class Clock:
+    """A UTC clock that moves only when told."""
+
+    def __init__(self, now: datetime = T0) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def advance(self, **delta: float) -> None:
+        self.now += timedelta(**delta)
+
+
+def config(tmp_path: Path, sock: str, **changes: Any) -> SidecarConfig:
+    """`sock`: the `sock` fixture's path (an AF_UNIX path holds at most 107 bytes)."""
+    root = tmp_path / "backups"
+    root.mkdir(exist_ok=True)
+    to = recipient()
+    values: dict[str, Any] = {
+        "socket": sock,
+        "root": str(root),
+        "api_uid": os.getuid(),
+        "recipient": to,
+        "pin": age_format.fingerprint(to),
+    }
+    values.update(changes)
+    return SidecarConfig(**values)
+
+
+@dataclass
+class Sidecar:
+    config: SidecarConfig
+    root: Root
+    ledger: Ledger
+    floor: Floor
+    ops: Ops
+    clock: Clock
+    server: asyncio.Server | None = None
+
+    async def finished(
+        self, kind: str = "pg_dump", content: bytes | None = None, *, covers_to: datetime = T0,
+        backup_id: str | None = None,
+    ) -> tuple[str, str, str]:  # fmt: skip
+        """A run the record holds as finished, its file in place: (backup id, location, digest)."""
+        backup_id, name = backup_id or str(uuid.uuid4()), str(uuid.uuid4())
+        location = f"{self.root.path}/{kind}/{name}.age"
+        data = age_bytes(seed=uuid.UUID(name).int) if content is None else content
+        await asyncio.to_thread(_write, location, data)
+        digest = hashlib.sha256(data).hexdigest()
+        await self.ledger.append("started", backup_id, kind=kind)
+        await self.ledger.append(
+            "finished", backup_id, kind=kind, location=location, digest=digest,
+            covers_to=timestamp(covers_to), size_bytes=len(data),
+        )  # fmt: skip
+        return backup_id, location, digest
+
+    async def handle(self, op: str, /, **args: str) -> dict[str, object]:
+        request = protocol.Request(str(uuid.uuid4()), op, 60, args)
+        return await self.ops.handle(request, lambda pct: None)
+
+
+async def build(cfg: SidecarConfig, clock: Clock | None = None) -> Sidecar:
+    clock = Clock() if clock is None else clock
+    root = Root(cfg.root)
+    root.ensure((LEDGER_DIR, QUARANTINE_DIR, *sorted(KINDS)))
+    ledger = Ledger(root, clock)
+    await ledger.load()
+    floor = Floor(root, ledger, run_cap=cfg.run_cap, run_window=cfg.run_window, grace=cfg.grace)
+    return Sidecar(cfg, root, ledger, floor, Ops(cfg, root, ledger, floor, clock=clock), clock)
