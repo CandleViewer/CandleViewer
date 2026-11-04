@@ -42,11 +42,11 @@ Board 09 of 10 (§0 L72). Grid (19200, 3200); 3280 x 1934 px; "page E20-D02 · b
 - spec L60: "BTCUSDT"
 - spec L53: "ETHUSDT"
 - spec L109: "Export CSV"
-- W-7 (§12 L385, 14:759): "forming"
-- W-25 (§12 L403, PROPOSED): "Exporting 86,400 bars."
-- W-19 (§12 L397, PROPOSED (14:761 pattern)): "Exporting 86,400 bars: 40 %"
+- W-7 (§12 L386, 14:759): "forming"
+- W-25 (§12 L404, PROPOSED): "Exporting 86,400 bars."
+- W-19 (§12 L398, PROPOSED (14:761 pattern)): "Exporting 86,400 bars: 40 %"
 - spec L55: "Cancel"
-- W-20 (§12 L398, PROPOSED): "Export cancelled. No file was saved."
+- W-20 (§12 L399, PROPOSED): "Export cancelled. No file was saved."
 
 ## Copy gaps (12)
 
@@ -71,7 +71,7 @@ Board 09 of 10 (§0 L72). Grid (19200, 3200); 3280 x 1934 px; "page E20-D02 · b
 
 ## Sources (3)
 
-- spec docs/design/E20/E20-D02.md md5 e252dfbc3ddbb75528df27d70abee7dd at the boards PR (§0 L72); the ruling of record folded (BQ-0 … BQ-9); no hand-off file
+- spec docs/design/E20/E20-D02.md md5 40669dbd39cb28403fa89307f09dd676 at the boards PR (§0 L72); the ruling of record folded (BQ-0 … BQ-9); no hand-off file
 - docs/design/E18/E18-D02.md md5 fd75a21fdc0b045c206182da712d94a8 (L124: the delta width floor 40 px, the collapse floor's seed, §4.1)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a060c51bd4bd1450307728ddf (tick and qty step: BTCUSDT 0.10 / 0.001, ETHUSDT 0.01 / 0.001)
 

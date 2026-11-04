@@ -154,7 +154,9 @@ def is_t2(n: dict) -> bool:
 def t2_checks() -> None:
     sites = ((8, "SCR-033/source-unavailable", "checkbox OI Δ · T2 2a", "T2 reason (W-14)", k.W("W-14")),
              (8, "SCR-033/view-as", "CMP-001 Apply · T2 2a", "words", k.W("W-17", user=k.VIEW_AS_USER)),
-             (7, "SCR-033/row-menu", "menuitem Move up · T2 2b", "T2 reason (W-16, echoed)", k.W("W-16", 0)))
+             (7, "SCR-033/row-menu", "menuitem Move up · T2 2a", "T2 reason (W-16, second line)", k.W("W-16", 0)),
+             (8, "SCR-033/apply-no-write", "CMP-001 Apply · T2 2a", "T2 reason (Apply)",
+              "Your role can't save workspaces."))
     for nn, fid, nm, rn, words in sites:
         ns = frame_nodes(load(nn), fid)
         t2 = [n for n in ns if n["name"] == nm]

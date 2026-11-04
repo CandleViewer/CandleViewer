@@ -60,21 +60,23 @@ def reorder() -> tuple[k.Node, tuple[str, list[str]]]:
 def row_menu() -> tuple[k.Node, tuple[str, list[str]]]:
     fid = "SCR-033/row-menu"
     first, last = k.W("W-16", 0), k.W("W-16", 1)
-    up = ui.t2_box(k.S("Move up"), name="menuitem Move up", typo=k.BODY, h=28, w=184, focused=True, rendering="2b",
-                   note='T2 2b (§1.4): menu item, aria-disabled="true", arrow-reachable; the reason node visually '
-                        'hidden, echoed by CMP-016 on hover and focus')
+    up = ui.t2_box(k.S("Move up"), name="menuitem Move up", typo=k.BODY, h=28, w=184, focused=True, rendering="2a",
+                   note='T2 2a (§1.4; E09-D09:49 gives menu items 2a): aria-disabled="true", arrow-reachable, '
+                        'aria-describedby → its second line')
+    up = ui.vbox("menuitem Move up with its reason", [up, ui.reason(first, 184, "T2 reason (W-16, second line)")],
+                 {"gap": k.STACK_XS}, w=184, note="the reason is the menu item's second line, in the DOM at mount")
     down = ui.item(k.S("Move down"), 184)
     menu = ui.menu_at(LIST_Y, [up, down])
-    tip = ui.card("CMP-016 tooltip echo", [ui.reason(first, 120, "T2 reason (W-16, echoed)")], 136,
-                  "the tooltip duplicates the reason; never the only copy", pad=k.INSET_SM)
-    tip = dict(tip, x=menu["x"] - 136 - 8, y=menu["y"] + 4)
     rs = rows(**{"Delta": {"focus": None}})
-    return ui.dialog(fid, rs, extra=[menu, tip], markers=[
-        ui.acc_name("Move up's description (visually hidden)", first, w=MW)]), k.frame_block(fid, [
+    return ui.dialog(fid, rs, extra=[menu], markers=[
+        ui.acc_name("Move up, as heard", f"{k.S('Move up')}, menu item, unavailable, {first}", w=MW)]), \
+        k.frame_block(fid, [
         "The second path: the row menu's Move up / Move down on ⋯ (E47-D09:140); CMP-056's per-row \"Move {row} up "
         "/ down\" buttons are not drawn (D02-F1; MEMO A9)",
-        f"At the range ends Move up or Move down is T2 2b: \"{first}\" on the first row (drawn), \"{last}\" on the "
-        f"last (§1.4); Enter or Space changes nothing and re-shows the reason with one polite announcement",
+        f"The menu opens on the row whose ⋯ was pressed, drawn on the first row (Delta). At the range ends Move up "
+        f"or Move down is T2 rendering 2a (E09-D09:49): CMP-019 lock leads its label and CMP-056's \"{first}\" "
+        f"(first row, drawn) or \"{last}\" (last row) is its second line (§1.4; D02-F3); Enter or Space changes "
+        f"nothing and re-shows the reason with one polite announcement",
         "After a row-menu move focus returns to the row's menu button"])
 
 

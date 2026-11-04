@@ -1,5 +1,5 @@
 """Board 08 scr033-validation-source-unavailable: SCR-033/no-row-selected, -threshold-invalid,
--source-unavailable (T2 2a), -view-as (T2 2a) (§6.5, §1.4)."""
+-source-unavailable (T2 2a), -view-as (T2 2a), -apply-no-write (T2 2a) (§6.5, §1.4)."""
 from __future__ import annotations
 
 import sys
@@ -72,9 +72,24 @@ def view_as() -> tuple[k.Node, tuple[str, list[str]]]:
         "View-as is checked first (§1.4): one notice in the dialog header (R32:57) carries W-17 (rbac.view_as, "
         "E09-D09:95), Apply's aria-describedby target; Apply is T2 2a with the CMP-019 lock",
         "Every row control stays operable as a preview; nothing is saved",
-        "Without workspaces:write the same rendering takes rbac.permission or rbac.owner_only (PROPOSED, D02-OQ2; "
-        "not drawn)"])
+        "Without workspaces:write the same rendering takes rbac.permission or rbac.owner_only (PROPOSED, D02-OQ2): "
+        "SCR-033/apply-no-write"])
+
+
+def apply_no_write() -> tuple[k.Node, tuple[str, list[str]]]:
+    fid = "SCR-033/apply-no-write"
+    why = k.ui("Your role can't save workspaces.", "E09-D09 rbac.permission with its verb \"save workspaces\" "
+               "(E09-D09:89, :114); rbac.owner_only by the chooser if no non-owner role holds workspaces:write; "
+               "PROPOSED, D02-OQ2")
+    return ui.dialog(fid, rows(**{"Delta": {"focus": "row"}}), apply="t2", apply_reason=why, markers=[
+        ui.acc_name("Apply, as heard", f"{k.S('Apply')}, button, unavailable, {why}", w=MW)]), k.frame_block(fid, [
+        "Without workspaces:write (22:10588) Apply is T2 rendering 2a (§1.4): CMP-079 RbacGate, the CMP-019 lock "
+        "leading the full label, the reason under Apply as its aria-describedby target, in the DOM at mount",
+        "The reason key is rbac.permission or rbac.owner_only by E09-D09 §3.1's chooser, verb \"save workspaces\" "
+        "(E09-D09:114); PROPOSED, D02-OQ2 (is Apply a template save?)",
+        "Every row control stays operable as a preview; Enter or Space on Apply changes nothing and re-shows the "
+        "reason with one polite announcement"])
 
 
 if __name__ == "__main__":
-    ui.run(NN, [no_row(), invalid(), unavailable(), view_as()], 2)
+    ui.run(NN, [no_row(), invalid(), unavailable(), view_as(), apply_no_write()], 2)

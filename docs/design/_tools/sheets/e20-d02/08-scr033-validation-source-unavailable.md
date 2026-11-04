@@ -2,7 +2,7 @@
 
 File `E20-D02 boards`, page `E20-D02`; export `docs/design/E20/img/E20-D02-08-scr033-validation-source-unavailable.png`; sheet `08-scr033-validation-source-unavailable.json` (validated); theme dark.
 
-Board 08 of 10 (§0 L71). Grid (12800, 3200); 3280 x 1934 px; "page E20-D02 · board 08 · r1".
+Board 08 of 10 (§0 L71). Grid (12800, 3200); 3280 x 2856 px; "page E20-D02 · board 08 · r1".
 
 ## Frames
 
@@ -10,21 +10,23 @@ Board 08 of 10 (§0 L71). Grid (12800, 3200); 3280 x 1934 px; "page E20-D02 · b
 - `SCR-033∕threshold-invalid` (`SCR-033/threshold-invalid`)
 - `SCR-033∕source-unavailable` (`SCR-033/source-unavailable`)
 - `SCR-033∕view-as` (`SCR-033/view-as`)
+- `SCR-033∕apply-no-write` (`SCR-033/apply-no-write`)
 
 ## Validator and size
 
-- `08-scr033-validation-source-unavailable.json: 0 errors, 131 warnings, 58 sections, 214759 bytes` (exit 0)
-- 58 sections, 1167 shapes, 214759 bytes
+- `08-scr033-validation-source-unavailable.json: 0 errors, 168 warnings, 72 sections, 270105 bytes` (exit 0)
+- 72 sections, 1474 shapes, 270105 bytes
 
-## Live checks (8)
+## Live checks (9)
 
 - centring: only a node a line here names is centred, and only on the axis it names; every other node keeps the sheet's x / y — never apply a generic re-centre
-- root 'E20-D02 / 08 scr033-validation-source-unavailable' at (12800, 3200): read back the name exactly after the first section call; size 3280 x 1934
-- after touchTexts + relayout: the root's h 1934 is the measured max(column end, footer end) + 80
+- root 'E20-D02 / 08 scr033-validation-source-unavailable' at (12800, 3200): read back the name exactly after the first section call; size 3280 x 2856
+- after touchTexts + relayout: measure max(annotation column end, footer end) + 80 and record it in MEASURED_H[8] (estimated 2856: the column at 1492 px with 15% slack)
 - frame 'SCR-033∕no-row-selected': read back 1280 x 800 at (80, 108); clip on, no child spills
 - frame 'SCR-033∕threshold-invalid': read back 1280 x 800 at (1440, 108); clip on, no child spills
 - frame 'SCR-033∕source-unavailable': read back 1280 x 800 at (80, 1016); clip on, no child spills
 - frame 'SCR-033∕view-as': read back 1280 x 800 at (1440, 1016); clip on, no child spills
+- frame 'SCR-033∕apply-no-write': read back 1280 x 800 at (80, 1924); clip on, no child spills
 - export docs/design/E20/img/E20-D02-08-scr033-validation-source-unavailable.png: record the board id and the PNG size
 
 ## Derivations (0)
@@ -41,27 +43,27 @@ Board 08 of 10 (§0 L71). Grid (12800, 3200); 3280 x 1934 px; "page E20-D02 · b
 
 - spec L60: "BTCUSDT"
 - spec L53: "ETHUSDT"
-- W-12 (§12 L390, PROPOSED (MEMO C10)): "Select at least one row. To remove the strip, use Hide Deep Stats."
+- W-12 (§12 L391, PROPOSED (MEMO C10)): "Select at least one row. To remove the strip, use Hide Deep Stats."
 - spec L1: "Deep Stats rows"
-- spec L285: "Set: Global"
-- spec L185: "Compact mode"
-- spec L244: "Sparkline N"
-- spec L244: "Thresholds on"
-- spec L273: "Format"
+- spec L286: "Set: Global"
+- spec L186: "Compact mode"
+- spec L245: "Sparkline N"
+- spec L245: "Thresholds on"
+- spec L274: "Format"
 - spec L19: "Sparkline"
 - spec L19: "Threshold"
-- spec L285: "No threshold"
+- spec L286: "No threshold"
 - spec L34: "Apply"
 - spec L55: "Cancel"
-- W-11 (§12 L389, PROPOSED): "Hide Deep Stats"
-- spec L201: "abs >"
-- W-29 (§12 L407, PROPOSED (E20-S03 bounds)): "Delta: enter a number in BTC."
-- W-13 (§12 L391, PROPOSED): "Delta %: enter a value from 0 to 100 %."
-- W-14 (§12 L392, PROPOSED (MEMO G8)): "No open-interest data for this symbol."
+- W-11 (§12 L390, PROPOSED): "Hide Deep Stats"
+- spec L202: "abs >"
+- W-29 (§12 L408, PROPOSED (E20-S03 bounds)): "Delta: enter a number in BTC."
+- W-13 (§12 L392, PROPOSED): "Delta %: enter a value from 0 to 100 %."
+- W-14 (§12 L393, PROPOSED (MEMO G8)): "No open-interest data for this symbol."
 - spec L105: "deepstats.source_unavailable"
-- W-17 (§12 L395, E09-D09:95): "Read-only while viewing as Manager 01."
+- W-17 (§12 L396, E09-D09:95): "Read-only while viewing as Manager 01."
 
-## Copy gaps (9)
+## Copy gaps (10)
 
 - "announced: polite, once, on the last uncheck (role="status")": kit label, not E20-D02 copy — board-marker label
 - "BTCUSDT · 1m": kit label, not E20-D02 copy — SCR-030's top bar (symbol and interval; the world's series)
@@ -72,6 +74,7 @@ Board 08 of 10 (§0 L71). Grid (12800, 3200); 3280 x 1934 px; "page E20-D02 · b
 - "the checkbox, as heard (not on screen)": kit label, not E20-D02 copy — board-marker label
 - "announced: polite, once, when Space re-shows it": kit label, not E20-D02 copy — board-marker label
 - "Apply, as heard (not on screen)": kit label, not E20-D02 copy — board-marker label
+- "Your role can't save workspaces.": kit label, not E20-D02 copy — E09-D09 rbac.permission with its verb "save workspaces" (E09-D09:89, :114); rbac.owner_only by the chooser if no non-owner role holds workspaces:write; PROPOSED, D02-OQ2
 
 ## Fallbacks (4)
 
@@ -82,7 +85,7 @@ Board 08 of 10 (§0 L71). Grid (12800, 3200); 3280 x 1934 px; "page E20-D02 · b
 
 ## Sources (3)
 
-- spec docs/design/E20/E20-D02.md md5 e252dfbc3ddbb75528df27d70abee7dd at the boards PR (§0 L71); the ruling of record folded (BQ-0 … BQ-9); no hand-off file
+- spec docs/design/E20/E20-D02.md md5 40669dbd39cb28403fa89307f09dd676 at the boards PR (§0 L71); the ruling of record folded (BQ-0 … BQ-9); no hand-off file
 - docs/design/E18/E18-D02.md md5 fd75a21fdc0b045c206182da712d94a8 (L124: the delta width floor 40 px, the collapse floor's seed, §4.1)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a060c51bd4bd1450307728ddf (tick and qty step: BTCUSDT 0.10 / 0.001, ETHUSDT 0.01 / 0.001)
 

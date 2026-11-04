@@ -33,7 +33,6 @@ CTRL = 32
 # marker is refused until the lane measures it.
 LIVE_HOW: dict[str, tuple[int, int]] = {  # the 'how' caption -> (live lines, live marker h)
     "announced: polite, one live region in the dialog, replaced never queued, ≤ 1 a second": (2, 68),
-    "Move up's description (visually hidden) (not on screen)": (2, 61),
     'announced: polite, once, on the last uncheck (role="status")': (2, 74),
     "announced: polite, once, when Space re-shows it": (2, 68),
 }
@@ -714,7 +713,7 @@ def toolbar(set_words: str, *, compact: bool = False, thresholds: bool = True) -
 
 
 def dialog(fid: str, rows: list[R], *, apply: str = "enabled", view_as: str | None = None, message: str | None = None,
-           set_words: str | None = None, scroll_to_end: bool = False, extra: Iterable[Node | None] = (),
+           apply_reason: str | None = None, set_words: str | None = None, scroll_to_end: bool = False, extra: Iterable[Node | None] = (),
            markers: Iterable[Node | None] = ()) -> Node:
     """SCR-033 over an inert SCR-030: header (title, close; the view-as notice), toolbar, the list (scrolling), the
     validation message, footer (Hide Deep Stats left; Cancel, Apply)."""
@@ -760,7 +759,10 @@ def dialog(fid: str, rows: list[R], *, apply: str = "enabled", view_as: str | No
                                                 text("words", message, k.CAPTION, k.TEXT_1)],
                          {"gap": k.INSET_XS}, w=LIST_W, h=24, x=DLG_PAD, y=foot_y - msg_h + 4,
                          note='role="status", announced once on the last uncheck; Apply\'s aria-describedby'))
-    if apply == "t2":
+    if apply == "t2" and apply_reason:
+        ap = t2_box(k.S("Apply"), name="CMP-001 Apply", w=96,
+                    note='T2 2a (§1.4, permission): aria-disabled="true", aria-describedby → the reason under it')
+    elif apply == "t2":
         ap = t2_box(k.S("Apply"), name="CMP-001 Apply", w=96,
                     note='T2 2a (§1.4, view-as): aria-disabled="true", aria-describedby → the header notice')
     elif apply == "invalid":
@@ -774,6 +776,9 @@ def dialog(fid: str, rows: list[R], *, apply: str = "enabled", view_as: str | No
     fk = [dict(button(k.W("W-11"), kind="ghost", name="Hide Deep Stats"), x=DLG_PAD, y=16),
           dict(cancel, x=DLG_W - DLG_PAD - ap["w"] - 8 - cancel["w"], y=16),
           dict(ap, x=DLG_W - DLG_PAD - ap["w"], y=16), rect("footer rule", DLG_W, 1, k.BORDER, x=0, y=0)]
+    if apply_reason:  # the 2a reason under Apply, right-aligned to it (§1.4)
+        rw = round(k.text_w(apply_reason, k.CAPTION)) + 4
+        fk.append(dict(reason(apply_reason, rw, "T2 reason (Apply)"), x=DLG_W - DLG_PAD - rw, y=16 + CTRL + 2))
     kids.append(box("dialog footer", fk, {}, w=DLG_W, h=FOOT_H, x=0, y=foot_y))
     kids += [x for x in extra if x]
     dlg = box("CMP-043 Dialog · SCR-033", kids, {"fill": k.OVERLAY, "stroke": k.BORDER, "strokeWidth": k.HAIR,

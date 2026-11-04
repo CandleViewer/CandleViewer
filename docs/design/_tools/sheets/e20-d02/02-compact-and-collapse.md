@@ -37,14 +37,14 @@ Board 02 of 10 (§0 L65). Grid (6400, 0); 3280 x 1026 px; "page E20-D02 · board
 
 - spec L60: "BTCUSDT"
 - spec L53: "ETHUSDT"
-- W-1 (§12 L379, PROPOSED (BQ-6)): "Thresholds: Global"
-- W-7 (§12 L385, 14:759): "forming"
-- W-3 (§12 L381, PROPOSED (BQ-6)): "Strong"
-- W-5 (§12 L383, PROPOSED (MEMO AD-3)): "Delta +36 BTC, buy side"
-- W-5 (§12 L383, PROPOSED (MEMO AD-3)): "Delta +68 BTC, buy side"
-- W-5 (§12 L383, PROPOSED (MEMO AD-3)): ", forming"
-- spec L425: "<=1.5 ms per frame"
-- spec L425: "strip adds ≤2 ms per frame"
+- W-1 (§12 L380, PROPOSED (BQ-6)): "Thresholds: Global"
+- W-7 (§12 L386, 14:759): "forming"
+- W-3 (§12 L382, PROPOSED (BQ-6)): "Strong"
+- W-5 (§12 L384, PROPOSED (MEMO AD-3)): "Delta +36 BTC, buy side"
+- W-5 (§12 L384, PROPOSED (MEMO AD-3)): "Delta +68 BTC, buy side"
+- W-5 (§12 L384, PROPOSED (MEMO AD-3)): ", forming"
+- spec L427: "<=1.5 ms per frame"
+- spec L427: "strip adds ≤2 ms per frame"
 
 ## Copy gaps (5)
 
@@ -63,7 +63,7 @@ Board 02 of 10 (§0 L65). Grid (6400, 0); 3280 x 1026 px; "page E20-D02 · board
 
 ## Sources (3)
 
-- spec docs/design/E20/E20-D02.md md5 e252dfbc3ddbb75528df27d70abee7dd at the boards PR (§0 L65); the ruling of record folded (BQ-0 … BQ-9); no hand-off file
+- spec docs/design/E20/E20-D02.md md5 40669dbd39cb28403fa89307f09dd676 at the boards PR (§0 L65); the ruling of record folded (BQ-0 … BQ-9); no hand-off file
 - docs/design/E18/E18-D02.md md5 fd75a21fdc0b045c206182da712d94a8 (L124: the delta width floor 40 px, the collapse floor's seed, §4.1)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a060c51bd4bd1450307728ddf (tick and qty step: BTCUSDT 0.10 / 0.001, ETHUSDT 0.01 / 0.001)
 

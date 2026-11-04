@@ -39,11 +39,11 @@ Board 04 of 10 (§0 L67). Grid (19200, 0); 3280 x 1947 px; "page E20-D02 · boar
 
 - spec L60: "BTCUSDT"
 - spec L53: "ETHUSDT"
-- W-1 (§12 L379, PROPOSED (BQ-6)): "Thresholds: Global"
-- W-7 (§12 L385, 14:759): "forming"
-- W-3 (§12 L381, PROPOSED (BQ-6)): "Strong"
-- W-4 (§12 L382, PROPOSED (MEMO AD-5)): "Delta % +55 %, buy side, strong: beyond threshold 50 %"
-- W-2 (§12 L380, PROPOSED (BQ-6)): "Thresholds: ETHUSDT"
+- W-1 (§12 L380, PROPOSED (BQ-6)): "Thresholds: Global"
+- W-7 (§12 L386, 14:759): "forming"
+- W-3 (§12 L382, PROPOSED (BQ-6)): "Strong"
+- W-4 (§12 L383, PROPOSED (MEMO AD-5)): "Delta % +55 %, buy side, strong: beyond threshold 50 %"
+- W-2 (§12 L381, PROPOSED (BQ-6)): "Thresholds: ETHUSDT"
 
 ## Copy gaps (6)
 
@@ -63,7 +63,7 @@ Board 04 of 10 (§0 L67). Grid (19200, 0); 3280 x 1947 px; "page E20-D02 · boar
 
 ## Sources (3)
 
-- spec docs/design/E20/E20-D02.md md5 e252dfbc3ddbb75528df27d70abee7dd at the boards PR (§0 L67); the ruling of record folded (BQ-0 … BQ-9); no hand-off file
+- spec docs/design/E20/E20-D02.md md5 40669dbd39cb28403fa89307f09dd676 at the boards PR (§0 L67); the ruling of record folded (BQ-0 … BQ-9); no hand-off file
 - docs/design/E18/E18-D02.md md5 fd75a21fdc0b045c206182da712d94a8 (L124: the delta width floor 40 px, the collapse floor's seed, §4.1)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a060c51bd4bd1450307728ddf (tick and qty step: BTCUSDT 0.10 / 0.001, ETHUSDT 0.01 / 0.001)
 

@@ -13,8 +13,8 @@ Board 07 of 10 (§0 L70). Grid (6400, 3200); 3280 x 1934 px; "page E20-D02 · bo
 
 ## Validator and size
 
-- `07-scr033-catalogue-reorder.json: 0 errors, 144 warnings, 59 sections, 225990 bytes` (exit 0)
-- 59 sections, 1230 shapes, 225990 bytes
+- `07-scr033-catalogue-reorder.json: 0 errors, 144 warnings, 58 sections, 225973 bytes` (exit 0)
+- 58 sections, 1230 shapes, 225973 bytes
 
 ## Live checks (8)
 
@@ -39,26 +39,26 @@ Board 07 of 10 (§0 L70). Grid (6400, 3200); 3280 x 1934 px; "page E20-D02 · bo
 
 - spec L60: "BTCUSDT"
 - spec L53: "ETHUSDT"
-- W-22 (§12 L400, PROPOSED (E20-D04)): "Deep Stats rows updated: 5 rows."
+- W-22 (§12 L401, PROPOSED (E20-D04)): "Deep Stats rows updated: 5 rows."
 - spec L1: "Deep Stats rows"
-- spec L285: "Set: Global"
-- spec L185: "Compact mode"
-- spec L244: "Sparkline N"
-- spec L244: "Thresholds on"
-- spec L273: "Format"
+- spec L286: "Set: Global"
+- spec L186: "Compact mode"
+- spec L245: "Sparkline N"
+- spec L245: "Thresholds on"
+- spec L274: "Format"
 - spec L19: "Sparkline"
 - spec L19: "Threshold"
-- spec L285: "No threshold"
+- spec L286: "No threshold"
 - spec L34: "Apply"
 - spec L55: "Cancel"
-- W-11 (§12 L389, PROPOSED): "Hide Deep Stats"
-- W-15 (§12 L393, E20.json:394): "Cumulative Delta moved to position 4 of 5"
-- spec L277: "Alt+↑ / Alt+↓ to move"
-- W-16 (§12 L394, 15:656): "Already first."
-- W-16 (§12 L394, 15:656): "Already last."
+- W-11 (§12 L390, PROPOSED): "Hide Deep Stats"
+- W-15 (§12 L394, E20.json:394): "Cumulative Delta moved to position 4 of 5"
+- spec L278: "Alt+↑ / Alt+↓ to move"
+- W-16 (§12 L395, CMP-056 (15:656)): "Already first."
+- W-16 (§12 L395, CMP-056 (15:656)): "Already last."
 - spec L20: "Move up"
 - spec L20: "Move down"
-- spec L201: "abs >"
+- spec L202: "abs >"
 
 ## Copy gaps (8)
 
@@ -66,7 +66,7 @@ Board 07 of 10 (§0 L70). Grid (6400, 3200); 3280 x 1934 px; "page E20-D02 · bo
 - "BTCUSDT · 1m": kit label, not E20-D02 copy — SCR-030's top bar (symbol and interval; the world's series)
 - "SCR-030 with the strip, inert behind the modal (drawn on boards 01–06)": kit label, not E20-D02 copy — board-marker label for the inert page
 - "announced: polite, one live region in the dialog, replaced never queued, ≤ 1 a second": kit label, not E20-D02 copy — board-marker label
-- "Move up's description (visually hidden) (not on screen)": kit label, not E20-D02 copy — board-marker label
+- "Move up, as heard (not on screen)": kit label, not E20-D02 copy — board-marker label
 - "300 BTC: example, never a recommendation (MEMO OQ-3)": kit label, not E20-D02 copy — board-marker note
 - "Comparison": kit label, not E20-D02 copy — the select's visible label
 - "Bound": kit label, not E20-D02 copy — the field's visible label
@@ -81,7 +81,7 @@ Board 07 of 10 (§0 L70). Grid (6400, 3200); 3280 x 1934 px; "page E20-D02 · bo
 
 ## Sources (3)
 
-- spec docs/design/E20/E20-D02.md md5 e252dfbc3ddbb75528df27d70abee7dd at the boards PR (§0 L70); the ruling of record folded (BQ-0 … BQ-9); no hand-off file
+- spec docs/design/E20/E20-D02.md md5 40669dbd39cb28403fa89307f09dd676 at the boards PR (§0 L70); the ruling of record folded (BQ-0 … BQ-9); no hand-off file
 - docs/design/E18/E18-D02.md md5 fd75a21fdc0b045c206182da712d94a8 (L124: the delta width floor 40 px, the collapse floor's seed, §4.1)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a060c51bd4bd1450307728ddf (tick and qty step: BTCUSDT 0.10 / 0.001, ETHUSDT 0.01 / 0.001)
 

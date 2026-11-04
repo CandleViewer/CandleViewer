@@ -39,10 +39,10 @@ Board 01 of 10 (§0 L64). Grid (0, 0); 3280 x 1934 px; "page E20-D02 · board 01
 
 - spec L60: "BTCUSDT"
 - spec L53: "ETHUSDT"
-- W-1 (§12 L379, PROPOSED (BQ-6)): "Thresholds: Global"
-- W-7 (§12 L385, 14:759): "forming"
-- W-3 (§12 L381, PROPOSED (BQ-6)): "Strong"
-- W-18 (§12 L396, PROPOSED): "Sparklines show for 3 rows (Cumulative Delta, Max Delta, Min Delta): more than 6 slow the chart."
+- W-1 (§12 L380, PROPOSED (BQ-6)): "Thresholds: Global"
+- W-7 (§12 L386, 14:759): "forming"
+- W-3 (§12 L382, PROPOSED (BQ-6)): "Strong"
+- W-18 (§12 L397, PROPOSED): "Sparklines show for 3 rows (Cumulative Delta, Max Delta, Min Delta): more than 6 slow the chart."
 
 ## Copy gaps (3)
 
@@ -62,7 +62,7 @@ Board 01 of 10 (§0 L64). Grid (0, 0); 3280 x 1934 px; "page E20-D02 · board 01
 
 ## Sources (3)
 
-- spec docs/design/E20/E20-D02.md md5 e252dfbc3ddbb75528df27d70abee7dd at the boards PR (§0 L64); the ruling of record folded (BQ-0 … BQ-9); no hand-off file
+- spec docs/design/E20/E20-D02.md md5 40669dbd39cb28403fa89307f09dd676 at the boards PR (§0 L64); the ruling of record folded (BQ-0 … BQ-9); no hand-off file
 - docs/design/E18/E18-D02.md md5 fd75a21fdc0b045c206182da712d94a8 (L124: the delta width floor 40 px, the collapse floor's seed, §4.1)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a060c51bd4bd1450307728ddf (tick and qty step: BTCUSDT 0.10 / 0.001, ETHUSDT 0.01 / 0.001)
 

@@ -66,7 +66,7 @@ VALIDATOR, PACKER, MKCALL = TOOLS / "validate_sheet.py", TOOLS / "compact.py", T
 COMPONENTS, TOKENS_FILE = TOOLS / "components.offline.json", TOOLS / "token-sync.json"
 HEAD = "the boards PR"  # the spec as built (§0 drawn, §19); re-pin DOCS when a further text fold lands
 DOCS = {  # key -> (repo-relative path, md5 at HEAD): every read is md5-checked
-    "spec": (_SPEC_PATH, "e252dfbc3ddbb75528df27d70abee7dd"),
+    "spec": (_SPEC_PATH, "40669dbd39cb28403fa89307f09dd676"),
     "floor": ("docs/design/E18/E18-D02.md", "fd75a21fdc0b045c206182da712d94a8"),
     "fixture": ("packages/fixtures/bybit/2026-10-05/rest/instruments_before.json", "edd9dd2a060c51bd4bd1450307728ddf"),
 }
@@ -569,7 +569,8 @@ def est_height(n: Node) -> float:
 # The live roots' heights, measured by the drawing lane after touchTexts + relayout (the checked want: max(annotation
 # column end, footer end) + MARGIN), folded from the live check of the ten drawn boards. The root takes the measured
 # value (it must still clear the frames and the footer); the estimate below serves only a board not yet measured.
-MEASURED_H: dict[int, int] = {1: 1934, 2: 1026, 3: 1026, 4: 1947, 5: 1934, 6: 1026, 7: 1934, 8: 1934, 9: 1934, 10: 1934}
+# Board 08 gained SCR-033/apply-no-write in the design-read fold (#5782): estimated until the redraw re-measures it.
+MEASURED_H: dict[int, int] = {1: 1934, 2: 1026, 3: 1026, 4: 1947, 5: 1934, 6: 1026, 7: 1934, 9: 1934, 10: 1934}
 ANN_SLACK = 1.15  # the estimate's slack on the annotation column until MEASURED_H holds the board
 
 
@@ -1169,7 +1170,7 @@ def selftest() -> int:
     check(PAGE == KEY and FILE_NAME == f"{KEY} boards" and EXPORT_DIR == f"docs/design/{EPIC}/img",
           f"page {PAGE!r}, file {FILE_NAME!r}, export dir {EXPORT_DIR!r}")
     check((WIN_W, WIN_H) == (1280, 800), f"frames {WIN_W} × {WIN_H}")
-    check(len(ALL_FRAMES) == len(set(ALL_FRAMES)) == 30, f"§0: {len(ALL_FRAMES)} frames, unique")
+    check(len(ALL_FRAMES) == len(set(ALL_FRAMES)) == 31, f"§0: {len(ALL_FRAMES)} frames, unique")
     check(sorted(STATES) == sorted(ALL_FRAMES) and all(board_of(f) == STATES[f][1] for f in ALL_FRAMES),
           f"§2: every state's frame on its §0 board ({len(STATES)})")
     check(sorted(COPY, key=lambda x: int(x[2:])) == [f"W-{i}" for i in range(1, 30)], "§12: W-1..W-29")
