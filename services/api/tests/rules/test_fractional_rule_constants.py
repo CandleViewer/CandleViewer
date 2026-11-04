@@ -402,6 +402,31 @@ def test_no_enum_value_of_the_vocabulary_is_decimal_text() -> None:
         check_constants(_rule(_cmp("eq", v, {"metric": metric})).conditions)
 
 
+def _quotient(const: Any) -> dict[str, Any]:
+    return {"node_id": "x1", "op": "div", "operands": [{"metric": "spread_bps"}, {"const": const}]}
+
+
+@pytest.mark.parametrize("const", ["5%", "NaN", "1_000", "1E+9999999999999999999999999"])
+@pytest.mark.parametrize("beside", [True, False], ids=["beside-a-product", "in-a-quotient"])
+async def test_a_save_refuses_a_constant_the_evaluator_cannot_read(
+    const: str, beside: bool
+) -> None:
+    """The unit checks read `5%`, `NaN` and `1_000` as numbers, and a product or a quotient as any
+    unit; the save runs the load's check, so it refuses what the load would quarantine."""
+    doc = _doc("0")
+    product = _quotient(1) | {"op": "mul"}
+    doc["conditions"] = _cmp("neq", const, product) if beside else _cmp("gt", 1, _quotient(const))
+    mgr = RulesManager(InMemoryRuleStore(), default_registry())
+    try:
+        with pytest.raises(RuleError) as refused:
+            await mgr.create(doc, OWNER)
+    finally:
+        await mgr.stop()
+    field = "conditions.right" if beside else "conditions.left.operands[1]"
+    issue = {"field": field, "rule": "type_mismatch", "message": NOT_A_NUMBER}
+    assert (refused.value.code, refused.value.extra["errors"]) == ("rule_ir_invalid", [issue])
+
+
 #: An enum constant as long as a rule body holds (the body bound, 2,000,000 bytes, is the only bound
 #: on its length), digits and then a letter, so a read that scans it scans it to its end.
 _LONG = "1" * 1_990_000 + "x"
