@@ -4038,6 +4038,20 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=1,
     ),
     _s(
+        "oms_closed_pnl_fetch_seconds",
+        "histogram",
+        "seconds",
+        ("result",),
+        "One read of an account's closed-PnL records from the venue, all its pages, in the poll "
+        "lane (E29-S06, 24 Sec.8.13), by result: ok or failed. No account label: the sync's logs "
+        "name the account. Buckets as a reconciliation pass's, whose read has the same 30 s bound.",
+        "dashboard",
+        _P,
+        "E29",
+        RECONCILE_BUCKETS,
+        max_series=2,
+    ),
+    _s(
         "rule_evaluations_total",
         "counter",
         "evaluations",
