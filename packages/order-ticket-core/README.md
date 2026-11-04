@@ -30,6 +30,9 @@ rule (C-2.12). The sizing mirror is **display-only** and says how exact it is (`
 - **Validation** (`validate.ts`): every failure in the ticket's field order, each with `22`'s
   `field` / `rule` / code and its message data; a check without its inputs, and every server
   rule not mirrored yet, is listed in `unmirrored`, never assumed to pass.
+- **Copy** (`messages.ts`): `messageFor(failure)` renders a deck key from `E30-D06-copy.json`
+  only where its sentence is true of the failure; otherwise the failure is `PENDING` (a deck
+  question on #919), never invented copy.
 - **Plain data** (`model.ts`): a draft and its context are structured-clone safe, so a worker can
   host the reducer if E30-K01 places it there.
 - **Fail closed**: an unknown position classes an order as an entry; an entry with no stop is
