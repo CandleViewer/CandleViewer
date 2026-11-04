@@ -68,7 +68,7 @@ from candleviewer.storage.repositories.orders import OrderRow
 from candleviewer.storage.repositories.positions import PositionRow
 from candleviewer.storage.repositories.recorded_stops import LIVE_STOP_STATUSES, RecordedStopRow
 from candleviewer.storage.repositories.trading_accounts import TradingAccountRow
-from tests.chaos.oms._oracle import Book, Truth
+from tests.chaos.oms._oracle import Book, Checked, Truth
 from tests.chaos.oms._venue import Venue, VenuePort
 from tests.unit.audit.audit_waits import VirtualTimeLoop
 from tests.unit.oms import command_rig as cr
@@ -484,14 +484,15 @@ class World(rt.World):
         return Truth(orders, tuple(fills), tuple(positions), self.exchange.creates())
 
 
-#: Every world built in the running test; the suite's autouse fixture empties it per test. The
-#: suite's one module-level list, and safe: a process runs one test at a time (an xdist worker is a
-#: process of its own), the fixture empties it before and after each, and only `unchecked` reads it
-#: (the fixture, and its guard test), so no world outlives its test here.
-BUILT: list[World] = []
+#: Every world built in the running test, the Postgres tier's too (`_pg.PgWorld`); the suite's
+#: autouse fixture empties it per test. The suite's one module-level list, and safe: a process runs
+#: one test at a time (an xdist worker is a process of its own), the fixture empties it before and
+#: after each, and only `unchecked` reads it (the fixture, and its guard test), so no world outlives
+#: its test here.
+BUILT: list[Checked] = []
 
 
-def unchecked() -> list[World]:
+def unchecked() -> list[Checked]:
     """The worlds of the running test the oracle has not checked (`conftest.py`)."""
     return [world for world in BUILT if not world.checked]
 
