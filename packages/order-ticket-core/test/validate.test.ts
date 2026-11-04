@@ -47,7 +47,7 @@ describe("validate: the result", () => {
     expect(result.failures.map((f) => `${f.field} ${f.rule} ${f.code}`)).toEqual([
       "trigger.price price_invalid validation_failed",
       "price tick_size tick_size_violation",
-      "sizing qty_step lot_size_violation",
+      "qty qty_step lot_size_violation",
       "stop_loss native_stop_required validation_failed",
       "take_profit stop_unit_unsupported validation_failed",
       "intent intent_mismatch validation_failed",
