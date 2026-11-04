@@ -98,7 +98,7 @@ export type SettingScope = (typeof SCOPE_VOCABULARY)[keyof typeof SCOPE_VOCABULA
 /** Kept in this browser's localStorage only (`cv.chartColorMode`, `cv.keymap-profile.v1:<user id>`). */
 const DEVICE = SCOPE_VOCABULARY.device;
 
-/** Server-stored per user: `PUT /api/v1/settings` (accessibility subtree), `GET /api/v1/me/sessions`. */
+/** Server-stored per user: `PATCH /api/v1/settings` (accessibility subtree), `GET /api/v1/me/sessions`. */
 const USER = SCOPE_VOCABULARY.user;
 
 /** Only settings that exist today (scope = where each is stored today); a section not built yet has no entries and is found by its name. */
