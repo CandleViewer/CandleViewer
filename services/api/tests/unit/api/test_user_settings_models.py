@@ -140,6 +140,9 @@ def test_judge_patch_drops_a_null_tone_and_refuses_a_null_volume() -> None:
         {"sounds": {"alerts": {"tone": "siren"}}},
         {"toast_duration": "30s"},
         {"muted_symbols": [{"symbol": "ETHUSDT"}]},
+        {"matrix": "on"},  # a non-object where an object is due
+        {"matrix": {"order_rejects": []}},
+        {"sounds": {"alerts": 5}},
     ],
 )
 def test_judge_patch_refuses_an_off_contract_notification_leaf(
