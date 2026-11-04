@@ -7,9 +7,10 @@ State comes from an in-memory snapshot (grants/accounts/freeze) behind ``ScopeSt
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from types import MappingProxyType
+from typing import Final, Literal, Protocol
 from uuid import UUID
 
 from candleviewer.rules.errors import ScopeForbiddenError
@@ -33,6 +34,16 @@ Reason = Literal[
 #: evaluation skip, not a refusal by the scope gate, so it is not one of the `Reason`s.
 BINDING_CAUSE = "metric_ref_binding"
 EntityKind = Literal["open_position", "pending_order", "account"]
+#: The entity a scope instance stands for, by its rule's `applies_to` (#5817): the open positions
+#: or the pending orders on the instance's symbol and account, or else the account itself.
+_INSTANCE_ENTITY: Final[Mapping[str, EntityKind]] = MappingProxyType(
+    {
+        "open_positions": "open_position",
+        "pending_orders": "pending_order",
+        "account": "account",
+        "any": "account",
+    }
+)
 #: The modes the evaluator runs a rule in (`rules.manager` imports it from here). A rule's mode is
 #: its stored row's, never the IR's own `mode` field, which can be stale (E35-S03, BQ-12).
 EvaluableMode = Literal["simulate", "armed"]
@@ -152,11 +163,19 @@ class ScopeResolver:
         owner: UUID,
         environment: str,
         instance: ScopeInstanceRef,
-        entity: EntityKind = "account",
+        entity: EntityKind | None = None,
         *,
         is_algo_child: bool = False,
     ) -> Reason | None:
-        """Second resolution, before each action. None = allowed, else suppression reason."""
+        """Second resolution, before each action. None = allowed, else suppression reason.
+
+        `entity` is the kind of entity the action touches, judged against `applies_to`. A check
+        that knows none (`None`) judges the entity the scope instance stands for
+        (`instance_entity`): the tick's gate, which runs before the rule has an action, and a
+        re-check of an action whose targets are not resolved yet. So an instance of the rule is
+        never refused for its own `applies_to`, and a known entity outside it is (#5817)."""
+        if entity is None:
+            entity = instance_entity(scope)
         reason: Reason | None
         if not self._env_ok(scope, owner, environment):
             reason = "live_gate" if environment == "live" else "environment"
@@ -224,6 +243,12 @@ def _applies(applies_to: str, entity: EntityKind) -> bool:
     }[applies_to]
 
 
+def instance_entity(scope: RuleScope) -> EntityKind:
+    """The entity a scope instance of `scope` stands for, which its `applies_to` names: the one a
+    check judges when it resolves no entity of its own (`ScopeResolver.check_action`)."""
+    return _INSTANCE_ENTITY[scope.applies_to]
+
+
 def summarize_scope(scope: RuleScope, *, account_count: int | None = None) -> str:
     """Server-derived header chip, e.g. ``2 accounts · BTCUSDT · open positions only · demo``."""
     n = len(scope.account_ids) if scope.account_ids else account_count
@@ -280,13 +305,14 @@ async def fire_scoped(
     instance: ScopeInstanceRef,
     dispatch: ActionDispatch,
     *,
-    entity: EntityKind = "account",
+    entity: EntityKind | None = None,
     is_algo_child: bool = False,
 ) -> FireOutcome:
     """Action-dispatch gate: the second resolution runs immediately before EVERY action.
 
     A live trigger for an instance whose scope no longer holds (revoked grant, freeze, closed
     live gate...) is skipped with ``skipped_reason="scope"`` and counted; nothing is dispatched.
+    `entity` is the kind the action touches; `None` is the instance's own (`check_action`).
     """
     reason = resolver.check_action(
         scope, owner, environment, instance, entity, is_algo_child=is_algo_child
