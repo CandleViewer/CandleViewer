@@ -594,6 +594,17 @@ describe("revocation and narrowing (SR-E29-11, E29-D05 F-02)", () => {
     expect([atOnce, store.getSnapshot().withdrawn]).toEqual([false, []]);
   });
 
+  it("a narrowed sub_ok takes an account withdrawn before out of a narrowing's candidates", () => {
+    const store = started();
+    store.applyFrames([snap(snapshotBody())]);
+    store.setEffective({ exchange_account_ids: [MAIN, SUB1] }); // Sub-2 is withdrawn
+    store.applyFrames([reset("narrowed")]); // every listed account a candidate, Sub-2 too
+    store.setEffective({ exchange_account_ids: [MAIN] });
+    const mainOnly = snapshotBody().executions.filter((i) => i.exchange_account_id === MAIN);
+    store.applyFrames([snap({ executions: mainOnly })]);
+    expect(store.takeSettled()).toBe(true);
+  });
+
   it("after a revocation, dismissing a line keeps the account out past Retry", () => {
     const store = started();
     store.applyFrames([snap(snapshotBody()), reset("revoked")]);
