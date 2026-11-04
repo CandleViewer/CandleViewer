@@ -41,8 +41,8 @@ export interface RegionExtras {
   /**
    * E29-S07 (#1028; BQ-11 of the ruling of record 6575172489, BQ-7 ruled (6610918411)): whether
    * every account in scope is synced and its last REST read showed every open position with a
-   * confirmed exchange-side stop. `false` drops the stops clause from every line and
-   * announcement; absent keeps it (a caller that does not judge it, as before).
+   * confirmed exchange-side stop. Only `true` keeps the stops clause in the lines and
+   * announcements; `false` or absent drops it (fail closed: a caller that does not judge it claims nothing).
    */
   readonly stopsConfirmed?: boolean;
 }

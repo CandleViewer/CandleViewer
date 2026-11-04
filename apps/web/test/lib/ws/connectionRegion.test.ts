@@ -41,6 +41,13 @@ describe("connectionRegion", () => {
     expect(R.regionAnnouncement(null, null)).toBeNull();
   });
 
+  it("a caller that does not judge the stops clause claims none: only `stopsConfirmed: true` keeps it (BQ-7)", () => {
+    const view = R.connectionRegion(dropped(), T0, { privateFeedDown: false });
+    expect(view?.lines.join(" ")).not.toContain("Exchange-side stops");
+    expect(view?.lines.join(" ")).toContain("App-managed rules are paused.");
+    expect(at(dropped())?.lines).toContain(STOPS); // the helper passes `true`
+  });
+
   it("B1: the counter, the age and the countdown, verbatim", () => {
     expect(at(dropped())).toEqual({
       state: "reconnecting",
