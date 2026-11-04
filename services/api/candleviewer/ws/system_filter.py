@@ -3,10 +3,11 @@
 `system` is implicit (§6.2), so it is filtered per frame, not at `sub`: `_Connection.push_system`,
 the one place a `system` frame is queued, asks `system_view` what the socket's principal may get
 at that moment, so a role or grant change or an in-place re-`auth` applies to every later frame.
-Deny by default: a `kind` outside §15.9's ten reaches nobody, and a principal with none of the
+Deny by default: a `kind` outside §15.9's eleven reaches nobody, and a principal with none of the
 three roles (the deny-all snapshot) gets nothing. The Owner gets the frame whole; a Manager or
 Viewer only the fields `NEUTRAL_FIELDS` lists for its `kind`, health components without `detail`
-(`04-security-program.md` §7.2.2 row 48), a kill switch without who engaged it or why, its
+(`04-security-program.md` §7.2.2 row 48), a `safety` frame and the snap's `safety_classes` cut to
+the socket's accounts (`safety_view`, #2302), a kill switch without who engaged it or why, its
 accounts, like those of an `account_notice`, cut to the socket's `account_scope` (an
 `account_notice` left with none is not sent: it is its accounts, SR-E29-10), and only the flag keys
 that the injected `FlagVisible` admits for its roles (E42-T03): none without one, and a
@@ -27,6 +28,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final
 
 from candleviewer.auth.scopes import PrincipalSnapshot, scoped_account_ids
+from candleviewer.ws import safety_view
 
 if TYPE_CHECKING:  # the annotation only: the filter stays free of the metrics facade at run time
     from candleviewer.ws.metrics import WithheldReason
@@ -39,6 +41,8 @@ _FLAGS: Final = "feature_flags"
 _EXCHANGE: Final = "exchange"
 _APPLIED: Final = "applied"
 _ACCOUNT_NOTICE: Final = "account_notice"
+_SAFETY: Final = safety_view.SAFETY
+_SAFETY_CLASSES: Final = safety_view.SAFETY_CLASSES
 
 #: (flag key, a principal's roles) -> whether that principal may learn the flag: its registry
 #: `visibility`, and never for a key no flag definition names. The composition root builds it from
@@ -51,7 +55,7 @@ NEUTRAL_FIELDS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
     {
         "health": _BASE
         | {"health", _COMPONENTS, _EXCHANGE, "clock_offset_ms", "degraded_topics", _KILL_SWITCH}
-        | {_FLAGS},
+        | {_FLAGS, _SAFETY_CLASSES},
         _KILL_SWITCH: _BASE | {_KILL_SWITCH},
         _FLAGS: _BASE | {_FLAGS},
         "exchange_state": _BASE | {_EXCHANGE, "public_ws", "private_ws", "affected_symbols"},
@@ -61,6 +65,8 @@ NEUTRAL_FIELDS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
         "clock_drift": _BASE | {"clock_offset_ms"},
         "notice": _BASE | {"reason"},
         _ACCOUNT_NOTICE: _BASE | {"reason", _ACCOUNTS},
+        # Cut to the socket's accounts for an account-keyed class (`safety_view`, #2302).
+        _SAFETY: _BASE | (safety_view.FRAME_FIELDS - {"kind"}),
     }
 )
 #: The fields of a health component a Manager or Viewer receives.
@@ -73,6 +79,8 @@ NEUTRAL_APPLIED: Final = frozenset({"throttle_multiplier", "forced_coalesce", "d
 _OBJECTS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
     {_EXCHANGE: NEUTRAL_EXCHANGE, _APPLIED: NEUTRAL_APPLIED}
 )
+#: The list fields whose items a Manager or Viewer receives cut to an allow-list.
+_LISTS: Final[Mapping[str, frozenset[str]]] = MappingProxyType({_COMPONENTS: NEUTRAL_COMPONENT})
 #: The `killSwitch` fields a Manager or Viewer receives, besides its own `exchange_account_ids`.
 NEUTRAL_KILL_SWITCH: Final = frozenset({"engaged", "scope", "engaged_at_ms"})
 #: The roles that receive the role-neutral view (C-12.4); `owner` receives the frame whole.
@@ -86,11 +94,17 @@ SCOPED_ROLES: Final = frozenset({"manager", "viewer"})
 
 
 def system_view(
-    body: object, principal: PrincipalSnapshot | None, *, flag_visible: FlagVisible | None = None
+    body: object,
+    principal: PrincipalSnapshot | None,
+    *,
+    flag_visible: FlagVisible | None = None,
+    now_ms: int | None = None,
 ) -> Mapping[str, Any] | None:
     """What `principal` receives of the `system` frame `body`: `body` itself, a copy holding only
     its role-neutral fields, or `None` for nothing. `flag_visible` decides the flag keys a Manager
-    or Viewer may learn; without it they learn none. Never changes `body`."""
+    or Viewer may learn; without it they learn none. `now_ms`, the gateway's time on receipt,
+    stamps a Manager's or Viewer's `cleared` safety frame; without it that frame is nothing
+    (#2302). Never changes `body`."""
     if principal is None or not isinstance(body, Mapping):
         return None
     kind = body.get("kind")
@@ -100,12 +114,14 @@ def system_view(
     if fields is None:
         return None
     if principal.is_owner:
-        return body
+        return _owner_view(body)
     # nosemgrep: cv-ws-no-adhoc-authz reason=sys-view owner=@CandleViewer/security review=2027-03-25
     if principal.roles.isdisjoint(SCOPED_ROLES):
         return None
     if _is_faulty(kind, body):
         return None  # a kill-switch frame is its state, an account notice its accounts
+    if kind == _SAFETY:  # its own accounts' count, since-time and state (#2302)
+        return safety_view.frame_view(body, principal, now_ms=now_ms)
     view = body
     for key in body:
         if key not in fields or not _is_neutral(key, body[key], principal.roles, flag_visible):
@@ -161,6 +177,8 @@ def _is_faulty(kind: str, body: Mapping[str, Any]) -> bool:
     kill-switch frame without its state, an `account_notice` whose `exchange_account_ids` is not a
     list naming at least one account, and an account list on any other `kind` (it is never cut
     away silently: that would send the frame, and the fact behind it, to every role)."""
+    if kind == _SAFETY:
+        return _ACCOUNTS in body or safety_view.is_faulty(body)
     if kind == _ACCOUNT_NOTICE:
         ids = body.get(_ACCOUNTS)
         return not isinstance(ids, list | tuple) or all(_account(raw) is None for raw in ids)
@@ -182,10 +200,11 @@ def _is_neutral(
         return isinstance(value, Mapping) and all(
             k in NEUTRAL_KILL_SWITCH or (k == _ACCOUNTS and value[k] == []) for k in value
         )
-    if key == _COMPONENTS:
+    if key == _SAFETY_CLASSES:  # always cut: an item may carry the in-process breakdown
+        return False
+    if key in _LISTS:
         return isinstance(value, list) and all(
-            isinstance(item, Mapping) and all(k in NEUTRAL_COMPONENT for k in item)
-            for item in value
+            isinstance(item, Mapping) and all(k in _LISTS[key] for k in item) for item in value
         )
     if key == _ACCOUNTS:
         return False
@@ -210,9 +229,11 @@ def _project(
         elif key == _KILL_SWITCH:
             if isinstance(value, Mapping):
                 out[key] = _kill_switch_view(value, principal)
-        elif key == _COMPONENTS:
+        elif key == _SAFETY_CLASSES:
+            out[key] = safety_view.items_view(value, principal)
+        elif (items := _LISTS.get(key)) is not None:
             if isinstance(value, list | tuple):
-                out[key] = [_only(c, NEUTRAL_COMPONENT) for c in value if isinstance(c, Mapping)]
+                out[key] = [_only(c, items) for c in value if isinstance(c, Mapping)]
         elif key == _ACCOUNTS:
             if mine := _viewable(value, principal):
                 out[key] = mine
@@ -221,6 +242,20 @@ def _project(
                 out[key] = _only(value, neutral)
         else:
             out[key] = value
+    return out
+
+
+def _owner_view(body: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The Owner's frame, of every kind: whole, less every in-process (`_`-prefixed) key, at the
+    top and in `safety_classes` items, which is never serialised (#2302). `body` itself when it
+    holds none."""
+    items = body.get(_SAFETY_CLASSES)
+    clean = safety_view.is_public(items)
+    if clean and not any(safety_view.is_internal(key) for key in body):
+        return body
+    out = {key: value for key, value in body.items() if not safety_view.is_internal(key)}
+    if not clean:
+        out[_SAFETY_CLASSES] = safety_view.items_view(items, None)
     return out
 
 

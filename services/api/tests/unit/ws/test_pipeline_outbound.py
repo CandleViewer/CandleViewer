@@ -95,7 +95,11 @@ _ON = BackpressureConfig()
 
 
 def _unlisted_kinds_pass(
-    body: object, principal: PrincipalSnapshot | None, *, flag_visible: FlagVisible | None = None
+    body: object,
+    principal: PrincipalSnapshot | None,
+    *,
+    flag_visible: FlagVisible | None = None,
+    now_ms: int | None = None,
 ) -> Mapping[str, Any] | None:
     """`system_view` for the rig's broadcasts: a body of a kind that §15.9 does not list passes
     whole; any other gets the cut the filter gives its principal."""
@@ -105,7 +109,7 @@ def _unlisted_kinds_pass(
         and kind not in NEUTRAL_FIELDS
     ):
         return body
-    return system_view(body, principal, flag_visible=flag_visible)
+    return system_view(body, principal, flag_visible=flag_visible, now_ms=now_ms)
 
 
 class _Hub(GatewayHub):

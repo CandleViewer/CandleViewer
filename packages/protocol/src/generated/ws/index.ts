@@ -1805,6 +1805,19 @@ export interface Error {
 }
 
 // Source: cv://ws/v1/system.schema.json
+/**
+ * This interface was referenced by `System`'s JSON-Schema
+ * via the `definition` "safetyClass".
+ */
+export type SafetyClass =
+  | "native_sl_missing"
+  | "sl_attach_failed"
+  | "liquidation_risk"
+  | "risk_auto_flatten"
+  | "risk_lockout"
+  | "unwind_incomplete"
+  | "order_entry_halted";
+
 export interface System {
   kind:
     | "health"
@@ -1816,7 +1829,8 @@ export interface System {
     | "degraded_data"
     | "clock_drift"
     | "notice"
-    | "account_notice";
+    | "account_notice"
+    | "safety";
   severity?: "debug" | "info" | "warning" | "error" | "critical";
   message?: string;
   health?: "healthy" | "degraded" | "warning" | "down";
@@ -1861,6 +1875,15 @@ export interface System {
   expected_downtime_ms?: number;
   clock_offset_ms?: number;
   degraded_topics?: string[];
+  safety_class?: SafetyClass;
+  environment?: "live" | "demo" | "testnet";
+  state?: "raised" | "cleared";
+  affected_count?: number;
+  /**
+   * Epoch milliseconds, UTC.
+   */
+  since_ms?: number;
+  safety_classes?: SafetyCoverage[];
 }
 /**
  * This interface was referenced by `System`'s JSON-Schema
@@ -1874,6 +1897,20 @@ export interface KillSwitch {
   engaged_by?: string | null;
   engaged_by_username?: string | null;
   reason?: string | null;
+}
+/**
+ * This interface was referenced by `System`'s JSON-Schema
+ * via the `definition` "safetyCoverage".
+ */
+export interface SafetyCoverage {
+  safety_class: SafetyClass;
+  environment: "live" | "demo" | "testnet";
+  state: "raised" | "clear" | "unknown";
+  affected_count?: number;
+  /**
+   * Epoch milliseconds, UTC.
+   */
+  since_ms?: number;
 }
 
 // Source: cv://ws/v1/ticker.schema.json

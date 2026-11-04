@@ -2143,6 +2143,10 @@ system_kinds:
     viewer: neutral, unauthenticated: none}
   notice: {owner: whole, manager_with_grant: whole, manager_without_grant: whole,
     viewer: whole, unauthenticated: none}
+  safety: {owner: whole, manager_with_grant: neutral, manager_without_grant: none,
+    viewer: none, unauthenticated: none}
+  safety_global: {owner: whole, manager_with_grant: whole, manager_without_grant: whole,
+    viewer: whole, unauthenticated: none}
   shutdown_notice: {owner: whole, manager_with_grant: whole, manager_without_grant: whole,
     viewer: whole, unauthenticated: none}
   unknown: {owner: none, manager_with_grant: none, manager_without_grant: none,

@@ -121,7 +121,7 @@ import re
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final, Protocol
@@ -230,6 +230,13 @@ from candleviewer.ws.revocation import (
     user_disabled_bye,
     ws_revoked_total,
 )
+from candleviewer.ws.safety_view import (
+    SAFETY,
+    SAFETY_CLASSES,
+    SafetyEdges,
+    dropped_items,
+    is_unkeyed,
+)
 from candleviewer.ws.sequencing import TopicEmitter
 from candleviewer.ws.system_filter import (
     FlagVisible,
@@ -306,6 +313,7 @@ SNAP_HEALTH_FIELDS: Final = (
     "exchange",
     "clock_offset_ms",
     "degraded_topics",
+    "safety_classes",  # #2302: the safety coverage, when the baseline carries it
 )
 #: §9.6 (#3085): the view-as binding of the session an `auth` presents, `None` when it holds no
 #: context. A read it cannot make raises, and the `auth` fails: never a scope it could not check.
@@ -738,6 +746,10 @@ class _Connection:
         self.system_snapped = False
         self.system_held: deque[dict[str, Any]] = deque(maxlen=SYSTEM_HELD_MAX)
         self.system_held_overflowed = False  # one warning a socket; every drop is counted
+        #: §15.9 (#2302): the safety state this socket was last sent per class and environment,
+        #: so it gets a `cleared` only after its own `raised`, no frame that changes nothing, and
+        #: count updates windowed on its own view. Its timers end at teardown (`stop_close_timer`).
+        self.safety_edges = SafetyEdges(call_later=self._call_later, due=self._safety_due)
         #: §15.9 (E42-T03): the flag keys a Manager or Viewer may learn; `None`, no key.
         self.flag_visible = flag_visible
         self.auth_failures = 0
@@ -881,10 +893,16 @@ class _Connection:
             self.arm_close_timer(self.tick_s if failed else CLOSE_REARM_MIN_S)
 
     def stop_close_timer(self) -> None:
-        """Teardown (C-2.18, TG5): the close and flush timers are cancelled, none armed after."""
+        """Teardown (C-2.18, TG5): the close and flush timers and the safety windows (#2302) are
+        cancelled, none armed after."""
         self.timer_stopped = True
         self.arm_close_timer()
         self.stop_flush_deadline()
+        self.safety_edges.stop()
+
+    def _call_later(self, delay: float, callback: Callable[[], None]) -> asyncio.TimerHandle:
+        """#2302: a safety window's end on the running loop; `SafetyEdges` holds and cancels it."""
+        return asyncio.get_running_loop().call_later(delay, callback)
 
     def arm_flush_deadline(self, delay: float) -> None:
         """#415: end the writer `delay` s from now (loop clock) if it still runs then: armed once,
@@ -950,25 +968,13 @@ class _Connection:
         not queued, so no delta ever precedes the snap. A second snap is ignored; a snap the
         principal may see none of (no role) leaves the socket unsnapped, so a later `auth_ok`
         may send it."""
-        view = self._system_view(body)
-        if view is None:
-            return
-        if snap and self.system_snapped:
-            return
-        if not snap and not self.system_snapped:  # the snap goes first; this follows it
-            if len(self.system_held) == self.system_held.maxlen:  # the oldest goes; counted
-                cv_ws_system_frames_withheld_total.labels(reason="held_overflow").inc()
-                if not self.system_held_overflowed:
-                    self.system_held_overflowed = True
-                    _log().warning("ws system hold overflow", connection_id=self.connection_id)
-            self.system_held.append(body)
-            return
-        views = [("snap" if snap else "d", view)]
-        if snap:
-            self.system_snapped = True
-            held = list(self.system_held)
-            self.system_held.clear()
-            views += [("d", cut) for item in held if (cut := self._system_view(item)) is not None]
+        self._queue_system(self._system_views(body, snap))
+
+    def _queue_system(self, views: Sequence[tuple[str, Mapping[str, Any]]]) -> None:
+        """SR-188: the one place a `system` frame is built, each `s` in turn. Its callers hand it
+        views already cut by `system_view` for the principal now: `push_system`, and for the
+        safety frames of #2302 only `reconcile_safety` and `_safety_due`
+        (`test_system_frame_callers.py` holds that list)."""
         for kind, cut in views:
             self.system_seq += 1  # the snap's is 1: no delta took one before it
             self.push(
@@ -982,13 +988,107 @@ class _Connection:
                 | {"p": cut}
             )
 
+    def _system_views(
+        self, body: dict[str, Any], snap: bool
+    ) -> list[tuple[str, Mapping[str, Any]]]:
+        """What `push_system` queues of `body`: the cut views, snap first, held deltas after.
+
+        #2302: a `safety` body before the snap is not held: the snap's `safety_classes` states
+        each class as it is then, and `seed` keeps its bodies. After it, while the socket's
+        principal is not the one its safety state was last seen under (a change not yet
+        settled), a `safety` body is only kept: the settle's `reconcile_safety` sends the state
+        under the new principal, stamped then."""
+        if body.get("kind") == SAFETY and not snap:
+            if not self.system_snapped:
+                return []
+            if self._safety_unsettled():
+                self.safety_edges.observe(body)
+                return []
+        self.safety_edges.observe(body)  # #2302: a body the fault check accepts, whatever the cut
+        view = self._system_view(body)
+        if view is None:
+            return []
+        if snap and self.system_snapped:
+            return []
+        if not snap and not self.system_snapped:  # the snap goes first; this follows it
+            if len(self.system_held) == self.system_held.maxlen:  # the oldest goes; counted
+                cv_ws_system_frames_withheld_total.labels(reason="held_overflow").inc()
+                if not self.system_held_overflowed:
+                    self.system_held_overflowed = True
+                    _log().warning("ws system hold overflow", connection_id=self.connection_id)
+            self.system_held.append(body)
+            return []
+        if snap:
+            if self.authz is not None:  # a view was cut: it has a principal
+                self.safety_edges.seed(body, view, self.authz.principal)
+        elif (sent := self.safety_edges.admit(body, view)) is None:
+            return []  # a safety frame this socket must not, or need not, be sent (#2302)
+        else:
+            view = sent
+        views: list[tuple[str, Mapping[str, Any]]] = [("snap" if snap else "d", view)]
+        if snap:
+            self.system_snapped = True
+            held = list(self.system_held)
+            self.system_held.clear()
+            for item in held:
+                cut = self._system_view(item)
+                if cut is not None and (cut := self.safety_edges.admit(item, cut)) is not None:
+                    views.append(("d", cut))
+        return views
+
+    def reconcile_safety(self) -> None:
+        """§15.9 (#2302): the socket's scope changed (a grant withdrawn, frozen or added, a role
+        change, an in-place re-`auth`), so its safety state is seen anew at once, without waiting
+        for the publisher: the `raised` it newly may see, and the `cleared`, stamped now, of what
+        it no longer may (`SafetyEdges.rescope`)."""
+        if not self.system_snapped or self.authz is None:
+            return
+        principal, now = self.authz.principal, self.wall_ms()
+        rescoped = self.safety_edges.rescope(
+            lambda body: system_view(body, principal, flag_visible=self.flag_visible, now_ms=now),
+            now,
+            principal=principal,
+        )
+        if rescoped:  # nothing to queue is no call: a scope change with no safety state is quiet
+            self._queue_system([("d", cut) for cut in rescoped])
+
+    def _safety_unsettled(self) -> bool:
+        """#2302: the socket's principal changed since its safety state was last seen, and the
+        change's `settle` (`reconcile_safety`) has not run yet. Every swap after the snap is
+        followed by a settle or an eviction (`ConnectionRegistry._fan_out`, `revoke_account`,
+        `run_auth`, a re-`auth` that failed after its swap included)."""
+        return self.authz is not None and self.authz.principal is not self.safety_edges.principal
+
+    def _safety_due(self, key: tuple[str, str]) -> None:
+        """§15.9 (#2302): the count-update window of `key` on this socket ended with an update
+        held (`SafetyEdges`): the latest, cut under the principal now, unless a close is under
+        way or the socket has no principal."""
+        if self.closing or self.authz is None or self._safety_unsettled():
+            return  # unsettled: the settle's rescope sends the latest count
+        principal, now = self.authz.principal, self.wall_ms()
+        sent = self.safety_edges.release(
+            key,
+            lambda body: system_view(body, principal, flag_visible=self.flag_visible, now_ms=now),
+        )
+        if sent is not None:
+            self._queue_system([("d", sent)])
+
     def _system_view(self, body: dict[str, Any]) -> Mapping[str, Any] | None:
         """The principal's §15.9 view of `body` now, counting a frame withheld for what it is
         or who the socket is (`withheld_reason`), never for its role's cut."""
         principal = None if self.authz is None else self.authz.principal
-        view = system_view(body, principal, flag_visible=self.flag_visible)
+        view = system_view(body, principal, flag_visible=self.flag_visible, now_ms=self.wall_ms())
         if view is None and (reason := withheld_reason(body, principal)) is not None:
             cv_ws_system_frames_withheld_total.labels(reason=reason).inc()
+        elif view is not None and is_unkeyed(view):  # #2302: no role, the Owner included
+            cv_ws_system_frames_withheld_total.labels(reason="invalid_body").inc()
+        elif (
+            view is not None
+            and principal is not None
+            and not principal.is_owner
+            and dropped_items(body.get(SAFETY_CLASSES))
+        ):  # #2302: a snapshot item outside the contract, which a Manager or Viewer never gets
+            cv_ws_system_frames_withheld_total.labels(reason="invalid_body").inc()
         return view
 
     def encode_frame(self, frame: dict[str, Any]) -> str | bytes:
@@ -1669,6 +1769,19 @@ def make_ws_router(
         async with _auth_call("view_as", auth_call_timeout_s):
             return await view_as(session_id)
 
+    async def settle_failed_reauth(conn: _Connection, authz: ConnectionAuthz) -> None:
+        """A re-`auth` that failed after its swap (`registry.apply`) keeps the socket open, so the
+        change is settled as a successful one is (§9.5: the re-pended subscriptions; #2302: the
+        safety state under the principal now). A settle that raises never masks the failure: the
+        socket, which may no longer be registered for later changes, closes `internal_error`, as
+        a late `auth` call's does."""
+        try:
+            await registry.settle(authz, conn.evict)
+        except Exception:
+            with contextlib.suppress(Exception):  # a failing logger must not skip the close
+                _log().error("ws reauth settle failed", connection_id=conn.connection_id)
+            conn.close_with("internal_error")
+
     def view_as_refusal(read: ViewAsBinding | None, socket_context: str | None) -> str | None:
         """§9.6: why an `auth` that read `read` is refused, or `None`. A held context refuses
         with `view_as_expired`; a context other than the socket's (none, or another one: a
@@ -1825,6 +1938,8 @@ def make_ws_router(
                 conn.close_with("auth_failed")
             else:
                 conn.push(build_ws_error("auth_failed", id=_str_or_none(frame.get("id"))))
+                if reauth and conn.authz is not None:
+                    await settle_failed_reauth(conn, conn.authz)
             return
         if conn.closing:
             return  # closed (expiry, revocation) while this auth was in flight: no auth_ok
@@ -1952,6 +2067,8 @@ def make_ws_router(
                 body["feature_flags"] = flags["feature_flags"]
         body["kill_switch"] = state
         if system_baseline is not None:
+            # #2302: no await from here to `push_system(snap=True)`, so a safety body dropped
+            # before the snap (`_system_views`) is always in the coverage read here.
             try:
                 health = system_baseline()
             except Exception:
@@ -2013,6 +2130,7 @@ def make_ws_router(
         narrowing re-pended (`subs`, nothing else), built under the new scope (§9.5). One that
         raises is contained to its subscription by the pipeline (§10.1)."""
         conn.pipeline.flush_pending(subs)
+        conn.reconcile_safety()  # §15.9 (#2302): the safety state under the new scope
 
     async def dispatch(conn: _Connection, frame: Any) -> None:
         if isinstance(frame, dict) and "id" in frame and not _is_envelope_id(frame["id"]):

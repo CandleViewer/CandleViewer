@@ -867,7 +867,7 @@ The account-scoped private topics (below) intersect the requested `exchange_acco
 
 **`orders` and `executions` are never throttled or coalesced.** Losing an intermediate order state or dropping a fill would corrupt the OMS mirror the UI renders and the journal derives from. If a client cannot keep up with these two topics, the server closes the connection (`4429`) rather than silently degrading them — a slow client must not be able to see a wrong position.
 
-**`system` is auto-subscribed.** Every authenticated connection is subscribed to `system` implicitly at `auth_ok`; it carries kill-switch transitions, feature-flag changes, degraded-data notices, exchange connectivity changes, planned-shutdown warnings and account notices (§15.9). A client may not unsubscribe from it.
+**`system` is auto-subscribed.** Every authenticated connection is subscribed to `system` implicitly at `auth_ok`; it carries kill-switch transitions, feature-flag changes, degraded-data notices, exchange connectivity changes, planned-shutdown warnings, account notices and safety summaries (§15.9); its snapshot also states each safety class's coverage (`safety_classes`, §15.9). A client may not unsubscribe from it.
 
 **As built (#377).** Kill-switch transitions are pushed on `system` as a `kill_switch` frame (§12.5) before the re-evaluation in §9.5 runs, so the UI can disable order entry on that frame alone. A live public subscription takes one shared upstream lease per `(symbol, family)` on the E08 ingestion streams. The lease is released 30 s after the last consumer leaves. Families with no ingestion stream yet stay `snapshot_pending`.
 
@@ -1295,7 +1295,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 
 | Mechanism      | What it does                                                               | Applied to                                                                      | Loss of information?                                    |
 | -------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| **Throttling** | Releases a topic's pending updates at most once per `throttle_ms`.         | All topics except `orders`, `executions` and `system` flag frames.              | No — state is complete at each emission.                |
+| **Throttling** | Releases a topic's pending updates at most once per `throttle_ms`.         | All topics except `orders`, `executions`, `system` flags, safety transitions.   | No — state is complete at each emission.                |
 | **Coalescing** | Merges all pending updates for a topic into one frame.                     | Book, bars, footprint, indicators, heatmap, metrics, ticker, positions, wallet. | Intermediate _frames_ are lost; final _state_ is exact. |
 | **Shedding**   | Drops the subscription and forces a re-snapshot, or closes the connection. | Last resort under sustained overflow.                                           | Yes — recovered by re-snapshot.                         |
 
@@ -1314,6 +1314,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 | `trades`, `liquidations`        | **Append, never merge** — throttling batches them into arrays.                                                                                                              | Every print matters for the tape and CVD.                      |
 | `orders`, `executions`          | **Never coalesced, never throttled.**                                                                                                                                       | State-machine transitions and fills must be seen individually. |
 | `system`                        | `feature_flags`: per flag key, last-write-wins, a key is never dropped. `notice`, `kill_switch`, `shutdown_notice`, `account_notice`: **never coalesced**.                  | A flag delta carries only changed keys; notices are events.    |
+| `system`, kind `safety`         | Transitions **never coalesced**; a clear waits a 1 000 ms dwell, so at most one raised/cleared pair per class and environment per 1 000 ms; counts last-write-wins.         | A transition is an event; the count is a state.                |
 
 **Bar key (#2014).** Within a channel (one `spec_hash`) every bar — of every `bar_type`, time bars included — is keyed by `(generation, index)` (24 §3.1), never by `t_ms`: non-time bars can share an open time, and `index` restarts at 0 only inside a fresh generation/epoch (ADR-0033; a builder cold start begins one, #2662). No two bars of one channel share `(generation, index)`, barring the clock-regression residual and a restore whose tape lost trades after the watermark (24 §3.5). A channel streams one generation at a time; any change of generation, in either direction, is a swap and arrives as a new snapshot (ADR-0033 client ingestion): a `snap` with `meta.reason: "generation_swap"` (§7.4), never a `d`. Clients compare generations for equality only, and MUST replace their whole series with that snapshot, never merging bars across generations. The server never drops an emission as stale for carrying a lower generation. One live builder serves a series at a time, which is what lets a channel stream one generation at a time: a server invariant that the rebuild flip (E12-S12, #535) must keep, with no client backstop (§7.4). Clients key their bar stores the same way. **Footprint bars take the same key (#2529; decided with E12-T06):** §14.4 bar items carry `generation` and `index`, and so does each CVWB kind-5 group prefix (`format_version = 2`, §3.4), so two footprint bars that share an open time are never merged: the coalescer keys them by `(generation, index)` (#3297), and an item without the key is malformed, merged or queued whole (§8.6 Failures). The coalescer keys two generations apart but does not police them: a generation change arrives as a `snap` (§7.4), and the server discards the window that predates it. Footprint items carry no `amended` (§14.4 has no such field, and kind-5 group `flags` bit1 stays reserved), so the carve-out below does not apply to them, and this contract defines no way to republish a late trade into a confirmed footprint bar: clients keep a confirmed footprint bar as received (the coalescer holds that within one window only: an update to a footprint bar confirmed earlier in the window breaks this rule, so it is refused `unmergeable`, §8.4 step 4), the series' `bars` topic carries the `amended` bar, and that bar's footprint cells are corrected only by the next `snap`, which is authoritative (§7.1). Delivering a late trade on `footprint` sooner is decided with the producer (#2197) and would be additive.
 
@@ -1383,7 +1384,7 @@ Each connection has a **bounded** outbound budget: 8 MiB or 2 000 frames, whiche
 
 On overflow the server acts in this order:
 
-1. **Drop the queued frames and coalescable pending state** of the offending topics and mark them `resnapshot_required`. The offending topics are the throttled topics that hold queued frames or a pending window, taken largest first by those bytes (a live and a replay subscription of one topic each on its own) until the queue, pending windows included, is back under the 50 % of step 2: a topic that is not needed for that keeps its frames and its window, and gets no `backpressure` snapshot (#4833). When all of them together do not take the queue under that line, every one is dropped, and step 3 decides. Over the `bars` share alone, every `bars` topic that holds state is dropped ("`bars.*` share" below). Every throttled topic can be dropped this way, the append-only `trades` and `liquidations` included; a dropped topic recovers through its snapshot (step 2), never by a replay of what was dropped. `orders` and `executions` (never throttled), control frames (`sub_ok`, `err`, `pong`, ...) and `system` frames are never dropped. A paused subscription (§5.4) is shed without the mark: its queued frames and throttle window are discarded, no `backpressure` snapshot is sent for it, and the `reconfigure` snapshot that its resume answers with recovers it.
+1. **Drop the queued frames and coalescable pending state** of the offending topics and mark them `resnapshot_required`. The offending topics are the throttled topics that hold queued frames or a pending window, taken largest first by those bytes (a live and a replay subscription of one topic each on its own) until the queue, pending windows included, is back under the 50 % of step 2: a topic that is not needed for that keeps its frames and its window, and gets no `backpressure` snapshot (#4833). When all of them together do not take the queue under that line, every one is dropped, and step 3 decides. Over the `bars` share alone, every `bars` topic that holds state is dropped ("`bars.*` share" below). Every throttled topic can be dropped this way, the append-only `trades` and `liquidations` included; a dropped topic recovers through its snapshot (step 2), never by a replay of what was dropped. `orders` and `executions` (never throttled), control frames (`sub_ok`, `err`, `pong`, ...) and `system` frames (a `safety` frame among them, §15.9) are never dropped. A paused subscription (§5.4) is shed without the mark: its queued frames and throttle window are discarded, no `backpressure` snapshot is sent for it, and the `reconfigure` snapshot that its resume answers with recovers it.
 2. Send `snap` with `reason: "backpressure"` for each such topic once the queue drains below 50 %. Snapshots are queued one at a time, each only while the queue, earlier snapshots included, is still below 50 %.
 3. Send `bye` with `slow_consumer` and close `4429` when either:
    - the queue is still over budget after the drop, because what remains cannot be dropped: `orders` or `executions`, or a backlog of control or `system` frames (S6); or
@@ -4321,7 +4322,8 @@ with it. `refusal` and `write_gate_reason` are open-ended for readers (C-6.3).
         "degraded_data",
         "clock_drift",
         "notice",
-        "account_notice"
+        "account_notice",
+        "safety"
       ]
     },
     "severity": { "enum": ["debug", "info", "warning", "error", "critical"] },
@@ -4400,10 +4402,106 @@ with it. `refusal` and `write_gate_reason` are open-ended for readers (C-6.3).
     "degraded_topics": {
       "type": "array",
       "items": { "$ref": "cv://ws/v1/common.schema.json#/$defs/topic" }
+    },
+
+    "safety_class": { "$ref": "#/$defs/safetyClass" },
+    "environment": { "$ref": "cv://ws/v1/common.schema.json#/$defs/environment" },
+    "state": { "enum": ["raised", "cleared"] },
+    "affected_count": { "type": "integer", "minimum": 0 },
+    "since_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
+    "safety_classes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/safetyCoverage" }
     }
   },
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "safety" } }, "required": ["kind"] },
+      "then": {
+        "required": [
+          "severity",
+          "safety_class",
+          "environment",
+          "state",
+          "affected_count",
+          "since_ms"
+        ],
+        "propertyNames": {
+          "enum": [
+            "kind",
+            "severity",
+            "safety_class",
+            "environment",
+            "state",
+            "affected_count",
+            "since_ms"
+          ]
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "state": { "const": "raised" } }, "required": ["state"] },
+            "then": {
+              "properties": {
+                "severity": { "const": "critical" },
+                "affected_count": { "minimum": 1 }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "state": { "const": "cleared" } }, "required": ["state"] },
+            "then": {
+              "properties": { "severity": { "const": "info" }, "affected_count": { "const": 0 } }
+            }
+          }
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            { "required": ["safety_class"] },
+            { "required": ["environment"] },
+            { "required": ["state"] },
+            { "required": ["affected_count"] },
+            { "required": ["since_ms"] }
+          ]
+        }
+      }
+    },
+    {
+      "if": { "required": ["safety_classes"] },
+      "then": { "properties": { "kind": { "const": "health" } } }
+    }
+  ],
   "$defs": {
+    "safetyClass": {
+      "enum": [
+        "native_sl_missing",
+        "sl_attach_failed",
+        "liquidation_risk",
+        "risk_auto_flatten",
+        "risk_lockout",
+        "unwind_incomplete",
+        "order_entry_halted"
+      ]
+    },
+    "safetyCoverage": {
+      "type": "object",
+      "required": ["safety_class", "environment", "state"],
+      "properties": {
+        "safety_class": { "$ref": "#/$defs/safetyClass" },
+        "environment": { "$ref": "cv://ws/v1/common.schema.json#/$defs/environment" },
+        "state": { "enum": ["raised", "clear", "unknown"] },
+        "affected_count": { "type": "integer", "minimum": 1 },
+        "since_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" }
+      },
+      "additionalProperties": false,
+      "if": { "properties": { "state": { "const": "raised" } } },
+      "then": { "required": ["affected_count", "since_ms"] },
+      "else": {
+        "not": { "anyOf": [{ "required": ["affected_count"] }, { "required": ["since_ms"] }] }
+      }
+    },
     "killSwitch": {
       "type": "object",
       "required": ["engaged", "scope"],
@@ -4495,18 +4593,19 @@ Such a frame, a `kill_switch` frame with no `kill_switch` object and a frame tha
 `exchange_account_ids` rule below are counted by `cv_ws_system_frames_withheld_total` (20 §12.1);
 the last two are left out of every connection but the Owner's.
 
-| `kind`               | Fields a Manager or Viewer also receives                                                                                                                                                                                             |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `health`             | `health`, `components` (each with only `name`, `state`, `last_good_at`; never `detail`, `04-security-program.md` §7.2.2 row 48), `exchange`, `clock_offset_ms`, `degraded_topics`, `kill_switch` and `feature_flags` (each as below) |
-| `kill_switch`        | `kill_switch` with only `engaged`, `scope`, `engaged_at_ms` and the `exchange_account_ids` the connection's `account_scope` lists (or `[]`); a frame with no `kill_switch` object goes to the Owner only, counted as `invalid_body`  |
-| `feature_flags`      | `feature_flags` with only the keys whose registry `visibility` admits the role, never one that no flag definition names; left out when none remains, and then a frame of this kind is not sent                                       |
-| `exchange_state`     | `exchange`, `public_ws`, `private_ws`, `affected_symbols`                                                                                                                                                                            |
-| `connection_quality` | `class`, `queue_pct`, `rtt_ms`, `applied`                                                                                                                                                                                            |
-| `shutdown_notice`    | `reason`, `closing_in_ms`, `expected_downtime_ms`                                                                                                                                                                                    |
-| `degraded_data`      | `degraded_topics`, `affected_symbols`                                                                                                                                                                                                |
-| `clock_drift`        | `clock_offset_ms`                                                                                                                                                                                                                    |
-| `notice`             | `reason`                                                                                                                                                                                                                             |
-| `account_notice`     | `reason`, `exchange_account_ids` (cut to the connection's `account_scope`; a frame left with none is not sent, and one whose list names no account goes to the Owner only, counted as `invalid_body`)                                |
+| `kind`               | Fields a Manager or Viewer also receives                                                                                                                                                                                                                                                             |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `health`             | `health`, `components` (each with only `name`, `state`, `last_good_at`; never `detail`, `04-security-program.md` §7.2.2 row 48), `exchange`, `clock_offset_ms`, `degraded_topics`, `kill_switch` and `feature_flags` (each as below), `safety_classes` (each item cut as a `safety` frame is, below) |
+| `kill_switch`        | `kill_switch` with only `engaged`, `scope`, `engaged_at_ms` and the `exchange_account_ids` the connection's `account_scope` lists (or `[]`); a frame with no `kill_switch` object goes to the Owner only, counted as `invalid_body`                                                                  |
+| `feature_flags`      | `feature_flags` with only the keys whose registry `visibility` admits the role, never one that no flag definition names; left out when none remains, and then a frame of this kind is not sent                                                                                                       |
+| `exchange_state`     | `exchange`, `public_ws`, `private_ws`, `affected_symbols`                                                                                                                                                                                                                                            |
+| `connection_quality` | `class`, `queue_pct`, `rtt_ms`, `applied`                                                                                                                                                                                                                                                            |
+| `shutdown_notice`    | `reason`, `closing_in_ms`, `expected_downtime_ms`                                                                                                                                                                                                                                                    |
+| `degraded_data`      | `degraded_topics`, `affected_symbols`                                                                                                                                                                                                                                                                |
+| `clock_drift`        | `clock_offset_ms`                                                                                                                                                                                                                                                                                    |
+| `notice`             | `reason`                                                                                                                                                                                                                                                                                             |
+| `account_notice`     | `reason`, `exchange_account_ids` (cut to the connection's `account_scope`; a frame left with none is not sent, and one whose list names no account goes to the Owner only, counted as `invalid_body`)                                                                                                |
+| `safety`             | `safety_class`, `environment`, `state`, `affected_count`, `since_ms` (an account-keyed class counted over the connection's `account_scope`, below; PROPOSED, #2302)                                                                                                                                  |
 
 So who engaged the kill switch (`engaged_by`, `engaged_by_username`), its free-text `reason`, the
 `actions` counts, the accounts outside the connection's scope, the `owner_only` flag keys and any
@@ -4581,6 +4680,144 @@ When E29-T06's rows fire (the orchestrator's ruling of record on #914, BQ-6 and 
 - `oms.account_desync` is sent once per pass that applied at least one correction to tracked state, never once per row. A correction is a step sent to an order, a position corrected, or a stop attached or restored. It is `critical` for a pass that found an open position with no exchange-side stop and no recorded stop in force: that pass pages P1, lists the position in its report, and leaves the attach to E32-T02. A pass whose only finding is such a position sends it at `critical` too, though it applied no correction (BQ-9 and BQ-6).
 - `oms.account_stale` is sent once per episode, when the 2-minute window of failed fetches ends and the account's reconciliation job locks (`stale_lockout`), so its order entry is refused with `account_stale`.
 - `oms.account_synced` is sent once, on the first clean pass after a desync or stale episode, never on every clean pass. A clean pass applied no correction, left nothing for the Owner and listed no error, so a pass that found such a naked position is never clean. A stale episode ends only by the operator's decision (`resolveReconciliation`), so its `synced` follows the first clean pass after it.
+
+**Safety summary (E09-D06 rule 1, #2302; contract first, C-6.1).** While a screen is idle-locked,
+the lock card still shows safety-critical state, as class, count and time only. A frame of
+`kind: "safety"` carries exactly seven fields, and the schema's `propertyNames` holds it to them:
+`kind`, `severity`, `safety_class`, `environment`, `state`, `affected_count` and `since_ms`. By
+schema it carries no account id, symbol, size, price, user name and no free text (`message`,
+`reason`), so a client can render it on a locked screen with no redaction of its own. The detail
+stays on its own channels (`alerts`, `positions`, `orders`, `trade_groups`, an `account_notice`),
+cut per role as they are, and the client renders it only after unlock. The safety fields appear
+on no other kind.
+
+- `safety_class` is a **closed** enum (§2.3: a new class is a contract change under C-6.3). What
+  `affected_count` counts, and the planned emitter of each class, which lands with its own
+  ticket (the WS gateway emits nothing for this kind until then). The first six classes are
+  **account-keyed** (each counted subject belongs to one exchange account); the last is
+  **process-global**:
+  - `native_sl_missing`: open positions with no exchange-native stop-loss for more than 10 s
+    (`24-internal-schemas.md` §8.8 rule 3). Emitters: the SL watchdog (#932) and B8's
+    `protection.sl_missing` entry (B1/B8, `28-statechart-catalogue.md`); a position leaves the
+    count when its stop is read on the exchange (`SL_OBSERVED`).
+  - `sl_attach_failed`: positions whose stop attach (attached, `trading-stop` or fallback) failed
+    and is not yet confirmed. Emitter: B1/B8 (#932).
+  - `liquidation_risk`: positions whose mark price is inside the risk engine's
+    near-liquidation band. Emitter: the risk engine (E39); its owning ticket is not yet named.
+  - `risk_auto_flatten`: accounts whose positions the risk engine is flattening, until the
+    flatten completes. Emitter: B20 (#955).
+  - `risk_lockout`: accounts in a risk lockout. Emitter: B20 (#955).
+  - `unwind_incomplete`: trade groups whose unwind has not completed (E34). Emitter: #1111.
+  - `order_entry_halted` (process-global): the halt causes in force that refuse new orders for
+    the whole process, `clock_drift` over 500 ms (SR-036) and an exhausted rate budget
+    (C-12.7), so its count is 1 or 2 and names no account. Risk-reducing actions stay allowed.
+    PROPOSED (#2302): the `clock_drift` kind is unchanged and is sent beside it.
+- `environment` is the `common` `environment` enum (`live`, `demo`, `testnet`). A class is
+  raised, counted and cleared per (`safety_class`, `environment`), never across environments
+  (C-2.11), and the lock card's DEMO or LIVE badge reads it (E09-D06). PROPOSED (#2302, the
+  security review's H2): the issue's frame has no environment field.
+- `state` is `raised` or `cleared`. A `raised` frame has `severity` `critical` and an
+  `affected_count` of at least one; a `cleared` frame has `severity` `info` and an
+  `affected_count` of 0 (PROPOSED, #2302: `info`, as the read-only notice above uses when trading
+  is re-enabled).
+- `since_ms` (epoch ms, server clock): on a `raised` frame and on its count updates, the time
+  the class was raised in this episode, as the connection sees it (below; unchanged by count
+  updates); on a `cleared` frame, the time it cleared: for a Manager's or Viewer's view of an
+  account-keyed class, the gateway's own time when the change that emptied its view reached it
+  (or the scope change's time, below), never the publisher's event time, which may be another
+  account's. After a server restart the episode begins again when the emitter re-reports it.
+- Each emitter keeps its existing detailed alert (`NakedPositionAlert`, B1's
+  `raise_naked_position_alert`, B20's lockout alert, E34's `unwind_incomplete`, E40's
+  `alerts`). This frame is a summary that records; it never enforces anything (C-2.21), and a
+  client keys order entry on the kill switch, the read-only notice and its refusals, never on it.
+
+Each connection's view (C-12.4). PROPOSED (#2302, the security review's H1): the issue's text
+"`affected_count` (integer >= 0)" is one process-wide count sent to every client; that would tell
+a Manager scoped to some accounts that incidents exist on others, how many and since when, which
+`account_notice` (withheld when no account is in scope) and the kill switch's account list (cut to
+scope) never do. So:
+
+- An **account-keyed** class is counted per connection. The Owner's count is every account's. A
+  Manager's or Viewer's is the count over the accounts its `account_scope` lists, and so are its
+  own `state` (`raised` while that count is above 0) and `since_ms` (the earliest raise among those
+  accounts when its view turns `raised`, then kept for that connection while its view stays
+  raised, so a count update never moves it). The publisher hands the gateway a per-account breakdown, in process only and never
+  serialised (`24-internal-schemas.md` §8.13), and the gateway derives each connection's frame
+  from it. A connection is sent a `cleared` only after a `raised` it was sent, and never a frame
+  whose state, count and since-time it already has: so a connection whose scoped count stays 0 is
+  sent nothing at all for that class, neither a frame nor a boolean, since existence leaks too.
+- A change of the connection's scope (a grant withdrawn, frozen or added, a role change, an
+  in-place re-`auth`) is applied to its safety state when the change settles, without waiting
+  for the publisher (until then the connection's `safety` frames wait for it):
+  the gateway keeps the last body per (`safety_class`, `environment`), at most 21, and sees each
+  anew under the new scope. It sends `raised` for what the connection newly may see, and
+  `cleared` for what it no longer may, with `since_ms` the time of the change, never the
+  publisher's, so a later event on an account it lost tells it nothing.
+- Deny by default: a Manager or Viewer is given nothing of a frame or a snapshot item whose
+  `safety_class` or `environment` is outside the contract's closed sets (the item is dropped and
+  counted `invalid_body`), and a valid item is rebuilt in a fixed key order, `safety_class`,
+  `environment`, `state`, then `affected_count` and `since_ms` only when `raised`.
+- PROPOSED (#2302), pending a ruling: a Viewer, like a Manager, is counted over the accounts its
+  grants name, so a Viewer with no grant gets nothing of an account-keyed class, as it gets no
+  `account_notice`.
+- A **process-global** class (`order_entry_halted`) names no account; every role receives it
+  whole, as `exchange_state`.
+- A frame for an environment the connection may not use is dropped. For an account-keyed class
+  the account cut already does it (an account belongs to one environment); for a process-global
+  one the gateway compares the frame's `environment` with the connection's environments once it
+  holds them, with the first emitter (`auth_ok` does not carry `allowed_environments` today, §4.3).
+
+Coalescing (§8.2): per (`safety_class`, `environment`), a frame is sent on each `raised` and each
+`cleared` transition, never coalesced and never held by the 1 000 ms `system` throttle (§8.1). A
+raise is sent at once, never delayed. A clear waits a **dwell** of 1 000 ms: a subject cleared
+and raised again inside the dwell never left the count, so the episode and its `since_ms` go on
+and at most a count update is sent. So there is at most one `raised`/`cleared` pair per class and
+environment per 1 000 ms. Transitions and count updates are judged per connection, on its own
+view (C-12.4): its view turning `raised` or `cleared` is a transition, and between transitions a
+change of its `affected_count` is a count update (`state` `raised` again), at most one per class
+and environment per connection per 1 000 ms, last-write-wins, so the one sent carries the latest
+count; a transition discards a pending count update of its key. So whether and when a connection
+is sent a frame follows from the accounts in its scope alone. The publisher owns the dwell and
+hands every change over at once; each connection's window is the gateway's
+(`24-internal-schemas.md` §8.13 rules 3 to 5), and the gateway merges no `system` frame. Like every `system` frame, a `safety` frame rides the priority lane and
+is never dropped by the §8.4 ladder. PROPOSED (#2302, the security review's M2): the issue's
+"one frame per raised/cleared transition per class" had no dwell.
+
+Snapshot coverage: the `system` snap at `auth_ok` (§12.1, `kind: "health"`) carries
+`safety_classes`, one item per (`safety_class`, `environment`) the process runs, each with its
+`state`: `raised` (with `affected_count` and `since_ms`, cut to the connection as a frame is),
+`clear`, or `unknown`. A class is `clear` only once its emitter has finished its first pass since
+start-up; until then it is `unknown`. A connection whose scoped count of a raised account-keyed
+class is 0 gets `clear` for it, the same bytes as a class raised nowhere. After start-up an
+account-keyed item is `unknown` to a Manager or Viewer only on the fault path (a raised item
+whose breakdown is missing), so such an `unknown` can tell it that the class is raised somewhere;
+the fault is the producer's, counted, and never shows a count, a time or an account. So a client that connects, reconnects or locks mid-incident shows
+the raised set from its first `system` frame, and knows which classes it cannot vouch for. The
+producer emits exactly one item per (`safety_class`, `environment`); the test of that comes with
+the producer. The field appears only on `kind: "health"` and is sent only on the snap; it is
+absent until the first emitter lands. A client keeps the latest state per (`safety_class`,
+`environment`) from the snap and every later `safety` frame. PROPOSED (#2302, the security
+review's M1): the issue's "the current raised set" alone, whose empty list would read as an
+all-clear before the emitters have looked. A `safety` frame that would reach a connection before
+its `system` snap is not sent: the snap states each class as it is when it is built.
+
+Accepted residual (#2302): an account-keyed item shown `unknown` to a Manager or Viewer (a raised
+item without its breakdown) tells it that the class is raised somewhere. This is an accepted
+residual: it fails safe, never as a false all-clear, and only on a producer fault.
+
+Consumer rule (lock card, SCR-005 #1640, SCR-152, SCR-153; E09-D06 rule 1): while locked, the
+client renders only frames of `kind` `kill_switch`, `exchange_state`, `health`,
+`degraded_data`, `clock_drift`, `shutdown_notice` and `safety`. From each it renders only an
+icon, the class label, the count, the since-time and the environment badge; every other field is
+dropped, so a `kill_switch` frame on the lock card omits `engaged_by_username` and `reason`, and
+equally its `exchange_account_ids`, `affected_symbols` and `degraded_topics`. The lock card never
+draws an all-clear while any `safety_classes` item is `unknown`, and draws nothing, not an
+all-clear, when the field is absent. Every other `kind` waits for unlock. A `raised` or `cleared`
+transition is announced assertively once; a count update politely
+(`05-accessibility-standard.md` §6.2).
+
+The new kind and fields are additive (C-6.3): `system.kind` is an open enum (§16.5), so a
+client ignores a `kind` it does not know, and `safety_classes` is an optional property.
 
 ### 15.10 `MachineStateUpdate`
 

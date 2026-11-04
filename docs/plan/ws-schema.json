@@ -3447,7 +3447,8 @@
             "degraded_data",
             "clock_drift",
             "notice",
-            "account_notice"
+            "account_notice",
+            "safety"
           ]
         },
         "severity": {
@@ -3589,10 +3590,196 @@
           "items": {
             "$ref": "cv://ws/v1/common.schema.json#/$defs/topic"
           }
+        },
+        "safety_class": {
+          "$ref": "#/$defs/safetyClass"
+        },
+        "environment": {
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/environment"
+        },
+        "state": {
+          "enum": ["raised", "cleared"]
+        },
+        "affected_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "since_ms": {
+          "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+        },
+        "safety_classes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/safetyCoverage"
+          }
         }
       },
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "safety"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": [
+              "severity",
+              "safety_class",
+              "environment",
+              "state",
+              "affected_count",
+              "since_ms"
+            ],
+            "propertyNames": {
+              "enum": [
+                "kind",
+                "severity",
+                "safety_class",
+                "environment",
+                "state",
+                "affected_count",
+                "since_ms"
+              ]
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "state": {
+                      "const": "raised"
+                    }
+                  },
+                  "required": ["state"]
+                },
+                "then": {
+                  "properties": {
+                    "severity": {
+                      "const": "critical"
+                    },
+                    "affected_count": {
+                      "minimum": 1
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "state": {
+                      "const": "cleared"
+                    }
+                  },
+                  "required": ["state"]
+                },
+                "then": {
+                  "properties": {
+                    "severity": {
+                      "const": "info"
+                    },
+                    "affected_count": {
+                      "const": 0
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": ["safety_class"]
+                },
+                {
+                  "required": ["environment"]
+                },
+                {
+                  "required": ["state"]
+                },
+                {
+                  "required": ["affected_count"]
+                },
+                {
+                  "required": ["since_ms"]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["safety_classes"]
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "const": "health"
+              }
+            }
+          }
+        }
+      ],
       "$defs": {
+        "safetyClass": {
+          "enum": [
+            "native_sl_missing",
+            "sl_attach_failed",
+            "liquidation_risk",
+            "risk_auto_flatten",
+            "risk_lockout",
+            "unwind_incomplete",
+            "order_entry_halted"
+          ]
+        },
+        "safetyCoverage": {
+          "type": "object",
+          "required": ["safety_class", "environment", "state"],
+          "properties": {
+            "safety_class": {
+              "$ref": "#/$defs/safetyClass"
+            },
+            "environment": {
+              "$ref": "cv://ws/v1/common.schema.json#/$defs/environment"
+            },
+            "state": {
+              "enum": ["raised", "clear", "unknown"]
+            },
+            "affected_count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "since_ms": {
+              "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+            }
+          },
+          "additionalProperties": false,
+          "if": {
+            "properties": {
+              "state": {
+                "const": "raised"
+              }
+            }
+          },
+          "then": {
+            "required": ["affected_count", "since_ms"]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": ["affected_count"]
+                },
+                {
+                  "required": ["since_ms"]
+                }
+              ]
+            }
+          }
+        },
         "killSwitch": {
           "type": "object",
           "required": ["engaged", "scope"],
