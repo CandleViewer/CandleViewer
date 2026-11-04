@@ -450,7 +450,7 @@ class _AlertDeliveryRepo:
     async def alert_owner(self, alert_id: str) -> None:
         return None
 
-    async def unacked_count(self, user_id: str) -> int:
+    async def unacked_count(self, user_id: str, *, in_app_only: bool = True) -> int:
         return 0
 
     async def list_page(self, **_kw: Any) -> Page[Any]:

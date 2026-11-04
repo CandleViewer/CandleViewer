@@ -46,7 +46,7 @@ def test_list_item_is_the_contract_alert_delivery_shape(env: Env) -> None:
         "id": d.id, "alert_id": ALERT_A, "channel": "in_app", "status": "sent",
         "severity": "info", "title": "BTC reclaims 64k", "message": "BTC reclaims 64k",
         "symbol": "BTCUSDT", "fired_at": d.queued_at.isoformat(), "acked_at": None,
-        "error": None,
+        "error": None, "kind": "firing", "summary": None, "silenced": None,
     }  # fmt: skip
 
 
@@ -514,9 +514,7 @@ def test_no_list_answer_carries_a_withheld_field(env: Env) -> None:
     r = env.c.get("/alerts/deliveries")
     assert _MARKER not in r.text
     declared = set(load_openapi_spec()["components"]["schemas"]["AlertDelivery"]["properties"])
-    # E40-S02: contracted in slice 1, served from slice 2 of #1130, which drops this.
-    pending = {"kind", "summary", "silenced"}
-    assert _keys(r.json()["items"]) == declared - pending  # field by field: the contract's
+    assert _keys(r.json()["items"]) == declared  # field by field: exactly the contract's
 
 
 def test_a_denial_whose_record_fails_keeps_its_slot_and_its_count() -> None:

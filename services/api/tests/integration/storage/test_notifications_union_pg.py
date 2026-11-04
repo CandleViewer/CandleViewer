@@ -339,6 +339,21 @@ async def test_ack_all_is_bounded_returns_its_ids_and_touches_nothing_else(
     assert {states[d] for d in sent} == {"acked"}
 
 
+async def test_unacked_count_is_in_app_only_and_every_channel_on_request(
+    pg_dsn: str, inbox: SqlAlchemyAlertDeliveryRepository
+) -> None:
+    """E40-D02 CC-18: one firing on several channels is one unread item."""
+    with _mig._conn(pg_dsn) as c:
+        alert = _mig._alert(c)
+        user = _owner_of(c, alert)
+        _delivery(c, alert, user)
+        _delivery(c, alert, user, channel="desktop")
+        _delivery(c, alert, user, channel="email")
+        _delivery(c, alert, user, channel="in_app", status="queued")
+    assert await inbox.unacked_count(user) == 1
+    assert await inbox.unacked_count(user, in_app_only=False) == 3
+
+
 async def test_desktop_shown_moves_only_the_owners_queued_row(
     world: dict[str, Any], pg_dsn: str, inbox: SqlAlchemyAlertDeliveryRepository
 ) -> None:

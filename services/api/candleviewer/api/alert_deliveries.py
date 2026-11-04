@@ -14,9 +14,12 @@ the caller's next denial record.
   unchanged too. The attempted transition is audited write-ahead (C-2.9); the conditional update
   may then lose to another session of the same user, whose answer is returned.
 - **ack-all**: never one unbounded statement - batches of `ACK_ALL_BATCH` rows, at most
-  `ACK_ALL_MAX_BATCHES` per request; a client whose `unacked_count` is still above 0 calls again
-  (the continuation). With anything to acknowledge, one record is written first, naming the
-  request's scope and bound; the count reached is the response's.
+  `ACK_ALL_MAX_BATCHES` per request; an answer of exactly `ACK_ALL_BATCH * ACK_ALL_MAX_BATCHES`
+  acknowledged is the continuation signal (the client calls again). `unacked_count` is no such
+  signal: it counts `in_app` rows only (CC-18), while ack-all acknowledges every channel's `sent`
+  rows and so asks the store for the every-channel count. With
+  anything to acknowledge, one record is written first, naming the request's scope and bound;
+  the count reached is the response's.
 - **desktop-outcome**: the Electron shell reports `shown` (`queued -> sent`) or `blocked` /
   `failed` (`queued -> failed` plus ONE in-app channel-failure notice, one transaction). A
   report for a delivery already settled is a 204 no-op; a non-desktop delivery is a 422. The
@@ -28,7 +31,8 @@ the caller's next denial record.
 fails the request, whose change is already durable.
 
 The response never carries the delivery `context` or anything from the alert's SECRET webhook
-columns: `AlertDelivery` is built field by field (`dump`).
+columns: `AlertDelivery` is built field by field (`dump`), with `kind` and a storm summary's
+`summary` derived from the row (CC-7).
 """
 
 # No `from __future__ import annotations`: FastAPI must evaluate `Depends(<closure>)` in the
@@ -49,6 +53,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from candleviewer.alerts.delivery_view import delivery_kind, silenced, storm_summary
 from candleviewer.alerts.dispatcher import Metric
 from candleviewer.api.alerts import READ, WRITE
 from candleviewer.api.alerts_http import AuditEmitter, Problem, ProblemRoute, Resolver, caller
@@ -127,7 +132,7 @@ class AlertDeliveryStore(Protocol):
 
     async def get(self, delivery_id: int) -> DeliveryView | None: ...
     async def alert_owner(self, alert_id: str) -> str | None: ...
-    async def unacked_count(self, user_id: str) -> int: ...
+    async def unacked_count(self, user_id: str, *, in_app_only: bool = True) -> int: ...
     async def list_page(
         self,
         *,
@@ -232,6 +237,10 @@ def _iso(d: datetime | None) -> str | None:
     return None if d is None else d.isoformat()
 
 
+def _iso_ms(ms: int | None) -> str | None:
+    return None if ms is None else datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat()
+
+
 def _utc(d: datetime | None, name: str) -> datetime | None:
     """A window bound in UTC: one without an offset is read as UTC (RFC 3339 UTC, `From`/`To`);
     one whose offset has no UTC instant (year 1 at +14:00) is the shared 422, never a bind error
@@ -248,15 +257,23 @@ def _utc(d: datetime | None, name: str) -> datetime | None:
 
 def dump(row: DeliveryView) -> dict[str, Any]:
     """`AlertDelivery`: `message` is the `body`, falling back to `title`; `symbol` is the
-    firing's symbol when it is one (a storm summary names several, so it has none)."""
+    firing's symbol when it is one (a storm summary names several, so it has none); `kind` and
+    a storm summary's `summary` come from the row's `context` (CC-7), never the context itself."""
     symbol = row.context.get("symbol") if isinstance(row.context, dict) else None
+    summary = storm_summary(row.context)
     return {
         "id": row.id, "alert_id": row.alert_id, "channel": row.channel, "status": row.status,
         "severity": row.severity or "info", "title": row.title,
         "message": row.body or row.title,
         "symbol": symbol if isinstance(symbol, str) and _SYMBOL.fullmatch(symbol) else None,
         "fired_at": row.queued_at.isoformat(), "acked_at": _iso(row.acked_at),
-        "error": row.error_message,
+        "error": row.error_message, "kind": delivery_kind(row.context),
+        "silenced": silenced(row.context),
+        "summary": None if summary is None else {
+            "count": summary.count, "symbols": list(summary.symbols),
+            "window_start": _iso_ms(summary.window_start_ms),
+            "window_end": _iso_ms(summary.window_end_ms),
+        },
     }  # fmt: skip
 
 
@@ -385,7 +402,7 @@ def make_alert_deliveries_router(
     @router.post("/alerts/deliveries/ack-all")
     async def ack_all(actor: Annotated[Actor, Depends(writer)]) -> Response:
         s = store()
-        pending = await s.unacked_count(actor.user_id)
+        pending = await s.unacked_count(actor.user_id, in_app_only=False)  # every channel's rows
         if not pending:  # nothing sent and unacknowledged: no change, no record
             return JSONResponse({"acknowledged": 0})
         # Write-ahead (C-2.9): the record names the request's scope and bound before any batch

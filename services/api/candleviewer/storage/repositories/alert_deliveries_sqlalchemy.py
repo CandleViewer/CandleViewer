@@ -142,9 +142,12 @@ _NOTICES = sa.text(
     "channel = 'in_app' AND context->>'failed_delivery_id' = ANY(CAST(:failed AS "
     "text[])) ORDER BY id"
 )
+#: `unacked_count` (E40-D02 CC-18): the in-app rows only, so a firing on several channels is one
+#: unread item; `ack-all` asks for every channel's (`in_app_only=False`), the rows it acknowledges.
 _UNACKED = sa.text(
     "SELECT count(*) FROM alert_deliveries WHERE user_id = CAST(:user AS uuid) AND "
-    "status = 'sent' AND acked_at IS NULL"
+    "status = 'sent' AND acked_at IS NULL AND (NOT CAST(:in_app_only AS boolean) OR "
+    "channel = 'in_app')"
 )
 _EXPIRED = sa.text(
     "SELECT id, alert_id::text AS alert_id, user_id::text AS user_id, "
@@ -339,9 +342,10 @@ class SqlAlchemyAlertDeliveryRepository:
         async with self._relational.unit_of_work() as uow:
             return [_row(m) for m in (await uow.session.execute(_NOTICES, params)).mappings()]
 
-    async def unacked_count(self, user_id: str) -> int:
+    async def unacked_count(self, user_id: str, *, in_app_only: bool = True) -> int:
+        params = {"user": user_id, "in_app_only": in_app_only}
         async with self._relational.unit_of_work() as uow:
-            return int((await uow.session.execute(_UNACKED, {"user": user_id})).scalar_one())
+            return int((await uow.session.execute(_UNACKED, params)).scalar_one())
 
     async def list_page(
         self,
