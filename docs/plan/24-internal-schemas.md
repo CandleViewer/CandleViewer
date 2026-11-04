@@ -2483,6 +2483,10 @@ share one base. Notional is a position's size at a fresh mark (the cached public
   recorded deviation (BQ-4 amendment; no owner document defines the base): a share of the total cap is looser than a
   share of the current exposure whenever the exposure is below that cap. The SCR-134 legend and help text (E39-S05)
   say "of the max total notional", and the measured value in `RiskSummary` uses the same base.
+- **Slice 3's duties** (`RiskService`, beside the bounds above): the gate refuses `risk_state_unavailable` while the
+  injected `now` runs ahead of the exchange time of the account's latest private-stream event by more than a bound it
+  states; and a backfill of missed executions routes each through `ReservationLedger.on_fill` with its `exec_id`, as a
+  released reservation's unconverted notional is cleared only there and `on_fill`, like the counters, dedupes by it.
 
 ### 8.12 The private-stream consumer (E29-T05)
 

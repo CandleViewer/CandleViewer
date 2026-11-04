@@ -16,6 +16,7 @@ import pytest
 from candleviewer.risk.counters import AccountCounters
 from candleviewer.risk.evaluator import evaluate
 from candleviewer.risk.inputs import VenueClosedPnl
+from candleviewer.risk.ledger import ReservationLedger, admit
 from tests.unit.risk._risk_builders import NOW, D, caps, counters, fill, mark, order
 
 pytestmark = pytest.mark.perf
@@ -101,4 +102,27 @@ def test_figures_and_evaluate_p95_on_a_day_of_closes() -> None:
         if gc_was_on:
             gc.enable()
     print(f"figures + evaluate p95 {best / 1e3:.1f} us")
+    assert 0 < best <= BUDGET_NS, f"p95 {best / 1e3:.0f} us over its budget"
+
+
+def test_admit_p95_within_the_order_path_risk_budget() -> None:
+    c, ledger = busy_day(), ReservationLedger(max_submits=10**6)  # every sample admitted
+    o = order(notional=D(100))
+    best, gc_was_on = 0, gc.isenabled()
+    gc.collect()
+    gc.disable()
+    try:
+        for _ in range(ROUNDS):
+            samples: list[int] = []
+            for _ in range(SAMPLES):
+                started = time.perf_counter_ns()
+                allowed = admit("p", o, LIMIT, c, ledger, now=NOW).decision.allowed
+                samples.append(time.perf_counter_ns() - started)
+                assert allowed and ledger.release("p", filled_notional=D(0))
+            p95 = sorted(samples)[int(0.95 * (len(samples) - 1))]
+            best = p95 if best == 0 else min(best, p95)
+    finally:
+        if gc_was_on:
+            gc.enable()
+    print(f"admit p95 {best / 1e3:.1f} us")
     assert 0 < best <= BUDGET_NS, f"p95 {best / 1e3:.0f} us over its budget"
