@@ -11,6 +11,8 @@ import type {
 import { extended, served, type Persona } from "./fixtures.js";
 
 const PERSONAS: readonly Persona[] = ["owner", "manager", "no-orders-write", "unrecorded-solusdt"];
+/** `only_tighten` as the inspector reads it wherever it is served: fixed, at true. */
+const FIXED_TRUE = { name: "only_tighten", kind: "fixed", initial: true };
 
 const actionOf = (vocabulary: RuleVocabulary, id: string): VocabularyAction => {
   const action = vocabulary.actions.find((a) => a.id === id);
@@ -81,29 +83,38 @@ describe("parameter fields over the served params_schema (E37-S02)", () => {
       ...actionOf(extended(), "zz_new_action"),
       params_schema: {
         type: "object",
-        properties: { zz_window: { type: "integer", minimum: 1 }, zz_mode: { enum: ["a", 2, {}] } },
+        properties: {
+          zz_window: { type: "integer", minimum: 1 },
+          zz_mode: { enum: ["a", 2, {}] },
+          zz_share: { type: "number", exclusiveMinimum: 0, exclusiveMaximum: 1 },
+        },
         required: ["zz_window"],
       },
     };
     expect(paramFields(fresh).map(brief)).toEqual([
       { name: "zz_window", kind: "integer", required: true, minimum: 1 },
       { name: "zz_mode", kind: "choice", options: ["a", 2] },
+      { name: "zz_share", kind: "number", exclusiveMinimum: 0, exclusiveMaximum: 1 },
     ]);
   });
 
   it("rules never loosen a stop: only_tighten is a fixed field at true wherever it is served, never a control that offers false", () => {
-    for (const persona of PERSONAS) {
-      for (const action of served(persona).actions) {
-        const field = paramFields(action).find((f) => f.name === "only_tighten");
-        if (field !== undefined) {
-          expect(brief(field), `${persona} ${action.id}`).toEqual({
-            name: "only_tighten",
-            kind: "fixed",
-            initial: true,
-          });
-        }
-      }
-    }
+    const fields = PERSONAS.flatMap((persona) =>
+      served(persona).actions.flatMap((action) =>
+        paramFields(action)
+          .filter((f) => f.name === "only_tighten")
+          .map((f) => [persona, action.id, brief(f)]),
+      ),
+    );
+    expect(fields).toEqual(
+      PERSONAS.flatMap((persona) =>
+        ["modify_stop_loss", "modify_take_profit", "tighten_stop"].map((id) => [
+          persona,
+          id,
+          FIXED_TRUE,
+        ]),
+      ),
+    );
     const holders = served("owner").actions.filter((a) =>
       paramFields(a).some((f) => f.kind === "fixed"),
     );
@@ -114,6 +125,25 @@ describe("parameter fields over the served params_schema (E37-S02)", () => {
     ]);
   });
 
+  it("only_tighten stays fixed at true whatever default the schema serves for it, or none, and a write carries true", () => {
+    const stop = actionOf(served("owner"), "modify_stop_loss");
+    const serving = (onlyTighten: Record<string, unknown>): VocabularyAction => ({
+      ...stop,
+      params_schema: { type: "object", properties: { value: {}, only_tighten: onlyTighten } },
+    });
+    const defaultFalse = serving({ type: "boolean", default: false });
+    const noDefault = serving({ type: "boolean" });
+    const fieldOf = (action: VocabularyAction) =>
+      paramFields(action)
+        .filter((f) => f.name === "only_tighten")
+        .map(brief);
+    expect([fieldOf(defaultFalse), fieldOf(noDefault)]).toEqual([[FIXED_TRUE], [FIXED_TRUE]]);
+    expect([
+      withFixedValues(defaultFalse, { only_tighten: false }),
+      withFixedValues(noDefault, { only_tighten: false }),
+    ]).toEqual([{ only_tighten: true }, { only_tighten: true }]);
+  });
+
   it("a write never carries only_tighten: false: it takes true, an absent one stays absent, and every other parameter is kept as given", () => {
     const stop = actionOf(served("owner"), "modify_stop_loss");
     const given = { mode: "atr", value: 2, only_tighten: false };
@@ -121,6 +151,19 @@ describe("parameter fields over the served params_schema (E37-S02)", () => {
     expect(given.only_tighten).toBe(false); // the caller's object is not changed
     expect(withFixedValues(stop, { mode: "atr", value: 2 })).toEqual({ mode: "atr", value: 2 });
     expect(withFixedValues(stop, { only_tighten: true })).toEqual({ only_tighten: true });
+    // move_to_breakeven serves no only_tighten, yet it is a stop action (the validator's set): false is written true.
+    const breakeven = actionOf(served("owner"), "move_to_breakeven");
+    expect(withFixedValues(breakeven, { offset_ticks: 2, only_tighten: false })).toEqual({
+      offset_ticks: 2,
+      only_tighten: true,
+    });
+    expect(withFixedValues(breakeven, { offset_ticks: 2 })).toEqual({ offset_ticks: 2 });
+    // modify_take_profit serves the field (the stop form, E36-D02 §8): a stored false is written true.
+    const takeProfit = actionOf(served("owner"), "modify_take_profit");
+    expect(withFixedValues(takeProfit, { mode: "absolute", only_tighten: false })).toEqual({
+      mode: "absolute",
+      only_tighten: true,
+    });
     const halt = actionOf(served("owner"), "halt_new_orders");
     expect(withFixedValues(halt, { scope: "account", until: "manual" })).toEqual({
       scope: "account",
@@ -129,19 +172,28 @@ describe("parameter fields over the served params_schema (E37-S02)", () => {
   });
 
   it("place_order's stop_loss is its native stop field, on no other action; on an action that places no orders it is its schema's kind", () => {
-    for (const action of served("owner").actions) {
-      const stops = paramFields(action).filter((f) => f.kind === "nativeStop");
-      expect(
-        stops.map((f) => f.name),
-        action.id,
-      ).toEqual(action.id === "place_order" ? ["stop_loss"] : []);
-    }
+    const stops = served("owner").actions.flatMap((action) =>
+      paramFields(action)
+        .filter((f) => f.kind === "nativeStop")
+        .map((f) => [action.id, f.name]),
+    );
+    expect(stops).toEqual([["place_order", "stop_loss"]]);
     const order = actionOf(served("owner"), "place_order");
     const stopOf = (action: VocabularyAction) =>
       paramFields(action).find((f) => f.name === "stop_loss")?.kind;
     expect([stopOf(order), stopOf({ ...order, places_orders: false })]).toEqual([
       "nativeStop",
       "group",
+    ]);
+    // The field follows a served stop_loss, never the id: scale_in serving one (D02-G16's carrier) gets it.
+    const scaleIn = actionOf(served("owner"), "scale_in");
+    const carrier = {
+      ...scaleIn,
+      params_schema: { type: "object", properties: { qty: {}, stop_loss: { type: "object" } } },
+    };
+    expect(paramFields(carrier).map((f) => [f.name, f.kind])).toEqual([
+      ["qty", "value"],
+      ["stop_loss", "nativeStop"],
     ]);
   });
 

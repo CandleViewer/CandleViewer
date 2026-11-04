@@ -3,7 +3,7 @@
  * served, with its treatment as the server states it (E36-D02 §8), its destructive word, its stop line (C-2.6,
  * E37-D02 A1) and its `targets` sentence. The client reads the served `available`, `simulate_only`,
  * `required_permissions`, `restriction`, `places_orders`, `params_schema` and `targets` only: no permission
- * arithmetic and no action list (AC 1, AC 4). Pure: no React, no DOM global.
+ * arithmetic and no action list (AC 1, AC 4). An absent flag reads as `22`'s default. Pure: no React, no DOM global.
  */
 import type { generated } from "@candleviewer/protocol";
 import { text, type CopyKey } from "./copy.js";
@@ -63,7 +63,8 @@ export function actionTreatment(action: VocabularyAction): ActionTreatment {
       details,
     };
   }
-  if (action.available) return { ...base, availability: "available", details };
+  // `22`'s default for an absent `available` is `true`: only a served `false` gates.
+  if (action.available !== false) return { ...base, availability: "available", details };
   const reasonKey = REASONS.find(([permission]) =>
     action.required_permissions.includes(permission),
   )?.[1];

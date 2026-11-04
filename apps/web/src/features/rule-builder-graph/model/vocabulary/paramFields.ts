@@ -1,9 +1,9 @@
 /**
  * The action inspector's parameter fields (E37-S02): each property of the served `params_schema`, in the order
  * served, as a descriptor the inspector draws a control for, so a new action or parameter needs no client change
- * (AC 1). Two are never plain controls: `only_tighten` is fixed at `true` (rules never loosen a stop, #4137; the
- * validator refuses `false` for every role), and a placing action's `stop_loss` is its native stop, never emptied
- * (E36-D02 §8, E32-D01 §5.2 Arm A: FZ-1 on a clear attempt). Pure: no React, no DOM global.
+ * (AC 1). Two are never plain controls: `only_tighten` is fixed at `true` wherever served (rules never loosen a
+ * stop, #4137; the server refuses `false` on the three stop actions), and a placing action's `stop_loss` is its native
+ * stop, never emptied (E36-D02 §8, E32-D01 §5.2 Arm A: FZ-1 on a clear attempt). Pure: no React, no DOM global.
  */
 import { STOP_FIELD, stopLineOf } from "./actions.js";
 import type { VocabularyAction } from "./types.js";
@@ -41,6 +41,7 @@ export interface ParamField {
   readonly minimum: number | undefined;
   readonly exclusiveMinimum: number | undefined;
   readonly maximum: number | undefined;
+  readonly exclusiveMaximum: number | undefined;
 }
 
 /** The parameter values no rule may change: a stop only tightens (#4137; `24` §8.8 rule 5). */
@@ -102,13 +103,16 @@ export function paramFields(action: VocabularyAction): ParamField[] {
       minimum: numberOr(property["minimum"]),
       exclusiveMinimum: numberOr(property["exclusiveMinimum"]),
       maximum: numberOr(property["maximum"]),
+      exclusiveMaximum: numberOr(property["exclusiveMaximum"]),
     };
   });
 }
 
 /**
- * `params` as the editor writes them: a fixed parameter that holds another value takes its fixed one, so no
- * write carries `only_tighten: false`; an absent one stays absent (its default is that value), as does the rest.
+ * `params` as the editor writes them: a fixed parameter that holds another value takes its fixed one, and so does
+ * `only_tighten` on a stop action whose schema does not serve it (`stopLineOf`'s ratchet: the validator's three stop
+ * actions), so no write carries `only_tighten: false`; an absent one stays absent (its default is that value), as
+ * does the rest.
  */
 export function withFixedValues(
   action: VocabularyAction,
@@ -118,6 +122,10 @@ export function withFixedValues(
   for (const field of paramFields(action)) {
     if (field.kind === "fixed" && Object.hasOwn(written, field.name))
       written[field.name] = field.initial;
+  }
+  if (stopLineOf(action).ratchet === undefined) return written;
+  for (const [name, value] of Object.entries(FIXED)) {
+    if (Object.hasOwn(written, name)) written[name] = value;
   }
   return written;
 }

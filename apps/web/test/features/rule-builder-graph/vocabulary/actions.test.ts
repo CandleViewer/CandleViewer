@@ -154,7 +154,18 @@ describe("action entries over the server-written vocabulary (E37-S02)", () => {
       ],
     ]);
     const owner = actionOptions(served("owner"));
+    expect(owner).toHaveLength(24);
     expect(owner.filter((o) => o.treatment.availability !== "available")).toEqual([]);
+  });
+
+  it("every T2 entry the four personas are served carries a keyed reason: none is disabled without a reason line (E09-D09 §2.1, §3.1)", () => {
+    const reasons = PERSONAS.flatMap((persona) =>
+      actionOptions(served(persona))
+        .filter((o) => o.treatment.availability === "gated")
+        .map((o) => o.treatment.reasonKey),
+    );
+    expect(reasons).toHaveLength(13);
+    expect(reasons).not.toContain(undefined);
   });
 
   it("reads only the served flags, with no permission arithmetic: an action needing both permissions reads the owner-only reason, one no reason is keyed for has none, and a step-up never gates", () => {
@@ -178,6 +189,13 @@ describe("action entries over the server-written vocabulary (E37-S02)", () => {
     expect(actionTreatment(held).availability).toBe("available");
     expect(actionTreatment({ ...halt, available: false }).availability).toBe("gated");
     expect(actionTreatment({ ...halt, simulate_only: true }).availability).toBe("simulate");
+    // Served without `available`, an action reads as `22`'s default, `true`: no reason the session does not have.
+    const unflagged = { ...actionOf(served("owner"), "place_order") };
+    Reflect.deleteProperty(unflagged, "available");
+    expect(actionTreatment(unflagged)).toMatchObject({
+      availability: "available",
+      reason: undefined,
+    });
   });
 
   it("names the destructive class: 'places orders' on the six order-placing actions, 'flattens' on the two flatten actions, no word elsewhere", () => {
@@ -226,6 +244,13 @@ describe("the native stop on every order-placing action (C-2.6; E37-D02 A1)", ()
       start_iceberg_slice: [FZ8],
       start_twap: [FZ8],
     });
+    // The field follows a served stop_loss, never the id: scale_in serving one (its carrier, D02-G16) draws it.
+    const scaleIn = actionOf(served("owner"), "scale_in");
+    const carrier = {
+      ...scaleIn,
+      params_schema: { type: "object", properties: { qty: {}, stop_loss: { type: "object" } } },
+    };
+    expect(said(stopLineOf(carrier))).toEqual(["field stop_loss", FS1]);
   });
 
   it("an action served without places_orders reads as placing orders, with the word and its native stop line, as with true; only false drops them (22's absent-value rule, #5803 R2S-02)", () => {
@@ -240,12 +265,18 @@ describe("the native stop on every order-placing action (C-2.6; E37-D02 A1)", ()
       expect(stopLineOf(absent), action.id).toEqual(stopLineOf(asTrue));
       expect(stopLineOf(absent).native, action.id).toBeDefined();
       expect(stopLineOf(asFalse).native, action.id).toBeUndefined();
-      expect(actionTreatment(asFalse).destructive, action.id).toBe(
-        action.id.startsWith("flatten_") ? "flattens" : undefined,
-      );
     }
-    // A served action that places orders and lost the flag keeps its own stop: the field, or FZ-7.
+    // A served false drops the "places orders" word: only the two flatten actions keep a word, their own.
     const owner = served("owner");
+    expect(
+      owner.actions
+        .map((a) => [a.id, actionTreatment({ ...a, places_orders: false }).destructive])
+        .filter(([, word]) => word !== undefined),
+    ).toEqual([
+      ["flatten_position", "flattens"],
+      ["flatten_all_positions", "flattens"],
+    ]);
+    // A served action that places orders and lost the flag keeps its own stop: the field, or FZ-7.
     expect(said(stopLineOf(withoutFlag(actionOf(owner, "place_order"))))).toEqual([
       "field stop_loss",
       FS1,
@@ -282,5 +313,8 @@ describe("the action node's scope line (BQ-9, PROPOSED)", () => {
       undefined,
       undefined,
     ]);
+    // A map that serves some values but not the one asked for has no sentence, never the rule scope's in its place.
+    const partial = { ...flatten, targets: { scope_accounts: "every account in the rule scope" } };
+    expect(targetsSentence(partial, "all_accounts")).toBeUndefined();
   });
 });
