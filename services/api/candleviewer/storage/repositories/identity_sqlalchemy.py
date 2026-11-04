@@ -11,10 +11,11 @@ Never selects `password_hash` or any SECRET-classified column.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import Any
 
 import sqlalchemy as sa
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -91,15 +92,9 @@ def _iso(value: Any) -> str | None:
     return None if value is None else str(value.isoformat())
 
 
-async def read_user(session: AsyncSession, user_id: str) -> dict[str, Any] | None:
-    """The OpenAPI `User` of an undeleted user, read in the caller's transaction; `None` when
-    there is none. `SqlAlchemyIdentityProvider.user` reads it on its own, and the user admin
-    store (E42-T09, #2649) under the user-row lock, so `getUser` and its `If-Match` check read
-    one representation."""
-    row = (await session.execute(_USER_SQL, {"id": user_id})).first()
-    if row is None:
-        return None
-    m = row._mapping
+def user_of(m: RowMapping | Mapping[str, Any]) -> dict[str, Any]:
+    """The OpenAPI `User` of one row of `_USER_SQL`'s select list. `read_user` maps its row with
+    it, and the user admin store's list (#5478) each of its rows: one representation for both."""
     return {
         "id": m["id"],
         "username": m["username"],
@@ -113,6 +108,15 @@ async def read_user(session: AsyncSession, user_id: str) -> dict[str, Any] | Non
         "created_at": _iso(m["created_at"]),
         "updated_at": _iso(m["updated_at"]),
     }
+
+
+async def read_user(session: AsyncSession, user_id: str) -> dict[str, Any] | None:
+    """The OpenAPI `User` of an undeleted user, read in the caller's transaction; `None` when
+    there is none. `SqlAlchemyIdentityProvider.user` reads it on its own, and the user admin
+    store (E42-T09, #2649) under the user-row lock, so `getUser` and its `If-Match` check read
+    one representation."""
+    row = (await session.execute(_USER_SQL, {"id": user_id})).first()
+    return None if row is None else user_of(row._mapping)
 
 
 class SqlAlchemyIdentityProvider:

@@ -23,7 +23,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
-from candleviewer.storage.repositories.identity_sqlalchemy import read_user
+from candleviewer.storage.repositories.identity_sqlalchemy import read_user, user_of
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
     CONSTRAINTS_NOW,
     LOCK_USER,
@@ -43,6 +43,7 @@ from candleviewer.storage.repositories.user_lifecycle import (
     UserUpdate,
     UserUpdateAudit,
 )
+from candleviewer.storage.repositories.user_list import UserListFilter
 from candleviewer.storage.repositories.user_purge import PurgeUserAnonymisedError
 from candleviewer.storage.repositories.user_purge_sqlalchemy import (
     anonymised,
@@ -272,6 +273,36 @@ _PATCH_USER = sa.text(
     "WHERE id = CAST(:id AS uuid)"
 )
 _NO_ROLES: frozenset[str] = frozenset()
+#: #5478 (22 `listUsers`): a keyset page of every undeleted user, ordered by `created_at` then `id`,
+#: with `_USER_SQL`'s select list, so each row maps as `read_user`'s (`user_of`). A filter bound
+#: `NULL` matches every row; `role` matches a grant that has not expired, as the `roles` column
+#: lists it; `pattern` is `user_list.like_pattern`'s, a bound value. One literal: no text is built.
+_LIST_USERS = sa.text(r"""
+    SELECT u.id::text AS id, u.username::text AS username, u.email::text AS email,
+           u.display_name, u.status::text AS status, u.mfa_required,
+           u.last_login_at, u.created_at, u.updated_at,
+           COALESCE((SELECT array_agg(DISTINCT r.name::text ORDER BY r.name::text)
+                     FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+                     WHERE ur.user_id = u.id
+                       AND (ur.expires_at IS NULL OR ur.expires_at > now())),
+                    ARRAY[]::text[]) AS roles,
+           EXISTS (SELECT 1 FROM mfa_methods m WHERE m.user_id = u.id
+                   AND m.confirmed_at IS NOT NULL AND m.revoked_at IS NULL) AS mfa_enabled
+    FROM users u
+    WHERE u.deleted_at IS NULL
+      AND (CAST(:status AS text) IS NULL OR u.status::text = CAST(:status AS text))
+      AND (CAST(:role AS text) IS NULL OR EXISTS (
+            SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+            WHERE ur.user_id = u.id AND r.name::text = CAST(:role AS text)
+              AND (ur.expires_at IS NULL OR ur.expires_at > now())))
+      AND (CAST(:pattern AS text) IS NULL
+           OR u.username::text ILIKE CAST(:pattern AS text) ESCAPE '\'
+           OR u.email::text ILIKE CAST(:pattern AS text) ESCAPE '\')
+      AND (CAST(:after_at AS timestamptz) IS NULL
+           OR (u.created_at, u.id) > (CAST(:after_at AS timestamptz), CAST(:after_id AS uuid)))
+    ORDER BY u.created_at, u.id
+    LIMIT :limit
+    """)
 
 
 def _columns(before: Mapping[str, Any], patch: UserPatch) -> dict[str, bool] | None:
@@ -295,7 +326,8 @@ class SqlAlchemyUserAdminStore:
     (C-2.9, #2510); commit. Any raise before the commit rolls it all back. A patch that changes
     nothing writes and audits nothing. Once the user's purge has run (E42-T10 #2650) every change is
     refused before any write, so nothing the purge nulled is filled again (O6); an enable otherwise
-    cancels a pending purge with the status change, ahead of the audit (#965 R6)."""
+    cancels a pending purge with the status change, ahead of the audit (#965 R6). Its list (#5478)
+    reads a keyset page of the same representation, with no lock."""
 
     def __init__(
         self,
@@ -313,6 +345,23 @@ class SqlAlchemyUserAdminStore:
         """The user's `User` representation; `None` when the user does not exist (or is deleted)."""
         async with self._relational.unit_of_work() as uow:
             return await read_user(uow.session, str(user_id))
+
+    async def list_users(self, query: UserListFilter) -> list[dict[str, Any]]:
+        """Up to `query.limit` users after `query.after`, in `created_at` then `id` order, each the
+        `User` representation `get_user` reads (`_LIST_USERS`), in one unit of work and with no row
+        lock. A driver error propagates, for the route to answer an outage `503`."""
+        after_at, after_id = query.after or (None, None)
+        bound = {
+            "status": query.status,
+            "role": query.role,
+            "pattern": query.pattern,
+            "after_at": after_at,
+            "after_id": None if after_id is None else str(after_id),
+            "limit": query.limit,
+        }
+        async with self._relational.unit_of_work() as uow:
+            rows = (await uow.session.execute(_LIST_USERS, bound)).all()
+        return [user_of(row._mapping) for row in rows]
 
     async def update_user(
         self,
