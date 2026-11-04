@@ -3193,8 +3193,9 @@ export interface paths {
      *     the server (24 §8.13; E29-S06, #981, contract first). An item is `provisional` while
      *     the venue's record of its close is unread: its figures are those the stored closing
      *     fills compose, and `net_pnl` is their sum, absent when they compose no `gross_pnl`: such
-     *     an item is still served and counted, provisional, so a close not yet read shows in the
-     *     items and the totals (24 §8.13). Reading the record settles the item in
+     *     an item is still served and counted, provisional, so a close not yet read whose order
+     *     the server stores shows in the items and the totals once a stored fill of that order is
+     *     known to close (24 §8.13). Reading the record settles the item in
      *     place, with the same `id`: `net_pnl` is then the venue's `closed_pnl`, authoritative,
      *     and `divergent` says the server's own `local_net_pnl` differs from it by more than
      *     `oms.closed_pnl_tolerance_rel` allows. Until the venue's record is final (24 §8.13), a

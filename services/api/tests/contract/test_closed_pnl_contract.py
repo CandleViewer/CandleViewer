@@ -22,6 +22,10 @@ The orchestrator's ruling of 2026-11-03 (08:03Z), as the four plan documents sta
   fills name as the record's `trade_group_id`, and a page read per account. With the orchestrator's
   review: the poll kept after a failed read or a fill, a close not yet read served provisional, the
   cap per record, and five sentences no test held.
+- Its rebase round: a close with no item (no order row, or a REST-recovered fill with no walk start)
+  waits for its record, a record written after its fill's poll ends is a check for #843, a record no
+  walk composes is in no group, row 55 keeps the window, row 59 bounds its sort by the named groups,
+  and Sec.9.3 rule 3 cites C-5.6.
 
 Nothing serves the new members yet: E29-S06's later slices implement them against this contract.
 """
@@ -461,8 +465,8 @@ def test_contract_24_keeps_the_venue_figure_writable_until_the_record_is_final()
         "`created_at` the earliest `createdTime` and `leverage` the latest record's. The cap sums "
         "each of them in the day of its own `updatedTime`, never at the merged `closed_at`, so a "
         "gain an earlier day counted never lowers a later day's loss again; the view shows the "
-        "order's one item on its latest record's day, so for such an order the two differ, the "
-        "one case where they do not converge. The case is logged at WARNING with the account and "
+        "order's one item on its latest record's day, so for such an order the two differ when "
+        "its records fall in different days. The case is logged at WARNING with the account and "
         "the order, and #843's capture of a partly filled closing order (below) shows which shape "
         "the venue writes.",
         "The record is final once its closing order's row is terminal and the record's `qty` "
@@ -527,9 +531,16 @@ def test_contract_24_counts_one_window_and_one_lookback_for_the_cap_and_the_view
         "writes a provisional item for each order with a row whose stored fill closes (one "
         "stating a `closedSize` above 0, or one the walk gives a `c` above 0), dated by its last "
         "such fill, local figures or none, so it counts in `meta.totals` at once (`count`, and "
-        "`provisional` true) and in their `net_pnl` once it has one. Only a close whose order has "
-        "no row waits for its record, which the poll reads within `SETTLE_POLL_S` of its fill "
-        "while reads succeed.",
+        "`provisional` true) and in their `net_pnl` once it has one. Every other close, such as "
+        "one whose order has no row (a liquidation's) or one whose closing fill was recovered over "
+        "REST (no `closedSize`, 21 §3.3.6) on a key whose walk has no start, waits for its record, "
+        "in no item and no total until that record is read.",
+        "The poll such a close's fill keeps running ends at the first read that starts "
+        "`SETTLE_POLL_S` or more after the fill was stored and succeeds (above), so a record the "
+        "venue writes after that read is missed until something else sets off a read (a later "
+        "fill, another item's poll, startup or a reconnect), however long that takes, a check for "
+        "E29-K01 (#843)'s captures, which measure how long after its fill the venue writes such a "
+        "record.",
     )
     assert missing == []
     members = _SCHEMAS["ClosedPnlWindow"]["properties"]
@@ -681,8 +692,9 @@ def test_contract_22_pins_the_window_parameter_the_filters_and_the_stand_in() ->
         "It ignores `window`, `side` and `trade_group_id`, as a list ignores a parameter it does "
         "not know, refuses a second `symbol` (`400 validation_failed`)",
         "and `net_pnl` is their sum, absent when they compose no `gross_pnl`: such an item is "
-        "still served and counted, provisional, so a close not yet read shows in the items and "
-        "the totals (24 §8.13).",
+        "still served and counted, provisional, so a close not yet read whose order the server "
+        "stores shows in the items and the totals once a stored fill of that order is known to "
+        "close (24 §8.13).",
     )
     assert missing == []
     content = _OPERATION["responses"]["200"]["content"]["application/json"]
@@ -713,7 +725,7 @@ def test_contract_21_builds_the_walks_two_indexes_plainly_under_a_lock_timeout()
         "transaction under `lock_timeout` (5 s), not `CONCURRENTLY`: a concurrent build waits for "
         "every older snapshot of the database, and a second API process booting meanwhile holds "
         "one while it waits for the migration advisory lock (`migrations/boot.py`), so the two "
-        "boots would wait on each other (`0034_order_vocabulary`); §9.3 rule 3 asks for a "
+        "boots would wait on each other (`0034_order_vocabulary`); §9.3 rule 3 (C-5.6) asks for a "
         "concurrent build over 1 M rows, and `executions` is far below that (§11.3).",
     )
     assert not _missing(
@@ -721,8 +733,8 @@ def test_contract_21_builds_the_walks_two_indexes_plainly_under_a_lock_timeout()
         "`ix_psnap_flat` is a plain `CREATE INDEX` in the revision's transaction under "
         "`lock_timeout` (5 s), not `CONCURRENTLY`, as `ix_exec_walk` is (§3.3.6): a concurrent "
         "build would wait on the snapshot a second booting API process holds "
-        "(`0034_order_vocabulary`), and `position_snapshots` is far below §9.3 rule 3's 1 M rows "
-        "(§11.3).",
+        "(`0034_order_vocabulary`), and `position_snapshots` is far below the 1 M rows over which "
+        "§9.3 rule 3 (C-5.6) asks for one (§11.3).",
     )
     assert "3. **Indexes are built `CONCURRENTLY`** on any table with > 1 M rows" in doc
     versions = _PLAN.parents[1] / "services/api/candleviewer/migrations/versions"
@@ -758,7 +770,8 @@ def test_contract_the_record_stores_the_one_group_its_opening_fills_name() -> No
     assert _row(doc, 59) == [
         "59", "Closed-PnL group filter",
         "row 55's read and totals with `trade_group_id = ANY($2)`, which a NULL never matches",
-        "`ix_cpr_group` (partial)", "< 5 ms for a group's records",
+        "`ix_cpr_group` (partial); 2 to 32 groups: a sort of only their records",
+        "< 5 ms for a group's records",
     ]  # fmt: skip
     text = _s813()
     for gone in ("(the first's, when they differ)", "else of its closing fills' leg"):
@@ -776,7 +789,9 @@ def test_contract_the_record_stores_the_one_group_its_opening_fills_name() -> No
         "It is NULL too when they name none or the walk has no start, never the closing side's "
         "group instead: a group's take-profit ladder is orders on its leg while its native stop's "
         "materialised order and a manual close are on none, so the group would count its "
-        "take-profits and miss its stop-outs. Settling never writes it.",
+        "take-profits and miss its stop-outs. Settling never writes it, so a record no walk "
+        "composes, such as a liquidation's, keeps it NULL, and the group whose position it closes "
+        "misses that stop-out in its totals.",
         "`listClosedPnl`'s `trade_group_id` filter, and the totals it narrows, read the stored "
         "column: an item whose `trade_group_id` is NULL is in no group's filter or totals, and "
         "counts in its account's as any item does.",
@@ -786,11 +801,12 @@ def test_contract_the_record_stores_the_one_group_its_opening_fills_name() -> No
 
 def test_contract_21_reads_a_page_per_account_and_never_sorts_every_match() -> None:
     """Fold r3, C3: row 55 reads each account's page and merges them, the bounded read #4997 gave
-    `listOrders` and `listExecutions` (`oms_reads_sqlalchemy._merged`, still `LATERAL`)."""
+    `listOrders` and `listExecutions` (`oms_reads_sqlalchemy._merged`, still `LATERAL`); its
+    rebase round put the window's `closed_at` bound back in the row."""
     doc = _doc("21-database-schema.md")
     assert _row(doc, 55) == [
         "55", "Closed-PnL pages and totals",
-        "`closed_pnl_records` per account (`LATERAL`): `LIMIT $n` past the cursor, either order",
+        "per account (`LATERAL`): `closed_at` in the window, `LIMIT` past the cursor, both ways",
         "`ix_cpr_day`, merged: never a sort of every match (`oms_reads`, #4997)",
         "< 20 ms for a day's records",
     ]  # fmt: skip
@@ -821,10 +837,12 @@ def test_contract_21_reads_a_page_per_account_and_never_sorts_every_match() -> N
         "name, else NULL, which only the composition writes",
         "C3: 21 §13.1 row 55 reads each account's page apart and merges them",
         "a failed read, and each stored fill until a read after it succeeds, keep the poll "
-        "running, and a close not yet read is served provisional",
+        "running, and a close not yet read whose order the server stores is served provisional "
+        "once a stored fill of that order is known to close",
         "the cap sums several records under one `orderId` each on its own `updatedTime`",
         "the generated TypeScript types read `provisional` and `divergent`, which have defaults, "
         "as present; nothing reads them yet",
+        "Folded on the rebase round (2026-11-04, note 6623235535). 21 §13.1's closed-PnL rows are",
     ],
 )
 def test_contract_24_change_log_records_this_slice(claim: str) -> None:
