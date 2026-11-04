@@ -217,6 +217,23 @@ def test_a_scenario_is_as_strong_as_the_weakest_file_it_delivers(root: Path) -> 
     refused(root, "weaker", "what it delivers is 'derived'")
 
 
+def test_a_corpus_file_whose_source_is_in_no_evidence_class_is_refused(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = {"path": "rest/trading-error-110017.json", "source": "k01 harness"}
+    monkeypatch.setattr(pack, "corpus_manifest", lambda **_: {"fixtures": [entry]})
+    plant(root, "unknown")
+    refused(root, "unknown", "in no evidence class")
+
+
+def test_a_corpus_file_its_manifest_does_not_list_is_refused(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(pack, "corpus_manifest", lambda **_: {"fixtures": []})
+    plant(root, "unlisted")
+    refused(root, "unlisted", "not listed in its corpus manifest")
+
+
 def test_a_scenario_that_delivers_nothing_is_refused(root: Path) -> None:
     plant(root, "empty", rest=None)
     refused(root, "empty", "delivers nothing")
@@ -293,6 +310,12 @@ def test_a_file_the_manifest_does_not_account_for_is_refused(root: Path) -> None
 def test_a_frames_file_off_the_form_is_refused(root: Path, text: str, rule: str) -> None:
     frames_scenario(root, "frames", text)
     refused(root, "frames", rule)
+
+
+def test_a_file_that_is_not_utf8_is_refused(root: Path) -> None:
+    frames_scenario(root, "latin1", "{}\n")
+    (root / "latin1" / "frames.jsonl").write_bytes(b'{"n":"\xe9"}\n')  # é as latin-1 writes it
+    refused(root, "latin1", "frames.jsonl is not UTF-8")
 
 
 def test_a_rest_file_that_is_not_json_is_refused(root: Path) -> None:
