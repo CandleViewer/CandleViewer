@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import re
 from functools import cache
 from pathlib import Path
 from typing import Any, Final
@@ -19,6 +20,8 @@ _CORPUS: Final = Path(__file__).with_name("ssrf_corpus.json")
 _FIELDS: Final = frozenset(
     {"id", "class", "url", "via", "attempt", "redirect_to", "connect_to", "expect"}
 )
+#: Reasons only the url step gives: an entry refused with one never reaches a lookup.
+_URL_STEP: Final = frozenset({"malformed_url", "userinfo"})
 
 
 @cache
@@ -27,13 +30,27 @@ def _corpus() -> dict[str, Any]:
     return corpus
 
 
+def _reaches_lookup(entry: dict[str, Any], names: dict[str, dict[str, str]]) -> bool:
+    """`entry`'s host is a name the url and name steps pass, so only a lookup decides it; an IP
+    literal (IPv6, or IPv4 in any form whose last label is a number) stands for itself."""
+    parts = urlsplit(entry["url"])
+    if entry["expect"] in _URL_STEP or parts.scheme not in {"https", "http"}:
+        return False
+    # `name_normalisation`: Python's IDNA codec maps every host here as UTS 46 does
+    host = (parts.hostname or "").encode("idna").decode("ascii").lower().removesuffix(".")
+    if host in names["exact"] or host.endswith(tuple(names["suffix"])):
+        return False
+    return ":" not in host and not re.fullmatch(r"0x[0-9a-f]*|[0-9]+", host.rsplit(".", 1)[-1])
+
+
 def test_ssrf_corpus_entries_are_classed_reasoned_and_scripted() -> None:
     """Scenario: Abuse cases are executable (edge)
     Then each abuse case is written concretely enough that E40-X01 can automate it without
     further interpretation
 
-    (Every entry has its own class, a URL and one outcome the corpus declares, and every resolver
-    script, attempt, redirect and pin it names resolves inside the corpus.)
+    (Every entry has its own class, a URL and one outcome the corpus declares; every resolver
+    script, attempt, redirect and pin it names resolves inside the corpus; and a name the url and
+    name steps pass has its resolver script, since the harness never asks the system resolver.)
     """
     corpus = _corpus()
     entries, resolvers = corpus["entries"], corpus["resolvers"]
@@ -50,6 +67,8 @@ def test_ssrf_corpus_entries_are_classed_reasoned_and_scripted() -> None:
             assert 2 <= e["attempt"] <= len(lookups), e["id"]
         if e["expect"] == "pinned":
             assert e["connect_to"] == lookups[0][0], e["id"]
+        if _reaches_lookup(e, corpus["refused_names"]):
+            assert "via" in e, f"{e['id']}: a name with no resolver script"
     for script in resolvers.values():
         for answers in script.values():
             assert answers, "a scripted name with no lookup"
@@ -67,7 +86,8 @@ def test_ssrf_corpus_order_refuses_every_reason_and_ranks_the_address_classes() 
 
     (Each entry has one answer: every refusal reason has its step, the name step refuses by the
     corpus's own name rules, and the address step ranks metadata before link-local and private
-    ranges, and loopback before the host's own services.)
+    ranges, and loopback before the host's own services; the policy's own address lists and
+    allow-list parse.)
     """
     corpus = _corpus()
     steps = {step["step"]: step["refuses"] for step in corpus["order"]}
@@ -83,3 +103,12 @@ def test_ssrf_corpus_order_refuses_every_reason_and_ranks_the_address_classes() 
     assert rank("loopback") < rank("host_service")
     for net in corpus["public_stand_ins"]:  # global only through the harness's injected classifier
         assert not ipaddress.ip_network(net).is_global, net
+    for net in corpus["tailnet_cidrs"]:
+        ipaddress.ip_network(net)  # raises on a range that does not parse
+    for key in ("tailnet_services", "metadata_addresses", "host_addresses"):
+        for address in corpus[key]:
+            ipaddress.ip_address(address)  # raises on an address that does not parse
+    for endpoint in corpus["allow_list"]:  # a scheme, a host and a port, nothing more
+        parts = urlsplit(endpoint)  # `.port` raises on a port that does not parse
+        assert parts.scheme in {"https", "http"} and parts.hostname and parts.port != 0, endpoint
+        assert not (parts.username or parts.path or parts.query or parts.fragment), endpoint

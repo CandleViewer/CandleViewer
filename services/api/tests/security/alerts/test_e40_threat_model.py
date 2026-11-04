@@ -412,6 +412,26 @@ def test_threat_model_limits_table_states_a_number_and_a_source_per_row() -> Non
         assert named in limits, f"the ticket's {named} limit is missing"
 
 
+def test_threat_model_os_notification_cap_never_refuses_or_counts_an_override_kind() -> None:
+    """The ticket's Performance notes ask for numeric limits, and no limit may hold back what
+    E40-D02 6.2 locks on ("always delivered"): the OS-notification cap in the limits and in
+    SR-E40-09 counts alert deliveries and test fires only and exempts every override kind,
+    SR-E40-09 answers AL-E04 (an override kind held back), and AC-AL-17 raises a kill-switch
+    notification with the cap reached.
+    """
+    exempt = (
+        "counts alert deliveries and test fires only and never refuses or counts an override kind"
+    )
+    limits = _rows(_section(_text(_MODEL), "Limits and rates"), r".+", 3)
+    requirement, rows, _owner = _requirements()["SR-E40-09"]
+    assert exempt in limits["OS notifications raised"][0], "the cap holds an override kind back"
+    assert exempt in requirement and "AL-E04" in _THREAT.findall(rows), "SR-E40-09"
+    seed_rows, action, expected, _proof, _verdict = _seeds()["AC-AL-17"]
+    assert "AL-E04" in _THREAT.findall(seed_rows)
+    assert "20 alert notifications raised" in action and "a kill-switch notification" in action
+    assert "with 20 raised, a kill-switch notification still shows" in expected
+
+
 def test_threat_model_ticket_map_is_the_first_ticket_heading_and_names_every_e40_key() -> None:
     """Part A DoD: "Every Critical/High has an owner, a target ticket and a testable control."
     The control-to-ticket map is the section GOV-008 reads (the first heading holding "ticket"),
