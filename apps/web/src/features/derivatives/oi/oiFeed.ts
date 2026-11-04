@@ -142,7 +142,9 @@ export function startOiFeed(
       fromMs: window.fromMs,
       toMs: window.toMs,
       signal: call.signal,
-      onAnomaly: (anomaly) => options.analytics?.backfillAnomaly(symbol, anomaly),
+      onAnomaly: (anomaly) => {
+        if (!stopped && !call.signal.aborted) options.analytics?.backfillAnomaly(symbol, anomaly);
+      },
     };
     // a rejected or throwing read is a failed read, never a pane stuck in loading
     const threw: HistoryResult = { kind: "failed", status: null, code: "exception" };
@@ -167,9 +169,15 @@ export function startOiFeed(
         } else {
           series.setHistoryFailed();
           history = { phase: "failed", status: result.status, lastSuccessAtMs };
-          options.analytics?.backfillFailed(symbol, result.status, result.code);
         }
         pendingStructural = true;
+        if (result.kind !== "ok") {
+          try {
+            options.analytics?.backfillFailed(symbol, result.status, result.code);
+          } catch {
+            // analytics is best-effort: a throwing sink never rejects the read
+          }
+        }
       });
   };
 

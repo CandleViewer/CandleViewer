@@ -247,6 +247,31 @@ describe("OI feed", () => {
     feed.stop();
   });
 
+  it("does not report an anomaly from a read that was stopped or superseded", async () => {
+    let seen: HistoryRequest | undefined;
+    const loadHistory = vi.fn(async (req: HistoryRequest): Promise<HistoryResult> => {
+      seen = req;
+      await Promise.resolve();
+      return ok;
+    });
+    const { feed, analytics } = start([], { loadHistory });
+    feed.stop();
+    seen?.onAnomaly?.("cursor_missing");
+    expect(analytics.backfillAnomaly).not.toHaveBeenCalled();
+  });
+
+  it("survives a throwing analytics sink and still publishes the failed state", async () => {
+    const failed: HistoryResult = { kind: "failed", status: 503, code: "x" };
+    const { d, feed, analytics } = start([failed]);
+    analytics.backfillFailed.mockImplementation(() => {
+      throw new Error("sink");
+    });
+    await settle();
+    d.frame();
+    expect(feed.getSnapshot().history.phase).toBe("failed");
+    feed.stop();
+  });
+
   it("keeps live streaming through a failed backfill, gaps the history and retries", async () => {
     const failed: HistoryResult = { kind: "failed", status: 503, code: "service_unavailable" };
     const { d, feed, handle, analytics, loadHistory } = start([failed, ok, failed]);
@@ -277,6 +302,7 @@ describe("OI feed", () => {
       lastSuccessAtMs: succeededAt,
     });
     expect(loadHistory).toHaveBeenCalledTimes(3);
+    expect(analytics.backfillFailed).toHaveBeenCalledTimes(2); // a retry counts again
   });
 
   it("draws a seam after a reset", async () => {

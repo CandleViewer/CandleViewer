@@ -73,6 +73,8 @@ export class OiSeries {
   private newest: LiveTick | null = null;
   private seamPending = false;
   private rowsCache: readonly OiRow[] | null = null;
+  /** The start of the first live bar the `MAX_LIVE_ROWS` bound evicted: its span is marked, never a line. */
+  private firstEvictedMs: number | null = null;
 
   constructor(
     readonly barMs: number,
@@ -138,7 +140,11 @@ export class OiSeries {
       asOfMs: tick.tsMs,
     });
     // ticks arrive in order, so the first key is the oldest bar
-    if (this.live.size > MAX_LIVE_ROWS) this.live.delete(this.live.keys().next().value ?? tMs);
+    if (this.live.size > MAX_LIVE_ROWS) {
+      const oldest = this.live.keys().next().value ?? tMs;
+      this.live.delete(oldest);
+      this.firstEvictedMs ??= oldest;
+    }
     this.changed();
     return true;
   }
@@ -200,7 +206,19 @@ export class OiSeries {
       if (fromMs < toMs) out.push({ fromMs, toMs, kind: "failed" });
     }
     out.push(...this.liveGaps);
+    const evicted = this.evictedGap();
+    if (evicted !== null) out.push(evicted);
     return out.sort((a, b) => a.fromMs - b.fromMs);
+  }
+
+  /** One `live` gap from history's end (or the first evicted bar) to the oldest kept live bar. */
+  private evictedGap(): OiGap | null {
+    if (this.firstEvictedMs === null) return null;
+    let oldest: number | null = null;
+    for (const t of this.live.keys()) if (oldest === null || t < oldest) oldest = t;
+    const last = this.lastHistoryMs();
+    const fromMs = last === null ? this.firstEvictedMs : last + this.historySpanMs;
+    return oldest !== null && fromMs < oldest ? { fromMs, toMs: oldest, kind: "live" } : null;
   }
 
   /** `coverage.from`: the first stored point, the empty state's "History starts …" (BQ 7). */
