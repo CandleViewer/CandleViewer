@@ -35,7 +35,7 @@ import pytest
 import candleviewer.app as appmod
 from candleviewer.accounts.consequences import ConsequenceRead
 from candleviewer.accounts.errors import AccountNotFoundError
-from candleviewer.accounts.exposure import ExposureRead, KeyExposure, KeyReadFailed
+from candleviewer.accounts.exposure import KeyExposure, KeyReadFailed
 from candleviewer.accounts.lifecycle import AccountLifecycle
 from candleviewer.accounts.models import ApiKeyMetadata, ExchangeAccount
 from candleviewer.api.deny_by_default import served_operations
@@ -56,6 +56,7 @@ from candleviewer.storage.repositories.accounts import (
     OwnerScope,
 )
 from tests.contract._admin_support import SPEC, validate_example
+from tests.contract._frozen_budget import consequence_read
 from tests.contract.rbac.rbac_harness import (
     ABSENT,
     FOREIGN,
@@ -243,7 +244,7 @@ def _served() -> Iterator[Served]:
     ports = Ports(store)
 
     def consequences(*_args: Any, env: str) -> ConsequenceRead:
-        return ConsequenceRead(ports, ExposureRead(ports, env=env), ports, ports, env=env)
+        return consequence_read(ports, env=env)
 
     def lifecycle(accounts: Any, _rules: Any, *, standings: Any, subscriptions: Any,
                   **_kw: Any) -> AccountLifecycle:  # fmt: skip
