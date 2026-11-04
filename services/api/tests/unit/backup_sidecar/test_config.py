@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from cvbackup import age_format
-from cvbackup.config import ConfigError, load
+from cvbackup.config import ConfigError, backup_root, load
 from tests.unit.backup_sidecar._sidecar import recipient
 
 _MARKER = "cvb-3319-marker-not-a-secret"
@@ -107,7 +107,7 @@ def test_config_paths_through_a_symlink_are_refused(tmp_path: Path) -> None:
 def test_config_root_with_a_hidden_component_is_refused(tmp_path: Path) -> None:
     (tmp_path / ".hidden").mkdir()
     with pytest.raises(ConfigError, match="CVB_BACKUP_ROOT must have no component that starts"):
-        load(_env(tmp_path, CVB_BACKUP_ROOT=str(tmp_path / ".hidden")))
+        backup_root(_env(tmp_path, CVB_BACKUP_ROOT=str(tmp_path / ".hidden")))  # `load`'s too
 
 
 def test_config_repr_holds_paths_and_public_values_only(tmp_path: Path) -> None:

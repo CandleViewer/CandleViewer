@@ -199,6 +199,22 @@ async def test_verify_one_at_a_time_is_busy(tmp_path: Path, sock: str) -> None:
         await _refused("busy", sidecar, "verify", backup_id=backup_id, location=location)
 
 
+async def test_verify_at_the_task_bound_records_its_hash_inline_never_busy_after(
+    tmp_path: Path, sock: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    backup_id, location, digest = await sidecar.finished()
+    bound, real = len(tasks.running()), ops._sha256
+
+    def full(*hashed: Any) -> str | None:  # the bound is reached while the thread hashes
+        monkeypatch.setattr(tasks, "MAX_TASKS", bound)
+        return real(*hashed)
+
+    monkeypatch.setattr(ops, "_sha256", full)
+    result = await sidecar.handle("verify", backup_id=backup_id, location=location)
+    assert result["checksum_sha256"] == digest and _entries(sidecar)[-1]["outcome"] == "ok"
+
+
 async def test_verify_cancelled_twice_closes_the_descriptor_only_after_the_thread_ends(
     tmp_path: Path, sock: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

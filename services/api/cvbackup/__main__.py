@@ -31,7 +31,7 @@ from cvbackup.ledger import Ledger
 from cvbackup.ops import KINDS, Ops
 from cvbackup.paths import LEDGER_DIR, QUARANTINE_DIR, Root
 from cvbackup.server import CLOSE_S, Server, Structural
-from cvbackup.tasks import running, spawn
+from cvbackup.tasks import TaskLimit, running, spawn
 
 SWEEP_S: Final = 300.0
 STRUCTURAL: Final = Structural()
@@ -84,6 +84,8 @@ async def _sweep(ops: Ops, stop: asyncio.Event) -> None:
     while not stop.is_set():
         try:
             await ops.sweep()
+        except TaskLimit:  # a purge is idempotent: one left unrecorded is redone next sweep
+            logging.getLogger("cvbackup").warning("cvbackup.sweep_deferred reason=task_limit")
         except Exception as exc:  # the next sweep tries again; its class only
             logging.getLogger("cvbackup").error("cvbackup.sweep_failed error=%s",
                                                 type(exc).__name__)  # fmt: skip

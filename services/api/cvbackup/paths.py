@@ -53,8 +53,8 @@ def components(path: str) -> tuple[str, ...] | None:
 
 
 def is_artefact_name(name: str) -> bool:
-    """`<uuid>.age`, so one component: never `.`, `..`, a `/` or a hidden name."""
-    return name.endswith(".age") and protocol.is_uuid(name[:-4])
+    """`<uuid4>.age`, so one component: never `.`, `..`, a `/` or a hidden name."""
+    return protocol.ARTEFACT_NAME.fullmatch(name) is not None
 
 
 class Root:

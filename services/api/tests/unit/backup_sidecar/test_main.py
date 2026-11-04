@@ -18,6 +18,7 @@ import pytest
 
 import cvbackup
 from cvbackup import __main__ as entry
+from cvbackup import tasks
 from cvbackup.ledger import FILE
 from cvbackup.ops import Ops
 from cvbackup.paths import LEDGER_DIR
@@ -78,6 +79,21 @@ async def test_serve_answers_on_its_socket_and_sweeps_until_stopped(
         "config_bundle",
         "pg_dump",
     }
+
+
+async def test_sweep_at_the_task_bound_is_deferred_to_the_next_sweep(
+    tmp_path: Path, sock: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    sidecar, stop, sweeps = await build(config(tmp_path, sock)), asyncio.Event(), []
+
+    async def bound() -> int:
+        sweeps.append(stop.set() if sweeps else None)  # the second sweep: then stop
+        raise tasks.TaskLimit
+
+    monkeypatch.setattr(sidecar.ops, "sweep", bound)
+    monkeypatch.setattr(entry, "SWEEP_S", 0.0)
+    await entry._sweep(sidecar.ops, stop)
+    assert len(sweeps) == 2 and "cvbackup.sweep_deferred reason=task_limit" in caplog.messages
 
 
 async def test_serve_stops_on_sigterm_while_an_op_hangs_on_an_open_connection(

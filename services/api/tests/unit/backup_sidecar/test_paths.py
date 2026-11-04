@@ -52,6 +52,7 @@ def test_a_location_outside_the_root_is_refused_before_any_io(tmp_path: Path) ->
     for method in (root.open_artefact, root.exists):
         assert _code(method, outside) == "artefact_missing"
     assert _code(root.quarantine, outside, _name()) == "artefact_missing"
+    assert _code(root.exists, f"{root.path}/pg_dump/{uuid.uuid1()}.age") == "artefact_missing"
 
 
 def test_only_a_regular_single_link_file_opens(tmp_path: Path) -> None:
@@ -62,7 +63,7 @@ def test_only_a_regular_single_link_file_opens(tmp_path: Path) -> None:
     os.link(linked, f"{root.path}/pg_dump/second-name")
     assert _code(root.open_artefact, directory) == "artefact_missing"
     assert _code(root.open_artefact, linked) == "artefact_missing"
-    assert _code(root.open_artefact, f"{tmp_path}/backups/nodir/x.age") == "artefact_missing"
+    assert _code(root.open_artefact, f"{root.path}/nodir/{uuid.uuid4()}.age") == "artefact_missing"
 
 
 def test_a_symlinked_directory_on_the_way_is_refused(tmp_path: Path) -> None:
