@@ -84,6 +84,7 @@ from candleviewer.oms.cancel_all import (
 from candleviewer.oms.cancel_all_coalescer import CancelAllCoalescer
 from candleviewer.oms.cancel_all_fold import CancelAllSpacer
 from candleviewer.oms.clock_halt import ClockHalt
+from candleviewer.oms.closed_pnl_sync import ClosedPnlSync, StoredCloses
 from candleviewer.oms.commands import NEVER_SENT_ALERT, OmsCommandPort
 from candleviewer.oms.day_figures import DayRiskFigures, Tiers
 from candleviewer.oms.errors import (
@@ -142,7 +143,9 @@ from candleviewer.oms.ports import (
     OrderFigures,
     OrderHandovers,
     Profiles,
+    ReconciliationRequests,
     RequestRecord,
+    ResyncReason,
     RuleOrigin,
     RuntimePortName,
     SubmissionPorts,
@@ -239,6 +242,8 @@ from candleviewer.statechart_wiring import EventFramesAdapter, EventsAdapter, Pe
 from candleviewer.storage.errors import StorageError, StorageTierUnavailable
 from candleviewer.storage.repositories.accounts import AccountScope
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
+from candleviewer.storage.repositories.closed_pnl import ClosedPnlStore
+from candleviewer.storage.repositories.closed_pnl_sqlalchemy import SqlAlchemyClosedPnlStore
 from candleviewer.storage.repositories.executions import ExecutionStore
 from candleviewer.storage.repositories.executions_sqlalchemy import SqlAlchemyExecutionStore
 from candleviewer.storage.repositories.idempotency_anchors import (
@@ -1675,6 +1680,11 @@ class OrderStores(OrderStore, OrderEventStore, Protocol):
     """The order rows and their events, in one adapter (`SqlAlchemyOrderStore`)."""
 
 
+class ExecutionStores(ExecutionStore, StoredCloses, Protocol):
+    """The fills and the size an order's trade fills state they closed, the closed-PnL sync's
+    final rule (E29-S06), in one adapter (`SqlAlchemyExecutionStore`)."""
+
+
 class PositionStores(PositionStore, PositionSnapshotStore, Protocol):
     """The positions and their snapshots, in one adapter (`SqlAlchemyPositionStore`), over the
     clock it is built with (E29-T05 S8b)."""
@@ -1700,7 +1710,7 @@ class OmsStores:
     the exchange-synced one, which its projection reads too (E29-T05 S8b, CG14)."""
 
     orders: OrderStores
-    executions: ExecutionStore
+    executions: ExecutionStores
     submissions: SubmissionStore
     anchors: IdempotencyAnchorStore
     stops: RecordedStopStore
@@ -1719,6 +1729,9 @@ class OmsStores:
     #: a composition without them binds `NoHandoverStore` and `NoReconciliation`.
     handovers: OmsHandoverStore | None = None
     reconcile: ReconcileReads | None = None
+    #: E29-S06 #981: `closed_pnl_records` (21 Sec.3.3.13), which the closed-PnL sync keeps; a
+    #: composition without it runs no sync.
+    closed_pnl: ClosedPnlStore | None = None
 
 
 #: The name prefix of the order lane's own WAL files, each beside the serving loop's (#913 L2, D6).
@@ -1872,6 +1885,7 @@ def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
         release=pool.dispose,
         handovers=SqlAlchemyHandoverStore(pool, statement_timeout_ms=cap_ms),
         reconcile=SqlAlchemyReconcileStore(pool, statement_timeout_ms=cap_ms),
+        closed_pnl=SqlAlchemyClosedPnlStore(pool, statement_timeout_ms=cap_ms),
     )
 
 
@@ -2050,6 +2064,9 @@ class _Parts:
     #: The accounts a job opens for at start: the environment's that resolve to a trading
     #: account (an active key, not deleted); the rest open on their stream's first trigger.
     tradable: Callable[[Sequence[UUID]], Awaitable[list[AccountId]]] | None = None
+    #: E29-S06 #981: the closed-PnL sync, built, started once `ready` (`_closed_pnl_started`);
+    #: None where the stores compose no closed-PnL store.
+    closed_pnl: ClosedPnlSync | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2370,6 +2387,24 @@ def _stream_stop_ended(call: asyncio.Future[None]) -> None:
         _log().error("oms_stream_consumer_stop_failed", error=type(error).__name__)
 
 
+class ClosedPnlResyncs:
+    """E29-S06 #981 (24 Sec.8.13): the consumer's `ReconciliationRequests` over reconciliation's
+    jobs, so each `resyncing` it answers asks the closed-PnL sync for a read at once too: the
+    sync's `reconnected` first, which only enqueues, what it raises logged by its class and never
+    raised; then the jobs' request as the consumer made it, their answer or refusal its own."""
+
+    def __init__(self, jobs: ReconciliationRequests, sync: ClosedPnlSync) -> None:
+        self._jobs, self._sync = jobs, sync
+
+    async def request_reconciliation(self, account_id: AccountId, *, reason: ResyncReason) -> None:
+        try:
+            self._sync.reconnected(account_id)
+        except Exception as exc:  # its read waits for the next trigger; the pass never does
+            failure = type(exc).__name__
+            _log().error("oms_closed_pnl_resync_failed", account_id=str(account_id), error=failure)
+        await self._jobs.request_reconciliation(account_id, reason=reason)
+
+
 class CommandAccounts:
     """The command port's `TradingAccounts` (CR-S3C1B-02): the binding's, which pages an account
     it refuses before the refusal goes on. SR-E27-07 lets an account be deleted with orders left
@@ -2429,7 +2464,8 @@ class OmsRuntime:
     `ready` at its end only. What `start()` cannot compose fails the runtime closed: logged by
     step (`phase`) and paged, `degraded` and never ready, while market data stays up. `run` tracks
     the route's submits, which `stop()` drains. It owns E29-T05's private-stream consumer (S8b):
-    composed with the OMS, started where `ready` is set, stopped first."""
+    composed with the OMS, started where `ready` is set, stopped first; and E29-S06's closed-PnL
+    sync, started there after it and stopped before what it reads through closes."""
 
     def __init__(
         self,
@@ -2585,12 +2621,15 @@ class OmsRuntime:
         or a position reading has been owed to protection for `OWED_DEGRADED_S` or more; failing
         closed, so the check reads `ok` only once the lane has confirmed the start. Never
         `readiness` itself, which `placeOrder` reads (the orchestrator's Q3): one unprotected
-        position never refuses every entry. Read from a worker thread; the detail names no
-        account."""
+        position never refuses every entry. `degraded` too once the closed-PnL sync's task has
+        ended unasked (E29-S06), as it never restarts itself. Read from a worker thread; the
+        detail names no account."""
         state, parts = self.readiness, self._parts
         if state != "ok" or parts is None:
             return state
         if self._streaming is not True or parts.stream.readiness.degraded() is not None:
+            return "degraded"
+        if parts.closed_pnl is not None and parts.closed_pnl.fault is not None:
             return "degraded"
         return state
 
@@ -2911,8 +2950,8 @@ class OmsRuntime:
         session ended has fenced itself before this one sweeps or admits, then steps 2 to 4, run
         again after a backoff while the store or the audit fails them (any other error ends it
         `degraded` after `SWEEP_MAX_FAILURES`, paged), then step 5, `ready`, never early, and there
-        the private-stream consumer's start (`_stream_started`). A failure met while a stop runs
-        ends it, cancelled, never retried."""
+        the private-stream consumer's start (`_stream_started`), then the closed-PnL sync's. A
+        failure met while a stop runs ends it, cancelled, never retried."""
         if self._parts is None and not await self._composed_again(lane, serving, tick):
             return
         await self._waited()
@@ -2953,6 +2992,7 @@ class OmsRuntime:
                 if self._topics is not None:  # E29-T13: snapshots read on the lane from now on
                     self._topics.attach(OnLaneTopicReads(parts))
                 await self._stream_started(parts)
+                await self._closed_pnl_started(parts)  # E29-S06: after the consumer, never before
             return
 
     async def _reconcile_started(self, parts: _Parts) -> None:
@@ -3010,6 +3050,28 @@ class OmsRuntime:
             await parts.lane.call(parts.stream.stop(), timeout_s=HOP_TIMEOUT_S)
         except Exception as exc:
             _log().error("oms_stream_consumer_stop_failed", error=type(exc).__name__)
+
+    async def _closed_pnl_started(self, parts: _Parts) -> None:
+        """E29-S06 #981 (24 Sec.8.13): the closed-PnL sync starts on the lane, where it runs, with
+        the environment's accounts that resolve to a trading account, each read at once; another
+        joins at its first stored fill or `resyncing`. Bounded as the jobs' start is. A start that
+        fails, or that the lane refuses or does not answer, is logged CRITICAL and paged, and
+        `ready` stands: order entry never waits for the sync."""
+        sync, tradable = parts.closed_pnl, parts.tradable
+        if sync is None or tradable is None:
+            return
+
+        async def begun() -> None:
+            ids = await self._bounded(parts.sweep.environment_accounts(self._env))
+            sync.start(await tradable(ids))
+
+        try:
+            await self._bounded(parts.lane.call(begun()))
+        except Exception as exc:
+            if self._stopping:  # the stop's own lane: nothing to start
+                raise asyncio.CancelledError from exc
+            _log().critical("oms_closed_pnl_sync_unstarted", error=type(exc).__name__)
+            _page(self._pager, "oms_closed_pnl_sync_unstarted")
 
     async def _swept(self, parts: _Parts) -> bool:
         """Steps 2 to 4; False when step 3 refuses `ready`, past `MAX_MACHINES` orders (paged).
@@ -3364,6 +3426,24 @@ class OmsRuntime:
                 notices.bind_reconciliation(
                     functools.partial(reconcile.jobs.trigger, trigger="unknown")
                 )
+            self._phase = "closed_pnl"
+            # E29-S06 #981 (24 Sec.8.13): the closed-PnL sync, read-only to the venue, its reads in
+            # the `poll` lane behind the governor's headroom, never the reserve (C-12.7), its
+            # records and seeds on this pool, its clock the exchange-synced one (the seed's skew),
+            # its day UTC's until E29-S06's resolver; started once `ready`. Each fill either write
+            # path stores asks it for a read, and so does each `resyncing`, ahead of the jobs'
+            # request; a stand-in stays bare, so still announced. No flag (C-4.13): it writes only
+            # records nothing serves yet.
+            sync: ClosedPnlSync | None = None
+            requests: ReconciliationRequests | None = None if reconcile is None else reconcile.jobs
+            if stores.closed_pnl is not None:
+                sync = ClosedPnlSync(
+                    accounts=accounts, router=router, records=stores.closed_pnl,
+                    closes=stores.executions, snapshots=snapshot_rows, metrics=metrics, now=wall,
+                )  # fmt: skip
+                fills.bind_stored(sync.stored)
+                if requests is not None:
+                    requests = ClosedPnlResyncs(requests, sync)
             self._phase = "stream"
             stream = build_stream_consumer(
                 facade=machines, orders=orders, stops=stops, positions=stored_positions,
@@ -3372,8 +3452,7 @@ class OmsRuntime:
                 credentials=rejections, audit=audit, emitter=writer,
                 environment=settings.environment, pager=self._pager, metrics=metrics,
                 now=self._now, offset_ms=ingestion.clock_offset_snapshot_ms,
-                clock_health=clock_health, clock=wall,
-                reconciliation=None if reconcile is None else reconcile.jobs,
+                clock_health=clock_health, clock=wall, reconciliation=requests,
                 handovers=fill_handovers, lockout=lockout, no_intent=placed,
                 evidence=None if reconcile is None else reconcile.marks,
             )  # fmt: skip
@@ -3466,6 +3545,9 @@ class OmsRuntime:
                 jobs = reconcile.jobs
                 at_gate = [name for name, _ in closers].index("stop_gate")
                 closers.insert(at_gate, ("reconciliation", lambda: lane.call(jobs.stop())))
+            if sync is not None:  # E29-S06: stopped, its task ended, before all it reads through
+                at_gate = [name for name, _ in closers].index("stop_gate")
+                closers.insert(at_gate, ("closed_pnl_sync", lambda: lane.call(sync.stop())))
             # S4-F: a fold's call still out once the machines have cut its members' invokes, as
             # theirs are, is ended before the trading port closes
             after = [name for name, _ in closers].index("machines") + 1
@@ -3502,7 +3584,7 @@ class OmsRuntime:
                 submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,
                 gate, exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
                 stream, admit_after, preview, leverage, writes, reads, observed, reconcile,
-                tradable,
+                tradable, closed_pnl=sync,
             )  # fmt: skip
             with self._handoff:  # SEC-S3L2-05: the runtime's now, unless a stop began meanwhile
                 stopping = self._stopping
