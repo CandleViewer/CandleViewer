@@ -11551,7 +11551,7 @@ export interface components {
         params_schema?: {
           [key: string]: unknown;
         };
-        /** @description True when the action can open or add to a position. The rule editors key the "places orders" word and the native-stop lines on it. */
+        /** @description True when the action can open or add to a position. The rule editors key the "places orders" word and the native-stop lines on it. An absent `places_orders` means unknown, and a client treats the action as placing orders. */
         places_orders?: boolean;
         required_permissions: string[];
         /** @default false */

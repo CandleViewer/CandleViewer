@@ -6675,7 +6675,7 @@ class Action1(BaseModel):
     places_orders: Annotated[
         StrictBool | None,
         Field(
-            description='True when the action can open or add to a position. The rule editors key the "places orders" word and the native-stop lines on it.\n'
+            description='True when the action can open or add to a position. The rule editors key the "places orders" word and the native-stop lines on it. An absent `places_orders` means unknown, and a client treats the action as placing orders.\n'
         ),
     ] = None
     restriction: str | None = None

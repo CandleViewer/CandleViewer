@@ -25443,7 +25443,8 @@ components:
                 type: boolean
                 description: >
                   True when the action can open or add to a position. The rule editors key the
-                  "places orders" word and the native-stop lines on it.
+                  "places orders" word and the native-stop lines on it. An absent
+                  `places_orders` means unknown, and a client treats the action as placing orders.
               restriction: { type: string }
               notes: { type: string }
               loosens_risk:

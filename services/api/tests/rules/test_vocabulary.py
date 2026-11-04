@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import typing
+from dataclasses import replace
 from pathlib import Path
 
 import jsonschema
@@ -147,6 +148,19 @@ def test_vocabulary_actions_carry_places_orders() -> None:
         acts = _vocab(permissions=perms)["actions"]
         assert all(isinstance(a["places_orders"], bool) for a in acts), perms
         assert {a["id"] for a in acts if a["places_orders"]} == PLACES_ORDERS, perms
+
+
+def test_vocabulary_places_orders_is_read_from_the_catalogue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The served flag is the catalogue's `ActionSpec.places_orders`, its one owner, and no list
+    in `build.py`: with every spec flipped, the served flags flip. `PLACES_ORDERS` stays the
+    value pin (above)."""
+    flipped = tuple(replace(a, places_orders=not a.places_orders) for a in ACTIONS)
+    monkeypatch.setattr(vbuild, "ACTIONS", flipped)
+    served = {a["id"]: a["places_orders"] for a in _vocab()["actions"]}
+    assert served == {a.type: a.places_orders for a in flipped}
+    assert {t for t, placing in served.items() if not placing} == PLACES_ORDERS
 
 
 def test_no_action_offers_to_loosen_a_stop() -> None:
