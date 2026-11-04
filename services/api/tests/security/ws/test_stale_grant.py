@@ -20,7 +20,7 @@ import pytest
 
 from candleviewer.ws import gateway
 from candleviewer.ws.upstream import UpstreamRefs
-from tests.contract.ws._harness import Client
+from tests.contract.ws._harness import BARRIER, Client, flushed
 from tests.security.ws._raw import (
     CONNECTION_REQUEST_ID,
     RawWorld,
@@ -35,7 +35,6 @@ from tests.security.ws._raw import (
 from tests.unit.ws._seq_support import ACC_A, ACC_B
 
 ACC_C = uuid.UUID(int=0xC)
-BARRIER = "ticker.BTCUSDT"  # the topic `flushed` reads its barrier through
 _DATA = {"snap", "d"}
 
 
@@ -68,17 +67,6 @@ class Held:
 
     def release(self) -> None:
         self.world.call(self._go.set)
-
-
-def flushed(c: Client) -> None:
-    """Returns once every frame queued for `c` so far has been received, read through the snapshot
-    of a topic it subscribes to now: the normal lane is FIFO and the new snapshot is its last frame
-    (the priority lane's `pong` would overtake a normal-lane frame)."""
-    c.send({"t": "sub", "id": "barrier", "p": {"topics": [{"ch": BARRIER}]}})
-    while (frame := c.recv())["t"] != "snap" or frame["ch"] != BARRIER:
-        pass
-    c.send({"t": "unsub", "id": "barrier", "p": {"topics": [BARRIER]}})
-    c.next_of("unsub_ok")
 
 
 def since(c: Client, mark: int) -> list[dict[str, Any]]:
