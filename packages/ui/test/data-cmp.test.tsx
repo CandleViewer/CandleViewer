@@ -39,6 +39,7 @@ import {
   FileDrop,
   FreshnessMarker,
   PositionsGrid,
+  PrintExportBar,
   WatchlistGroupTabs,
   WatchlistRow,
   watchlistColumns,
@@ -320,5 +321,13 @@ describe("E29-S01's positions grid carries its catalogue id", () => {
     const host = await mount(<PositionsGrid caption="Positions" groups={[]} />);
     expect(host.querySelectorAll('[data-cmp="CMP-114"]')).toHaveLength(1);
     expect(host.querySelectorAll('[data-cmp="CMP-049"]')).toHaveLength(1);
+  });
+});
+
+describe("E29-S04's export bar carries its catalogue id", () => {
+  it("CMP-099 marks exactly one root with data-cmp, over one CMP-001 per format", async () => {
+    const host = await mount(<PrintExportBar formats={["csv", "pdf"]} onExport={noop} />);
+    expect(host.querySelectorAll('[data-cmp="CMP-099"]')).toHaveLength(1);
+    expect(host.querySelectorAll('[data-cmp="CMP-001"]')).toHaveLength(2);
   });
 });

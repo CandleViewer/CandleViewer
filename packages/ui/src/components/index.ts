@@ -79,6 +79,10 @@ export type {
 export { SplitButton } from "./SplitButton.js";
 export type { SplitButtonPrimary, SplitButtonProps } from "./SplitButton.js";
 
+// E29-S04's export bar (SCR-078's Export CSV).
+export { PrintExportBar } from "./PrintExportBar.js";
+export type { ExportFormat, PrintExportBarProps } from "./PrintExportBar.js";
+
 // E29-S02's in-cell editor: the cell use of CMP-100 PriceInput and CMP-101 QtyInput.
 export {
   CELL_NUMBER_EDITOR_COPY,

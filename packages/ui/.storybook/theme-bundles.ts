@@ -60,6 +60,7 @@ import "../src/components/popover.css";
 import "../src/components/positionmode.css";
 import "../src/components/positionsgrid.css";
 import "../src/components/previewtile.css";
+import "../src/components/printexportbar.css";
 import "../src/components/progress.css";
 import "../src/components/radio.css";
 import "../src/components/recorderstatusrow.css";

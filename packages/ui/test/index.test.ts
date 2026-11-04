@@ -9,6 +9,7 @@ import type {
   AuditRowProps,
   ButtonProps,
   CardProps,
+  ExportFormat,
   LiqTierCellProps,
   PositionsGridColumnId,
   PositionsGridGroup,
@@ -18,6 +19,7 @@ import type {
   PositionsGridRow,
   PositionsGridTier,
   PositionsGridTotals,
+  PrintExportBarProps,
   TableKeptRow,
   TableTreeRow,
   UpdatesPausedChipProps,
@@ -281,6 +283,17 @@ describe("@candleviewer/ui positions grid and CMP-049's treegrid (E29-S01)", () 
           UpdatesPausedChipProps,
         ]
       | null = null;
+    expect(props).toBeNull();
+  });
+});
+
+describe("@candleviewer/ui CMP-099 PrintExportBar (E29-S04)", () => {
+  it("exports PrintExportBar from the package entry as a component function", () => {
+    expect(typeof Atoms.PrintExportBar).toBe("function");
+  });
+
+  it("exports CMP-099's types (checked by the typechecker)", () => {
+    const props: [ExportFormat, PrintExportBarProps] | null = null;
     expect(props).toBeNull();
   });
 });

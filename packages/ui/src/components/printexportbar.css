@@ -1,0 +1,36 @@
+/* CMP-099 PrintExportBar (E29-D04 §2.8.9). Tokens only; each button draws itself as CMP-001 secondary (`15`: "inherits
+   CMP-001"). The bar spaces them as the blotter's toolbar does (E29-D02:493) and gives a running export CMP-038's busy
+   form, its label kept: no motion of its own, the arc's turn and its reduced-motion stop being CMP-014's. */
+.cv-print-export-bar {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-stack-sm);
+  vertical-align: middle;
+}
+
+/* A label never truncates (`05` §5 item 7; E29-D03 §3.2, §8.2): a button keeps its whole width, so a narrow bar
+   wraps it to a new row, and CMP-001's ellipsis is lifted, as button.css lifts it for buy and sell. */
+.cv-print-export-bar > .cv-button {
+  flex: none;
+}
+
+.cv-print-export-bar > .cv-button > .cv-button__label {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* Running (E29-D03:200): CMP-001's loading look hides the label under a centred spinner; here "Export CSV" stays
+   in color.text.primary and the CMP-014 arc leads it in the label's colour (CMP-038's arc colour,
+   color.action.primary.default, measures 2.58:1 on the secondary fill in dark). */
+.cv-print-export-bar
+  > .cv-button[aria-busy="true"]:not([data-side])
+  > :is(.cv-button__label, .cv-button__icon) {
+  opacity: 1;
+}
+
+.cv-print-export-bar > .cv-button[aria-busy="true"]:not([data-side]) > .cv-spinner {
+  position: static;
+  order: -1;
+  margin: 0;
+}
