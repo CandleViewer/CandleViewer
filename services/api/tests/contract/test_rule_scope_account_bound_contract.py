@@ -1,18 +1,25 @@
-"""#5691 (E35, C-12.4): a rule's scope lists at most 100 accounts, each once; contract first.
+"""#5691 (E35, C-12.4): a rule's scope lists at most 100 accounts and 3 environments, each once.
 
-22 states the bound and the uniqueness on `RuleIrScope.account_ids` (C-6.1), and how each operation
-that reads a scope answers a list past the bound or one naming an account twice: a save and
-`compileRule` with `422 rule_ir_invalid`, `validateRule` with `200` and `valid: false`. 24 states
-the same in §11.2, §11.3 and its §19 entry. Read from the spec, never a copy (AGENTS.md section 6
-rule 12).
+22 states the bound and the uniqueness on `RuleIrScope.account_ids` and `environments` (contract
+first, C-6.1), and how each operation that reads a scope answers a list past a bound or one naming
+an entry twice: a save and `compileRule` with `422 rule_ir_invalid`, `validateRule` with `200` and
+`valid: false`. 24 states the same in §11.2, §11.3 and its §19 entry. Read from the spec, never
+a copy (AGENTS.md section 6 rule 12). The tests at the end tie the code to it: the model's
+constants, the schema the model publishes and the contract model generated from 22.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import uuid
 from typing import Any
 
+import pytest
+from pydantic import ValidationError
+
+from candleviewer.api._generated.openapi_models import RuleIrScope
+from candleviewer.rules.ir import to_json_schema
 from tests.contract._admin_support import ROOT, SPEC, text
 
 #: The ruled bound (#5691, BQ-1), held here as a number of its own.
@@ -164,3 +171,48 @@ def test_the_24_entry_states_the_bound_and_the_c63_call() -> None:
     assert (env["default"], env["maxItems"], env["uniqueItems"]) == (["demo"], ENVIRONMENTS, True)
     ids = _ir_json_scope_member("account_ids")
     assert ids == {"type": "array", "items": _ITEM, "maxItems": BOUND, "uniqueItems": True}
+
+
+# ----- the code holds what 22 states ----------------------------------------------------------
+
+
+def test_max_scope_accounts_is_the_bound_22_states() -> None:
+    from candleviewer.rules.ir.models import MAX_SCOPE_ACCOUNTS
+
+    stated = _SCHEMAS["RuleIrScope"]["properties"]["account_ids"]["maxItems"]
+    assert MAX_SCOPE_ACCOUNTS == stated == BOUND
+    assert f"A scope lists at most {MAX_SCOPE_ACCOUNTS} accounts, each once" in _scope_prose()
+    held = f"holds at most {MAX_SCOPE_ACCOUNTS} accounts, each once (`RuleIrScope`)"
+    assert held in _prose("createRule")
+
+
+def test_max_scope_environments_is_the_bound_22_states() -> None:
+    from candleviewer.rules.ir.models import MAX_SCOPE_ENVIRONMENTS
+
+    stated = _SCHEMAS["RuleIrScope"]["properties"]["environments"]["maxItems"]
+    assert MAX_SCOPE_ENVIRONMENTS == stated == ENVIRONMENTS
+    assert f"A scope names at most {MAX_SCOPE_ENVIRONMENTS} environments" in _scope_prose()
+
+
+def test_the_published_ir_schema_carries_the_same_bound() -> None:
+    """The schema the model publishes (`rule-ir.json`, served at `GET /schemas/rule-ir.json`)
+    holds 22's bounds, uniqueness, items and defaults on `RuleScope.account_ids` and
+    `environments` (22 names its environments by `$ref`, the published schema inline)."""
+    published = to_json_schema()["$defs"]["RuleScope"]["properties"]
+    stated = _SCHEMAS["RuleIrScope"]["properties"]
+    ids = published["account_ids"]
+    assert {key: value for key, value in ids.items() if key != "title"} == stated["account_ids"]
+    envs = {key: value for key, value in published["environments"].items() if key != "title"}
+    assert envs.pop("items")["enum"] == _SCHEMAS["Environment"]["enum"]
+    assert envs == {k: v for k, v in stated["environments"].items() if k != "items"}
+
+
+def test_the_generated_python_model_carries_the_bound() -> None:
+    """The contract model generated from 22 holds `maxItems`; uniqueness is the server model's own
+    check (`RuleScope`), which compares UUIDs, not text."""
+    ids = [str(uuid.UUID(int=0x1000 + i)) for i in range(BOUND + 1)]
+    RuleIrScope.model_validate({"level": "account", "account_ids": ids[:BOUND]})
+    for member, sent in (("account_ids", ids), ("environments", ["demo"] * (ENVIRONMENTS + 1))):
+        with pytest.raises(ValidationError) as refused:
+            RuleIrScope.model_validate({"level": "account", member: sent})
+        assert [(e["type"], e["loc"]) for e in refused.value.errors()] == [("too_long", (member,))]

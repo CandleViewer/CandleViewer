@@ -21,12 +21,13 @@ from uuid import UUID
 
 import structlog
 from pydantic import ValidationError
+from pydantic_core import ErrorDetails
 
 from candleviewer.observability import spawn
 from candleviewer.rules.arming import ArmingFacts, check_arming
 from candleviewer.rules.compiler.common import ConditionNodeBoundError, check_bounds
 from candleviewer.rules.evaluator.engine import EvaluationResult
-from candleviewer.rules.ir import Rule, ir_hash
+from candleviewer.rules.ir import Rule, RuleScope, ir_hash
 from candleviewer.rules.ir.accounts import (
     collect_account_ids,
     holds_account_key,
@@ -503,6 +504,17 @@ _MISSING: Final = "The rule document is not valid: Field required"
 _NO_OBJECT: Final = (
     "The rule document is not valid: Input should be a valid dictionary or instance of "
 )
+#: What the model answers a scope list past its bound or naming an entry twice (`RuleScope`).
+_SCOPE_LIST_REFUSALS: Final = frozenset({"too_long", "non_unique_items"})
+
+
+def _not_valid(error: ErrorDetails, within: tuple[str, ...] = ()) -> RuleError:
+    """`_validated`'s answer to the model's `error`: `422 rule_ir_invalid` at its location, under
+    `within` when the model read only a member of the document."""
+    path = "/" + "/".join(str(part) for part in (*within, *error["loc"]))
+    return RuleError(
+        422, "rule_ir_invalid", f"The rule document is not valid: {error['msg']}", path=path
+    )
 
 
 def _bundled_ir(bundle: dict[str, Any]) -> dict[str, Any]:
@@ -518,6 +530,25 @@ def _bundled_ir(bundle: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(ir.get("scope", {}), dict):
         raise RuleError(422, "rule_ir_invalid", _NO_OBJECT + "RuleScope", path="/scope")
     return ir
+
+
+def _check_scope_lists(doc: Any) -> None:
+    """The scope's two list bounds (`RuleScope.account_ids`, `environments`), decided on those
+    lists alone, as a save decides them before its scope check: a list past its bound or naming
+    an entry twice is `_validated`'s answer, `422 rule_ir_invalid` at `/scope/account_ids` or
+    `/scope/environments`, with no record and no count. Any other fault of the account list is
+    `_validated`'s, later; the environment list is replaced by demo and read for its two bounds
+    only."""
+    scope = doc.get("scope") if isinstance(doc, dict) else None
+    if not isinstance(scope, dict):
+        return
+    lists = {key: scope[key] for key in ("account_ids", "environments") if key in scope}
+    try:
+        RuleScope.model_validate({"level": "account", **lists})
+    except ValidationError as exc:
+        for error in exc.errors():
+            if error["type"] in _SCOPE_LIST_REFUSALS:
+                raise _not_valid(error, ("scope",)) from exc
 
 
 def _raised_limits(rule: Rule) -> dict[str, Any]:
@@ -707,11 +738,14 @@ class RulesManager:
         then kept as written, never remapped (G-10). A bundle naming no account lands naming none,
         so it applies to every account its owner is granted. Its `ir_version` is validated as
         carried, never supplied or defaulted: a bundle carrying none is refused as a malformed one
-        is, audited as the ungranted-account refusal is. The order is the bounds, the grant check
-        and its audited `403` (C-12.4), the shape (`_bundled_ir`, unaudited), the `ir_version`
-        presence, then the strip. Each record waits at most `REFUSAL_AUDIT_TIMEOUT_S`."""
+        is, audited as the ungranted-account refusal is. The order is the bounds, the scope's two
+        list bounds (`_check_scope_lists`, decided as a save decides them, unaudited), the grant
+        check and its audited `403` (C-12.4), the shape (`_bundled_ir`, unaudited), the
+        `ir_version` presence, then the strip. Each record waits at most
+        `REFUSAL_AUDIT_TIMEOUT_S`."""
         held = bundle.get("ir")
         self.check_document(held)  # the bounds, before the walk and the copy below
+        _check_scope_lists(held)  # the lists' bounds, before the grant walk, as a save does
         refs = collect_account_ids(held)  # any shape: a string or a number names no account
         denied = [] if actor.is_owner else [a for a in refs if a not in actor.granted_accounts]
         if denied:
@@ -914,13 +948,7 @@ class RulesManager:
         try:
             rule = Rule.model_validate({**ir, "rule_id": rule_id})
         except ValidationError as exc:
-            first = exc.errors()[0]
-            raise RuleError(
-                422,
-                "rule_ir_invalid",
-                f"The rule document is not valid: {first['msg']}",
-                path="/" + "/".join(str(p) for p in first["loc"]),
-            ) from exc
+            raise _not_valid(exc.errors()[0]) from exc
         res = validate_rule(rule, self._reg, limit_caps=True)
         if res.errors:
             raise _ir_invalid(res.errors)

@@ -6,6 +6,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,16 @@ def _temporal(window: int | None) -> dict[str, Any]:
     return t
 
 
+#: The most accounts a rule's scope lists, each once (#5691); the contract tests tie it to the code.
+SCOPE_BOUND = 100
+_ACCOUNT = str(uuid.UUID(int=10))
+_OTHER_ACCOUNT = str(uuid.UUID(int=11))
+
+
+def _accounts(n: int) -> list[str]:
+    return [str(uuid.UUID(int=0x1000 + i)) for i in range(n)]
+
+
 BAD: list[tuple[str, str, Any, str]] = [
     ("unknown_action", "actions.0.type", "withdraw_funds", "actions"),
     ("33_children", "conditions", {"node_id": "g", "op": "all_of", "children": [_leaf()] * 33},
@@ -57,6 +68,16 @@ BAD: list[tuple[str, str, Any, str]] = [
     ("bad_operand", "conditions.left", {"nonsense": 1}, "left"),
     ("bad_condition", "conditions", {"node_id": "x"}, "conditions"),
     ("bad_symbol", "scope.symbols", ["btc"], "symbols"),
+    ("scope_accounts_over_the_bound", "scope.account_ids", _accounts(SCOPE_BOUND + 1),
+     "account_ids"),
+    ("scope_account_listed_twice", "scope.account_ids", [_ACCOUNT, _ACCOUNT], "account_ids"),
+    ("scope_account_listed_twice_apart", "scope.account_ids",
+     [_ACCOUNT, _OTHER_ACCOUNT, _ACCOUNT], "account_ids"),
+    ("scope_environment_listed_twice", "scope.environments", ["demo", "demo"], "environments"),
+    ("scope_environment_listed_twice_apart", "scope.environments", ["demo", "live", "demo"],
+     "environments"),
+    ("scope_environments_over_the_bound", "scope.environments",
+     ["demo", "live", "testnet", "demo"], "environments"),
 ]  # fmt: skip
 
 
@@ -78,6 +99,14 @@ def test_structurally_invalid_document_is_rejected_loudly(
     assert any(loc in [str(p) for p in e["loc"]] for e in ei.value.errors()), name
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(doc, to_json_schema())
+
+
+def test_scope_account_ids_at_the_bound_is_valid_and_the_schema_agrees() -> None:
+    doc = load("form_simple_0")
+    doc["scope"]["account_ids"] = _accounts(SCOPE_BOUND)
+    rule = Rule.model_validate(doc)
+    assert [str(a) for a in rule.scope.account_ids] == doc["scope"]["account_ids"]
+    jsonschema.validate(doc, to_json_schema())
 
 
 @pytest.mark.parametrize("model", [Rule, AlertCondition], ids=["rule", "alert-condition"])
