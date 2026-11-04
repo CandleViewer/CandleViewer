@@ -36,10 +36,10 @@ async def _sidecar(tmp_path: Path, sock: str, **changes: Any) -> Sidecar:
     return await build(config(tmp_path, sock, **changes))
 
 
-async def _refused(sidecar: Sidecar, op: str, **args: str) -> str:
+async def _refused(code: str, sidecar: Sidecar, op: str, **args: str) -> None:
     with pytest.raises(OpError) as refused:
         await sidecar.handle(op, **args)
-    return refused.value.code
+    assert refused.value.code == code
 
 
 def _entries(sidecar: Sidecar) -> list[dict[str, Any]]:
@@ -65,21 +65,21 @@ async def test_plan_mints_location_under_root_for_kind(tmp_path: Path, sock: str
 async def test_plan_unsupported_kind_is_kind_not_supported(tmp_path: Path, sock: str) -> None:
     sidecar = await _sidecar(tmp_path, sock)
     for kind in ("pg_basebackup", "questdb_snapshot", "parquet_sync"):
-        assert await _refused(sidecar, "plan", kind=kind) == "kind_not_supported"
+        await _refused("kind_not_supported", sidecar, "plan", kind=kind)
 
 
 async def test_plan_recipient_not_matching_pin_is_recipient_mismatch(
     tmp_path: Path, sock: str
 ) -> None:
     sidecar = await _sidecar(tmp_path, sock, pin=age_format.fingerprint(recipient()))
-    assert await _refused(sidecar, "plan", kind="pg_dump") == "recipient_mismatch"
+    await _refused("recipient_mismatch", sidecar, "plan", kind="pg_dump")
 
 
 async def test_floor_runs_over_cap_in_window_are_runs_capped(tmp_path: Path, sock: str) -> None:
     sidecar = await _sidecar(tmp_path, sock, run_cap=2, run_window=timedelta(hours=1))
     for _ in range(2):
         await sidecar.ledger.append("started", str(uuid.uuid4()), kind="pg_dump")
-    assert await _refused(sidecar, "plan", kind="pg_dump") == "runs_capped"
+    await _refused("runs_capped", sidecar, "plan", kind="pg_dump")
     sidecar.clock.advance(hours=1)  # the window rolls past both
     assert (await sidecar.handle("plan", kind="config_bundle"))["encrypted"] is True
 
@@ -90,16 +90,7 @@ async def test_floor_run_cap_survives_restart(tmp_path: Path, sock: str) -> None
     sidecar.ledger.close()
     restarted = await build(sidecar.config, sidecar.clock)
     assert restarted.ledger.readable
-    assert await _refused(restarted, "plan", kind="pg_dump") == "runs_capped"
-
-
-async def test_plan_with_an_unreadable_record_is_ledger_unreadable(
-    tmp_path: Path, sock: str
-) -> None:
-    sidecar = await _sidecar(tmp_path, sock)
-    write(Path(sidecar.root.path, LEDGER_DIR, FILE), b"not a record\n")
-    await sidecar.ledger.load()
-    assert await _refused(sidecar, "plan", kind="pg_dump") == "ledger_unreadable"
+    await _refused("runs_capped", restarted, "plan", kind="pg_dump")
 
 
 # -- run and restore (B1c, B2) ---------------------------------------------------------------
@@ -111,22 +102,16 @@ async def test_run_checks_its_request_then_answers_tool_failed_in_b1b(
     sidecar = await _sidecar(tmp_path, sock)
     location = str((await sidecar.handle("plan", kind="pg_dump"))["location"])
     fresh = {"backup_id": str(uuid.uuid4()), "kind": "pg_dump", "location": location}
-    assert await _refused(sidecar, "run", **fresh) == "tool_failed"
+    await _refused("tool_failed", sidecar, "run", **fresh)
     assert _entries(sidecar) == [] and not exists(location)  # no run spent, no file
     other_kind = {**fresh, "kind": "config_bundle"}
-    assert await _refused(sidecar, "run", **other_kind) == "bad_request"
-    assert await _refused(sidecar, "run", **{**fresh, "kind": "pg_basebackup"}) == (
-        "kind_not_supported"
-    )
+    await _refused("bad_request", sidecar, "run", **other_kind)
+    await _refused("kind_not_supported", sidecar, "run", **{**fresh, "kind": "pg_basebackup"})
     outside = location.replace(sidecar.root.path, str(tmp_path / "elsewhere"))
-    assert await _refused(sidecar, "run", **{**fresh, "location": outside}) == "bad_request"
+    await _refused("bad_request", sidecar, "run", **{**fresh, "location": outside})
     backup_id, existing, _ = await sidecar.finished()
-    assert await _refused(sidecar, "run", **{**fresh, "backup_id": backup_id}) == (
-        "location_mismatch"
-    )
-    assert await _refused(sidecar, "run", **{**fresh, "location": existing}) == (
-        "location_mismatch"
-    )
+    await _refused("location_mismatch", sidecar, "run", **{**fresh, "backup_id": backup_id})
+    await _refused("location_mismatch", sidecar, "run", **{**fresh, "location": existing})
 
 
 async def test_restore_is_validated_and_answered_restore_not_available(
@@ -136,7 +121,7 @@ async def test_restore_is_validated_and_answered_restore_not_available(
     backup_id, location, digest = await sidecar.finished()
     args = {"job_id": str(uuid.uuid4()), "backup_id": backup_id, "location": location,
             "digest": digest}  # fmt: skip
-    assert await _refused(sidecar, "restore", **args) == "restore_not_available"
+    await _refused("restore_not_available", sidecar, "restore", **args)
 
 
 # -- verify ----------------------------------------------------------------------------------
@@ -172,85 +157,57 @@ async def test_verify_digest_is_of_the_descriptor_opened_not_a_file_swapped_in(
     assert result["checksum_sha256"] == digest
 
 
-@pytest.mark.parametrize(
-    "data",
-    [
-        pytest.param(age_bytes(stanzas=("X25519", "X25519")), id="two-stanzas"),
-        pytest.param(age_bytes(stanzas=("ssh-ed25519",)), id="other-type"),
-        pytest.param(age_bytes(pad=4096), id="over-4kib"),
-    ],
-)
-async def test_verify_header_malformed_is_recorded_and_refused(
-    tmp_path: Path, sock: str, data: bytes
-) -> None:
-    sidecar = await _sidecar(tmp_path, sock)
-    backup_id, location, _ = await sidecar.finished(content=data)
-    assert await _refused(sidecar, "verify", backup_id=backup_id, location=location) == (
-        "header_malformed"
-    )
-    assert _entries(sidecar)[-1]["outcome"] == "header_malformed"
+_MALFORMED = {
+    "two-stanzas": age_bytes(stanzas=("X25519", "X25519")),
+    "other-type": age_bytes(stanzas=("ssh-ed25519",)),
+    "over-4kib": age_bytes(pad=4096),
+}
 
 
-async def test_verify_bytes_changed_since_the_run_are_digest_mismatch(
-    tmp_path: Path, sock: str
+@pytest.mark.parametrize("case", [*_MALFORMED, "bytes-changed", "deleted", "symlink"])
+async def test_verify_a_bad_artefact_is_refused_and_its_outcome_recorded(
+    tmp_path: Path, sock: str, case: str
 ) -> None:
     sidecar = await _sidecar(tmp_path, sock)
-    backup_id, location, _ = await sidecar.finished()
-    data = bytearray(read(location))
-    data[-1] ^= 1
-    write(location, bytes(data))
-    assert await _refused(sidecar, "verify", backup_id=backup_id, location=location) == (
-        "digest_mismatch"
-    )
-    assert _entries(sidecar)[-1]["outcome"] == "digest_mismatch"
+    backup_id, location, _ = await sidecar.finished(content=_MALFORMED.get(case))
+    code = "header_malformed" if case in _MALFORMED else "artefact_missing"
+    if case == "bytes-changed":  # changed since the run
+        code, data = "digest_mismatch", read(location)
+        write(location, data[:-1] + bytes([data[-1] ^ 1]))
+    elif case in ("deleted", "symlink"):
+        os.replace(location, tmp_path / "moved.age")
+        if case == "symlink":
+            os.symlink(tmp_path / "moved.age", location)
+    await _refused(code, sidecar, "verify", backup_id=backup_id, location=location)
+    assert _entries(sidecar)[-1]["outcome"] == code
 
 
 async def test_verify_only_the_location_its_record_holds(tmp_path: Path, sock: str) -> None:
     sidecar = await _sidecar(tmp_path, sock)
     backup_id, location, _ = await sidecar.finished()
     _, other, _ = await sidecar.finished()
-    assert await _refused(sidecar, "verify", backup_id=backup_id, location=other) == (
-        "location_mismatch"
-    )
-    assert await _refused(sidecar, "verify", backup_id=str(uuid.uuid4()), location=location) == (
-        "unknown_backup"
-    )
-
-
-@pytest.mark.parametrize("how", ["deleted", "symlink"])
-async def test_verify_a_missing_or_linked_artefact_is_artefact_missing(
-    tmp_path: Path, sock: str, how: str
-) -> None:
-    sidecar = await _sidecar(tmp_path, sock)
-    backup_id, location, _ = await sidecar.finished()
-    moved = tmp_path / "moved.age"
-    os.replace(location, moved)
-    if how == "symlink":
-        os.symlink(moved, location)
-    assert await _refused(sidecar, "verify", backup_id=backup_id, location=location) == (
-        "artefact_missing"
-    )
-    assert _entries(sidecar)[-1]["outcome"] == "artefact_missing"
+    await _refused("location_mismatch", sidecar, "verify", backup_id=backup_id, location=other)
+    unknown = str(uuid.uuid4())
+    await _refused("unknown_backup", sidecar, "verify", backup_id=unknown, location=location)
 
 
 async def test_verify_one_at_a_time_is_busy(tmp_path: Path, sock: str) -> None:
     sidecar = await _sidecar(tmp_path, sock)
     backup_id, location, _ = await sidecar.finished()
     async with sidecar.ops._verifying:
-        assert await _refused(sidecar, "verify", backup_id=backup_id, location=location) == ("busy")
+        await _refused("busy", sidecar, "verify", backup_id=backup_id, location=location)
 
 
-async def test_verify_and_remove_with_an_unreadable_record_are_ledger_unreadable(
+async def test_plan_verify_and_remove_with_an_unreadable_record_are_ledger_unreadable(
     tmp_path: Path, sock: str
 ) -> None:
     sidecar = await _sidecar(tmp_path, sock)
     backup_id, location, _ = await sidecar.finished()
     write(Path(sidecar.root.path, LEDGER_DIR, FILE), b'{"torn":', append=True)
     await sidecar.ledger.load()
-    for op in ("verify", "remove"):
-        assert await _refused(sidecar, op, backup_id=backup_id, location=location) == (
-            "ledger_unreadable"
-        )
+    args = {"kind": "pg_dump", "backup_id": backup_id, "location": location}
+    for op in ("plan", "verify", "remove"):
+        await _refused("ledger_unreadable", sidecar, op, **args)
     assert exists(location)
 
 
@@ -278,9 +235,7 @@ async def test_floor_remove_newest_finished_of_kind_is_refused_newest_artefact(
 ) -> None:
     sidecar = await _sidecar(tmp_path, sock)
     only, location, _ = await sidecar.finished("config_bundle")
-    assert await _refused(sidecar, "remove", backup_id=only, location=location) == (
-        "newest_artefact"
-    )
+    await _refused("newest_artefact", sidecar, "remove", backup_id=only, location=location)
     assert exists(location)
 
 
@@ -290,12 +245,9 @@ async def test_floor_newest_is_judged_from_ledger_order_not_request_or_covers(
     sidecar = await _sidecar(tmp_path, sock)
     older, older_at, _ = await sidecar.finished(covers_to=T0 + timedelta(days=1))
     newest, newest_at, _ = await sidecar.finished(covers_to=T0)  # finished later, covers less
-    assert await _refused(sidecar, "remove", backup_id=newest, location=newest_at) == (
-        "newest_artefact"
-    )
-    assert (await sidecar.handle("remove", backup_id=older, location=older_at))["state"] == (
-        "quarantined"
-    )
+    await _refused("newest_artefact", sidecar, "remove", backup_id=newest, location=newest_at)
+    removed = await sidecar.handle("remove", backup_id=older, location=older_at)
+    assert removed["state"] == "quarantined"
 
 
 async def test_remove_location_not_in_ledger_is_location_mismatch(
@@ -304,9 +256,7 @@ async def test_remove_location_not_in_ledger_is_location_mismatch(
     sidecar = await _sidecar(tmp_path, sock)
     older, _, _ = await sidecar.finished()
     _, newest_at, _ = await sidecar.finished()
-    assert await _refused(sidecar, "remove", backup_id=older, location=newest_at) == (
-        "location_mismatch"
-    )
+    await _refused("location_mismatch", sidecar, "remove", backup_id=older, location=newest_at)
     assert exists(newest_at)
 
 
@@ -373,7 +323,8 @@ async def test_remove_at_the_task_bound_is_busy_before_the_rename_or_lands_whole
     await sidecar.finished()
     args = {"backup_id": older, "location": location}
     monkeypatch.setattr(tasks, "MAX_TASKS", len(tasks.running()))
-    assert await _refused(sidecar, "remove", **args) == "busy" and exists(location)
+    await _refused("busy", sidecar, "remove", **args)
+    assert exists(location)
     monkeypatch.setattr(tasks, "MAX_TASKS", len(tasks.running()) + 1)  # the removal's own task
     assert (await sidecar.handle("remove", **args))["state"] == "quarantined"
     assert sidecar.ledger.get(older).state == "quarantined" and not exists(location)

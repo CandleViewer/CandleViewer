@@ -44,6 +44,13 @@ class Floor:
         if self._ledger.started_since(now - self._run_window) >= self._run_cap:
             raise FloorRefusal("runs_capped")
 
+    async def admit(self, backup_id: str, kind: str, now: datetime) -> None:
+        """The cap's check and the run's `started` entry as one step under the record's lock,
+        so two concurrent admissions never both pass the cap."""
+        await self._ledger.append(
+            "started", backup_id, kind=kind, guard=lambda: self.check_run(now)
+        )
+
     def purge_after(self, now: datetime) -> datetime:
         return now + self._grace
 

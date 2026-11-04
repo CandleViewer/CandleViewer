@@ -255,16 +255,21 @@ class Ledger:
         ]  # fmt: skip
 
     async def append(self, entry: str, backup_id: str, *, inline: bool = False,
+                     guard: Callable[[], None] = lambda: None,
                      **members: object) -> None:  # fmt: skip
         """Append one entry, `fsync`ed before this returns; its fault leaves the record
         unreadable (`LedgerUnreadable`). A cancel never cuts an append short (`uninterrupted`, or
-        `inline` from a caller already uninterrupted): the entry still lands and counts."""
-        work = self._append(entry, backup_id, members)
+        `inline` from a caller already uninterrupted): the entry still lands and counts. `guard`
+        runs under the append's lock, so its decision and the entry are one step. Readers keep the
+        durable state while the bytes are written; it advances only once they are durable."""
+        work = self._append(entry, backup_id, members, guard)
         await (work if inline else uninterrupted(work, name="cvbackup.append"))
 
-    async def _append(self, entry: str, backup_id: str, members: Mapping[str, object]) -> None:
+    async def _append(self, entry: str, backup_id: str, members: Mapping[str, object],
+                      guard: Callable[[], None]) -> None:  # fmt: skip
         async with self._lock:
             state = self._held()
+            guard()  # a decision the entry depends on, under the same lock
             line = protocol.dumps({
                 "e": entry, "seq": state.seq + 1, "prev": state.prev,
                 "at": timestamp(self._clock()), "backup_id": backup_id, **members,
@@ -272,11 +277,13 @@ class Ledger:
             decoded = protocol.loads(line)
             if not (isinstance(decoded, dict) and _valid(decoded, state)):
                 raise ValueError("an entry the record refuses")  # a caller's bug, not the volume's
-            self._state = None  # until the bytes are durable
             try:
                 await asyncio.to_thread(_write_all, self._fd, line + b"\n")
-            except OSError:
-                raise LedgerUnreadable from None
+            except BaseException as fault:  # its bytes may half exist
+                self._state = None
+                if isinstance(fault, OSError):
+                    raise LedgerUnreadable from None
+                raise
             _apply(decoded, line, state)
             self._state = state
 
