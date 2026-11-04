@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cv-order-latency-results/1",
+  "title": "E30-K01 order-path latency results",
+  "description": "One file per target (electron, browser), written by the spike harness. Every sample behind a number is a duration in ms inside one renderer clock (event.timeStamp to a mark).",
+  "type": "object",
+  "required": [
+    "schema",
+    "ticket",
+    "issue",
+    "status",
+    "target",
+    "host",
+    "protocol",
+    "budgetsMs",
+    "load",
+    "cells",
+    "demoLeg"
+  ],
+  "properties": {
+    "schema": { "const": "cv-order-latency-results/1" },
+    "ticket": { "const": "E30-K01" },
+    "issue": { "const": 852 },
+    "status": { "enum": ["template", "measured"] },
+    "target": { "enum": ["electron", "browser"] },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "host": {
+      "type": "object",
+      "required": [
+        "class",
+        "platform",
+        "cpus",
+        "loadavgStart",
+        "loadavgEnd",
+        "calibration",
+        "versions"
+      ],
+      "properties": {
+        "class": { "enum": ["reference", "below-class", "ci"] },
+        "platform": { "type": "string" },
+        "cpus": { "type": "integer", "minimum": 1 },
+        "cpuModel": { "type": "string" },
+        "memGiB": { "type": "integer" },
+        "loadavgStart": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "loadavgEnd": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "calibration": {
+          "type": "object",
+          "description": "Recorded beside the result; never applied to a budget."
+        },
+        "versions": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "required": ["samplesPerCell", "warmupDiscarded", "runs", "paceMs", "egressGuard"],
+      "properties": {
+        "samplesPerCell": { "type": "integer", "minimum": 1 },
+        "warmupDiscarded": { "type": "integer", "minimum": 0 },
+        "runs": { "type": "integer", "minimum": 1 },
+        "paceMs": { "type": "number" },
+        "egressGuard": { "const": true },
+        "note": { "type": "string" }
+      }
+    },
+    "budgetsMs": {
+      "type": "object",
+      "description": "PROPOSED until the orchestrator rules BQ 2/3; null = information only.",
+      "required": [
+        "recompute_end_a",
+        "recompute_end_b",
+        "click_to_fetch",
+        "hotkey_to_fetch",
+        "ws_orders_to_render"
+      ],
+      "additionalProperties": { "type": ["number", "null"] }
+    },
+    "load": {
+      "type": "object",
+      "description": "The replayed recorded capture and the scale applied to its own rate (BQ 8).",
+      "required": [
+        "fixture",
+        "frames",
+        "avgFrameBytes",
+        "msgsPerSec",
+        "scale",
+        "targetBytesPerSec"
+      ],
+      "properties": {
+        "fixture": { "type": "string" },
+        "frames": { "type": "integer" },
+        "captureSpanMs": { "type": "number" },
+        "avgFrameBytes": { "type": "number" },
+        "msgsPerSec": { "type": "number" },
+        "scale": { "type": "number" },
+        "targetBytesPerSec": { "type": "number" }
+      }
+    },
+    "cellMeta": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["placement", "runMode"],
+        "properties": {
+          "placement": { "enum": ["sync", "store", "worker"] },
+          "runMode": { "enum": ["worker", "inline"] },
+          "page": {
+            "type": "object",
+            "properties": {
+              "offscreenCanvas": { "type": "boolean" },
+              "gl": { "type": "string" },
+              "userAgent": { "type": "string" },
+              "trades": { "type": "integer" },
+              "submits": { "type": "integer" }
+            }
+          },
+          "cloneCostMs": {
+            "type": "array",
+            "items": { "type": "array", "items": { "type": "number" } }
+          }
+        }
+      }
+    },
+    "cells": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/cell" }
+    },
+    "demoLeg": {
+      "type": "object",
+      "required": ["status", "blockedBy"],
+      "properties": {
+        "status": { "const": "PENDING" },
+        "blockedBy": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "stats": {
+      "type": "object",
+      "required": ["n", "p50", "p95", "p99", "worst1pct", "max"],
+      "properties": {
+        "n": { "type": "integer", "minimum": 1 },
+        "p50": { "type": "number" },
+        "p95": { "type": "number" },
+        "p99": { "type": "number" },
+        "worst1pct": { "type": "number" },
+        "max": { "type": "number" }
+      }
+    },
+    "cell": {
+      "type": "object",
+      "required": [
+        "target",
+        "placement",
+        "runMode",
+        "measure",
+        "trigger",
+        "inputMethod",
+        "budgetMs",
+        "runs",
+        "pooled",
+        "p95Spread",
+        "noisy",
+        "verdict"
+      ],
+      "properties": {
+        "target": { "enum": ["electron", "browser"] },
+        "placement": { "enum": ["sync", "store", "worker"] },
+        "runMode": { "enum": ["worker", "inline"] },
+        "measure": {
+          "enum": [
+            "recompute_end_a",
+            "recompute_end_b",
+            "click_to_fetch",
+            "hotkey_to_fetch",
+            "ws_orders_to_render"
+          ]
+        },
+        "trigger": { "type": "string" },
+        "inputMethod": { "type": "string" },
+        "budgetMs": { "type": ["number", "null"] },
+        "runs": { "type": "array", "items": { "$ref": "#/$defs/stats" }, "minItems": 1 },
+        "pooled": { "$ref": "#/$defs/stats" },
+        "p95Spread": {
+          "type": ["number", "null"],
+          "description": "(max - min) / min of the per-run p95s."
+        },
+        "noisy": {
+          "type": "boolean",
+          "description": "True when two runs differ by more than 15 % at p95: rejected."
+        },
+        "verdict": { "enum": ["PASS", "FAIL", "INCONCLUSIVE", "RECORDED", "INFO"] }
+      }
+    }
+  }
+}
