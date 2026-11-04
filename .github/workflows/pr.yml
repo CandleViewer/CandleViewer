@@ -431,8 +431,8 @@ jobs:
       # touched the checkout or its history yet. gitleaks and trufflehog read the PR's commits
       # (commitlint's range; gitleaks also diffs each merge commit) offline, from images pinned
       # by digest; then the credential-hygiene gate and the SR-146 scan of what the scanners
-      # printed. The `security` lane's gitleaks job still scans the whole tree (about 31 s) and
-      # history on code PRs. Cost: no new job; two image pulls (about 73 MB compressed) and
+      # printed. On code PRs the `security` lane's gitleaks gate scans the whole tree and its
+      # gitleaks-history job the full history. Cost: no new job; two image pulls (73 MB) and
       # seconds of scanning in this one.
       - name: secret-scan (#3385; gitleaks + trufflehog over the PR's commits, credential hygiene)
         id: secret-scan
