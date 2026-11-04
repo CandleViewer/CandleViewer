@@ -18,6 +18,7 @@ const ok = (settled: typeof ALL): FundingHistoryResult => ({
   kind: "ok",
   settled,
   intervalMinutes: 480,
+  predicted: null,
   coverage: null,
   truncated: false,
 });
@@ -67,6 +68,18 @@ describe("settlement poll", () => {
     expect(feed.getSnapshot().series.settled.map((p) => p.tMs)).toEqual(ALL.map((p) => p.tMs));
     expect(feed.getSnapshot().series.steps).toHaveLength(4);
     expect(waits).toEqual([]);
+  });
+
+  it("refreshes the accruing rate on an ok read that settles nothing, and clears one no longer published", async () => {
+    const withRate = {
+      ...ok(OLD),
+      predicted: { tMs: DEADLINE, rate: "0.0001", annualisedPct: null },
+    };
+    const { feed, settle } = setup([withRate, ok(OLD), ok(OLD)]);
+    await settle();
+    // the second read (the poll) published no predicted item: nothing is carried over (BQ-4)
+    expect(feed.getSnapshot().series.predicted).toBeNull();
+    expect(feed.getSnapshot().series.settled).toHaveLength(3);
   });
 
   it("backs off 1, 2, 4 and 8 s and stops after five attempts", async () => {

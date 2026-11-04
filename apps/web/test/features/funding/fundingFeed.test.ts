@@ -19,6 +19,7 @@ const ok = (over: Partial<FundingHistoryOk> = {}): FundingHistoryOk => ({
   kind: "ok",
   settled: SETTLED,
   intervalMinutes: 480,
+  predicted: null,
   coverage: null,
   truncated: false,
   ...over,

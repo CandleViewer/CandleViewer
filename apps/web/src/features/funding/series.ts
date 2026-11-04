@@ -2,6 +2,7 @@
 // per settled rate, its width the served `funding_interval_minutes` (BQ 8), never the points' spacing, which
 // would stretch a step over a missing settlement. The bars form (`deriv.funding_style`) reads the same steps.
 import type { FundingHistoryOk, SettledPoint } from "./history";
+import type { PredictedRate } from "./predicted";
 
 export interface FundingStep {
   /**
@@ -25,6 +26,11 @@ export interface FundingSeriesModel {
   readonly steps: readonly FundingStep[];
   /** `meta.coverage.gaps`: spans with a missing settlement, reported and never filled. */
   readonly gaps: readonly FundingGap[];
+  /**
+   * E24-S04: the accruing rate, a separate marker beyond the last settled step and never a step of the settled
+   * line (D03 §5.3); `null`: none published, so no marker and no phantom point.
+   */
+  readonly predicted: PredictedRate | null;
 }
 
 export const EMPTY_SERIES: FundingSeriesModel = {
@@ -32,6 +38,7 @@ export const EMPTY_SERIES: FundingSeriesModel = {
   settled: [],
   steps: [],
   gaps: [],
+  predicted: null,
 };
 
 const MINUTE_MS = 60_000;
@@ -40,7 +47,10 @@ export function buildFundingSeries({
   settled,
   intervalMinutes,
   coverage,
-}: Pick<FundingHistoryOk, "settled" | "intervalMinutes" | "coverage">): FundingSeriesModel {
+  predicted = null,
+}: Pick<FundingHistoryOk, "settled" | "intervalMinutes" | "coverage"> & {
+  readonly predicted?: PredictedRate | null;
+}): FundingSeriesModel {
   const intervalMs = intervalMinutes === null ? null : intervalMinutes * MINUTE_MS;
   const ascending = [...settled].sort((a, b) => a.tMs - b.tMs);
   return {
@@ -51,6 +61,7 @@ export function buildFundingSeries({
         ? []
         : ascending.map((p) => ({ fromMs: p.tMs - intervalMs, toMs: p.tMs, rate: p.rate })),
     gaps: coverage?.gaps ?? [],
+    predicted,
   };
 }
 
@@ -70,3 +81,9 @@ export function mergeSettled(
   }
   return { points: [...byTime.values()].sort((a, b) => a.tMs - b.tMs), added };
 }
+
+/** E24-S04 BQ-1: the annualised toggle exists only when the server served an annualised value to show. */
+export const servesAnnualised = (series: FundingSeriesModel): boolean =>
+  series.intervalMs !== null &&
+  ((series.predicted !== null && series.predicted.annualisedPct !== null) ||
+    series.settled.some((p) => p.annualisedPct !== undefined));
