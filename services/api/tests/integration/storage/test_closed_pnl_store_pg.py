@@ -1,8 +1,8 @@
 """Integration: the closed-PnL store on Postgres 16 (E29-S06 #981 slice 2; 21 Sec.3.3.13): it
 composes, settles once, replaces until final and freezes, the group the composition's alone; it
 pages each account both ways and merges, totals in SQL, both leaving out a record at the window's
-end, serves and counts an item with no figure and filters on the stored group; and rows 55 to 59
-read what 21 Sec.13.1 says through the indexes they name. The revision's own:
+end, serves and counts an item with no figure and filters on the symbol and the stored group; and
+rows 55 to 59 read what 21 Sec.13.1 says through the indexes they name. The revision's own:
 `test_closed_pnl_records_migration.py`, whose fixture and helpers this module shares."""
 
 from __future__ import annotations
@@ -111,6 +111,8 @@ async def test_the_reads_page_both_ways_total_in_sql_and_read_rows_56_to_58(pg_d
                           trade_group_id=g2)  # fmt: skip
         bare = put("closed_pnl_records", exchange_order_id="o-3", closed_at=_T0 + 30 * _S)
         edge = put("closed_pnl_records", exchange_order_id="o-4", closed_at=until, gross_pnl=5)
+        btc = put("closed_pnl_records", exchange_order_id="o-5", symbol="BTCUSDT",
+                  closed_at=_T0 + 45 * _S, gross_pnl=7)  # fmt: skip
         other = put(
             "closed_pnl_records", b, **_SETTLED | {"closed_at": _T0 + _S, "trade_group_id": g1}
         )
@@ -132,16 +134,17 @@ async def test_the_reads_page_both_ways_total_in_sql_and_read_rows_56_to_58(pg_d
     rel = SqlAlchemyRelationalRepository(pg_dsn, "closed-pnl-reads-it")
     store = cpr.SqlAlchemyClosedPnlStore(rel)
     try:
-        query = Query(accounts=(a, b), since=_T0, until=until)
+        query = Query(accounts=(a, b), symbols=("SOLUSDT",), since=_T0, until=until)  # not btc
         page = await store.page(query, None, 2)  # each account's first two, merged
         assert [(i.row.id, i.net_pnl) for i in page] == [(settled, 25), (other, 8)]
-        # the rest of the window, room to spare: it ends before `edge`, at `until` exactly
+        # the rest of the window, room to spare: not edge (at `until`), not btc (another symbol)
         rest = await store.page(query, Keyset(page[-1].row.closed_at, page[-1].row.id), 3)
         assert [(i.row.id, i.net_pnl) for i in rest] == [
             (bare, None), (provisional, Decimal("-6.91")),
         ]  # fmt: skip
-        newest = await store.page(Query(accounts=(a, b), oldest_first=False), None, 4)
-        assert [i.row.id for i in newest] == [edge, provisional, bare, other]  # no window: edge
+        # no window and no symbol: `edge` and `btc` are stored and read, the filters leave them out
+        newest = await store.page(Query(accounts=(a, b), oldest_first=False), None, 5)
+        assert [i.row.id for i in newest] == [edge, provisional, btc, bare, other]
         totals = await store.totals(query)  # the item with no figure counts, provisional; not edge
         assert (totals.count, totals.net_pnl, totals.provisional) == (4, Decimal("26.09"), True)
         by_account = [(t.exchange_account_id, t.count, t.net_pnl) for t in totals.by_account]
@@ -170,7 +173,16 @@ async def test_the_reads_page_both_ways_total_in_sql_and_read_rows_56_to_58(pg_d
 def test_rows_56_to_58_plan_over_the_indexes_they_name(pg_dsn: str) -> None:
     """EXPLAIN of each store read as asyncpg runs it, a prepared statement on its generic plan,
     sequential scans priced out (the `test_orders_store_pg.py` probe). Rows 55 and 59 read
-    seeded, analysed records below."""
+    seeded, analysed records below.
+
+    Row 56's pick of `ix_cpr_pending` over `ix_cpr_day`, which gives the poll's `closed_at` order
+    too, is no cost win here: the tables are never analysed, empty when this probe runs alone and
+    holding the reads test's rows after it, and there the two cost the same, or `ix_cpr_pending`
+    is ahead only for being empty; a tie goes to the index the planner costs first, the one built
+    later. So the probe relies on the order revision 0070 creates the indexes in and on the state
+    the tables are in. It catches a dropped or renamed index, a partial predicate the planner
+    cannot prove and an order the index does not give; it does not catch a regression under real
+    statistics, where `ix_cpr_pending` holds the unfinished records alone."""
     a, dialect = uuid.uuid4(), make_url("postgresql+asyncpg://").get_dialect()()
     for stmt, indexes in (
         (cpr.pending_statement(a, _T0, 5), ("ix_cpr_pending", "ux_orders_exch_id")),

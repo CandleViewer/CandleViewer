@@ -6,14 +6,18 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import fields, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from uuid import uuid5
 
 import pytest
+from sqlalchemy import TextClause
 from sqlalchemy.engine import make_url
 
 from candleviewer.db import models
@@ -55,6 +59,13 @@ def _venue(**over: Any) -> VenueRecord:
     values |= {"side": "long", "qty": Decimal(4), "avg_entry_price": Decimal("148.1")}
     values |= {"avg_exit_price": Decimal("150.8"), "leverage": Decimal(3), "closed_at": _T}
     return VenueRecord(**(values | {"closed_pnl": Decimal(10), "venue_created_at": _T} | over))
+
+
+def _held(**over: Any) -> dict[str, Any]:
+    """The row a store holds of `_venue()`'s record, settled and not final, every column named."""
+    row: dict[str, Any] = dict.fromkeys(f.name for f in fields(ClosedPnlRecordRow))
+    row |= {name: getattr(_venue(), name) for name in mod.VENUE_COLUMNS} | {"settled_at": _T}
+    return row | over
 
 
 def test_a_records_id_is_22s_uuid5_and_22s_example_holds_it() -> None:
@@ -108,9 +119,7 @@ def test_a_record_the_table_would_refuse_is_refused_before_any_statement(
 def test_a_venue_read_settles_once_replaces_until_final_then_is_frozen(
     held: dict[str, Any] | None, read: dict[str, Any], outcome: str
 ) -> None:
-    row: dict[str, Any] = dict.fromkeys(f.name for f in fields(ClosedPnlRecordRow))
-    row |= {name: getattr(_venue(), name) for name in mod.VENUE_COLUMNS} | {"settled_at": _T}
-    held_row = None if held is None else ClosedPnlRecordRow(**(row | held))
+    held_row = None if held is None else ClosedPnlRecordRow(**_held(**held))
     assert settle_outcome(held_row, _venue(**read)) == outcome
     assert [f.name for f in fields(ClosedPnlRecordRow)] == list(models.closed_pnl_records.c.keys())
 
@@ -120,15 +129,16 @@ def test_each_statement_names_its_account_and_keeps_its_writers_and_readers_apar
     and the provisional columns only unsettled; a venue read, the venue's columns and `settled_at`
     once, never on a final row and never the group; `finalize`, once. A page reads each account
     on its own (`LATERAL`) either way from its keyset and merges, serves an item with no figure and
-    has `net_pnl` from the totals' expression; the group filter matches the stored column, and the
-    page and the totals read the window from `since` up to, not at, `until`. Rows 56 and 57 write
-    the predicates of their partial indexes (`ix_cpr_pending`, `ix_psnap_flat`) as literals,
-    which a generic plan can prove, and bind the rest; row 58's `ix_exec_walk` is not partial.
-    The poll is pinned whole, its inner join included, in the `closed_at` order alone that
-    `ix_cpr_pending` gives, and the flats read each venue time once."""
+    has `net_pnl` from the totals' expression; the symbol and group filters match their stored
+    columns, each alternative once, and the page and the totals read the window from `since` up
+    to, not at, `until`. Rows 56 and 57 write the predicates of their partial indexes
+    (`ix_cpr_pending`, `ix_psnap_flat`) as literals, which a generic plan can prove, and bind the
+    rest; row 58's `ix_exec_walk` is not partial. The poll is pinned whole, its inner join
+    included, in the `closed_at` order alone that `ix_cpr_pending` gives, and the flats read each
+    venue time once."""
     query = ClosedPnlQuery(
-        accounts=(_B, _A, _A), symbols=("SOLUSDT",), trade_groups=(_G, _G), side="short",
-        since=_T, until=_T + timedelta(days=1),
+        accounts=(_B, _A, _A), symbols=("SOLUSDT", "BTCUSDT", "SOLUSDT"), trade_groups=(_G, _G),
+        side="short", since=_T, until=_T + timedelta(days=1),
     )  # fmt: skip
     compose, settle, final, ascending, descending, totals, pending, flats, fills, first = (
         _sql(stmt) for stmt in (
@@ -162,6 +172,7 @@ def test_each_statement_names_its_account_and_keeps_its_writers_and_readers_apar
     net = (f"{case}closed_pnl ELSE closed_pnl_records.gross_pnl + coalesce(closed_pnl_records."
            "fee_pnl, 0) + coalesce(closed_pnl_records.funding_pnl, 0) END")  # fmt: skip
     group = "closed_pnl_records.trade_group_id IN ($"
+    symbol, symbols = "closed_pnl_records.symbol IN ($", ["BTCUSDT", "SOLUSDT"]  # once, in order
     window = ("closed_pnl_records.closed_at >= ${}::TIMESTAMP WITH TIME ZONE AND "
               "closed_pnl_records.closed_at < ${}::TIMESTAMP WITH TIME ZONE")  # fmt: skip
     for (sql, params), sign, order in ((ascending, ">", ""), (descending, "<", " DESC")):
@@ -170,6 +181,7 @@ def test_each_statement_names_its_account_and_keeps_its_writers_and_readers_apar
                 "(SELECT closed_pnl_records.id AS id, ") in sql  # fmt: skip
         assert f"{net} AS net_pnl FROM closed_pnl_records WHERE closed_pnl_records." in sql
         assert "exchange_account_id = accounts.account_id AND " in sql and group in sql
+        assert symbol in sql and symbols in params.values()
         assert "gross_pnl IS NOT NULL" not in sql  # an item without a figure is served
         assert sql.endswith(
             f"{window.format(4, 5)} AND (closed_pnl_records.closed_at, closed_pnl_records.id) "
@@ -183,6 +195,7 @@ def test_each_statement_names_its_account_and_keeps_its_writers_and_readers_apar
     assert (f"count(*) AS count, coalesce(sum({net}), 0) AS net_pnl, "
             "bool_or(closed_pnl_records.settled_at IS NULL)") in totals[0]  # fmt: skip
     assert "closed_pnl_records.exchange_account_id IN ($" in totals[0] and group in totals[0]
+    assert symbol in totals[0] and symbols in totals[1].values()
     assert totals[1]["exchange_account_id_1"] == [_A, _B] and "gross_pnl IS NOT" not in totals[0]
     assert totals[0].endswith(
         f"{window.format(2, 3)} GROUP BY ROLLUP(closed_pnl_records.exchange_account_id) "
@@ -232,3 +245,131 @@ async def test_totals_without_both_ends_of_their_window_are_refused_before_any_s
     with pytest.raises(TotalsUnbounded, match="since and until"):
         await store.totals(ClosedPnlQuery(accounts=(_A,), **window))
     require_window(ClosedPnlQuery(accounts=(_A,), since=_T, until=_T + timedelta(days=1)))
+
+
+def _store(relational: Any) -> mod.SqlAlchemyClosedPnlStore:
+    return mod.SqlAlchemyClosedPnlStore(cast(Any, relational))  # structural fake
+
+
+#: Each read but the totals, called with a limit and a time to try, its other arguments valid.
+_READS: dict[str, Callable[[mod.SqlAlchemyClosedPnlStore, int, datetime], Awaitable[object]]] = {
+    "page": lambda s, limit, _at: s.page(ClosedPnlQuery(accounts=(_A,)), None, limit),
+    "pending": lambda s, limit, at: s.pending(_A, at, limit),
+    "walk_flats": lambda s, limit, at: s.walk_flats(_A, "SOLUSDT", 0, at, limit),
+    "walk_fills": lambda s, limit, at: s.walk_fills(_A, "SOLUSDT", 0, FillKey(at), limit),
+}
+
+
+@pytest.mark.parametrize("limit", [0, True], ids=["zero", "bool"])
+@pytest.mark.parametrize("read", list(_READS))
+async def test_a_read_whose_limit_is_no_int_of_at_least_1_is_refused_before_any_statement(
+    read: str, limit: int
+) -> None:
+    """C-2.18: a read's rows are bounded by an int of at least 1, and `True` is no 1. The upper
+    bounds (the limit, 25 accounts, 2 to 32 groups, the symbols) are the route's, S6's."""
+    with pytest.raises(ValueError, match=r"^limit must be an int of at least 1$"):
+        await _READS[read](_store(_NoStatement()), limit, _T)
+
+
+@pytest.mark.parametrize(
+    ("read", "column"), [("pending", "reach"), ("walk_flats", "before"), ("walk_fills", "after")]
+)
+async def test_a_read_from_a_naive_time_is_refused_before_any_statement(
+    read: str, column: str
+) -> None:
+    """The time a read starts from is aware, as every stored one is. The page's keyset is not
+    checked here, as `oms_reads_sqlalchemy.py`'s is not (#4997)."""
+    with pytest.raises(ValueError, match=f"^{column} must be a timezone-aware datetime$"):
+        await _READS[read](_store(_NoStatement()), 5, _T.replace(tzinfo=None))
+
+
+@pytest.mark.parametrize("read", list(_READS))
+async def test_a_read_of_one_row_from_an_aware_time_passes_its_guards(read: str) -> None:
+    """The boundary: 1 is the smallest limit, and the read reaches the statement this fake fails."""
+    with pytest.raises(AssertionError, match="a statement ran"):
+        await _READS[read](_store(_NoStatement()), 1, _T)
+
+
+class _Rows:
+    """A statement's result as the store reads it: `mappings()`, then `one()` or `first()`."""
+
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self._rows = rows
+
+    def mappings(self) -> _Rows:
+        return self
+
+    def one(self) -> dict[str, Any]:
+        (row,) = self._rows
+        return row
+
+    def first(self) -> dict[str, Any] | None:
+        return self._rows[0] if self._rows else None
+
+
+class _Recorder:
+    """A relational repository that runs no SQL: each statement of its units of work with its
+    parameters, in the order the store ran it (`ran`), each answered from `script` but the text
+    clauses (the statement cap and the lock), and the commits."""
+
+    def __init__(self, *script: list[dict[str, Any]]) -> None:
+        self.script, self.ran, self.commits = list(script), list[tuple[Any, Any]](), 0
+
+    @asynccontextmanager
+    async def unit_of_work(self) -> AsyncIterator[Any]:
+        async def execute(stmt: Any, params: Any = None) -> _Rows:
+            self.ran.append((stmt, params))
+            return _Rows([] if isinstance(stmt, TextClause) else self.script.pop(0))
+
+        async def commit() -> None:
+            self.commits += 1
+
+        yield SimpleNamespace(session=SimpleNamespace(execute=execute), commit=commit)
+
+
+def _ran(rec: _Recorder) -> list[Any]:
+    """What the store ran: the cap and the account's lock by name, each other as `_sql` has it."""
+    return [
+        "LOCK" if stmt is mod.LOCK else "cap" if isinstance(stmt, TextClause) else _sql(stmt)
+        for stmt, _ in rec.ran
+    ]
+
+
+def test_the_lock_is_the_accounts_transaction_scoped_advisory_lock() -> None:
+    assert str(mod.LOCK) == (
+        "SELECT pg_advisory_xact_lock(hashtextextended('cv.closed_pnl_records:' || "
+        "CAST(:account AS text), 0))"
+    )
+
+
+async def test_compose_takes_the_accounts_lock_after_the_cap_and_before_its_upsert() -> None:
+    """Every write of an account waits for the one before (C-2.18: the cap bounds that wait)."""
+    rec, record = _Recorder([_held()]), _composed(trade_group_id=_G)
+    await _store(rec).compose(record)
+    assert _ran(rec) == ["cap", "LOCK", _sql(mod.compose_statement(record))]
+    assert rec.ran[1] == (mod.LOCK, {"account": str(_A)}) and rec.commits == 1
+
+
+async def test_settle_takes_the_accounts_lock_before_it_reads_the_row_it_decides_on() -> None:
+    """A venue read's outcome is decided on the row its write meets: the lock comes before the
+    read of the held row, and the write follows it."""
+    rec, venue = _Recorder([], [{"id": _venue().id}]), _venue()
+    assert await _store(rec).settle(venue) == "inserted"
+    read, write = _sql(mod.get_statement(_A, venue.id)), _sql(mod.settle_statement(venue))
+    assert _ran(rec) == ["cap", "LOCK", read, write]
+    assert rec.ran[1] == (mod.LOCK, {"account": str(_A)}) and rec.commits == 1
+
+
+async def test_a_settle_that_changes_nothing_reads_under_the_lock_and_commits_nothing() -> None:
+    rec, venue = _Recorder([_held()]), _venue()
+    assert await _store(rec).settle(venue) == "unchanged"
+    assert _ran(rec) == ["cap", "LOCK", _sql(mod.get_statement(_A, venue.id))]
+    assert rec.ran[1] == (mod.LOCK, {"account": str(_A)}) and rec.commits == 0
+
+
+@pytest.mark.parametrize("stamps", [True, False], ids=["stamped", "nothing-to-stamp"])
+async def test_finalize_takes_the_accounts_lock_before_its_update(stamps: bool) -> None:
+    rec, rid = _Recorder([{"id": _venue().id}] if stamps else []), _venue().id
+    assert await _store(rec).finalize(_A, rid) is stamps
+    assert _ran(rec) == ["cap", "LOCK", _sql(mod.finalize_statement(_A, rid))]
+    assert rec.ran[1] == (mod.LOCK, {"account": str(_A)}) and rec.commits == int(stamps)
