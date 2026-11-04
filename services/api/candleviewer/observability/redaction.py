@@ -78,12 +78,22 @@ _REDACT_KEY_FORMS: Final[frozenset[str]] = frozenset(k.replace("-", "_") for k i
 _KEY_NAME_MARKER: Final[str] = "[redacted:key-name]"
 #: `_REDACT_KEY_FORMS` as a pattern, each name with `-` and `_` alike; the bundle scan's too.
 _KEY_NAMES: Final = "|".join(sorted(re.escape(k).replace("_", "[-_]") for k in _REDACT_KEY_FORMS))
+#: What follows the `\` of an escaped whitespace character, as `repr` and JSON write one: a tab, a
+#: line break, a return, a form feed or a vertical tab by letter (`\t`, `\f`), and each other one
+#: by its code (`\x0b`, `\xa0`, `\u000b`, `\u2028`) (#4713).
+_SPACE_ESCAPES: Final = (
+    r"[tnrfv]",
+    r"x(?:0[9a-d]|1[c-f]|85|a0)",
+    r"u(?:00(?:0[9a-d]|1[c-f]|85|a0)|1680|200[0-9a]|202[89f]|205f|3000)",
+)
+_SPACE_ESCAPE: Final = f"(?:{'|'.join(_SPACE_ESCAPES)})"
 #: A name after a `.` is part of a dotted id, not a label, when a `:` follows it at once and then a
 #: character other than a space or a quote: a WS machine topic such as `machines.session:<id>.state`
 #: stays readable (#415). A dotted attribute and its value is a label (`self.password='…'`,
-#: `obj.api_secret=…`, `cfg.token: …`), and an escaped line break or quote (`\n`, `\'`, as the
-#: bundle's buffer writes them) reads as a space or a quote. The bundle scan's too.
-_NOT_DOTTED: Final = rf"""(?!(?<=\.)(?:{_KEY_NAMES}):(?!\\[tnr"'])[^\s"'])"""
+#: `obj.api_secret=…`, `cfg.token: …`), and an escaped whitespace character or quote (`\n`, `\'`,
+#: as the bundle's buffer writes them) reads as a space or a quote, with its escape doubled or not
+#: (`\\n`, `\\\\t`, `\\'`; #4713). The bundle scan's too.
+_NOT_DOTTED: Final = rf"""(?!(?<=\.)(?:{_KEY_NAMES}):(?!\\++(?:["']|{_SPACE_ESCAPE}))[^\s"'])"""
 #: A labelled value that holds nothing to redact: a marker, the end of a cut text or a placeholder,
 #: as the whole value, so `password=***x` holds a value (#415). What follows it ends a value: a
 #: space, a quote, a comma, a closing bracket, the end, a `\`, as the bundle's buffer writes a line
@@ -103,19 +113,60 @@ _QUOTED: Final = r"""(?:"(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?)"""
 #: Read as the end of the name just matched, so the other names cost nothing more.
 _TO_LINE_END: Final = r"(?<=cookie)|(?<=input[-_]value)"
 #: Where a label starts, read as the bundle scan reads it: the redaction filter and the bundle scan
-#: agree on where a label starts.
-_LABEL_START: Final = r"(?:\b|(?<=\\[tnr]))"
+#: agree on where a label starts. A label starts after any escaped whitespace character
+#: (`_SPACE_ESCAPE`: `\t`, `\f`, `\x0b`, `\u2028`), whose last character is a word character: a
+#: fixed-width look-behind for each form, read after the first-letter check (#4713).
+_LABEL_START: Final = r"(?:\b" + "".join(rf"|(?<=\\{form})" for form in _SPACE_ESCAPES) + ")"
 #: A label's `:` or `=` and the whitespace around it, read as the bundle scan reads them: the
-#: redaction filter and the bundle scan agree on whitespace between a label and its value.
-_LABEL_SPACE: Final = r"\s*[:=](?:\s|\\[tnr])*+"
+#: redaction filter and the bundle scan agree on whitespace between a label and its value. A run of
+#: escaped whitespace characters after it (`\xa0`, `\x0b\t`, `\u2028`) reads as whitespace too,
+#: where whitespace follows the run (#4713); otherwise the value starts there, as before. The run is
+#: possessive, so it is read once.
+_ESCAPED_SPACE_RUN: Final = rf"(?:\\{_SPACE_ESCAPE})++(?=\s)"
+_LABEL_SPACE: Final = rf"\s*[:=](?:\s|\\[tnr]|{_ESCAPED_SPACE_RUN})*+"
+#: `_SPACE_ESCAPES`, each with its `\`, written backwards, for `_LABEL_END_BACK`.
+_SPACE_ESCAPES_BACK: Final = (
+    r"[tnrfv]\\",
+    r"(?:[9a-d]0|[c-f]1|58|0a)x\\",
+    r"(?:(?:[9a-d]0|[c-f]1|58|0a)00|0861|[0-9a]002|[89f]202|f502|0003)u\\",
+)
+#: What follows a doubled-quote opener (`""`, `''` or a longer run) whose value it starts: a
+#: character a bare value starts with, or (#4713) quotes of the other kind and whitespace, then
+#: such a character, with a closing run of the opener's kind later on the line (`"" a b""`,
+#: `""'a'""`). The nearest closing run is read, so each opener reads only to the next one; an
+#: empty value in doubled quotes (`password='', user=…`) has none and stays readable.
+_DOUBLED_DQ: Final = r"""[^\s"',}\]]|[\s']*+[^\s"'][^\n]*?\"\""""
+_DOUBLED_SQ: Final = r"""[^\s"',}\]]|[\s"]*+[^\s"'][^\n]*?''"""
+#: A label as `_LABELLED_VALUE` reads it: a key name, its quotes, its separator and whitespace
+#: (`_LABEL_SPACE`). A `_TO_LINE_END` name's value starts at an escaped whitespace character other
+#: than `\t`, `\n` or `\r`, as before, and runs to the line's end from there.
+_LABEL: Final = rf"""(?=[{_KEY_FIRST}]){_LABEL_START}{_NOT_DOTTED}(?:{_KEY_NAMES})
+    (?P<line>{_TO_LINE_END})?["']{{0,2}}
+    \s*[:=](?:\s|\\[tnr]|(?(line)(?!)|{_ESCAPED_SPACE_RUN}))*+"""
 #: A value labelled with a key name in text (`token = …`, `"password": "…"`, `Authorization: Bearer
 #: …`): the bundle scan's labelled-secret rule as a substitution (#415). On its line, a
 #: quoted value runs to its closing quote, a `_TO_LINE_END` name's to the line's end, and any other
 #: bare one, after a `Bearer` or `Basic` scheme, to a space, comma or closing bracket, with any
-#: quoted part in it (`access_token="…"`).
+#: quoted part in it (`access_token="…"`). A value in doubled quotes (`""…""`, `''…''`, as CSV and
+#: SQL escape a quote, or `""""…""""`, escaped twice) runs to its closing quotes when it starts as
+#: a bare value does, and a label's name may be in doubled quotes too (`""token"": ""…""`) (#4713).
 _LABELLED_VALUE: Final = re.compile(
-    rf"""(?ix)(?P<label>{_LABEL_START}(?=[{_KEY_FIRST}]){_NOT_DOTTED}(?:{_KEY_NAMES})
-    (?P<line>{_TO_LINE_END})?["']?{_LABEL_SPACE})
+    rf"""(?ix)(?P<label>{_LABEL})
+    (?:(?P<quote>"{{2,}}+(?={_DOUBLED_DQ})|'{{2,}}+(?={_DOUBLED_SQ})|["'])
+    {_NO_VALUE}(?:\\.|(?!(?P=quote))[^\\\n])+
+    |{_NO_VALUE}(?(line)[^\s"'][^\n]*
+    |(?:(?:bearer|basic)[ \t]+)?[^\s"',}}\]](?:[^\s"',}}\]]|{_QUOTED})*))"""
+)
+#: The labelled-value rule as it was before #4713, for the value-shape check alone
+#: (`_redact_str_value`): a value shape left after it makes the whole text its marker, as it did,
+#: and one inside a value that rule redacts does not. Its own label start and dotted-id check.
+_LABEL_START_BEFORE_4713: Final = r"(?:\b|(?<=\\[tnr]))"
+_LABEL_SPACE_BEFORE_4713: Final = r"\s*[:=](?:\s|\\[tnr])*+"
+_NOT_DOTTED_BEFORE_4713: Final = rf"""(?!(?<=\.)(?:{_KEY_NAMES}):(?!\\[tnr"'])[^\s"'])"""
+_LABELLED_VALUE_BEFORE_4713: Final = re.compile(
+    rf"""(?ix)(?P<label>{_LABEL_START_BEFORE_4713}(?=[{_KEY_FIRST}])"""
+    rf"""{_NOT_DOTTED_BEFORE_4713}(?:{_KEY_NAMES})
+    (?P<line>{_TO_LINE_END})?["']?{_LABEL_SPACE_BEFORE_4713})
     (?:(?P<quote>["']){_NO_VALUE}(?:\\.|(?!(?P=quote))[^\\\n])+
     |{_NO_VALUE}(?(line)[^\s"'][^\n]*
     |(?:(?:bearer|basic)[ \t]+)?[^\s"',}}\]](?:[^\s"',}}\]]|{_QUOTED})*))"""
@@ -212,10 +263,15 @@ _KEY_NAMES_BACK: Final = "|".join(
 )
 #: The end of a label as `_LABELLED_VALUE` reads it, written backwards, to read it back from a line
 #: break (#4671): whitespace (an escaped line break, tab or return, `\n`, `\t` or `\r`, reads `n\`,
-#: `t\` or `r\`), a separator and the whitespace before it, a quote, and a key name. Each part is
-#: optional, so it always matches, and it ends where the text stops reading as the end of a label.
+#: `t\` or `r\`; a run of escaped whitespace characters where whitespace or the line break follows
+#: it, as `_LABEL_SPACE` reads one, read first and whole, #4713), a separator and the whitespace
+#: before it, a quote or two (#4713), and a key name.
+#: Each part is optional, so it always matches, and it ends where the text stops reading as the end
+#: of a label.
 _LABEL_END_BACK: Final = re.compile(
-    rf"""(?i)(?:\s|[tnr]\\)*+(?P<sep>[:=]\s*+)?["']?(?P<name>{_KEY_NAMES_BACK})?"""
+    rf"""(?i)(?:\s|(?<![^\s])(?:{"|".join(_SPACE_ESCAPES_BACK)})++|[tnr]\\)*+"""
+    rf"""(?P<sep>[:=]\s*+)?["']{{0,2}}"""
+    rf"""(?P<name>{_KEY_NAMES_BACK})?"""
 )
 #: Whitespace and a separator: a label whose key name ends a line can have its separator on the
 #: next one.
@@ -253,6 +309,40 @@ def _marker(match: re.Match[str]) -> str:
 def _label_marker(match: re.Match[str]) -> str:
     """The label and its opening quote stay; the value is the key-name marker."""
     return f"{match['label']}{match['quote'] or ''}{_KEY_NAME_MARKER}"
+
+
+#: `_LABEL` alone, without a value: where a label starts inside a value (`_redact_labels`).
+_LABEL_HEAD: Final = re.compile(f"(?ix){_LABEL}")
+
+
+def _redact_labels(text: str) -> str:
+    """Each value labelled with a key name shows the key-name marker (`_LABELLED_VALUE`) (#4713).
+
+    A label that starts inside a redacted value (`_LABEL_HEAD`) names a value that ends on the line
+    where it starts, at the latest; so the redacted value runs on to the end of that line. A label
+    read in more shapes thus keeps redacted each value that a label inside it names, however deep.
+    The labels are read in one pass and the redacted value only grows, so the text is read in
+    linear time.
+    """
+    out: list[str] = []
+    pos = 0
+    while (match := _LABELLED_VALUE.search(text, pos)) is not None:
+        end, at = match.end(), match.end("label")
+        while (head := _LABEL_HEAD.search(text, at)) is not None and head.start() < end:
+            at = head.end()  # where the value it names starts
+            if at >= end or (end < len(text) and text[end] != "\n"):
+                line = text.find("\n", at)
+                end = max(end, len(text) if line < 0 else line)
+        out += (text[pos : match.start()], _label_marker(match))
+        pos = end
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def _has_label(text: str) -> bool:
+    """Whether `text` can hold a labelled value: a `:` or `=` after a letter, a quote or a space
+    (`_LABEL_SEP`). The labelled-value step reads only such a text."""
+    return ("=" in text or ":" in text) and _LABEL_SEP.search(text) is not None
 
 
 def _label_runs_on(text: str, line: int) -> bool:
@@ -333,11 +423,19 @@ def _redact_str_value(value: str) -> str:
     """
     if len(value) > _CUT_LEN:
         value = _cut(value)
-    if ("=" in value or ":" in value) and _LABEL_SEP.search(value):
-        value = _LABELLED_VALUE.sub(_label_marker, value)
+    if not _has_label(value):
+        match = _VALUE_PATTERN.search(value)
+        return value if match is None else _marker(match)
+    # #4713: a value shape left after the rule before #4713 makes the whole text its marker, as it
+    # did, so a label read in more shapes never leaves a text readable that was a marker; a shape
+    # in a value that rule redacts (`api_key=…`) leaves the text readable, as it did
+    before = _LABELLED_VALUE_BEFORE_4713.sub(_label_marker, value)
+    match = _VALUE_PATTERN.search(_cut(before) if len(before) > _CUT_LEN else before)
+    if match is None:
+        value = _redact_labels(value)
         if len(value) > _CUT_LEN:
             value = _cut(value)
-    match = _VALUE_PATTERN.search(value)
+        match = _VALUE_PATTERN.search(value)
     return value if match is None else _marker(match)
 
 
@@ -357,7 +455,7 @@ def _redact_runs(text: str) -> str:
     or a cut right after a path's `/download/`) makes the whole text the marker, as for a message
     line.
     """
-    text = _cut(_LABELLED_VALUE.sub(_label_marker, _cut(text)))
+    text = _cut(_redact_labels(_cut(text)))
     text = _DOWNLOAD_PATH.sub(_DOWNLOAD_MARK, text)
     if _VALUE_PATTERN.search(text) is not None:
         text = _cut(_RUN.sub(_run_marker, text))

@@ -1,0 +1,351 @@
+{"text": "x\u2028set-cookie'':\\\\n\\\\'FAKEPLXL3Zvwv-q\\\\'\\n x\u00a0secret' :\n'FAKE33t9-qw-97';", "values": ["FAKEPLXL3Zvwv-q", "FAKE33t9-qw-97"]}
+{"text": "{'totp\"'\t=\\x0b\\\\\"FAKE2PRPmPm_X3\\\\\"'} x.signature' =\\\\\\\\t\\\\\"FAKEX_k_P7\\\\\"", "values": ["FAKE2PRPmPm_X3", "FAKEX_k_P7"]}
+{"text": "\"self.x_api_key\\\\\\\"\\t:\\u000b\\\"FAKEkk-3RwRP9RX\\\"'} x\\u00a0secret' :\\u00a0FAKEmkkmPqkwPm- \"", "values": ["FAKEkk-3RwRP9RX", "FAKEmkkmPqkwPm-"]}
+{"text": "'\\'x\\\\\\\\x0bx_auth_token\":\\\\xa0\"FAKEwZmkL927-q9\"\"} {\"password :\\\\xa0\"\\\\\\'FAKE7RZX2q-w3_\"\\\\\\' \\''", "values": ["FAKEwZmkL927-q9", "FAKE7RZX2q-w3_"]}
+{"text": "x,x\\ftotp'\t:\u000b\\'FAKE-qRLtm\\'; x\\\\signature' :\t\\\\'FAKE7mP2tR9w\\\\')\r\n", "values": ["FAKE-qRLtm", "FAKE7mP2tR9w"]}
+{"text": "x\u0085set-cookie\\' :\\u2028\\\\'FAKEX-29-X-93\\\\'\n {'x_api_key\"' :\\u2028FAKE27PLttmvwX\\n", "values": ["FAKEX-29-X-93", "FAKE27PLttmvwX"]}
+{"text": "x\\u2028X-Arm-Token\"\"=\\\\n\\\\\"FAKE-Z3kLXmkX\\\\\"'} x\tx_api_key'\t:\r\n\\\"FAKEwX2m__v\\\"", "values": ["FAKE-Z3kLXmkX", "FAKEwX2m__v"]}
+{"text": "'x\\\\\\\\access_token\\' =\\x0b\"\\'FAKEm-P3RZkZR3v\"\\', \\nx_arm_token\"\"=\\xa0FAKEXLq3tXqRkXZq '", "values": ["FAKEm-P3RZkZR3v", "FAKEXLq3tXqRkXZq"]}
+{"text": "'x\\u2028x_bapi_sign:\\xa0FAKEk7tXPLqZX7vL  x\\\\\\\\ntotp\\\\\":\\xa0\"\\'FAKEvZw7q7tLw\"\\''", "values": ["FAKEk7tXPLqZX7vL", "FAKEvZw7q7tLw"]}
+{"text": "x,\"\nX_AUTH_TOKEN''\t: FAKEZwk2XLt'} x\ttotp\t=\n'FAKERwkmtL9ZL'\\n\"\r\n", "values": ["FAKEZwk2XLt", "FAKERwkmtL9ZL"]}
+{"text": "x,\"\"\"x\\u2028token':\\\\u2028FAKE32qw2kqRXPv2\\\"\"} x\\\\u2028secret''\\t:\\\\u2028''FAKEk_R-vZk-vt''\\\"\"}\"\"\"\r\n", "values": ["FAKE32qw2kqRXPv2", "FAKEk_R-vZk-vt"]}
+{"text": "x\\u2028x_csrf_token\"' =\r\n\\\\'FAKELP3m3XZ7vq\\\\'\"} x.session-token\"\t:\u000b\\\\\"FAKEXwPZ3tX37q\\\\\",", "values": ["FAKELP3m3XZ7vq", "FAKEXwPZ3tX37q"]}
+{"text": "x\\\\sign'' :\\\"FAKEvXZLX33\\\") x\\\\session\" :\\x0bFAKE-kP9qtZZX ", "values": ["FAKEvXZLX33", "FAKE-kP9qtZZX"]}
+{"text": "x\\tarm_token\"'\t:\\\\n\\'FAKEvPqRXtqqt\\'\\n (totp=\r\n\\'FAKER2qmtZ-q\\''}", "values": ["FAKEvPqRXtqqt", "FAKER2qmtZ-q"]}
+{"text": "self.x-bapi-sign''=\u000b\\\"FAKEmq7-tR-\\\"'} self.signature\"\t=\\\\n\\\\'FAKEZ-ZvLRZ\\\\'\\n", "values": ["FAKEmq7-tR-", "FAKEZ-ZvLRZ"]}
+{"text": "'\\'x\\\\x85proxy_authorization\"\" =\\\\\\\\u2028FAKE2Pmt22kmR2RZ\\\\\\\\n cfg.api-secret\\\\\\'\\\\\\'\\\\t:\\\\\\\\\\\\\\\\n\"\"FAKELX-P9t23\"\",\\''", "values": ["FAKE2Pmt22kmR2RZ", "FAKELX-P9t23"]}
+{"text": "x\\u2028csrf\"\" =\\\\\\\\t''FAKE_72wttvZ7X_'''} x\\\\secret\" =\n'FAKERtRXq7X' ", "values": ["FAKE_72wttvZ7X_", "FAKERtRXq7X"]}
+{"text": "x\u0085x-arm-token''=\\\\n\\'FAKE39v9R-k3w\\'  {'access-token :\\n\\\"FAKEw3wXR2vL_9t\\\"", "values": ["FAKE39v9R-k3w", "FAKEw3wXR2vL_9t"]}
+{"text": "x\\u2028x_access_token\"\t:\\x0b\\'FAKEm9Zm-Xk3\\', x\u00a0BEARER\" =\r\n\\\"FAKEwkLm_2\\\"", "values": ["FAKEm9Zm-Xk3", "FAKEwkLm_2"]}
+{"text": "x,\"\"\"x\\u001crecovery_code':\\u00a0FAKEtZqwR332R x\\\\x0bX-Access-Token\\\\'\\t=\\\\\\\\\\\\\\\\t'FAKEZ7RttL92R7v';\"\"\"\r\n", "values": ["FAKEtZqwR332R", "FAKEZ7RttL92R7v"]}
+{"text": "x\\\\xa0arm-token''\t=\r\n\\\\\"FAKEX-mZvZ99\\\\\"'} {'proxy_authorization\t:\\t\\\\'FAKE-wvm3mqPwk\\\\'\n", "values": ["FAKEX-mZvZ99", "FAKE-wvm3mqPwk"]}
+{"text": "x,\"self.SECRET'' :\\x0b'FAKERZRLm_kX-kZw''} x\\fx-auth-token=\r\n\\'FAKER9q__Zw-mm\\'\\n\"\r\n", "values": ["FAKERZRLm_kX-kZw", "FAKER9q__Zw-mm"]}
+{"text": "x\tx_bapi_sign\"'=\\\\n\\'FAKERRPkm-m--2w9\\'  x.access-token\t:\nFAKER--32-X", "values": ["FAKERRPkm-m--2w9", "FAKER--32-X"]}
+{"text": "x\\x0bPassword\":\t\\\"FAKELRZvL2\\\"'} x\u000bapi_key :\r\n'FAKE_wZ977k3'\n", "values": ["FAKELRZvL2", "FAKE_wZ977k3"]}
+{"text": "x,\"\"\"x\\u00a0x_bapi_sign=\\\\x0bFAKEP2Z7L3979Z9\\n cfg.recovery_code\\\"\"' =\\n\\\"\"'FAKEkw_3Rk7twZZ\\\"\"' \"\"\"\r\n", "values": ["FAKEP2Z7L3979Z9", "FAKEkw_3Rk7twZZ"]}
+{"text": "x\\ttotp'':\\u2028\\\"FAKEL2PvZLXq72wm\\\"\\n SESSION_TOKEN\"\t:\\\\n\\\\'FAKE7_v2R9Z9_RqP\\\\'\\n", "values": ["FAKEL2PvZLXq72wm", "FAKE7_v2R9Z9_RqP"]}
+{"text": "x\\x0bx-arm-token\"'=\\u2028\\'FAKEPv9-3_3\\' x\u0085session =\r\n\\'FAKEm2vtXvw3\\' ", "values": ["FAKEPv9-3_3", "FAKEm2vtXvw3"]}
+{"text": "x,\"x\\fbearer\"\" :\\u2028''FAKEw7Lm2ZX'''} \"\"\"\"x_arm_token' : \\\\\"\"FAKEt_7X3-w93\\\\\"\",\"\r\n", "values": ["FAKEw7Lm2ZX", "FAKEt_7X3-w93"]}
+{"text": "\"x\\u001caccess_token'' :\\r\\n\\\\\\\\'FAKEvwZZ23P3Z7\\\\\\\\''} x\\u001cAuthorization' =\\\\t'FAKEt_7P7m' \"", "values": ["FAKEvwZZ23P3Z7", "FAKEt_7P7m"]}
+{"text": "x\\\\xa0PROXY_AUTHORIZATION'\t:\\x0b\\'FAKE7mw9vZmtq\\', x\tARM-TOKEN' =\\x0b\\\\'FAKE997tXR\\\\'\n", "values": ["FAKE7mw9vZmtq", "FAKE997tXR"]}
+{"text": "(password\"\"\t:\\\\\\\\t\"'FAKEq2PRRtXR_2\"'  x\\\\nsecret' :\\x0b\\\\\"FAKEtqZXwm3PkXP\\\\\"\\n", "values": ["FAKEq2PRRtXR_2", "FAKEtqZXwm3PkXP"]}
+{"text": "x,\"self.x-bapi-sign\"\":\\\\n''FAKEv29R7XZ'''} {\"\"x-auth-token'\t:\r\n'FAKE7Pq2t3'\"\"}\"\r\n", "values": ["FAKEv29R7XZ", "FAKE7Pq2t3"]}
+{"text": "x\\ftoken\"\"\t:\\t\\\"FAKE9wt7mZ23Z\\\"'} x\\\\session_token\t:\r\n'FAKE2qkZm-v-k')", "values": ["FAKE9wt7mZ23Z", "FAKE2qkZm-v-k"]}
+{"text": "x,\"x\u000bx_api_key\"\"\t:\\t\\\"\"FAKEZ3Zt79RP\\\"\"'} x\\\\ncsrf' :\nFAKEmm33Zmw- \"\r\n", "values": ["FAKEZ3Zt79RP", "FAKEmm33Zmw-"]}
+{"text": "x,\"x\u00a0Bearer\"\":\t\\'FAKEm-9L7t_L-LRm\\') x\\trecovery-code'\t=\\\\\\\\t\"\"\"\"FAKEP3XtXv3q9X\"\"\"\"\"\"}\"\r\n", "values": ["FAKEm-9L7t_L-LRm", "FAKEP3XtXv3q9X"]}
+{"text": "x,\"\"\"x\\\\taccess_token'' :\\\\nFAKEkvZvmk93-ww'} x\\tapi-secret' :\\\\\\\\n\\\\'FAKE9_vRPqL2q\\\\'\\\"\"}\"\"\"\r\n", "values": ["FAKEkvZvmk93-ww", "FAKE9_vRPqL2q"]}
+{"text": "x\\x0bdek_ref\"'=\\\\\\\\tFAKE_R9_Z3qLt'} {'set_cookie':\r\n\\\\\"FAKEqtk_9_Zk\\\\\";", "values": ["FAKE_R9_Z3qLt", "FAKEqtk_9_Zk"]}
+{"text": "x\u00a0DEK-REF\\\" = \\\"FAKEZw99Z__m7P\\\"\"} x\u00a0api_secret''=\\u2028FAKEvvq2qXP23tP\\n", "values": ["FAKEZw99Z__m7P", "FAKEvvq2qXP23tP"]}
+{"text": "x.signature\"\"\t:\\\\'FAKE_qR_3kRkP_\\\\'\"} \"\"x_csrf_token\" =\\\\\\\\t''FAKEkRmq__Z7w'';", "values": ["FAKE_qR_3kRkP_", "FAKEkRmq__Z7w"]}
+{"text": "\"x\\\\tproxy-authorization''=\\\\x0bFAKEZ79Lkqwvk2qL\\n x\\u000bsignature\\\\\\\"=\\\\\\\\n'FAKE_LZPLL',\"", "values": ["FAKEZ79Lkqwvk2qL", "FAKE_LZPLL"]}
+{"text": "'x\\u2028api_key\\t=\\r\\n\"FAKEZRwP-XX_R\"\\\\n x\\\\fTOTP:\\\\u2028FAKE27q2P7w7tmP\\n'", "values": ["FAKEZRwP-XX_R", "FAKE27q2P7w7tmP"]}
+{"text": "\ncookie\"'\t=\\u2028\\\"FAKE_twk_7ZR-\\\"  input-value' =\r\n'FAKE7wtmvwwk-q9R',", "values": ["FAKE_twk_7ZR-", "FAKE7wtmvwwk-q9R"]}
+{"text": "x\\frecovery_code\t:\r\n\\\"FAKEZ3Xkw2_Pt\\\"  x\u000bTOTP\":\nFAKELZwP7-_P'}", "values": ["FAKEZ3Xkw2_Pt", "FAKELZwP7-_P"]}
+{"text": "x\u001cx_api_key\"\"\t=\\u2028FAKEv2t3wRLm9mR  x\\x0bset_cookie\\'\t=\t\\\\\"FAKE_7qwt9\\\\\"\"}", "values": ["FAKEv2t3wRLm9mR", "FAKE_7qwt9"]}
+{"text": "'\"x\\\\\\\\u2028access_token\\\\\"\\' : \\\\\"\\\\\"FAKE_-tP7Pv\\\\\"\\\\\"; x\\\\u00a0x_bapi_sign=\\\\u000bFAKEv2qv2RPXm\\'}\"'", "values": ["FAKE_-tP7Pv", "FAKEv2qv2RPXm"]}
+{"text": "\narm-token''=\n\\\"FAKEX9w9k9mt\\\", x\\\\Token\"\t=\\t\\'FAKEXR7-RZ2\\' ", "values": ["FAKEX9w9k9mt", "FAKEXR7-RZ2"]}
+{"text": "\"\"signature\"\":\r\n\\\"FAKEPLvLwkZqq9\\\"; cfg.sealed_seed\" =\\'FAKEwL9mXvZw\\'", "values": ["FAKEPLvLwkZqq9", "FAKEwL9mXvZw"]}
+{"text": "x,\"authorization'' :\\\\n\\'FAKEXk-Z9vXXww\\', \"\"\"\"session-token' :\\x0bFAKE22RRXRZPZt\\n\"\r\n", "values": ["FAKEXk-Z9vXXww", "FAKE22RRXRZPZt"]}
+{"text": "x\u3000arm_token\"\"\t=\t\\'FAKEPL-R99XL29q7\\'; x\u0085arm_token' :\\n\"'FAKE97q3vtLvL_\"'\\n", "values": ["FAKEPL-R99XL29q7", "FAKE97q3vtLvL_"]}
+{"text": "x\\ftotp\":\\x0b'FAKE-9-mXv''} x.sealed_seed=\n\\\\'FAKE7qLwXk-k\\\\'\n", "values": ["FAKE-9-mXv", "FAKE7qLwXk-k"]}
+{"text": "'\\'x\\\\\\\\u2028password\"\"=\\\\\\\\x0b\\\\\\\\\"FAKERPL2-2_\\\\\\\\\"\"} x\\\\tsignature\" : \"\\\\\\'FAKEkqk9RmwmvRk\"\\\\\\',\\''", "values": ["FAKERPL2-2_", "FAKEkqk9RmwmvRk"]}
+{"text": "x\u2028input_value\"\"\t:\n\\'FAKEZXqqm2Z_kZ-\\') \"\"x_access_token'\t=\n\\'FAKE_L3--3m\\'\n", "values": ["FAKEZXqqm2Z_kZ-", "FAKE_L3--3m"]}
+{"text": "x\\\\nx_arm_token\"'\t=\\n\\\"FAKEq9X27PZ_\\\"'}  api_secret\" :\t\"'FAKELqmkPX\"'\"}", "values": ["FAKEq9X27PZ_", "FAKELqmkPX"]}
+{"text": "x\\\\api-secret''\t:\\\"FAKE-9LRRw3\\\"  x\u000bBearer\"\t:\\x0b\"FAKE_ZP-9X-mmL\"", "values": ["FAKE-9LRRw3", "FAKE_ZP-9X-mmL"]}
+{"text": "\"x\\\\u2028password=\\\\u2028''FAKEq__mvLmX937X'''} x\\\\\\\\nsign' :\\u000b''FAKERv-qX__mq9''\"", "values": ["FAKEq__mvLmX937X", "FAKERv-qX__mq9"]}
+{"text": "Proxy_Authorization\"\"=\\n\\'FAKE7-qRR3Pw\\'\"} x\\\\recovery-code'=\u000b\\\\\"FAKEwLLXvwPt3q\\\\\",", "values": ["FAKE7-qRR3Pw", "FAKEwLLXvwPt3q"]}
+{"text": "\"x\\\\tx_access_token\\\"\\\" =\\\\\\\\n\\\\'FAKEv9Lq7L\\\\', x\\fx_auth_token'' :\\\\u2028FAKE7vw3wZ2k9R\"", "values": ["FAKEv9Lq7L", "FAKE7vw3wZ2k9R"]}
+{"text": "x,\"\"\"(x_arm_token'' =\\u000bFAKE7vL37qPkwtmm\\\"\"} x\\\\\\\\xa0sign\\\"\"'=\\tFAKELw_7Pkw)\"\"\"\r\n", "values": ["FAKE7vL37qPkwtmm", "FAKELw_7Pkw"]}
+{"text": "x\\u2028x-api-key'' =\\u2028FAKEt9mk2LXt'} x\u000bsession_token\"\t=\r\n\\\\'FAKEtt3Rtm\\\\''}", "values": ["FAKEt9mk2LXt", "FAKEtt3Rtm"]}
+{"text": "x\\\\x_csrf_token\"':\t\\'FAKELL_mmwXZ\\'\\n x\u000bx_bapi_sign' :\"FAKE7Z2wk-t-w3\"'}", "values": ["FAKELL_mmwXZ", "FAKE7Z2wk-t-w3"]}
+{"text": "x\u3000password''\t:\\\\\\\\t\\\\\"FAKEXL9wZmRm\\\\\"\"} x\u000bapi-secret\"\t:\u000b\"FAKE_kLXt_LR2Rtv\"\\n", "values": ["FAKEXL9wZmRm", "FAKE_kLXt_LR2Rtv"]}
+{"text": "x\\\\nx_access_token\"\" =\\\\nFAKEqRR2Lkv_R7\"} x\u2028input-value\" =\\u2028\\\"FAKE7Pq-tR\\\")", "values": ["FAKEqRR2Lkv_R7", "FAKE7Pq-tR"]}
+{"text": "x\\\\xa0x_access_token\t:\\n\\'FAKE939kZP9Rvt3\\' \"\"bearer' =\\\\n\"'FAKERXwq_kRR\"' ", "values": ["FAKE939kZP9Rvt3", "FAKERXwq_kRR"]}
+{"text": "x,\"x\u3000authorization\"\"\t=\t\\\\\"\"FAKEqwZ-t9t\\\\\"\"'} x\fx_bapi_api_key'\t=\\u2028\\\\'FAKE7kP-tX\\\\',\"\r\n", "values": ["FAKEqwZ-t9t", "FAKE7kP-tX"]}
+{"text": "(refresh_token\"' =\\x0b\\\\'FAKEtvkqkt\\\\''} self.x_arm_token': \"FAKEL7LR-X7RPZ\"\\n", "values": ["FAKEtvkqkt", "FAKEL7LR-X7RPZ"]}
+{"text": "(csrf\"\" :\r\n\\'FAKEXm2mw7XqRwR\\'; x\tproxy-authorization=\nFAKELw9qRtqq'}", "values": ["FAKEXm2mw7XqRwR", "FAKELw9qRtqq"]}
+{"text": "x\\tAccess_Token\"' =\u000b\\\"FAKEqwq_Rw\\\", x.x-bapi-api-key\"\t=\u00a0FAKE93v-3L;", "values": ["FAKEqwq_Rw", "FAKE93v-3L"]}
+{"text": "x\\x0bsession\"=\\x0b\\\"FAKEv-Pq2ZXZkP\\\"'} x\u2028sealed_seed\"\t:\\n\"FAKELvqLZ_P7\"\"}", "values": ["FAKEv-Pq2ZXZkP", "FAKELvqLZ_P7"]}
+{"text": "x,\"x.api_secret\\\"\"=\"\"'FAKEm77kRkw97\"\"' x\u00a0access-token''\t:\\x0bFAKEt29kL9PmLtq;\"\r\n", "values": ["FAKEm77kRkw97", "FAKEt29kL9PmLtq"]}
+{"text": "x\u2028X-Auth-Token\"'\t:\\n\\\\\"FAKE27RP99XX2\\\\\"\"} x\u2028authorization\t:\n\\\"FAKEwwtqk9Pv\\\"\"}", "values": ["FAKE27RP99XX2", "FAKEwwtqk9Pv"]}
+{"text": "x\u2028totp\"\"\t=\r\n\\\"FAKE-tk-ZPq3\\\"; x\\\\nsign\" =\u000b\\\\\"FAKEk273Ltt3R92\\\\\",", "values": ["FAKE-tk-ZPq3", "FAKEk273Ltt3R92"]}
+{"text": "\"x.dek_ref\\\"\\\"=\\\\\\\\'FAKEPmqLqP9P\\\\\\\\') x\\u00a0arm-token''=\\\\x0bFAKEXwkqtXwZv399\"", "values": ["FAKEPmqLqP9P", "FAKEXwkqtXwZv399"]}
+{"text": "\"\\\"self.Bearer\\\\\\\"' :\\\\\\\\x0b\\\\\\\\\\\\\\\"FAKE_Pkvtwv-\\\\\\\\\\\\\\\") x\\\\\\\\\\\\\\\\ninput_value'':\\\\\\\\u2028FAKERwm22Xmk3\\\\\\\\n\\\"\"", "values": ["FAKE_Pkvtwv-", "FAKERwm22Xmk3"]}
+{"text": "\"\"secret''=\u00a0\\\"FAKE3kZt_9\\\", x\u00a0dek_ref\":\u000b\\\\\"FAKEZ2X97tqPt9tX\\\\\")", "values": ["FAKE3kZt_9", "FAKEZ2X97tqPt9tX"]}
+{"text": "x,\"x\u0085session''=\n\\'FAKE9L_-kk\\') x\\\\bearer\t:\n\\'FAKE-_2-mm9\\'\\n\"\r\n", "values": ["FAKE9L_-kk", "FAKE-_2-mm9"]}
+{"text": "'cfg.set_cookie\"\\'\\t:\\\\\\\\n\\\\\"FAKE_RR7kP_\\\\\") x\\u3000token\"\":\\\\u2028FAKEq2RwP923tw\\n'", "values": ["FAKE_RR7kP_", "FAKEq2RwP923tw"]}
+{"text": "x\u2028session\"':\\u2028'FAKEvmq2L_tt22'\"} {'x-bapi-api-key\"\t=\t\\\"FAKE79m2PP2q_k3m\\\"\\n", "values": ["FAKEvmq2L_tt22", "FAKE79m2PP2q_k3m"]}
+{"text": "x\\tCookie\"\"\t=\\x0b''FAKEm93_vwX'') x\u0085authorization :\n\\\\'FAKE73q93k_XL-Z\\\\')", "values": ["FAKEm93_vwX", "FAKE73q93k_XL-Z"]}
+{"text": "x,\"{'refresh_token''=\\x0bFAKEPZ7PkvqwXPw, x\tsignature\\' :\\\\\\\\tFAKE9twt7kkqk)\"\r\n", "values": ["FAKEPZ7PkvqwXPw", "FAKE9twt7kkqk"]}
+{"text": "x\u3000password\"\"\t=\\\\n\"FAKE_LwL33\"'} {'access-token :\u000b\\'FAKELvLLLXm-mRPk\\'\"}", "values": ["FAKE_LwL33", "FAKELvLLLXm-mRPk"]}
+{"text": "x.x_arm_token''\t:\\\\\\\\t\\\\\"FAKE2m9L_7mPt-P\\\\\"\"} x\u2028password\"\t: \\\"FAKEqkR7PXRRm\\\" ", "values": ["FAKE2m9L_7mPt-P", "FAKEqkR7PXRRm"]}
+{"text": "x,\"x\\fx_arm_token\"\"\t=\\n\\\\'FAKEL39X_qvk\\\\''} {\"\"dek_ref'\t:\\t\\\\'FAKEv-2wvktZ\\\\';\"\r\n", "values": ["FAKEL39X_qvk", "FAKEv-2wvktZ"]}
+{"text": "x\\x0bx_csrf_token'' :\t\\\"FAKE3m77-R9m9m_\\\" {\"X_ARM_TOKEN' =\r\n\\\"FAKEXLLP__-RZ-\\\"'}", "values": ["FAKE3m77-R9m9m_", "FAKEXLLP__-RZ-"]}
+{"text": "\"x\\\\frefresh_token''=\\xa0'FAKELRqZLR_v''} x\\\\\\\\nX_Arm_Token' :\\\\\\\\n\\\\'FAKE37vwwRv-2k\\\\'\\n\"", "values": ["FAKELRqZLR_v", "FAKE37vwwRv-2k"]}
+{"text": "'\\'x\\\\tapi-secret\"\" :\\\\\\\\u2028FAKEvXLRkZk2Xw7P  x\\\\\\\\x0binput_value\\\\\\\\\":\\\\x0b\"FAKE_w2Lm22RR\"\\\\\\\\n\\''", "values": ["FAKEvXLRkZk2Xw7P", "FAKE_w2Lm22RR"]}
+{"text": "x,\"x\\tCSRF'' =\t\\'FAKEq72wP-ttw\\'\"\"} x\\tAPI_KEY'\t:\tFAKE9Zt9tkwm7\"\r\n", "values": ["FAKEq72wP-ttw", "FAKE9Zt9tkwm7"]}
+{"text": "refresh_token\"'\t=\\\\\\\\t\\\"FAKEkZPw9-9Xk\\\"; {'signature\"=\u00a0\\\\'FAKE_X39-2_tv--_\\\\'\n", "values": ["FAKEkZPw9-9Xk", "FAKE_X39-2_tv--_"]}
+{"text": "x\u2028recovery_code'' =\\\\n\\'FAKEq--3-3\\'\\n x-arm-token' =\t\\'FAKE-kL2PvmZ\\'\n", "values": ["FAKEq--3-3", "FAKE-kL2PvmZ"]}
+{"text": "x\\x0bAccess_Token\"\" : \\\"FAKEqLk2Lw2Pk\\\"  (password\t:\nFAKEkqPqm-vqPR7v\"}", "values": ["FAKEqLk2Lw2Pk", "FAKEkqPqm-vqPR7v"]}
+{"text": "x,\"\nsession_token\\' :\r\nFAKEZ79mm2  x\\x0bcsrf' :\\u2028FAKE7v3m3wm7q\"\"}\"\r\n", "values": ["FAKEZ79mm2", "FAKE7v3m3wm7q"]}
+{"text": "self.x_arm_token\\\":\n\\'FAKEX9q2m3w\\''} x\\x0btoken\"'\t=\\u2028FAKEXwXLZwZXm3v7 ", "values": ["FAKEX9q2m3w", "FAKEXwXLZwZXm3v7"]}
+{"text": "(Csrf''=\\x0b\\\\\"FAKE32-kt9vL9t-\\\\\"\"} x\\\\x_bapi_sign\" =\\n\"FAKEPXRkq3t7t\";", "values": ["FAKE32-kt9vL9t-", "FAKEPXRkq3t7t"]}
+{"text": "x\\x0bx_bapi_api_key\"\t:\u000b\\\\\"FAKERwwRvqt2_m9\\\\\"'} x\fset_cookie'\t=\\u2028FAKEZLZt9tRLwmk\n", "values": ["FAKERwwRvqt2_m9", "FAKEZLZt9tRLwmk"]}
+{"text": "self.x-api-key'' : FAKE7PRktvX_2P\"} x\u0085SEALED-SEED\" :\t\\\\\"FAKEXXmZ3R223v\\\\\"\\n", "values": ["FAKE7PRktvX_2P", "FAKEXXmZ3R223v"]}
+{"text": " password\"'=\\n\\'FAKEq_7PkmLw\\';  x_csrf_token'\t:\r\n'FAKE2q393v_m3X9_',", "values": ["FAKEq_7PkmLw", "FAKE2q393v_m3X9_"]}
+{"text": "x,\"x\u00a0Session-Token\"\":\\n\\\\\"\"FAKEt2kPvRP97\\\\\"\"'} {'signature :\t\\'FAKELtRqv3X2P2vv\\';\"\r\n", "values": ["FAKEt2kPvRP97", "FAKELtRqv3X2P2vv"]}
+{"text": "{'api_secret\"\" =\\\\\\\\t\\\\'FAKER9m7k_vw3\\\\'\"} x\u2028Session_Token\"\t=\\u2028\\\"FAKE773L9_7R2Xm\\\" ", "values": ["FAKER9m7k_vw3", "FAKE773L9_7R2Xm"]}
+{"text": "'\\'cfg.signature\\\\\\'\\\\t= \\\\\\\\\\\\\\\\\\\\\\'FAKE73vk9922t3R\\\\\\\\\\\\\\\\\\\\\\'\\\\n x\\\\\\\\\\\\\\\\xa0session_token\"=\\\\\\\\u2028FAKEwwX332R9w;\\''", "values": ["FAKE73vk9922t3R", "FAKEwwX332R9w"]}
+{"text": "'\"x\\\\fx_csrf_token\\\\\"\\\\\" :\\\\n\\\\\\\\\\\\\\\\\\'FAKE__m2Zk9LvZ\\\\\\\\\\\\\\\\\\'  x\\\\\\\\u2028api_secret=\\\\u00a0FAKEkL2t72P37\\'}\"'", "values": ["FAKE__m2Zk9LvZ", "FAKEkL2t72P37"]}
+{"text": "x\\\\xa0api-secret'' =FAKEwmZm3-mkP39\"} x\tsealed_seed\" =\\t\\\"FAKE2mXPR3\\\";", "values": ["FAKEwmZm3-mkP39", "FAKE2mXPR3"]}
+{"text": " x_api_key'':\\\"FAKEkLt_Lm7L\\\"  x\u2028secret\" : \"'FAKE_9mP3Lk_92XR\"'\"}", "values": ["FAKEkLt_Lm7L", "FAKE_9mP3Lk_92XR"]}
+{"text": "x\u2028X_Csrf_Token\"\"\t=\\u2028\\\"FAKEX933mLw79\\\" x\u000bsealed_seed\t:\n'FAKELm2Zt2wkt' ", "values": ["FAKEX933mLw79", "FAKELm2Zt2wkt"]}
+{"text": "x\taccess-token\"'\t:\\\\\\\\t\\'FAKELqR99kv\\'; \"\"csrf\" =\n\\\\\"FAKEX2ktw9\\\\\")", "values": ["FAKELqR99kv", "FAKEX2ktw9"]}
+{"text": "{\"arm_token\"':\t\\\"FAKEZ9vLkt-mZXPt\\\" (Set_Cookie\": 'FAKE9v2_k7qP'\"}", "values": ["FAKEZ9vLkt-mZXPt", "FAKE9v2_k7qP"]}
+{"text": "x,\"x\\x0bAuthorization'=\\u2028FAKERkPt9X2LLPk, x\\u2028set_cookie\"\"\"\" =\t\"\"\"\"FAKEvP_wX_t-P\"\"\"\"\\n\"\r\n", "values": ["FAKERkPt9X2LLPk", "FAKEvP_wX_t-P"]}
+{"text": "x\\\\xa0session'\t=\\n\\\\'FAKE-q9vZP\\\\''} cfg.arm-token'\t:\\u2028FAKEqq_9-LLZ3ttZ ", "values": ["FAKE-q9vZP", "FAKEqq_9-LLZ3ttZ"]}
+{"text": "x\\u2028sign\t:\u000b\\'FAKE2twXqRtm-\\'  {'SESSION':\r\n'FAKE__wR_Xq2PRqZ''}", "values": ["FAKE2twXqRtm-", "FAKE__wR_Xq2PRqZ"]}
+{"text": "\"x\\\\trefresh_token'' =\\\\u2028FAKEZXtqw392tL; self.Authorization\\\"\\\":\\r\\n''FAKEZZRRLkt2R''\"", "values": ["FAKEZXtqw392tL", "FAKEZZRRLkt2R"]}
+{"text": "x,\"x\\x0binput-value''\t=\u000b\\\\\"\"FAKER93XL22m3mLR\\\\\"\"  x\fX_Arm_Token =\r\n\\\\'FAKE_XRqZk2\\\\')\"\r\n", "values": ["FAKER93XL22m3mLR", "FAKE_XRqZk2"]}
+{"text": "x,\"x\\\\sign\"\"' :\\n'FAKEk7mw73'\"\"} x\u3000session\"\"\t:\\u2028FAKE7XwZqtRXqvPw\"\"}\"\r\n", "values": ["FAKEk7mw73", "FAKE7XwZqtRXqvPw"]}
+{"text": "x,\"x.X_BAPI_SIGN\\\"\" =\"\"\"\"FAKEXvtmXvLk\"\"\"\"  x\u0085x_access_token\"\":\\u2028FAKEkZqkL3X3t-k'}\"\r\n", "values": ["FAKEXvtmXvLk", "FAKEkZqkL3X3t-k"]}
+{"text": "x\\\\nsecret\"'\t:\t\\\"FAKEZ7w7Xtt9qmR\\\") x\u001csecret\"\t:\r\n\\\"FAKE_kX7kLwP\\\"'}", "values": ["FAKEZ7w7Xtt9qmR", "FAKE_kX7kLwP"]}
+{"text": "\"\"api-key\"\":\u000b\\\\\"FAKE_k9RZt\\\\\"\"} x\u0085totp\" :\\x0b\\\\\"FAKEv9_-tqP\\\\\")", "values": ["FAKE_k9RZt", "FAKEv9_-tqP"]}
+{"text": "'x\\\\\\\\xa0x_access_token\"\" =\\\\x0bFAKEmkRPkZR2ktv) x\\\\tX-BAPI-API-KEY\\\\\"=\\x0b\\'\\'FAKEvLw7mm2q\\'\\')'", "values": ["FAKEmkRPkZR2ktv", "FAKEvLw7mm2q"]}
+{"text": "'\"{\\'secret\\\\\\\\\\\\\" =\\\\u000b\\\\\\\\\\\\\"FAKE3Pv3tqR2wv2\\\\\\\\\\\\\"\\\\\"} x.proxy_authorization:\\\\\\\\u2028FAKEqt97PRZZR\"'", "values": ["FAKE3Pv3tqR2wv2", "FAKEqt97PRZZR"]}
+{"text": "x\u00a0X_BAPI_API_KEY\"\":\u000bFAKE77t3q9_'} x\u2028csrf:\r\n'FAKEPP-_kLL-RL';", "values": ["FAKE77t3q9_", "FAKEPP-_kLL-RL"]}
+{"text": "'\"x\\\\\\\\fx_arm_token\\' :\\\\\\\\x0b\\\\\"FAKEm_Rk_L\\\\\", x\\\\\\\\x0bx_access_token :\\\\\\\\u2028FAKE937Lm9vvmL)\"'", "values": ["FAKEm_Rk_L", "FAKE937Lm9vvmL"]}
+{"text": "x\\u2028x_access_token\"\" :\r\n\\\"FAKE_7kZLkvZv\\\")  x-access-token\"\t=\\\\\\\\tFAKEqw_PZq-;", "values": ["FAKE_7kZLkvZv", "FAKEqw_PZq-"]}
+{"text": "(refresh_token\"':\\\\\\\\t\"\"FAKEqRt7qZ3wX7\"\"\"} x.cookie\"\t:\\u2028''FAKEwkRXRPv''\\n", "values": ["FAKEqRt7qZ3wX7", "FAKEwkRXRPv"]}
+{"text": "\"x\\u2028dek_ref\\\"\\t:\\u00a0''FAKEZR3Zm_X2mm-''\\n x\\\\x0binput-value =\\\\u2028FAKEXLm2RP2kw3v9)\"", "values": ["FAKEZR3Zm_X2mm-", "FAKEXLm2RP2kw3v9"]}
+{"text": "x\fTotp\"'\t:\\u2028\\\"FAKE7PZZtw-7LPw\\\"\\n x\\\\nsession_token\"\t:\u00a0FAKEww92k77\n", "values": ["FAKE7PZZtw-7LPw", "FAKEww92k77"]}
+{"text": "x,\"\"\"\"\"input_value\"\" :\r\n\\\\'FAKEwX7kXtv_7\\\\''} x\\tx_api_key' =\r\n'FAKEqt_Ltq-_' \"\r\n", "values": ["FAKEwX7kXtv_7", "FAKEqt_Ltq-_"]}
+{"text": "x\u001cSession''\t:\\x0b\"'FAKE2_wLmLmtR7\"') x\\\\access-token' :\\\\n''FAKEqRvPqkwktq''\\n", "values": ["FAKE2_wLmLmtR7", "FAKEqRvPqkwktq"]}
+{"text": "(api_key\"\"\t=\u00a0\\'FAKE3-939RvP_2\\' X-CSRF-TOKEN'\t:\\\\\\\\t\\\"FAKERw3q_--P\\\"\"}", "values": ["FAKE3-939RvP_2", "FAKERw3q_--P"]}
+{"text": "x\u00a0x-access-token''\t=\\\\\\\\t\\\"FAKEwL2wkt-v-t\\\", (session\"\t: \\\"FAKEZPR9_RX-kX_L\\\",", "values": ["FAKEwL2wkt-v-t", "FAKEZPR9_RX-kX_L"]}
+{"text": "self.X_Api_Key''=\\x0b\\\\'FAKEw-tvvt3qXmt\\\\'\"} x\fsignature':\n\"'FAKER93Pkt_\"',", "values": ["FAKEw-tvvt3qXmt", "FAKER93Pkt_"]}
+{"text": "x,x\\x0bSession_Token'' =\\u2028\\'FAKEL3v_229\\')  bearer'\t=\\nFAKEPvv2397w'}\r\n", "values": ["FAKEL3v_229", "FAKEPvv2397w"]}
+{"text": "x,\"{'input_value\"\":\\n\\\\\"\"FAKEmq-wP2-R\\\\\"\" x\u3000session_token'=\r\nFAKERwZ7P7R\"\r\n", "values": ["FAKEmq-wP2-R", "FAKERwZ7P7R"]}
+{"text": "x\tcookie\"\" :\\\\\"FAKELXR72qZZwv_\\\\\" x\\u2028x-auth-token':\n\\'FAKE_Lqq_tX9m\\'\"}", "values": ["FAKELXR72qZZwv_", "FAKE_Lqq_tX9m"]}
+{"text": "x\\u2028session\t:\\\\nFAKE-XP9XmmX93Pm\"} x\u00a0set_cookie\"\t=\\u2028\"FAKEXPqR__vw79\"'}", "values": ["FAKE-XP9XmmX93Pm", "FAKEXPqR__vw79"]}
+{"text": "x\\u2028Csrf\t:\u00a0\\\"FAKE9-mR7Rv3L-R\\\") cfg.proxy_authorization\" =\\u2028\"FAKE7ZL-Lt\"\"}", "values": ["FAKE9-mR7Rv3L-R", "FAKE7ZL-Lt"]}
+{"text": "'x\\xa0sealed_seed\"\" =\\\\u2028FAKE3kwRLqm7ww x\\x0bSIGNATURE\\t=\\\\u2028\\\\\\\\\"FAKEPZ7XL-\\\\\\\\\"\\\\n'", "values": ["FAKE3kwRLqm7ww", "FAKEPZ7XL-"]}
+{"text": "'sign\"\" :\\\\u2028\\\\\"FAKE3m29PvqR39t9\\\\\"\"} x\\x1cx-bapi-api-key\" =\\\\t\\\\\"FAKE2Zv3XLkPZ\\\\\"\\\\n'", "values": ["FAKE3m29PvqR39t9", "FAKE2Zv3XLkPZ"]}
+{"text": "x,\"x\\\\session\"\" :\\x0b\\\\'FAKEt3tRRwXm\\\\''} x\tdek-ref' =\\u2028\\'FAKE22ZvZw_3t\\'\"\r\n", "values": ["FAKEt3tRRwXm", "FAKE22ZvZw_3t"]}
+{"text": "x\\\\xa0input_value\"'=\t\\\\\"FAKE2w99PL-Z\\\\\") x\tproxy_authorization\":\r\n\"'FAKE-2Z7PPXPmw_m\"'\\n", "values": ["FAKE2w99PL-Z", "FAKE-2Z7PPXPmw_m"]}
+{"text": "\nsecret\"\"=\\u2028''FAKEqR7LPZw_R-'''} x\u001cX-Auth-Token' =\\\\\\\\t\"\"FAKEvZZw2m\"\",", "values": ["FAKEqR7LPZw_R-", "FAKEvZZw2m"]}
+{"text": "\nsecret\"':\r\n\\'FAKEvP2wq3LLttv\\', x\fsealed_seed'\t=\\u2028\\\\\"FAKEvPtPLL3w\\\\\")", "values": ["FAKEvP2wq3LLttv", "FAKEvPtPLL3w"]}
+{"text": "x\\\\xa0api-key\"\t=\\x0bFAKEX3Rwvm-2k\"} x\u3000x_access_token\" =\u000b\\\"FAKE9tw3qLX7\\\",", "values": ["FAKEX3Rwvm-2k", "FAKE9tw3qLX7"]}
+{"text": "x,\"x\u00a0dek-ref\"\":\\'FAKEq7kw2X2ZP\\'  x\u00a0api_secret': 'FAKEP9k2mt',\"\r\n", "values": ["FAKEq7kw2X2ZP", "FAKEP9k2mt"]}
+{"text": "x,\"x\\x0bx_bapi_sign''\t=\u00a0\\'FAKE2m992997_mqX\\'\"\"} x\u3000token'\t=\\\\n\"\"FAKEm-9kw3XX7_v3\"\" \"\r\n", "values": ["FAKE2m992997_mqX", "FAKEm-9kw3XX7_v3"]}
+{"text": "x,\"\"\"x\\tcookie\\t=\\r\\n\\\\\\\"\"FAKEXZ3mZ-97\\\\\\\"\"  x\\u000brecovery-code'' =\\u000bFAKE2tLPRw2wZ2t)\"\"\"\r\n", "values": ["FAKEXZ3mZ-97", "FAKE2tLPRw2wZ2t"]}
+{"text": "x\\\\nsession\"\"\t:\\\\n\\\"FAKEwwX7v9k\\\" x\u3000Session\"=\u000b\\\"FAKEt7Zmqtk\\\"\n", "values": ["FAKEwwX7v9k", "FAKEt7Zmqtk"]}
+{"text": "x\\x0btoken=zz\\tcookie:sid=FAKEs1q9; other=FAKEq9!val", "values": ["FAKEs1q9", "FAKEq9!val"]}
+{"text": "\"\"token\"\":zz\\tinput_value={\"a\": 1, \"b\": \"FAKEhq2!\"}", "values": ["FAKEhq2!"]}
+{"text": "x\\u2028token=zz\\tcookie:a=1; b=FAKES3C!x", "values": ["FAKES3C!x"]}
+{"text": "password=''abc cookie: FAKEXq Y'' tail-FAKEs3c!", "values": ["FAKEXq", "tail-FAKEs3c!"]}
+{"text": "x\\x0btoken=S001Kq9z\\x0btoken=S002Kq9z\"\"cookie: S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=A1\\x0btoken=A2\\x0btoken=A3\"\"cookie: SEKRET9z tail", "values": ["SEKRET9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\x0b\\x0btoken=S002Kq9z''set-cookie: S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\t\\x0btoken=S002Kq9z\\tauthorization: Bearer S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\t\\x0btoken=S002Kq9z\\tauthorization: Bearer S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z''\\x0btoken=S002Kq9z\\nauthorization: Bearer S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z''\\x0btoken=S002Kq9z\\nauthorization: Bearer S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\t\"\"token\"\":S002Kq9z\"\"cookie: S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\"\"\"\"token\"\":S002Kq9z\\tcookie: S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\"\"\"\"token\"\":S002Kq9z''cookie: S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\t\"\"token\"\":S002Kq9z\"\"set-cookie: S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\"\"\"\"token\"\":S002Kq9z\"\"set-cookie: S003Kq9z", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\n\"\"token\"\":S002Kq9zset-cookie: S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\t\"\"token\"\":S002Kq9z\"\"authorization: Bearer S003Kq9z", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\x0bpassword=S002Kq9z''authorization: Bearer S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\x0bpassword=S002Kq9z''authorization: Basic S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9zcfg.token:\\\\nS002Kq9z\\tcookie: S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9zcfg.token:\\\\nS002Kq9z\"\"set-cookie: S003Kq9z\"\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z''cfg.token:\\\\nS002Kq9z\\tset-cookie: S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\ncfg.token:\\\\nS002Kq9z''set-cookie: S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\ncfg.token:\\\\nS002Kq9z\\tauthorization: Bearer S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\"\"cfg.token:\\\\nS002Kq9z\\tauthorization: Basic S003Kq9z\"\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z''cfg.token:\\\\nS002Kq9z''authorization: Basic S003Kq9z\"\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\ncfg.token:\\\\nS002Kq9z\"\"authorization: Basic S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\ncfg.token:\\\\nS002Kq9z''authorization: Basic S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\x0bauthorization: Bearer S002Kq9z\"\"authorization: Bearer S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\x0bsession=S002Kq9z''cookie: S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\x0bsession=S002Kq9z\\nset-cookie: S003Kq9z\"\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\x0bsession=S002Kq9z\\tauthorization: Basic S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\"\"\\x0bpassword=S002Kq9z\"\"cookie: S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\t\\x0bpassword=S002Kq9z\\nauthorization: Bearer S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0btoken=S001Kq9z\\n\\x0bpassword=S002Kq9z''authorization: Basic S003Kq9z\"\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\x0btoken=S002Kq9z\\ncookie: S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\n\\x0btoken=S002Kq9z\\tcookie: S003Kq9z\"\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\x0b\\x0btoken=S002Kq9z\\nset-cookie: S003Kq9z ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z''\\x0btoken=S002Kq9z\\tset-cookie: S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\t\\x0btoken=S002Kq9z\\tauthorization: Bearer S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\t\\x0btoken=S002Kq9z\\tauthorization: Bearer S003Kq9z ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\x0b\\x0btoken=S002Kq9z\\nauthorization: Bearer S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\t\\x0btoken=S002Kq9z\\nauthorization: Basic S003Kq9z ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\x0b\"\"token\"\":S002Kq9z\"\"cookie: S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\t\"\"token\"\":S002Kq9z\"\"set-cookie: S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\"\"\"\"token\"\":S002Kq9z\\tset-cookie: S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\"\"\"\"token\"\":S002Kq9z\\nauthorization: Bearer S003Kq9z\"\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z''\"\"token\"\":S002Kq9z\"\"authorization: Bearer S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\x0bpassword=S002Kq9z\\tcookie: S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\x0bpassword=S002Kq9zset-cookie: S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\ncfg.token:\\\\nS002Kq9z\\tcookie: S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\tcfg.token:\\\\nS002Kq9z\"\"set-cookie: S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\"\"cfg.token:\\\\nS002Kq9z\\nset-cookie: S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z''cfg.token:\\\\nS002Kq9zset-cookie: S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\ncfg.token:\\\\nS002Kq9z''set-cookie: S003Kq9z", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9zcfg.token:\\\\nS002Kq9z''authorization: Bearer S003Kq9z", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\x0bcfg.token:\\\\nS002Kq9z\\nauthorization: Bearer S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\"\"cfg.token:\\\\nS002Kq9z''authorization: Bearer S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z''cfg.token:\\\\nS002Kq9z\\tauthorization: Bearer S003Kq9z", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z''cfg.token:\\\\nS002Kq9z''authorization: Bearer S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\ncfg.token:\\\\nS002Kq9z\"\"authorization: Bearer S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z''cfg.token:\\\\nS002Kq9z\"\"authorization: Basic S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\x0bauthorization: Bearer S002Kq9z\"\"cookie: S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\x0bauthorization: Basic S002Kq9z''cookie: S003Kq9z\"\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\x0bauthorization: Basic S002Kq9z\\tset-cookie: S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\x0bauthorization: Basic S002Kq9z\"\"authorization: Basic S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\x0b\\x0bpassword=S002Kq9z\\tcookie: S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z''\\x0bpassword=S002Kq9zset-cookie: S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\t\\x0bpassword=S002Kq9z\"\"authorization: Bearer S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\t\\x0bpassword=S002Kq9z''authorization: Bearer S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\"\"token\"\":S001Kq9z\\n\\x0bpassword=S002Kq9z\\nauthorization: Bearer S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\x0btoken=S002Kq9z\\tcookie: S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\t\\x0btoken=S002Kq9z''cookie: S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\"\"\\x0btoken=S002Kq9z\\tcookie: S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z''\\x0btoken=S002Kq9z\\tcookie: S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\t\\x0btoken=S002Kq9z\\tset-cookie: S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\"\"\\x0btoken=S002Kq9z\"\"set-cookie: S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z''\\x0btoken=S002Kq9z\"\"set-cookie: S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z''\\x0btoken=S002Kq9z''authorization: Bearer S003Kq9z", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z''\\x0btoken=S002Kq9z\\nauthorization: Bearer S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\n\\x0btoken=S002Kq9z''authorization: Bearer S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\"\"token\"\":S002Kq9z\\nset-cookie: S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\t\"\"token\"\":S002Kq9z\\x0bset-cookie: S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\t\"\"token\"\":S002Kq9z\"\"set-cookie: S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\t\"\"token\"\":S002Kq9z''set-cookie: S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\x0b\"\"token\"\":S002Kq9z\\tset-cookie: S003Kq9z ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\x0b\"\"token\"\":S002Kq9z''set-cookie: S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\n\"\"token\"\":S002Kq9z\"\"set-cookie: S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\"\"\"\"token\"\":S002Kq9z\"\"authorization: Bearer S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\x0bpassword=S002Kq9z''cookie: S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9zcfg.token:\\\\nS002Kq9z''cookie: S003Kq9z", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\x0bcfg.token:\\\\nS002Kq9z\"\"cookie: S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\"\"cfg.token:\\\\nS002Kq9z''cookie: S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\tcfg.token:\\\\nS002Kq9zset-cookie: S003Kq9z\"\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\x0bcfg.token:\\\\nS002Kq9z\\x0bset-cookie: S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\ncfg.token:\\\\nS002Kq9z''set-cookie: S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z''cfg.token:\\\\nS002Kq9z\\nauthorization: Bearer S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\"\"cfg.token:\\\\nS002Kq9z''authorization: Basic S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\x0bauthorization: Bearer S002Kq9z\\nauthorization: Basic S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\x0bauthorization: Basic S002Kq9z\"\"cookie: S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\x0bauthorization: Basic S002Kq9z\\ncookie: S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\x0bauthorization: Basic S002Kq9z''set-cookie: S003Kq9z\"\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\x0bsession=S002Kq9z\\tcookie: S003Kq9z", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\x0bsession=S002Kq9z\"\"cookie: S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\x0bsession=S002Kq9z\\x0bset-cookie: S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\x0bsession=S002Kq9z\\nset-cookie: S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\x0bsession=S002Kq9z''authorization: Basic S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\t\\x0bpassword=S002Kq9z\\x0bset-cookie: S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\n\\x0bpassword=S002Kq9z\\x0bset-cookie: S003Kq9z ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\"\"\\x0bpassword=S002Kq9z\\nauthorization: Bearer S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\n\\x0bpassword=S002Kq9z\\tauthorization: Bearer S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z\\t\\x0bpassword=S002Kq9z\\tauthorization: Basic S003Kq9z\"\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z''\\x0bpassword=S002Kq9z''authorization: Basic S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "xcfg.token:\\\\nS001Kq9z''\\x0bpassword=S002Kq9z''authorization: Basic S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\ttoken=S001Kq9z\\x0bauthorization: Bearer S002Kq9z\\ncookie: S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\ttoken=S001Kq9z''authorization: Bearer S002Kq9z\"\"cookie: S003Kq9z ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\ttoken=S001Kq9z\\x0bauthorization: Bearer S002Kq9z''set-cookie: S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\ttoken=S001Kq9z\\x0bauthorization: Bearer S002Kq9z''authorization: Basic S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\ttoken=S001Kq9z\"\"authorization: Bearer S002Kq9z\\nauthorization: Basic S003Kq9z ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\ttoken=S001Kq9z\\nauthorization: Basic S002Kq9z''cookie: S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\ttoken=S001Kq9z\\tauthorization: Basic S002Kq9z''set-cookie: S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\ttoken=S001Kq9z\\x0bauthorization: Basic S002Kq9z\\tset-cookie: S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\ttoken=S001Kq9z\"\"authorization: Basic S002Kq9z''set-cookie: S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\ttoken=S001Kq9z''authorization: Basic S002Kq9z\\tset-cookie: S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\ttoken=S001Kq9z''authorization: Basic S002Kq9z\\tset-cookie: S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\ttoken=S001Kq9z\\nauthorization: Basic S002Kq9z''set-cookie: S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\x0btoken=S002Kq9z\\tset-cookie: S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\x0btoken=S002Kq9z\\tset-cookie: S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\x0btoken=S002Kq9z\\nauthorization: Bearer S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\x0b\\x0btoken=S002Kq9z\\tcookie: S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z''\\x0btoken=S002Kq9z\"\"cookie: S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\n\\x0btoken=S002Kq9z''set-cookie: S003Kq9z\"\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\"\"\\x0btoken=S002Kq9z\\tauthorization: Bearer S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\"\"\\x0btoken=S002Kq9z\"\"authorization: Bearer S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z''\\x0btoken=S002Kq9z\"\"authorization: Basic S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\t\"\"token\"\":S002Kq9z\"\"cookie: S003Kq9z", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\"\"token\"\":S002Kq9z\\nset-cookie: S003Kq9z", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\x0b\"\"token\"\":S002Kq9z\\nset-cookie: S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\"\"\"\"token\"\":S002Kq9z\\nset-cookie: S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\n\"\"token\"\":S002Kq9z\\x0bset-cookie: S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\n\"\"token\"\":S002Kq9z\"\"set-cookie: S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\x0b\"\"token\"\":S002Kq9z\"\"authorization: Bearer S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\"\"token\"\":S002Kq9z\"\"authorization: Basic S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\t\"\"token\"\":S002Kq9z\\nauthorization: Basic S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\x0b\"\"token\"\":S002Kq9z\"\"authorization: Basic S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z''\"\"token\"\":S002Kq9z\\tauthorization: Basic S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\n\"\"token\"\":S002Kq9z\\nauthorization: Basic S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\x0bpassword=S002Kq9z''authorization: Bearer S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\tcfg.token:\\\\nS002Kq9z\"\"cookie: S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\x0bcfg.token:\\\\nS002Kq9z\\tcookie: S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z''cfg.token:\\\\nS002Kq9z''set-cookie: S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\ncfg.token:\\\\nS002Kq9z''set-cookie: S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\tcfg.token:\\\\nS002Kq9z\\nauthorization: Bearer S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\"\"cfg.token:\\\\nS002Kq9z''authorization: Bearer S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\tcfg.token:\\\\nS002Kq9z\\nauthorization: Basic S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\x0bcfg.token:\\\\nS002Kq9z\"\"authorization: Basic S003Kq9z\"\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\x0bauthorization: Basic S002Kq9z\"\"authorization: Basic S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\x0bsession=S002Kq9z''authorization: Basic S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\t\\x0bpassword=S002Kq9z''cookie: S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\x0b\\x0bpassword=S002Kq9z\\ncookie: S003Kq9z\"\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\n\\x0bpassword=S002Kq9z\\tcookie: S003Kq9z", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\n\\x0bpassword=S002Kq9z\\ncookie: S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\x0b\\x0bpassword=S002Kq9z\\nset-cookie: S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\"\"\\x0bpassword=S002Kq9zset-cookie: S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z''\\x0bpassword=S002Kq9zset-cookie: S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z''\\x0bpassword=S002Kq9z''set-cookie: S003Kq9z ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\t\\x0bpassword=S002Kq9z\"\"authorization: Bearer S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\"\"\\x0bpassword=S002Kq9z\\tauthorization: Bearer S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x\\x0bpassword=S001Kq9z\\t\\x0bpassword=S002Kq9z\"\"authorization: Basic S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z\"\"authorization: Bearer S002Kq9z''cookie: S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z''authorization: Bearer S002Kq9z\"\"cookie: S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z\\nauthorization: Bearer S002Kq9z\\ncookie: S003Kq9z\\x0b", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z\"\"authorization: Bearer S002Kq9z\\tset-cookie: S003Kq9z ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z\"\"authorization: Bearer S002Kq9z\"\"set-cookie: S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z\"\"authorization: Bearer S002Kq9z''set-cookie: S003Kq9z\\t", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z''authorization: Bearer S002Kq9z\\nauthorization: Bearer S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z\\x0bauthorization: Bearer S002Kq9z\\tauthorization: Basic S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z\\x0bauthorization: Bearer S002Kq9z\\nauthorization: Basic S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z\"\"authorization: Bearer S002Kq9z\\nauthorization: Basic S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z\\x0bauthorization: Basic S002Kq9z\\tcookie: S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z\\x0bauthorization: Basic S002Kq9z\\tcookie: S003Kq9z,", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z''authorization: Basic S002Kq9z\\tset-cookie: S003Kq9z''", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z''authorization: Basic S002Kq9z\\x0bset-cookie: S003Kq9z\\\"", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z\\nauthorization: Basic S002Kq9z\"\"set-cookie: S003Kq9z\\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z\\x0bauthorization: Basic S002Kq9z\\tauthorization: Bearer S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z\\tauthorization: Basic S002Kq9z\"\"authorization: Basic S003Kq9z; ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z\"\"authorization: Basic S002Kq9z\"\"authorization: Basic S003Kq9z ", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x token :S001Kq9z\\nauthorization: Basic S002Kq9z\\nauthorization: Basic S003Kq9z\n", "values": ["S001Kq9z", "S002Kq9z", "S003Kq9z"]}
+{"text": "x,\"{\"\"cookie'\t=\\x0b \"\"'FAKEm932wtXmk\"\"') x\tapi_secret\"\"' =\\x0b \"\"\"\" FAKELRZPwZv\"\"\"\" )\"\r\n", "values": ["FAKEm932wtXmk", "FAKELRZPwZv"]}
+{"text": "x,\"x\tCookie:\\u00a0 \"\"'FAKEZXv2L7m_7Lk\"\"''} x\u3000cookie\"\"\"\" =\t\\\\\"\"FAKE3_7Zm7L27v3\\\\\"\"\"\"}\"\r\n", "values": ["FAKEZXv2L7m_7Lk", "FAKE3_7Zm7L27v3"]}
+{"text": "x\u2028cookie\t:\\u00a0 ''\"FAKEwqwvq27''\") x\\tarm-token\\\"\t=\\u00a0 \\\\'FAKE9w-tv9kZ92R\\\\'\n", "values": ["FAKEwqwvq27", "FAKE9w-tv9kZ92R"]}
+{"text": "x,\"x\\\\ninput_value'\t:\\xa0 ''\"\"FAKEm_X7qt_9--''\"\") cfg.api_key\"\"' :\\\\n\"\"\"\" FAKEw-w_3RP2km\"\"\"\" ;\"\r\n", "values": ["FAKEm_X7qt_9--", "FAKEw-w_3RP2km"]}
+{"text": "x\u2028input_value\" =\\f \"\"'FAKE_XLR9P3kqmX\"\"' x\tinput_value\\'\t=\u000bFAKEvPX3tm2R9tL ", "values": ["FAKE_XLR9P3kqmX", "FAKEvPX3tm2R9tL"]}
+{"text": "x,\"x\u0085cookie' :\\u2028 '' FAKEv9_Z2q'' ; x\\\\dek-ref\"\"\"\" :\\n\"\"\"\"'FAKE-t79727\"\"\"\"''}\"\r\n", "values": ["FAKEv9_Z2q", "FAKE-t79727"]}
+{"text": "Set-Cookie:\\u2028 'FAKEqqtRLP39wX''} x\u3000input_value\\\" =\u000b'FAKEX3L33Xm3ZkR',", "values": ["FAKEqqtRLP39wX", "FAKEX3L33Xm3ZkR"]}
+{"text": "{'set_cookie\"\t=\\x0b '' FAKEXX_X39t''   x\u001csession_token\\' =\\\\n\\\"FAKE-XL323-Lw\\\";", "values": ["FAKEXX_X39t", "FAKE-XL323-Lw"]}
+{"text": "x\u2028set-cookie'\t=\\u2028 ''FAKE3q7RZvwwv'' x\fx_csrf_token\\'=\\\\\\\\t\"\"FAKEkLR_2kZmPwXt\"\"\n", "values": ["FAKE3q7RZvwwv", "FAKEkLR_2kZmPwXt"]}
+{"text": "x,\"self.input_value'\t:\\u2028 \"\"FAKEkkw2twR9\"\"'} x\\ftotp\"\"\"\"\t: \\\\'FAKEktPZwL3_\\\\';\"\r\n", "values": ["FAKEkkw2twR9", "FAKEktPZwL3_"]}
+{"text": "x,\"x\u000bset_cookie\t=\\u00a0 \"\"'FAKELv3PXk2\"\"''} x\u0085authorization\\'\t:\\u00a0 \"\"'FAKEt2-kLv2PLRL\"\"'\"\"}\"\r\n", "values": ["FAKELv3PXk2", "FAKEt2-kLv2PLRL"]}
+{"text": "\"\"COOKIE' :\\xa0 \"\"FAKE7qZ3kkX\"\"'} {'REFRESH-TOKEN\\':\\u00a0 ''\"FAKEq9q92Rtw_ZZ''\";", "values": ["FAKE7qZ3kkX", "FAKEq9q92Rtw_ZZ"]}
+{"text": "x\fINPUT_VALUE' =\\xa0 ''FAKEv3m-_7vm7-''\"} x\u00a0api-secret\\' =\u00a0\\\\\"FAKE2_RmP_k_R7\\\\\" ", "values": ["FAKEv3m-_7vm7-", "FAKE2_RmP_k_R7"]}
+{"text": "x\\fset-cookie:\\u00a0 '' FAKEtXwvZq'' \\n x\\\\xa0X_Bapi_Api_Key\\'\t:\\n\"FAKE3Pv3ZP_PL9\")", "values": ["FAKEtXwvZq", "FAKE3Pv3ZP_PL9"]}
+{"text": "\"\"password\"\": \"\"'FAKEs3cq9w'\"\"", "values": ["FAKEs3cq9w"]}
+{"text": "password=\"\" FAKEs3cq9w\"\"", "values": ["FAKEs3cq9w"]}
+{"text": "password:\\xa0 FAKEs3cq9w", "values": ["FAKEs3cq9w"]}
+{"text": "token=\\x0b FAKEs3cq9w", "values": ["FAKEs3cq9w"]}
+{"text": "x password:\\xa0\\xa0 FAKEmP7q9Xw3Rt done", "values": ["FAKEmP7q9Xw3Rt"]}
+{"text": "{'token=\\x0b\\t FAKEZk2_Lw9-qX'}", "values": ["FAKEZk2_Lw9-qX"]}

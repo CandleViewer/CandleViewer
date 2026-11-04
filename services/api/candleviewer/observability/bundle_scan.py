@@ -13,7 +13,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from candleviewer.observability.redaction import _JWT_RE, _KEY_NAMES, _NO_VALUE, _NOT_DOTTED
+from candleviewer.observability.redaction import (
+    _JWT_RE,
+    _KEY_NAMES,
+    _LABEL_SPACE,
+    _LABEL_START,
+    _NO_VALUE,
+    _NOT_DOTTED,
+    _SPACE_ESCAPE,
+    _TO_LINE_END,
+)
 
 
 @dataclass(frozen=True)
@@ -22,14 +31,49 @@ class Finding:
     rule: str
 
 
+#: What may come between a label's separator and its value (#4713): escapes (a run of `\`, with an
+#: escaped whitespace character's letter or code and whitespace after it or not: `\\n`, `\x0b `)
+#: and quotes, each
+#: escaped, doubled or not (`\'`, `\\'`, `''`). The filter reads them as the start of a value or as
+#: its quotes; the scan reads past them, and past whitespace after a doubled quote, as the filter
+#: reads such a value (`_DOUBLED_DQ_IN_STRING`, `_DOUBLED_SQ_IN_STRING`).
+#: A doubled quote as the log buffer escapes it (`\'\'`, `\\"\\"`), and whitespace after it, where a
+#: value and a closing one follow in the same string, as the filter reads such a value; `{q}` is the
+#: quote. The buffer escapes `{q}` because it closes the string, so a bare `{q}` ends the search: a
+#: closing run in a later string of the line (a JSON line, an event dict's `repr`) is not this
+#: value's. The search reads a run of `\` once, whole, and tests for the closing run only where a
+#: run starts; an opener is read from its start only (the look-behind).
+_ESCAPED_DOUBLED: Final = (
+    r"""(?<![\\{q}])(?:\\++{q}){{2,}}+"""
+    r"""(?=\s*+[^\s"'\\](?:[^\\\n{q}]|\\++{q}?+)*?(?:\\++{q}){{2}})\s*+"""
+)
+#: `_DOUBLED_DQ` and `_DOUBLED_SQ` as the scan reads them in a line that joins several strings (a
+#: JSON line, an event dict's `repr`): the closing run is searched for in the string that holds the
+#: opener, up to a bare quote of the other kind, which the buffer leaves bare only where it closes
+#: that string (an escaped character, `\'`, is read as a pair). A `\` before a quote of the
+#: opener's kind is read alone, so that quote can start a closing run. The filter reads a value
+#: alone.
+_DOUBLED_DQ_IN_STRING: Final = r"""[^\s"',}\]]|[\s']*+[^\s"'](?:[^'\\\n]|\\[^"\n]?+)*?\"\""""
+_DOUBLED_SQ_IN_STRING: Final = r"""[^\s"',}\]]|[\s"]*+[^\s"'](?:[^"\\\n]|\\[^'\n]?+)*?''"""
+_VALUE_LEAD: Final = (
+    rf"""(?:(?<!")"{{2,}}+(?={_DOUBLED_DQ_IN_STRING})[\s']*+"""
+    rf"""|(?<!')'{{2,}}+(?={_DOUBLED_SQ_IN_STRING})[\s"]*+"""
+    rf"""|{_ESCAPED_DOUBLED.format(q='"')}|{_ESCAPED_DOUBLED.format(q="'")}"""
+    rf"""|\\++(?:{_SPACE_ESCAPE}\s*+)?|["'])"""
+)
 #: `api_secret=ABC...` / `"password": "ABC..."`, each key name with `-` and `_` alike; what
 #: the redaction writes for a value (a marker, the end of a cut text) or a placeholder is fine.
 #: The log buffer writes a line break as `\n` (#415): a label after one, or with one before its
 #: value, is read as on one line, so a label and its value on two lines are found. The space after
 #: the separator is possessive: an escaped `\t` given back would read as a value. A quote that the
 #: buffer escapes (`\'`, `\"`) before a value reads as a quote, as the filter reads it (#415).
-_LABELLED = re.compile(rf"""(?ix)["']?(?:\b|(?<=\\[tnr])){_NOT_DOTTED}(?:{_KEY_NAMES})["']?
-    \s*[:=](?:\s|\\[tnr])*+(?:\\?["'])?{_NO_VALUE}[^\s"',}}\]]{{6,}}""")
+#: A label starts where the filter's starts (`_LABEL_START`: after any escaped whitespace
+#: character), its name may be in doubled quotes (`""token"":`), and `_VALUE_LEAD` comes before its
+#: value, as the filter reads them; the `lead` group is where they start. A `_TO_LINE_END` name's
+#: value is read as the filter reads it, to the line's end, spaces and quotes included (#4713).
+_LABELLED = re.compile(rf"""(?ix)["']?{_LABEL_START}{_NOT_DOTTED}(?:{_KEY_NAMES})
+    (?P<line>{_TO_LINE_END})?["']{{0,2}}{_LABEL_SPACE}(?P<lead>{_VALUE_LEAD}*){_NO_VALUE}
+    (?:(?(line)[^\n]|[^\s"',}}\]])){{6,}}""")
 
 
 def _six_character_head(rule: re.Pattern[str]) -> re.Pattern[str]:
@@ -45,9 +89,9 @@ def _six_character_head(rule: re.Pattern[str]) -> re.Pattern[str]:
 _LABELLED_HEAD: Final = _six_character_head(_LABELLED)
 #: The log buffer `repr`s a text the redaction wrote (a traceback, a stack, an event dict's value),
 #: so `password:\n[redacted:key-name]` reaches the scan as `password:\\n[redacted:key-name]`, its
-#: escape doubled (#4681). A value that is escapes (runs of `\`, each with a `t`, `n` or `r` after
-#: it or not) and then a marker or a placeholder, as `_NO_VALUE` names them, holds no value.
-_ESCAPE_RUN: Final = re.compile(r"(?:\\++[tnr]?)*+")
+#: escape doubled (#4681). A value that is escapes and quotes (`_VALUE_LEAD`, #4713) and then a
+#: marker or a placeholder, as `_NO_VALUE` names them, holds no value.
+_ESCAPE_RUN: Final = re.compile(f"{_VALUE_LEAD}*+", re.IGNORECASE)
 #: `_NO_VALUE` is a negative lookahead: it matches (the empty string) where no marker or
 #: placeholder starts, so a match means the text there holds a value.
 _HOLDS_VALUE: Final = re.compile(_NO_VALUE, re.IGNORECASE)
@@ -66,10 +110,14 @@ _RULES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
 
 
 def _labelled(text: str) -> bool:
-    """`_LABELLED` finds a value that is not a marker after the buffer's doubled escapes."""
+    """`_LABELLED` finds a value that is not a marker after the buffer's doubled escapes.
+
+    The escapes and quotes are read from where they start (#4713), so a match that starts its value
+    inside one (the `n` of `\\n`) is read as the whole escape and what follows it.
+    """
     pos = 0
     while (match := _LABELLED_HEAD.search(text, pos)) is not None:
-        pos = match.end() - 6
+        pos = match.start("lead")
         escapes = _ESCAPE_RUN.match(text, pos)  # it matches here, if only the empty string
         pos = escapes.end() if escapes else pos
         if _HOLDS_VALUE.match(text, pos):
