@@ -1,0 +1,22 @@
+# E29-Q02 (#1147): the OMS contract cases the conformance report expects, one test function per line
+# as `module::test | surface | plan cases`. The plan cases are E29-TC-nnn of
+# docs/qa/e29-oms-test-plan.md (E29-Q01 #844), the ones the test gives contract evidence for.
+# test_e29_q02_report.py keeps this list equal to the tests the listed modules define, and
+# tests/contract/e29_q02_report.py prints each one's outcome per run. A test added or removed
+# changes this list in the same commit; a later slice adds its modules' lines here.
+
+# C1: the exit routes, every status 22 declares (tests/contract/test_order_exits_contract.py)
+tests/contract/test_order_exits_contract.py::test_amend_order_each_declared_status_answers_as_22_declares_it | amendOrder: PATCH /orders/{orderId} | E29-TC-650, E29-TC-655, E29-TC-509, E29-TC-111
+tests/contract/test_order_exits_contract.py::test_cancel_order_each_declared_status_answers_as_22_declares_it | cancelOrder: DELETE /orders/{orderId} | E29-TC-650, E29-TC-655, E29-TC-652, E29-TC-107
+tests/contract/test_order_exits_contract.py::test_cancel_all_orders_each_declared_status_answers_as_22_declares_it | cancelAllOrders: POST /orders/cancel-all | E29-TC-650, E29-TC-655, E29-TC-105, E29-TC-110
+tests/contract/test_order_exits_contract.py::test_order_exits_every_status_22_declares_has_a_case | amend, cancel and cancel-all | E29-TC-650
+tests/contract/test_order_exits_contract.py::test_order_exits_the_routers_serve_exactly_the_operations_driven_here | amend, cancel and cancel-all | E29-TC-650
+tests/contract/test_order_exits_contract.py::test_cancel_order_of_a_final_order_is_202_with_the_order_as_it_stands | cancelOrder: DELETE /orders/{orderId} | E29-TC-652
+tests/contract/test_order_exits_contract.py::test_cancel_order_whose_record_cannot_be_written_is_503_audit_unavailable | cancelOrder: DELETE /orders/{orderId} | E29-TC-652
+tests/contract/test_order_exits_contract.py::test_cancel_order_the_exchange_reports_already_terminal_is_202_with_it_unknown | cancelOrder: DELETE /orders/{orderId} | E29-TC-104
+tests/contract/test_order_exits_contract.py::test_cancel_order_repeated_while_its_cancel_is_in_flight_is_202_as_it_then_stands | cancelOrder: DELETE /orders/{orderId} | E29-TC-107
+tests/contract/test_order_exits_contract.py::test_order_exit_by_a_manager_answers_the_status_its_scope_gives_it | amendOrder and cancelOrder as a Manager | E29-TC-107
+tests/contract/test_order_exits_contract.py::test_amend_order_that_re_pairs_a_tp_sl_pair_is_202_with_both_sides_and_its_etag | amendOrder: PATCH /orders/{orderId} | E29-TC-509
+tests/contract/test_order_exits_contract.py::test_cancel_all_orders_failing_two_of_five_accounts_is_200_with_a_result_each | cancelAllOrders: POST /orders/cancel-all | E29-TC-105
+tests/contract/test_order_exits_contract.py::test_cancel_all_orders_by_a_manager_answers_the_status_its_scope_gives_it | cancelAllOrders as a Manager | E29-TC-110
+tests/contract/test_order_exits_contract.py::test_cancel_all_orders_counts_in_affected_only_the_orders_its_selection_takes | cancelAllOrders: POST /orders/cancel-all | E29-TC-114

@@ -21,6 +21,8 @@ from typing import Any, Final
 
 import pytest
 
+from tests.contract.e29_q02_report import pytest_configure  # noqa: F401 (E29-Q02's report)
+
 _ROOT: Final = Path(__file__).resolve().parents[2]  # services/api: node ids are relative to it
 EXPECTED: Final = Path(__file__).with_name("e12_q04_cases.txt")
 #: The surface each listed module's cases exercise, for the matrix.
