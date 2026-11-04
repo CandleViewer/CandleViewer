@@ -1360,18 +1360,17 @@ def test_main_cli_ok_on_clean_report(tmp_path: Path) -> None:
     assert rc == 0
 
 
-def test_repo_register_accepts_the_braces_ghsa_exception_with_approver_and_expiry() -> None:
+def test_repo_register_holds_no_braces_exception_so_its_finding_blocks() -> None:
+    # #1737: EX-06 (braces) was removed once lint-staged 16.4.0 dropped micromatch, the only
+    # path to braces; EX-05 was cleared by an override earlier (#1857). A braces finding that
+    # comes back now blocks instead of riding an old exception.
     register = Path(__file__).resolve().parents[2] / "security" / "accepted-risks.yaml"
     risks = {r.finding_id: r for r in load_accepted_risks(register)}
-    ids = ["GHSA-vfj7-8cjw-p6xm"]  # EX-05 cleared by override (#1857)
-    findings = []
-    for gid in ids:
-        assert risks[gid].approver and risks[gid].expires
-        findings.append(Finding(tool="npm-audit", finding_id=gid, severity="HIGH", package="x"))
-    result = evaluate_findings(findings, list(risks.values()), run_date=date(2026, 10, 3))
-    assert not result.blocked
-    late = evaluate_findings(findings, list(risks.values()), run_date=date(2027, 1, 1))
-    assert late.blocked
+    gid = "GHSA-vfj7-8cjw-p6xm"
+    assert gid not in risks
+    finding = Finding(tool="npm-audit", finding_id=gid, severity="HIGH", package="braces@3.0.3")
+    result = evaluate_findings([finding], list(risks.values()), run_date=date(2026, 11, 1))
+    assert result.blocked
 
 
 def test_gitleaks_block_message_cites_ir02(
@@ -1684,15 +1683,14 @@ def test_real_pnpm_audit_report_from_main_blocks_on_its_critical_and_high_adviso
     assert (rc, out) == (1, "")
     blocking = re.findall(r"^CI-SEC-001: npm-audit finding (\S+) \((\w+)\)", err, re.MULTILINE)
     assert blocking == [
+        ("GHSA-vfj7-8cjw-p6xm", "HIGH"),
         ("GHSA-68fv-2mgg-jv7q", "HIGH"),
         ("GHSA-5gmw-xhrv-c9v3", "CRITICAL"),
         ("GHSA-85c8-ppgw-ccpr", "CRITICAL"),
     ]
     lines = err.splitlines()
     assert (len(lines), lines[-1]) == (5, "security_gate[npm-audit]: BLOCKED (CI-SEC-001)")
-    (accepted,) = [line for line in lines if line.startswith("accepted risk: ")]
-    head = "accepted risk: npm-audit finding GHSA-vfj7-8cjw-p6xm (HIGH) until 2026-12-31 - EX-06: "
-    assert accepted.startswith(head)
+    assert not [line for line in lines if line.startswith("accepted risk: ")]
 
 
 def test_clean_pnpm_audit_report_passes_with_no_findings(
@@ -1758,14 +1756,36 @@ def test_pnpm_high_advisory_without_a_register_entry_blocks_with_ci_sec_001(
     assert err.startswith(head + " — source-map-js@1.2.1: ")
 
 
-def test_braces_stays_accepted_by_ex06_until_it_expires(
+def test_braces_blocks_on_the_repo_register_since_ex06_was_removed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     report = _write_json(tmp_path, "npm-audit.json", _pnpm_doc(BRACES))
     rc, out, err = _npm_gate(capsys, report)
+    assert (rc, out) == (1, "")
+    head = "CI-SEC-001: npm-audit finding GHSA-vfj7-8cjw-p6xm (HIGH) has no accepted-risk entry"
+    assert err.startswith(head + " — braces@3.0.3: ")
+
+
+def test_braces_dated_entry_accepts_until_it_expires(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The shape EX-06 had (#1737 removed it): a dated High entry accepts its finding until its
+    # expiry date, and from that date the gate blocks with CI-SEC-004.
+    report = _write_json(tmp_path, "npm-audit.json", _pnpm_doc(BRACES))
+    entry = {
+        "id": "GHSA-vfj7-8cjw-p6xm",
+        "tool": "npm-audit",
+        "severity": "HIGH",
+        "reason": "test: dev-only transitive",
+        "approver": "sec",
+        "expires": "2026-12-31",
+        "ticket": "https://github.com/CandleViewer/CandleViewer/issues/1737",
+    }
+    risks = _write_yaml(tmp_path, {"entries": [entry]})
+    rc, out, err = _npm_gate(capsys, report, risks=risks)
     assert (rc, err) == (0, "")
     assert out.startswith("accepted risk: npm-audit finding GHSA-vfj7-8cjw-p6xm (HIGH) until ")
-    rc, out, err = _npm_gate(capsys, report, run_date="2026-12-31")
+    rc, out, err = _npm_gate(capsys, report, risks=risks, run_date="2026-12-31")
     assert (rc, out) == (1, "")
     assert err.startswith("CI-SEC-004: accepted risk expired for GHSA-vfj7-8cjw-p6xm ")
 
