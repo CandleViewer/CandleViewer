@@ -1,6 +1,6 @@
 # E49-C3 Charter: Rule-engine boundaries
 
-- Ticket: E49-Q02 (#1336) · Format: session-based, 90 min (45 QA alone, 45 paired with a domain engineer) · Status: run 1 (2026-11-01): route level only (its screens are stubs)
+- Ticket: E49-Q02 (#1336) · Format: session-based, 90 min (45 QA alone, 45 paired with a domain engineer) · Status: run 1 (2026-11-01): route level only (its screens are stubs) · refreshed 2026-11-04 to `fdad0285f`: parked: its screens are stubs; the backend half runs in-process only
 - Cites: 03 §11.2 (rule-engine boundary conditions), §7 Rules suite (form to graph round-trip), §9 (sequence gap, DB down)
 - Mission: make a rule do something its author did not write, or fail to do what was written.
 - Areas:
@@ -20,12 +20,14 @@
   only, behind the egress guard (C-13.5); Demo environment flag; test accounts only.
 - Automated neighbours: the E35 round-trip property suite and its recorded seed (`test(rule-engine)` #5336), `docs/qa/e35-rule-engine-test-plan.md`.
 
-## Explorable at `origin/main` (2026-11-01)
+## Explorable at the GA-candidate pin `fdad0285f` (2026-11-04)
 
-| Surface                    | State                                                                |
-| -------------------------- | -------------------------------------------------------------------- |
-| Rules routes R-160..R-164  | stub routes (manifest owner label E14; build epics E36 #62, E37 #66) |
-| Rule IR, compiler, runtime | backend (E35 #56); round-trip property tests exist                   |
+Re-verified against the code at the pin. A parked row names its owning ticket and the trigger that unparks it; the trigger is always that the route renders a body, not `StubRoute` (`apps/web/src/routes/tree.tsx:82-83`).
+
+| Surface                                           | State                                                                                                           | Evidence                                                                      |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Rules routes R-160..R-164                         | parked: stub routes (manifest owner label E14; build epics E36 #62, E37 #66). Unparks when R-160 renders a body | `apps/web/src/routes/manifest.ts:66-75`, `apps/web/src/routes/tree.tsx:82-83` |
+| Rule IR, compiler, evaluator, executor, lifecycle | backend (E35 #56); round-trip property tests exist; no UI path                                                  | `services/api/candleviewer/rules/`                                            |
 
 ## Debrief (one block per session)
 
@@ -36,3 +38,4 @@ run record) · areas not reached · keyboard-only screens and dead ends · time 
   stub heading and the environment badge (C8 sweep); no order, rule, group or replay path exists to
   probe, so none of the oracles above was applied. Not reached: every area above. Findings: E49-R1-05
   (the stub headings name the wrong epics), E49-R1-09 (unbuilt, not a defect).
+- Session sheet: one `E49-session-sheet.md` copy per session; this block keeps the summary line only.

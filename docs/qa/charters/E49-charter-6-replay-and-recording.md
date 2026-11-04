@@ -1,6 +1,6 @@
 # E49-C6 Charter: Replay and recording
 
-- Ticket: E49-Q02 (#1336) · Format: session-based, 90 min (45 QA alone, 45 paired with a domain engineer) · Status: run 1 (2026-11-01): route level only (its screens are stubs)
+- Ticket: E49-Q02 (#1336) · Format: session-based, 90 min (45 QA alone, 45 paired with a domain engineer) · Status: run 1 (2026-11-01): route level only (its screens are stubs) · refreshed 2026-11-04 to `fdad0285f`: parked: its screens are stubs; the backend half runs in-process only
 - Cites: 03 §7 Replay suite, §9 (sequence gap, DB down); not in the §11.2 mandated list (ticket addition)
 - Mission: make replay show something that never happened, or hide something that did.
 - Areas:
@@ -18,12 +18,14 @@
   only, behind the egress guard (C-13.5); Demo environment flag; test accounts only.
 - Automated neighbours: `docs/qa/exploratory/E07-charter-1-tier-boundary.md`, `E07-charter-3-retention-safety.md`.
 
-## Explorable at `origin/main` (2026-11-01)
+## Explorable at the GA-candidate pin `fdad0285f` (2026-11-04)
 
-| Surface             | State                                                      |
-| ------------------- | ---------------------------------------------------------- |
-| Replay R-170, R-171 | stub routes (manifest owner label E16; build epic E26 #49) |
-| Recorder, retention | backend (E16 #42); E07 tier-boundary charters exist        |
+Re-verified against the code at the pin. A parked row names its owning ticket and the trigger that unparks it; the trigger is always that the route renders a body, not `StubRoute` (`apps/web/src/routes/tree.tsx:82-83`).
+
+| Surface                            | State                                                                                                 | Evidence                                                                            |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Replay R-170, R-171                | parked: stub routes (manifest owner label E16; build epic E26 #49). Unparks when R-170 renders a body | `apps/web/src/routes/manifest.ts:78-79`, `apps/web/src/routes/tree.tsx:82-83`       |
+| Recorder, retention, replay runner | backend (E16 #42); E07 tier-boundary charters exist; no UI path                                       | `services/api/candleviewer/replay/runner.py`, `services/api/candleviewer/recorder/` |
 
 ## Debrief (one block per session)
 
@@ -34,3 +36,4 @@ run record) · areas not reached · keyboard-only screens and dead ends · time 
   stub heading and the environment badge (C8 sweep); no order, rule, group or replay path exists to
   probe, so none of the oracles above was applied. Not reached: every area above. Findings: E49-R1-05
   (the stub headings name the wrong epics), E49-R1-09 (unbuilt, not a defect).
+- Session sheet: one `E49-session-sheet.md` copy per session; this block keeps the summary line only.

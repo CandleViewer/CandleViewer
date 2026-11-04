@@ -2,6 +2,7 @@
 
 - Ticket: E49-Q02 (#1336), PR 1 (`Partial:`) · Run: 2026-11-01, 23:54 to 23:55 UTC (56 s of scripted
   exploration; about 15 min of trace and screenshot review after it) · Base: `origin/main` at `ca49e693a`
+- Build sha under test: `ca49e693a` · Stack tier: A (browser on stubs, no backend)
 - Charters: `docs/qa/charters/E49-README.md` · Harness: `docs/qa/e49-exploratory-harness.md` (tier A)
 - Session: `apps/web/e2e/exploratory/run-1.explore.ts`, 14 committed sessions plus one held in the private
   report (§1), all completed; egress guard clean.

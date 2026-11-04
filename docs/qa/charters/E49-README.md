@@ -1,9 +1,12 @@
 # E49 exploratory charters: index, format and disposition rules
 
-- Ticket: E49-Q02 (#1336), PR 1 of 2 (`Partial:`; the closing PR carries the two bug bashes).
+- Ticket: E49-Q02 (#1336), `Partial:` slices (PR 1 merged; this refresh, the bash kit, the harness work and the closing record follow; the closing PR carries the two bug bashes).
 - Owner of the format: `docs/plan/03-testing-strategy.md` §11.2 (charters), §11.3 (severities and
   SLAs), §12 (keyboard-only clause), §17 (environments). This file cites them; it does not restate them.
 - Harness: `docs/qa/e49-exploratory-harness.md`. Run records: `docs/qa/e49-run-<n>-findings.md`.
+  Session sheet (one copy per session): [E49-session-sheet.md](E49-session-sheet.md).
+- Pin of the last refresh: `fdad0285f` (2026-11-04). Each charter's "Explorable" table is re-verified
+  against the code at a pin, cites `path:line`, and marks parked rows with their owner and unpark trigger.
 - Deviation: the ticket names `docs/plan/backlog/artifacts/charters/` for the charters. The established
   location `docs/qa/charters/` is used instead, per the ruling (BQ-03), so one folder holds every charter
   (beside the E04 to E11 ones); the ticket path holds a pointer to this index.
@@ -13,16 +16,16 @@
 Each is 90 minutes, one risk area, mission plus oracles plus debrief (03 §11.2). The §11.2 mandated
 minimum is covered by charters 1, 3, 4, 5 and 7; 2, 6 and 8 are the ticket's additions.
 
-| #   | Charter                                                                   | Risk area (ticket)           | 03 §11.2 mandated area              | Status after run 1                    |
-| --- | ------------------------------------------------------------------------- | ---------------------------- | ----------------------------------- | ------------------------------------- |
-| 1   | [OMS order path](E49-charter-1-oms-order-path.md)                         | Order races, reconnects      | OMS / order-path edge cases         | route level only; OMS UI not built    |
-| 2   | [Emulated algos](E49-charter-2-emulated-algos.md)                         | OCO, iceberg, TWAP, chase    | (ticket addition; §9 chaos)         | route level only; not built           |
-| 3   | [Rule-engine boundaries](E49-charter-3-rule-engine-boundaries.md)         | Form/graph, degraded, stale  | Rule-engine boundary conditions     | route level only; editors not built   |
-| 4   | [Fan-out edges](E49-charter-4-fanout-edges.md)                            | Partial failure, native SL   | Multi-account fan-out edge cases    | route level only; not built           |
-| 5   | [Chart engine at extremes](E49-charter-5-chart-engine-extremes.md)        | Density, intervals, GPU      | Chart-engine correctness at extreme | not reached in run 1                  |
-| 6   | [Replay and recording](E49-charter-6-replay-and-recording.md)             | Retention, gaps, live+replay | (ticket addition; §7 Replay)        | route level only; not built           |
-| 7   | [Admin and RBAC probing](E49-charter-7-admin-rbac-probing.md)             | Roles, deep links, sessions  | Admin / RBAC boundary probing       | run 1 explored (shell, guards, stubs) |
-| 8   | [Cross-feature interference](E49-charter-8-cross-feature-interference.md) | Feature interplay            | (ticket addition)                   | run 1: route sweep, every role        |
+| #   | Charter                                                                   | Risk area (ticket)           | 03 §11.2 mandated area              | Status at the pin         |
+| --- | ------------------------------------------------------------------------- | ---------------------------- | ----------------------------------- | ------------------------- |
+| 1   | [OMS order path](E49-charter-1-oms-order-path.md)                         | Order races, reconnects      | OMS / order-path edge cases         | parked: OMS UI is a stub  |
+| 2   | [Emulated algos](E49-charter-2-emulated-algos.md)                         | OCO, iceberg, TWAP, chase    | (ticket addition; §9 chaos)         | parked: algos not built   |
+| 3   | [Rule-engine boundaries](E49-charter-3-rule-engine-boundaries.md)         | Form/graph, degraded, stale  | Rule-engine boundary conditions     | parked: editors are stubs |
+| 4   | [Fan-out edges](E49-charter-4-fanout-edges.md)                            | Partial failure, native SL   | Multi-account fan-out edge cases    | parked: trade groups stub |
+| 5   | [Chart engine at extremes](E49-charter-5-chart-engine-extremes.md)        | Density, intervals, GPU      | Chart-engine correctness at extreme | parked: no mounted chart  |
+| 6   | [Replay and recording](E49-charter-6-replay-and-recording.md)             | Retention, gaps, live+replay | (ticket addition; §7 Replay)        | parked: replay is a stub  |
+| 7   | [Admin and RBAC probing](E49-charter-7-admin-rbac-probing.md)             | Roles, deep links, sessions  | Admin / RBAC boundary probing       | buildable: tiers A and B  |
+| 8   | [Cross-feature interference](E49-charter-8-cross-feature-interference.md) | Feature interplay            | (ticket addition)                   | buildable in part         |
 
 ## Session format
 
@@ -35,7 +38,16 @@ minimum is covered by charters 1, 3, 4, 5 and 7; 2, 6 and 8 are the ticket's add
 4. **Second 45 min, paired with a domain engineer** (ticket): trace the suspicious observations.
 5. **Debrief** (Gherkin "Every charter produces an evidenced debrief"): mission, areas actually probed,
    oracles used, findings with reproduction steps, areas the timebox did not reach. A session with no
-   finding still lists what it probed and which oracles it applied ("A charter finds nothing").
+   finding still lists what it probed and which criteria it applied ("A charter finds nothing"). The
+   tester fills one session sheet ([E49-session-sheet.md](E49-session-sheet.md)); the run record is a
+   roll-up of the sheets, not a rewrite.
+
+## Run record header (every run record)
+
+Beside the ticket and run date, each record carries two fields: **Build sha under test** (the full
+`main` sha the stack was built from) and **Stack tier** (A browser on stubs, B seeded backend; harness
+doc §2). A record also says who ran each session and in what role; it is an agent baseline unless a human
+QA signs a session sheet.
 
 ## Recorded-fixture rule (C-13.5)
 
