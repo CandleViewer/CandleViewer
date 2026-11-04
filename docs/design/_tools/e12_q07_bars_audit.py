@@ -309,7 +309,8 @@ MUTATIONS = (
        "Clo" "ses #530. This PR is `Refs #530`"),
     _M("M-15", "G-HYGIENE", "a local path in the results", "results", "Linux (WSL2)",
        "Linux (WSL2) at /" "home/x"),
-    _M("M-16", "G-SCOPE", "a file outside the PR's paths", "@changed", replace="docs/plan/05-accessibility-standard.md"),
+    _M("M-16", "G-SCOPE", "a file outside the PR's paths", "@changed",
+       replace="docs/plan/05-accessibility-standard.md"),
     _M("M-17", "G-REGISTER", "a severity outside the register's set", "report",
        "| moderate (heuristic) |", "| medium (heuristic) |"),
 )
