@@ -17,6 +17,11 @@ S8: the lifespan awaits `account_fixture_guard`, the dev package's boot guard, b
 starts, and `account_fixture_record` once they run: the guard's boot record goes through the audit
 writer injected here, so `cvdev` never imports `candleviewer.audit`.
 S12b: the handle refuses everything until that guard passes, which then builds the pair behind it.
+
+E29-Q03 (#977): `attach_fixture_tickers` hands the dev package the ingestion module, so a fixture
+stack on `CV_FEED=synthetic` without the public WS gets a ticker stream fed from the synthetic
+feed's mid: that stack has no venue ticker, so every market order was answered 503. The stream
+answers nothing until the boot guard above has armed the handle.
 """
 
 from __future__ import annotations
@@ -24,16 +29,20 @@ from __future__ import annotations
 import importlib
 from collections.abc import Awaitable, Callable
 from types import ModuleType
-from typing import Any, Final, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 import httpx
 import structlog
 
 from candleviewer.net.read_only_gate import ReadOnlyGate
-from candleviewer.settings import Settings
+from candleviewer.settings import FeedMode, Settings
+
+if TYPE_CHECKING:
+    from candleviewer.ingestion.service import IngestionService
 
 #: The dev-only package, and its entry point: a module exposing `build(settings) -> AccountFixture`
-#: and (S8) the boot guard `guard_boot(settings) -> AccountFixtureBoot`, which refuses by raising.
+#: and (S8) the boot guard `guard_boot(settings) -> AccountFixtureBoot`, which refuses by raising;
+#: (E29-Q03) `attach_tickers(settings, fixture, ingestion)` attaches the synthetic ticker.
 _DEV_PACKAGE: Final = "cvdev"
 _DEV_WIRING: Final = "cvdev.account_fixture.wiring"
 #: S8 (FX-R01): one record per boot while the fixture is on, written once its guard passed.
@@ -157,6 +166,20 @@ async def account_fixture_record(passed: AccountFixtureBoot | None, audit: _Audi
     `writer` raises), so there the guard's warning is the only record."""
     if passed is not None and audit.is_active:
         await passed.record(audit.writer)
+
+
+def attach_fixture_tickers(
+    settings: Settings, fixture: AccountFixture | None, ingestion: IngestionService
+) -> None:
+    """E29-Q03, for `create_app()` when no public WS is wired: with the fixture on and
+    `CV_FEED=synthetic`, the dev package attaches its synthetic ticker stream to `ingestion`.
+    Anything else imports nothing and attaches nothing, so `ingestion.tickers` stays None."""
+    if fixture is None or settings.feed is not FeedMode.SYNTHETIC or settings.ingestion_ws_enabled:
+        return
+    attach: Callable[[Settings, AccountFixture, IngestionService], None] = _dev_module(
+        settings, _DEV_WIRING
+    ).attach_tickers
+    attach(settings, fixture, ingestion)
 
 
 def _dev_module(settings: Settings, name: str) -> ModuleType:

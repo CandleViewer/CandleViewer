@@ -33,7 +33,11 @@ from fastapi.responses import JSONResponse
 from starlette.datastructures import State
 from starlette.types import ASGIApp
 
-from candleviewer.account_fixture_wiring import AccountFixture, build_account_fixture
+from candleviewer.account_fixture_wiring import (
+    AccountFixture,
+    attach_fixture_tickers,
+    build_account_fixture,
+)
 from candleviewer.account_health_wiring import wire_account_health
 from candleviewer.account_lifecycle_wiring import wire_account_lifecycle, wire_key_revoke
 from candleviewer.accounts.key_age import KeyRotationPolicy
@@ -1673,6 +1677,8 @@ def create_app(
     public_rest = PublicRest(ctx) if resolved.ingestion_ws_enabled else None
     if public_rest is not None:
         wire_public_ws(ctx, kline_boundary, public_rest, machine_feed)
+    else:  # E29-Q03: the dev fixture stack's synthetic ticker; nothing unless the fixture is on
+        attach_fixture_tickers(resolved, account_fixture, ctx.ingestion)
     # E12 #2031: the set and its writer are started/stopped by the lifespan (set first, then
     # writer). Always on: the `bars_enabled` flag was removed in #399.
     # #399: the WS series store (hydrated by the reader, built first) and the bars publisher on
