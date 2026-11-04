@@ -649,9 +649,9 @@ def test_contract_21_guards_the_record_and_stores_the_walks_inputs() -> None:
     assert missing == []
     kept = r"^\| `position_snapshots` \(PG\) +\| 90 d .+\| The latest flat the venue confirmed "
     assert re.search(kept + "per key stays past 90 d", doc, re.M)
-    for row, index in ((54, "ix_cpr_pending"), (55, "ix_psnap_flat"), (56, "ix_exec_walk")):
+    for row, index in ((56, "ix_cpr_pending"), (57, "ix_psnap_flat"), (58, "ix_exec_walk")):
         assert re.search(rf"^\| {row} +\| Closed-PnL [^|]+\|[^|]+\| `{index}` ", doc, re.M), row
-    assert re.search(r"^\| 54 +\| [^|]+\| [^|]+, not final, `closed_at` in reach ", doc, re.M)
+    assert re.search(r"^\| 56 +\| [^|]+\| [^|]+, not final, `closed_at` in reach ", doc, re.M)
 
 
 def test_contract_22_pins_the_window_parameter_the_filters_and_the_stand_in() -> None:
@@ -709,7 +709,7 @@ def test_contract_21_builds_the_walks_two_indexes_plainly_under_a_lock_timeout()
         assert "CONCURRENTLY ix_" not in section and "built `CONCURRENTLY`" not in section
     assert not _missing(
         fills,
-        "through `ix_exec_walk` (§13.1 row 56), a plain `CREATE INDEX` in the revision's "
+        "through `ix_exec_walk` (§13.1 row 58), a plain `CREATE INDEX` in the revision's "
         "transaction under `lock_timeout` (5 s), not `CONCURRENTLY`: a concurrent build waits for "
         "every older snapshot of the database, and a second API process booting meanwhile holds "
         "one while it waits for the migration advisory lock (`migrations/boot.py`), so the two "
@@ -748,16 +748,16 @@ def test_contract_the_record_stores_the_one_group_its_opening_fills_name() -> No
         "provisional `qty`, prices and `closed_at`;",
         "and so may `trade_group_id`, the composition's alone (24 §8.13): settling never writes "
         "it, and `trg_cpr_guard` refuses no change to it, the record final or not;",
-        "and its `trade_group_id` filter (`ix_cpr_group`, row 57)",
+        "and its `trade_group_id` filter (`ix_cpr_group`, row 59)",
         "The filter matches the stored `trade_group_id`, so a record whose `trade_group_id` is "
         "NULL is in no group's page or totals (24 §8.13).",
         "`trade_group_id`, an id, is class P0 with no comment; it references its group `ON DELETE "
         "RESTRICT`, as `idempotency_anchors.trade_group_id` does (§3.3.10), and no index serves "
         "that reference, as a group is never deleted (§7, §3.3.3a).",
     )
-    assert _row(doc, 57) == [
-        "57", "Closed-PnL group filter",
-        "row 53's read and totals with `trade_group_id = ANY($2)`, which a NULL never matches",
+    assert _row(doc, 59) == [
+        "59", "Closed-PnL group filter",
+        "row 55's read and totals with `trade_group_id = ANY($2)`, which a NULL never matches",
         "`ix_cpr_group` (partial)", "< 5 ms for a group's records",
     ]  # fmt: skip
     text = _s813()
@@ -785,18 +785,18 @@ def test_contract_the_record_stores_the_one_group_its_opening_fills_name() -> No
 
 
 def test_contract_21_reads_a_page_per_account_and_never_sorts_every_match() -> None:
-    """Fold r3, C3: row 53 reads each account's page and merges them, the bounded read #4997 gave
+    """Fold r3, C3: row 55 reads each account's page and merges them, the bounded read #4997 gave
     `listOrders` and `listExecutions` (`oms_reads_sqlalchemy._merged`, still `LATERAL`)."""
     doc = _doc("21-database-schema.md")
-    assert _row(doc, 53) == [
-        "53", "Closed-PnL pages and totals",
+    assert _row(doc, 55) == [
+        "55", "Closed-PnL pages and totals",
         "`closed_pnl_records` per account (`LATERAL`): `LIMIT $n` past the cursor, either order",
         "`ix_cpr_day`, merged: never a sort of every match (`oms_reads`, #4997)",
         "< 20 ms for a day's records",
     ]  # fmt: skip
     assert not _missing(
         _between(doc, "#### 3.3.13 ", "\n### 3.4 "),
-        "`listClosedPnl`'s pages and totals (`ix_cpr_day`, §13.1 row 53)",
+        "`listClosedPnl`'s pages and totals (`ix_cpr_day`, §13.1 row 55)",
         "A page reads each account on its own (`LATERAL` over the accounts): at most the page's "
         "`limit` rows past the cursor, in `(closed_at, id)` order either way, which it then "
         "merges, so no read sorts every matching row, as `listOrders` and `listExecutions` read "
@@ -819,7 +819,7 @@ def test_contract_21_reads_a_page_per_account_and_never_sorts_every_match() -> N
         "transaction under a 5 s `lock_timeout`, not `CONCURRENTLY`",
         "C2: `closed_pnl_records` gains `trade_group_id`, the one group the walk's opening fills "
         "name, else NULL, which only the composition writes",
-        "C3: 21 §13.1 row 53 reads each account's page apart and merges them",
+        "C3: 21 §13.1 row 55 reads each account's page apart and merges them",
         "a failed read, and each stored fill until a read after it succeeds, keep the poll "
         "running, and a close not yet read is served provisional",
         "the cap sums several records under one `orderId` each on its own `updatedTime`",
