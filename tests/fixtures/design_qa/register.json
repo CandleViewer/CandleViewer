@@ -1,0 +1,10 @@
+{
+  "derivedFrom": { "auditedSha": "a6ec967627b74737c6b462691cab8262a7176877" },
+  "screens": [
+    { "id": "SCR-001", "verdict": "findings" },
+    { "id": "SCR-002", "verdict": "no findings at sha" },
+    { "id": "SCR-003", "verdict": "findings" },
+    { "id": "SCR-004", "verdict": "not auditable at sha" },
+    { "id": "SCR-005", "verdict": "not auditable at sha" }
+  ]
+}

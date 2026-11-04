@@ -721,6 +721,8 @@ Applied to every component ticket and every screen ticket before it can move to 
 - [ ] Storybook stories match the full Variants × States matrix stated in the catalogue entry.
 - [ ] Component or screen composes only published-library Figma components (no local detached overrides).
 
+Screen-level design QA follows `docs/plan/backlog/artifacts/e49-design-qa-protocol.md` (E49-D01), which takes E09-D11 §16 (PS-1..PS-10) as its spine; this line supersedes E09-D11's A-1.
+
 ---
 
 ## 13. Design-ahead process & sign-off definition
