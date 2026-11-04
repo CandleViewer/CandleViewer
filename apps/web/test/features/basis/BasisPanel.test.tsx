@@ -157,7 +157,7 @@ describe("basis panel: connected", () => {
     const fake = install();
     const c = clock();
     const report = vi.fn();
-    render(
+    const { unmount } = render(
       <ConnectedBasisPanel
         symbol="BTCUSDT"
         paneId="p"
@@ -179,6 +179,10 @@ describe("basis panel: connected", () => {
     expect(panel().textContent).toContain("basis, mark − index");
     expect(localStorage.length).toBe(0);
     expect(report).toHaveBeenCalledWith({ name: "basis.source_toggled", source: "mark" });
+    expect(handle.release).not.toHaveBeenCalled();
+    unmount(); // teardown: the topic handle is released exactly once
+    expect(handle.release).toHaveBeenCalledTimes(1);
+    expect(fake.handles).toHaveLength(1);
   });
 
   const snapOf = (failed: boolean) => ({
