@@ -24,7 +24,7 @@ from uuid import UUID
 
 from pydantic import ValidationError
 
-from candleviewer.api._generated.openapi_models import HotkeyProfileInput
+from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.drawings_models import format_errors
 from candleviewer.api.hotkey_rules import (
     HotkeyBindingsInvalid,
@@ -62,7 +62,7 @@ def judge_body(raw: bytes, vocabulary: Vocabulary | None = None) -> JudgedProfil
     a rule of `bindings` refuses it, `HotkeyBindingConflict` (`409 binding_conflict`) when two of
     its bindings share a key while both can be live (`hotkey_rules.judge`)."""
     try:
-        body = HotkeyProfileInput.model_validate_json(raw)
+        body = api.HotkeyProfileInput.model_validate_json(raw)
     except ValidationError as exc:
         found = redact_structure(format_errors(exc))
         raise HotkeyBindingsInvalid(
