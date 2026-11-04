@@ -152,8 +152,8 @@ letters and digits. The hygiene check refuses the `api_key`, `apiKey` and `api_s
 characters, a signature from 32 hex digits, a PEM header and those two headers. Neither refuses a bare
 key or signature in prose, in an `auth` frame's `args`, in a signed URL, in an error text or under a
 field of another name. The bare-key rule that `accounts/` has joins `oms/` in the PR of #844 that adds
-the first template; until then the review under R-4 and gitleaks' own rules are what stop those
-shapes. The form, built with the scenarios:
+the first template; until then the field-by-field review under R-4 is the control for those shapes
+(gitleaks runs its own rules over them as well). The form, built with the scenarios:
 
 - A **template** is a derived file in which every secret-shaped value is a placeholder, a whole JSON
   string value or a token inside a longer text. The committed file parses without its seed and passes
