@@ -1653,12 +1653,14 @@ _ORDER: Final = _closed(
     reduce_only=_FLAG,
     exchange_order_id=_TEXT,
 )
-#: A 24 Sec.8.1 `Execution`, with the exchange order id it pairs on (SR-E29-03).
+#: A 24 Sec.8.1 `Execution`, with the exchange order id it pairs on (SR-E29-03); `closed_size` is
+#: the venue's `closedSize`, which the step writer stores only within 0 to `qty` (E29-S06).
 _EXECUTION: Final = _closed(
     **dict.fromkeys(("exec_id", "exchange_order_id", *FACTS[:-1], "fee_currency"), _TEXT),
     side=_SIDE,
     **dict.fromkeys(("qty", "price", "fee", "fee_rate"), _MONEY_TEXT),
     closed_pnl=_MONEY_OR_NULL,
+    closed_size=_MONEY_OR_NULL,
     exec_type={"enum": ["trade", "funding", "adl_trade", "bust_trade", "settle"]},
     is_maker=_FLAG,
     **dict.fromkeys(("ts_exec", "ts_ingest"), _US),

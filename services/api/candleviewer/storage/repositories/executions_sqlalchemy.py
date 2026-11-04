@@ -4,16 +4,18 @@ Core statements and the `CappedStore` cap and error mapping, as in `orders_sqlal
 is `INSERT ... ON CONFLICT (exchange_account_id, exec_id) DO NOTHING` (21 Sec.3.3.6) and says
 whether this call stored the row; the id is `gen_random_uuid()`. `order_id` is bound through a
 subquery scoped to the execution's account: another account's order binds NULL, which `RETURNING`
-shows, and the store raises `OrderNotFoundError` before committing. `get` and `list_recent` (the
-`executions` WS snapshot, E29-T13) filter on the account (C-12.4). `insert` commits alone;
-`commit_fill` (E29-T03) locks the order, inserts the fill and, only if it is new, checks it
-against the order (`OrderFill.check`) and commits the step with it.
+shows, and the store raises `OrderNotFoundError` before committing; `position_idx` is that order
+row's, bound the same way (E29-S06, 24 Sec.8.13). `get`, `list_recent` (the `executions` WS
+snapshot, E29-T13) and `closed_size` (E29-S06's final rule) filter on the account (C-12.4).
+`insert` commits alone; `commit_fill` (E29-T03) locks the order, inserts the fill and, only if it
+is new, checks it against the order (`OrderFill.check`) and commits the step with it.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import fields
+from decimal import Decimal
 from typing import Any, Final
 from uuid import UUID
 
@@ -28,6 +30,7 @@ from candleviewer.storage.repositories.executions import (
     OrderFill,
     require_recent_limit,
 )
+from candleviewer.storage.repositories.oms_reads import CLOSING_EXEC_TYPES
 from candleviewer.storage.repositories.orders import CommittedStep, OrderNotFoundError
 from candleviewer.storage.repositories.orders_sqlalchemy import CappedStore, commit_step, lock_order
 
@@ -45,6 +48,9 @@ def insert_statement(execution: NewExecution) -> sa.Insert:
             orders.c.id == execution.order_id,
         )
         values["order_id"] = owned.scalar_subquery()
+        # the fill's key is its order row's (21 Sec.3.3.6): the venue's fill names none
+        key = owned.with_only_columns(orders.c.position_idx).scalar_subquery()
+        values["position_idx"] = sa.func.coalesce(key, execution.position_idx)
     stmt = pg_insert(executions).values(id=sa.func.gen_random_uuid(), **values)
     return stmt.on_conflict_do_nothing(
         index_elements=[_X.exchange_account_id, _X.exec_id]
@@ -64,6 +70,18 @@ def list_recent_statement(account_id: UUID, limit: int) -> sa.Select[Any]:
         .where(_X.exchange_account_id == account_id, _X.order_id.is_not(None))
         .order_by(_X.exec_ts.desc(), _X.id.desc())
         .limit(limit)
+    )
+
+
+def closed_size_statement(account_id: UUID, order_id: UUID) -> sa.Select[Any]:
+    """The size the order's stored trade fills state they closed, NULL when one of them states
+    none or none is stored: the closed-PnL sync's final rule (E29-S06, 24 Sec.8.13), over
+    `ix_exec_order`."""
+    every = sa.and_(sa.func.count() > 0, sa.func.count(_X.closed_size) == sa.func.count())
+    return sa.select(sa.case((every, sa.func.sum(_X.closed_size))).label("closed_size")).where(
+        _X.exchange_account_id == account_id,
+        _X.order_id == order_id,
+        _X.exec_type.in_(CLOSING_EXEC_TYPES),
     )
 
 
@@ -108,3 +126,10 @@ class SqlAlchemyExecutionStore(CappedStore):
         async with self._unit_of_work() as uow:
             result = await uow.session.execute(list_recent_statement(account_id, limit))
             return tuple(_execution(row) for row in result.mappings())
+
+    async def closed_size(self, account_id: UUID, order_id: UUID) -> Decimal | None:
+        """`closed_size_statement`'s answer, in the order's account (C-12.4)."""
+        async with self._unit_of_work() as uow:
+            result = await uow.session.execute(closed_size_statement(account_id, order_id))
+            size: Decimal | None = result.scalar_one()
+        return size

@@ -37,7 +37,11 @@ MAX_RECENT: Final = 100
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NewExecution:
     """An `executions` row to insert; the store assigns `id`, the database `recv_ts`. An `order_id`
-    must name an order of the same account: the store refuses another account's."""
+    must name an order of the same account: the store refuses another account's. `closed_size` is
+    the venue's `closedSize`, None where the fill's source states none; the store refuses one
+    outside 0 to `exec_qty` (`ex_closed`). The store binds `position_idx` from the order row that
+    `order_id` names, as the venue's fill has none (21 Sec.3.3.6, 24 Sec.8.13): the value given
+    stands only for a fill with no order row, which keeps 0."""
 
     exchange_account_id: UUID
     exec_id: str
@@ -56,6 +60,7 @@ class NewExecution:
     fee_rate: Decimal | None = None
     fee_currency: str = "USDT"
     closed_pnl: Decimal | None = None
+    closed_size: Decimal | None = None
     mark_price: Decimal | None = None
     underlying_price: Decimal | None = None
     block_trade_id: str | None = None
@@ -79,6 +84,13 @@ _MONEY: Final = {
     for name in typed_fields(NewExecution, Decimal)
 }
 _STAMPS: Final = typed_fields(NewExecution, datetime)
+
+
+def stated_closed_size(closed_size: Decimal | None, exec_qty: Decimal) -> Decimal | None:
+    """The size a fill states it closed, as a writer stores it: None outside 0 to `exec_qty`,
+    which `ex_closed` would refuse, so a hostile or malformed figure never costs the fill itself
+    (24 Sec.8.13 step 3 then reads the fill as stating none)."""
+    return closed_size if closed_size is not None and 0 <= closed_size <= exec_qty else None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -73,7 +73,9 @@ class PositionRow(PositionState):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NewPositionSnapshot:
-    """A `position_snapshots` row to append; the database assigns `id` and `snap_ts`."""
+    """A `position_snapshots` row to append; the database assigns `id` and `snap_ts`.
+    `exchange_updated_ts` is the reading's own time at the venue: a row at `size` 0 with it set is
+    a flat the venue confirmed, where 24 Sec.8.13's walk starts (21 Sec.3.3.7)."""
 
     exchange_account_id: UUID
     symbol: str
@@ -86,9 +88,10 @@ class NewPositionSnapshot:
     cum_realised_pnl: Decimal | None = None
     liq_price: Decimal | None = None
     equity_usd: Decimal | None = None
+    exchange_updated_ts: datetime | None = None
 
     def __post_init__(self) -> None:
-        check_fields(self, _SNAPSHOT_MONEY, ())
+        check_fields(self, _SNAPSHOT_MONEY, _SNAPSHOT_STAMPS)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -105,6 +108,7 @@ _STATE_MONEY: Final = {
 }
 _STATE_STAMPS: Final = typed_fields(PositionState, datetime)
 _SNAPSHOT_MONEY: Final = dict.fromkeys(typed_fields(NewPositionSnapshot, Decimal), (38, 18))
+_SNAPSHOT_STAMPS: Final = typed_fields(NewPositionSnapshot, datetime)
 
 
 class FutureDatedPositionError(OrderStoreError):

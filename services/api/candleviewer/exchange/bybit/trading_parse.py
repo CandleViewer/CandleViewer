@@ -69,6 +69,7 @@ __all__ = [
     "PositionPage",
     "RowRefusal",
     "WalletPage",
+    "count_orderless",
     "envelope_ms",
     "kept",
     "normalised_link",
@@ -409,22 +410,27 @@ class PositionRow(_Venue):
 
 
 class ClosedPnlRow(_Venue):
-    """A row of `position/closed-pnl`: one closing order's realised PnL."""
+    """A row of `position/closed-pnl`: one closing order's realised PnL. `orderId` is "" (or
+    absent) where the venue writes none, and the fees "" or absent where it states none (24
+    Sec.8.13, Sec.14.2 rule 12)."""
 
     metric_model = "closed_pnl"
     documented = frozenset(
         {
-            "orderId", "qty", "orderPrice", "orderType", "execType", "cumEntryValue",
-            "cumExitValue", "fillCount", "openFee", "closeFee",
+            "qty", "orderPrice", "orderType", "execType", "cumEntryValue", "cumExitValue",
+            "fillCount",
         }
     )  # fmt: skip
 
     symbol: Symbol
+    orderId: Annotated[str, StringConstraints(max_length=64)] = ""
     side: Side
     closedSize: Quantity
     avgEntryPrice: Price
     avgExitPrice: Price
     closedPnl: Amount
+    openFee: OptAmount = None
+    closeFee: OptAmount = None
     leverage: Amount
     createdTime: Millis
     updatedTime: Millis
@@ -668,6 +674,16 @@ def refuse_row(
     )
 
 
+def count_orderless(record: ClosedPnl) -> ClosedPnl:
+    """`record`, counted (`no_order_id`) and logged with its symbol when the venue wrote its
+    `orderId` empty: returned all the same, never refused, so the day's loss sums it (24 Sec.8.13,
+    Sec.14.2 rule 12)."""
+    if record.exchange_order_id is None:
+        bybit_rows_refused_total.labels(reason="no_order_id").inc()
+        logger().warning("bybit_closed_pnl_without_order_id", symbol=record.symbol)
+    return record
+
+
 def kept[T](rows: Sequence[T], link_of: Callable[[T], str], account: AccountRef) -> list[T]:
     """The rows whose id does not name another environment or account; the rest are dropped
     and counted (ruling R12), never raised."""
@@ -760,6 +776,7 @@ def to_execution(row: ExecutionRow, account: AccountRef, ts_ingest: TsUs) -> Exe
         exec_type=EXEC_TYPES[row.execType],
         # 24 §8.1: present on reducing fills, the venue's `execPnl` of the size the fill closed.
         closed_pnl=row.execPnl if row.closedSize else None,
+        closed_size=row.closedSize,  # None for `execution/list`'s "" (24 §8.13 step 3)
         ts_exec=row.execTime * 1000,
         ts_ingest=ts_ingest,
         seq=row.seq,
@@ -790,13 +807,16 @@ def to_closed_pnl(row: ClosedPnlRow, account: AccountRef) -> ClosedPnl:
     return ClosedPnl(
         account_id=account.account_id,
         symbol=row.symbol,
+        exchange_order_id=row.orderId or None,  # never "": the empty-orderId rule (24 §8.13)
         side=_SIDE[row.side],
         qty=row.closedSize,
         avg_entry_price=row.avgEntryPrice,
         avg_exit_price=row.avgExitPrice,
         closed_pnl=row.closedPnl,
+        open_fee=row.openFee,
+        close_fee=row.closeFee,
         leverage=row.leverage,
-        opened_at=row.createdTime * 1000,
+        created_at=row.createdTime * 1000,
         closed_at=row.updatedTime * 1000,
     )
 

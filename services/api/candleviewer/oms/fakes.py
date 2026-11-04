@@ -143,6 +143,7 @@ _ORDER_CHECKS: Final[dict[str, Callable[[port.NewOrder | Row], bool]]] = {
 _EXECUTION_CHECKS: Final[dict[str, Callable[[NewExecution], bool]]] = {
     "ex_px": lambda x: x.exec_price <= 0,
     "ex_qty": lambda x: x.exec_qty <= 0,
+    "ex_closed": lambda x: x.closed_size is not None and not 0 <= x.closed_size <= x.exec_qty,
 }
 #: The scale Postgres returns each number at: numeric(38,18), but numeric(18,10) for `fee_rate`.
 _E18: Final = Decimal(10) ** -18
@@ -639,6 +640,9 @@ class InMemoryOrderStore:
         """The row an insert would store, refused as Postgres refuses it, before its conflict."""
         _refuse(execution, _EXECUTION_CHECKS)
         values = asdict(execution) | {"id": UUID(int=next(self._ids)), "recv_ts": self._clock()}
+        order = None if execution.order_id is None else self._orders.get(execution.order_id)
+        if order is not None and order.exchange_account_id == execution.exchange_account_id:
+            values["position_idx"] = order.position_idx  # its order row's, as Postgres binds it
         return _at_scale(ExecutionRow(**values), _EXECUTION_SCALES)
 
     async def _turn(self) -> None:
