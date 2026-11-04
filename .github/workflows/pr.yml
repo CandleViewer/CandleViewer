@@ -259,6 +259,7 @@ jobs:
               - 'docs/plan/27-adrs/ADR-0009-secrets-and-key-management.md'
               - 'docs/plan/27-adrs/ADR-0014-observability.md'
               - 'docs/plan/27-adrs/ADR-0037-journal-first-audit-lane.md'
+              - 'docs/plan/backlog/E39.json'
               - 'docs/plan/backlog/_tools/published.json'
               - 'docs/plan/module-contracts.toml'
               - 'docs/plan/notes/e16-storage-measurement-raw/storage_measure.json'

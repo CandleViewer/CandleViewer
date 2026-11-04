@@ -5989,7 +5989,12 @@ class Account2(BaseModel):
 
 
 class EffectiveLimits(BaseModel):
-    risk_caps: RiskCaps | None = None
+    risk_caps: Annotated[
+        ProfileRiskCaps | None,
+        Field(
+            description="The caps of the account profile, as a profile stores them. E39-S01 moved it from `RiskCaps` (now deprecated, 24-internal-schemas.md section 19) while no route served this operation and no client read it.\n"
+        ),
+    ] = None
     accounts: list[Account2] | None = None
     __null_refused = field_validator("risk_caps", "accounts", mode="before")(_refuse_null)
 
@@ -6556,9 +6561,15 @@ class Totals3(BaseModel):
     positions_without_native_stop: Annotated[
         JsonInt | None,
         Field(
-            description="MUST be zero in steady state; any non-zero value is a violation of the native-stop safety invariant and is surfaced as a critical banner.\n"
+            description="MUST be zero in steady state; any non-zero value is a violation of the native-stop safety invariant and is surfaced as a critical banner. It counts the accounts whose position state was read; an account whose position or counter state cannot be read is reported `stale` and is never counted as a clean 0 (C-2.6; no flag hides a violation, E39-X01 G-6).\n"
         ),
     ] = None
+    stale: Annotated[
+        StrictBool,
+        Field(
+            description="True when any covered account is `stale` (E39-S01): every figure above then leaves that account out and is shown as incomplete, never as a clean total.\n"
+        ),
+    ]
     __null_refused = field_validator("equity_usd", "unrealised_pnl_usd", "realised_pnl_today_usd", "open_positions", "gross_notional_usd", "positions_without_native_stop", mode="before")(_refuse_null)
 
 
@@ -6571,6 +6582,18 @@ class Lockout(BaseModel):
 
 class Account3(BaseModel):
     exchange_account_id: UUID | None = None
+    stale: Annotated[
+        StrictBool,
+        Field(
+            description="The account's risk state cannot be read fresh (E39-S01): its counters are being rebuilt, its private stream is older than E39-T01's `risk_state_max_age_seconds` (the one staleness bound), or a mark price it needs is stale. Its figures are then the last ones read, or absent, never a clean 0, and an opening order on it is refused `503 risk_state_unavailable`.\n"
+        ),
+    ]
+    provisional: Annotated[
+        StrictBool,
+        Field(
+            description="`realised_pnl_today_usd` holds fees or funding not yet settled by the exchange, at their pessimistic bound (E39-K01 BQ-5); it turns false when the settled figure confirms it (E39-S01).\n"
+        ),
+    ]
     label: str | None = None
     equity_usd: Annotated[
         str | None,
