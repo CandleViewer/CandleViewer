@@ -5,7 +5,7 @@ bucket on a fake monotonic clock (no test sleeps)."""
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -70,11 +70,21 @@ def target(op: str, **env_kw: Any) -> Target:
     return Target(e, "DELETE" if op == "delete" else "PUT", path, _BODY[op], ok, state)
 
 
-async def asgi(t: Target, content: Any, headers: dict[str, str] | None = None) -> httpx.Response:
-    """*content* (an async stream) sent as is: the transport pulls a chunk only when it is read."""
+async def asgi(
+    t: Target, parts: list[bytes], headers: dict[str, str] | None = None
+) -> tuple[httpx.Response, list[bytes]]:
+    """*parts* streamed with no length unless *headers* declare one: the answer, and the parts the
+    transport pulled (it pulls one only when the app reads it)."""
+    pulled: list[bytes] = []
+
+    async def stream() -> AsyncIterator[bytes]:
+        for part in parts:
+            pulled.append(part)
+            yield part
+
     transport = httpx.ASGITransport(app=t.env.c.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        return await client.request(t.method, t.path, content=content, headers=headers)
+        return await client.request(t.method, t.path, content=stream(), headers=headers), pulled
 
 
 def padded(body: Any, size: int) -> bytes:
@@ -127,9 +137,11 @@ def bucket(clock: Clock) -> DrawingsWriteLimiter:
     )
 
 
-def limited(op: str, clock: Clock) -> Target:
-    """*op* on an app whose bucket runs on *clock*, full again once the setup's create is done."""
-    t = target(op, limiter=bucket(clock))
+def limited(op: str, clock: Clock | None = None) -> Target:
+    """*op* on an app whose bucket runs on *clock* (a stopped one if None), full again once the
+    setup's create is done."""
+    clock = Clock() if clock is None else clock
+    t = target(op, write_limiter=bucket(clock))
     clock.t += 60.0
     return t
 

@@ -55,8 +55,7 @@ def env() -> Env:
 
 
 # The permission comes first. `test_every_route_forbidden_without_its_permission` checks only the
-# row count after a refused PUT; this checks the stored row itself, and that the role refusal's
-# `rbac.denied` is the only record (#5696): no `alert.scope_refused` for a caller refused first.
+# row count after a refused PUT; this checks the stored row itself, and its one record (#5696).
 @pytest.mark.parametrize("op", ["create", "update"])
 def test_write_without_alerts_write_403_nothing_stored(env: Env, op: str) -> None:
     method, path = _target(env, op)

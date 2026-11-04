@@ -1,6 +1,6 @@
-"""E40-T04 inbox RBAC: every route's permission (403 before any lookup, recorded as `rbac.denied`
-within the alert routes' refusal budget, #5696), 401 without a session, fail-closed 501 when no
-resolver is wired, 503 without a store, and SR-026's declared-query allow-list on the list."""
+"""E40-T04 inbox RBAC: every route's permission (403 before any lookup), 401 without a session,
+fail-closed 501 when no resolver is wired, 503 without a store, and SR-026's declared-query
+allow-list on the list."""
 
 from __future__ import annotations
 

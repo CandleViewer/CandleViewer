@@ -34,8 +34,7 @@ def test_every_route_forbidden_without_its_permission(
     r = env.c.request(method, path.format(id=aid), json=body)
     assert r.status_code == 403 and r.json()["required_permissions"] == [perm]
     assert len(env.repo.rows) == 1 and not env.repo.deleted
-    # The role refusal is recorded (#5696): one `rbac.denied` after the create's record.
-    assert env.audit.actions() == ["alert.created", "rbac.denied"]
+    assert env.audit.actions() == ["alert.created", "rbac.denied"]  # #5696: the refusal's record
 
 
 @pytest.mark.parametrize(("method", "path", "body", "perm"), ROUTES)

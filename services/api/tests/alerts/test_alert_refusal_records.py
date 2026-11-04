@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -135,8 +136,7 @@ def _refuse(env: AlertsEnv, kind: str, aid: str) -> str:
         ungranted = PRICE_CROSS | {"exchange_account_id": "00000000-0000-4000-8000-0000000000ff"}
         r = env.c.post("/alerts", json=ungranted)
     assert r.status_code == (404 if kind == "foreign" else 403)
-    answer: str = r.text
-    return answer
+    return str(r.text)
 
 
 @pytest.mark.parametrize(
@@ -177,20 +177,11 @@ def test_crud_and_inbox_refusals_share_one_budget_per_caller() -> None:
 def test_create_app_hands_both_alert_routers_one_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     """The app wires one budget into both routers, and their counters: each bound refusal reason
     bound at 0, a held record counted (SR-E40-16, SR-125)."""
-    seen: dict[str, dict[str, Any]] = {}
-
-    def spy(name: str, make: Any) -> Any:
-        def wrapped(*args: Any, **kwargs: Any) -> Any:
-            seen[name] = kwargs
-            return make(*args, **kwargs)
-
-        return wrapped
-
-    monkeypatch.setattr(app_module, "make_alerts_router", spy("crud", make_alerts_router))
-    monkeypatch.setattr(
-        app_module, "make_alert_deliveries_router", spy("inbox", make_alert_deliveries_router)
-    )
+    crud, inbox = MagicMock(wraps=make_alerts_router), MagicMock(wraps=make_alert_deliveries_router)
+    monkeypatch.setattr(app_module, "make_alerts_router", crud)
+    monkeypatch.setattr(app_module, "make_alert_deliveries_router", inbox)
     facade = app_module.create_app(Settings(alerts_evaluator_enabled=False)).state.metrics_facade
+    seen = {"crud": crud.call_args.kwargs, "inbox": inbox.call_args.kwargs}
     assert isinstance(seen["crud"]["denials"], DenialBudget)
     assert seen["crud"]["denials"] is seen["inbox"]["denials"]
     seen["crud"]["on_refused"]("rate_limited")
@@ -242,8 +233,7 @@ def test_a_failed_refusal_record_gives_back_the_count_it_carried() -> None:
     failed: list[dict[str, Any]] = []
 
     def refused() -> int:
-        status: int = env.c.put(f"/alerts/{aid}/enabled", json={"enabled": False}).status_code
-        return status
+        return int(env.c.put(f"/alerts/{aid}/enabled", json={"enabled": False}).status_code)
 
     async def refuse(action: str, **kw: Any) -> None:
         failed.append(kw)

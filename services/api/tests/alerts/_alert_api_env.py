@@ -10,9 +10,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from candleviewer.api.alert_deliveries import DenialBudget
 from candleviewer.api.alerts import make_alerts_router
-from candleviewer.api.drawings_limiter import DrawingsWriteLimiter
 from candleviewer.audit.actions import validate_action
 from candleviewer.rules.manager import Actor
 from candleviewer.rules.vocabulary import default_registry
@@ -177,20 +175,13 @@ class Audit:
 
 class Env:
     """App with two users: `user` is the caller, `perms` its permissions, `granted` its account
-    grants and `owner` whether it holds the Owner role. `limiter` and `denials` replace the
-    router's own write bucket and refusal-record budget (#5696); `refused` lists the bounds'
-    refusals by reason and `held` counts the refusal records the budget held."""
+    grants and `owner` whether it holds the Owner role. *router* goes to the router as is (#5696:
+    `write_limiter`, `denials`); `refused` lists the bounds' refusals by reason and `held` counts
+    the refusal records the budget held."""
 
-    def __init__(
-        self,
-        *,
-        wired: bool = True,
-        limiter: DrawingsWriteLimiter | None = None,
-        denials: DenialBudget | None = None,
-    ) -> None:
+    def __init__(self, *, wired: bool = True, **router: Any) -> None:
         self.repo, self.audit = FakeAlertRepo(), Audit()
-        self.refused: list[str] = []
-        self.held: list[None] = []
+        self.refused, self.held = list[str](), list[None]()
         self.user: str | None = USER_A
         self.perms = frozenset({"alerts:read", "alerts:write"})
         self.granted: frozenset[str] = frozenset()  # the caller's account grants
@@ -214,10 +205,9 @@ class Env:
                 on_compile=lambda s, reason: self.compiles.append(reason),
                 clock=lambda: NOW,
                 on_cap_refused=lambda: self.cap_refusals.append(1),
-                denials=denials,
-                write_limiter=limiter,
                 on_refused=self.refused.append,
                 on_held=lambda: self.held.append(None),
+                **router,
             )
         )
         self.c = TestClient(app)

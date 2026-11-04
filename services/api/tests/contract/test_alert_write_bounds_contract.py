@@ -2,8 +2,9 @@
 
 Each refusal of a bound validates against the response its operation declares for the status (the
 `413`, `422` and `429` that #5696 adds), the `429` carries the declared integer `Retry-After` and
-no `RateLimit-*` header, and the numbers in 22's "Alert write bounds and refusal records" are the
-code's (C-6.1, C-6.2). The routers run over the in-memory stores of `tests/alerts/`.
+no `RateLimit-*` header and changes nothing, and the numbers in 22's "Alert write bounds and
+refusal records" are the code's (C-6.1, C-6.2). The routers run over the in-memory stores of
+`tests/alerts/`.
 """
 
 from __future__ import annotations
@@ -16,16 +17,7 @@ import pytest
 from candleviewer.api.alert_body import MAX_ALERT_BODY_BYTES, MAX_ALERT_JSON_DEPTH, MAX_ALERT_VALUES
 from candleviewer.api.alert_deliveries import DENIAL_WINDOW_S, DENIALS_PER_WINDOW
 from candleviewer.api.alerts import ALERT_WRITE_BURST, ALERT_WRITES_PER_MINUTE
-from tests.alerts._alert_write_env import (
-    BODY_ROUTES,
-    Clock,
-    deep,
-    limited,
-    padded,
-    sized,
-    spend,
-    target,
-)
+from tests.alerts._alert_write_env import BODY_ROUTES, deep, limited, padded, sized, spend, target
 from tests.contract.test_alert_inbox_contract import _SPEC, _check
 from tests.openapi_helpers import deref
 
@@ -59,12 +51,15 @@ def test_alert_body_bound_refusals_are_the_declared_413_and_422(op: str) -> None
 
 @pytest.mark.parametrize("op", ["create", "update", "delete", "enabled", "snooze"])
 def test_alert_write_past_the_burst_is_the_declared_429_with_retry_after(op: str) -> None:
-    """The 429 is the declared `RateLimited`, with its integer `Retry-After` header and no
-    `RateLimit-*` one: this bucket sends none (SR-E40-16)."""
-    t = limited(op, Clock())
+    """Gherkin: a write past the bucket is the declared 429 (`RateLimited`), with its integer
+    `Retry-After` header and no `RateLimit-*` one (this bucket sends none), and "no record is
+    written for the refused write": nothing changes, and the refusal is counted (SR-E40-16)."""
+    t = limited(op)
     spend(t)
-    path, method = OPS[op]
+    path, method, before = *OPS[op], t.snapshot()
     r = t.write()
+    assert (r.status_code, r.json()["code"], t.snapshot()) == (429, "rate_limited", before)
+    assert t.env.refused == ["rate_limited"]
     _check(path, method, 429, r.json())
     declared = deref(_SPEC, _SPEC["paths"][path][method]["responses"]["429"])["headers"]
     assert deref(_SPEC, declared["Retry-After"])["schema"] == {"type": "integer"}

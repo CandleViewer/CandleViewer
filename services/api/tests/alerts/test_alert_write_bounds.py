@@ -14,7 +14,6 @@ import asyncio
 import codecs
 import json
 import time
-from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -95,28 +94,18 @@ def test_alert_body_one_byte_over_the_cap_is_413(op: str) -> None:
 async def test_alert_body_declared_length_over_the_cap_is_413_unread(op: str) -> None:
     """Gherkin "before parsing the body": a declared length over the cap is refused before any
     byte is read (SR-E40-17)."""
-    t, pulled = target(op), []
-
-    async def chunks() -> AsyncIterator[bytes]:
-        pulled.append(1)
-        yield json.dumps(t.body).encode()
-
-    too_large(await asgi(t, chunks(), {"content-length": str(CAP + 1)}))
+    t = target(op)
+    r, pulled = await asgi(t, [json.dumps(t.body).encode()], {"content-length": str(CAP + 1)})
+    too_large(r)
     assert pulled == [] and t.env.refused == ["body_too_large"]
 
 
 async def test_alert_body_streamed_past_the_cap_stops_one_chunk_past_it() -> None:
     """Gherkin "before parsing the body": with no length, the stream is read one chunk past the
     cap, never to its end (SR-E40-17)."""
-    t, pulled = target("create"), []
+    t = target("create")
     parts = [json.dumps(t.body)[:-1].encode(), *[b" " * (CAP // 16)] * 32, b"}"]
-
-    async def chunks() -> AsyncIterator[bytes]:
-        for part in parts:
-            pulled.append(part)
-            yield part
-
-    r = await asgi(t, chunks())
+    r, pulled = await asgi(t, parts)
     too_large(r)
     assert "content-length" not in r.request.headers
     assert len(pulled) <= 16 + 2 < len(parts) and t.state() == ({}, set())
@@ -246,13 +235,17 @@ def test_alert_save_of_the_widest_admissible_body_is_within_the_loop_budget() ->
     assert refused == []
 
 
+@pytest.mark.parametrize(("codec", "mark"), [("utf-16", b""), ("utf-8", codecs.BOM_UTF8)])
 @ROUTES
-def test_alert_body_not_utf8_is_the_routes_not_json_422(op: str) -> None:
-    """A body in another encoding is the route's own 422 for one that is not JSON (RFC 8259
-    section 8.1): nothing changed, nothing counted (SR-E40-17)."""
+def test_alert_body_not_utf8_or_with_a_byte_order_mark_is_the_routes_not_json_422(
+    op: str, codec: str, mark: bytes
+) -> None:
+    """22: UTF-8 without a byte order mark. In another encoding (RFC 8259 section 8.1), or with the
+    mark, the body is the route's own 422 for one that is not JSON: nothing changed, nothing
+    counted (SR-E40-17)."""
     t = target(op)
     before = t.snapshot()
-    r = t.send(json.dumps(t.body).encode("utf-16"))
+    r = t.send(mark + json.dumps(t.body).encode(codec))
     assert (r.status_code, r.json()["code"]) == (422, "validation_failed")
     assert (t.snapshot(), t.env.refused) == (before, [])
 
@@ -266,18 +259,6 @@ def test_alert_name_in_latin_1_is_not_json_and_nothing_is_stored() -> None:
     r = t.send(body)
     assert (r.status_code, r.json()["detail"]) == (422, "Body is not JSON.")
     assert (t.snapshot(), t.env.refused) == (before, [])
-
-
-@ROUTES
-def test_alert_body_with_a_byte_order_mark_is_the_routes_not_json_422(op: str) -> None:
-    """22: UTF-8 without a byte order mark; with one, the route's 422 for a body that is not JSON,
-    nothing changed, nothing counted (SR-E40-17)."""
-    t = target(op)
-    before = t.snapshot()
-    r = t.send(codecs.BOM_UTF8 + json.dumps(t.body).encode())
-    assert (r.status_code, r.json()["code"], t.snapshot(), t.env.refused) == (
-        422, "validation_failed", before, []
-    )  # fmt: skip
 
 
 @ROUTES
@@ -296,3 +277,16 @@ def test_alert_bounds_answer_after_the_ownership_check(op: str) -> None:
     t = target(op)
     t.env.user = USER_B
     assert t.send(padded(t.body, CAP + 1)).status_code == 404 and t.env.refused == []
+
+
+def test_alert_bounds_answer_before_the_armed_alert_cap() -> None:
+    """22: the bounds are decided before the body is validated, the armed-alert cap (#1864) at the
+    write. At the cap, re-arming an alert with a body over the byte cap is the 413: the bound's
+    refusal is counted, never the cap's, and nothing changes (SR-E40-17)."""
+    t = target("enabled")
+    assert t.write().status_code == 200  # disarmed: enabling it again would arm it
+    t.env.repo.max_armed = 0  # and the caller is at the cap
+    before = t.snapshot()
+    r = t.send(padded({"enabled": True}, CAP + 1))
+    assert (r.status_code, t.snapshot(), t.env.refused) == (413, before, ["body_too_large"])
+    assert t.env.cap_refusals == []

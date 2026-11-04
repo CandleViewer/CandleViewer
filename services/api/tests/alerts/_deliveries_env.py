@@ -166,9 +166,12 @@ class Env:
         limiter: DrawingsWriteLimiter | None = None,
     ) -> None:
         self.store, self.audit, self.metrics = FakeDeliveryStore(), Audit(), Metrics()
-        self.refused: list[str] = []
-        self.held: list[None] = []
-        budget = DenialBudget() if denials is None else denials
+        self.refused, self.held = list[str](), list[None]()
+        both: dict[str, Any] = {  # what `create_app()` hands both routers
+            "denials": DenialBudget() if denials is None else denials,
+            "on_refused": self.refused.append,
+            "on_held": lambda: self.held.append(None),
+        }
         self.changes: list[list[int]] = []
         self.change_fails = False
         self.change_hangs = False
@@ -195,21 +198,12 @@ class Env:
                 metric=self.metrics,
                 now=lambda: T0 + timedelta(hours=1),
                 on_change=on_change,
-                denials=budget,
-                on_refused=self.refused.append,
-                on_held=lambda: self.held.append(None),
+                **both,
             )
         )
         app.include_router(
             make_alerts_router(
-                lambda: FakeAlertRepo(),
-                default_registry,
-                resolve,
-                self.audit,
-                denials=budget,
-                write_limiter=limiter,
-                on_refused=self.refused.append,
-                on_held=lambda: self.held.append(None),
+                FakeAlertRepo, default_registry, resolve, self.audit, write_limiter=limiter, **both
             )
         )
         self.c = TestClient(app)

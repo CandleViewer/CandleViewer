@@ -144,8 +144,7 @@ def test_list_notifications_503() -> None:
     _check("/notifications", "get", r.status_code, r.json())
 
 
-#: The modules whose `Problem(<status>, "<code>", ...)` these operations answer with; the body
-#: reader is the desktop report's too (#5696).
+#: The modules whose `Problem(<status>, "<code>", ...)` these operations answer with.
 _ROUTERS = ("alert_deliveries.py", "notifications.py", "alerts_http.py", "alert_body.py")
 _PROBLEM = re.compile(r'Problem\(\s*(\d{3}),\s*"([^"]+)"')
 _CALL = re.compile(r"(?<!class )\bProblem\(")
