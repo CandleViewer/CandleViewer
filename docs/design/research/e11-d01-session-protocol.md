@@ -281,7 +281,7 @@ and ends "Report: `docs/design/research/e11-chart-navigation-research.md` §Deci
 4. The crosshair addresses price levels; snapping to open/high/low/close is a choice, never the default.
 5. The data table is a place to work, not a copy to read: the same bars, actions on every row, the primary columns fit at 200 %.
 6. Aggregation is disclosed with its ratio and its guarantee; it is never phrased as confidence or staleness.
-7. A trading modifier is never also a free navigation gesture at the same pointer position; where they would share a key the navigation binding yields (`Alt+wheel` dropped), and never a timer.
+7. A trading modifier is never also a free navigation gesture at the same pointer position; where they would share a key the navigation binding yields (`Alt+wheel` dropped; 2026-11-03, #5645: the engine's fall-through makes `Alt+wheel` zoom over the plot, routed to E11-S04 / E31, no new decision), and never a timer.
 8. Linked charts share time, never price: a neighbour's crosshair is a dashed line at the same moment, and your scale, your lock and your readout stay your own.
 9. Every jump has a way back: a jump lands the target in the centre, marks it, says "Paused at …", and `End` returns to live.
 10. TradingView habits are matched where cheap (`Shift+wheel` pans, double-click resets) and every divergence is named (arrows move a cursor, `Ctrl+↑/↓` unbound).
