@@ -1,9 +1,10 @@
 # The OMS chaos scenarios: E29-T05's half, and E29-Q04's
 
-Suite: `services/api/tests/chaos/oms/` (marker `chaos`, PR-lane safe, no Docker), from E29-T05's
-closing slice (#848). Run:
+Suite: `services/api/tests/chaos/oms/`, from E29-T05's closing slice (#848). Its in-process tier
+(marker `chaos`, PR-lane safe, no Docker) runs with:
 `cd services/api && uv run pytest tests/chaos/oms -m "chaos and not integration" --no-cov`;
-E29-Q04's Postgres tier (below) is `-m "chaos and integration"` and needs Docker.
+E29-Q04's Postgres tier (below; markers `chaos`, `integration` and `nightly`) is
+`-m "chaos and integration and nightly"` and needs Docker.
 
 **Harness.** `tests/unit/oms/stream_world.py`: the private-stream consumer as the OMS runtime
 composes it (`build_stream_consumer`, S8b), over the real facade (`OrderMachines` on B1 and the
@@ -173,8 +174,8 @@ forbids happens (slice 3's in their own modules, on Postgres):
 | s10      | the clock halt (`ClockHalt.refusal` answers None)                            | the create it refuses reaches the venue                                                                                                                                                                |
 | s11      | the IP hold (`TokenBucketGovernor.hold_ip` holds nothing)                    | the create it refuses reaches the venue                                                                                                                                                                |
 | s13      | the writer's refusal (`Wal(refuses=False)`: a full log drops)                | the create it refuses reaches the venue: it proves the refusal's cause, not production's fail-closed code, which one-off mutants removed (the submit's and the attach's write-ahead), each failing s13 |
-| s14      | the resumed create's lookups, in the process after the kill                  | the re-send meets the venue's refusal of the reused id, the lookup after it binds the one order, and the oracle fails: 2 creates, one from each process                                                |
-| s16      | the outage at the VALIDATE commit (`at_validate`'s stop disarmed)            | the node stays up, the same request is accepted and its create goes out: it proves the refusal's cause, as s13's control does                                                                          |
+| s14      | the resumed create's lookups, in the process after the kill                  | the re-send meets the venue's refusal of the reused id, the lookup after it binds the one order, and the oracle fails: 2 creates, one from each process (not yet run)                                  |
+| s16      | the outage at the VALIDATE commit (`at_validate`'s stop disarmed)            | the node stays up, the same request is accepted and its create goes out: it proves the refusal's cause, as s13's control does (not yet run)                                                            |
 
 **Deviations, as ruled.** The suite path and the venue (BQ-1, amended): it extends
 `services/api/tests/chaos/oms/`, not the ticket's top-level `tests/chaos/oms/`, and its faults are
@@ -185,8 +186,9 @@ post-GA, E45-T08's. The partial-close resize (BQ-6): the oracle holds each posit
 size, never weakened to fit; #978 shipped its BQ-1 option A (#5356 merged, 24 Sec.19.73: below
 100 % no stop is resized, which is E32-S02's), so that row is an open deviation on #978, with
 E32-S02 named. E29-S07's banner, controls and summary (BQ-9, amended):
-E29-Q02's (#1147); the server half is slice 4's, s7's "never stale as live" with it. The stores
-are in memory. The 10018 reserve for stop and cancel (s11): E34-T02's, its chaos E34-Q04's. s4b's
+E29-Q02's (#1147); the server half is slice 4's, s7's "never stale as live" with it.
+The in-process tier's stores are in memory. The 10018 reserve for stop and cancel (s11): E34-T02's,
+its chaos E34-Q04's. s4b's
 anomaly is audited in the pass's own record (`oms.reconcile`, 24 Sec.8.5 step 3c), the facade's
 `oms.reconcile_anomaly` being the stream's (s4). s4b uses a venue whose reads lag its stream,
 which lets the oracle end clean once they catch up. s9's restart is in process; s14 is the

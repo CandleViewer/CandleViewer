@@ -11,8 +11,7 @@ lifeline (`watch_parent`), and once it is closed, the parent done or gone, the c
 The points, each on the order lane:
 - `door`: the order `submitting`, its create at the venue's door when the process went down:
   nothing reached the venue;
-- `taken`: the venue took the create, and its answer never came back (the process went down
-  after the send);
+- `taken`: the venue holds the create (the process went down after the send);
 - `filled`: the order acknowledged, then part filled while the account had no stream, the fill
   never pushed."""
 
@@ -82,7 +81,7 @@ async def run(order: dict[str, str]) -> None:
     db, host = _pg.Db.given(order), Path(order["host"])
     port = Parking(db.ref, order["point"], host)
     async with _pg.running(db, host, _pg.Host(held=port)) as world:
-        outcome = await world.submit()  # at `door` and `taken`, never answered
+        outcome = await world.submit()  # not reached at `door` and `taken`
         assert (outcome.status, outcome.lifecycle) == (202, "submitted"), outcome
         await world.on_lane(filled(port))
 

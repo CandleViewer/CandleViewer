@@ -37,7 +37,7 @@ FIRST, SECOND = 0x161, 0x162  # the two requests' client keys
 @contextmanager
 def at_validate(stop: Callable[[], None]) -> Iterator[None]:
     """The next order's `VALIDATE` meets `stop` first: B1's `start`, which records it, is entered
-    only once `stop` has run (off the lane, outside B1's persist bound); later ones as they are."""
+    only once `stop` has run (off the lane, before B1 records it); later ones as they are."""
     start, armed = OrderMachines.start, [stop]
 
     async def stopped_first(self: OrderMachines, *args: Any, **kwargs: Any) -> str:
