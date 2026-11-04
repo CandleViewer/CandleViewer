@@ -5498,7 +5498,7 @@ class Deriv(BaseModel):
     zones_enabled: Annotated[
         StrictBool | None,
         Field(
-            description="Reserved for the estimated liquidation zones, K01's method (a), which v1 does not build (24 §6.4): no client reads or writes it until the K01 real-data re-run reopens (a), and the recorded histogram has its own leaf, `liq_by_price` (24 §19.123); client default `false` (6612964585 Q1)."
+            description="Reserved for the estimated liquidation zones, K01's method (a), which v1 does not build (24 §6.4): no client reads or writes it until the K01 real-data re-run reopens (a), and the recorded histogram has its own leaf, `liq_by_price` (24 §19.132); client default `false` (6612964585 Q1)."
         ),
     ] = None
     liq_by_price: Annotated[
