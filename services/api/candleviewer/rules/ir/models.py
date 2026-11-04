@@ -8,6 +8,7 @@ control (nothing may be smuggled into a stored IR). The IR is data, never code (
 from __future__ import annotations
 
 import math
+import re
 from decimal import Decimal, DecimalException
 from typing import Annotated, Any, Literal
 
@@ -72,6 +73,25 @@ def _plain_decimal(d: Decimal) -> str:
         return plain_decimal(d)
     except (PlainWidthError, DecimalException):
         return str(d)
+
+
+#: Decimal text: ASCII digits with an optional sign, point and exponent. ``str(Decimal)`` writes
+#: every finite number so, and a stored version holds the IR's JSON-mode dump, where a ``Decimal``
+#: const is that text (``"0.2"``, ``"-5E-7"``).
+_DECIMAL_TEXT = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", re.ASCII)
+
+
+def decimal_text(text: str) -> Decimal | None:
+    """The number ``text`` spells, exactly (never through a float), when it is decimal text whose
+    number the IR can hold (``plain_decimal``'s range); else None."""
+    if _DECIMAL_TEXT.fullmatch(text) is None:
+        return None
+    try:
+        number = Decimal(text)
+        plain_decimal(number)
+    except (PlainWidthError, ArithmeticError):  # wider than the bound, or past the exponent range
+        return None
+    return number
 
 
 def _one_refusal(v: Any) -> Any:
@@ -149,6 +169,19 @@ class Literal_(BaseModel):
 
     model_config = _CFG
     const: bool | int | Decimal | str
+
+    def value(self) -> bool | Decimal | str:
+        """The constant as the evaluator reads it (#5807): true or false as a bool, a number as a
+        ``Decimal``, decimal text too (a stored version holds a ``Decimal`` const as its text), and
+        other text as itself, an enum value. ``const`` itself is never re-typed: the content hash
+        reads decimal text as text, so every hash stays as it is."""
+        c = self.const
+        if isinstance(c, bool | Decimal):
+            return c
+        if isinstance(c, int):
+            return Decimal(c)
+        number = decimal_text(c)
+        return c if number is None else number
 
 
 class ArithmeticNode(BaseModel):
