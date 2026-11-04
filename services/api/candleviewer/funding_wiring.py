@@ -68,6 +68,9 @@ class GuardedFundingStore:
     async def read_settled(self, symbol: str, rng: Any, limit: int) -> list[SettledFunding]:
         return list(await self._live().read_settled(symbol, rng, limit))
 
+    async def coverage(self, symbol: str) -> tuple[int, int] | None:
+        return await self._live().coverage(symbol)
+
 
 class FundingRefreshTask:
     """Tracked, cancellable owner of the periodic funding backfill."""

@@ -1,7 +1,10 @@
 """`GET /market/funding` (`docs/plan/22-api-openapi.yaml`, E24-T02).
 
-Contract-exact: top-level `symbol`, `funding_interval_minutes`, `items`
-`{t, funding_rate, predicted, estimated}` and `Page` `meta`. `predicted` and
+Contract-exact: top-level `symbol`, `funding_interval_minutes`, the instrument's
+`upper_funding_rate` / `lower_funding_rate` (`null` when it holds none, never `0`), `items`
+`{t, funding_rate, annualised_pct, predicted, estimated}` and `FundingPageMeta` `meta` (`Page`
+plus `coverage`, E24-S03 #778). `annualised_pct` is the server's (`domain.funding`), on every item
+at the response's `funding_interval_minutes`, as 22 states it (C-6.1). `predicted` and
 `estimated` are always present (never optional decoration) so a client cannot
 mistake the unsettled rate for a settlement (STRIDE T). RBAC mirrors
 `api/ticker.py`: no resolver -> 501, no session -> 401, no `marketdata:read` ->
@@ -23,8 +26,10 @@ from typing import Any, Protocol
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
+from candleviewer.domain.funding import fixed_point, served_annualised_pct
 from candleviewer.orderflow.funding import (
     DEFAULT_LIMIT,
+    FundingCoverage,
     FundingInvalidRequest,
     FundingSeries,
     FundingSymbolUnknown,
@@ -87,11 +92,32 @@ def _parse_time(value: str | None) -> int | None:
     return int(parsed.timestamp() * 1_000_000)
 
 
+def _pct(rate: Decimal, interval_min: int) -> str:
+    return fixed_point(served_annualised_pct(rate, interval_min))
+
+
+def _bound(value: Decimal | None) -> str | None:
+    return None if value is None else _dec(value)
+
+
+def _coverage(cov: FundingCoverage) -> dict[str, object]:
+    return {
+        "first_available_ts": None
+        if cov.first_available_us is None
+        else _iso(cov.first_available_us),
+        "covered_from": None if cov.covered_from_us is None else _iso(cov.covered_from_us),
+        "covered_to": None if cov.covered_to_us is None else _iso(cov.covered_to_us),
+        "no_coverage": cov.no_coverage,
+        "gaps": [{"from": _iso(lo), "to": _iso(hi)} for lo, hi in cov.gaps],
+    }
+
+
 def serialize_series(series: FundingSeries) -> dict[str, object]:
     items: list[dict[str, object]] = [
         {
             "t": _iso(row.ts_us),
             "funding_rate": _dec(row.funding_rate),
+            "annualised_pct": _pct(row.funding_rate, series.funding_interval_minutes),
             "predicted": False,
             "estimated": False,
         }
@@ -102,19 +128,27 @@ def serialize_series(series: FundingSeries) -> dict[str, object]:
             {
                 "t": _iso(series.predicted.ts_us),
                 "funding_rate": _dec(series.predicted.funding_rate),
+                "annualised_pct": _pct(
+                    series.predicted.funding_rate, series.funding_interval_minutes
+                ),
                 "predicted": True,
                 "estimated": True,
             }
         )
+    meta: dict[str, object] = {
+        "next_cursor": series.next_cursor,
+        "has_more": series.has_more,
+        "count": len(items),
+    }
+    if series.coverage is not None:
+        meta["coverage"] = _coverage(series.coverage)
     return {
         "symbol": series.symbol,
         "funding_interval_minutes": series.funding_interval_minutes,
+        "upper_funding_rate": _bound(series.upper_funding_rate),
+        "lower_funding_rate": _bound(series.lower_funding_rate),
         "items": items,
-        "meta": {
-            "next_cursor": series.next_cursor,
-            "has_more": series.has_more,
-            "count": len(items),
-        },
+        "meta": meta,
     }
 
 

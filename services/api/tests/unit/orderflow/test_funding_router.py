@@ -83,6 +83,7 @@ def test_contract_shape_flags_and_interval() -> None:
     assert settled == {
         "t": "2023-11-14T22:13:20Z",
         "funding_rate": "0.00008",
+        "annualised_pct": "17.52",  # 0.00008 x (525600 / 240) x 100 (#778)
         "predicted": False,
         "estimated": False,
     }

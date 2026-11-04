@@ -199,15 +199,12 @@ def _build(
         min_leverage=_optional_decimal(leverage_filter, "minLeverage", Decimal(1)),
         leverage_step=_optional_decimal(leverage_filter, "leverageStep", Decimal("0.01")),
         funding_interval_min=funding_min,
+        # 24 §19.110: a bound the venue does not send is None, never a `0` read as a real bound.
         upper_funding_rate=(
-            _decimal(raw, "upperFundingRate")
-            if raw.get("upperFundingRate") is not None
-            else Decimal(0)
+            _decimal(raw, "upperFundingRate") if raw.get("upperFundingRate") is not None else None
         ),
         lower_funding_rate=(
-            _decimal(raw, "lowerFundingRate")
-            if raw.get("lowerFundingRate") is not None
-            else Decimal(0)
+            _decimal(raw, "lowerFundingRate") if raw.get("lowerFundingRate") is not None else None
         ),
         copy_trading=bool(raw.get("copyTrading", False) not in (False, "None", "none")),
         metadata_version=1,

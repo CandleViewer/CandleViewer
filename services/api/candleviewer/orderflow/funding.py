@@ -11,7 +11,12 @@ Invariants (STRIDE `docs/security/threat-models/E24-derivatives.md` D3/D12):
 - `annualised_pct` is computed once, here, at write time;
 - the predicted rate is built from the ticker, flagged `predicted`/`estimated`,
   and has no code path to the store;
-- an absent ticker rate yields no predicted item (never a stale one).
+- an absent ticker rate yields no predicted item (never a stale one);
+- the rate bounds come from the instruments cache, `None` when it holds none (never `0`);
+- `coverage` (22 `FundingPageMeta`, #778) is what the store answers for: the stored extent joined
+  with this process's completed backfills (`_backfilled`, one span per symbol, in memory: after
+  a restart the stored extent alone stands until a backfill completes). A span the store does not
+  answer for is `no_coverage`, never "covered"; a missing settlement is a gap, never filled.
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ from candleviewer.domain.funding import (
     HasFundingInterval,
     PredictedFunding,
     SettledFunding,
+    funding_gaps,
     resolve_funding_interval_minutes,
     settle,
 )
@@ -87,6 +93,10 @@ class FundingStore(Protocol):
         self, symbol: str, rng: _Range, limit: int
     ) -> Sequence[SettledFunding]: ...
 
+    async def coverage(self, symbol: str) -> tuple[int, int] | None:
+        """The first and the last stored settlement's `ts`, or None when none is stored."""
+        ...
+
 
 class _Range(Protocol):
     @property
@@ -126,6 +136,20 @@ class TimeWindow:
 
 
 @dataclass(frozen=True, slots=True)
+class FundingCoverage:
+    """22 `FundingPageMeta.coverage`; the covered edges are both None when `no_coverage`."""
+
+    first_available_us: int | None
+    covered_from_us: int | None
+    covered_to_us: int | None
+    gaps: tuple[tuple[int, int], ...]
+
+    @property
+    def no_coverage(self) -> bool:
+        return self.covered_from_us is None
+
+
+@dataclass(frozen=True, slots=True)
 class FundingSeries:
     symbol: str
     funding_interval_minutes: int
@@ -134,6 +158,34 @@ class FundingSeries:
     next_funding_time_us: int | None
     next_cursor: str | None
     has_more: bool
+    upper_funding_rate: Decimal | None = None
+    lower_funding_rate: Decimal | None = None
+    #: None: not computed (a caller built the series without a store), served absent.
+    coverage: FundingCoverage | None = None
+
+
+def _bound(instrument: object, name: str) -> Decimal | None:
+    """An instrument's funding cap or floor: a `Decimal`, else None (none held, never `0`)."""
+    value = getattr(instrument, name, None)
+    return value if isinstance(value, Decimal) else None
+
+
+def _launch_us(instrument: object) -> int | None:
+    """The instrument's listing time (`launch_time`, us), or None when it holds no integer."""
+    value: object = getattr(instrument, "launch_time", None)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _covered(
+    stored: tuple[int, int] | None, fetched: tuple[int, int] | None, step_us: int
+) -> tuple[int, int] | None:
+    """The one span the store answers for: the stored extent and the completed backfills joined
+    when they meet (within one interval), else the backfilled span, the fresher evidence."""
+    if stored is None or fetched is None:
+        return stored or fetched
+    if stored[0] <= fetched[1] + step_us and fetched[0] <= stored[1] + step_us:
+        return min(stored[0], fetched[0]), max(stored[1], fetched[1])
+    return fetched
 
 
 def encode_cursor(symbol: str, after_ts_us: int, *, now_s: float) -> str:
@@ -174,6 +226,17 @@ class FundingService:
         self._instruments = instruments
         self._tickers = tickers
         self._clock_s = clock_s
+        #: Per symbol, the span this process's completed backfills fetched (bounded by the
+        #: catalogue: only a listed symbol with an interval is backfilled).
+        self._backfilled: dict[str, tuple[int, int]] = {}
+
+    def _record_backfilled(self, symbol: str, lo: int, hi: int) -> None:
+        old = self._backfilled.get(symbol)
+        if old is not None and lo <= old[1] and old[0] <= hi:
+            lo, hi = min(lo, old[0]), max(hi, old[1])
+        elif old is not None and old[1] > hi:
+            return  # a disjoint older window: keep the fresher span
+        self._backfilled[symbol] = (lo, hi)
 
     def interval_minutes(self, symbol: str) -> int:
         """THE accessor. Raises `FundingIntervalUnknown`; also publishes the gauge."""
@@ -196,7 +259,7 @@ class FundingService:
         except FundingIntervalUnknown:
             deriv_funding_refresh_total.labels(symbol=label, result="interval_unknown").inc()
             raise
-        written, end_us = 0, window.end_us
+        written, end_us, reached = 0, window.end_us, window.start_us
         try:
             for _ in range(MAX_PAGES_PER_RUN):
                 page = await self._fetcher(symbol, window.start_us, end_us, PAGE_LIMIT)
@@ -215,6 +278,8 @@ class FundingService:
                 if len(page) < PAGE_LIMIT or oldest <= window.start_us or oldest > end_us:
                     break
                 end_us = oldest - 1000  # the upstream takes millisecond bounds
+            else:  # the page bound ran out first: only the part fetched is covered
+                reached = end_us + 1000
         except Exception as exc:
             if isinstance(exc, FundingRowRejected):
                 deriv_upstream_schema_rejected_total.labels(
@@ -223,6 +288,7 @@ class FundingService:
                 logger().warning("funding_page_rejected", symbol=label, reason=exc.reason)
             deriv_funding_refresh_total.labels(symbol=label, result="error").inc()
             raise
+        self._record_backfilled(symbol, reached, window.end_us)
         deriv_funding_refresh_total.labels(symbol=label, result="ok").inc()
         return written
 
@@ -281,13 +347,22 @@ class FundingService:
             interval = self.interval_minutes(symbol)
         except FundingIntervalUnknown as exc:
             raise FundingSymbolUnknown(symbol) from exc
+        instrument = self._instruments(symbol)
+        window_start, after = start, None
         if cursor:
-            start = max(start, decode_cursor(cursor, symbol=symbol, now_s=now_s) + 1)
+            after = decode_cursor(cursor, symbol=symbol, now_s=now_s)
+            start = max(start, after + 1)
         rows = list(await self._store.read_settled(symbol, TimeWindow(start, end), limit + 1))
         has_more = len(rows) > limit
         rows = rows[:limit]
         next_cursor = encode_cursor(symbol, rows[-1].ts_us, now_s=now_s) if has_more else None
         predicted, next_us = self.predicted(symbol)
+        stored = await self._store.coverage(symbol)
+        coverage = self._coverage(
+            stored, symbol, window_start, end, rows, interval,
+            after=after, has_more=has_more, listed_us=_launch_us(instrument),
+            grid_us=next_us if next_us is not None else None if stored is None else stored[0],
+        )  # fmt: skip
         return FundingSeries(
             symbol=symbol,
             funding_interval_minutes=interval,
@@ -296,7 +371,51 @@ class FundingService:
             next_funding_time_us=next_us,
             next_cursor=next_cursor,
             has_more=has_more,
+            upper_funding_rate=_bound(instrument, "upper_funding_rate"),
+            lower_funding_rate=_bound(instrument, "lower_funding_rate"),
+            coverage=coverage,
         )
+
+    def _coverage(
+        self,
+        stored: tuple[int, int] | None,
+        symbol: str,
+        start: int,
+        end: int,
+        rows: Sequence[SettledFunding],
+        interval: int,
+        *,
+        after: int | None,
+        has_more: bool,
+        listed_us: int | None,
+        grid_us: int | None,
+    ) -> FundingCoverage:
+        """The window's covered part and this page's gaps in it (module docstring). Before the
+        symbol's listing (`launch_time`) no settlement was due: the scan starts there, an edge
+        as exclusive as a stored settlement. The grid is the ticker's next settlement, on the
+        current interval, else the first stored settlement's time."""
+        first = None if stored is None else stored[0]
+        span = _covered(stored, self._backfilled.get(symbol), interval * 60_000_000)
+        if span is None or max(start, span[0]) > min(end, span[1]):
+            return FundingCoverage(first, None, None, ())
+        lo, hi = max(start, span[0]), min(end, span[1])
+        resumed = after is not None and after >= lo
+        page_lo = after if resumed and after is not None else lo
+        if listed_us is not None and listed_us > page_lo:
+            page_lo, resumed = listed_us, True
+        if page_lo > hi:
+            return FundingCoverage(first, lo, hi, ())
+        inside = [r.ts_us for r in rows if page_lo <= r.ts_us <= hi]
+        gaps = funding_gaps(
+            inside,
+            interval_min=interval,
+            lo_us=page_lo,
+            # A later page goes on past this one's last row, unless the covered part ends here.
+            hi_us=hi if not has_more or (rows and rows[-1].ts_us >= hi) else None,
+            lo_is_settlement=resumed,
+            grid_us=grid_us,
+        )
+        return FundingCoverage(first, lo, hi, gaps)
 
 
 __all__ = [
@@ -304,6 +423,7 @@ __all__ = [
     "DEFAULT_LIMIT",
     "MAX_LIMIT",
     "MAX_WINDOW_DAYS",
+    "FundingCoverage",
     "FundingInvalidRequest",
     "FundingSeries",
     "FundingService",
