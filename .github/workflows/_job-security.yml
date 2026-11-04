@@ -16,8 +16,9 @@ name: _job-security
 # verdict, writes every scan's outcome to the job summary and fails the job
 # unless each one succeeded or was skipped. Uploads have no `id`, so an upload
 # outage never gates. codeql, gitleaks and trivy stay separate jobs: folding
-# codeql would make SAST serial, gitleaks must scan a tree and history that no
-# install has touched, and trivy builds and boots the image.
+# codeql would make SAST serial, gitleaks must scan a tree that no install has
+# touched (its history sweeps run in gitleaks-history, a full-depth clone), and
+# trivy builds and boots the image.
 #
 # Error codes (tools/ci/security_gate.py): CI-SEC-001 blocking finding,
 # CI-SEC-002 licence violation, CI-SEC-003 LGPL needs approval,
@@ -291,19 +292,21 @@ jobs:
   # gitleaks — CONSTITUTION §9 #12 (secrets-scan). Any finding blocks; a
   # gitleaks finding can never be exception-listed in accepted-risks.yaml
   # (security_gate.py enforces this at load time). Full-history nightly
-  # scan is configured separately by E03-T12 (deferred); this PR-scoped
-  # job diffs only the PR's commit range.
+  # scan is configured separately by E03-T12 (deferred); this job scans the
+  # checked-out tree (`--no-git`), so a shallow checkout is enough (#5697: a
+  # full clone took 4-5 min on starved runners and the job was cancelled after
+  # "no leaks found"). The history sweeps run in `gitleaks-history` below.
   # ---------------------------------------------------------------------
   gitleaks:
     name: gitleaks
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       # gitleaks-action needs `pull-requests: read` (crashes with "Resource not
       # accessible by integration" without it). The gate below reads the pinned
@@ -330,6 +333,44 @@ jobs:
         if: failure()
         run: echo "::error title=Committed secret blocks merge::Rotate first per SECURITY.md / runbook IR-02 (docs/ci-runbook.md)."
 
+      # E43-T06 (SR-140..146): credential hygiene + scan of this job's log/artefact
+      # outputs (the scanner reports that get uploaded) for secret shapes.
+      - name: Credential hygiene gate (fixtures, dev env, workflows)
+        run: python scripts/check_secrets_hygiene.py all
+
+      - name: Scan job log/artefact outputs for secrets (SR-146)
+        if: always()
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(*.json *.log *.sarif)
+          if [ ${#files[@]} -gt 0 ]; then
+            python scripts/check_secrets_hygiene.py logs "${files[@]}"
+          fi
+
+  # ---------------------------------------------------------------------
+  # gitleaks-history — E43-T06 (SR-140..146): the full-history gitleaks sweep
+  # and the trufflehog second opinion. Their findings are report-only (counted
+  # and printed, `|| true`), but a sweep that crashes (no report) or an SR-146
+  # hit in the outputs fails the job, as it failed `gitleaks` before. Split from
+  # `gitleaks` (#5697) so the gate can check out shallow; not a required check
+  # (C-9.1). No `continue-on-error`, on the job or a step.
+  # ---------------------------------------------------------------------
+  gitleaks-history:
+    name: gitleaks-history
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
       # E43-T06: full-history sweep (git mode, all refs) + second-opinion scanner.
       - name: Full-history gitleaks sweep (git mode, all refs)
         run: |
@@ -354,11 +395,6 @@ jobs:
               "$RUNNER_TEMP/trufflehog-$m.log" || true
           done
           rm -f "$RUNNER_TEMP"/trufflehog-*.log
-
-      # E43-T06 (SR-140..146): credential hygiene + scan of this job's log/artefact
-      # outputs (the scanner reports that get uploaded) for secret shapes.
-      - name: Credential hygiene gate (fixtures, dev env, workflows)
-        run: python scripts/check_secrets_hygiene.py all
 
       - name: Scan job log/artefact outputs for secrets (SR-146)
         if: always()
