@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX } from "react";
+import { useEffect, useRef, useState, type JSX, type ReactNode } from "react";
 import { Icon } from "../icons/Icon.js";
 import { cx } from "./internal/cx.js";
 import { systemSecondTick, type SecondTick } from "./secondTick.js";
@@ -62,6 +62,11 @@ export interface FundingCountdownProps {
    * status region, so AN-1 / AN-2 are said once (E24-D03 §13).
    */
   announce?: boolean | undefined;
+  /**
+   * E24-S04 (#779), additive: the host's words after the rate ("/ 8 h · 10.95 % p.a. · predicted (estimated)",
+   * or "Funding n/a" with no `rate`), so a predicted rate is never drawn as settled. Rendered as given.
+   */
+  rateExtra?: ReactNode;
   className?: string;
 }
 
@@ -174,6 +179,7 @@ export function FundingCountdown({
   now,
   charges,
   announce = true,
+  rateExtra,
   className,
 }: FundingCountdownProps): JSX.Element {
   const read = now ?? tick.now;
@@ -311,6 +317,7 @@ export function FundingCountdown({
           {signed(rate, sign)}
         </MonoText>
       )}
+      {notTrading ? null : rateExtra}
       {body}
       {announce ? (
         <span className="cv-visually-hidden" role="status" aria-live="polite" aria-atomic="true">
