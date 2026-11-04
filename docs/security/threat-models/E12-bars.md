@@ -384,7 +384,7 @@ pins the abort outcome yet). `bars_rebuild_total{trigger}` does not exist: the r
 and today only `bars_rebuild_scheduled_total` (no user label) counts the rebuilds a stale read requests.
 `bars_source_overwrite_refused_total` is registered, but the precedence check it counts is not yet on a served
 write path (BR-07, E12-T05). Two §10 expectations are not met as built: no alert rule watches the bars rejection
-or rebuild rates (X02 F4b), and served-bars log lines do not carry `build_version` (§12.1).
+or rebuild rates (tracked on #452, E12-X02), and served-bars log lines do not carry `build_version` (§12.1).
 
 ## 11. Control-to-ticket map
 
@@ -460,10 +460,11 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
     tracked as **RSK-058** (Open, not accepted).
   - BR-13, the loss no sequence number shows (23-ws §3.4): an emission neither encoding can carry, or one the emit path skips for a sink that times out or raises, is dropped with no gap. The trace is `bar_emit_sink_errors_total{reason}`: `ws` and `ws_timeout` are the losses seen on the topic, `ws` for the emission neither encoding can carry (the WS sink is also named `ws`, so a WS sink that raises counts there too, and `ws_timeout` is its timeout); `questdb` and `questdb_timeout` are persistence misses with no gap on the wire; `series_store` and `series_store_timeout` are snapshot-side misses, not wire losses: the store lacks the emission, so a snapshot can lack that bar until a later close flags the gap and the series is read again. Its other reasons are not losses: `ws_no_scales` and `ws_binary_refused` count binary groups sent structured instead, which are delivered, and `ws_generation_swap` counts routine swaps (§7.4), whose signal is `cv_ws_resync_total` (BR-38). The symptom is a bar stuck at `confirm: false` while later indexes stream, until the series' next snapshot, which repairs the series but not necessarily that bar. A valid bar cannot cause the first case; the second is the existing sink isolation (24 §3.5). Owner E12-T06 (#399), reviewed 2026-10-16; to be re-checked at the E12-X04 sign-off.
   - BR-17 (repudiation of which build produced a served bar): inherent High, residual Medium. As built
-    (§12.1) the WS half is met; REST provenance is contracted (#5424) but not yet served (#5396 PR B). The control
-    (`build_version`/`spec_hash`/`meta.sources` on every response, SR-E12-14) is not built until E12-T05/T06 add
-    it (requested on #398, #399); until then a disputed bar cannot be tied to a build, and a `build_version` only
-    maps to a commit if the build info records it. Owner-accepted risk is not requested; it is gated on E12-T05.
+    (§12.1) the control (`build_version`/`spec_hash`/`meta.sources` on every response, SR-E12-14) is met on WS
+    (E12-T06, #399); on REST only `meta.sources` is served: `spec_hash` and `build_version` are contracted
+    (#5424) but not yet served (#5396 PR B; E12-T05, #398, closed without them). Until then a disputed REST bar
+    cannot be tied to a build, and a `build_version` only maps to a commit if the build info records it.
+    Owner-accepted risk is not requested; it is gated on #5396 PR B.
   - BR-28..BR-31 availability caps are starting values; a legitimate user at the per-user caps on a hot
     symbol still costs real CPU. Tracked as **RSK-059**.
   - BR-28's non-time estimate (#2093) has three residuals, all tracked in #3279. Renko's print count is
@@ -539,7 +540,7 @@ delta on kline windows, and an honest `recording_started_at`.
 - **BR-06:** dedup happens at ingestion, as modelled, but late prints are **not** ignored: a print up to 60 s
   late amends the closed time bar it belongs to (re-emitted as an amend, `bars_amended_total`), a later one is
   dropped and counted (`bars_late_trade_dropped_total`), and a non-time builder takes a late print into its
-  open bar (the S02 rule, ratified in #2013). The result is still a pure function of the ordered tape, so
+  open bar (the S02 rule, still pending ratification in #2013). The result is still a pure function of the ordered tape, so
   live, replay and rebuild agree; what changes is that a closed time bar can move within that 60 s window.
 - **§10 signals** exist under the names the catalogue registers (`kline_backfill_*`,
   `trade_prints_rejected_total`, `bars_checksum_mismatch_total`); see the note under §10.
@@ -548,11 +549,13 @@ delta on kline windows, and an honest `recording_started_at`.
 **Open, not accepted** (each blocks sign-off unless fixed, accepted by the Owner in writing, or deferred with a
 dated ticket):
 
-- **P0, served-series integrity markers:** the bars REST, klines REST and WS reads do not yet tell the client
-  when a served page or stream is incomplete or built across an unrecovered gap; withheld rows and gap or
-  partial bars reach clients without a marker. The klines read does not yet mark in-window holes either, and
-  the WS stream does not carry the markers. The contract for the markers is merged (#5424, #5396 PR A); serving
-  them is a dedicated fix in the #5396 lane. E12 cannot be signed off until this lands.
+- **P0, served-series integrity markers:** a closed bar the server built but did not store is now listed as a
+  range in `meta.coverage_holes` on bars REST, klines REST and the WS `bars` snapshot (#5432, the first step of
+  #5396 PR B). Still pending: the per-bar `gap_before`, `partial` and `tape_gap` flags on REST and WS, and the
+  listing of other in-window ranges a read cannot serve (both #5396 PR B); and a marker for a stored row that
+  fails its integrity check and is therefore not served (an E12-X02 integrity case, #452). Until these land, a
+  page or snapshot can be incomplete, or built across an unrecovered gap, without saying so. The contract for
+  the markers is merged (#5424). E12 cannot be signed off until this lands.
 - **High, REST provenance (SR-E12-14) and Medium, stale marking (BR-10):** bars REST responses do not yet carry
   `spec_hash`, `build_version` or `stale_build`; the contract declares them (#5424) and the WS path sends its
   equivalent. Fix in flight (#5396 PR B).
@@ -560,23 +563,28 @@ dated ticket):
   rebuild runner, atomic generation swap, same-version parity and the rebuild surface's limits, ownership,
   audit and IDOR checks are not built (no rebuild surface is served yet). Owner E12-S12 (#535), which inherits the skipped cases.
 - **Medium, tape-over-kline precedence (BR-07, SR-E12-10):** implemented and unit-tested but not yet connected to
-  a served write path, so it protects nothing today; it needs an end-to-end test when E12-T05 connects it. No
-  backfill run log exists yet. Open; a follow-up issue tracks it.
+  a served write path, so it protects nothing today; it needs an end-to-end test once a served write path
+  connects it. Open; tracked by #5627 (fix in review, #5635). The backfill run log exists: every backfill job
+  logs its symbol, interval, window, page and row counts and outcome; no test pins that record yet.
 - **Medium, single writer (BR-05):** synthetic-bar refusal is enforced; single-writer ownership of the bar
-  tables is not yet enforced in code; it needs a guard test. Open; a follow-up issue tracks it.
+  tables is not yet enforced in code; it needs a guard test. Open; tracked by #5626 (fix in review, #5634: a
+  static guard and reader verification). Runtime separation of the writer is not built; that is recorded on
+  #5626 as an owner decision.
 - **Medium, backfill budget lane (BR-33):** backfill never spends an account's order budget; the C-12.7 separation between backfill and order traffic, including the reserve, is only partly built (E34-T02, #859) and its abuse case is not yet tested.
-- **Medium, alerting (X02 F4b):** no alert rule watches bars rejection or rebuild rates. Open; owner: the E12
-  lane, with this review's sign-off.
+- **Medium, alerting:** no alert rule watches bars rejection or rebuild rates; each needs a runbook anchor and
+  a rule test. Open; tracked on #452 (E12-X02).
 - **Medium, SCR-048:** no web path shows a server bars rejection as the documented accessible error state; no
   web client consumes bars REST/WS yet. Blocked on design #329.
-- **Low:** no per-user REST rate limit or coalescing of identical expensive reads (BR-36, X02 F3, #528);
-  served-bars log lines lack `build_version`; the web production-bundle guard has no E12 identifiers registered
-  and no test pins the absence of user identifiers in spec logs (BR-26, SR-E12-16). Open; owner: the E12 lane,
-  with this review's sign-off.
+- **Low:** no per-user REST rate limit or coalescing of identical expensive reads (BR-36; its load run is
+  carried to #528, E12-Q05); served-bars log lines lack `build_version`; the web production-bundle guard has no
+  E12 identifiers registered and no test pins the absence of user identifiers in spec logs (BR-26, SR-E12-16).
+  Open; the last three are tracked on #538 (E12-X04), whose sign-off waits for each to be fixed or accepted.
+- **Low, bars store-failure handling (BR-27, SR-E12-01):** a bars read whose store does not answer, or answers
+  with a driver error, is not always bounded in time or mapped to 503. Open; tracked by #3287 (E12-X02).
 
-**Known residuals the model already accepts or tracks:** the unkeyed row checksum is tamper-evident against naive
-edits only (RSK-058); the renko window estimate is an estimate (#3279); rows dropped after write retries are
-exhausted are counted but not replayed (#531).
+**Known residuals the model already accepts or tracks:** the row checksum detects naive edits only, not a
+deliberate edit by anyone with write access to the store (RSK-058); the renko window estimate is an estimate
+(#3279); rows dropped after write retries are exhausted are counted but not replayed (#531).
 
 **Not covered by this review:** penetration testing (E43, pre-live gate R4). This review is internal and does not
 substitute for it.
@@ -611,6 +619,7 @@ path; a privileged rebuild operation being added (E12-S12).
 | 2026-10-29 | author (#2294)                                          | Section 10 detection signals built                                                                                                                                                                                          |
 | 2026-10-31 | author (E12-T06, #399 R3)                               | Closing security record (§13); BR-23 test added                                                                                                                                                                             |
 | 2026-11-03 | E12-X04 review read (#538)                              | 54 controls: 36 present and tested, 4 built differently and equivalent, 4 weakly tested, 1 unreachable, 8 absent, 1 pending an in-flight PR. 13 findings: P0 1, High 1, Medium 7, Low 3, Info 1. Sign-off pending (P0 open) |
+| 2026-11-04 | author (E12-X04 fold, #538)                             | Rebased onto the coverage-hole serving (#5432); every open finding names its tracking issue. 14 findings: P0 1, High 1, Medium 7, Low 4, Info 1 (adds the store-failure Low, #3287)                                         |
 
 ## 13. E12-T06 closing security record (2026-10-31)
 
@@ -745,34 +754,39 @@ section is updated in the same PR.
    must re-read closed bars over REST `/market/bars` after any `snap`. A time bar may still be amended by a print up to 60 s late, delivered as an amend of
    the same bar; later prints are dropped and counted. A non-time bar may absorb a late print into the open
    bar. Treat "confirmed" as "final unless amended within 60 s of close", not as immutable.
-4. **`recording_started_at` honesty.** A window before the recording start is refused, naming the recording
-   start. `meta.sources` never claims `tape` when no tape rows were served. Kline-sourced windows have **null**,
+4. **`recording_started_at` honesty.** For non-time bars (tick, volume, delta, range, renko), a window that
+   begins before the recording start is refused, naming the recording start; time bars are not refused on this
+   ground. `meta.sources` never claims `tape` when no tape rows were served. Kline-sourced windows have **null**,
    never zero, delta fields.
 5. **Generations.** A generation change on WS always arrives as a full snapshot, never as a delta.
 
 **Non-guarantees (you must NOT assume these):**
 
-1. **Partial and gap marking on bars and klines REST** — _pending: P0, a dedicated fix in the #5396 lane._ Today `GET /market/bars` does not
-   mark withheld, gapped or partial bars, so a missing bar can look like a quiet market. The per-bar
-   `gap_before`, `partial` and `tape_gap` flags and `coverage_holes` are in the contract (#5424) but not yet
-   served. `GET /market/klines` lists in `meta.coverage_holes` only the part of a window after now; ranges inside the
-   window it could not serve are not yet listed, and per-bar flags are not served. Until the P0 closes, do not
-   treat a `/market/bars` or `/market/klines` page as complete.
+1. **Partial and gap marking on bars and klines REST** — _pending: P0, #5396 PR B and #452._ Both
+   `GET /market/bars` and `GET /market/klines` list in `meta.coverage_holes` the ranges of closed bars the server
+   built but did not store (`/market/klines` also the part of a window after now). Not yet served: the per-bar
+   `gap_before`, `partial` and `tape_gap` flags and the other in-window ranges a read cannot serve (#5396 PR B),
+   and a marker for a stored row not served because it fails its integrity check (#452), so a missing bar can
+   still look like a quiet market. Until the P0 closes, do not treat a `/market/bars` or `/market/klines` page as
+   complete.
 2. **`build_version` provenance on REST** — _pending: #5396 PR B._ REST bars do not yet carry `spec_hash`,
    `build_version` or `stale_build`. Treat REST provenance as unknown, not as current.
 3. **Rebuild.** No rebuild runs today: rows built by an older builder version are counted and a rebuild is
    requested, but they are not healed. No atomic generation swap or same-version parity guarantee exists until
    E12-S12 (#535).
-4. **Checksums as a security boundary.** Row checksums are unkeyed and detect naive edits only; no exchange-side
+4. **Checksums as a security boundary.** Row checksums detect naive edits only, not a deliberate edit by
+   anyone with write access to the store; no exchange-side
    checksum exists (ADR-0005).
 5. **Wall-clock alignment of non-time bars.** Tick, volume, delta, range and renko bars are not aligned to
    wall-clock boundaries.
 6. **Recovery of lost rows.** Rows lost after write retries are exhausted in a long store outage are counted
    (`bars_write_failed_total`) but not replayed (#531).
-7. **Gap marking on WS.** WS `bars` items do not yet carry `gap_before`, `partial` or `tape_gap`, and snapshots
-   do not carry `meta.coverage_holes` (declared in 23-ws, pending #5396). A missing bar on WS can look like a
-   quiet market.
+7. **Gap marking on WS.** A WS `bars` snapshot lists in `meta.coverage_holes` the ranges of closed bars the
+   server built but did not store; WS `bars` items do not yet carry `gap_before`, `partial` or `tape_gap`
+   (declared in 23-ws, pending #5396 PR B), and deltas carry no ranges. A missing bar on WS can still look like
+   a quiet market.
 
 **For any path that can place orders (E37 rules run by E35):** gate on confirmed bars and, once served, on the provenance and gap
-markers. Until non-guarantees 1, 2 and 7 close, no served bar stream is gap-marked: gate on WS confirmed bars for
-provenance, and do not treat any served series, REST or WS, as complete.
+markers. Until non-guarantees 1, 2 and 7 close, served series list only the ranges of closed bars the server
+did not store, with no per-bar gap marker: gate on WS confirmed bars for provenance, treat a confirmed time bar
+as final only 60 s after its close (guarantee 3), and do not treat any served series, REST or WS, as complete.
