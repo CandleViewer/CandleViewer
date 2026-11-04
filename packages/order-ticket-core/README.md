@@ -15,7 +15,8 @@ rule (C-2.12). The sizing mirror is **display-only** and says how exact it is (`
 | Slice | Holds                                                                                      |
 | ----- | ------------------------------------------------------------------------------------------ |
 | S1    | `model.ts` (draft and context types), `decimal.ts` (exact decimals), `instrument.ts` grids |
-| S2    | entry classification, `validate()` and the copy-deck messages                              |
+| S2a   | entry classification and `validate()`                                                      |
+| S2b   | the copy-deck messages (`messages.ts`)                                                     |
 | S3    | the `24` §9.3 sizing mirror and the shared golden vectors (parity, run in `unit-frontend`) |
 | S4    | `buildRequest()`, `Idempotency-Key`, the arm header, acceptance, errors, metrics, perf     |
 
@@ -26,6 +27,9 @@ rule (C-2.12). The sizing mirror is **display-only** and says how exact it is (`
 - **Grids** (`instrument.ts`): quantities floor to the lot; a stop rounds away from entry and a
   take-profit toward it, as the server's sizer does (`24` §9.3.1, §9.3.3); minimums are checked
   quantity first, then notional (the profile's leg floor when it is higher).
+- **Validation** (`validate.ts`): every failure in the ticket's field order, each with `22`'s
+  `field` / `rule` / code and its message data; a check without its inputs, and every server
+  rule not mirrored yet, is listed in `unmirrored`, never assumed to pass.
 - **Plain data** (`model.ts`): a draft and its context are structured-clone safe, so a worker can
   host the reducer if E30-K01 places it there.
 - **Fail closed**: an unknown position classes an order as an entry; an entry with no stop is
