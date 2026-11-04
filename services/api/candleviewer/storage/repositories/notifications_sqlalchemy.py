@@ -10,9 +10,9 @@ carries the caller's view, already resolved from the caller's permissions and gr
   The notification centre (SCR-014) mirrors the in-app toasts (US-ALRT-005); every channel's row
   stays in `GET /alerts/deliveries`, the alert centre's record, so an alert whose channels omit
   `in_app` has no history here beyond its channel-failure notices. Under `unread_only` an alert
-  row is unread while `status = 'sent' AND acked_at IS NULL` (the in-app half of
-  `unacked_count`), so an unread alert row can be acked; rule, order and system rows have no read
-  state yet (`read_at` null), so `unread_only` keeps them all;
+  row is unread while `status = 'sent' AND acked_at IS NULL` (what `unacked_count` counts), so
+  an unread alert row can be acked; rule, order and system rows have no read state yet
+  (`read_at` null), so `unread_only` keeps them all;
 - rule: `rule_events` of exactly the rules the caller may read (`rules:read`; `rule_ids`, from the
   rules module's one visibility predicate) - the outcomes in `RULE_EVENT_KINDS`; never `payload`;
 - order: `order_events` of orders on the caller's accounts (`orders:read`; `accounts`, None for

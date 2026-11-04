@@ -54,6 +54,7 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.alerts.delivery_view import delivery_kind, silenced, storm_summary
 from candleviewer.observability import spawn
 
 #: Private topics are flat; the owner comes from the subscription (§6.2).
@@ -186,9 +187,10 @@ def _epoch_ms(d: datetime) -> int:
 
 def delivery_item(row: DeliveryRecord) -> dict[str, Any]:
     """One §15.7 `deliveries` item: `message` is the `body`, falling back to `title`; `symbol` is
-    the firing's when it is one. Never the delivery `context` or anything of the alert's SECRET
-    columns."""
+    the firing's when it is one; `kind` and a storm summary's `summary` derive from the row's
+    `context` (CC-7). Never the `context` itself or anything of the alert's SECRET columns."""
     symbol = row.context.get("symbol") if isinstance(row.context, dict) else None
+    summary = storm_summary(row.context)
     return {
         "id": row.id, "alert_id": row.alert_id, "channel": row.channel, "status": row.status,
         "severity": row.severity or "info", "title": row.title,
@@ -196,7 +198,12 @@ def delivery_item(row: DeliveryRecord) -> dict[str, Any]:
         "symbol": symbol if isinstance(symbol, str) and _SYMBOL.fullmatch(symbol) else None,
         "fired_at_ms": _epoch_ms(row.queued_at),
         "acked_at_ms": None if row.acked_at is None else _epoch_ms(row.acked_at),
-        "error": row.error_message,
+        "error": row.error_message, "kind": delivery_kind(row.context),
+        "silenced": silenced(row.context),
+        "summary": None if summary is None else {
+            "count": summary.count, "symbols": list(summary.symbols),
+            "window_start_ms": summary.window_start_ms, "window_end_ms": summary.window_end_ms,
+        },
     }  # fmt: skip
 
 

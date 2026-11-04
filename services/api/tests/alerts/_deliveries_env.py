@@ -76,11 +76,13 @@ class FakeDeliveryStore:
     async def alert_owner(self, alert_id: str) -> str | None:
         return self.owners.get(alert_id)
 
-    async def unacked_count(self, user_id: str) -> int:
+    async def unacked_count(self, user_id: str, *, in_app_only: bool = True) -> int:
+        """As the SQL: in-app rows only unless asked for every channel (CC-18)."""
         return sum(
             r.user_id == user_id and r.status == "sent" and r.acked_at is None
+            and (r.channel == "in_app" or not in_app_only)
             for r in self.rows.values()
-        )
+        )  # fmt: skip
 
     async def list_page(
         self,

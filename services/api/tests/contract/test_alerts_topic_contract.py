@@ -43,9 +43,7 @@ def test_an_item_carries_exactly_the_schemas_properties() -> None:
     reader = FakeReader()
     item = delivery_item(reader.add(USER_A))
     declared = _ALERTS["properties"]["deliveries"]["items"]["properties"]
-    # E40-S02: contracted in slice 1, served from slice 2 of #1130, which drops this.
-    pending = {"kind", "summary", "silenced"}
-    assert set(item) == set(declared) - pending
+    assert set(item) == set(declared)
     assert set(_ALERTS["properties"]) == {"deliveries", "unacked_count"}
 
 
@@ -69,3 +67,31 @@ def test_no_secret_column_of_alerts_can_reach_an_item() -> None:
     row = reader.add(USER_A, context={name: "x" for name in secret} | {"symbol": "BTCUSDT"})
     text = json.dumps(delivery_item(row))
     assert not any(name in text for name in secret) and '"context"' not in text
+
+
+def test_every_kind_and_a_storm_summary_validate() -> None:
+    """E40-D02 CC-7 (#1130): each class D-39 names, and the summary with and without its window."""
+    reader = FakeReader()
+    contexts: list[dict[str, Any]] = [
+        {"symbol": "BTCUSDT", "condition_hash": "h", "gates": ["storm"]},
+        {"disarmed": True, "reason": "source_unavailable", "metric": "price"},
+        {"channel_failure": True, "failed_delivery_id": 7},
+        {"storm_summary": True, "suppressed": 3, "symbols": ["A", "B"],
+         "window_start_ms": 1_790_000_000_000, "window_end_ms": 1_790_000_060_000},
+        {"storm_summary": True, "suppressed": 1, "symbols": ["A"]},
+    ]  # fmt: skip
+    items = [delivery_item(reader.add(USER_A, context=c)) for c in contexts]
+    assert [i["kind"] for i in items] == [
+        "firing", "disarm_notice", "failure_notice", "storm_summary", "storm_summary",
+    ]  # fmt: skip
+    assert items[3]["summary"] == {"count": 3, "symbols": ["A", "B"],
+                                   "window_start_ms": 1_790_000_000_000,
+                                   "window_end_ms": 1_790_000_060_000}  # fmt: skip
+    assert items[4]["summary"]["window_start_ms"] is None
+    assert all(i["summary"] is None for i in items[:3])
+    _validate({"deliveries": items, "unacked_count": 0})
+    assert "condition_hash" not in json.dumps(items)
+    held = [delivery_item(reader.add(USER_A, context={"silenced": s})) for s in
+            ("muted_symbol", "quiet_hours")]  # fmt: skip
+    assert [i["silenced"] for i in held] == ["muted_symbol", "quiet_hours"]
+    _validate({"deliveries": held})
