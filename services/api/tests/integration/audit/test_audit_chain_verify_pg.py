@@ -62,9 +62,8 @@ def test_the_entry_point_on_cv_ro_names_the_fixtures_victim(
     assert entry.main([]) == 1
     out = capsys.readouterr().out
     assert f"FAIL chain: first_bad_id={victim} kind=entry_hash_mismatch" in out
-    for section in ("grants", "triggers"):  # cv_app S+I, cv_ro exactly SELECT, live
+    for section in ("grants", "triggers", "fields"):  # cv_app S+I, cv_ro exactly SELECT, live
         assert f"PASS {section}" in out
-    assert "SKIP fields: lands in slice 2" in out
     assert "cv_ro_test_pw" not in out
 
 

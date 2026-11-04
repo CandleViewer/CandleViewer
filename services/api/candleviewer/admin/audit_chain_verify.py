@@ -6,10 +6,12 @@ in-app verify's one walk, statement and budget (`AuditQueryService.plan_verify`,
 genesis to the head read at start, with its database checkpoints. New here: the definitions
 (`--check`: `cv_app` exactly SELECT and INSERT and `cv_ro` exactly SELECT on `audit_log` and
 `audit_checkpoints`, over all seven table privileges, column grants and every role a login can
-become included; the five guard triggers firing for an ordinary session, with every
-`session_replication_role` that applies `origin`; `fields` prints SKIP until slice 2); the
-checkpoint file (interim anchor: each head names an entry with the same hash, with
-`_check_range`'s kinds, and its sha256 is the recorded one); the report and the exit codes.
+become included; the five guard triggers firing for an ordinary session in the shape
+`0003_audit_log` gives them, with every `session_replication_role` that applies `origin`; the
+deployed `audit_chain()` framing exactly `HASHED_FIELDS` in order, a shape the reader does not
+know being a finding); the checkpoint file (interim anchor: each head names an entry with the
+same hash, with `_check_range`'s kinds, and its sha256 is the recorded one); the report and the
+exit codes.
 
 A break is named as `audit_ack_break` names one (`first_bad_id`, `kind`). The tool writes nothing
 and engages no halt: a break it finds is a tamper signal for an Owner-run `verifyAuditChain`.
@@ -25,7 +27,7 @@ import hashlib
 import json
 import re
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
@@ -34,7 +36,7 @@ from candleviewer.admin.audited import audit_exempt
 from candleviewer.audit.hashing import ChainHasherBusy
 from candleviewer.audit.models import ChainBreakKind
 from candleviewer.audit.query import VERIFY_BATCH_SIZE, AuditQueryService, chain_digest
-from candleviewer.audit.repository import AuditRepository
+from candleviewer.audit.repository import HASHED_FIELDS, AuditRepository
 from candleviewer.audit.verify_runner import VerifyStopReason
 from candleviewer.storage.errors import AuditEntryTooLarge, StorageTierUnavailable
 
@@ -55,18 +57,27 @@ AUDIT_TABLES: Final = ("audit_log", "audit_checkpoints")
 TABLE_PRIVILEGES: Final = tuple("SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER".split())
 #: What each login holds on each audit table, exactly (C-5.7).
 EXPECTED_GRANTS: Final = {"cv_app": frozenset({"SELECT", "INSERT"}), "cv_ro": frozenset({"SELECT"})}
-#: Trigger name -> table, as `0003_audit_log` creates them.
+#: Trigger name -> (table, shape), as `0003_audit_log` creates them. The shape is the store's:
+#: the `tgtype` bits (1 row, 2 before, 4 insert, 8 delete, 16 update, 32 truncate) and the
+#: function; a WHEN clause or an `UPDATE OF` column list would add a word.
+_ROW_INSERT, _ROW_UPDATE_DELETE, _TRUNCATE = "type=7", "type=27", "type=34"
 EXPECTED_TRIGGERS: Final = {
-    "trg_audit_chain": "audit_log",
-    "trg_audit_append": "audit_log",
-    "trg_audit_no_truncate": "audit_log",
-    "trg_audit_ckpt_append": "audit_checkpoints",
-    "trg_audit_ckpt_no_truncate": "audit_checkpoints",
+    "trg_audit_chain": ("audit_log", f"{_ROW_INSERT} function=public.audit_chain"),
+    "trg_audit_append": ("audit_log", f"{_ROW_UPDATE_DELETE} function=public.forbid_mutation"),
+    "trg_audit_no_truncate": ("audit_log", f"{_TRUNCATE} function=public.audit_refuse_truncate"),
+    "trg_audit_ckpt_append": (
+        "audit_checkpoints",
+        f"{_ROW_UPDATE_DELETE} function=public.forbid_mutation",
+    ),
+    "trg_audit_ckpt_no_truncate": (
+        "audit_checkpoints",
+        f"{_TRUNCATE} function=public.audit_refuse_truncate",
+    ),
 }
 _SHA256: Final = re.compile(r"[0-9a-f]{64}")
 #: `head_id` is a Postgres `bigint`.
 _BIGINT_MAX: Final = 2**63 - 1
-FIELDS_SKIP: Final = "SKIP fields: lands in slice 2"
+TIMEOUT_MIN_S: Final = 1.0
 
 
 class VerifyStores(Protocol):
@@ -79,9 +90,11 @@ class VerifyStores(Protocol):
         self, roles: list[str], tables: list[str], privileges: list[str]
     ) -> dict[tuple[str, str], frozenset[str]]: ...
 
-    async def triggers(self, tables: list[str]) -> dict[tuple[str, str], bool]: ...
+    async def triggers(self, tables: list[str]) -> dict[tuple[str, str], tuple[bool, str]]: ...
 
     async def replication_roles(self) -> list[tuple[str, str]]: ...
+
+    async def chain_definition(self) -> str | None: ...
 
     async def dispose(self) -> None: ...
 
@@ -114,9 +127,15 @@ def main(argv: Sequence[str] | None = None, *, connect: Callable[[], VerifyStore
     """`connect` builds the stores from the settings (`None`: no read-only login); opens nothing."""
     args = _parser().parse_args(argv)
     if args.self_test:
+        given = (args.checkpoint_file, args.checkpoint_sha256, args.batch, args.timeout)
+        if any(value is not None for value in given):
+            return _usage("--self-test takes no other option")
         return asyncio.run(self_test())
-    if not 0 < args.timeout <= TIMEOUT_MAX_S:
-        return _usage(f"--timeout must be above 0 and at most {TIMEOUT_MAX_S:.0f} s")
+    batch = DEFAULT_BATCH if args.batch is None else args.batch
+    timeout = DEFAULT_TIMEOUT_S if args.timeout is None else args.timeout
+    if not TIMEOUT_MIN_S <= timeout <= TIMEOUT_MAX_S:
+        limits = f"{TIMEOUT_MIN_S:.0f} to {TIMEOUT_MAX_S:.0f}"
+        return _usage(f"--timeout must be {limits} s")
     if args.check and args.checkpoint_file is not None:
         return _usage("--check walks no chain, so it compares no checkpoint file")
     if args.checkpoint_sha256 is not None and not _SHA256.fullmatch(args.checkpoint_sha256):
@@ -138,7 +157,7 @@ def main(argv: Sequence[str] | None = None, *, connect: Callable[[], VerifyStore
         return _usage(f"invalid settings ({type(exc).__name__})")
     if stores is None:
         return _usage("set CV_AUDIT_VERIFY_DSN to a read-only login; CV_PG_DSN is never used")
-    run_args = (args.check, data, args.checkpoint_sha256, args.batch, args.timeout)
+    run_args = (args.check, data, args.checkpoint_sha256, batch, timeout)
     return asyncio.run(run(stores, *run_args))
 
 
@@ -160,16 +179,31 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-sha256", help="the file's sha256 as it was recorded")
     parser.add_argument(
         "--batch",
-        type=int,
-        default=DEFAULT_BATCH,
-        choices=range(1, VERIFY_BATCH_SIZE + 1),
-        metavar=f"1..{VERIFY_BATCH_SIZE}",
-        help="entries per read (default %(default)s)",
+        type=_batch,
+        metavar=_BATCH_RANGE,
+        help=f"entries per read (default {DEFAULT_BATCH})",
     )
     parser.add_argument(
-        "--timeout", type=float, default=DEFAULT_TIMEOUT_S, help="seconds (default %(default)s)"
+        "--timeout",
+        type=float,
+        metavar=f"{TIMEOUT_MIN_S:.0f}..{TIMEOUT_MAX_S:.0f}",
+        help=f"seconds for the whole run (default {DEFAULT_TIMEOUT_S:.0f})",
     )
     return parser
+
+
+_BATCH_RANGE: Final = f"1..{VERIFY_BATCH_SIZE}"
+
+
+def _batch(text: str) -> int:
+    """`--batch`: an integer in `_BATCH_RANGE`; the error names the range, not every choice."""
+    try:
+        value = int(text)
+    except ValueError:
+        value = 0
+    if not 1 <= value <= VERIFY_BATCH_SIZE:
+        raise argparse.ArgumentTypeError(f"must be an integer in {_BATCH_RANGE}")
+    return value
 
 
 async def run(
@@ -212,7 +246,8 @@ async def _checks(
             try:
                 plan = await query.plan_verify(from_id=None, to_id=None, max_span=_WHOLE_CHAIN)
                 result = await query.run_verify(plan, batch_size=batch)
-            finally:
+            finally:  # a stop mid-walk reports the entries the walk had already checked
+                checked = query.entries_walked
                 query.close()
             checked = result.entries_checked
             if plan.from_id is not None and not result.full_chain:  # a pass covers the whole chain
@@ -257,15 +292,15 @@ def stop_reason(exc: BaseException) -> str:
 
 
 async def definitions(stores: VerifyStores, found: list[Finding]) -> list[Finding]:
-    """The grants and the guard triggers, each section's findings added to `found` as soon as it
-    ends (a later stop keeps them). The `fields` section lands in slice 2."""
+    """The grants, the guard triggers and the deployed `audit_chain()` field order, each
+    section's findings added to `found` as soon as it ends (a later stop keeps them)."""
     held = await stores.held_privileges(
         list(EXPECTED_GRANTS), list(AUDIT_TABLES), list(TABLE_PRIVILEGES)
     )
     found += _section("grants", check_grants(held))
     present = await stores.triggers(list(AUDIT_TABLES))
     found += _section("triggers", check_triggers(present, await stores.replication_roles()))
-    _out(FIELDS_SKIP)
+    found += _section("fields", check_fields(await stores.chain_definition()))
     return found
 
 
@@ -284,19 +319,150 @@ def check_grants(held: dict[tuple[str, str], frozenset[str]]) -> list[Finding]:
 
 
 def check_triggers(
-    present: dict[tuple[str, str], bool], replication: Sequence[tuple[str, str]]
+    present: dict[tuple[str, str], tuple[bool, str]], replication: Sequence[tuple[str, str]]
 ) -> list[Finding]:
-    """Each guard trigger on its table and firing, and each applying replication role `origin`."""
+    """Each guard trigger on its table, firing, and of the shape `0003_audit_log` gives it; each
+    applying replication role `origin`."""
     found: list[Finding] = []
     for where, value in replication:
         if value.strip().lower() != "origin":
             found.append(Finding("triggers", f"session_replication_role {value!r} ({where})"))
-    for name, table in sorted(EXPECTED_TRIGGERS.items()):
-        if (name, table) not in present:
+    for name, (table, shape) in sorted(EXPECTED_TRIGGERS.items()):
+        got = present.get((name, table))
+        if got is None:
             found.append(Finding("triggers", f"{name} on {table}: absent"))
-        elif present[(name, table)] is not True:
+            continue
+        if got[0] is not True:
             found.append(Finding("triggers", f"{name} on {table}: disabled"))
+        if got[1] != shape:
+            found.append(Finding("triggers", f"{name} on {table}: {got[1]}, expected {shape}"))
     return found
+
+
+# --- `fields`: the deployed `audit_chain()` against `HASHED_FIELDS` ----------------------------
+
+#: The one statement that sets the hash, as 0003 and 0045 write it.
+_ENTRY_HASH: Final = re.compile(r"\bNEW\.entry_hash\s*:=\s*encode\(\s*digest\(")
+_DIGEST_TAIL: Final = re.compile(r"\s*,\s*'hex'\s*\)\s*;")
+#: A framed column: `audit_field(NEW.<col>)`, optionally cast to text.
+_PLAIN_TERM: Final = re.compile(r"audit_field\(\s*NEW\.([a-z_]+)(?:\s*::\s*text)?\s*\)")
+#: `event_ts`, framed in the rendering the verifier reads (`fetch_verify_batch`).
+_EVENT_TS_TERM: Final = re.compile(
+    r"audit_field\(\s*to_char\(\s*NEW\.event_ts\s+AT\s+TIME\s+ZONE\s+'UTC'\s*,\s*"
+    r"'YYYY-MM-DD\"T\"HH24:MI:SS\.USOF'\s*\)\s*\)"
+)
+#: The other uses of NEW the function may make: the three columns it sets, and its return.
+_SETS: Final = re.compile(r"\bNEW\.(id|prev_hash|entry_hash)\s*:=")
+_RETURN_NEW: Final = re.compile(r"\bRETURN\s+NEW\s*;")
+_NEW: Final = re.compile(r"\bNEW\b", re.IGNORECASE)
+
+
+class _Unparsed(ValueError):
+    """A definition the `fields` reader does not understand: a finding, never a pass."""
+
+
+def check_fields(definition: str | None) -> list[Finding]:
+    """The deployed `audit_chain()` (`pg_get_functiondef`) must hash exactly `prev_hash` and then
+    `HASHED_FIELDS`, in order, each framed by `audit_field`, and nothing else. Any shape the
+    reader does not know is a finding (fail closed): a comment, a second digest, a term that is
+    not a framed column, a use of NEW outside the framed terms, the three columns it sets and its
+    one `RETURN NEW`."""
+    if not definition:
+        return [Finding("fields", "audit_chain() not found")]
+    try:
+        framed = framed_fields(definition)
+    except _Unparsed as exc:
+        return [Finding("fields", f"definition not understood: {exc}")]
+    expected = ("prev_hash", *HASHED_FIELDS)
+    if framed != expected:
+        return [Finding("fields", f"{len(framed)} framed {list(framed)} != expected")]
+    return []
+
+
+def framed_fields(definition: str) -> tuple[str, ...]:
+    """The columns the definition's one digest frames, in order; `_Unparsed` for any other
+    shape."""
+    if "--" in definition or "/*" in definition:
+        raise _Unparsed("a comment")
+    if len(re.findall(r"\bdigest\s*\(", definition, re.IGNORECASE)) != 1:
+        raise _Unparsed("not exactly one digest")
+    starts = list(_ENTRY_HASH.finditer(definition))
+    if len(starts) != 1:
+        raise _Unparsed("the entry_hash assignment")
+    args, end = _call_arguments(definition, starts[0].end())
+    if len(args) != 2 or args[1].strip() != "'sha256'":
+        raise _Unparsed("the digest arguments")
+    if not _DIGEST_TAIL.match(definition, end):
+        raise _Unparsed("the digest encoding")
+    columns: list[str] = []
+    for number, raw in enumerate(_split_top_level(args[0], "||"), start=1):
+        term = raw.strip()
+        plain = _PLAIN_TERM.fullmatch(term)
+        if plain is not None and plain.group(1) != "event_ts":
+            columns.append(plain.group(1))
+        elif _EVENT_TS_TERM.fullmatch(term):
+            columns.append("event_ts")
+        else:
+            raise _Unparsed(f"term {number} is not a framed column")
+    sets = [m.group(1) for m in _SETS.finditer(definition)]
+    if sorted(sets) not in (["entry_hash", "prev_hash"], ["entry_hash", "id", "prev_hash"]):
+        raise _Unparsed("the columns it sets")
+    returns = len(_RETURN_NEW.findall(definition))
+    if returns != 1 or len(_NEW.findall(definition)) != len(columns) + len(sets) + returns:
+        raise _Unparsed("NEW used outside the framed terms")
+    return tuple(columns)
+
+
+def _scan(text: str, start: int) -> Iterator[tuple[int, int]]:
+    """(index, paren depth) of each character of `text` from `start` outside a quoted literal
+    or identifier, the depth before the character."""
+    depth, index, quote = 0, start, ""
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "'\"":
+            quote = char
+        else:
+            yield index, depth
+            depth += (char == "(") - (char == ")")
+        index += 1
+    if quote:
+        raise _Unparsed("an unterminated literal")
+
+
+def _call_arguments(text: str, start: int) -> tuple[list[str], int]:
+    """The top-level arguments of the call whose `(` ends just before `start`, and the index
+    after its `)`."""
+    args: list[str] = []
+    begin = start
+    for index, depth in _scan(text, start):
+        char = text[index]
+        if depth == 0 and char == ",":
+            args.append(text[begin:index])
+            begin = index + 1
+        elif depth == 0 and char == ")":
+            args.append(text[begin:index])
+            return args, index + 1
+    raise _Unparsed("an unclosed call")
+
+
+def _split_top_level(text: str, operator: str) -> list[str]:
+    """`text` split at each `operator` outside parentheses and quotes."""
+    parts: list[str] = []
+    begin = depth = 0
+    for index, before in _scan(text, 0):
+        if before < 0:
+            raise _Unparsed("unbalanced parentheses")
+        if before == 0 and index >= begin and text.startswith(operator, index):
+            parts.append(text[begin:index])
+            begin = index + len(operator)
+        depth = before + (text[index] == "(") - (text[index] == ")")
+    if depth != 0:
+        raise _Unparsed("unbalanced parentheses")
+    parts.append(text[begin:])
+    return parts
 
 
 def parse_heads(data: bytes) -> tuple[list[FileHead], list[Finding]]:
@@ -375,8 +541,9 @@ class SeededStores:
             self.rows.append((2 * n, prev, entry, *values))  # ids with gaps, as the table has
             prev = entry
         self.held = {(r, t): e for r, e in EXPECTED_GRANTS.items() for t in AUDIT_TABLES}
-        self.present = {pair: True for pair in EXPECTED_TRIGGERS.items()}
+        self.present = {(n, t): (True, shape) for n, (t, shape) in EXPECTED_TRIGGERS.items()}
         self.replication = [("session", "origin")]
+        self.definition = RENDERED_CHAIN
         self.checkpoints: list[tuple[int, str]] = []
         self.disposed = False
 
@@ -392,12 +559,16 @@ class SeededStores:
         return dict(self.held)
 
     @audit_exempt("read")
-    async def triggers(self, tables: list[str]) -> dict[tuple[str, str], bool]:
+    async def triggers(self, tables: list[str]) -> dict[tuple[str, str], tuple[bool, str]]:
         return dict(self.present)
 
     @audit_exempt("read")
     async def replication_roles(self) -> list[tuple[str, str]]:
         return list(self.replication)
+
+    @audit_exempt("read")
+    async def chain_definition(self) -> str | None:
+        return self.definition
 
     @audit_exempt("lifecycle")
     async def dispose(self) -> None:
@@ -433,6 +604,41 @@ class SeededStores:
         return min(above, default=None)
 
 
+#: `audit_chain()` as `pg_get_functiondef` renders the definition 0045 deploys: the header
+#: rewritten, the body verbatim.
+RENDERED_CHAIN: Final = """CREATE OR REPLACE FUNCTION public.audit_chain()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog', 'public', 'pg_temp'
+AS $function$
+DECLARE last_hash sha256_hex;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('audit_log'));
+  NEW.id := nextval('audit_log_id_seq');
+  SELECT entry_hash INTO last_hash FROM audit_log ORDER BY id DESC LIMIT 1;
+  NEW.prev_hash := COALESCE(last_hash, repeat('0',64));
+  NEW.entry_hash := encode(digest(
+      audit_field(NEW.prev_hash)
+      || audit_field(NEW.actor_user_id::text) || audit_field(NEW.actor_label)
+      || audit_field(NEW.actor_ip::text) || audit_field(NEW.session_id::text)
+      || audit_field(NEW.action) || audit_field(NEW.object_kind)
+      || audit_field(NEW.object_id) || audit_field(NEW.outcome::text)
+      || audit_field(NEW.severity::text) || audit_field(NEW.reason)
+      || audit_field(NEW.before_state::text) || audit_field(NEW.after_state::text)
+      || audit_field(NEW.request_id::text) || audit_field(NEW.env::text)
+      || audit_field(to_char(NEW.event_ts AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.USOF')),
+    'sha256'), 'hex');
+  RETURN NEW;
+END $function$
+"""
+_OFF: Final = (False, EXPECTED_TRIGGERS["trg_audit_append"][1])
+_UNFRAMED: Final = RENDERED_CHAIN.replace("audit_field(NEW.reason)", "NEW.reason")
+_REORDERED: Final = RENDERED_CHAIN.replace(
+    "audit_field(NEW.action) || audit_field(NEW.object_kind)",
+    "audit_field(NEW.object_kind) || audit_field(NEW.action)",
+)
+
+
 def _file(*heads: tuple[int, str]) -> bytes:
     return "".join(json.dumps({"head_id": h, "head_hash": hh}) + "\n" for h, hh in heads).encode()
 
@@ -448,8 +654,11 @@ async def self_test() -> int:
         ("re-ordered entries", lambda s: _swap(s, 2, 3), EXIT_FAIL),
         ("checkpoint above the head", lambda s: s.checkpoints.append((99, "a" * 64)), EXIT_FAIL),
         ("widened grant", lambda s: s.held.update(widened), EXIT_FAIL),
-        ("disabled guard", lambda s: s.present.update({append: False}), EXIT_FAIL),
+        ("disabled guard", lambda s: s.present.update({append: _OFF}), EXIT_FAIL),
         ("replica default", lambda s: s.replication.append(("session", "replica")), EXIT_FAIL),
+        ("no chain function", lambda s: setattr(s, "definition", ""), EXIT_FAIL),
+        ("field order", lambda s: setattr(s, "definition", _REORDERED), EXIT_FAIL),
+        ("unframed field", lambda s: setattr(s, "definition", _UNFRAMED), EXIT_FAIL),
     ]
     failed = 0
     for name, inject, expected in cases:

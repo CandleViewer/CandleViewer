@@ -392,6 +392,13 @@ class AuditQueryService:
         self._sleep = sleep
         self._structure_budget = structure_budget
         self.verify_slot = VerifySlot()
+        self._walked = 0
+
+    @property
+    def entries_walked(self) -> int:
+        """The entries the latest `run_verify` has checked so far, the last one included: what a
+        caller reports when the run stops before it returns."""
+        return self._walked
 
     def close(self) -> None:
         self._hasher.shutdown()
@@ -562,6 +569,7 @@ class AuditQueryService:
         `batch_size` rows, hashed off the event loop; the walk stops at the first divergence
         (`kind` says which check failed). A database failure, a read over its time budget
         or a full hasher raises and returns nothing."""
+        self._walked = 0
         stored = None
         if plan.from_id is not None:
             stored = await self._repository.fetch_anchor_hash(plan.from_id)
@@ -664,6 +672,7 @@ class AuditQueryService:
                 check = functools.partial(_walk_batch, expected, rows, checkpoints)
                 walk = await self._hasher.run(check)
                 checked, passed = checked + walk.checked, passed + walk.passed
+                self._walked = checked
                 if walk.bad_id is not None:
                     return _Walk(checked, passed, walk.last_hash, walk.bad_id, walk.kind)
                 expected, passed_id = walk.last_hash, walk.last_id

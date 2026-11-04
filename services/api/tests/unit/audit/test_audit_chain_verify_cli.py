@@ -18,6 +18,7 @@ from candleviewer.admin import audit_chain_verify as cli
 from candleviewer.audit.checkpoint import run_checkpoint
 from candleviewer.audit.hashing import ChainHasherBusy
 from candleviewer.audit.query import AuditQueryService
+from candleviewer.audit.repository import HASHED_FIELDS
 from candleviewer.storage.errors import AuditEntryTooLarge
 from candleviewer.storage.guarded_privileges import GUARDED_PRIVILEGES
 from candleviewer.storage.repositories.audit_sqlalchemy import AuditReadFailed
@@ -91,9 +92,8 @@ async def test_run_passes_an_intact_chain_with_its_checkpoint_file(
     status = await _run(stores, data=data, sha256=hashlib.sha256(data).hexdigest(), batch=3)
     out = capsys.readouterr().out
     assert status == cli.EXIT_PASS and stores.disposed
-    for section in ("grants", "triggers", "chain", "checkpoint-file"):
+    for section in ("grants", "triggers", "fields", "chain", "checkpoint-file"):
         assert f"PASS {section}" in out
-    assert "SKIP fields: lands in slice 2" in out and "PASS fields" not in out
     assert "PASS chain (entries_checked=7, head id 7)" in out
     assert "RESULT: PASS (0 FAIL)" in out
     assert [c[2] for c in repo.verify_calls] == [3, 3, 3]
@@ -142,6 +142,22 @@ async def test_run_names_a_database_checkpoint_above_the_head(capsys: Cap) -> No
 async def test_run_passes_an_empty_log(capsys: Cap) -> None:
     assert await _run(_Stores(FakeAuditRepository())) == cli.EXIT_PASS
     assert "PASS chain (entries_checked=0, head id 0)" in capsys.readouterr().out
+
+
+async def test_a_stop_mid_walk_reports_the_entries_already_checked(capsys: Cap) -> None:
+    class _Drops(FakeAuditRepository):
+        async def fetch_verify_batch(self, **kw: Any) -> list[tuple[Any, ...]]:
+            if self.verify_calls:
+                self.verify_calls.append((0, 0, 0))
+                raise AuditReadFailed("57014")
+            return await super().fetch_verify_batch(**kw)
+
+    repo = _Drops()
+    for row in (await _repo(5)).rows:
+        repo.rows.append(row)
+    assert await _run(_Stores(repo), batch=2) == cli.EXIT_STOPPED
+    out = capsys.readouterr().out
+    assert "STOPPED: store_unavailable sqlstate=57014 (entries_checked=2)" in out
 
 
 async def test_check_only_reads_the_definitions_and_walks_nothing(capsys: Cap) -> None:
@@ -231,9 +247,10 @@ async def test_run_names_a_widened_grant_a_missing_role_and_a_disabled_guard(cap
     stores = _Stores(await _repo(2))
     stores.held[("cv_app", "audit_log")] = frozenset({"SELECT", "INSERT", "TRIGGER"})
     del stores.held[("cv_ro", "audit_checkpoints")]
-    stores.present[("trg_audit_append", "audit_log")] = False
+    append = ("trg_audit_append", "audit_log")
+    stores.present[append] = (False, stores.present[append][1])
     del stores.present[("trg_audit_chain", "audit_log")]
-    stores.present[("trg_audit_chain", "audit_checkpoints")] = True  # same name, other table
+    stores.present[("trg_audit_chain", "audit_checkpoints")] = (True, "")  # same name, other table
     assert await _run(stores) == cli.EXIT_FAIL
     out = capsys.readouterr().out
     assert "FAIL grants: cv_app on audit_log: extra ['TRIGGER'], missing []" in out
@@ -242,27 +259,158 @@ async def test_run_names_a_widened_grant_a_missing_role_and_a_disabled_guard(cap
     assert "FAIL triggers: trg_audit_chain on audit_log: absent" in out
 
 
-async def test_the_fields_section_is_skipped_never_passed(capsys: Cap) -> None:
-    assert await _run(_Stores(await _repo(1)), check_only=True) == cli.EXIT_PASS
-    out = capsys.readouterr().out
-    assert "SKIP fields: lands in slice 2" in out and "PASS fields" not in out
+async def test_the_deployed_field_order_must_be_hashed_fields(capsys: Cap) -> None:
+    stores = _Stores(await _repo(1))
+    stores.definition = stores.definition.replace("NEW.actor_label", "NEW.actor_ip", 1)
+    assert await _run(stores, check_only=True) == cli.EXIT_FAIL
+    assert "FAIL fields:" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("shape", "finding"),
+    [
+        ("type=23 function=public.forbid_mutation", "type=23"),  # UPDATE only, no DELETE
+        ("type=26 function=public.forbid_mutation", "type=26"),  # a statement trigger
+        ("type=25 function=public.forbid_mutation", "type=25"),  # AFTER
+        ("type=27 function=public.audit_chain", "function=public.audit_chain"),
+        ("type=27 function=other.forbid_mutation", "function=other.forbid_mutation"),
+        ("type=27 function=public.forbid_mutation when", "when"),
+        ("type=27 function=public.forbid_mutation columns", "columns"),
+    ],
+)
+def test_a_guard_trigger_of_another_shape_is_a_finding(shape: str, finding: str) -> None:
+    present = _present()
+    present[("trg_audit_append", "audit_log")] = (True, shape)
+    (only,) = cli.check_triggers(present, [])
+    assert only.detail.startswith(f"trg_audit_append on audit_log: {shape}, expected type=27")
+    assert finding in only.detail
+
+
+def _present() -> dict[tuple[str, str], tuple[bool, str]]:
+    return {(n, t): (True, shape) for n, (t, shape) in cli.EXPECTED_TRIGGERS.items()}
 
 
 def test_a_trigger_reported_in_any_state_but_true_does_not_fire() -> None:
-    present = {pair: True for pair in cli.EXPECTED_TRIGGERS.items()}
+    present = _present()
     assert cli.check_triggers(present, [("session", "origin")]) == []
+    chain = ("trg_audit_chain", "audit_log")
     for state in (False, None, 1, "O"):
-        present[("trg_audit_chain", "audit_log")] = state  # type: ignore[assignment]  # a store that returns a non-bool
+        present[chain] = (state, present[chain][1])  # type: ignore[assignment]  # a store that returns a non-bool
         (only,) = cli.check_triggers(present, [])
         assert only.detail == "trg_audit_chain on audit_log: disabled"
 
 
 @pytest.mark.parametrize("value", ["replica", "local", "", "Replica"])
 def test_triggers_fail_unless_every_replication_role_setting_is_origin(value: str) -> None:
-    present = {pair: True for pair in cli.EXPECTED_TRIGGERS.items()}
     settings = [("session", "origin"), ("this database, role cv_app", value), ("x", " ORIGIN")]
-    (only,) = cli.check_triggers(present, settings)
+    (only,) = cli.check_triggers(_present(), settings)
     assert only.detail == f"session_replication_role {value!r} (this database, role cv_app)"
+
+
+def _shipped_bodies() -> list[str]:
+    """0045's upgrade and downgrade `audit_chain()` bodies, as `pg_get_functiondef` renders a
+    deployed one: the header rewritten, the body verbatim between `$function$` quotes."""
+    versions = Path(entry.__file__).resolve().parent / "migrations" / "versions"
+    text = (versions / "0045_audit_chain_hardening.py").read_text(encoding="utf-8")
+    bodies = text.split("$BODY$")[1::2]
+    assert len(bodies) == 2
+    header = (
+        "CREATE OR REPLACE FUNCTION public.audit_chain()\n RETURNS trigger\n LANGUAGE plpgsql\n"
+    )
+    pinned = " SET search_path TO 'pg_catalog', 'public', 'pg_temp'\n"
+    return [
+        f"{header}{pinned}AS $function${bodies[0]}$function$\n",
+        f"{header}AS $function${bodies[1]}$function$\n",
+    ]
+
+
+@pytest.mark.parametrize("index", [0, 1])
+def test_the_shipped_definitions_frame_exactly_the_hashed_fields(index: int) -> None:
+    definition = _shipped_bodies()[index]
+    assert cli.framed_fields(definition) == ("prev_hash", *HASHED_FIELDS)
+    assert cli.check_fields(definition) == []
+
+
+def test_the_self_test_rendering_frames_exactly_the_hashed_fields() -> None:
+    assert cli.check_fields(cli.RENDERED_CHAIN) == []
+
+
+_SHIPPED = _shipped_bodies()[0]
+_LABEL = "audit_field(NEW.actor_label)"
+_EVENT = "audit_field(to_char(NEW.event_ts AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.USOF'))"
+
+
+@pytest.mark.parametrize(
+    ("definition", "why"),
+    [
+        (None, "audit_chain() not found"),
+        ("", "audit_chain() not found"),
+        # a field added to the digest outside `audit_field`
+        (_SHIPPED.replace(_EVENT, f"{_EVENT} || NEW.object_label"), "term 17"),
+        (_SHIPPED.replace(_EVENT, f"{_EVENT} || coalesce(NEW.object_label, '')"), "term 17"),
+        # a field framed through another wrapper or cast
+        (_SHIPPED.replace(_LABEL, "audit_field(lower(NEW.actor_label))"), "term 3"),
+        (_SHIPPED.replace(_LABEL, "audit_field(NEW.actor_label::varchar(8))"), "term 3"),
+        (_SHIPPED.replace(_LABEL, "audit_field(left(NEW.actor_label, 4))"), "term 3"),
+        (_SHIPPED.replace("'YYYY-MM-DD", "'YYYY-MM"), "term 16"),
+        (_SHIPPED.replace(_EVENT, "audit_field(NEW.event_ts::text)"), "term 16"),
+        # an unframed concatenation inside a term
+        (_SHIPPED.replace(_LABEL, "audit_field(NEW.actor_label || NEW.reason)"), "term 3"),
+        # a value reaching the digest through a variable or another assignment
+        (_SHIPPED.replace(_LABEL, "audit_field(v_label)"), "term 3"),
+        (
+            _SHIPPED.replace("RETURN NEW;", "NEW.reason := 'x'; RETURN NEW;"),
+            "NEW used outside",
+        ),
+        (
+            _SHIPPED.replace(
+                "NEW.prev_hash := COALESCE(", "NEW.prev_hash := md5(NEW.reason) || COALESCE("
+            ),
+            "NEW used outside",
+        ),
+        (
+            _SHIPPED.replace(
+                "RETURN NEW;", "PERFORM pg_notify('c', row_to_json(new)::text); RETURN NEW;"
+            ),
+            "NEW used outside",
+        ),
+        (_SHIPPED.replace("RETURN NEW;", "RETURN NEW; RETURN NEW;"), "NEW used outside"),
+        # a second digest, a changed algorithm or encoding, a comment
+        (_SHIPPED.replace("RETURN NEW;", "PERFORM digest('x', 'md5'); RETURN NEW;"), "digest"),
+        (_SHIPPED.replace("'sha256'), 'hex')", "'md5'), 'hex')"), "the digest arguments"),
+        (_SHIPPED.replace("'sha256'), 'hex')", "'sha256'), 'base64')"), "the digest encoding"),
+        (_SHIPPED.replace(_LABEL, f"{_LABEL} -- || audit_field(NEW.reason)"), "a comment"),
+        (_SHIPPED.replace(_LABEL, f"/* x */ {_LABEL}"), "a comment"),
+        (
+            _SHIPPED.replace("NEW.entry_hash := encode(", "NEW.entry_hash := upper(encode("),
+            "entry_hash",
+        ),
+        (_SHIPPED.replace(_LABEL, "audit_field(NEW.actor_label, 'x'"), "the digest arguments"),
+        (_SHIPPED[: _SHIPPED.index("'sha256'")], "an unclosed call"),
+        (_SHIPPED.replace("NEW.prev_hash := COALESCE", "last_hash := COALESCE"), "it sets"),
+        (_SHIPPED.replace("RETURN NEW;", "NEW.id := 1; RETURN NEW;"), "it sets"),
+        (_SHIPPED.replace(_LABEL, "audit_field('it''s"), "unterminated"),
+        (_SHIPPED.replace(_LABEL, "audit_field(NEW.actor_label))"), "the digest"),
+    ],
+)
+def test_a_definition_the_reader_does_not_know_is_never_a_pass(
+    definition: str | None, why: str
+) -> None:
+    (finding,) = cli.check_fields(definition)
+    assert finding.section == "fields" and why in finding.detail
+
+
+@pytest.mark.parametrize(
+    ("definition", "why"),
+    [
+        (_SHIPPED.replace(_LABEL, "audit_field(NEW.actor_ip)", 1), "16 framed"),
+        (_SHIPPED.replace(f" || {_LABEL}", ""), "15 framed"),
+        (_SHIPPED.replace(_EVENT, f"{_EVENT} || audit_field(NEW.object_label)"), "17 framed"),
+    ],
+)
+def test_a_framed_list_other_than_the_hashed_fields_is_a_finding(definition: str, why: str) -> None:
+    (finding,) = cli.check_fields(definition)
+    assert finding.detail.startswith(why)
 
 
 @pytest.mark.parametrize(
@@ -291,7 +439,7 @@ async def test_a_stop_after_a_failed_check_keeps_the_failure(capsys: Cap) -> Non
         async def held_privileges(self, *args: Any) -> dict[tuple[str, str], frozenset[str]]:
             return {}
 
-        async def triggers(self, tables: list[str]) -> dict[tuple[str, str], bool]:
+        async def chain_definition(self) -> str | None:
             raise AuditReadFailed("08006")
 
     stores = _Down(await _repo(1))
@@ -322,9 +470,9 @@ async def test_a_stored_value_that_is_not_a_hash_is_not_printed() -> None:
 
 async def test_the_whole_run_is_bounded_by_its_timeout(capsys: Cap) -> None:
     class _Slow(_Stores):
-        async def triggers(self, tables: list[str]) -> dict[tuple[str, str], bool]:
+        async def chain_definition(self) -> str | None:
             await asyncio.sleep(60)
-            return {}
+            return None
 
     assert await _run(_Slow(await _repo(1)), timeout_s=0.01) == cli.EXIT_STOPPED
     assert "STOPPED: timeout" in capsys.readouterr().out
@@ -387,9 +535,15 @@ def test_main_invalid_settings_name_only_the_class(monkeypatch: MP, capsys: Cap)
     ("argv", "why"),
     [
         (["--checkpoint-sha256", "ABC"], "--checkpoint-sha256 must be 64"),
-        (["--timeout", "0"], "--timeout must be above 0"),
-        (["--timeout", "21601"], "--timeout must be above 0"),
+        (["--timeout", "0"], "--timeout must be 1 to 21600 s"),
+        (["--timeout", "1e-9"], "--timeout must be 1 to 21600 s"),
+        (["--timeout", "nan"], "--timeout must be 1 to 21600 s"),
+        (["--timeout", "21601"], "--timeout must be 1 to 21600 s"),
         (["--check", "--checkpoint-file", "x"], "--check walks no chain"),
+        (["--self-test", "--checkpoint-file", "x"], "--self-test takes no other option"),
+        (["--self-test", "--batch", "2000"], "--self-test takes no other option"),
+        (["--self-test", "--timeout", "60"], "--self-test takes no other option"),
+        (["--self-test", "--checkpoint-sha256", "0" * 64], "--self-test takes no other option"),
         (["--checkpoint-sha256", "0" * 64], "--checkpoint-sha256 needs --checkpoint-file"),
     ],
 )
@@ -401,6 +555,33 @@ def test_main_refuses_bad_arguments_before_any_connection(
 
     assert cli.main(argv, connect=connect) == cli.EXIT_USAGE
     assert why in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", ["0", "10001", "x", "1.5"])
+def test_a_bad_batch_names_the_range_not_every_choice(capsys: Cap, value: str) -> None:
+    with pytest.raises(SystemExit) as raised:
+        cli.main(["--batch", value], connect=_never)
+    assert raised.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert "argument --batch: must be an integer in 1..10000" in err and "9999" not in err
+
+
+def test_main_uses_the_defaults_and_the_bounds_are_accepted(monkeypatch: MP) -> None:
+    seen: list[Any] = []
+
+    async def fake_run(stores: Any, *args: Any) -> int:
+        seen.append(args)
+        return cli.EXIT_PASS
+
+    monkeypatch.setattr(cli, "run", fake_run)
+    assert cli.main([], connect=lambda: cli.SeededStores()) == cli.EXIT_PASS
+    assert cli.main(["--batch", "1", "--timeout", "1"], connect=cli.SeededStores) == 0
+    assert cli.main(["--batch", "10000", "--timeout", "21600"], connect=cli.SeededStores) == 0
+    assert seen == [
+        (False, None, None, cli.DEFAULT_BATCH, cli.DEFAULT_TIMEOUT_S),
+        (False, None, None, 1, 1.0),
+        (False, None, None, 10_000, 21_600.0),
+    ]
 
 
 def test_main_refuses_an_unreadable_or_oversized_file(

@@ -20,6 +20,9 @@ verify's own code (`AuditQueryService.plan_verify`, `run_verify`: one walk, stat
 | `chain`           | Every entry from genesis to the head links and recomputes to its stored hash, and every database checkpoint names its entry (SR-063)                                                                                                                                             |
 | `checkpoint-file` | With `--checkpoint-file`: every head in the file names an entry with the same hash, and the file's sha256 is the recorded one                                                                                                                                                    |
 
+The `fields` section runs on every run, `--check` and `--self-test` included: a deployed
+`audit_chain()` the reader does not understand is a finding, never a pass.
+
 A break reads `first_bad_id=<id> kind=<kind>` as in `audit_ack_break`; the kinds are
 `prev_hash_mismatch`, `entry_hash_mismatch`, `checkpoint_mismatch`, `checkpoint_missing`,
 `tail_truncated`. Output names ids, hashes, roles and privileges only, and `entries_checked` on
@@ -48,9 +51,9 @@ every end; the checkpoint file is compared only against an unbroken chain.
    `entry_too_large@<id>`, `internal_error`): the result is unknown and never a pass.
 
 `--check` runs only `grants`, `triggers` and `fields`, with no walk. `--self-test` needs no
-database: it runs on a seeded chain with a changed, a dropped and a re-ordered entry, a widened
-grant, a disabled guard, a replica default and a diverging file. Until slice 2 of #1238 lands,
-`fields` prints `SKIP fields: lands in slice 2`, never a pass, and nothing checks the field order.
+database: every section runs on a seeded in-memory chain with a changed, a dropped and a re-ordered
+entry, a widened grant, a disabled guard, a replica default, a changed field order and a diverging
+file.
 
 ## When it fails
 
