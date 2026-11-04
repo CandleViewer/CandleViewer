@@ -106,7 +106,8 @@ class BarPage:
 #: every new generation (each builder cold start begins one, #2662), so it is not chronological
 #: across generations, and legacy generation-0 history repeats `(generation, index)` after an old
 #: cold start (#2126 regression (b)). `bars_time` holds NULL-`index` kline rows, so it keeps
-#: `ts, "index"` with a `ts` cursor (unique open time per interval). Non-time kinds order by
+#: `ts, "index"` with a `ts` cursor; rows can share an open time (a kline and a tape row, two
+#: generations), all returned: `/market/bars` serves one per open time. Non-time kinds order by
 #: `ts, generation, "index"` and resume by keyset on that full key, so equal-`ts` siblings (renko
 #: multi-brick, volume splits) are never skipped at a page boundary. Within one generation whose
 #: `index` increases with `ts` this is exactly the contract's `(generation, index)` order.
@@ -588,6 +589,8 @@ def _tail_bar(row: dict[str, object], spec: BarSpec) -> tuple[int, Bar] | None:
     s = stored_bar(row)
     if not (s.tape_built and s.confirmed) or s.index is None or s.generation is None:
         return None
+    if s.turnover is None or s.trades is None:  # kline-sourced only; unreachable for tape rows
+        return None
     check_generation(s.generation, source=s.source)  # 0..MAX_GENERATION, as written
     bar = Bar.model_construct(
         spec_hash=spec.spec_hash, symbol=str(row["symbol"]), index=s.index, open_time=s.ts_us,
@@ -622,9 +625,9 @@ class StoredBar:
     low: str
     close: str
     volume: str
-    turnover: str
+    turnover: str | None  # None on kline-sourced rows: no vwap, so no turnover (null, never zero)
     confirmed: bool
-    trades: int
+    trades: int | None  # None on kline-sourced rows: no trade count (null, never zero)
     delta: str | None  # None on kline-sourced rows: no order flow (null, never zero, BR-07)
     min_delta: str | None
     max_delta: str | None
@@ -669,13 +672,16 @@ def stored_bar(row: dict[str, object]) -> StoredBar:
     vwap, volume = Decimal(str(row.get("vwap") or 0)), Decimal(str(row.get("volume") or 0))
     source = str(row.get("source") or "tape")  # NULL = pre-0003 legacy row, tape-built
     flow = source != "kline"
+    trade_count = row.get("trade_count")
     idx, gen = row.get("index"), row.get("generation")
     return StoredBar(
         ts_us=ts_us_from_row(row["ts"]),
         close_ts_us=ts_us_from_row(close_ts) if close_ts is not None else None,
         open=_num(row["open"]), high=_num(row["high"]), low=_num(row["low"]),
-        close=_num(row["close"]), volume=_num(volume), turnover=repr(float(vwap * volume)),
-        confirmed=bool(row.get("is_closed")), trades=int(str(row.get("trade_count") or 0)),
+        close=_num(row["close"]), volume=_num(volume),
+        turnover=repr(float(vwap * volume)) if flow else None,
+        confirmed=bool(row.get("is_closed")),
+        trades=int(str(trade_count or 0)) if flow else None,
         delta=_num(row.get("delta") or 0) if flow else None,
         min_delta=_num(row.get("min_delta") or 0) if flow else None,
         max_delta=_num(row.get("max_delta") or 0) if flow else None, source=source,

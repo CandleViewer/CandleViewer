@@ -21,19 +21,28 @@ Order of refusal (each before any storage read except where noted):
    from the window's stored prints (`bars.estimate`, #2093: one count of the window's trades
    under `QUERY_TIMEOUT_S`, after the recording-start read and before the bar read; it fails
    closed with 503) -> 422 `bar_window_too_large`. Anything narrower is paged by rows: an
-   uncursored request is the first page, every read asks for `limit + 1` rows (bounded work),
-   and a server-issued `next_cursor` is returned whenever more rows remain.
+   uncursored request is the first page, a non-time read asks for `limit + 1` rows and a time
+   read for `limit + 1 + _SAME_OPEN_ROOM`, plus one re-read of a single open time of at most
+   `SAME_OPEN_REREAD` rows when every row read shares it and fewer than that were read
+   (bounded work, 22 `getBars`), and a
+   server-issued `next_cursor` is returned whenever more rows remain.
 
 The cursor is bound to `(bars, symbol, bar_type:param)` (`api.market_response`), so a klines
 cursor or one for another series is `invalid_cursor`. Time bars order by `ts` with a `ts`
-cursor (open time is unique per interval; kline rows have a NULL `index`). Non-time bars order
+cursor (kline rows have a NULL `index`). The stored key also holds `generation` and `index`, so
+rows can share an open time: time bars are collapsed to one per open time before paging
+(`one_bar_per_open_time`: tape over kline, then the series' current generation). `include_open`
+adds the live series store's bars after the last served row to the last page (`live_rows`):
+closes storage does not hold yet (a close reaches the store before the writer), then the forming
+bar; a full page moves them to the next cursor page. Non-time bars order
 by the stored key `(ts, generation, index)` and the cursor carries that key (#2017), so
 equal-`ts` siblings (one print -> N volume bars / renko bricks) are each served exactly once
 across page boundaries. Every stored bar carries `index` and `generation` when the row has one.
 
 Coverage holes (#5396, 24 §19.81): a closed bar the server did not store (`bars.write_holes`) is
 listed in `meta.coverage_holes` while it is not stored: the recorded ranges inside the page's span
-(from the page's first position to the next page's, or to `to`), minus the bars the page serves,
+(from the page's first position to the next page's, or to `to`), minus the stored bars the page
+serves (a live `include_open` bar is not stored yet and fills none),
 at most `MAX_COVERAGE_HOLES` entries. The key is absent when there is none.
 """
 
@@ -42,6 +51,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Final, Protocol
@@ -83,7 +93,8 @@ from candleviewer.bars.metrics import (
 )
 from candleviewer.bars.models import BarSpec
 from candleviewer.bars.reader import BarKey, BarPage, StoredBar, row_key, stored_bar
-from candleviewer.bars.rows import BUILD_VERSIONS
+from candleviewer.bars.rows import BUILD_VERSIONS, bar_row
+from candleviewer.bars.series_store import LiveTail
 from candleviewer.bars.spec import PARAM_MAX_LEN, check_param_bounds, from_wire, qty_step_for
 from candleviewer.bars.write_holes import Present, WriteHoleLedger
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -130,6 +141,10 @@ class BarReaderLike(Protocol):
 RecordingStart = Callable[[str], Awaitable[int | None]]
 #: SR-E12-02 (#2093): a symbol's stored prints in a window (`MarketDataRepository.trade_totals`).
 TradeTotalsSource = Callable[[str, TimeRange], Awaitable[TradeTotals]]
+#: `(symbol, spec, since_us)`: the live series store's view beyond storage
+#: (`SeriesStore.live_tail`): its generation, closes from `since_us` on (None: none) and forming
+#: bar; None = the server does not build the series live.
+LiveSeriesSource = Callable[[str, BarSpec, int | None], LiveTail | None]
 
 
 class _Rejected(Exception):
@@ -202,6 +217,84 @@ def _window_too_large(detail: str) -> JSONResponse:
     return problem(422, "bar_window_too_large", "Window too large", detail)
 
 
+#: Time bars: rows read beyond `limit + 1`, so a page still holds `limit` bars after rows that
+#: share an open time collapse into one (a kline row, a tape row, a rebuilt generation). 22.
+_SAME_OPEN_ROOM: Final = 8
+#: Time bars: when every row a read fetched shares one open time, that open time is re-read
+#: alone, at most this many rows (22 `getBars`). A read of this many rows or more (`limit` >= 503)
+#: is not repeated: it already holds as many, and its fetched rows are the ones considered.
+SAME_OPEN_REREAD: Final = 512
+
+
+def one_bar_per_open_time(rows: list[StoredBar], current: int | None) -> list[StoredBar]:
+    """Time bars, ascending by `ts`: one row per open time (22 `getBars`). The stored key is
+    `(ts, generation, index)` (21 §4.8), so a kline row (NULL `index`) and a tape row, or two
+    generations, can share a `ts`. Keep the tape-built one over kline, then the row of the
+    `current` generation (generations are opaque: compared for equality only, 22
+    `Bar.generation`), then, as a deterministic tiebreak, the highest generation and index."""
+    best: dict[int, StoredBar] = {}
+    for row in rows:
+        held = best.get(row.ts_us)
+        if held is None or _preference(row, current) > _preference(held, current):
+            best[row.ts_us] = row
+    return list(best.values())  # dict order = first sight = ascending ts
+
+
+def current_generation(rows: list[StoredBar], live: int | None) -> int | None:
+    """The series' current generation for `one_bar_per_open_time`: the one the server builds
+    live when known, else that of the newest tape-built row read (the tiebreak among its ts)."""
+    if live is not None:
+        return live
+    tape = [r for r in rows if r.tape_built and r.generation is not None]
+    return max(tape, key=lambda r: (r.ts_us, r.generation or 0)).generation if tape else None
+
+
+def _preference(row: StoredBar, current: int | None) -> tuple[bool, bool, int, int]:
+    return (row.tape_built, row.tape_built and row.generation == current,
+            row.generation or 0, -1 if row.index is None else row.index)  # fmt: skip
+
+
+def _stored_key(row: StoredBar) -> BarKey:
+    return (row.ts_us, row.generation or 0, -1 if row.index is None else row.index)
+
+
+def _after(spec: BarSpec, row: StoredBar, last: StoredBar | None, floor: BarKey) -> bool:
+    """Strictly after the page's last served row (m5): by `ts` for time bars (one bar per open
+    time), by the stored key otherwise; with none served, at or after the page's first
+    position `floor`."""
+    if spec.kind == "time":
+        return row.ts_us > last.ts_us if last is not None else row.ts_us >= floor[0]
+    return _stored_key(row) > _stored_key(last) if last is not None else _stored_key(row) >= floor
+
+
+def live_rows(
+    tail: LiveTail, spec: BarSpec, first_us: int, end_us: int, rows: list[StoredBar],
+    floor: BarKey,
+) -> list[StoredBar]:  # fmt: skip
+    """`include_open`: the live series' bars after the page's last served row and inside the
+    window, oldest first, as stored-shape rows (same serialisation path as stored bars): the
+    closes storage does not hold yet (a close reaches the series store before the writer, M1),
+    each at its own build, then the forming bar (`confirm` false). Never one already served:
+    time bars once per open time; other kinds by `(ts, generation, index)`, as `row_key`."""
+    last = rows[-1] if rows else None
+    served = {r.ts_us if spec.kind == "time" else _stored_key(r) for r in rows}
+    out: list[StoredBar] = []
+    bars = [*tail.closed, *([(tail.forming, None)] if tail.forming is not None else [])]
+    for bar, build in bars:
+        forming = bar is tail.forming
+        if bar.closed is forming or not first_us <= bar.open_time < end_us:
+            continue
+        row = stored_bar(bar_row(bar, spec, generation=tail.generation))
+        if not forming:  # the forming bar is the running build (`bar_row`'s version)
+            row = replace(row, build_version=build)
+        ident = row.ts_us if spec.kind == "time" else _stored_key(row)
+        if ident in served or not _after(spec, row, out[-1] if out else last, floor):
+            continue
+        served.add(ident)
+        out.append(row)
+    return out
+
+
 def make_market_bars_router(
     reader_provider: Callable[[], BarReaderLike | None],
     *,
@@ -210,6 +303,7 @@ def make_market_bars_router(
     principal_resolver: _Resolver | None = None,
     symbol_listed: Callable[[str], bool] | None = None,
     qty_step: Callable[[str], Decimal | None] | None = None,
+    live_series: LiveSeriesSource | None = None,
     now_us: Callable[[], int],
     write_holes: WriteHoleLedger | None = None,
 ) -> APIRouter:
@@ -217,6 +311,8 @@ def make_market_bars_router(
     exists only once a real QuestDB is composed); `None` -> 503. `symbol_listed=None` fails
     closed (503), never open, and so does `trade_totals=None` for non-time bars. `qty_step` is the
     catalogue's lot step for the `volume`/`delta` floor (SR-E12-03); with none, they are refused.
+    `live_series` (None: stored closed bars only) is the live series store's view for
+    `include_open` and a time bar's current generation (`SeriesStore.live_tail`).
     `write_holes` lists the closed bars not stored in `meta.coverage_holes` (module docstring)."""
     router = APIRouter(tags=["market-data"])
 
@@ -369,13 +465,32 @@ def make_market_bars_router(
             rng = TimeRange(start_us=first_us, end_us=end_us)
             if (refusal := await _print_estimate(symbol, spec, bar_type, rng)) is not None:
                 return refusal
+        # Time bars: the live series' generation, if the server builds it (the collapse's
+        # current generation, m1). Its bars beyond storage are read after the page (include_open).
+        tail: LiveTail | None = None
+        if live_series is not None and spec.kind == "time":
+            # Read before storage and again after it (include_open); a swap between the two
+            # (mn-3) refuses the second one's rows, below.
+            tail = live_series(symbol, spec, None)
+        first_us = start_us if after_us is None else max(start_us, after_us + 1)
         try:
             async with asyncio.timeout(QUERY_TIMEOUT_S):
-                page = await (
-                    reader.read_bars(symbol, spec, start_us, end_us, limit + 1, after_us=after_us)
-                    if at_key is None
-                    else reader.read_bars(symbol, spec, start_us, end_us, limit + 1, at_key=at_key)
-                )
+                if at_key is not None:
+                    page = await reader.read_bars(
+                        symbol, spec, start_us, end_us, limit + 1, at_key=at_key
+                    )
+                else:  # time bars read extra rows: rows sharing an open time collapse below
+                    room = _SAME_OPEN_ROOM if spec.kind == "time" else 0
+                    page = await reader.read_bars(
+                        symbol, spec, start_us, end_us, limit + 1 + room, after_us=after_us
+                    )
+                rows = [stored_bar(r) for r in page.rows]
+                ts = page.next_cursor
+                if (spec.kind == "time" and ts is not None and len(page.rows) < SAME_OPEN_REREAD
+                        and {r.ts_us for r in rows} == {ts}):  # fmt: skip
+                    # m2: every row read shares one open time: re-read it alone, bounded
+                    again = await reader.read_bars(symbol, spec, ts, ts + 1, SAME_OPEN_REREAD)
+                    rows = [stored_bar(r) for r in again.rows] or rows
         except (TimeoutError, OSError, ConnectionError):
             return _refused("unavailable", problem(503, "store_unavailable",
                             "Service unavailable",
@@ -384,7 +499,6 @@ def make_market_bars_router(
         # checksum-failed rows (`page.dropped`) but reports the position of the (limit+1)-th raw
         # row whenever the fetch was full. That row is the next page's first, so a dropped row
         # (even the page's last) is stepped over, never ends the series.
-        rows = [stored_bar(r) for r in page.rows]
         next_cursor: str | None = None
         page_to = end_us  # where the next page starts (the span `meta.coverage_holes` covers)
         if spec.kind != "time":
@@ -393,17 +507,46 @@ def make_market_bars_router(
                 rows = [s for s, r in zip(rows, page.rows, strict=True)
                         if row_key(r) < page.next_key]  # fmt: skip
                 next_cursor = encode_key_cursor(scope, page.next_key)
-        elif (resume := page.next_cursor) is not None:
-            kept = [r for r in rows if r.ts_us < resume]  # the extra row opens the next page
-            if kept or not rows:
-                rows = kept
-            else:  # unreachable for time bars (unique open time); strict progress regardless
+        else:
+            # One bar per open time, before any counting. Every open time but the last of a full
+            # read is complete, and the last is re-read whole from the cursor (it is not served).
+            current = current_generation(rows, None if tail is None else tail.generation)
+            rows = one_bar_per_open_time(rows, current)
+            resume = page.next_cursor
+            if len(rows) > limit:  # the (limit+1)-th distinct open time opens the next page
+                resume = rows[limit].ts_us
                 rows = rows[:limit]
-                resume = rows[-1].ts_us + 1
-            next_cursor = encode_cursor(scope, resume)
-            page_to = resume
+            elif resume is not None:
+                kept = [r for r in rows if r.ts_us < resume]  # the extra row opens the next page
+                if kept or not rows:
+                    rows = kept
+                else:  # one open time filled the read: served whole (re-read above); progress
+                    resume = rows[-1].ts_us + 1
+            if resume is not None:
+                next_cursor = encode_cursor(scope, resume)
+                page_to = resume
+        live: list[StoredBar] = []
         if not include_open:
             rows = [r for r in rows if r.confirmed]  # only the newest bar can be forming
+        elif live_series is not None and next_cursor is None:  # the last page only
+            floor = at_key if at_key is not None else (first_us, -1, -1)
+            got = live_series(symbol, spec, rows[-1].ts_us if rows else first_us)
+            if (spec.kind == "time" and tail is not None and got is not None
+                    and got.generation != tail.generation):  # fmt: skip
+                # The series swapped generation during the storage read: the rows above were
+                # collapsed to `tail.generation`, so live rows of another one are not appended
+                # (mn-3). Never a duplicate open time either way (`live_rows` skips served ones).
+                got = None
+            pending = [] if got is None else live_rows(got, spec, first_us, end_us, rows, floor)
+            live = pending[: max(0, limit - len(rows))]
+            rows += live
+            if len(pending) > len(live):  # a full page: the next live bar opens the next one
+                nxt = pending[len(live)]
+                next_cursor = (
+                    encode_cursor(scope, nxt.ts_us) if spec.kind == "time"
+                    else encode_key_cursor(scope, _stored_key(nxt))
+                )  # fmt: skip
+                page_to = nxt.ts_us  # n1: the next page's span starts there
         sources = (["tape"] if any(r.tape_built for r in rows) else []) + (
             ["questdb"] if any(not r.tape_built for r in rows) else [])  # fmt: skip
         record_page("bars", len(rows), sources)
@@ -411,13 +554,13 @@ def make_market_bars_router(
                     spec_hash=spec.spec_hash, tiers=sources, rows=len(rows))  # fmt: skip
         holes: list[dict[str, int]] | None = None
         if write_holes is not None:
-            if at_key is not None:
-                page_from = at_key[0]
-            else:
-                page_from = start_us if after_us is None else max(start_us, after_us + 1)
+            page_from = at_key[0] if at_key is not None else first_us
+            # A live bar is no stored bar (not written yet): it never suppresses a recorded hole.
+            stored_rows = rows[: len(rows) - len(live)]
             holes = merge_coverage_holes(write_holes.holes_for(
-                symbol, spec.spec_hash, page_from, page_to, _present(spec, rows),
+                symbol, spec.spec_hash, page_from, page_to, _present(spec, stored_rows),
             )) or None  # fmt: skip
+        # Live bars are tape-built, each at its own build_version: they count in provenance.
         provenance = bars_provenance(rows, spec_hash=spec.spec_hash,
                                      running=BUILD_VERSIONS[spec.kind])  # fmt: skip
         meta = build_meta(count=len(rows), next_cursor=next_cursor, sources=sources,
@@ -445,6 +588,7 @@ def _present(spec: BarSpec, rows: list[StoredBar]) -> list[Present]:
 
 __all__ = [
     "BarReaderLike",
+    "LiveSeriesSource",
     "RecordingStart",
     "TradeTotalsSource",
     "make_market_bars_router",

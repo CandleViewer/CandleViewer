@@ -244,6 +244,22 @@ async def test_a_released_series_is_kept_current_through_its_grace() -> None:
     assert store.latest(SYM, H, 1) is not None
 
 
+async def test_live_tail_of_a_released_series_ends_with_its_grace() -> None:
+    """`/market/bars?include_open` never serves a forming bar frozen since the release: the
+    sweep runs only on the next `ensure`, so the read itself refuses an expired series."""
+    clock = Clock()
+    store = SeriesStore(clock=clock)
+    hold = await store.ensure(SYM, SPEC)
+    await emit(store, up("close", 0), up("open", 1))
+    tail = store.live_tail(SYM, SPEC, None)
+    assert tail is not None and tail.forming is not None and tail.forming.index == 1
+    hold.release()
+    clock.t += RELEASE_GRACE_S - 0.5
+    assert store.live_tail(SYM, SPEC, None) is not None  # within the grace: still served
+    clock.t += 0.5
+    assert store.live_tail(SYM, SPEC, None) is None  # past it, though no `ensure` swept it yet
+
+
 async def test_an_expired_series_stops_counting_toward_the_cap_at_its_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1174,7 +1190,7 @@ async def test_a_read_after_a_live_swap_between_reads_hydrates_the_new_generatio
 
 
 async def hydrated(
-    bars: Sequence[tuple[int, Bar]], builds: dict[tuple[int, int, int], int]
+    bars: Sequence[tuple[int, Bar]], builds: dict[tuple[int, int, int], int | None]
 ) -> SeriesStore:
     tail = Tail(now=True)
     tail.tail = BarTail(list(bars), builds=builds)
@@ -1267,3 +1283,17 @@ async def test_an_empty_read_with_nothing_seen_live_names_no_generation() -> Non
     store = SeriesStore(Tail(now=True))
     await store.ensure(SYM, SPEC)
     assert generation(store) is None and view(store) == ([], None) and store.hydrated(SYM, H)
+
+
+async def test_live_tail_is_the_generation_closes_since_a_time_and_the_forming_bar() -> None:
+    """`/market/bars?include_open` (#5497 M1): closes from `since_us` on, oldest first, each at
+    its build (a hydrated bar's mark, None when unknown; a live close the running code's)."""
+    store = await hydrated(rows(0, 1, 2), {(0, 1, T0 + STEP): None})
+    await emit(store, up("close", 3), up("open", 4), generation=0)
+    got = store.live_tail(SYM, SPEC, T0 + STEP)
+    assert got is not None and got.generation == 0
+    assert [(b.index, v) for b, v in got.closed] == [(1, None), (2, 1), (3, 1)]
+    assert got.forming is not None and got.forming.index == 4
+    none = store.live_tail(SYM, SPEC, None)
+    assert none is not None and none.closed == [] and none.forming is not None
+    assert store.live_tail("ETHUSDT", SPEC, T0) is None  # not kept: no live view

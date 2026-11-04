@@ -3317,6 +3317,7 @@ def create_app(
             principal_resolver=audit_resolver,
             symbol_listed=lambda sym: _catalogue_listed(ctx, sym),
             qty_step=lambda sym: _catalogue_qty_step(ctx, sym),  # SR-E12-03 volume/delta floor
+            live_series=bars_series.live_tail,  # include_open; a time bar's generation
             now_us=lambda: time.time_ns() // 1000,
             write_holes=write_holes,
         )
