@@ -14,6 +14,7 @@ from candleviewer.api.alert_deliveries import LIST_DELIVERIES_QUERY
 _OUTCOME = {"outcome": "shown", "permission": "granted"}
 ROUTES: list[tuple[str, str, Any, str]] = [
     ("GET", "/alerts/deliveries", None, "alerts:read"),
+    ("GET", "/alerts/deliveries/{id}", None, "alerts:read"),
     ("POST", "/alerts/deliveries/{id}/ack", None, "alerts:write"),
     ("POST", "/alerts/deliveries/ack-all", None, "alerts:write"),
     ("POST", "/alerts/deliveries/{id}/desktop-outcome", _OUTCOME, "alerts:write"),
@@ -80,6 +81,27 @@ def test_list_refuses_an_undeclared_query_parameter(env: Env, key: str) -> None:
     env.store.add()
     r = env.c.get("/alerts/deliveries", params={key: "x"})
     assert r.status_code == 422 and r.json()["code"] == "validation_failed"
+
+
+@pytest.mark.parametrize("key", ["user_id", "userId", "owner", "channel"])
+def test_get_one_refuses_any_query_parameter(env: Env, key: str) -> None:
+    """SR-026 (#1130 lens M-2): `getAlertDelivery` declares none, so a target-user key is refused,
+    never ignored, before anything is read or audited."""
+    d = env.store.add()
+    r = env.c.get(
+        f"/alerts/deliveries/{d.id}", params={key: "00000000-0000-4000-8000-00000000000b"}
+    )
+    assert r.status_code == 422 and r.json()["code"] == "validation_failed"
+    assert env.audit.calls == []
+
+
+def test_get_one_declares_no_query_parameter() -> None:
+    from candleviewer.api.alert_deliveries import GET_DELIVERY_QUERY
+    from candleviewer.api.contract_conformance import load_openapi_spec
+    from tests.unit.api.test_query_allowlist import _declared_query
+
+    path = "/alerts/deliveries/{deliveryId}"
+    assert _declared_query(load_openapi_spec(), path, "get") == GET_DELIVERY_QUERY == frozenset()
 
 
 def test_list_declares_exactly_the_contract_parameters() -> None:
