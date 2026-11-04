@@ -71,7 +71,8 @@ would retire its exception.
   name (an assignment, annotated or not, a keyword or a dict key), reported on the float's line;
   `float(Decimal(...))` and `float(x.quantize(...))`; and `float(p)` of a parameter or a local
   annotated `Decimal`, `Px`, `Qty`, `Notional`, `Bps`, `Amount`, `Money`, `Price`, `Quantity` or
-  `Figure` (or `| None`). Fix: keep the `Decimal`; quantize to the tick or step.
+  `Figure` (or `| None`). An argument or a name that spans lines is read on every line. Fix: keep
+  the `Decimal`; quantize to the tick or step.
 - **Does not match:** a name that ends as a duration does (`_s`, `_ms`, `_us`, `_ns`, `_sec`,
   `_secs`, `_seconds`, `timeout`, `interval`, `delay`, `wait`, `deadline`, `ttl`), a money word in it
   or not (`price_age_s`); counts and clocks; `float("inf")`; a money word inside another (`slot`,

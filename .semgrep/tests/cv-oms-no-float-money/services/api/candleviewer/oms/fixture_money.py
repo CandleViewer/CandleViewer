@@ -46,6 +46,18 @@ def decimals(raw, level: Px, tick, step: Qty | None = None):
     return a, b, c, d, e
 
 
+def continued(base, order, row, level):
+    """A money word on a continuation line, of the argument or of the name, is read too."""
+    total = float(  # ruleid: cv-oms-no-float-money
+        base
+        + order.price
+    )
+    row[
+        "price"
+    ] = float(level)  # ruleid: cv-oms-no-float-money
+    return total
+
+
 def _seconds(name: str, value: float) -> float:
     if isinstance(value, bool) or not (math.isfinite(value) and value > 0):
         raise ValueError(f"{name} must be a finite number of seconds above zero")
