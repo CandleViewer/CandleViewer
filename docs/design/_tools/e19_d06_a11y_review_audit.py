@@ -66,7 +66,7 @@ LIB_REL = "docs/design/_tools/spec_audit_lib.py"
 P14_REL = "docs/plan/14-screens-catalogue.md"
 OWN = (SPEC_REL, TOOL_REL, LIB_REL)
 # RULED BQ-14: the one link-only line this PR adds to `14`, under SCR-038's E19-D04 line.
-ANCHOR = "- **Flows (E19-D04):** [E19-D04.md](../design/E19/E19-D04.md) §2–§7"
+ANCHOR = "- **Flows (E19-D04):** [E19-D04.md](../design/E19/E19-D04.md) §2\u2013§7"
 POINTER = (
     "- **A11y review (E19-D06):** [E19-D06.md](../design/E19/E19-D06.md) §3, §7 (the table "
     "strategy and the announcement policy, text first, owner approval pending; a pointer only, "
@@ -93,10 +93,10 @@ KEYED = {k: L.DocRef(path, pin) for k, path, pin in (
 )}
 # fmt: on
 _ALTS = "|".join(re.escape(k) for k in sorted(KEYED, key=len, reverse=True))
-# `NN`:line, KEY:line or `KEY`:line, with an optional –end.
+# `NN`:line, KEY:line or `KEY`:line, with an optional -end.
 CITE_RE = re.compile(
     rf"(?:`(?P<nn>\d\d)`|`?(?<![A-Za-z0-9-])(?P<named>{_ALTS})`?):(?P<first>\d+)"
-    r"(?:–(?P<firstend>\d+))?"
+    r"(?:\u2013(?P<firstend>\d+))?"
 )
 
 # The load-bearing cites, pinned to their words (`--repin` proposes moves).
@@ -126,7 +126,8 @@ KEY_CITES: tuple[L.KeyCite, ...] = tuple(
         ("D03", 175, "the engine draws from system colours"), ("D03", 183, "wrap, never truncate"),
         ("D03", 285, "Behaviour (1.4.13)"), ("D03", 355, "The Levels group"),
         ("D03", 424, "D03-C11"), ("D03", 442, "D03-A3"), ("D03", 461, "no tritan matrix"),
-        ("D04", 183, "24 × 24 CSS px"), ("D04", 260, "profile range stop"), ("D04", 405, "D04-C6"),
+        ("D04", 183, "24 \u00d7 24 CSS px"), ("D04", 260, "profile range stop"),
+        ("D04", 405, "D04-C6"),
         ("D05", 166, "RenderFlags.animate"), ("D05", 170, "The canvas is not recoloured by the OS"),
         ("D05", 172, "wrap or truncate with a"), ("D05", 243, "WCAG 2.2.2"),
         ("D05", 394, "Combined M-2 + M-4 + M-8"), ("D05", 433, '"Final" spoken alone'),
@@ -711,7 +712,7 @@ def g_pointer(t: L.Tree) -> list[str]:
     at = next((i for i, ln in enumerate(base) if ln.startswith(ANCHOR)), None)
     if at is None:
         return ["SCR-038's E19-D04 line is not in `14`"]
-    want = base[: at + 1] + [POINTER] + base[at + 1 :]
+    want = [*base[: at + 1], POINTER, *base[at + 1 :]]
     ok = t.text("p14").splitlines() == want
     return [] if ok else ["`14` is not its base plus the one pointer line under SCR-038"]
 
@@ -815,7 +816,7 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-39", "G-MOTION", "the flash verdict dropped", "spec",
        "| 2.3.1 / `05`:252 — nothing flashes", "| `05`:252 — nothing flashes"),
     _M("M-40", "G-MOTION", "V-29 loses the in-app override", "spec",
-       "reduce, by OS or `Ctrl+Shift+M`, keeps meaning", "reduce, by the OS setting, keeps meaning"),
+       "reduce, by OS or `Ctrl+Shift+M`, keeps meaning", "reduce, by OS setting, keeps meaning"),
     _M("M-41", "G-POINTER", "the `14` pointer line reworded", "p14",
        "§3, §7 (the table strategy", "§3, §7 (the binding table strategy"),
 )
