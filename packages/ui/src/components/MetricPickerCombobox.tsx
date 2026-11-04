@@ -308,22 +308,27 @@ export function MetricPickerCombobox(props: MetricPickerComboboxProps): JSX.Elem
               role="option"
               aria-selected={at && part === 0 ? true : undefined}
               aria-disabled={option.available ? undefined : true}
-              // No `aria-label`: the name is the option's own text, so it holds every word line 1 shows. The unit's
-              // leading space keeps it apart from the label in the name; the clause whole and line 2 describe it.
+              // No `aria-label`: the name is the option's own text. Each space between its words is a text node, not
+              // a span's first character (`dom-accessibility-api` trims each element's text); the `·` is `aria-hidden`.
               aria-describedby={cx(clause !== undefined && `${id}-clause`, `${id}-desc`)}
             >
               <span className="cv-metricpicker__label">{marked(option.label, query)}</span>
               {option.unit ? (
                 <>
-                  <span aria-hidden="true">{" ·"}</span>
-                  <span>{` ${option.unit}`}</span>
+                  <span aria-hidden="true">{" ·"}</span> <span>{option.unit}</span>
                 </>
               ) : null}
               {option.estimated ? (
-                <span className="cv-metricpicker__word">{` ${props.estimatedText}`}</span>
+                <>
+                  {" "}
+                  <span className="cv-metricpicker__word">{props.estimatedText}</span>
+                </>
               ) : null}
               {clause === undefined ? null : (
-                <span className="cv-metricpicker__word">{` ${before}`}</span>
+                <>
+                  {" "}
+                  <span className="cv-metricpicker__word">{before}</span>
+                </>
               )}
             </span>
             {stop ? (

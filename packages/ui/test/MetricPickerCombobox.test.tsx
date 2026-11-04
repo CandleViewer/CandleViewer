@@ -141,11 +141,8 @@ const listbox = (): HTMLElement | null => document.querySelector("[role=listbox]
 const status = (): HTMLElement => screen().getByRole("status");
 const option = (name: string): HTMLElement => screen().getByRole("option", { name });
 /**
- * The accessible name of each option in `root`, as the role query computes it: it hands every name, with its
- * element, to a `name` matcher. An option has no `aria-label` (its name is its visible text), so nothing reads one.
- * jsdom reports every span's `display` as empty, so the query spaces each child element where a browser joins
- * inline text as it stands: a highlight inside a word ("stop- hunt") reads spaced here, and the Label in Name
- * test holds the text to read the same either way.
+ * Each option's accessible name in `root`, from the role query: `dom-accessibility-api`, the engine of the stories'
+ * plays too. It trims each element's text and, with the `beforeEach` spy, spaces children as it does in a browser.
  */
 const namesIn = (root: HTMLElement): Map<Element, string> => {
   const seen = new Map<Element, string>();
@@ -157,8 +154,7 @@ const namesIn = (root: HTMLElement): Map<Element, string> => {
   });
   return seen;
 };
-const optionNames = (): Map<Element, string> => namesIn(document.body);
-const names = (): string[] => [...optionNames().values()];
+const names = (): string[] => [...namesIn(document.body).values()];
 const activeId = (): string | null => input().getAttribute("aria-activedescendant");
 /** The accessible name of the active stop: an option's visible text, or Start recording's words. */
 const activeName = (): string | null => {
@@ -166,7 +162,7 @@ const activeName = (): string | null => {
   if (node === null) return null;
   return namesIn(node.closest<HTMLElement>(".cv-select__row") ?? document.body).get(node) ?? null;
 };
-/** A node's text outside every `aria-hidden` element, as it stands: a browser joins inline elements' text as is. */
+/** A node's text outside every `aria-hidden` element, as it stands: how the native accessibility tree joins it. */
 const shownText = (node: Node): string => {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
   if (!(node instanceof Element) || node.getAttribute("aria-hidden") === "true") return "";
@@ -180,7 +176,7 @@ const shownWords = (node: Node): string[] => {
   if (!(node instanceof Element) || node.getAttribute("aria-hidden") === "true") return [];
   return [...node.childNodes].flatMap(shownWords);
 };
-/** Each option's name as a browser reads it from the text alone: the 105-option list's check (the role query is slow). */
+/** The names from the text alone, as the native tree joins it: the 105-option list's check (the role query is slow). */
 const shownNames = (): string[] =>
   screen()
     .queryAllByRole("option")
@@ -209,6 +205,14 @@ const axeClean = async (): Promise<void> => {
 
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
+  // An empty `display` reads `inline`, as a browser's does for a span; `afterEach` restores it (see `namesIn`).
+  const real = window.getComputedStyle.bind(window);
+  vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) => {
+    const style = real(element, pseudo);
+    const read = style.getPropertyValue.bind(style);
+    style.getPropertyValue = (name) => read(name) || (name === "display" ? "inline" : "");
+    return style;
+  });
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -314,7 +318,7 @@ describe("MetricPickerCombobox (CMP-157)", () => {
 
   it("an unavailable option without a recorder action is explained, with no second stop", async () => {
     await mount(<Host />);
-    await type("stop-hunt"); // whole words: see `namesIn` on a highlight inside a word
+    await type("stop-hunt");
     await press("ArrowDown");
     const hunt = option(HUNT_NAME);
     expect(hunt).toHaveAccessibleDescription(
@@ -502,10 +506,9 @@ describe("MetricPickerCombobox (CMP-157)", () => {
   });
 
   // WCAG 2.5.3, Label in Name: what an option shows is in its name. axe's rule for it, `label-content-name-mismatch`,
-  // cannot fail in jsdom (its text check measures on a canvas, which jsdom lacks, so a mismatch there ends as
-  // "incomplete", never as a violation; the Storybook gate's Chromium run is the rule's), so this reads the names the
-  // role query computes against the words each option shows, `aria-hidden` ones left out. The name must also read
-  // the same where a browser joins inline text as it stands (see `namesIn`): each word carries its own space.
+  // cannot fail in jsdom (its text check needs a canvas, so a mismatch there ends as "incomplete", never as a
+  // violation; the Storybook gate's Chromium run is the rule's), so each name is read against the words its option
+  // shows (`aria-hidden` ones left out) by two models: `namesIn` (the plays' engine) and `shownText` (the native tree).
   const shows: [string, number, () => JSX.Element][] = [
     [
       "the SevenCategories story's sixteen metrics, estimated and unavailable, and Spread's stop",
@@ -525,11 +528,13 @@ describe("MetricPickerCombobox (CMP-157)", () => {
     expect(shown).toHaveLength(count);
     // Not hollow: the options show their units and the estimated word, and each name is checked against them.
     expect(shown.flatMap(shownWords)).toEqual(expect.arrayContaining(["bps", "(estimated)"]));
-    const named = optionNames();
+    const named = namesIn(document.body);
     for (const node of shown) {
       const name = named.get(node);
-      expect(flat(shownText(node)), "the text as a browser joins it").toBe(name);
+      expect(flat(shownText(node)), "the text as the native tree joins it").toBe(name);
       for (const word of shownWords(node)) expect(name, word).toContain(word);
+      for (const part of node.querySelectorAll(":not([aria-hidden])"))
+        expect(part.textContent?.trim(), "a read element").not.toBe("·");
     }
   });
 });
