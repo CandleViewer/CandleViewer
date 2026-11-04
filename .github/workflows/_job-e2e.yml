@@ -98,6 +98,47 @@ jobs:
           CV_LANE: e2e-web shard ${{ matrix.shard }}
         run: node ../../packages/fixtures/bin/flaky-summary.mjs
 
+      # E49-Q01 (#1335 BQ-4, BQ-5): on the nightly, each shard keeps its JSON report 14 days for
+      # e2e-nightly's ga-pack-health job (flake report over ten nights, shard map). Reduced first to
+      # titles, statuses and durations (no error text, output or attachment), and taken before the
+      # quarantine leg below rewrites the file. The failure-only traces keep their 7 days. Both
+      # lanes run the same inline script (scripts/tests/test_ga_pack_health.py runs it). Both new
+      # steps are continue-on-error: their only reader does not enforce yet, so an artifact-service
+      # outage or a truncated report must not turn the release-blocking nightly red (C-9.2).
+      - name: Reduce the shard's JSON report to titles, statuses and durations (nightly only)
+        if: ${{ always() && inputs.quarantine }}
+        continue-on-error: true
+        env:
+          REPORT: apps/web/playwright-report/results.json
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          src, out = pathlib.Path(os.environ["REPORT"]), pathlib.Path("ga-pack-report/results.json")
+          keep = {"suites", "specs", "tests", "results", "title", "file", "projectName", "status",
+                  "duration", "retry"}
+          def cut(node):
+              if isinstance(node, list):
+                  return [cut(item) for item in node]
+              if isinstance(node, dict):
+                  return {k: cut(v) for k, v in node.items() if k in keep}
+              return node
+          if src.is_file():
+              out.parent.mkdir(exist_ok=True)
+              out.write_text(json.dumps({"suites": cut(json.loads(src.read_text())["suites"])}))
+          else:
+              print(f"no JSON report at {src} (the suite did not run to the end)")
+          PY
+
+      - name: Upload the shard's reduced JSON report (nightly only, read by ga-pack-health)
+        if: ${{ always() && inputs.quarantine }}
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-web-report-shard-${{ matrix.shard }}
+          path: ga-pack-report/results.json
+          if-no-files-found: ignore
+          retention-days: 14
+
       # The quarantine leg (nightly only): a known-flaky test reports here without turning the
       # release-blocking nightly red; its P1 ticket tracks the fix (C-9.3).
       - name: Quarantined @flaky tests (flaky-nightly project, shard ${{ matrix.shard }}/4)
@@ -300,6 +341,41 @@ jobs:
         env:
           CV_LANE: e2e-electron
         run: node ../../packages/fixtures/bin/flaky-summary.mjs
+
+      # E49-Q01 (#1335): as e2e-web's shards above.
+      - name: Reduce the JSON report to titles, statuses and durations (nightly only)
+        if: ${{ always() && inputs.quarantine }}
+        continue-on-error: true
+        env:
+          REPORT: apps/desktop/playwright-report/results.json
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          src, out = pathlib.Path(os.environ["REPORT"]), pathlib.Path("ga-pack-report/results.json")
+          keep = {"suites", "specs", "tests", "results", "title", "file", "projectName", "status",
+                  "duration", "retry"}
+          def cut(node):
+              if isinstance(node, list):
+                  return [cut(item) for item in node]
+              if isinstance(node, dict):
+                  return {k: cut(v) for k, v in node.items() if k in keep}
+              return node
+          if src.is_file():
+              out.parent.mkdir(exist_ok=True)
+              out.write_text(json.dumps({"suites": cut(json.loads(src.read_text())["suites"])}))
+          else:
+              print(f"no JSON report at {src} (the suite did not run to the end)")
+          PY
+
+      - name: Upload the reduced JSON report (nightly only, read by ga-pack-health)
+        if: ${{ always() && inputs.quarantine }}
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-electron-report
+          path: ga-pack-report/results.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Quarantined @flaky tests (flaky-nightly project)
         if: ${{ always() && inputs.quarantine }}

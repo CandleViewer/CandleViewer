@@ -35,6 +35,10 @@ FLAKY_TICKET_RE = re.compile(r"ticket:\s*([A-Z][A-Z0-9]*-\d+)")
 FLAKY_DATE_RE = re.compile(r"quarantined:\s*(\d{4}-\d{2}-\d{2})")
 PYTEST_FLAKY_RE = re.compile(r"@pytest\.mark\.flaky")
 VITEST_FLAKY_RE = re.compile(r"\b(?:it|test|describe)\.flaky\s*\(")
+# E49-Q01 (#1335, BQ-5): the Playwright `@flaky` title tag, as tools/ci/flaky_quarantine_report.py.
+PLAYWRIGHT_FLAKY_RE = re.compile(
+    r"""\b(?:test|it)(?:\.\w+)*\s*\(\s*(["'`])(?:(?!\1).)*@flaky(?![\w-])"""
+)
 QUARANTINE_WORKING_DAYS = 10
 
 # Directory names pruned outright while walking the tree for `check_*` scans
@@ -347,6 +351,7 @@ def check_flaky_quarantine_age(repo_root: Path = REPO_ROOT) -> list[Violation]:
         _walk_files(repo_root, (".test.ts", ".test.tsx", ".test.mjs")),
         VITEST_FLAKY_RE,
     )
+    _scan(_walk_files(repo_root, (".spec.ts", ".real.ts")), PLAYWRIGHT_FLAKY_RE)
     return violations
 
 

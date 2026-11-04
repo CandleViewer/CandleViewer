@@ -143,6 +143,19 @@ def test_flaky_quarantine_age_passes_within_window(tmp_path: Path) -> None:
     assert pack.check_flaky_quarantine_age(tmp_path) == []
 
 
+def test_flaky_quarantine_age_reads_the_playwright_title_tag(tmp_path: Path) -> None:
+    # E49-Q01 (#1335, BQ-5): the `@flaky` title tag of a Playwright spec, same markers.
+    old = (datetime.now(timezone.utc).date() - timedelta(days=30)).isoformat()
+    (tmp_path / "x.spec.ts").write_text(
+        f'// ticket: E49-1 quarantined: {old} owner: qa\ntest("x @flaky", () => {{}});\n'
+        'test("y @flaky", () => {});\n',
+        encoding="utf-8",
+    )
+    found = [str(v) for v in pack.check_flaky_quarantine_age(tmp_path)]
+    assert any("x.spec.ts:2" in v and "E49-1" in v for v in found)
+    assert any("x.spec.ts:3" in v and "no `ticket: <KEY>`" in v for v in found)
+
+
 # --- Assertion 7: compose invariants ------------------------------------------
 
 

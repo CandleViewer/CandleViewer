@@ -185,3 +185,22 @@ def test_scan_pytest_file_falls_back_on_an_inconsistent_dedent(tmp_path: Path) -
         encoding="utf-8",
     )
     assert [e.line for e in scan_pytest_file(f, tmp_path)] == [4]
+
+
+def test_report_to_dict_adds_owner_and_start_to_a_playwright_entry(tmp_path: Path) -> None:
+    # E49-Q01 (#1335, BQ-5): a Playwright `@flaky` title tag carries `owner:` beside the markers.
+    spec = tmp_path / "e2e" / "x.spec.ts"
+    spec.parent.mkdir()
+    spec.write_text(
+        '// ticket: E49-7 quarantined: 2026-11-02 owner: @qa\ntest("x @flaky", () => {});\n',
+        encoding="utf-8",
+    )
+    assert build_report(tmp_path).to_dict()["quarantined"] == [
+        {
+            "path": "e2e/x.spec.ts",
+            "line": 2,
+            "ticket": "E49-7",
+            "owner": "qa",
+            "since": "2026-11-02",
+        }
+    ]
