@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, UserId
 from candleviewer.risk.caps import ManagerCaps, PolicyCaps, ProfileCaps, ResolvedCaps, resolve_caps
 from candleviewer.risk.evaluator import RiskEvaluation, evaluate
@@ -58,6 +59,41 @@ def figures(**fields: Any) -> RiskFigures:
     return replace(base, **fields)
 
 
+def instrument(symbol: str = "BTCUSDT", **fields: Any) -> Instrument:
+    """A trading linear USDT perpetual unless `fields` say otherwise."""
+    base: dict[str, Any] = {
+        "symbol": symbol,
+        "base_coin": "BTC",
+        "quote_coin": "USDT",
+        "settle_coin": "USDT",
+        "status": "trading",
+        "contract_type": "linear_perpetual",
+        "launch_time": 0,
+        "tick_size": D("0.1"),
+        "price_scale": 1,
+        "min_price": D("0.1"),
+        "max_price": D("199999.8"),
+        "qty_step": D("0.001"),
+        "min_order_qty": D("0.001"),
+        "max_order_qty": D(100),
+        "max_mkt_order_qty": D(50),
+        "min_notional": D(5),
+        "max_leverage": D(100),
+        "min_leverage": D(1),
+        "leverage_step": D("0.01"),
+        "funding_interval_min": 480,
+        "upper_funding_rate": D("0.00375"),
+        "lower_funding_rate": D("-0.00375"),
+        "copy_trading": False,
+        "metadata_version": 1,
+        "fetched_at": 0,
+    }
+    return Instrument.model_validate(base | fields)
+
+
+_BTCUSDT = instrument()
+
+
 def order(**fields: Any) -> RiskOrder:
     """A notional given alone is priced at 1, so it stays `qty` at the reference price."""
     if "notional" in fields and not {"qty", "reference_price"} & fields.keys():
@@ -67,7 +103,7 @@ def order(**fields: Any) -> RiskOrder:
         environment="demo",
         paper=False,
         user_id=UserId(UUID(int=2)),
-        symbol="BTCUSDT",
+        instrument=_BTCUSDT,
         side="buy",
         qty=D("0.1"),
         reference_price=D(100_000),

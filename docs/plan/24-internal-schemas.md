@@ -2447,7 +2447,10 @@ loss in percent, drawdown, consecutive losses. A projected figure may land on it
 it. Comparisons run at 80 significant digits, exact for `numeric(38,18)` operands. `evaluate` never raises on malformed
 inputs: a non-finite figure, a negative quantity, price, notional, held notional, counter or cap limit, a figure or limit whose decimal exponent is beyond ±100 (so no ratio overflows), an order priced at or below 0, whose notional exceeds its quantity at its reference price, or that opens exposure with a notional at or below 0 (every exposure cap measures the held notional plus the order's), or a tz-naive
 `as_of` refuses `risk_state_unavailable` before any other check; only a tz-naive `now` (a programmer error) raises.
-`as_of` and `now` come from the same injected clock. An order that is reduce-only and opens neither exposure nor a
+`as_of` and `now` come from the same injected clock. The symbol rule is `accounts.profiles.SymbolScope`'s verdict on
+the order's instrument (`RiskOrder.instrument`), the one matcher of the order validator and a profile save (#908): a
+`*USDT` pattern matches only a trading USDT perpetual, `blocked_symbols` wins over the allow-list and `all_symbols`, and
+an empty allow-list without `all_symbols` admits nothing. An entry on either list that is not the profile layer's `SymbolPattern` (`^\*?[A-Z0-9]{4,20}$`) refuses every symbol, fail closed on both lists. The instrument's status and product type are the order validator's fence, not the gate's: the gate reads them only for a pattern's match. An order that is reduce-only and opens neither exposure nor a
 position skips every check, these refusals included (SR-E39-02).
 
 ### 8.12 The private-stream consumer (E29-T05)

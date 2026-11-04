@@ -28,6 +28,10 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final, Literal
 
+from pydantic import TypeAdapter, ValidationError
+
+from candleviewer.accounts.profiles import SymbolEntries, SymbolPattern, SymbolScope
+
 
 class CapSource(StrEnum):
     """The layer that binds a resolved limit; `label` names it in a refusal message."""
@@ -48,6 +52,8 @@ _LABELS: Final = {
 }
 
 Behaviour = Literal["warn", "block", "flatten"]
+_PATTERN: Final = TypeAdapter(SymbolPattern)
+_NO_SYMBOLS: Final = SymbolEntries.of(())
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +75,9 @@ class ProfileCaps:
     """The account profile's caps; None sets no limit at this layer.
 
     `max_consecutive_losses` has no stored column yet (E39-S02/E39-T03 own it): it is evaluated
-    only when given.
+    only when given. `blocked_symbols` is `AccountProfile.denied_symbols` under the gate's name:
+    slice 4's binder maps the one to the other. Each symbol entry must read as the profile layer's
+    `SymbolPattern`; one that does not refuses every symbol (`resolve_caps`).
     """
 
     max_position_notional_usd: Decimal | None = None
@@ -106,13 +114,14 @@ class ResolvedCaps:
     """Per cap the tightest blocking limit and the policy's warn threshold, plus the symbol rule.
 
     `caps` holds the blocking limits (behaviour `block` or `flatten`), `warn_limits` the policy
-    limits whose behaviour is `warn`; a cap may appear in either, both or neither.
+    limits whose behaviour is `warn`; a cap may appear in either, both or neither. `symbols` is the
+    profile's lists compiled into `accounts.profiles.SymbolScope`, the one matcher the order path
+    and a profile save use (#908, PF-T07, SR-E28-06), so a `*USDT` pattern means here what it
+    means there.
     """
 
     caps: Mapping[str, ResolvedCap]
-    all_symbols: bool
-    allowed_symbols: frozenset[str]
-    blocked_symbols: frozenset[str]
+    symbols: SymbolScope
     warn_limits: Mapping[str, ResolvedCap] = MappingProxyType({})
 
     def get(self, name: str) -> ResolvedCap | None:
@@ -172,7 +181,21 @@ def resolve_caps(
     return ResolvedCaps(
         caps=MappingProxyType(caps),
         warn_limits=MappingProxyType(warns),
-        all_symbols=profile.all_symbols,
-        allowed_symbols=profile.allowed_symbols,
-        blocked_symbols=profile.blocked_symbols,
+        symbols=_scope(profile),
     )
+
+
+def _entries(listed: frozenset[str]) -> SymbolEntries | None:
+    try:
+        return SymbolEntries.of(_PATTERN.validate_python(entry) for entry in listed)
+    except ValidationError:
+        return None
+
+
+def _scope(profile: ProfileCaps) -> SymbolScope:
+    """The profile's lists compiled; an entry outside `SymbolPattern` on either list fails closed:
+    the scope admits nothing, whatever `all_symbols` says."""
+    allowed, denied = _entries(profile.allowed_symbols), _entries(profile.blocked_symbols)
+    if allowed is None or denied is None:
+        return SymbolScope(all_symbols=False, allowed=_NO_SYMBOLS, denied=_NO_SYMBOLS)
+    return SymbolScope(all_symbols=profile.all_symbols, allowed=allowed, denied=denied)
