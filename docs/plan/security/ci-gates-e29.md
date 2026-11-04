@@ -159,9 +159,10 @@ would retire its exception.
   `.values(rows)`; a payload changed through a name (`p = values["payload"]; p["sign"] = ...`) or by
   `|=`; text SQL with an alias between the table and its columns
   (`INSERT INTO order_events AS oe (...)`), or with a SQL comment other than between `INSERT` and
-  `INTO` (`INSERT INTO /* tag */ order_events`); a statement split across string literals. The
-  in-memory fake (`oms/fakes.py`) redacts the same way, proven by its own tests. The threat model's
-  record-type form (section 6 item 4) waits for closed payload schemas (SR-E29-08 item 3, G-1):
+  `INTO` (`INSERT INTO /* tag */ order_events`) or a nested block comment between them
+  (`INSERT /* a /* b */ c */ INTO`); a statement split across string literals. The in-memory fake
+  (`oms/fakes.py`) redacts the same way, proven by its own tests. The threat model's record-type
+  form (section 6 item 4) waits for closed payload schemas (SR-E29-08 item 3, G-1):
   `NewOrderEvent.payload` is a plain `Mapping` today.
 - **Fixture:** `.semgrep/tests/cv-oms-order-events-unredacted/`.
 
