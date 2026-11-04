@@ -6954,6 +6954,16 @@ The orchestrator assigned this number on 2026-11-03 (ruling of record on #1029, 
 - Beside this section, no contract changes: ADR-0006 Amendment 2 and Validation status, and ADR-0044 (v1 order entry is REST in every environment; the exchange's reject text is code-only to clients and stored redacted; its risks name the E30 and `11-user-stories.md` texts that still show the exchange's message); `20` §3.5, §5 (the planned layout drops `ws_trade.py`), §9, §10.2 and §13.2 (REST in every environment, the shipped interface names, rows for the stream consumer and the exit routes; the live 500 ms figure assumed a WS trade path) and §16; `21` §3.3.4 (automatic adoption only; the `exchange_updated_ts` note); `28` B1.6 (text only); `04` SR-057, SR-058, O8, row 17 and the E29 paragraph's tense; the E29 threat model's §2 (E3b) and §12.3 notes.
 - No migration, REST operation, WS frame, table, column, chart or `machine_hash` change.
 
+### 19.128 2026-11-04 — 22 E29 operations: the 401, `Idempotency-Replayed`, the close-all account cap and close-all's nullable `symbol` they already have, declared (E29-Q02, #1147)
+
+The orchestrator assigned this number on 2026-11-04 (17:14Z); it keeps it through its rebases.
+
+- E29-Q02's contract suite (#1147) found four things the E29 routes already do that 22 did not declare. Contract first (C-6.1), and here the contract catches up with the shipped routes: no route changes, and each declaration below was checked against the route's code and its tests.
+- 22 declares `401` (the shared `Unauthorized`, step 1's no principal) on `listOrders`, `getOrder`, `getOrderDiagnostics`, `listPositions`, `getPosition`, `closePosition`, `reversePosition` and `setPositionLeverage`. Each route answers it when no verified session is found, as `placeOrder`, `amendOrder`, `cancelOrder`, `cancelAllOrders` and `closeAllPositions` already declare it.
+- 22 declares `Idempotency-Replayed` (the shared header) on the 2xx of `amendOrder` (`202`), `cancelOrder` (`202`), `cancelAllOrders` (`200`), `closeAllPositions` (`200`) and `setPositionLeverage` (`200`): the same key with the same body is answered from the 24 h record with `Idempotency-Replayed: true`, as `placeOrder`, `closePosition` and `reversePosition` already declare it. `setPositionLeverage`'s text now names the replay among its 24 h record's answers.
+- 22 `closeAllPositions`: `exchange_account_ids` gains `maxItems: 200`, the route's cap, and a longer list is refused as `validation_failed`, naming `exchange_account_ids`, with nothing closed or sent. `symbol` is `oneOf [Symbol, null]`, as `cancelAllOrders`' is: the route reads `null` as no symbol, so `null` and omission mean the same, and the text says so.
+- No new `x-error-codes` entry, component schema or operation, so the `openapi_pending` baselines do not move; no route, WS, table, column, chart or `machine_hash` change, and no migration. `packages/protocol` is regenerated from 22; the Python models and the contract subset come out unchanged.
+
 ### 19.142 2026-11-05 — §7.2, §7.4: the moving averages' applied price and offset, the client-worker orders and `ma_ribbon` (E13-S02, #424)
 
 This is the number the orchestrator assigned on 2026-11-05 (ruling of record 6651687192 on #424, BQ-02); it keeps it through its rebases.
