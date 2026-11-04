@@ -36,7 +36,7 @@ own `capture_date` (the `recorded_*` files below).
 | Live feed fields (#3447): `RPI`, `seq`, newer tickers  | `ws/recorded_publicTrade_BTCUSDT.jsonl`, `ws/recorded_tickers_BTCUSDT.jsonl`     |
 | Risk-limit tiers (#913): one recorded page each        | `rest/risk_limit_BTCUSDT.json`, `rest/risk_limit_ETHUSDT.json`                   |
 | Bulk ticker route (#4707): one recorded reply each     | `rest/recorded_tickers_{BTCUSDT,ETHUSDT,SOLUSDT}.json`                           |
-| Order path (#2877): trade replies, reads, two errors   | `rest/trading-*.json` (docs-transcribed, below)                                  |
+| Order path (#2877): trade replies, reads, six errors   | `rest/trading-*.json` (docs-transcribed, below)                                  |
 | Private stream (#3963): replies and topic pushes       | `ws/private-*.jsonl` (docs-transcribed, below)                                   |
 | Open-interest history (#665): 260 rows, 2 cursor pages | `rest/open_interest_BTCUSDT_5min_page{0,1}.json`, `rest/docs-open-interest.json` |
 
@@ -124,6 +124,13 @@ echo of its request's `orderLinkId`, which the port pairs it by, is assumed pend
 §14.1), and a linear position, wallet (USDT) or fee-rate row; strict-model unit tests alone
 cover those parsers.
 
+E29-Q01 (#844) added four more error-table rows, read from the same page on 2026-11-04 (`10006`,
+`110017`, `110020`, `110025`: the table's `UTA` section, code and text only). Their source file,
+`docs/v5/error.mdx`, holds the same four rows at the commit above and at the docs repository's head
+(`76aa20a4a479`). Each answers the route its `stream` names: `POST /v5/order/create` for the first
+three, `POST /v5/position/switch-mode` for `110025`. E29-K01's follow-up capture may replace `110017`
+and `110025`; no demo run provokes `10006` or `110020`, so those two stay transcribed.
+
 Licence: the upstream repository `bybit-exchange/docs` has no licence file at that commit, so no
 licence grants these examples. Each file reproduces one short documented example, used only to
 test this adapter's parsers against the documented shape, under ruling R2 (#2701); E29-K01's
@@ -150,6 +157,10 @@ account id.
 - `trading-account-info.json`: source: docs-transcribed, `account/account-info`; 2026-10-21; symbol none; env none; redaction none.
 - `trading-error-110072.json`: source: docs-transcribed, `error (UTA table, 110072)`; 2026-10-21; symbol none; env none; redaction none.
 - `trading-error-110001.json`: source: docs-transcribed, `error (UTA table, 110001)`; 2026-10-21; symbol none; env none; redaction none.
+- `trading-error-10006.json`: source: docs-transcribed, `error (UTA table, 10006)`; 2026-11-04; symbol none; env none; redaction none.
+- `trading-error-110017.json`: source: docs-transcribed, `error (UTA table, 110017)`; 2026-11-04; symbol none; env none; redaction none.
+- `trading-error-110020.json`: source: docs-transcribed, `error (UTA table, 110020)`; 2026-11-04; symbol none; env none; redaction none.
+- `trading-error-110025.json`: source: docs-transcribed, `error (UTA table, 110025)`; 2026-11-04; symbol none; env none; redaction none.
 
 ### Docs-transcribed private-stream frames (#3963, G-8b ruling 11)
 

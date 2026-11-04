@@ -2871,7 +2871,87 @@
    "required": true
   }
  },
+ "rest.trading-error-10006": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  }
+ },
  "rest.trading-error-110001": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-error-110017": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-error-110020": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "retCode": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "retMsg": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  }
+ },
+ "rest.trading-error-110025": {
   "": {
    "types": [
     "object"
