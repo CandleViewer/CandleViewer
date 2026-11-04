@@ -2454,6 +2454,29 @@ The `jsonb` keys, closed sets each:
 the allowance and the override's grace window are E39-S02's. A lockout's `released_at` is written when the release
 happens, never scheduled ahead.
 
+**Cap resolution and the evaluator (E39-T01, `risk/caps.py`, `risk/evaluator.py`).** `resolve_caps` merges the
+`risk_policy` row, the account's `account_profiles` caps and the acting manager's
+`user_account_access.max_daily_loss_usd` (that acting user's row only, none for a system origin) into one blocking
+limit per cap: the most restrictive non-NULL value wins, so no layer widens another (US-PROF-003, SR-E39-03), and a NULL
+column sets no limit at its layer. On a tie the most specific layer is named (manager, then profile, then policy); the
+refusal's `message` names it, and `RiskDecision` gains no field. The profile's `max_leverage_cap` resolves as
+`max_leverage`. A profile or manager limit always blocks; a policy limit whose `breach_behaviour` is `block` or `flatten`
+joins the blocking minimum (the flatten is E39-S02's), and one whose behaviour is `warn` stays out of it as a separate
+warn threshold. Each check refuses on the blocking limit and, independently, returns a warning beside the verdict when
+the warn threshold is crossed, so a policy `warn` never disables a profile or manager limit. A policy cap of 0 is a
+limit, not "unlimited": it refuses every opening order on that cap. `evaluate(order, figures, caps, now=…)` is pure and
+stops at the first refusal, in this order: symbol rule, kill switch, lockout, state freshness and equity, orders per
+minute, concurrent orders, open positions (only for an order whose effect opens a position, `RiskOrder.opens_position`),
+position notional, aggregate notional, position share of equity, per-symbol concentration (a share of the
+resolved `max_total_notional_usd`, block or warn; a blocking concentration cap with no aggregate cap refuses
+`risk_limit_breached` on `per_symbol_concentration_pct`, a warn-only one is skipped), leverage, daily loss in USD, daily
+loss in percent, drawdown, consecutive losses. A projected figure may land on its limit; a measured loss is refused at
+it. Comparisons run at 80 significant digits, exact for `numeric(38,18)` operands. `evaluate` never raises on malformed
+inputs: a non-finite figure, a negative quantity, price, notional, held notional, counter or cap limit, or a tz-naive
+`as_of` refuses `risk_state_unavailable` before any other check; only a tz-naive `now` (a programmer error) raises.
+`as_of` and `now` come from the same injected clock. An order that is reduce-only and opens neither exposure nor a
+position skips every check, these refusals included (SR-E39-02).
+
 ### 8.12 The private-stream consumer (E29-T05)
 
 _Added for E29-T05 (#848); as built since its wiring slice (S8b): the OMS runtime runs it._ The consumer reads each account's private stream (§14.1 `subscribe_private`, §14.2 rule 13) and drives what it reports into the OMS: order and execution rows into the order's B1 machine through the one facade (`OrderMachines`, §8.2), position rows into the position projection, wallet rows into E27-T04's wallet cache, and each status into account health, reconciliation and the key standing. The stream, never the REST acknowledgement, is the source of truth for an order's fills and end (ADR-0006, §8.4). The client topics that publish this truth (`orders`, `executions`, `positions`) are E29-T13's (#4207; `23-ws-protocol.md` §6.2.3, `oms/ws_topics.py`). They are published from the steps as they commit, not from the facade's machine-state publish, which skips a view that did not change, as a second partial fill leaves it: the step writer reports each committed step with the row as it then stands (`OrderStepWriter`'s `on_commit`), the projection's position store each row it applied (`PublishedPositions`), and the facade names the fills it holds before their bind (`OrderMachines.held_fills`, a plain-view read), which a position waits for. How it starts and stops is `20-architecture.md` §6.2's. The consumer's dead-man's-switch window opens at its start, where the OMS runtime sets `ready`, not at boot, with that section's backstop for an OMS that never becomes ready, and `CV_ACCOUNT_DOWN_S` stays the window.
