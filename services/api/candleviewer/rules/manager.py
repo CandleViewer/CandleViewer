@@ -25,7 +25,9 @@ from pydantic import ValidationError
 from candleviewer.observability import spawn
 from candleviewer.rules.arming import ArmingFacts, check_arming
 from candleviewer.rules.compiler.common import ConditionNodeBoundError, check_bounds
+from candleviewer.rules.errors import ConstantTypeError
 from candleviewer.rules.evaluator.engine import EvaluationResult
+from candleviewer.rules.evaluator.nodes import check_constants
 from candleviewer.rules.ir import Rule, ir_hash
 from candleviewer.rules.ir.accounts import (
     collect_account_ids,
@@ -469,11 +471,14 @@ def _illegal(leaf: str, target: str) -> str:
 
 
 def quarantine_path(ir: dict[str, Any]) -> str | None:
-    """JSON path of the first schema violation, or None when the stored IR is sound."""
+    """JSON path of the first schema violation, or of the first constant the evaluator cannot read
+    as its place needs (`check_constants`, #5807), or None when the stored IR is sound."""
     try:
-        Rule.model_validate(ir)
+        check_constants(Rule.model_validate(ir).conditions)
     except ValidationError as exc:
         return "/" + "/".join(str(p) for p in exc.errors()[0]["loc"])
+    except ConstantTypeError as exc:
+        return "/" + "/".join(str(p) for p in exc.loc)
     return None
 
 
