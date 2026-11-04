@@ -4,7 +4,7 @@ endpoint). The operations come from 22 itself with every component kept; each ca
 real router of its operation through Schemathesis's ASGI client, with no socket (the network guard
 stays on). Reads first, then each write. The routers run on the fakes of their own unit tests
 (`_e29_oms_world`), not through `create_app()`: its fake backend composes no OMS, so each answers
-`501` or `503` before it reads a request.
+`501` or `503` to a valid request (a position write refuses an invalid body first).
 
 The hooks are the session's: the Owner's bearer, the SR-041 and arm tokens a request declares, a
 fresh `Idempotency-Key` per request, and the world's id for a path parameter a case draws
@@ -12,7 +12,9 @@ well-formed. No hook maps or filters a body or a query; a case that broke a hook
 repaired (the guard is not under test here). A repeat under a key is a replay, whose
 `Idempotency-Replayed` header 22 declares on none of `amendOrder`, `cancelOrder`,
 `cancelAllOrders`, `closeAllPositions` and `setPositionLeverage`: the replay case is added once it
-does. No step-up is needed: `sl_loosen`, of `setPositionTpSl`, is the one the E29 operations have.
+does. A key reused under another body is `closeAllPositions`' `500` where 22 lists `409` (F1,
+#5855), pinned by the request sweep's `xfail`. No step-up is needed: `sl_loosen`, of
+`setPositionTpSl`, is the one the E29 operations have.
 
 Not driven: `setPositionTpSl` (`PUT /positions/{positionId}/tpsl`): no router serves it
 (`rbac/matrix.yaml`: `not_mounted`), so there is no answer to judge and its step-up hook has
@@ -20,31 +22,35 @@ nothing to supply; `test_e29_the_one_operation_not_driven_is_not_mounted` fails 
 
 22 lists no `401` on `listOrders`, `getOrder`, `getOrderDiagnostics`, `listPositions`,
 `getPosition`, `closePosition`, `reversePosition` and `setPositionLeverage` (its `info` says every
-operation may answer one), so the copy of 22 here gives those the shared `Unauthorized`.
+operation may answer one), so the copy of 22 here gives those the shared `Unauthorized`. It also
+takes `"symbol": null` on `closeAllPositions` (`oneOf [Symbol, null]`): the route reads `null` as
+no symbol, where 22 types a string alone (F2, #5855). The `22` PR (branch
+`docs/e29-q02-22-auth-replay`) declares it, which flips
+`test_e29_22_declares_the_null_symbol_close_all_positions_takes`: delete `_null_symbol` and the
+marker then.
 
 Every built-in check runs but these, each left out for the reason given, which lies outside the
 route's answer:
 
 - `allow_header_conformance`: Starlette answers a method no route of a path serves from the first
-  route that matched the path, so its `405` names that route's method alone (app-wide).
+  route that matched the path, so its `405` names that route's method alone (app-wide). It fails
+  on six of the 15 operations only, but a list of six is one more to keep: all 15, as the
+  user-settings module does.
 - `positive_data_acceptance`, on `listOrders`, `listExecutions` and `listClosedPnl` (an issued
   cursor), `placeOrder`, `amendOrder`, `closePosition`, `reversePosition` and
   `setPositionLeverage` (a limit price, `pct` xor `qty`, a leverage inside the cap, a current
   `If-Match`, an algo that exists): 22 cannot say what a route also needs, so a request valid
-  against 22 is refused by contract. The other seven operations keep it.
+  against 22 is refused by contract. The other seven operations keep it. (`reversePosition`
+  passes at this seed, as no draw is a limit entry without its price: the rule stays true.)
 - `missing_required_header`, on the writes: `X-CSRF-Token` is required, and SR-041's guard is the
   composed app's middleware, which these worlds do not run (the sweep drops `Idempotency-Key`).
 - `unsupported_method`, on `cancelAllOrders` and `closeAllPositions`: their literal paths also
   match `/orders/{orderId}` and `/positions/{positionId}`, so `PATCH /orders/cancel-all` is
   `amendOrder`'s `400` (22's own path collision, the order the routers mount in).
-- `negative_data_rejection`, on `closeAllPositions` only: its route takes `"symbol": null` as no
-  symbol, where 22 types `symbol` as a string alone (a finding of this module, in its PR); the
-  exclusion goes with the fix, as does the `IdempotencyKeyReuse` that route lets out unhandled (a
-  `500` behind the app's handler) for a key reused under another body, where 22 lists `409`.
 
-`negative_data_rejection` expects 400, 401, 403, 404 or 422 (404: a path id no one holds is
-judged before the body). The examples, coverage and fuzzing phases run, 25 fuzzed examples per
-operation, derandomized with a fixed seed.
+`negative_data_rejection` expects 400, 401, 403 or 422: the hooks pin every well-formed path id to
+the world's, so none is a `404`. The examples, coverage and fuzzing phases run, 25 fuzzed examples
+per operation, derandomized with a fixed seed.
 """
 
 from __future__ import annotations
@@ -59,16 +65,17 @@ import pytest
 import schemathesis
 import yaml
 from hypothesis import settings
+from jsonschema import Draft202012Validator
 from schemathesis.specs.openapi.checks import (
     allow_header_conformance,
     missing_required_header,
-    negative_data_rejection,
     positive_data_acceptance,
     unsupported_method,
 )
 from starlette.routing import Match
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from tests.contract import _e29_oms_world as oms_world
 from tests.contract._e29_oms_world import (
     ARM,
     GROUP_OF,
@@ -99,15 +106,24 @@ _NO_POSITIVE: Final = frozenset(
 )  # fmt: skip
 _COLLIDING: Final = frozenset({"cancelAllOrders", "closeAllPositions"})
 _CONFIG: Final = schemathesis.Config.from_str(
-    "seed = 1147\n[checks]\nnegative_data_rejection.expected-statuses = [400, 401, 403, 404, 422]\n"
+    "seed = 1147\n[checks]\nnegative_data_rejection.expected-statuses = [400, 401, 403, 422]\n"
 )
 #: The world's id of what a path parameter names, by operation (filled by the module fixture).
 _PINS: Final[dict[str, dict[str, str]]] = {}
 
 
+def _null_symbol(close_all: dict[str, Any]) -> None:
+    """F2 (#5855): `closeAllPositions` reads `"symbol": null` as no symbol, where 22 types it a
+    string alone. The `22` PR (branch `docs/e29-q02-22-auth-replay`) declares `oneOf [Symbol,
+    null]`, which makes this a no-op and flips the xfail below: delete both then."""
+    members = close_all["requestBody"]["content"]["application/json"]["schema"]["properties"]
+    if {"type": "null"} not in members["symbol"].get("oneOf", []):
+        members["symbol"] = {"oneOf": [members["symbol"], {"type": "null"}]}
+
+
 def _operations(operations: Sequence[str]) -> dict[str, Any]:
     """22, copied once (Schemathesis rewrites what it loads) and cut to `operations`; one that
-    lists no `401` gets the shared response."""
+    lists no `401` gets the shared response, and `closeAllPositions` takes a null `symbol`."""
     spec: dict[str, Any] = copy.deepcopy(SPEC)
     paths: dict[str, Any] = {}
     for path, item in spec["paths"].items():
@@ -120,6 +136,8 @@ def _operations(operations: Sequence[str]) -> dict[str, Any]:
             paths[path] = {**kept, "parameters": item.get("parameters", [])}
             for op in kept.values():
                 op["responses"].setdefault("401", {"$ref": "#/components/responses/Unauthorized"})
+                if op["operationId"] == "closeAllPositions":
+                    _null_symbol(op)
     spec["paths"] = paths
     return spec
 
@@ -225,7 +243,6 @@ def _excluded(operation: str) -> list[Any]:
         *([positive_data_acceptance] if operation in _NO_POSITIVE else []),
         *([missing_required_header] if operation in _WRITES else []),
         *([unsupported_method] if operation in _COLLIDING else []),
-        *([negative_data_rejection] if operation == "closeAllPositions" else []),
     ]
 
 
@@ -233,7 +250,7 @@ def _excluded(operation: str) -> list[Any]:
 @settings(max_examples=25, derandomize=True, deadline=None, database=None)
 def test_e29_reads_schemathesis_fuzz(case: schemathesis.Case[Any]) -> None:
     """Each generated request is answered with a status the operation declares, in its declared
-    media type and schema, and a request outside the schema is refused (400, 401, 403, 404, 422)."""
+    media type and schema, and a request outside the schema is refused (400, 401, 403, 422)."""
     case.call_and_validate(base_url=_BASE_URL, excluded_checks=_excluded(_hooks(case)))
 
 
@@ -263,6 +280,21 @@ def test_e29_the_one_operation_not_driven_is_not_mounted() -> None:
     `not_mounted` and fails once the route appears."""
     rows = yaml.safe_load(MATRIX_PATH.read_text(encoding="utf-8"))["operations"]
     assert rows["PUT /positions/{positionId}/tpsl"]["state"] == "not_mounted"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="F2 (#5855): 22 types closeAllPositions.symbol a string alone; the 22 PR (branch "
+    "docs/e29-q02-22-auth-replay) declares it nullable, which flips this: delete _null_symbol "
+    "and the marker",
+)
+def test_e29_22_declares_the_null_symbol_close_all_positions_takes() -> None:
+    """The route reads `"symbol": null` as no symbol, as `cancelAllOrders`' does and 22 declares
+    there; `_operations` relaxes the member in its copy until 22 declares it here."""
+    asked = oms_world.inline(oms_world.operation("closeAllPositions")[2]["requestBody"])
+    symbol = asked["content"]["application/json"]["schema"]["properties"]["symbol"]
+    assert Draft202012Validator(symbol).is_valid(None)
 
 
 @pytest.mark.parametrize("operation", _WRITES)

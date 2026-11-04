@@ -41,6 +41,7 @@ tests/contract/test_e29_oms_schemathesis_contract.py::test_e29_reads_schemathesi
 tests/contract/test_e29_oms_schemathesis_contract.py::test_e29_writes_schemathesis_fuzz | the eight E29 writes, fuzzed (Schemathesis) | E29-TC-650, E29-TC-655
 tests/contract/test_e29_oms_schemathesis_contract.py::test_e29_every_operation_22_has_under_its_paths_is_driven_or_listed | the E29 operations | E29-TC-650
 tests/contract/test_e29_oms_schemathesis_contract.py::test_e29_the_one_operation_not_driven_is_not_mounted | setPositionTpSl: PUT /positions/{positionId}/tpsl | E29-TC-650
+tests/contract/test_e29_oms_schemathesis_contract.py::test_e29_22_declares_the_null_symbol_close_all_positions_takes | closeAllPositions: POST /positions/close-all, a null symbol (F2) | E29-TC-650
 tests/contract/test_e29_oms_schemathesis_contract.py::test_e29_the_hooks_supply_every_header_22_requires_of_a_write | the eight E29 writes | E29-TC-650
 tests/contract/test_e29_oms_schemathesis_contract.py::test_e29_the_arm_token_the_hooks_supply_is_the_one_a_live_account_takes | setPositionLeverage: PUT /positions/{positionId}/leverage | E29-TC-650
 
