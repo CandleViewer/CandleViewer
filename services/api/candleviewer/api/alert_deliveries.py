@@ -9,6 +9,9 @@ Delivery ids are sequential, so those denial records are budgeted per caller (`D
 probing other users' ids cannot flood the audit log, and what the budget holds back is carried by
 the caller's next denial record.
 
+- **read one** (`getAlertDelivery`, CC-2): the caller's own delivery with its `context`, served
+  through `alerts.delivery_view.public_context`'s allow-list, so `condition_hash` and `gates`
+  never leave; unknown or foreign is the same audited 404.
 - **ack**: only `sent -> acked` is legal. Acking an acked delivery returns it unchanged (same
   `acked_at`); a delivery that never reached `sent` has nothing to acknowledge and is returned
   unchanged too. The attempted transition is audited write-ahead (C-2.9); the conditional update
@@ -30,9 +33,9 @@ the caller's next denial record.
 `CHANGE_HOOK_TIMEOUT_S` (an ack-all calls it once per batch), and its failure is logged and never
 fails the request, whose change is already durable.
 
-The response never carries the delivery `context` or anything from the alert's SECRET webhook
-columns: `AlertDelivery` is built field by field (`dump`), with `kind` and a storm summary's
-`summary` derived from the row (CC-7).
+No response but `getAlertDelivery`'s carries the delivery `context`, and none carries anything
+from the alert's SECRET webhook columns: `AlertDelivery` is built field by field (`dump`), with
+`kind` and a storm summary's `summary` derived from the row (CC-7).
 """
 
 # No `from __future__ import annotations`: FastAPI must evaluate `Depends(<closure>)` in the
@@ -53,19 +56,28 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from candleviewer.alerts.delivery_view import delivery_kind, silenced, storm_summary
+from candleviewer.alerts.delivery_view import (
+    delivery_kind,
+    public_context,
+    silenced,
+    storm_summary,
+)
 from candleviewer.alerts.dispatcher import Metric
+from candleviewer.alerts.render import TitleOf, registry_titles
 from candleviewer.api.alerts import READ, WRITE
 from candleviewer.api.alerts_http import AuditEmitter, Problem, ProblemRoute, Resolver, caller
 from candleviewer.api.view_as_subject import acting_user
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.rules.manager import Actor
+from candleviewer.rules.vocabulary import default_registry
 
 #: SR-026: the declared query parameters of `listAlertDeliveries`; any other key is refused.
 LIST_DELIVERIES_QUERY = frozenset(
     {"cursor", "limit", "status", "alert_id", "unacked_only", "from", "to"}
 )
+#: SR-026: `getAlertDelivery` declares no query parameter, so any key is refused.
+GET_DELIVERY_QUERY: frozenset[str] = frozenset()
 #: ack-all bounds (ticket DoS note): rows per UPDATE, UPDATEs per request.
 ACK_ALL_BATCH = 500
 ACK_ALL_MAX_BATCHES = 10
@@ -277,6 +289,12 @@ def dump(row: DeliveryView) -> dict[str, Any]:
     }  # fmt: skip
 
 
+def dump_detail(row: DeliveryView, title_of: TitleOf) -> dict[str, Any]:
+    """`AlertDeliveryDetail`: `dump` plus the allow-listed `context` (CC-2), its `values`
+    under *title_of*'s scopes as the rendered body has them."""
+    return dump(row) | {"context": public_context(row.context, title_of)}
+
+
 class _DesktopOutcome(BaseModel):
     """The report-back body; closed (`additionalProperties: false`)."""
 
@@ -302,12 +320,15 @@ def make_alert_deliveries_router(
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     on_change: OnChange | None = None,
     denials: DenialBudget | None = None,
+    metric_title: TitleOf | None = None,
 ) -> APIRouter:
     """Mount before the `/alerts` CRUD router: its `/alerts/{alertId}` would otherwise take
     `GET /alerts/deliveries` and refuse `deliveries` as a malformed alert id. *metric* is the
-    dispatcher's `cv_alert_delivery_*` sink: a desktop delivery settles here, not there."""
+    dispatcher's `cv_alert_delivery_*` sink: a desktop delivery settles here, not there.
+    *metric_title* gives each metric's scope; by default the registry the evaluator uses."""
     router = APIRouter(tags=["alerts"], route_class=ProblemRoute)
     budget = DenialBudget() if denials is None else denials
+    titles = registry_titles(default_registry()) if metric_title is None else metric_title
 
     def store() -> AlertDeliveryStore:
         s = store_provider()
@@ -350,20 +371,31 @@ def make_alert_deliveries_router(
             raise
 
     reader = caller(actor_resolver, READ, LIST_DELIVERIES_QUERY)
+    one_reader = caller(actor_resolver, READ, GET_DELIVERY_QUERY)
     writer = caller(actor_resolver, WRITE)
+
+    async def _own(delivery_id: int, actor: Actor) -> tuple[Actor, DeliveryView]:
+        """`scope: self`: someone else's delivery is indistinguishable from a missing one."""
+        row = await store().get(delivery_id)
+        if row is None:
+            raise _not_found()
+        if row.user_id != actor.user_id:
+            await _deny(actor, "alert_delivery", str(delivery_id),
+                        "delivery owned by another user")  # fmt: skip
+            raise _not_found()
+        return actor, row
 
     async def owned(
         deliveryId: Annotated[int, Path(ge=1, le=_INT64_MAX)],
         actor: Annotated[Actor, Depends(writer)],
     ) -> tuple[Actor, DeliveryView]:
-        """`scope: self`: someone else's delivery is indistinguishable from a missing one."""
-        row = await store().get(deliveryId)
-        if row is None:
-            raise _not_found()
-        if row.user_id != actor.user_id:
-            await _deny(actor, "alert_delivery", str(deliveryId), "delivery owned by another user")
-            raise _not_found()
-        return actor, row
+        return await _own(deliveryId, actor)
+
+    async def owned_read(
+        deliveryId: Annotated[int, Path(ge=1, le=_INT64_MAX)],
+        actor: Annotated[Actor, Depends(one_reader)],
+    ) -> tuple[Actor, DeliveryView]:
+        return await _own(deliveryId, actor)
 
     @router.get("/alerts/deliveries")
     async def list_deliveries(
@@ -419,6 +451,12 @@ def make_alert_deliveries_router(
             if len(ids) < ACK_ALL_BATCH:
                 break
         return JSONResponse({"acknowledged": total})
+
+    @router.get("/alerts/deliveries/{deliveryId}")
+    async def get_delivery(
+        got: Annotated[tuple[Actor, DeliveryView], Depends(owned_read)],
+    ) -> Response:
+        return JSONResponse(dump_detail(got[1], titles))
 
     @router.post("/alerts/deliveries/{deliveryId}/ack")
     async def ack(got: Annotated[tuple[Actor, DeliveryView], Depends(owned)]) -> Response:
@@ -493,11 +531,13 @@ __all__ = [
     "CHANGE_HOOK_TIMEOUT_S",
     "DENIALS_PER_WINDOW",
     "DENIAL_WINDOW_S",
+    "GET_DELIVERY_QUERY",
     "LIST_DELIVERIES_QUERY",
     "AlertDeliveryStore",
     "DeliveryView",
     "DenialBudget",
     "OnChange",
     "dump",
+    "dump_detail",
     "make_alert_deliveries_router",
 ]

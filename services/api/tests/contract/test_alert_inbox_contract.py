@@ -75,6 +75,18 @@ def test_ack_alert_delivery_200_and_404(env: Env) -> None:
     _check("/alerts/deliveries/{deliveryId}/ack", "post", r.status_code, r.json())
 
 
+def test_get_alert_delivery_200_and_404(env: Env) -> None:
+    """E40-D02 CC-2 (#1130): the caller's delivery with its context; foreign is the 404."""
+    d = env.store.add(context={"symbol": "BTCUSDT", "condition_hash": "h", "gates": ["storm"],
+                               "values": {"price": "65012.5"}, "event_ts_ms": 1})  # fmt: skip
+    r = env.c.get(f"/alerts/deliveries/{d.id}")
+    _check("/alerts/deliveries/{deliveryId}", "get", r.status_code, r.json())
+    api.AlertDeliveryDetail.model_validate(r.json())
+    foreign = env.store.add(user=_USER_B, alert=ALERT_B)
+    r = env.c.get(f"/alerts/deliveries/{foreign.id}")
+    _check("/alerts/deliveries/{deliveryId}", "get", r.status_code, r.json())
+
+
 def test_storm_summary_list_item_validates(env: Env) -> None:
     env.store.add(context={"storm_summary": True, "suppressed": 4, "symbols": ["A"],
                            "window_start_ms": 1, "window_end_ms": 60_001})  # fmt: skip
@@ -111,6 +123,7 @@ def test_report_desktop_outcome(env: Env, body: dict[str, Any], status: int) -> 
     ("path", "method"),
     [
         ("/alerts/deliveries", "get"),
+        ("/alerts/deliveries/{deliveryId}", "get"),
         ("/alerts/deliveries/{deliveryId}/ack", "post"),
         ("/alerts/deliveries/ack-all", "post"),
         ("/alerts/deliveries/{deliveryId}/desktop-outcome", "post"),

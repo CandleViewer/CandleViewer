@@ -1,4 +1,5 @@
-"""E40-S02 (#1130): value formatting is bounded at save and at render.
+"""E40-S02 (#1130): value formatting is bounded at save and at render, and the served `context`
+`values` follow the renderer's scope rule.
 
 At save the compiler refuses a text constant or a listed value over 1,000 characters, a number
 wider than the IR's plain width and a list longer than `MAX_SET_VALUES`, each decided before the
@@ -14,6 +15,7 @@ from typing import Any
 import pytest
 
 from candleviewer.alerts.compiler import MAX_SET_VALUES, MAX_TEXT, AlertCompiler
+from candleviewer.alerts.delivery_view import public_context
 from candleviewer.alerts.errors import AlertIrInvalid
 from candleviewer.alerts.models import AlertCondition
 from candleviewer.alerts.render import (
@@ -193,3 +195,14 @@ def test_value_formatting_is_bounded_case_12_widest_accepted_condition_renders_i
     elapsed = time.perf_counter() - start
     print(f"widest-accepted-render-seconds={elapsed:.5f}")
     assert elapsed < 0.05  # C-2.17: never blocks the loop past 50 ms
+
+
+# --- the served context -------------------------------------------------------------------
+
+
+def test_public_context_serves_only_values_the_body_may_show() -> None:
+    values = {"price": "65012.5", "account_equity": "812.40", "position_qty": "0.5",
+              "made_up_metric": "1", "market_regime": "trend"}  # fmt: skip
+    got = public_context({"values": values}, TITLES)
+    assert got == {"values": {"price": "65012.5", "market_regime": "trend"}}
+    assert public_context({"values": values}) == {"values": {}}  # no registry: none served
