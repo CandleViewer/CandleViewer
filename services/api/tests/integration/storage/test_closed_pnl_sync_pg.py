@@ -4,7 +4,7 @@
 venue's time, where row 57 finds a confirmed flat; and the sync keeps the venue's records through
 the closed-PnL store (slice 2): inserted settled, replaced until final, made final by its rule, a
 read after final never applied, and the ruled seed stored once per key. The venue is
-`test_closed_pnl_sync.py`'s fake, its records and readings derived from the recorded ones there;
+`test_closed_pnl_sync.py`'s fake, its records and readings derived from the transcribed ones there;
 the Postgres fixture and helpers are `test_closed_pnl_records_migration.py`'s."""
 
 from __future__ import annotations
