@@ -43,8 +43,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "b81479ab0"  # origin/main at the ruling fold; every cite is read here
-D03_HEAD = "c2c1c5d50"  # #497's text head (its ruling folded), cited by section only
+BASE = "c56a10bc3"  # origin/main at the design-read fold; every cite is read here
+D03_HEAD = "77f390860"  # #5780's head, #497's text (its ruling folded), cited by section only
+D03_PR = "#5780"  # the D03 text PR the pin is conditional on
+CHECKLIST = "6626707818"  # the owner checklist comment on #498 (section 12)
 BQ_LIST = "6609418330"  # the BQ list on #498
 RULING = "6609843435"  # the orchestrator's ruling of record on it
 AGREE = frozenset({0, 1, 2, 4, 5, 6, 7, 8, 9})  # BQ-3 is ruled in the comment's own words
@@ -64,7 +66,7 @@ PINS_OPEN = 'RULED_PINS = """\n'
 PINS_CLOSE = '"""  # end of the ruled pins'
 RULED_PINS = """
 BQ-0 656b2f7993e3ce88
-BQ-1 37bb65e61a776208
+BQ-1 679c8e095636115e
 BQ-2 8628daec3fc1217f
 BQ-3 ffa6e4d67de5f0e7
 BQ-4 685bf013faf265d7
@@ -87,6 +89,7 @@ KEYED = {
     "D02": L.DocRef("docs/design/E18/E18-D02.md", BASE),
     "E06D01": L.DocRef("docs/design/E06/E06-D01.md", BASE),
     "E06D03": L.DocRef("docs/design/E06/E06-D03.md", BASE),
+    "E11D04": L.DocRef("docs/design/E11/E11-D04.md", BASE),
     "E11D06": L.DocRef("docs/design/E11/E11-D06.md", BASE),
     "E11D07": L.DocRef("docs/design/E11/E11-D07.md", BASE),
     "E47D04": L.DocRef("docs/design/E47/E47-D04.md", BASE),
@@ -102,10 +105,11 @@ CITE_RE = L.cite_regex(KEYED, ranges=True)
 # The load-bearing cites: the needle must stand on the cited line at the base.
 PINS: tuple[L.KeyCite, ...] = (
     L.KeyCite("11", 1666, "coalesced to ≤10 Hz"),
-    L.KeyCite("26", 236, "asymmetric ±15 % hysteresis"),
-    L.KeyCite("26", 244, "±15 % dead band"),
-    L.KeyCite("26", 284, "alpha_outline"),
-    L.KeyCite("26", 797, "disables momentum, fades and transitions"),
+    L.KeyCite("26", 238, "asymmetric ±15 % hysteresis"),
+    L.KeyCite("26", 246, "±15 % dead band"),
+    L.KeyCite("26", 286, "alpha_outline"),
+    L.KeyCite("26", 801, "disables momentum, fades and transitions"),
+    L.KeyCite("05", 165, "Text resize (WCAG 1.4.4, AA)"),
     L.KeyCite("05", 57, "`Alt+T`"),
     L.KeyCite("05", 186, "never throttled/coalesced"),
     L.KeyCite("05", 185, "1 update / 2s per field"),
@@ -117,7 +121,7 @@ PINS: tuple[L.KeyCite, ...] = (
     L.KeyCite("16", 119, "motion.duration.{instant,fast,normal,slow}"),
     L.KeyCite("16", 212, "Dialog/drawer open"),
     L.KeyCite("16", 225, "`motion.hold.*` group"),
-    L.KeyCite("16", 394, "code-only"),
+    L.KeyCite("16", 401, "code-only"),
     L.KeyCite("D02", 398, "250 ms cadence"),
     L.KeyCite("D02", 644, "miniature engine instance"),
     L.KeyCite("D02", 736, "oldest loaded bar; latest bar with follow on"),
@@ -128,6 +132,10 @@ PINS: tuple[L.KeyCite, ...] = (
     L.KeyCite("E06D01", 61, "8.5px"),
     L.KeyCite("E06D01", 71, "minHeightPx: 6"),
     L.KeyCite("E06D03", 105, "`repeatWindow` = 500 ms"),
+    L.KeyCite("E11D04", 183, "`forming` (`confirm: false`)"),
+    L.KeyCite("E11D04", 185, "the bar's point-of-control price"),
+    L.KeyCite("E11D04", 186, "`Ask-stacked`, `Bid-stacked`"),
+    L.KeyCite("E11D07", 214, "`forming` in `state`"),
     L.KeyCite("E11D06", 232, "one frame, in both modes"),
     L.KeyCite("E11D06", 372, "nothing switches a flag on under reduce"),
     L.KeyCite("E47D04", 227, "never cancels an order"),
@@ -167,6 +175,7 @@ AUTO_ROWS = ("LR-3", "LR-4", "LR-5")
 WCAG_SC = (
     "1.3.1",
     "1.4.1",
+    "1.4.4",
     "1.4.10",
     "1.4.11",
     "2.1.1",
@@ -186,6 +195,15 @@ FILLS = (
     "color.heatmap.bid.1",
     "color.buy.default",
 )
+# The cvd-safe twins (D03 section 2.5) of the same fills, audited as their own rows.
+FILLS_CVD = (
+    "color.surface.canvas",
+    "color.cvd.sell",
+    "color.cvd.heatmap.ask.1",
+    "color.cvd.heatmap.bid.1",
+    "color.cvd.buy",
+)
+VARIANTS = (("", FILLS), (", cvd-safe", FILLS_CVD))
 DURATIONS = {"instant": "0ms", "fast": "100ms", "normal": "200ms", "slow": "400ms"}
 EASINGS = {
     "standard": [0.2, 0, 0, 1],
@@ -249,12 +267,12 @@ def lum(hexv: str) -> float:
     return float(cvd().relative_luminance(hexv[:7]))
 
 
-def worst_pair(name: str) -> tuple[str, str, float, float]:
+def worst_pair(name: str, fills: tuple[str, ...] = FILLS) -> tuple[str, str, float, float]:
     """The two fills a forming cell can reach with the largest luminance step, darker first."""
     t = theme(name)
     best = ("", "", 0.0, 0.0)
-    for i, a in enumerate(FILLS):
-        for b in FILLS[i + 1 :]:
+    for i, a in enumerate(fills):
+        for b in fills[i + 1 :]:
             la, lb = lum(t[a]), lum(t[b])
             if abs(la - lb) > best[2]:
                 lo, hi = (a, b) if la < lb else (b, a)
@@ -432,11 +450,14 @@ def g_pins(t: L.Tree) -> list[str]:
 
 def g_version(t: L.Tree) -> list[str]:
     spec, v = t.text("spec"), sec(t, "### 13.1 Version line")
-    miss = [n for n in (BASE, D03_HEAD, "re-pinned", "#497", "--repin-ruled") if n not in v]
+    miss = [n for n in (BASE, D03_HEAD, D03_PR, "re-pinned", "#497", "--repin-ruled") if n not in v]
     if f"Base `origin/main` `{BASE}`" not in spec:
         miss.append("the Inputs line's base")
-    if f"`{D03_HEAD}`" not in spec or "if #497 merges as is" not in spec:
+    if f"`{D03_HEAD}`" not in spec or f"if {D03_PR} merges as is" not in spec:
         miss.append("the D03 pin")
+    heading = next((ln for ln in spec.split("\n") if ln.startswith("## 12. Owner walkthrough")), "")
+    if f"comment {CHECKLIST}" not in heading or f"comment {CHECKLIST}" not in bullet(spec, "BQ-1"):
+        miss.append("the owner checklist comment")
     return [f"missing: {', '.join(miss)}"] if miss else []
 
 
@@ -557,14 +578,14 @@ def g_hold(t: L.Tree) -> list[str]:
 
 def flash_rows() -> list[list[str]]:
     out = []
-    for name in THEMES:
-        lo, hi, d, dark = worst_pair(name)
+    for name, (tag, fills) in itertools.product(THEMES, VARIANTS):
+        lo, hi, d, dark = worst_pair(name, fills)
         pair = "yes" if d >= STEP and dark < DARK_BELOW else "no"
         free = window_max(fill_changes(CADENCE_HZ, None))
         held = window_max(fill_changes(CADENCE_HZ, FR6_CROSSINGS))
         out.append(
             [
-                name,
+                name + tag,
                 f"`{lo}` → `{hi}`",
                 fmt(d),
                 fmt(dark),
@@ -693,8 +714,10 @@ def g_stops(t: L.Tree) -> list[str]:
 
 
 def figure(spec: str) -> str:
-    """Figure A: the stop table as boxes in Tab order with their enter keys (SVG, text only)."""
+    """Figure A: the stop table as boxes, an arrow from each stop its "Enter from" cell names."""
     got = stop_rows(spec)
+    ids = [r[0] for r in got]
+    edges = [(ids.index(s), i) for i, r in enumerate(got) for s in re.findall(r"FS\d\d", r[4])]
     h = 40 + 56 * len(got)
     out = [
         (
@@ -702,17 +725,23 @@ def figure(spec: str) -> str:
             f'viewBox="0 0 720 {h}" font-family="sans-serif" font-size="13">'
         ),
         "<title>E18-D04 figure A: the footprint layer's focus stops (section 7.1)</title>",
+        '<defs><marker id="a" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto">'
+        '<path d="M0,0 L8,4 L0,8 z"/></marker></defs>',
         '<rect width="720" height="100%" fill="white"/>',
     ]
     for i, r in enumerate(got):
         y = 20 + 56 * i
-        label = f"{r[0]} {L.unquote(r[1])}"[:70].replace("&", "&amp;").replace("<", "&lt;")
-        enter = f"from: {r[4]}"[:90].replace("&", "&amp;").replace("<", "&lt;")
-        out.append(f'<rect x="20" y="{y}" width="680" height="40" fill="white" stroke="black"/>')
+        label = f"{r[0]} {L.unquote(r[1])}"[:62].replace("&", "&amp;").replace("<", "&lt;")
+        enter = f"from: {r[4]}"[:80].replace("&", "&amp;").replace("<", "&lt;")
+        out.append(f'<rect x="20" y="{y}" width="520" height="40" fill="white" stroke="black"/>')
         out.append(f'<text x="30" y="{y + 17}">{label}</text>')
         out.append(f'<text x="30" y="{y + 33}" font-size="11">{enter}</text>')
-        if i + 1 < len(got):
-            out.append(f'<line x1="360" y1="{y + 40}" x2="360" y2="{y + 56}" stroke="black"/>')
+    for k, (a, b) in enumerate(edges):
+        x, ya, yb = 556 + 18 * k, 26 + 56 * a + 4 * (k % 4), 44 + 56 * b + 4 * (k % 4)
+        out.append(
+            f'<polyline points="540,{ya} {x},{ya} {x},{yb} 540,{yb}" fill="none" '
+            'stroke="black" marker-end="url(#a)"/>'
+        )
     out.append("</svg>")
     return "\n".join(out) + "\n"
 
@@ -729,7 +758,7 @@ def g_survive(t: L.Tree) -> list[str]:
         if len(r) < 6 or any(not c for c in r[1:5]):
             bad.append(f"{r[0] if r else '?'} has an empty level")
             continue
-        for lvl, cell in zip(LEVELS, r[1:5]):
+        for lvl, cell in zip(LEVELS, r[1:5], strict=True):
             if cell.startswith("gone") and not ("SCR-045" in r[5] or re.search(r"F-\d", cell)):
                 bad.append(f"{r[0]} at {lvl}: gone with no alternative")
     return bad
@@ -849,10 +878,10 @@ def _refigure(m: L.Mutation) -> L.Mutation:
 _M = L.Mutation
 # fmt: off
 MUTATIONS: tuple[L.Mutation, ...] = (
-    _M("M-1", "G-CITE", "a cite past the end of `26`", "spec", "`26`:797", "`26`:99999"),
+    _M("M-1", "G-CITE", "a cite past the end of `26`", "spec", "`26`:801", "`26`:99999"),
     _M("M-2", "G-PINS", "a pinned cite moved off its line", "spec", "(K02:56)", "(K02:55)"),
     _M("M-3", "G-VERSION", "the D03 pin loses its condition", "spec",
-       "if #497 merges as is", "once #497 merges"),
+       "if #5780 merges as is", "once #5780 merges"),
     _M("M-4", "G-AC", "a scenario name reworded", "spec",
        'AC "LOD switching does not flicker"', 'AC "LOD switching does not flash"'),
     _M("M-5", "G-BQ", "the heading drops the ruling", "spec",
@@ -864,7 +893,8 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-8", "G-MOTION", "a marker bounces", "spec",
        "outline alpha 0 → 1", "outline scale 0 → 1, a bounce"),
     _M("M-9", "G-MOTION", "a bespoke duration", "spec",
-       r"(\| M-02 [^|]*\|[^|]*\|[^|]*\|[^|]*\| )`motion\.duration\.fast`", r"\g<1>120 ms", regex=True),
+       r"(\| M-02 [^|]*\|[^|]*\|[^|]*\|[^|]*\| )`motion\.duration\.fast`", r"\g<1>120 ms",
+       regex=True),
     _M("M-10", "G-HOLD", "a written hold number drifts", "spec",
        r"(\| held +\| )\d+ changes", r"\g<1>9 changes", regex=True),
     _M("M-11", "G-FLASH", "a written luminance step drifts", "spec",
@@ -911,6 +941,8 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-32", "G-BQ", "a ruled bullet edited without a re-pin", "spec",
        "the PR title a conventional commit (§14).", "the PR title a commit (§14)."),
     _M("M-33", "G-UNTOUCHED", "the attributes line grows", "@numstat:.gitattributes", "", "4 0"),
+    _M("M-34", "G-VERSION", "the checklist comment uncited", "spec",
+       "posted on #498, comment 6626707818)", "posted on #498)"),
 )
 # fmt: on
 

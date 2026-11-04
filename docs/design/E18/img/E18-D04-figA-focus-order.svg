@@ -1,35 +1,36 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="720" height="488" viewBox="0 0 720 488" font-family="sans-serif" font-size="13">
 <title>E18-D04 figure A: the footprint layer's focus stops (section 7.1)</title>
+<defs><marker id="a" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z"/></marker></defs>
 <rect width="720" height="100%" fill="white"/>
-<rect x="20" y="20" width="680" height="40" fill="white" stroke="black"/>
+<rect x="20" y="20" width="520" height="40" fill="white" stroke="black"/>
 <text x="30" y="37">FS01 the chart region (SCR-030)</text>
 <text x="30" y="53" font-size="11">from: `Ctrl+\`; `Tab`</text>
-<line x1="360" y1="60" x2="360" y2="76" stroke="black"/>
-<rect x="20" y="76" width="680" height="40" fill="white" stroke="black"/>
+<rect x="20" y="76" width="520" height="40" fill="white" stroke="black"/>
 <text x="30" y="93">FS02 the plot: the chart root's cursor, footprint on</text>
 <text x="30" y="109" font-size="11">from: FS01; `Esc` from FS03</text>
-<line x1="360" y1="116" x2="360" y2="132" stroke="black"/>
-<rect x="20" y="132" width="680" height="40" fill="white" stroke="black"/>
+<rect x="20" y="132" width="520" height="40" fill="white" stroke="black"/>
 <text x="30" y="149">FS03 the expanded level window (≤ 40 level nodes)</text>
 <text x="30" y="165" font-size="11">from: `Enter` on FS02</text>
-<line x1="360" y1="172" x2="360" y2="188" stroke="black"/>
-<rect x="20" y="188" width="680" height="40" fill="white" stroke="black"/>
+<rect x="20" y="188" width="520" height="40" fill="white" stroke="black"/>
 <text x="30" y="205">FS04 the cell-detail drawer (CMP-046, non-modal)</text>
 <text x="30" y="221" font-size="11">from: `Enter` on a level in FS03</text>
-<line x1="360" y1="228" x2="360" y2="244" stroke="black"/>
-<rect x="20" y="244" width="680" height="40" fill="white" stroke="black"/>
+<rect x="20" y="244" width="520" height="40" fill="white" stroke="black"/>
 <text x="30" y="261">FS05 the cell menu</text>
-<text x="30" y="277" font-size="11">from: `Shift+F10` or the Menu key on a level (PROPOSED, G-3)</text>
-<line x1="360" y1="284" x2="360" y2="300" stroke="black"/>
-<rect x="20" y="300" width="680" height="40" fill="white" stroke="black"/>
+<text x="30" y="277" font-size="11">from: `Shift+F10` or the Menu key on a level in FS03 (PROPOSED, G-3)</text>
+<rect x="20" y="300" width="520" height="40" fill="white" stroke="black"/>
 <text x="30" y="317">FS06 SCR-045, the table in place of the plot</text>
 <text x="30" y="333" font-size="11">from: `Alt+T` on FS02 or FS03</text>
-<line x1="360" y1="340" x2="360" y2="356" stroke="black"/>
-<rect x="20" y="356" width="680" height="40" fill="white" stroke="black"/>
-<text x="30" y="373">FS07 SCR-032, the footprint settings dialog, with the CMP-228 tile</text>
+<rect x="20" y="356" width="520" height="40" fill="white" stroke="black"/>
+<text x="30" y="373">FS07 SCR-032, the footprint settings dialog, with the CMP-228 </text>
 <text x="30" y="389" font-size="11">from: its invoking control (D02 §6.1)</text>
-<line x1="360" y1="396" x2="360" y2="412" stroke="black"/>
-<rect x="20" y="412" width="680" height="40" fill="white" stroke="black"/>
+<rect x="20" y="412" width="520" height="40" fill="white" stroke="black"/>
 <text x="30" y="429">FS08 SCR-056's E18 rows</text>
 <text x="30" y="445" font-size="11">from: `Tab` into its panel</text>
+<polyline points="540,26 556,26 556,100 540,100" fill="none" stroke="black" marker-end="url(#a)"/>
+<polyline points="540,142 574,142 574,104 540,104" fill="none" stroke="black" marker-end="url(#a)"/>
+<polyline points="540,90 592,90 592,164 540,164" fill="none" stroke="black" marker-end="url(#a)"/>
+<polyline points="540,150 610,150 610,224 540,224" fill="none" stroke="black" marker-end="url(#a)"/>
+<polyline points="540,138 628,138 628,268 540,268" fill="none" stroke="black" marker-end="url(#a)"/>
+<polyline points="540,86 646,86 646,328 540,328" fill="none" stroke="black" marker-end="url(#a)"/>
+<polyline points="540,146 664,146 664,332 540,332" fill="none" stroke="black" marker-end="url(#a)"/>
 </svg>
