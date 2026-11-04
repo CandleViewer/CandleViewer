@@ -1,14 +1,16 @@
 """THROWAWAY spike tests for E39-K01: pin the synthetic table and the hybrid's safety direction.
 
-No network, no clock reads in the table, Decimal money. Run from this directory:
-    python -m pytest -q test_daily_pnl.py
+No network, no clock reads in the table, Decimal money. Run as the README says.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 
 import daily_pnl as d
+
+RND = d.Q4  # one Q4 step: a record's rounding
 
 
 def test_report_is_byte_identical_across_runs() -> None:
@@ -33,7 +35,7 @@ def test_unconfirmed_backfilled_loss_blocks_where_the_stored_rows_do_not() -> No
     assert len(held) == rep["unconfirmed_hours"] > 0
     for row in held:
         settled = Decimal(row["settled"])
-        assert Decimal(row["hybrid"]) < settled < Decimal(row["local"]), row
+        assert Decimal(row["hybrid"]) <= settled - Decimal("1.18") < Decimal(row["local"]), row
     # In this seed the backfilled loss is what takes the day past the cap.
     assert any(Decimal(r["settled"]) <= -d.CAP < Decimal(r["local"]) for r in held)
     assert all(Decimal(r["hybrid"]) <= -d.CAP for r in held if Decimal(r["settled"]) <= -d.CAP)
@@ -84,3 +86,31 @@ def test_bounds_never_lock_later_or_shorter_than_the_settled_figure() -> None:
     for name in ("day_mtm_b", "settled"):
         for o in lk["lock_onsets"][name]:
             assert first[(o["acct"], o["day"])] <= o["from_hour"], (name, o)
+
+
+def test_hybrid_never_shows_less_loss_than_settled_and_credits_no_gain(monkeypatch: Any) -> None:
+    """Per hour on five seeds: hybrid <= settled + rounding and blocking <= hybrid (a plain sum lets
+    the carried gain offset); the fee bound keeps a margin; a backfilled gain is never credited."""
+    for seed in range(d.SEED, d.SEED + 5):
+        for r in d.report(seed)["hours"]:
+            assert Decimal(r["blocking"]) <= Decimal(r["hybrid"]) <= Decimal(r["settled"]) + RND
+    rep = d.report()
+    assert Decimal(rep["lockouts"]["carried_at_boundary"][0]["carried_net_upnl"]) > 0
+    assert Decimal(rep["max_provisional_bound_usd"]) > d.TOL
+    monkeypatch.setattr(d, "GAP", (0, d.END))  # every A close backfilled
+    recs = [r for r in d.build().records if r["unconfirmed"]]
+    assert any(r["exact"] > 0 for r in recs) and all(r["local"] <= 0 for r in recs)
+
+
+def test_restart_rebuild_reads_held_costs_back_to_each_position_open() -> None:
+    """Finding 5.8 (c), restart at D1 00:30: read back to each open, blocking <= blocking_settled;
+    a key-bounded read drops the carried long's 12.8539 + 1.6389 USDT; the fallback is None."""
+    tr, restart, k1 = d.build(), d.DAY + 1800, d.windows()[1]
+    truth = d.upnl(tr, "A", restart) - d.upnl(tr, "A", restart, net=True)
+    assert d.rebuilt_held(tr, "A", restart, 0) == truth
+    assert truth - d.rebuilt_held(tr, "A", restart, k1[1], bound=False) == Decimal("14.49275")
+    assert d.rebuilt_held(tr, "A", restart, k1[1]) is None
+    for r in (r for r in d.report()["hours"] if r["acct"] == "A" and 25 <= r["t"] <= k1[2] // d.H):
+        un = d.upnl(tr, "A", r["t"] * d.H) - d.rebuilt_held(tr, "A", r["t"] * d.H, 0)
+        blocking = Decimal(r["hybrid"]) + min(Decimal(0), un)
+        assert blocking == Decimal(r["blocking"]) <= Decimal(r["blocking_settled"]) + RND, r

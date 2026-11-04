@@ -11,9 +11,8 @@ compares four daily-PnL sources and the hybrid against closed-PnL over a 3-day *
 
 - **Every figure it prints is SYNTHETIC**, and so is the JSON (its `label` and `synthetic` keys say so). Its
   divergences evidence the model, never the venue.
-- The trail keeps the documented field shapes of the transcribed Bybit fixtures and synthesises only values. It
-  emits domain-level numbers (fills, funding, transfers, closed-PnL records), never Bybit payloads, keys or account
-  ids.
+- The trail uses domain-level dicts only (fills, funding, transfers, closed-PnL records) and synthesises every value;
+  no Bybit field shapes, payloads, keys or account ids.
 - It lives only in this directory: never imported by `services/`, never placed in `packages/fixtures`, never
   imported by a test outside this directory. No coverage target applies (DoR §5.1).
 - The demo leg (one demo account, 3 days) is the owner-run In Test item pending #843. The owner's demo key is never

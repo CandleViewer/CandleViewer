@@ -1,13 +1,7 @@
 """E39-K01 THROWAWAY harness: four daily-PnL sources and the hybrid, on a seeded synthetic trail.
 
-Not production code: never imported by services/, no coverage target (DoR 5.1). Every number it
-prints is SYNTHETIC. It emits domain-level numbers (fills, funding, transfers, closed-PnL
-records), never Bybit payloads, keys or account ids. The modelling assumptions (fee rates, record
-lag, record rounding, what closedPnl nets, A1-A7) are listed in ../E39-K01.md section 3.
-
-Run:  python daily_pnl.py              -> writes ../E39-K01-results.json, prints its sha256
-      python daily_pnl.py --check      -> builds twice in-process and compares the bytes
-      python daily_pnl.py --latency    -> read-latency micro-benchmark (not deterministic)
+Not production code (DoR 5.1); every number is SYNTHETIC, domain-level only, never Bybit payloads,
+keys or account ids. Assumptions A1-A8: ../E39-K01.md section 3. Usage: README.md.
 """
 
 from __future__ import annotations
@@ -67,6 +61,9 @@ class Pos:
     funding: Decimal = Decimal(0)  # unattributed funding cash flow (+ received)
 
 
+Snap = tuple[int, str, str, Decimal, Decimal, Decimal, Decimal]
+
+
 @dataclass
 class Trail:
     fills: list[dict[str, Any]] = field(default_factory=list)
@@ -74,9 +71,7 @@ class Trail:
     records: list[dict[str, Any]] = field(default_factory=list)
     marks: dict[str, list[Decimal]] = field(default_factory=dict)
     #: (ts, acct, sym, qty, avg, pending opening fee, pending funding) after each change
-    snaps: list[tuple[int, str, str, Decimal, Decimal, Decimal, Decimal]] = field(
-        default_factory=list
-    )
+    snaps: list[Snap] = field(default_factory=list)
 
 
 def windows(off: int = OFFSET_CHANGE[1], req: int = OFFSET_CHANGE[0],
@@ -241,9 +236,28 @@ def upnl(tr: Trail, acct: str, t: int, net: bool = False) -> Decimal:
     return out
 
 
+def rebuilt_held(tr: Trail, acct: str, t: int, reach: int, bound: bool = True) -> Decimal | None:
+    """Held costs (opening fee + paid funding) of the open positions as a rebuild at t reading back
+    to `reach` sees them (finding 5.8 (c)). Opened before `reach`: the taker-bound opening fee, and
+    None (risk_state_unavailable) once a settlement fell since; bound=False counts both as 0."""
+    out = Decimal(0)
+    for s in START_PX:
+        sn = [x for x in tr.snaps if x[1] == acct and x[2] == s and x[0] <= t]
+        if not sn or not sn[-1][3]:
+            continue
+        _, _, _, qty, avg, ofee, fund = sn[-1]
+        opened = next((sn[i + 1][0] for i in range(len(sn) - 2, -1, -1) if not sn[i][3]), sn[0][0])
+        if opened >= reach:
+            out += ofee - min(Decimal(0), fund)
+        elif bound and any(a == acct and x == s and opened < ts <= t for a, x, ts, _ in tr.funding):
+            return None
+        elif bound:
+            out += q(abs(qty) * avg * TAKER)
+    return out
+
+
 def carried_upnl(tr: Trail, acct: str, ws: int, t: int) -> Decimal:
-    """The net uPnL at the window start of positions held unchanged since before it (the
-    day-mark-to-market alternative, BQ-3 (b), subtracts it)."""
+    """Net uPnL at ws of positions unchanged since before it (BQ-3 (b) subtracts it)."""
     out = Decimal(0)
     for s in START_PX:
         before = [x for x in tr.snaps if x[1] == acct and x[2] == s and x[0] < ws]
@@ -373,7 +387,8 @@ def report(seed: int = SEED) -> dict[str, Any]:
         # Criterion 1's denominator (BQ-1) read per hour: |div| against that hour's reference.
         over = [abs(v) > CRIT1 * abs(d) for v, d in zip(vals, ref, strict=True)]
         pcts = [abs(v) / abs(d) * 100 for v, d in zip(vals, ref, strict=True) if d]
-        summary[key] = {"max_abs_usd": str(abs(worst)), "pct_of_cap": str(q(abs(worst) / CAP * 100, Q4)),
+        summary[key] = {"max_abs_usd": str(abs(worst)),
+                        "pct_of_cap": str(q(abs(worst) / CAP * 100, Q4)),
                         "hours_over_tol": sum(abs(v) > TOL for v in vals),
                         "hours_over_crit1": sum(over),
                         "max_pct_of_reference": str(q(max(pcts), Q4)),
@@ -417,30 +432,23 @@ def pct(num: Decimal, den: Decimal) -> str:
     return str(q(abs(num) / abs(den) * 100, Q4)) if den else "n/a"
 
 
-def criterion_1(tr: Trail, ends: list[dict[str, Any]]) -> dict[str, Any]:
+def judge(r: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
     """BQ-1 ruling: the pass/fail rule is |source - closed-PnL| <= 0.5 % of closed-PnL over the
-    window (the whole 3-day window, per account); USD and % of the cap are reported beside it. The
-    per-day-key reading of "the window" is reported too, because its verdict differs."""
-    whole = []
-    for acct in ("A", "B"):
-        r = hour(tr, acct, ("W", 0, END), END)
-        closed = Decimal(r["closed_pnl"])
-        out: dict[str, Any] = {"acct": acct, "closed_pnl": r["closed_pnl"]}
-        for s in SOURCES:
-            div = Decimal(r[s]) - closed
-            out[s] = {"div_usd": str(div), "pct_of_closed_pnl": pct(div, closed),
-                      "pct_of_cap": pct(div, CAP), "pass": abs(div) <= CRIT1 * abs(closed)}  # fmt: skip
-        whole.append(out)
-    per_key = []
-    for r in ends:
-        closed = Decimal(r["closed_pnl"])
-        row: dict[str, Any] = {"acct": r["acct"], "day": r["day"], "closed_pnl": r["closed_pnl"]}
-        for s in SOURCES:
-            div = Decimal(r[s]) - closed
-            row[s] = {"div_usd": str(div), "pct_of_closed_pnl": pct(div, closed),
-                      "pass": abs(div) <= CRIT1 * abs(closed)}  # fmt: skip
-        per_key.append(row)
-    return {"whole_window": whole, "per_day_key": per_key}
+    window; USD and % of the cap are reported beside it."""
+    closed = Decimal(r["closed_pnl"])
+    out: dict[str, Any] = {k: r[k] for k in keys}
+    for s in SOURCES:
+        div = Decimal(r[s]) - closed
+        out[s] = {"div_usd": str(div), "pct_of_closed_pnl": pct(div, closed),
+                  "pct_of_cap": pct(div, CAP), "pass": abs(div) <= CRIT1 * abs(closed)}  # fmt: skip
+    return out
+
+
+def criterion_1(tr: Trail, ends: list[dict[str, Any]]) -> dict[str, Any]:
+    """The rule over the whole 3-day window per account, and per day key (its verdict differs)."""
+    whole = [judge(hour(tr, a, ("W", 0, END), END), ("acct", "closed_pnl")) for a in ("A", "B")]
+    return {"whole_window": whole,
+            "per_day_key": [judge(r, ("acct", "day", "closed_pnl")) for r in ends]}  # fmt: skip
 
 
 def fees_funding(tr: Trail) -> list[dict[str, str]]:
@@ -455,11 +463,8 @@ def fees_funding(tr: Trail) -> list[dict[str, str]]:
     return out
 
 
-def lockouts(
-    tr: Trail, rows: list[dict[str, Any]], ws: list[tuple[str, int, int]]
-) -> dict[str, Any]:
-    """Sticky lockout hours (a lock holds to its day key's end) on three figures: the decision
-    (pessimistic carried positions, BQ-3 (a), on the hybrid), day-mark-to-market (BQ-3 (b)), and the
+def lockouts(tr: Trail, rows: list[dict[str, Any]], ws: list[Any]) -> dict[str, Any]:
+    """Sticky lockout hours on the decision (BQ-3 (a)), day-mark-to-market (BQ-3 (b)) and the
     decision's figure on settled records (BQ-5: what the provisional and unconfirmed bounds cost).
     """
     figs = {"pessimistic_a": "blocking", "day_mtm_b": "blocking_day_mtm",
@@ -479,7 +484,7 @@ def lockouts(
         for w in ws[1:]:
             c = carried_upnl(tr, acct, w[1], w[1])
             carried.append({"acct": acct, "day": w[0], "carried_net_upnl": str(c),
-                            "pct_of_cap": pct(min(Decimal(0), c), CAP)})  # fmt: skip
+                            "pct_of_cap": str(q(c / CAP * 100, Q4))})  # fmt: skip
             r = next(x for x in rows if x["acct"] == acct and x["day"] == w[0])
             if Decimal(r["blocking"]) <= -CAP < Decimal(r["hybrid"]):
                 relock.append({"acct": acct, "day": w[0], "hour": r["t"]})
@@ -489,14 +494,17 @@ def lockouts(
 
 
 def dump(rep: dict[str, Any]) -> bytes:
-    """Compact, diff-friendly JSON: one line per scalar key, list item or episode."""
+    """Compact, diff-friendly JSON: one line per key, per hour row and per episode source."""
     out = []
     for k in sorted(rep):
         v = rep[k]
-        if isinstance(v, list) or (isinstance(v, dict) and k == "episodes"):
-            items = v if isinstance(v, list) else [{s: e} for s in sorted(v) for e in v[s]]
-            body = ",\n  ".join(json.dumps(x, sort_keys=True) for x in items)
+        if k == "hours":
+            body = ",\n  ".join(json.dumps(x, sort_keys=True) for x in v)
             out.append(f' "{k}": [\n  {body}\n ]')
+        elif k == "episodes":
+            rows = [f'"{s}": {json.dumps(v[s], sort_keys=True)}' for s in sorted(v)]
+            body = ",\n  ".join(rows)
+            out.append(f' "{k}": {{\n  {body}\n }}')
         else:
             out.append(f" {json.dumps(k)}: {json.dumps(v, sort_keys=True)}")
     return ("{\n" + ",\n".join(out) + "\n}\n").encode()
@@ -505,35 +513,32 @@ def dump(rep: dict[str, Any]) -> bytes:
 def latency(n: int = 200_000) -> dict[str, float]:
     """p50/p95 in microseconds of the hot-path read for each candidate (cache hits only)."""
     rng = random.Random(1)
-    counters = {(e, f"acct{i}", False): Decimal(rng.randint(-300, 300)) for i in range(64)
-                for e in ("live", "demo")}  # fmt: skip
-    upnl_c = {k: Decimal(rng.randint(-200, 200)) for k in counters}
+    keys = [(e, f"acct{i}", False) for i in range(64) for e in ("live", "demo")]
+    counters = {k: Decimal(rng.randint(-300, 300)) for k in keys}
+    upnl_c = {k: Decimal(rng.randint(-200, 200)) for k in keys}
     records = [Decimal(rng.randint(-5000, 5000)) / 100 for _ in range(400)]
-    cache: dict[tuple[str, str, bool], tuple[float, Decimal]] = {}
+    cache: dict[Any, tuple[float, Decimal]] = {}
 
-    def stream(k: tuple[str, str, bool]) -> Decimal:
-        return counters[k] + min(Decimal(0), upnl_c[k])
-
-    def cached_rest(k: tuple[str, str, bool]) -> Decimal:  # DayRiskFigures shape, 5 s TTL hit
+    def cached_rest(k: Any) -> Decimal:  # DayRiskFigures shape, 5 s TTL hit
         hit = cache.get(k)
         if hit is None or time.monotonic() - hit[0] > 5.0:
-            hit = (time.monotonic(), max(Decimal(0), -sum(records, Decimal(0))))
-            cache[k] = hit
+            hit = cache[k] = (time.monotonic(), max(Decimal(0), -sum(records, Decimal(0))))
         return hit[1]
 
-    def recompute(k: tuple[str, str, bool]) -> Decimal:  # the miss's local work, no network
-        return max(Decimal(0), -sum(records, Decimal(0)))
-
-    keys = list(counters)
     out = {}
-    for name, fn in (("stream_counter", stream), ("cached_rest_hit", cached_rest),
-                     ("closed_pnl_sum_400_records", recompute)):  # fmt: skip
+    for name, fn, reps in (
+        ("stream_counter", lambda k: counters[k] + min(Decimal(0), upnl_c[k]), n),
+        ("cached_rest_hit", cached_rest, n),
+        (
+            "closed_pnl_sum_400_records",
+            lambda k: max(Decimal(0), -sum(records, Decimal(0))),
+            n // 50,
+        ),
+    ):  # the last is the miss's local work, no network
         samples = []
-        reps = n if name != "closed_pnl_sum_400_records" else n // 50
         for i in range(reps):
-            k = keys[i % len(keys)]
             t0 = time.perf_counter_ns()
-            fn(k)
+            fn(keys[i % len(keys)])
             samples.append(time.perf_counter_ns() - t0)
         samples.sort()
         out[name + "_p50_us"] = round(samples[len(samples) // 2] / 1000, 3)
