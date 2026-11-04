@@ -23072,17 +23072,16 @@ components:
         values:
           type: object
           maxProperties: 64
-          propertyNames: { maxLength: 64 }
           description: >
-            Each metric the condition read, by metric name, as evaluated. A number is finite
-            (NaN and the infinities are not JSON and are never served).
-          additionalProperties:
-            {
-              type: ["string", "number", "boolean", "null"],
-              maxLength: 1000,
-              minimum: -1.7976931348623157e+308,
-              maximum: 1.7976931348623157e+308,
-            }
+            Each metric the condition read, by metric name (at most 64 characters), as
+            evaluated. A number is finite (NaN and the infinities are not JSON and are never
+            served).
+          # `then` holds what the generated model cannot take: a `propertyNames` bound becomes a
+          # `constr` key, which `mypy --strict` refuses.
+          if: true
+          then:
+            propertyNames: { maxLength: 64 }
+          additionalProperties: { $ref: "#/components/schemas/AlertDeliveryValue" }
         suppressed_reason: { $ref: "#/components/schemas/DeliverySuppressionReason" }
         suppression_reason: { $ref: "#/components/schemas/DeliverySuppressionReason" }
         silenced: { $ref: "#/components/schemas/AlertSilenceReason" }
@@ -23096,6 +23095,13 @@ components:
         symbols: { type: array, maxItems: 100, items: { type: string, maxLength: 1000 } }
         window_start_ms: { type: integer }
         window_end_ms: { type: integer }
+    AlertDeliveryValue:
+      description: "One `AlertDeliveryContext.values` entry: a string of at most 1,000 characters, a finite number, a boolean or `null`."
+      anyOf:
+        - { type: string, maxLength: 1000 }
+        - { type: number, minimum: -1.7976931348623157e+308, maximum: 1.7976931348623157e+308 }
+        - { type: boolean }
+        - { type: "null" }
 
     # === Journal ============================================================
     JournalTrade:

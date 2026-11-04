@@ -28,8 +28,6 @@ from pydantic import (
     StrictBool,
     StrictFloat,
     Strict,
-    confloat,
-    constr,
 )
 
 
@@ -4366,86 +4364,25 @@ class AlertDeliveryStormSummary(BaseModel):
     window_end: AwareDatetime | None
 
 
-class AlertDeliveryContext(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    trigger_type: Annotated[str | None, Field(max_length=1000)] = None
-    symbol: Annotated[str | None, Field(max_length=1000)] = None
-    event_ts_ms: Annotated[JsonInt | None, Field(description="Exchange event time")] = None
-    evaluated_at_ms: Annotated[JsonInt | None, Field(description="Server evaluation time")] = None
-    bar_open_ms: Annotated[JsonInt | None, Field(description="Set by the once-per-bar gate.")] = (
-        None
-    )
-    values: Annotated[
-        dict[
-            constr(max_length=64),
-            constr(max_length=1000)
-            | confloat(ge=-1.7976931348623157e308, le=1.7976931348623157e308, strict=True)
-            | StrictBool
-            | None,
-        ]
-        | None,
+class AlertDeliveryValue1(RootModel[str]):
+    root: Annotated[
+        str,
         Field(
-            description="Each metric the condition read, by metric name, as evaluated. A number is finite (NaN and the infinities are not JSON and are never served).\n",
-            max_length=64,
+            description="One `AlertDeliveryContext.values` entry: a string of at most 1,000 characters, a finite number, a boolean or `null`.",
+            max_length=1000,
         ),
-    ] = None
-    suppressed_reason: Annotated[
-        Literal[
-            "storm",
-            "email_relay_off",
-            "webhook_disabled",
-            "push_unavailable",
-            "recipient_deleted",
-            "unknown_channel",
-            "owner_inactive",
-            "muted_symbol",
-            "quiet_hours",
-            "window_visible",
-            "desktop_off",
-        ]
-        | None,
+    ]
+
+
+class AlertDeliveryValue2(RootModel[StrictFloat]):
+    root: Annotated[
+        StrictFloat,
         Field(
-            description="The closed set of reasons a delivery is `suppressed` (E40-D02 CC-9, CC-17), carried in `AlertDelivery.error` and the `context` keys `suppressed_reason` (the evaluator's storm gate) and `suppression_reason` (the dispatcher and the desktop report).\n"
+            description="One `AlertDeliveryContext.values` entry: a string of at most 1,000 characters, a finite number, a boolean or `null`.",
+            ge=-1.7976931348623157e308,
+            le=1.7976931348623157e308,
         ),
-    ] = None
-    suppression_reason: Annotated[
-        Literal[
-            "storm",
-            "email_relay_off",
-            "webhook_disabled",
-            "push_unavailable",
-            "recipient_deleted",
-            "unknown_channel",
-            "owner_inactive",
-            "muted_symbol",
-            "quiet_hours",
-            "window_visible",
-            "desktop_off",
-        ]
-        | None,
-        Field(
-            description="The closed set of reasons a delivery is `suppressed` (E40-D02 CC-9, CC-17), carried in `AlertDelivery.error` and the `context` keys `suppressed_reason` (the evaluator's storm gate) and `suppression_reason` (the dispatcher and the desktop report).\n"
-        ),
-    ] = None
-    silenced: Annotated[
-        Literal["muted_symbol", "quiet_hours"] | None,
-        Field(
-            description="Why a firing's optional channels were held (E40-D02 CC-9): `muted_symbol`, the symbol is on the owner's `notifications.muted_symbols`; `quiet_hours`, the firing fell inside the owner's `notifications.quiet_hours`. Neither ever holds a critical-override kind (`packages/protocol/notification-overrides.json`), and user alerts never override.\n"
-        ),
-    ] = None
-    disarmed: StrictBool | None = None
-    reason: Annotated[str | None, Field(max_length=1000)] = None
-    metric: Annotated[str | None, Field(max_length=1000)] = None
-    channel_failure: StrictBool | None = None
-    failed_delivery_id: Annotated[JsonInt | None, Field(ge=0)] = None
-    storm_summary: StrictBool | None = None
-    suppressed: Annotated[JsonInt | None, Field(ge=0)] = None
-    symbols: Annotated[list[Symbol3] | None, Field(max_length=100)] = None
-    window_start_ms: JsonInt | None = None
-    window_end_ms: JsonInt | None = None
-    __null_refused = field_validator("trigger_type", "event_ts_ms", "evaluated_at_ms", "values", "suppressed_reason", "suppression_reason", "silenced", "disarmed", "reason", "metric", "channel_failure", "failed_delivery_id", "storm_summary", "suppressed", "symbols", "window_start_ms", "window_end_ms", mode="before")(_refuse_null)
+    ]
 
 
 class JournalTrade(BaseModel):
@@ -8028,8 +7965,79 @@ class AlertDelivery(BaseModel):
     __null_refused = field_validator("id", "alert_id", "channel", "status", "severity", "title", "message", "fired_at", "kind", mode="before")(_refuse_null)
 
 
-class AlertDeliveryDetail(AlertDelivery):
-    context: AlertDeliveryContext
+class AlertDeliveryContext(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    trigger_type: Annotated[str | None, Field(max_length=1000)] = None
+    symbol: Annotated[str | None, Field(max_length=1000)] = None
+    event_ts_ms: Annotated[JsonInt | None, Field(description="Exchange event time")] = None
+    evaluated_at_ms: Annotated[JsonInt | None, Field(description="Server evaluation time")] = None
+    bar_open_ms: Annotated[JsonInt | None, Field(description="Set by the once-per-bar gate.")] = (
+        None
+    )
+    values: Annotated[
+        dict[str, AlertDeliveryValue1 | AlertDeliveryValue2 | StrictBool | None] | None,
+        Field(
+            description="Each metric the condition read, by metric name (at most 64 characters), as evaluated. A number is finite (NaN and the infinities are not JSON and are never served).\n",
+            max_length=64,
+        ),
+    ] = None
+    suppressed_reason: Annotated[
+        Literal[
+            "storm",
+            "email_relay_off",
+            "webhook_disabled",
+            "push_unavailable",
+            "recipient_deleted",
+            "unknown_channel",
+            "owner_inactive",
+            "muted_symbol",
+            "quiet_hours",
+            "window_visible",
+            "desktop_off",
+        ]
+        | None,
+        Field(
+            description="The closed set of reasons a delivery is `suppressed` (E40-D02 CC-9, CC-17), carried in `AlertDelivery.error` and the `context` keys `suppressed_reason` (the evaluator's storm gate) and `suppression_reason` (the dispatcher and the desktop report).\n"
+        ),
+    ] = None
+    suppression_reason: Annotated[
+        Literal[
+            "storm",
+            "email_relay_off",
+            "webhook_disabled",
+            "push_unavailable",
+            "recipient_deleted",
+            "unknown_channel",
+            "owner_inactive",
+            "muted_symbol",
+            "quiet_hours",
+            "window_visible",
+            "desktop_off",
+        ]
+        | None,
+        Field(
+            description="The closed set of reasons a delivery is `suppressed` (E40-D02 CC-9, CC-17), carried in `AlertDelivery.error` and the `context` keys `suppressed_reason` (the evaluator's storm gate) and `suppression_reason` (the dispatcher and the desktop report).\n"
+        ),
+    ] = None
+    silenced: Annotated[
+        Literal["muted_symbol", "quiet_hours"] | None,
+        Field(
+            description="Why a firing's optional channels were held (E40-D02 CC-9): `muted_symbol`, the symbol is on the owner's `notifications.muted_symbols`; `quiet_hours`, the firing fell inside the owner's `notifications.quiet_hours`. Neither ever holds a critical-override kind (`packages/protocol/notification-overrides.json`), and user alerts never override.\n"
+        ),
+    ] = None
+    disarmed: StrictBool | None = None
+    reason: Annotated[str | None, Field(max_length=1000)] = None
+    metric: Annotated[str | None, Field(max_length=1000)] = None
+    channel_failure: StrictBool | None = None
+    failed_delivery_id: Annotated[JsonInt | None, Field(ge=0)] = None
+    storm_summary: StrictBool | None = None
+    suppressed: Annotated[JsonInt | None, Field(ge=0)] = None
+    symbols: Annotated[list[Symbol3] | None, Field(max_length=100)] = None
+    window_start_ms: JsonInt | None = None
+    window_end_ms: JsonInt | None = None
+    __null_refused = field_validator("trigger_type", "event_ts_ms", "evaluated_at_ms", "values", "suppressed_reason", "suppression_reason", "silenced", "disarmed", "reason", "metric", "channel_failure", "failed_delivery_id", "storm_summary", "suppressed", "symbols", "window_start_ms", "window_end_ms", mode="before")(_refuse_null)
 
 
 class JournalTradeDetail(JournalTrade):
@@ -8542,6 +8550,10 @@ class CapacityReport(BaseModel):
 class ApiKeyWithVerification(BaseModel):
     key: ApiKey
     verification: KeyVerificationPassed
+
+
+class AlertDeliveryDetail(AlertDelivery):
+    context: AlertDeliveryContext
 
 
 class OrderDiagnostics(BaseModel):
