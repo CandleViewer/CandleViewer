@@ -48,11 +48,17 @@ it (CI-SEC-006; the date is the R3 security gate of threat model section 5.4):
 | ------------------------ | ---------------------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cv-oms-unscoped-select` | `storage/repositories/oms_reads_sqlalchemy.py`, `position_holder_statement`  | `refusal-audit-holder` | The account holding a position id the scope does not view, read for the refusal's audit record alone and never served (SR-E29-13, ruling Q12); in the module's `UNSCOPED`, which its unit test pins        |
 | `cv-oms-unscoped-select` | `storage/repositories/orders_sqlalchemy.py`, `in_scope_statement` (`holder`) | `refusal-audit-holder` | Beside the scoped row, the account of the order holding the id, so only the holding account leaves the database for an out-of-scope id (ruling Q12)                                                        |
-| `cv-oms-unscoped-select` | `storage/repositories/orders_sqlalchemy.py`, `link_taken_statement`          | `global-link-check`    | 24 section 8.3 rule 5's yes or no over the global `ux_orders_link`: a bool across every account by design, asked by the allocator and never on an API route or WS topic (`OrderLinkLookup`); in `UNSCOPED` |
+| `cv-oms-unscoped-select` | `storage/repositories/orders_sqlalchemy.py`, `link_taken_statement`          | `global-link-check`    | 24 section 8.3 rule 5's yes or no over the global `ux_orders_link`: a bool across every account by design, asked by the allocator and reconciler (below), never on an API route or WS topic; in `UNSCOPED` |
 | `cv-oms-env-branch`      | `oms/ports.py`, `InterimRiskGate.check`                                      | `interim-risk-gate-r4` | Ruling R4's interim risk gate: a demo order is admitted unevaluated and every other environment's is refused, announced by `oms_interim_ports{port="risk_gate"}` until E39-S01 replaces it                 |
 | `cv-oms-env-branch`      | `oms/ports.py`, `NoArmRecords.check`                                         | `interim-arm-records`  | SR-043's interim stand-in: every live order is `session_not_armed` until E30-S04 brings arm records                                                                                                        |
 | `cv-oms-env-branch`      | `oms_wiring.py`, `TradingSwitchesBinding.refusal`                            | `live-enable-gate`     | The live trading switch (C-2.21's synchronous check, rulings Q4 and Q6): a live account's order needs the setting and the flag; demo and testnet never meet it, and any other value is live's              |
 | `cv-oms-env-branch`      | `oms_wiring.py`, `OmsRuntime._compose` (the size step's figures)             | `live-no-day-figures`  | 24 section 9.3.6: live has no day figures, so every live entry is refused; `DayRiskFigures` serves demo and testnet only                                                                                   |
+
+`link_taken_statement` answers `link_id_taken`, which has two callers: the allocator, through its
+`OrderLinkLookup` (`OrderRepository.exists`), and step 3c of the reconciliation pass
+(`oms/reconciler.py`), which asks it about an exchange order whose id no row of its own account
+holds, so that an id another account's row holds is recorded as an anomaly and never adopted (24
+section 8.5). Neither reads more than the yes or no.
 
 The four environment branches are policy on the environment's risk class, not a venue difference, so
 `ExchangeCapabilities` has no field for them; moving each onto a record the composition root builds
@@ -103,13 +109,15 @@ would retire its exception.
   built, which the order and position routes reach: `storage/repositories/orders*.py`, `oms_*.py`,
   `positions*.py`, `executions*.py` and `recorded_stops*.py`. Fix: add the account, or the
   principal's `scope_clause(scope, environment, account, trade=...)`.
-- **Does not match:** a correlated `EXISTS` that selects no row of the tables (`select(literal(1))`
-  correlated to its outer statement, as the startup sweep's are), an insert's `RETURNING` CTE,
-  another table. The predicate is looked for, not proven: one compared with any right-hand side
-  passes (a join's `_O.exchange_account_id == _L.exchange_account_id`), and so does a select inside a
-  scoped `where`'s arguments. A predicate in a `where` on another statement fires: write it in the
-  chain.
-- **Not seen:** a table only in `select_from`, an alias passed in or built by a helper, a tuple of five
+- **Does not match:** an insert's `RETURNING` CTE, another table. The predicate is looked for, not
+  proven: one compared with any right-hand side passes (a join's
+  `_O.exchange_account_id == _L.exchange_account_id`), and so does a select inside a scoped
+  `where`'s arguments. A predicate in a `where` on another statement fires: write it in the chain.
+- **Not seen:** a select whose selected expressions name none of the tables, the table only in its
+  `where` or `select_from` (`select(literal(1)).where(_O.id == rs.order_id)`): the rule reads what
+  a select returns, not whether it is correlated, so the startup sweep's correlated `EXISTS`
+  subqueries pass, and so would an uncorrelated one over every account's rows; an alias passed in
+  or built by a helper, a tuple of five
   or more, a table or column list imported under another name (`orders as order_table`,
   `ORDER_COLUMNS as _ORDER_COLUMNS`), a column tuple built at module level, an alias made by
   `sa.alias(orders, ...)` and bound to a name (`orders.alias(...)` is seen), a column added by
@@ -176,7 +184,10 @@ would retire its exception.
   exchange call outside the adapter package" is narrowed to network clients, as
   `cv-adapter-isolation` already bans the vendor's identifiers outside the adapter.
 - **Not seen:** a client handed in by another module (the composition root hands the OMS its port),
-  a call on a module name the list lacks.
+  a call on a module name the list lacks, a module name built at runtime
+  (`importlib.import_module(name)`), which `cv-adapter-isolation` misses too, and an exchange SDK
+  (`import pybit`, `import ccxt`), which that rule sees only where the vendor's name is written as a
+  word.
 - **Fixture:** `.semgrep/tests/cv-oms-no-network-client/`.
 
 ## cv-oms-env-branch
