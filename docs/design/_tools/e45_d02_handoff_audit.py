@@ -17,12 +17,16 @@ Gates (each FAIL led by its name):
               alone; the E45-D02 rows are exactly the ids §11's list paragraph names.
   G-FRAMES    §0 maps H01 … H28 one to one onto D01's drawn frames W01 … W28 by name; widths are
               1280 or "1280, 1920"; the stated total equals 2 × the frames at each width.
+  G-BOARDS    BQ-02: at most ten boards, light twins at most a third of them; the dark 1280 boards
+              hold every H-row once, the dark 1920 board the width-bearing ones, each light board
+              twins a dark one; every H-row's "Drawn on" and §0's counts follow from the boards.
   G-TOKEN     every token the spec names exists at the base; the disabled text token and the
               disabled opacity appear only on a "never" line; no raw hex value.
   G-CONTRAST  every CR-row recomputed from the token JSON (dark, light, high contrast) equals the
               spec to 0.01 and meets its bar; the T2, danger and focus pairs are present.
   G-MOTION    every M-row moves only `opacity` or `transform` or is a status (one frame / a cut,
-              the same when reduced); the ticket's transitions are present; `16`:259 is quoted.
+              the same when reduced); each is PROPOSED and names its duration token or "no
+              duration token"; the ticket's transitions are present; `16`:259 is quoted.
   G-PROTECT   C-2.6: §1 quotes `22`:17468; Attach takes no code; Cancel at Bybit and Attach stay
               enabled under §5.3; no line gates either; the reassurance is conditioned on no
               missing_native_sl row in §1 and on its deck row.
@@ -30,6 +34,8 @@ Gates (each FAIL led by its name):
   G-T2        §1 quotes G-T2.1b and G-T2.3 verbatim and names the CMP-019 `lock`; every row that
               shows T2 names its rendering; §4 lists CMP-079 and the lock; T-09 binds G-T2.2;
               every gated frame names its T2 (G-T2.6); §4 maps Re-read, Re-run and the toggle.
+  G-LADDER    BQ-03: §4 gives CMP-044 `variant="standard"`, an explicit `confirmVariant` and no
+              `rung`; C-3 and C-4 cite the ladder lines and are PROPOSED to their owners.
   G-REQUEST   R6: #5776, #5182, #1220 and #5233 appear only on an R-row, a G-row, the pre-stage
               paragraph or a line that points at an R-row.
   G-CITE      every cite in range, non-blank at its base, and equal to the pins.
@@ -71,8 +77,10 @@ PATHS: dict[str, str] = {
     "15": "docs/plan/15-component-catalogue.md",
     "16": "docs/plan/16-design-system-brief.md",
     "22": "docs/plan/22-api-openapi.yaml",
+    "24": "docs/plan/24-internal-schemas.md",
     "E29D03": "docs/design/E29/E29-D03.md",
     "E42D02": "docs/design/E42/E42-D02.md",
+    "E42D04": "docs/design/E42/E42-D04.md",
     "DS": ".claude/rules/32-design-specs.md",
 }
 TOKENS = "packages/ui/tokens"
@@ -82,7 +90,8 @@ THEMES = {
     "hc": ("primitives", "semantic-dark", "semantic-hc"),
 }
 BARS = {"text": 4.5, "ui": 3.0}
-CITE = re.compile(r"`(\d\d|E29D03|E42D02|DS)`:(\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)")
+BOARD_CAP = 10  # the standing cap (BQ-02): ten boards, light twins at most a third
+CITE = re.compile(r"`(\d\d|E29D03|E42D02|E42D04|DS)`:(\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)")
 TOKEN_RX = re.compile(
     r"`((?:color|space|type|radius|elevation|motion|size|border|opacity|font)\.[a-z0-9.-]+)`"
 )
@@ -243,6 +252,8 @@ def g_deck(t: Texts) -> list[str]:
                     bad.append(f"{rid}: no {b} twin")
                 elif a == ".one" and set(SLOT.findall(text)) - set(SLOT.findall(texts[twin])):
                     bad.append(f"{rid}: its slots are not in {twin}")
+    plural = [r for r in rows if str(r.get("id")).endswith((".one", ".other"))]
+    bad += [f"{r['id']}: a plural row is not PROPOSED" for r in plural if r["status"] != "PROPOSED"]
     return bad
 
 
@@ -318,6 +329,40 @@ def g_frames(t: Texts) -> list[str]:
         wide,
     ):
         bad.append(f"§0's total is not {2 * (len(hs) + wide)} ({len(hs)} + {wide} at 1920)")
+    return bad
+
+
+def g_boards(t: Texts) -> list[str]:
+    bad = []
+    zero = section(t.spec, "## 0.")
+    hs = {r[0]: r for r in table_rows(zero, "H") if re.fullmatch(r"H\d\d", r[0])}
+    bs = [r for r in table_rows(zero, "B-") if len(r) == 5]
+    light = [b for b in bs if b[1] == "light"]
+    if len(bs) > BOARD_CAP:
+        bad.append(f"{len(bs)} boards, over the cap of {BOARD_CAP}")
+    if 3 * len(light) > len(bs):
+        bad.append(f"{len(light)} light twins on {len(bs)} boards, over a third")
+    frames = {b[0]: re.findall(r"H\d\d", b[4]) for b in bs}
+    dark = {b[3]: frames[b[0]] for b in bs if b[1:3] == ["dark", "1280"]}
+    if sorted(h for fs in dark.values() for h in fs) != sorted(hs):
+        bad.append("the dark 1280 boards do not hold every H-row once")
+    wide = sorted(h for h, r in hs.items() if r[3] == "1280, 1920")
+    if sorted({h for b in bs if b[1:3] == ["dark", "1920"] for h in frames[b[0]]}) != wide:
+        bad.append("the dark 1920 boards do not hold exactly the width-bearing frames")
+    for b in light:
+        if b[2] != "1280" or frames[b[0]] != dark.get(b[3]):
+            bad.append(f"{b[0]} is not a light twin of D01 board {b[3]}")
+    for h, r in hs.items():
+        on = ", ".join(b[0] for b in bs if h in frames[b[0]])
+        if r[4] != on:
+            bad.append(f"{h}: drawn on `{r[4]}`, the boards say `{on}`")
+    drawn = {(b[1], b[2], h) for b in bs for h in frames[b[0]]}
+    total = 2 * (len(hs) + len(wide))
+    m = re.search(r"\*\*Boards: (\d+)\*\*.*?\*\*Drawn: (\d+) frames\. Bound as text: (\d+)", zero)
+    if not m or (int(m[1]), int(m[2]), int(m[3])) != (len(bs), len(drawn), total - len(drawn)):
+        bad.append(
+            f"§0 does not state {len(bs)} boards, {len(drawn)} drawn, {total - len(drawn)} text"
+        )
     return bad
 
 
@@ -403,8 +448,10 @@ def g_motion(t: Texts) -> list[str]:
             bad.append(f"{r[0]} is a status but animates or differs when reduced")
         if not reduce:
             bad.append(f"{r[0]} has no reduced-motion twin")
-        if not CITE.search(r[-1]):
-            bad.append(f"{r[0]} cites no `16` row")
+        if not CITE.search(r[-1]) or "PROPOSED" not in r[-1]:
+            bad.append(f"{r[0]} cites no `16` row or is not marked PROPOSED")
+        if "`motion.duration." not in safe and "no duration token" not in safe:
+            bad.append(f"{r[0]} names no duration token")
         for name in TOKEN_RX.findall(safe):
             if not name.startswith("motion."):
                 bad.append(f"{r[0]} times itself with `{name}`")
@@ -491,6 +538,19 @@ def g_t2(t: Texts) -> list[str]:
     return bad
 
 
+def g_ladder(t: Texts) -> list[str]:
+    bad = []
+    confirm = " ".join(one_cell(section(t.spec, "## 4."), "confirms", 2).split())
+    for need in ('`variant="standard"`', "explicit `confirmVariant`", "no `rung`"):
+        if need not in confirm:
+            bad.append(f"§4 does not give CMP-044 {need} (BQ-03)")
+    for c, cite, owner in (("C-3", "`E42D04`:201", "E42-D04"), ("C-4", "`E42D02`:174", "E42-D02")):
+        rows = table_rows(t.spec, c + " ")
+        if len(rows) != 1 or cite not in rows[0][1] or f"PROPOSED to {owner}" not in rows[0][2]:
+            bad.append(f"{c} does not record the ladder departure at {cite}, PROPOSED to {owner}")
+    return bad
+
+
 def g_request(t: Texts) -> list[str]:
     bad = []
     for i, ln in enumerate(t.spec.split("\n"), 1):
@@ -574,9 +634,11 @@ def g_scope(t: Texts) -> list[str]:
 
 
 GATES: dict[str, Callable[[Texts], list[str]]] = {
-    "G-DECK": g_deck, "G-SOURCE": g_source, "G-FRAMES": g_frames, "G-TOKEN": g_token,
+    "G-DECK": g_deck, "G-SOURCE": g_source, "G-FRAMES": g_frames, "G-BOARDS": g_boards,
+    "G-TOKEN": g_token,
     "G-CONTRAST": g_contrast, "G-MOTION": g_motion, "G-PROTECT": g_protect,
-    "G-ENFORCE": g_enforce, "G-T2": g_t2, "G-REQUEST": g_request, "G-CITE": g_cite,
+    "G-ENFORCE": g_enforce, "G-T2": g_t2, "G-LADDER": g_ladder, "G-REQUEST": g_request,
+    "G-CITE": g_cite,
     "G-HYGIENE": g_hygiene, "G-SCOPE": g_scope,
 }  # fmt: skip
 
@@ -661,6 +723,24 @@ def deck_edit(rid: str, field: str, value: Any) -> Callable[[Texts], Texts]:
     return f
 
 
+def insert_after(lead: str, rows: str) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        ls = t.spec.split("\n")
+        i = next(k for k, ln in enumerate(ls) if ln.startswith(f"| {lead} "))
+        return replace(t, spec="\n".join([*ls[: i + 1], rows, *ls[i + 1 :]]))
+
+    return f
+
+
+def chain(*fns: Callable[[Texts], Texts]) -> Callable[[Texts], Texts]:
+    def f(t: Texts) -> Texts:
+        for fn in fns:
+            t = fn(t)
+        return t
+
+    return f
+
+
 def deck_drop(rid: str) -> Callable[[Texts], Texts]:
     return lambda t: replace(
         t, deck="\n".join(x for x in t.deck.split("\n") if not x.startswith('{"id": "' + rid + '"'))
@@ -678,9 +758,12 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-SOURCE", "mark a PROPOSED row RULED", deck_edit("e45.s143.disc.unknown", "status", "RULED")),
     ("G-SOURCE", "drop a row §11 lists", deck_drop("e45.s143.disc.delta.higher")),
     ("G-SOURCE", "leave an E45-D02 row out of §11", sub("`e45.s143.tile.count.one`, ", "")),
-    ("G-FRAMES", "drop a frame", drop_row("| H17 ")),
+    ("G-FRAMES", "drop a frame", chain(drop_row("| H17 "), *(set_cell(b, 4, "H11, H12, H13, H14, H15, H16") for b in ("B-3", "B-7")), sub("**Drawn: 56 frames.", "**Drawn: 54 frames."))),
     ("G-FRAMES", "rename a frame away from D01", set_cell("H05", 2, "`SCR-143/discrepancies/dense`")),
     ("G-FRAMES", "misstate the total", sub("**Total: 72 frames**", "**Total: 70 frames**")),
+    ("G-BOARDS", "draw an eleventh board", chain(insert_after("B-9", "| B-10 | dark | 1920 | — | — |\n| B-11 | dark | 1920 | — | — |"), sub("**Boards: 9**", "**Boards: 11**"))),
+    ("G-BOARDS", "draw a fourth light twin", chain(insert_after("B-9", "| B-10 | light | 1280 | 1 | H01, H02, H03, H04, H05 |"), *(set_cell(h, 4, "B-1, B-10") for h in ("H01", "H02", "H03")), *(set_cell(h, 4, "B-1, B-9, B-10") for h in ("H04", "H05")), sub("**Boards: 9**", "**Boards: 10**"), sub("**Drawn: 56 frames. Bound as text: 16", "**Drawn: 61 frames. Bound as text: 11"))),
+    ("G-BOARDS", "move a wide frame off the 1920 board", set_cell("B-9", 4, "H04, H05, H09, H10, H11, H18, H20")),
     ("G-TOKEN", "name a token the base lacks", set_cell("T-15", 2, "`color.text.hyperlink`")),
     ("G-TOKEN", "bind the disabled text token", add_line("A T2 label uses `color.text.disabled`.")),
     ("G-TOKEN", "write a raw value", add_line("The row tint is #1C222B.")),
@@ -690,6 +773,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-MOTION", "animate a height", set_cell("M-03", 2, "`height`")),
     ("G-MOTION", "animate a status", set_cell("M-05", 3, "a fade over `motion.duration.normal`")),
     ("G-MOTION", "drop the dialog entry", drop_row("| M-06 ")),
+    ("G-MOTION", "drop a row's PROPOSED mark", set_cell("M-06", 6, "`16`:249")),
     ("G-MOTION", "let the view speak under a confirm", sub("nothing beneath it moves or speaks", "the view keeps speaking")),
     ("G-PROTECT", "ask a code before attaching a stop", set_cell("CF-03", 4, "K-17, inside")),
     ("G-PROTECT", "gate Cancel at Bybit on a row change", sub("For CF-01 and CF-03 the line is text only and the confirm stays enabled", "For CF-01 and CF-03 the confirm turns off")),
@@ -702,6 +786,8 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-T2", "drop the lock from §4", set_cell("T2", 1, "CMP-079 RbacGate")),
     ("G-T2", "leave the stale frame's T2 unnamed", set_cell("H09", 5, "—")),
     ("G-T2", "drop the toggle from §4", drop_row("| Include drills (SCR-144) ")),
+    ("G-LADDER", "give CMP-044 a rung", sub("and no `rung`", "and `rung` 1")),
+    ("G-LADDER", "drop the ladder departure's owner", set_cell("C-3", 2, "`primary` (BQ-03, AMEND)")),
     ("G-REQUEST", "lean on #5182 outside a request row", add_line("Per #5182, Force resolve takes no code.")),
     ("G-CITE", "re-point a cite to an unpinned line", sub("(`15`:1046)", "(`15`:1047)")),
     ("G-HYGIENE", "write a closing keyword", add_line("This PR closes #1251.")),
