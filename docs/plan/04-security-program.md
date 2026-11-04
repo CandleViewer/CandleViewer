@@ -438,10 +438,11 @@ keys, the same 404 for missing, deleted and foreign ids, closed bounded models) 
 autosave, export, import, floating windows and the shipped view-as read path (#3085). Of 49 rows (LY-S01..LY-E05),
 12 are inherent High and none Critical. Its export allow-list and denial rule (§5) and its import order with the
 newer-version refusal (§6) are the requirements E15-S07 implements; SR-E15-01..20 go to E15-X02, E15-X03 and the owning
-stories. Open findings: no write rate limit against the 2-second debounce (F-01, High), soft-deleted rows unbounded for
-90 days (F-02, High), the workspace delete unaudited (F-03), the bundle contract not closed, unversioned and without an
-import operation (F-04, High), and foreign-id denial records unbudgeted on reads (F-08). The
-sharing half maps to R6 (the register's R13 is Team & knowledge); register entries are made at approval.
+stories. Open findings: control absent, a per-user write rate limit (F-01, SR-E15-04, High); control absent, a per-user
+bound on retained soft-deleted rows (F-02, SR-E15-05, High); control absent, an audit record for workspace delete (F-03,
+SR-E15-17); and `WorkspaceBundle` not closed, with a free-string `schema_version`, no root `kind` and no operation that
+takes a bundle (F-04, High). The sharing half maps to R6 (the register's R13 is Team & knowledge); register entries
+are made at approval.
 
 **E13 indicator framework, presets & metric exposure** (`docs/security/threat-models/E13-indicators.md`, ticket
 E13-X01) is integrity-first where indicators become safety-relevant: ATR feeding `sl_offset_unit="atr"` stop
