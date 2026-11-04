@@ -1501,9 +1501,7 @@ export interface paths {
     put?: never;
     /**
      * Create an alert
-     * @description Its body bounds, write rate and refusal records: "Alert write bounds and refusal records"
-     *     in `info.description`.
-     *     Alerts reuse the rule IR condition language but may only use notification actions —
+     * @description Alerts reuse the rule IR condition language but may only use notification actions —
      *     an alert can never place an order. `trigger_mode` is `once` (fire and disable),
      *     `every_time`, or `once_per_bar`. Channels are `in_app`, `desktop`, `email`, `webhook`.
      *     A name the owner already uses for a live alert answers `409 conflict`. A `422` is
@@ -1516,6 +1514,9 @@ export interface paths {
      *     written. Only arming is refused: a create with `enabled` false, disabling, snoozing,
      *     deleting and a write to an alert that is already armed never are. The cap of 200 is
      *     interim until the Owner ratifies it as a `LIMIT_CAPS` row (#2701).
+     *
+     *     Body bounds, write rate and refusal records: "Alert write bounds and refusal records" in
+     *     `info.description`.
      */
     post: operations["createAlert"];
     delete?: never;
@@ -1537,13 +1538,14 @@ export interface paths {
     get: operations["getAlert"];
     /**
      * Replace an alert
-     * @description Its body bounds, write rate and refusal records: "Alert write bounds and refusal records"
-     *     in `info.description`.
-     *     A name the owner already uses for another live alert answers `409 conflict`. A `422`
+     * @description A name the owner already uses for another live alert answers `409 conflict`. A `422`
      *     is `rule_ir_invalid` or `validation_failed`, as for `createAlert` (#2748). A replace that
      *     sets `enabled` true on a disabled alert arms it and is held to the armed-alert cap of
      *     `createAlert` (`409 conflict`, `errors[].rule` `limit_reached`, example `armedAlertCap`);
      *     a replace of an alert that is already armed, or one that leaves it disabled, never is.
+     *
+     *     Body bounds, write rate and refusal records: "Alert write bounds and refusal records" in
+     *     `info.description`.
      */
     put: operations["updateAlert"];
     post?: never;
@@ -1592,12 +1594,13 @@ export interface paths {
     get?: never;
     /**
      * Snooze an alert, or clear its snooze
-     * @description Its body bounds, write rate and refusal records: "Alert write bounds and refusal records"
-     *     in `info.description`.
-     *     `until` is a future tz-aware instant (snoozed until then) or `null` (snooze cleared); a
+     * @description `until` is a future tz-aware instant (snoozed until then) or `null` (snooze cleared); a
      *     past or offset-less instant, or one more than 30 days ahead (rule `until_too_far`), is
      *     `422 validation_failed`; a non-string `until` (e.g. a numeric epoch) is refused too. Audited as `alert.snoozed` /
      *     `alert.unsnoozed` (C-2.9). Another user's alert is `404`.
+     *
+     *     Body bounds, write rate and refusal records: "Alert write bounds and refusal records" in
+     *     `info.description`.
      */
     put: operations["setAlertSnooze"];
     post?: never;
