@@ -1,6 +1,6 @@
 # E18-D04 — hand-off: copy-ready A-rows and the motion-pair lines
 
-**Ticket:** E18-D04 (#498) · **PR:** 1b, the second of two (`Refs #498`, `Partial: E18-D03 #497 is open` while it is; §14 of the spec) · **Status:** every row PROPOSED until its owner stamps it; nothing here is applied by this ticket. The spec is `docs/design/E18/E18-D04.md` (§10.3 lists these rows with their owners).
+**Ticket:** E18-D04 (#498) · **PR:** 1b, the second of two (`Refs #498`, `Partial: E18-D03 #497 is open` while it is; §14 of the spec) · **Status:** every row PROPOSED until its owner stamps it; nothing here is applied by this ticket. The spec is `docs/design/E18/E18-D04.md` (§10.3 lists these rows with their owners). The owner walks them from the checklist on #498 (comment 6626707818; spec §12).
 
 ## Motion-pair lines for the `16` §11.4 checklists
 
@@ -12,7 +12,7 @@ The checklist line each consuming component's hand-off pastes (`16`:743 item 8; 
 
 ## §C Copy-ready A-rows
 
-**Rules.** Old is the whole current line at the base `b81479ab0`, verbatim; New is the exact text the owner writes; an "insert after" row adds its New after the named line. 8 rows.
+**Rules.** Old is the whole current line at the base `c56a10bc3`, verbatim; New is the exact text the owner writes; an "insert after" row adds its New after the named line. 8 rows.
 
 ### A-1 · CMP-109 · `15`:1292 · insert after
 
@@ -120,7 +120,7 @@ New:
 
 ### A-7 · `05` §6.3 · `05`:203 · insert after
 
-Purpose: SCR-045 parity (F-2): the facts the mirror speaks that the footprint table lacks; PROPOSED, or a recorded reason they stay mirror-only.
+Purpose: SCR-045 parity (F-2): the two level facts the mirror speaks that the level sub-row lacks, a level POC marker and a stack run length; PROPOSED, or a recorded reason they stay derivable. `forming` and the bar's POC are the bar row's already (E11D04:183, :185), so no row is added for them.
 
 Old:
 
@@ -131,14 +131,13 @@ Old:
 New:
 
 ```text
-| POC             | "Point of control" or blank                                                                     | Filter-only               | The mirror's "point of control" (E18-D04 F-2)      |
-| Stack           | "×3 bid" / "×3 ask" and the zone's state word, or blank                                           | Yes (groups stacked rows) | The mirror's "part of a 3-level … stack" (F-2)      |
-| Forming         | "Forming" on the open bar's rows, else blank                                                     | No                        | The mirror's "forming" (F-2)                        |
+| Level POC marker | "Point of control" on the level that is the bar's POC, else blank                               | Filter-only               | The mirror's "point of control" at the level (E18-D04 F-2) |
+| Stack run length | "×3 bid" / "×3 ask" on each level of a stacked run, else blank                                  | Yes (groups stacked rows) | The mirror's "part of a 3-level … stack" (E18-D04 F-2)     |
 ```
 
 ### A-8 · E11-D06 row 22 · E11D06:324 · replace
 
-Purpose: Row 22 follows A-4 (BQ-3, RULED); only its motion-safe cell changes; applied after merge with the other A-rows.
+Purpose: Row 22 follows A-4 (BQ-3, RULED); its Duration cell and its Reduced-motion variant change (reduce: one frame, the cell-text fade included); applied after merge with the other A-rows.
 
 Old:
 
@@ -149,5 +148,5 @@ Old:
 New:
 
 ```text
-| 22  | **LOD step-down / step-up** (candle L0–L2, footprint L0–L3)                                                                                                                                                             | spacing crosses the asymmetric band (12 → 10.2 px, 10 → 8.5 px, and back at 12 / 10) or the load ladder                                                                                                                                                                 | the rendering level                                                                                                                                                              | 1 frame, no crossfade of fills, outlines or the L2 / L3 collapse; footprint cell text fades over `fast` (E18-D04 §5)                                                                  | none                                                                  | same                                                                                                                                     | the step itself no; the level is disclosed by rows 23–24 (text)                                                                   |
+| 22  | **LOD step-down / step-up** (candle L0–L2, footprint L0–L3)                                                                                                                                                             | spacing crosses the asymmetric band (12 → 10.2 px, 10 → 8.5 px, and back at 12 / 10) or the load ladder                                                                                                                                                                 | the rendering level                                                                                                                                                              | 1 frame, no crossfade of fills, outlines or the L2 / L3 collapse; footprint cell text fades over `fast` (E18-D04 §5)                                                                  | none                                                                  | 1 frame, the cell-text fade included                                                                                                                                     | the step itself no; the level is disclosed by rows 23–24 (text)                                                                   |
 ```
