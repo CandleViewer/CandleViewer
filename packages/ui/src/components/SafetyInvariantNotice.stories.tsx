@@ -10,7 +10,7 @@ const CLAUSE =
 
 /** Theme and density come from the toolbars: compact flows the two sentences as one line, comfortable as two. */
 const meta: Meta<typeof SafetyInvariantNotice> = {
-  title: "Atoms/SafetyInvariantNotice",
+  title: "RuleEngine/SafetyInvariantNotice",
   component: SafetyInvariantNotice,
   args: { lead: LEAD, clause: CLAUSE },
   decorators: [

@@ -78,6 +78,13 @@ describe("safetynotice.css: CMP-158's look over callout.css", () => {
     );
   });
 
+  it("lays the two sentences out as `15` CMP-158 says: one flowing line in compact, two in comfortable", () => {
+    for (const part of [both, ".cv-safety-notice .cv-callout__body"])
+      expect(find(notes.normal, part, "display"), part).toContain("display: inline;");
+    const comfortableBody = `[data-density="comfortable"] .cv-safety-notice .cv-callout__body`;
+    expect(find(notes.normal, comfortableBody, "display")).toContain("display: block;");
+  });
+
   it("forced colours: the words in CanvasText, as CMP-028's glyph and edge are", () => {
     expect(find(notes.forced, both, "color")).toContain("color: CanvasText");
     expect(find(callout.forced, ".cv-callout__glyph", "color")).toContain("color: CanvasText");
