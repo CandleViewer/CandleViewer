@@ -3305,10 +3305,10 @@ class Rule(BaseModel):
 
 class RuleScope(BaseModel):
     level: Literal["global","account","symbol","position","trade_group"]
-    account_ids: tuple[AccountId, ...] = ()      # empty = all permitted accounts
+    account_ids: tuple[AccountId, ...] = ()      # empty = all permitted accounts; at most 100, each once
     symbols: tuple[Symbol, ...] = ()             # empty = all
     applies_to: Literal["open_positions","pending_orders","account","any"] = "any"
-    environments: tuple[Environment, ...] = ("demo",)   # SAFE DEFAULT: demo only
+    environments: tuple[Environment, ...] = ("demo",)   # SAFE DEFAULT: demo only; at most 3, each once
     exclude_algo_children: bool = True
 
 class Trigger(BaseModel):
@@ -3402,6 +3402,8 @@ class RuleLimits(BaseModel):
 
 > **Action budget (SR-104, #3232).** `max_fires_per_hour` and `max_fires_per_day` bound how often one scope instance fires; at either limit the evaluator skips the fire. For a rule, a value above its default needs the Owner role and a value above its hard cap is refused, at save and again at arming; a rule armed above a cap before the caps existed is disarmed, never clamped. The caps live in `candleviewer.rules.limits`, mirrored by the contract's `x-cv-limit-caps` on `RuleIr`. Alerts reuse `RuleLimits` without either check.
 
+> **Scope account list (E35, #5691).** A rule's scope lists at most `MAX_SCOPE_ACCOUNTS` (100) accounts, each once (22 `RuleIrScope.account_ids`, `maxItems` and `uniqueItems`); `candleviewer.rules.ir.models` holds the number and the published schema carries it. Two entries are one account when they parse to the same UUID. A longer list, or a repeat, is refused at save, validate and compile. A stored version that breaks it is unreadable to the model and takes the quarantine path (G-15: read-only, disarmed when armed, skipped by the evaluator), never clamped or edited. Its `environments` name at most `MAX_SCOPE_ENVIRONMENTS` (3) environments, each once (22 `RuleIrScope.environments`), held, refused and quarantined the same way.
+
 ### 11.3 JSON Schema (shared by both editors)
 
 Both editors validate against this before save; the backend re-validates on `POST /rules`. Abbreviated to the structural core — the full document is generated from the pydantic models at build time and published at `/api/v1/schemas/rule-ir.json` (see §17.3).
@@ -3442,7 +3444,12 @@ Both editors validate against this before save; the backend re-validates on `POS
       "additionalProperties": false,
       "properties": {
         "level": { "enum": ["global", "account", "symbol", "position", "trade_group"] },
-        "account_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+        "account_ids": {
+          "type": "array",
+          "items": { "type": "string", "format": "uuid" },
+          "maxItems": 100,
+          "uniqueItems": true
+        },
         "symbols": {
           "type": "array",
           "items": { "type": "string", "pattern": "^[A-Z0-9]{4,20}$" }
@@ -3454,7 +3461,9 @@ Both editors validate against this before save; the backend re-validates on `POS
         "environments": {
           "type": "array",
           "items": { "enum": ["live", "demo", "testnet"] },
-          "default": ["demo"]
+          "default": ["demo"],
+          "maxItems": 3,
+          "uniqueItems": true
         },
         "exclude_algo_children": { "type": "boolean", "default": true }
       }
@@ -6856,3 +6865,14 @@ This is the number the orchestrator assigned on 2026-11-03 (08:03Z); it keeps it
 - 22 `createAlert`, `updateAlert` and `setAlertEnabled` gain `409 conflict` with `errors[].field` `enabled`, `errors[].rule` `limit_reached` and a message that names the cap, never a count (example `armedAlertCap`): a write that would leave the caller with more than 200 armed alerts (live and `enabled`, snoozed or not) is refused and nothing is written. A create arms when `enabled` is true (the default), a replace or `setAlertEnabled` when it turns a disabled alert's `enabled` true. Only arming is refused: disabling, snoozing, deleting and any write to an alert that is already armed never are. The cap is interim until the Owner ratifies it as a `LIMIT_CAPS` row (#2701).
 - The count and the write that it admits run in one transaction under a per-owner advisory lock, as the drawings quota does (#2727), so two writes at 199 never both pass. The write-ahead audit record of the write is unchanged and no action is registered or removed. A refusal is counted by `cv_alert_armed_cap_refused_total` (no labels; `20-architecture.md` §12.1).
 - No new `x-error-codes` entry, schema member or operation, so the `openapi_pending` baselines do not move; no WS, table, column, chart or `machine_hash` change, and no migration.
+
+### 19.123 2026-11-03 — 22 `RuleIrScope.account_ids` and `environments`, §11.2: a scope lists at most 100 accounts and 3 environments, each once (E35, #5691)
+
+The orchestrator assigned this number on 2026-11-03 (23:50Z); it is kept through every rebase.
+
+- Contract first (C-6.1), in the first of the change's two commits. 22 `RuleIrScope.account_ids` gains `maxItems: 100` and `uniqueItems: true`, and §11.2's `RuleScope` states the same: one entry for each account the rule names, none twice. An empty list still means every account the rule's owner holds a grant on when the rule fires. Two entries are one account when they parse to the same UUID, whatever their spelling.
+- A list past the bound, or one that names an account twice, is refused `422 rule_ir_invalid` on `createRule` and `updateRule` (`path` `/scope/account_ids`) and on `compileRule`, and `validateRule` answers `200` with `valid: false` and a `schema_error` at `scope.account_ids`. The refusal is decided on the list alone, before the scope check and for every role, so it names no account and writes no audit record, and nothing is stored. Each listed account is still checked against the saver's grants.
+- A stored version whose scope breaks the bound (saved before this entry) is unreadable to the model and takes the path every unreadable version takes (G-15): read-only, disarmed when armed, skipped by the evaluator, never clamped or edited, since a stored version is immutable. There is no migration.
+- 22 `RuleIrScope.environments` gains `maxItems: 3` and `uniqueItems: true`, the orchestrator's addition of 2026-11-04 (01:06Z), and §11.2 states the same: a scope names each environment once, and a repeat or a longer list is refused `422 rule_ir_invalid` at `/scope/environments` (`scope.environments` on `validateRule` and `compileRule`), decided before the scope check, so the refusal writes no record. A stored scope that breaks it takes the same quarantine path.
+- `packages/protocol` and `rule-ir.json` are regenerated. No new `x-error-codes` entry, schema member, operation, WS frame, table, column, chart or `machine_hash` change.
+- **Breaking by the letter (C-6.3):** a list past the bound, or with a repeat, was accepted before and is now refused, so the request schema narrows. The orchestrator ruled on 2026-11-03 (23:50Z), as it ruled #5577's narrowing: no `/v2` is served, the squash title carries `!` and the body a `BREAKING CHANGE:` footer. No ADR is needed pre-GA, because no client sends a scope's account or environment list past these bounds: the web app has no rule scope editor, and the rule-graph generators send one account id and at most two distinct environments.
