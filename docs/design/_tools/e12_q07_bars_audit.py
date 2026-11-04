@@ -1,0 +1,349 @@
+#!/usr/bin/env python3
+"""E12-Q07 (#530) audit: the bar-mode a11y run record, PR 1 (the built set).
+
+Offline and default-deny. The shared gates (git, cites, pins, closing keywords, hygiene, public
+text, G-UNTOUCHED, the runner and the mutation harness) live in `spec_audit_lib.py`; this file
+keeps only E12-Q07's rows. It reads the plan and design texts the record cites AS TEXT at the
+pinned base (`BASE`) and, from the working tree, the record, its results, the PR's test file, the
+a11y register and itself. It runs no repo code.
+
+Gates (each FAIL led by its name):
+  G-CITE      every cite resolves at the base on a non-blank line; at least MIN_CITES parse.
+  G-PINS      the ruled oracles still stand on the cited lines (the caps, BG-09, BG-13, FM-11,
+              R-4, R-7, the T01 rows, `05`'s rows), so a moved source fails until re-pinned.
+  G-BUILT     section 2 lists exactly the ticket's surfaces; each row is built or "not yet built"
+              naming a story of the ruling's set (or the T01 owner); none is both.
+  G-AC        section 5 carries AC 1 to AC 5; AC 1 reads "not run: not mounted"; AC 4 is held and
+              never merged skipped; every result uses the record's vocabulary.
+  G-CAPS      the caps the record states (60, 200, 1,800) equal D11's line and the test's
+              constants; the test file has no skip, only or fixme.
+  G-REGISTER  every finding row has an SC, a severity of the register's set, a disposition and
+              either an A11Y-F id that `findings.json` holds with the same SC, screen and severity,
+              or "report only (n)" with its numbered note under the table saying why.
+  G-EVIDENCE  every backticked repo path the record names exists; every quoted test title in
+              section 3.1 is a title in the file it names.
+  G-OWNER     at most ten owner-run rows; the heard passes name `05` section 8.1 rows 1, 3, 4
+              and row 2 as not covered.
+  G-HYGIENE   no closing keyword, local path, host, lane name, HTML comment, trailing blank or
+              CR in the record, its results or the test file; the record says Partial work.
+  G-SCOPE     the diff against the merge-base with origin/main touches only this PR's paths.
+
+Usage (from the repo root):
+  python3 -I docs/design/_tools/e12_q07_bars_audit.py --check | --self-test
+Exit 0 = no FAIL; 1 = at least one FAIL.
+"""
+
+from __future__ import annotations
+
+import functools
+import json
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import spec_audit_lib as L  # the shared helper sits beside this file
+
+ROOT = Path(__file__).resolve().parents[3]
+BASE = "aa0a02b8c54c877c39718f101abf69467cb4a2d6"  # origin/main when written; re-pinned on rebase
+RULING = "6637510765"  # the ruling of record on the BQ list
+REPORT_REL = "docs/qa/a11y/e12-q07-bars-v1.md"
+RESULTS_REL = "docs/qa/a11y/e12-q07-bars-v1-results/offline-summary.md"
+TEST_REL = "apps/web/test/chart/a11y/e12Q07Audit.test.tsx"
+TOOL_REL = "docs/design/_tools/e12_q07_bars_audit.py"
+FINDINGS_REL = "docs/plan/a11y/findings.json"
+OWN = (
+    REPORT_REL,
+    RESULTS_REL,
+    TEST_REL,
+    TOOL_REL,
+)
+SEVERITIES = ("blocker", "serious", "moderate", "minor")  # the register's set
+REPORT_ONLY = re.compile(r"^report only \((\d+)\)$")
+
+PLAN = {
+    "05": "docs/plan/05-accessibility-standard.md",
+}
+KEYED = {
+    "D11": L.DocRef("docs/design/E12/E12-D11.md", BASE),
+    "D07": L.DocRef("docs/design/E12/E12-D07.md", BASE),
+    "D10": L.DocRef("docs/design/E12/E12-D10.md", BASE),
+    "D13": L.DocRef("docs/design/E12/E12-D13.md", BASE),
+    "D04E47": L.DocRef("docs/design/E47/E47-D04.md", BASE),
+    "T01": L.DocRef("docs/qa/a11y/e47-t01-sweep.md", BASE),
+}
+CITE_RE = L.cite_regex(KEYED, ranges=True)
+MIN_CITES = 25
+PINS = (
+    L.KeyCite("D11", 96, "cap 200, hard cap 1,800 nodes per pane"),
+    L.KeyCite("D11", 529, "| BG-01 |"),
+    L.KeyCite("D11", 537, "| BG-09 |"),
+    L.KeyCite("D11", 541, "| BG-13 |"),
+    L.KeyCite("D11", 240, "| FM-11 |"),
+    L.KeyCite("D11", 291, "audit:q07=70"),
+    L.KeyCite("D07", 225, "`forming`"),
+    L.KeyCite("D07", 238, 'named "no delta: bar from exchange klines"'),
+    L.KeyCite("D04E47", 119, "R-4 Never the body"),
+    L.KeyCite("D04E47", 122, "R-7 Restore to the invoker"),
+    L.KeyCite("T01", 178, "| SCR-041 | unreachable: built, not mounted"),
+    L.KeyCite("T01", 180, "| SCR-043 | unreachable: not built"),
+    L.KeyCite("T01", 182, "| SCR-045 | unreachable: not built"),
+    L.KeyCite("T01", 185, "| SCR-048 | unreachable: built, not mounted"),
+    L.KeyCite("D13", 514, "| OR-3 |"),
+    L.KeyCite("D10", 61, "| M-07 |"),
+    L.KeyCite("05", 257, "### 8.1 Coverage matrix"),
+    L.KeyCite("05", 304, "required `a11y` check"),
+)
+SURFACES = (
+    "SCR-041",
+    "SCR-042",
+    "SCR-043",
+    "SCR-044",
+    "SCR-045",
+    "SCR-047",
+    "SCR-048",
+    "CMP-199",
+    "CMP-220",
+    "CMP-221",
+    "CMP-222",
+    "CMP-029",
+    "Candle, OHLC, hollow and Heikin-Ashi",
+    "Rebuild strip, cancel, history marker",
+)
+STORIES = frozenset({"#533", "#535", "#451", "#521", "#336", "#387", "#487", "#811"})
+AC_VOCAB = re.compile(
+    r"\*\*(?:pass|deviation|held|heuristic|not run: not mounted|not yet built — #\d+|owner-run)"
+)
+CAPS = {"DEFAULT_ROWS": "60", "ROW_CAP": "200", "NODE_CAP": "1_800"}
+SKIPS = re.compile(r"\b(?:it|test|describe)\.(?:skip|only|todo|fails)\b|\bfixme\b")
+PATH_RE = re.compile(r"`((?:apps|packages|docs|tools|scripts)/[A-Za-z0-9_./-]+\.[a-z]+)`")
+TITLE_RE = re.compile(r"\(`([A-Za-z]+\.test\.tsx)`, \"([^\"]+)\"\)")
+FINDING_ROW = re.compile(r"^F-\d+$")
+PARTIAL = "This PR is `Refs #530` and Partial"
+
+
+@functools.cache
+def repo() -> L.Repo:
+    return L.Repo(ROOT)
+
+
+@functools.cache
+def docs() -> L.Docs:
+    return L.Docs(repo(), BASE, KEYED, plan=PLAN)
+
+
+def sec(t: L.Tree, heading: str) -> str:
+    return L.section(t.text("report"), heading)
+
+
+@functools.cache
+def test_titles(name: str) -> str:
+    hits = sorted(ROOT.joinpath("apps/web/test").rglob(name))
+    return hits[0].read_text(encoding="utf-8") if hits else ""
+
+
+# ---------- gates ---------------------------------------------------------------------------------
+def g_cite(t: L.Tree) -> list[str]:
+    text = t.text("report") + "\n" + t.text("results")
+    bad = L.check_cites(L.extract_cites(text, CITE_RE), docs(), min_count=MIN_CITES)
+    return [f"unresolved cites: {', '.join(b.split(' (')[0] for b in bad)}"] if bad else []
+
+
+def g_pins(t: L.Tree) -> list[str]:
+    cites = L.extract_cites(t.text("report"), CITE_RE)
+    unused = [
+        f"{p.doc}:{p.line}"
+        for p in PINS
+        if not any(c.doc == p.doc and c.lo <= p.line <= c.hi for c in cites)
+    ]
+    return L.check_key_cites(PINS, docs()) + [f"pinned but never cited: {u}" for u in unused]
+
+
+def g_built(t: L.Tree) -> list[str]:
+    rows = L.table_rows(sec(t, "## 2. "))
+    names = [r[0] if r[0] in SURFACES else r[0].split(" ")[0] for r in rows]
+    bad = [] if names == list(SURFACES) else ["section 2's surfaces differ from the ticket's list"]
+    for r in rows:
+        state, audited = (r[1], r[2]) if len(r) > 2 else ("", "")
+        unbuilt = "not yet built" in state
+        if unbuilt == ("built" in state.replace("not yet built", "")):
+            bad.append(f"{r[0]}: not exactly one of built / not yet built")
+        if unbuilt and not set(re.findall(r"#\d+", state)) & STORIES:
+            bad.append(f"{r[0]}: not yet built without a story of the ruling's set")
+        if unbuilt and audited != "none" and "built" not in state.replace("not yet built", ""):
+            bad.append(f"{r[0]}: an unbuilt surface is audited")
+    return bad
+
+
+def g_ac(t: L.Tree) -> list[str]:
+    rows = {r[0].split(":")[0]: r for r in L.table_rows(sec(t, "## 5. "))}
+    bad = [f"{a} missing" for a in (f"AC {n}" for n in range(1, 6)) if a not in rows]
+    if "AC 1" in rows and "not run: not mounted" not in rows["AC 1"][1]:
+        bad.append("AC 1 is not 'not run: not mounted'")
+    if "AC 4" in rows and "never merged skipped" not in rows["AC 4"][2]:
+        bad.append("AC 4's held test is not stated as never merged skipped")
+    bad += [
+        f"{k}: result outside the vocabulary" for k, r in rows.items() if not AC_VOCAB.match(r[1])
+    ]
+    return bad
+
+
+def g_caps(t: L.Tree) -> list[str]:
+    report, test = t.text("report"), t.text("test")
+    bad = []
+    for name, value in CAPS.items():
+        if not re.search(rf"\bconst {name} = {value};", test):
+            bad.append(f"the test's {name} is not {value}")
+    line = docs().line("D11", 96) or ""
+    if not all(v in line for v in ("60 by default", "cap 200", "1,800")):
+        bad.append("D11:96 no longer states 60 / 200 / 1,800")
+    if "(60 rows, cap 200, 1,800 nodes)" not in report:
+        bad.append("section 3.2 does not state the caps")
+    bad += [f"the test file carries {m.group(0)}" for m in SKIPS.finditer(test)]
+    return bad
+
+
+def g_register(t: L.Tree) -> list[str]:
+    reg = {f["id"]: f for f in json.loads(t.text("findings"))["findings"]}
+    block = sec(t, "## 4. ")
+    rows = [r for r in L.table_rows(block) if FINDING_ROW.match(r[0])]
+    if not rows:
+        return ["no finding row in section 4"]
+    bad = []
+    for r in rows:
+        if len(r) < 7 or not re.fullmatch(r"\d\.\d\.\d+", r[2]) or not r[5]:
+            bad.append(f"{r[0]}: no SC or no disposition")
+        if not r[3].startswith(SEVERITIES):
+            bad.append(f"{r[0]}: severity outside the register's set")
+        only = REPORT_ONLY.match(r[-1])
+        if only and not re.search(rf"^{only.group(1)}\. {r[0]} \S", block, re.MULTILINE):
+            bad.append(f"{r[0]}: report only without its note")
+        ids = re.findall(r"A11Y-F-\d{4}", r[-1])
+        if not only and not ids:
+            bad.append(f"{r[0]}: neither a register id nor report only (n)")
+        for fid in ids:
+            f = reg.get(fid)
+            if f is None:
+                bad.append(f"{fid} is not in the register")
+            elif f["wcagSc"] != r[2] or f["screenId"] not in r[1]:
+                bad.append(f"{fid} differs from its row (SC or screen)")
+    return bad
+
+
+def g_evidence(t: L.Tree) -> list[str]:
+    text = t.text("report") + "\n" + t.text("results")
+    bad = [p for p in sorted(set(PATH_RE.findall(text))) if not (ROOT / p).exists()]
+    for name, title in TITLE_RE.findall(sec(t, "### 3.1 ")):
+        if f'"{title}"' not in test_titles(name) and f"'{title}'" not in test_titles(name):
+            bad.append(f"{name}: no test titled {title[:40]!r}")
+    return [f"missing: {b}" for b in bad]
+
+
+def g_owner(t: L.Tree) -> list[str]:
+    rows = L.table_rows(sec(t, "## 6. "))
+    bad = [] if 0 < len(rows) <= 10 else [f"{len(rows)} owner-run rows (at most 10)"]
+    std = " ".join(r[-1] for r in rows)
+    bad += [
+        f"no {s}" for s in ("§8.1 row 1", "§8.1 row 3", "§8.1 row 4", "§8.1 row 2") if s not in std
+    ]
+    if not any("not covered" in r[1] and "row 2" in r[-1] for r in rows):
+        bad.append("JAWS (row 2) is not stated as not covered")
+    return bad
+
+
+def g_hygiene(t: L.Tree) -> list[str]:
+    named = t.named("report", "results", "test")
+    bad = L.closing_keywords(named) + L.whitespace_hygiene(named)
+    bad += L.scan_public(named) + L.comment_findings(named)
+    report = t.text("report")
+    if PARTIAL not in report or RULING not in report:
+        bad.append("the record does not state Partial work under the ruling")
+    return bad
+
+
+def g_scope(t: L.Tree) -> list[str]:
+    bad = L.untouched(t.changed, OWN)
+    return [f"out of scope: {b}" for b in bad]
+
+
+GATES = (
+    L.Gate("G-CITE", g_cite),
+    L.Gate("G-PINS", g_pins),
+    L.Gate("G-BUILT", g_built),
+    L.Gate("G-AC", g_ac),
+    L.Gate("G-CAPS", g_caps),
+    L.Gate("G-REGISTER", g_register),
+    L.Gate("G-EVIDENCE", g_evidence),
+    L.Gate("G-OWNER", g_owner),
+    L.Gate("G-HYGIENE", g_hygiene),
+    L.Gate("G-SCOPE", g_scope),
+)
+
+_M = L.Mutation
+# fmt: off
+MUTATIONS = (
+    _M("M-1", "G-CITE", "a cite past the end of `05`", "report", "`05`:185 ", "`05`:99999 "),
+    _M("M-2", "G-PINS", "a pinned cite moved one line", "report", "D11:537 ", "D11:536 "),
+    _M("M-3", "G-BUILT", "an unbuilt surface without a story", "report",
+       "not yet built — #336 ", "not yet built "),
+    _M("M-4", "G-BUILT", "a surface dropped from section 2", "report",
+       "| CMP-221 ChartToolbar ", "| CMP-226 ChartToolbar "),
+    _M("M-5", "G-AC", "AC 1 claims a sweep that did not run", "report",
+       r"\*\*not run: not mounted\*\*(\s*\| §0;)", r"**pass**\1", regex=True),
+    _M("M-6", "G-AC", "AC 4's hold loses its never-skipped line", "report",
+       "never merged skipped", "merged as skipped"),
+    _M("M-7", "G-CAPS", "the test loosens the node cap", "test",
+       "const NODE_CAP = 1_800;", "const NODE_CAP = 2_000;"),
+    _M("M-8", "G-CAPS", "a fixme test", "test", "  it(\"BG-09:", "  it.skip(\"BG-09:"),
+    _M("M-9", "G-REGISTER", "a report-only row loses its note", "report",
+       "1. F-1 is not a register row yet", "F-1 is not a register row yet"),
+    _M("M-10", "G-REGISTER", "a register id that does not exist", "report",
+       "| report only (1) |", "| `A11Y-F-0936` |"),
+    _M("M-11", "G-EVIDENCE", "a cited test title that is not in its file", "report",
+       "focus back on the trigger\")", "focus back on its trigger\")"),
+    _M("M-12", "G-EVIDENCE", "a path that does not exist", "report",
+       "`apps/web/e2e/motion-reduce.spec.ts`", "`apps/web/e2e/motion-reduced.spec.ts`"),
+    _M("M-13", "G-OWNER", "JAWS no longer stated as not covered", "report",
+       "is not covered by this ticket", "is run by the owner"),
+    _M("M-14", "G-HYGIENE", "a closing keyword", "report", "This PR is `Refs #530`",
+       "Clo" "ses #530. This PR is `Refs #530`"),
+    _M("M-15", "G-HYGIENE", "a local path in the results", "results", "Linux (WSL2)",
+       "Linux (WSL2) at /" "home/x"),
+    _M("M-16", "G-SCOPE", "a file outside the PR's paths", "@changed", replace="docs/plan/05-accessibility-standard.md"),
+    _M("M-17", "G-REGISTER", "a severity outside the register's set", "report",
+       "| moderate (heuristic) |", "| medium (heuristic) |"),
+)
+# fmt: on
+
+
+# ---------- modes ---------------------------------------------------------------------------------
+def read_tree() -> L.Tree:
+    base = repo().diff_base(BASE)
+    files = {
+        "report": REPORT_REL,
+        "results": RESULTS_REL,
+        "test": TEST_REL,
+        "findings": FINDINGS_REL,
+        "tool": TOOL_REL,
+    }
+    return L.Tree(
+        files={k: (ROOT / v).read_text(encoding="utf-8") for k, v in files.items()},
+        changed=repo().changed_paths(base),
+    )
+
+
+def check() -> int:
+    return L.report(L.run_gates(GATES, read_tree()))
+
+
+def self_test() -> int:
+    disk = [ROOT / rel for rel in OWN]
+    return L.self_test(read_tree(), GATES, MUTATIONS, disk, namespace=globals())
+
+
+def main(argv: list[str]) -> int:
+    return L.cli(argv, {"check": check, "self-test": self_test}, __doc__)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
