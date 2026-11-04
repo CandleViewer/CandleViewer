@@ -66,7 +66,7 @@ VALIDATOR, PACKER, MKCALL = TOOLS / "validate_sheet.py", TOOLS / "compact.py", T
 COMPONENTS, TOKENS_FILE = TOOLS / "components.offline.json", TOOLS / "token-sync.json"
 HEAD = "the boards PR"  # the spec as built (§0 drawn, §19); re-pin DOCS when a further text fold lands
 DOCS = {  # key -> (repo-relative path, md5 at HEAD): every read is md5-checked
-    "spec": (_SPEC_PATH, "40669dbd39cb28403fa89307f09dd676"),
+    "spec": (_SPEC_PATH, "416c1519e1e6169a55b74455131fe031"),
     "floor": ("docs/design/E18/E18-D02.md", "fd75a21fdc0b045c206182da712d94a8"),
     "fixture": ("packages/fixtures/bybit/2026-10-05/rest/instruments_before.json", "edd9dd2a060c51bd4bd1450307728ddf"),
 }
@@ -570,7 +570,7 @@ def est_height(n: Node) -> float:
 # column end, footer end) + MARGIN), folded from the live check of the ten drawn boards. The root takes the measured
 # value (it must still clear the frames and the footer); the estimate below serves only a board not yet measured.
 # Board 08 gained SCR-033/apply-no-write in the design-read fold (#5782): estimated until the redraw re-measures it.
-MEASURED_H: dict[int, int] = {1: 1934, 2: 1026, 3: 1026, 4: 1947, 5: 1934, 6: 1026, 7: 1934, 9: 1934, 10: 1934}
+MEASURED_H: dict[int, int] = {1: 1934, 2: 1026, 3: 1026, 4: 1947, 5: 1934, 6: 1026, 7: 1934, 8: 2842, 9: 1934, 10: 1934}
 ANN_SLACK = 1.15  # the estimate's slack on the annotation column until MEASURED_H holds the board
 
 

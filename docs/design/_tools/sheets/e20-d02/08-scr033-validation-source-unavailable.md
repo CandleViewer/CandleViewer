@@ -2,7 +2,7 @@
 
 File `E20-D02 boards`, page `E20-D02`; export `docs/design/E20/img/E20-D02-08-scr033-validation-source-unavailable.png`; sheet `08-scr033-validation-source-unavailable.json` (validated); theme dark.
 
-Board 08 of 10 (§0 L71). Grid (12800, 3200); 3280 x 2856 px; "page E20-D02 · board 08 · r1".
+Board 08 of 10 (§0 L71). Grid (12800, 3200); 3280 x 2842 px; "page E20-D02 · board 08 · r1".
 
 ## Frames
 
@@ -14,14 +14,14 @@ Board 08 of 10 (§0 L71). Grid (12800, 3200); 3280 x 2856 px; "page E20-D02 · b
 
 ## Validator and size
 
-- `08-scr033-validation-source-unavailable.json: 0 errors, 168 warnings, 72 sections, 270105 bytes` (exit 0)
-- 72 sections, 1474 shapes, 270105 bytes
+- `08-scr033-validation-source-unavailable.json: 0 errors, 168 warnings, 72 sections, 270034 bytes` (exit 0)
+- 72 sections, 1474 shapes, 270034 bytes
 
 ## Live checks (9)
 
 - centring: only a node a line here names is centred, and only on the axis it names; every other node keeps the sheet's x / y — never apply a generic re-centre
-- root 'E20-D02 / 08 scr033-validation-source-unavailable' at (12800, 3200): read back the name exactly after the first section call; size 3280 x 2856
-- after touchTexts + relayout: measure max(annotation column end, footer end) + 80 and record it in MEASURED_H[8] (estimated 2856: the column at 1492 px with 15% slack)
+- root 'E20-D02 / 08 scr033-validation-source-unavailable' at (12800, 3200): read back the name exactly after the first section call; size 3280 x 2842
+- after touchTexts + relayout: the root's h 2842 is the measured max(column end, footer end) + 80
 - frame 'SCR-033∕no-row-selected': read back 1280 x 800 at (80, 108); clip on, no child spills
 - frame 'SCR-033∕threshold-invalid': read back 1280 x 800 at (1440, 108); clip on, no child spills
 - frame 'SCR-033∕source-unavailable': read back 1280 x 800 at (80, 1016); clip on, no child spills
@@ -85,7 +85,7 @@ Board 08 of 10 (§0 L71). Grid (12800, 3200); 3280 x 2856 px; "page E20-D02 · b
 
 ## Sources (3)
 
-- spec docs/design/E20/E20-D02.md md5 40669dbd39cb28403fa89307f09dd676 at the boards PR (§0 L71); the ruling of record folded (BQ-0 … BQ-9); no hand-off file
+- spec docs/design/E20/E20-D02.md md5 416c1519e1e6169a55b74455131fe031 at the boards PR (§0 L71); the ruling of record folded (BQ-0 … BQ-9); no hand-off file
 - docs/design/E18/E18-D02.md md5 fd75a21fdc0b045c206182da712d94a8 (L124: the delta width floor 40 px, the collapse floor's seed, §4.1)
 - packages/fixtures/bybit/2026-10-05/rest/instruments_before.json md5 edd9dd2a060c51bd4bd1450307728ddf (tick and qty step: BTCUSDT 0.10 / 0.001, ETHUSDT 0.01 / 0.001)
 
