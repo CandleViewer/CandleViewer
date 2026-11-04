@@ -1,12 +1,16 @@
 // E24-S01 (#776) slice 2: the OI table alternative (D02 §11, D03 S54-64; `05` §6.3) over CMP-049: one row
 // per visible point with time, span, OI in base coin and in USDT (live points only, BQ 1) and the source
 // in words (the provenance rule: `live` vs `REST history`), and the gaps as rows in words, so a gap is never
-// only a missing line. The quadrant and delta columns are E24-S02's.
+// only a missing line. E24-S02 (#777) adds the delta and quadrant columns
+// when the served per-bar series is given: the quadrant in words (and glyph pair), never colour alone.
 import { useEffect, useId, useRef, type JSX } from "react";
 import { EmptyState, Table, type TableColumn } from "@candleviewer/ui";
 import type { OiGap, OiRow } from "../series";
+import { alignToBar } from "../intervals";
+import type { OiBar, OiBarModel } from "../quadrant/bars";
+import { QUADRANT_STYLE } from "../quadrant/quadrant";
 import * as copy from "./copy";
-import { groupedDecimal, tableTime } from "./format";
+import { groupedDecimal, signedDecimal, tableTime } from "./format";
 
 /** CMP-049 draws at most 200 rows without a host window (#266); the newest are kept (PROPOSED). */
 export const MAX_TABLE_ROWS = 200;
@@ -42,6 +46,8 @@ export interface OiTableProps {
   /** The chart's visible range; the whole series when absent. */
   readonly visible?: { readonly fromMs: number; readonly toMs: number } | undefined;
   readonly density?: "comfortable" | "compact" | undefined;
+  /** E24-S02: the served per-bar delta and quadrant; the columns are absent without it. */
+  readonly bars?: OiBarModel | undefined;
 }
 
 export function OiTable({
@@ -51,6 +57,7 @@ export function OiTable({
   gaps,
   visible,
   density = "compact",
+  bars,
 }: OiTableProps): JSX.Element {
   const capId = useId();
   const box = useRef<HTMLDivElement>(null);
@@ -63,6 +70,14 @@ export function OiTable({
     ...gaps.filter((g) => inView(g.fromMs, g.toMs)).map((gap) => ({ kind: "gap", gap }) as const),
   ].sort((a, b) => startOf(a) - startOf(b));
   const shown = lines.slice(-MAX_TABLE_ROWS);
+
+  const barAt = new Map<number, OiBar>((bars?.bars ?? []).map((b) => [b.tMs, b]));
+  // a live or ticker row need not start on a bar open: align it to its bar. A row whose bar the metrics did
+  // not serve reads "unclassified": the OI feed does hold its sample.
+  const barOf = (l: Line): OiBar | null =>
+    bars === undefined || l.kind !== "point"
+      ? null
+      : (barAt.get(alignToBar(l.row.tMs, bars.barMs)) ?? null);
 
   const columns: TableColumn<Line>[] = [
     {
@@ -104,6 +119,37 @@ export function OiTable({
           ? groupedDecimal(l.row.valueUsdt)
           : none("no USDT value"),
     },
+    ...(bars === undefined
+      ? []
+      : ([
+          {
+            id: "delta",
+            header: copy.COL_DELTA(bars.deltaUnit),
+            align: "end",
+            minWidthEm: 9,
+            cell: (l) => {
+              const d = barOf(l)?.delta ?? null;
+              return d === null ? none("no change for this bar") : signedDecimal(d);
+            },
+          },
+          {
+            id: "quadrant",
+            header: copy.COL_QUADRANT,
+            minWidthEm: 12,
+            cell: (l) => {
+              if (l.kind === "gap") return none("no quadrant");
+              const q = barOf(l)?.quadrant ?? null;
+              if (q !== null)
+                return (
+                  <>
+                    <span aria-hidden="true">{QUADRANT_STYLE[q].glyphs} </span>
+                    {QUADRANT_STYLE[q].words}
+                  </>
+                );
+              return copy.UNCLASSIFIED;
+            },
+          },
+        ] satisfies TableColumn<Line>[])),
     {
       id: "source",
       header: copy.COL_SOURCE,
