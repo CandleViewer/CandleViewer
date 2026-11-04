@@ -284,13 +284,12 @@ def _concentration(
 ) -> None:
     """The symbol's share of the aggregate cap, so a first position is not 100 % of itself.
 
-    The base is the resolved `max_total_notional_usd`, blocking or warn. A blocking
-    concentration cap with no base cannot be measured and refuses closed; a warn-only one is
-    skipped. A zero base breaches for any positive symbol notional.
+    The base is the blocking `max_total_notional_usd` only; a policy warn total is never a base.
+    A blocking concentration cap with no blocking base cannot be measured and refuses closed; a
+    warn-only one is skipped. A zero base breaches for any positive symbol notional.
     """
     name = "per_symbol_concentration_pct"
-    # Only the policy sets the aggregate cap, so it is either blocking or a warn threshold.
-    total = caps.get("max_total_notional_usd") or caps.warn_limit("max_total_notional_usd")
+    total = caps.get("max_total_notional_usd")
     if total is None:
         if caps.get(name) is not None:
             raise refuse(

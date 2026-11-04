@@ -2468,8 +2468,8 @@ limit, not "unlimited": it refuses every opening order on that cap. `evaluate(or
 stops at the first refusal, in this order: symbol rule, kill switch, lockout, state freshness and equity, orders per
 minute, concurrent orders, open positions (only for an order whose effect opens a position, `RiskOrder.opens_position`, or whose symbol is unheld),
 position notional, aggregate notional, position share of equity, per-symbol concentration (a share of the
-resolved `max_total_notional_usd`, block or warn; a blocking concentration cap with no aggregate cap refuses
-`risk_limit_breached` on `per_symbol_concentration_pct`, a warn-only one is skipped), leverage, daily loss in USD, daily
+blocking `max_total_notional_usd` only, never a policy warn total; a blocking concentration cap with no blocking
+aggregate cap refuses closed, `risk_limit_breached` on `per_symbol_concentration_pct`, and a warn-only one is skipped), leverage, daily loss in USD, daily
 loss in percent, drawdown, consecutive losses. A projected figure may land on its limit; a measured loss is refused at
 it. Comparisons run at 80 significant digits, exact for `numeric(38,18)` operands. `evaluate` never raises on malformed
 inputs: a non-finite figure, a negative quantity, price, notional, held notional, counter or cap limit, a figure or limit whose decimal exponent is beyond ±100 (so no ratio overflows), or a tz-naive

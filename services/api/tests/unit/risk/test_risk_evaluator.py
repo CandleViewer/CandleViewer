@@ -242,15 +242,15 @@ def test_evaluate_policy_warn_never_softens_a_tighter_profile_limit() -> None:
     assert run(f=figures(daily_figure=D(-950)), c=c).decision.cap == "max_daily_loss_usd"
 
 
-def test_evaluate_zero_warn_aggregate_cap_still_enforces_a_blocking_concentration() -> None:
+def test_evaluate_warn_only_aggregate_cap_is_no_concentration_base() -> None:  # BQ addendum 2
     pol = {
-        "max_total_notional_usd": D(0),
+        "max_total_notional_usd": D(1000),
         "breach_behaviour": {"max_total_notional_usd": "warn"},
         "per_symbol_concentration_pct": D(50),
     }
-    decision = run(c=caps(pol=pol)).decision
-    assert decision.cap == "per_symbol_concentration_pct"
-    assert not decision.allowed
+    decision = run(order(notional=D(400)), c=caps(pol=pol)).decision  # 40 % of the warn total
+    assert decision.cap == "per_symbol_concentration_pct" and not decision.allowed
+    assert "cannot be measured" in decision.message
 
 
 def test_evaluate_unheld_symbol_counts_as_opening_even_if_the_order_says_not() -> None:
@@ -338,16 +338,12 @@ def test_evaluate_concentration_without_an_aggregate_cap_refuses_closed() -> Non
     assert run(c=warn_only).decision.allowed
 
 
-def test_evaluate_concentration_base_is_a_warn_aggregate_cap_too() -> None:
-    pol = {
-        "max_total_notional_usd": D(20_000),
-        "per_symbol_concentration_pct": D(60),
-        "breach_behaviour": {"max_total_notional_usd": _WARN},
-    }
-    # 10 000 of 20 000 is 50 %: admitted; held 3 000 more makes 65 %: refused by concentration.
-    assert run(c=caps(pol)).decision.allowed
-    f = figures(symbol_notional={"BTCUSDT": D(3000)})
-    assert run(f=f, c=caps(pol)).decision.cap == "per_symbol_concentration_pct"
+@pytest.mark.parametrize(  # the measured figures clamp at 0: a gain day, a peak below the figure
+    ("cap", "peak"), [("max_daily_loss_usd", 100), ("max_drawdown_pct", 0)]
+)
+def test_evaluate_zero_cap_refuses_a_measured_figure_clamped_at_zero(cap: str, peak: int) -> None:
+    f = figures(daily_figure=D(100), day_peak_figure=D(peak))
+    assert run(f=f, c=caps(pol={cap: D(0)})).decision.cap == cap
 
 
 _MALFORMED: tuple[tuple[str, dict[str, Any]], ...] = (
