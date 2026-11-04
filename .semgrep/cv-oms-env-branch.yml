@@ -52,7 +52,7 @@ rules:
                         - pattern: $ENUM.TESTNET
                     - metavariable-regex:
                         metavariable: $ENUM
-                        regex: ^(?:\w+\.)*\w*Env\w*$
+                        regex: ^[\w.]*Env\w*$
           - pattern-not-inside: |
               if <... $VALUE ...>:
                   raise ...
@@ -93,7 +93,7 @@ rules:
                         - pattern: $ENUM.TESTNET
                     - metavariable-regex:
                         metavariable: $ENUM
-                        regex: ^(?:\w+\.)*\w*Env\w*$
+                        regex: ^[\w.]*Env\w*$
           - pattern-not-inside: |
               if <... $X in $SET ...>:
                   raise ...
@@ -130,7 +130,7 @@ rules:
                             - pattern: $MAKER(...)
                             - metavariable-regex:
                                 metavariable: $MAKER
-                                regex: ^(?!(?:\w+\.)*_*[A-Z]\w*$)
+                                regex: ^(?!(?:[\w.]*\.)?_*[A-Z]\w*$)
               - patterns:
                   - pattern: |
                       if $COND:
@@ -149,7 +149,7 @@ rules:
                         - pattern: $ENUM.TESTNET
                     - metavariable-regex:
                         metavariable: $ENUM
-                        regex: ^(?:\w+\.)*\w*Env\w*$
+                        regex: ^[\w.]*Env\w*$
                 - patterns:
                     - pattern-either:
                         - pattern: $ENV in $SET
