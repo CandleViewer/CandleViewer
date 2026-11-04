@@ -48,6 +48,7 @@ tests/contract/test_e29_oms_schemathesis_contract.py::test_e29_the_arm_token_the
 # (tests/contract/ws/test_ws_oms_frames_contract.py, test_ws_oms_scope_revocation_contract.py)
 tests/contract/ws/test_ws_oms_frames_contract.py::test_orders_a_committed_step_of_every_kind_conforms_in_every_stored_state | WS orders deltas: step kind x state | E29-TC-450, E29-TC-751
 tests/contract/ws/test_ws_oms_frames_contract.py::test_orders_an_open_only_subscriber_gets_a_closing_step_as_a_removal_alone | WS orders deltas: open_only removal | E29-TC-751
+tests/contract/ws/test_ws_oms_frames_contract.py::test_the_open_set_read_refuses_a_list_it_cannot_trust | WS orders deltas: the Sec.6.2.3 open-set read guard | E29-TC-751
 tests/contract/ws/test_ws_oms_frames_contract.py::test_orders_each_variant_of_a_row_conforms_as_a_delta | WS orders deltas: row variants | E29-TC-751
 tests/contract/ws/test_ws_oms_frames_contract.py::test_an_account_with_no_rows_gets_an_empty_snapshot_that_conforms | WS orders, executions and positions: empty snapshot | E29-TC-751
 tests/contract/ws/test_ws_oms_frames_contract.py::test_executions_each_variant_of_a_fill_conforms_as_a_delta | WS executions deltas: fill variants | E29-TC-751
