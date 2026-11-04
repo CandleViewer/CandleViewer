@@ -383,17 +383,19 @@ class RulesService:
             result the tick's scope gate skipped go through the audit-only one, on the audit
             queue: audited per action, never dispatched, whatever the emitter's re-check finds,
             and never in a fire's slot or lane. The gate refused them, so each counts under
-            `scope` on every evaluation (BQ-5); only the evaluation that opens a (rule, instance,
-            reason) episode offers their records (`DenialEpisodes`), written or shed. A binding
-            refusal is an evaluation skip, not a gate refusal (`EvaluationResult.binding_refused`):
-            no action is refused or counted, and only its episode's first offers one record-only
-            job, which names the cause and the instance (`ScopedActionEmitter.binding_skipped`)."""
+            `scope` on every evaluation (BQ-5); the evaluation that opens a (rule, instance,
+            reason) episode offers their records (`DenialEpisodes`), and a shed job or a failed
+            write ends the episode, so the next evaluation that holds the refusal offers them
+            again. A binding refusal is an evaluation skip, not a gate refusal
+            (`EvaluationResult.binding_refused`): no action is refused or counted, and only its
+            episode's first offers one record-only job, which names the cause and the instance
+            (`ScopedActionEmitter.binding_skipped`)."""
             if emitter is None or audit_only is None or env is None:
                 return
             first_denial = denials.first(result)  # each result the gate saw opens, holds or ends
             kind: JobKind
             first_binding = _binding_episode(result)
-            emit: Callable[[ActionRequest], Awaitable[object]]
+            emit: Callable[[ActionRequest], Awaitable[bool]]
             if result.fired:
                 emit, queue, kind = emitter.emit, dispatch, "fire"
             elif first_binding:
@@ -409,8 +411,10 @@ class RulesService:
             if kind == "scope_denial" and not first_binding:
                 for action in rule.actions:
                     self._metrics.refused(action.type, "scope")
-                if not first_denial:
+                if result.scope_refusal is not None and not first_denial:
                     return  # held: counted, and recorded by its episode's first evaluation
+            if first_denial:  # its write raising, or cut short, ends the episode
+                emit = denials.ending_on_failure(result, emit)
             ref = instance_ref(result.scope_instance)
             run_id = uuid4()  # the fire's id: its actions share it (24 §11.9)
             actions = rule.actions[:1] if first_binding else rule.actions  # one record
@@ -423,12 +427,14 @@ class RulesService:
                 )
                 for action in actions
             )  # fmt: skip
-            queue.offer(
+            accepted = queue.offer(
                 Fire(
                     str(rule.rule_id), run_id, reqs, emit, kind=kind, version_id=item.version_id,
                     trigger_type=result.trigger_type, metric_values=result.metric_values,
                 )
             )  # fmt: skip
+            if first_denial and not accepted:
+                denials.forget(result)  # shed: the next evaluation that holds it offers again
 
         def _factory(rule: Rule, snaps: SnapshotBuilder) -> Evaluator:
             if emitter is None or env is None:
@@ -446,6 +452,7 @@ class RulesService:
                 ("simulate", "armed") if emitter is not None else ("simulate",)
             )
             items = await manager.evaluable_rules(modes)
+            denials.retain({str(item.rule.rule_id) for item in items})  # a rule gone ends its own
             # Revocation/freeze reach every tick (AC1/AC5).
             await self._refresh_scope_for([item.rule for item in items])
             return items
