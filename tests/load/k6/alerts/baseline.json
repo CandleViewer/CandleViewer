@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "ticket": "E40-Q02 (#1203)",
+  "mode": "warn-only",
+  "machine_profile": "ci-ubuntu-latest",
+  "recorded": null,
+  "note": "No CI-runner numbers yet: the values are set by a reviewed baseline PR from a green run's compare.json (06 section 7.4), which also moves mode to gate.",
+  "metrics": {
+    "ack_p95_ms": {
+      "metric": "alerts_ack_ms",
+      "stat": "p(95)",
+      "value": null
+    },
+    "http_p95_ms": {
+      "metric": "http_req_duration",
+      "stat": "p(95)",
+      "value": null,
+      "skip_if_has": "http_req_duration{endpoint:notifications}"
+    },
+    "notifications_p95_ms": {
+      "metric": "http_req_duration{endpoint:notifications}",
+      "stat": "p(95)",
+      "value": null
+    },
+    "window_gap_p95_ms": {
+      "metric": "alerts_window_gap_ms",
+      "stat": "p(95)",
+      "value": null
+    }
+  }
+}
