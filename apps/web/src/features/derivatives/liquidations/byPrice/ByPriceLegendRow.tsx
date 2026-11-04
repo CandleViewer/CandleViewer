@@ -31,23 +31,27 @@ function coverageLine(layer: ByPriceLayer, nowMs: number): string | null {
   return null;
 }
 
-const time = (ms: number): string => new Date(ms).toISOString().slice(11, 19) + " UTC";
+const time = (ms: number): string => new Date(ms).toISOString().slice(11, 19);
 
 export function ByPriceLegendRow({ view, nowMs }: ByPriceLegendRowProps): JSX.Element | null {
   if (view.phase === "off") return null;
   const { layer } = view;
   const c = layer?.coverage;
   const name = c?.kind === "full" ? `${copy.LAYER_NAME} ${copy.WINDOW_TODAY}` : copy.LAYER_NAME;
+  // failed and refused are said inside the polite status region, so a screen reader hears them when they arrive
+  const statusText =
+    view.phase === "refused"
+      ? copy.REFUSED
+      : view.phase === "failed"
+        ? copy.RETRY_TITLE
+        : view.stale && view.loadedAtMs !== null
+          ? copy.stale(
+              Math.max(0, Math.floor((nowMs - view.loadedAtMs) / 1000)),
+              time(view.loadedAtMs),
+            )
+          : null;
   const line =
-    view.phase === "loading"
-      ? copy.LOADING
-      : view.phase === "refused"
-        ? copy.REFUSED
-        : view.phase === "failed"
-          ? copy.RETRY_TITLE
-          : layer === null
-            ? null
-            : coverageLine(layer, nowMs);
+    view.phase === "loading" ? copy.LOADING : layer === null ? null : coverageLine(layer, nowMs);
   return (
     <li className="cv-liq-by-price__legend" data-cmp="CMP-199">
       <Tooltip content={copy.K01_SENTENCE}>
@@ -62,11 +66,16 @@ export function ByPriceLegendRow({ view, nowMs }: ByPriceLegendRowProps): JSX.El
         <Tag label={copy.sinceChip(copy.coverageTime(c.fromMs, nowMs))} density="compact" />
       ) : null}
       <span role="status" className="cv-liq-by-price__status">
-        {view.stale && view.loadedAtMs !== null ? copy.stale(time(view.loadedAtMs)) : null}
+        {statusText}
       </span>
       {line === null ? null : <p className="cv-liq-by-price__caption">{line}</p>}
       {view.phase === "failed" ? (
-        <Button variant="secondary" density="compact" onClick={view.retry}>
+        <Button
+          variant="secondary"
+          density="compact"
+          aria-label={copy.RETRY_LABEL}
+          onClick={view.retry}
+        >
           {copy.RETRY}
         </Button>
       ) : null}
