@@ -37,10 +37,11 @@ D02B_HEAD = "06967e08a"  # #5513 (E26-D02 boards, #509) head; re-pinned to its m
 D03_HEAD = "582a7c956"  # E26-D03 (#510) assembled head; re-pinned to its merge commit
 D04_HEAD = "78a17238e"  # E26-D04 (#511) assembled head; re-pinned to its merge commit
 D05_HEAD = "14a0ff517"  # E26-D05 (#512) assembled head; re-pinned to its merge commit
+SIBLINGS = {"D03": D03_HEAD, "D04": D04_HEAD, "D05": D05_HEAD}
 BQ_LIST = "6598368751"  # the BQ list on #513
 RULING = "6608045629"  # the orchestrator's ruling of record on the BQ list
 # fmt: off
-BQ_VERDICTS = ("AGREE", "AGREE", "AMEND", "AGREE", "AMEND", "AGREE (ruled 20×)", "AGREE",
+BQ_VERDICTS = ("AGREE", "AGREE", "AMEND", "AGREE", "AMEND", "AGREE (ruled 20\u00d7)", "AGREE",
     "DISAGREE", "AMEND", "AGREE", "AGREE", "AGREE", "AGREE", "AGREE")
 # fmt: on
 HELPER_SHA = "62b56d6446b218cd"  # sha256[:16] of the shared helper as landed
@@ -62,7 +63,7 @@ KEYED = {
     "D02B": L.DocRef(_E26 + "D02.md", D02B_HEAD),
     **{
         f"D0{n}{h}": L.DocRef(f"{_E26}D0{n}{'-handoff' if h else ''}.md", rev)
-        for n, rev in zip("2345", (BASE, D03_HEAD, D04_HEAD, D05_HEAD))
+        for n, rev in zip("2345", (BASE, D03_HEAD, D04_HEAD, D05_HEAD), strict=True)
         for h in ("", "H")
     },
     "E05D02R": L.DocRef("docs/design/E05/E05-D02-rest.md", BASE),
@@ -74,10 +75,10 @@ KEYED = {
     "SEML": L.DocRef("packages/ui/tokens/semantic-light.tokens.json", BASE),
 }
 _ALTS = "|".join(re.escape(k) for k in sorted(KEYED, key=len, reverse=True))
-# `NN`:line, KEY:line or `KEY`:line, with an optional –end.
+# `NN`:line, KEY:line or `KEY`:line, with an optional en-dash end.
 CITE_RE = re.compile(
     rf"(?:`(?P<nn>\d\d)`|`?(?<![A-Za-z0-9-])(?P<named>{_ALTS})`?):(?P<first>\d+)"
-    r"(?:–(?P<firstend>\d+))?"
+    r"(?:\u2013(?P<firstend>\d+))?"
 )
 
 # The load-bearing cites, pinned to their words (`--repin` proposes moves).
@@ -91,13 +92,13 @@ KEY_CITES: tuple[L.KeyCite, ...] = tuple(
         ("06", 39, "Sustain up to 100x"), ("14", 2251, "`R` jump to real time"),
         ("14", 2254, "labelled live region updated at most 1 Hz"),
         ("16", 212, "Dialog/drawer open"), ("16", 218, "Respects `prefers-reduced-motion`"),
-        ("D01", 266, "the same 25× as the paper boundary"), ("D02", 61, 'role="timer"'),
+        ("D01", 266, "the same 25\u00d7 as the paper boundary"), ("D02", 61, 'role="timer"'),
         ("D02", 116, "4 px inset, against 2 px focus rings"), ("D02", 118, "`color.replay.border`"),
         ("D02", 125, "Entering and leaving the page flips"), ("D02", 269, "Playhead = thumb"),
         ("D02", 292, "elapsed at 1 Hz"), ("D02", 411, "**The scrub thumb**"),
         ("D02", 453, "changes only on a user action or on pause"), ("D02", 700, "OQ-12"),
         ("D03", 306, "Initial focus"), ("D04", 595, "PROPOSED `color.replay.border`"),
-        ("D05", 246, "24 × 24 compact"),
+        ("D05", 246, "24 \u00d7 24 compact"),
         ("D05", 365, "`aria-valuenow` the cursor in epoch seconds"),
         ("D05", 367, "focus goes to `Play`"), ("E11D06", 96, "no transition, ever"),
         ("KM", 921, '"replay.play_pause"'), ("KM", 1010, '"Jump to real time"'),
@@ -210,9 +211,13 @@ def repo() -> L.Repo:
     return L.Repo(ROOT)
 
 
-@functools.cache
-def docs() -> L.Docs:
-    return L.Docs(repo(), BASE, KEYED, plan=PLAN)
+def docs(t: L.Tree) -> tuple[L.Docs, list[str]]:
+    """The cited documents, and the siblings PENDING (pin not in this clone; cites checked at
+    merge, never a FAIL). A self-test mutation may move a pin ("D03 <rev>" in the "pin" file)."""
+    rev = {**SIBLINGS, **dict(x.split() for x in t.text("pin").splitlines())}
+    keyed = {k: L.DocRef(r.rel, rev.get(k[:3], r.rev)) for k, r in KEYED.items()}
+    gone = [k for k, r in rev.items() if repo().git_ok("cat-file", "-e", f"{r}^{{commit}}") is None]
+    return L.Docs(repo(), BASE, keyed, plan=PLAN), gone
 
 
 @functools.cache
@@ -292,22 +297,23 @@ def numbered(got: list[list[str]], prefix: str, n: int) -> list[str]:
 
 
 def g_cite(t: L.Tree) -> list[str]:
-    cites = L.extract_cites(spec(t), CITE_RE)
-    bad = L.check_cites(cites, docs(), nonblank=False, min_count=200)
-    ln = docs().line
+    d, skip = docs(t)
+    cites = [c for c in L.extract_cites(spec(t), CITE_RE) if c.doc[:3] not in skip]
+    bad, ln = L.check_cites(cites, d, nonblank=False, min_count=200), d.line
     bad += [c.raw for c in cites if not all((ln(c.doc, n) or "").strip() for n in (c.lo, c.hi))]
     return [f"unresolved cites: {', '.join(b.split(' (')[0] for b in bad)}"] if bad else []
 
 
 def g_keycite(t: L.Tree) -> list[str]:
-    d = docs()
+    d, skip = docs(t)
     drift = t.text("drift")  # "KEY|line|text": a source drifted in memory (self-test only)
     if drift:
         key, n, text = drift.split("|", 2)
         lines = list(d.lines(key) or ())
         lines[int(n) - 1] = text
         d = d.drifted(key, tuple(lines))
-    return L.check_key_cites(KEY_CITES, d)
+    keep = [p for p in KEY_CITES if p.doc[:3] not in skip and d.lines(p.doc) is not None]  # G-CITE
+    return L.check_key_cites(keep, d)
 
 
 def g_version(t: L.Tree) -> list[str]:
@@ -330,8 +336,7 @@ def g_ac(t: L.Tree) -> list[str]:
 
 
 def g_inbox(t: L.Tree) -> list[str]:
-    got = rows(t, "## 2. The inbox")
-    defined = defined_ids(spec(t))
+    got, defined = rows(t, "## 2. The inbox"), defined_ids(spec(t))
     bad = numbered(got, "IB", 22)
     for r in got:
         if len(r) < 4 or r[2] not in DISPOSITIONS:
@@ -342,8 +347,7 @@ def g_inbox(t: L.Tree) -> list[str]:
 
 
 def g_decisions(t: L.Tree) -> list[str]:
-    got = rows(t, "## 3. Adopted decisions")
-    bad = numbered(got, "AD", 10)
+    bad = numbered(got := rows(t, "## 3. Adopted decisions"), "AD", 10)
     for r in got:
         if len(r) < 4 or not r[2].strip("— ") or not re.search(r"#\d+", r[3]):
             bad.append(f"{r[0]} test or owner")
@@ -351,8 +355,7 @@ def g_decisions(t: L.Tree) -> list[str]:
 
 
 def g_motion(t: L.Tree) -> list[str]:
-    got = rows(t, "### 4.1")
-    bad = numbered(got, "MP", 13)
+    bad = numbered(got := rows(t, "### 4.1"), "MP", 13)
     names = " ".join(r[1] for r in got if len(r) > 1)
     bad += [f"no row for {m!r}" for m in T_MOTIONS if m not in names]
     for r in got:
@@ -382,9 +385,8 @@ def g_tokens(t: L.Tree) -> list[str]:
 
 
 def g_speed(t: L.Tree) -> list[str]:
-    bad = []
-    rule = sec(t, "### 4.2")
-    if f"requested speed of {THRESHOLD}× or more" not in rule or "`06`:26" not in rule:
+    bad, rule = [], sec(t, "### 4.2")
+    if f"requested speed of {THRESHOLD}\u00d7 or more" not in rule or "`06`:26" not in rule:
         bad.append("the rule sentence or its budget cite")
     const = [r for r in rows(t, "### 4.4") if len(r) > 3 and r[3].startswith("PROPOSED")]
     if [r[2] for r in const] != [THRESHOLD]:
@@ -436,8 +438,7 @@ def g_t2(t: L.Tree) -> list[str]:
 
 
 def g_live(t: L.Tree) -> list[str]:
-    bad = []
-    got = rows(t, "## 8. The live-region policy")
+    bad, got = [], rows(t, "## 8. The live-region policy")
     for r in got:
         if len(r) < 6 or r[1] not in LR_OBJECTS or r[3] not in LR_POLITE or r[4] not in LR_RATES:
             bad.append(f"{r[0] if r else '?'} object, politeness or rate")
@@ -536,8 +537,7 @@ def g_verdict(t: L.Tree) -> list[str]:
 def g_findings(t: L.Tree) -> list[str]:
     got = rows(t, "## 13. Findings")
     counts = [len(got)] + [sum(1 for r in got if len(r) > 1 and r[1] == s) for s in SEVERITIES]
-    m = F_HEAD_RE.search(spec(t))
-    bad = []
+    m, bad = F_HEAD_RE.search(spec(t)), []
     if m is None or [int(x) for x in m.groups()] != counts + counts:
         bad.append(f"heading or marker vs table {counts}")
     if HOLD not in sec(t, "## 13. Findings"):
@@ -561,8 +561,7 @@ def g_findings(t: L.Tree) -> list[str]:
 
 
 def g_ids(t: L.Tree) -> list[str]:
-    defined = defined_ids(spec(t))
-    refs = set(REF_RE.findall(spec(t)))
+    defined, refs = defined_ids(spec(t)), set(REF_RE.findall(spec(t)))
     return [f"dangling: {', '.join(sorted(refs - defined))}"] if refs - defined else []
 
 
@@ -581,8 +580,7 @@ def g_handoff(t: L.Tree) -> list[str]:
 
 def g_walk(t: L.Tree) -> list[str]:
     items = re.findall(r"^(\d+)\. ", sec(t, "### 15.3"), re.MULTILINE)
-    n = len(items)
-    ok = 0 < n <= 10 and items == [str(i) for i in range(1, n + 1)]
+    ok = 0 < (n := len(items)) <= 10 and items == [str(i) for i in range(1, n + 1)]
     return [] if ok else [f"{n} walkthrough items"]
 
 
@@ -606,9 +604,10 @@ def g_ruling(t: L.Tree) -> list[str]:
 # ruled-pins:begin (written by --repin-ruled only)
 # fmt: off
 RULED_PINS: tuple[str, ...] = (
-    "BQ-0 7bb5d5ceb5ed6c04", "BQ-1 191dd12073a4aa71", "BQ-2 55d15bd60609988d", "BQ-3 583aa9e4df37bdb7",
-    "BQ-4 485b9c72fa5c7125", "BQ-5 a3451e531467647c", "BQ-6 014817a72d76dda6", "BQ-7 4257452494242623",
-    "BQ-8 8817f362d19fbf82", "BQ-9 bd2cfb9532dad927", "BQ-10 4f3af5bb4d1a9417", "BQ-11 b2ac60b543a68f11",
+    "BQ-0 7bb5d5ceb5ed6c04", "BQ-1 191dd12073a4aa71", "BQ-2 55d15bd60609988d",
+    "BQ-3 583aa9e4df37bdb7", "BQ-4 485b9c72fa5c7125", "BQ-5 a3451e531467647c",
+    "BQ-6 014817a72d76dda6", "BQ-7 4257452494242623", "BQ-8 8817f362d19fbf82",
+    "BQ-9 bd2cfb9532dad927", "BQ-10 4f3af5bb4d1a9417", "BQ-11 b2ac60b543a68f11",
     "BQ-12 ebc9328051bee661", "BQ-13 85b712db0ef4a877",
 )
 # ruled-pins:end
@@ -642,11 +641,11 @@ def g_helper(t: L.Tree) -> list[str]:
 
 
 # fmt: off
-GATES = tuple(L.Gate("G-" + f.__name__[2:].upper(), f) for f in (
+GATES = (*(L.Gate("G-" + f.__name__[2:].upper(), f) for f in (
     g_cite, g_keycite, g_version, g_ac, g_inbox, g_decisions, g_motion, g_tokens, g_speed,
     g_keys, g_t2, g_live, g_colour, g_env, g_contrast, g_cvd, g_verdict, g_findings, g_ids,
     g_handoff, g_walk, g_boards, g_ruling,
-)) + (
+)),
     L.Gate("G-RULED", lambda t: L.check_hash_pins(spec(t), "\n".join(RULED_PINS))),
     L.Gate("G-OUTRANK", g_outrank),
     L.Gate("G-NOCLOSE", lambda t: L.closing_keywords(t.named("spec", "tool"))),
@@ -659,11 +658,11 @@ GATES = tuple(L.Gate("G-" + f.__name__[2:].upper(), f) for f in (
 # fmt: on
 
 
-def _drift(text: str) -> L.Mutation:
+def _file(mid: str, gate: str, what: str, label: str, text: str) -> L.Mutation:
     def fn(tree: L.Tree) -> L.Tree:
-        return dataclasses.replace(tree, files={**tree.files, "drift": text})
+        return dataclasses.replace(tree, files={**tree.files, label: text})
 
-    return L.Mutation("M-02", "G-KEYCITE", "a pinned source line reworded", fn=fn)
+    return L.Mutation(mid, gate, what, fn=fn)
 
 
 _M = L.Mutation
@@ -680,7 +679,8 @@ def _R(mid: str, gate: str, what: str, find: str, repl: str) -> L.Mutation:
 # fmt: off
 MUTATIONS: tuple[L.Mutation, ...] = (
     _S("M-01", "G-CITE", "a cite past the end of D02", "(D02:700)", "(D02:99999)"),
-    _drift("14|2254|- **A11y:** the replay clock speaks every second."),
+    _file("M-02", "G-KEYCITE", "a pinned source line reworded", "drift",
+          "14|2254|- **A11y:** the replay clock speaks every second."),
     _S("M-03", "G-VERSION", "the version line drops the re-pin",
        "each re-pinned to its merge commit when it merges", "each kept when it merges"),
     _S("M-04", "G-AC", "a scenario name reworded",
@@ -756,6 +756,7 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _S("M-40", "G-KEYS", "the thumb's arrows apply at once",
        "adjust a pending seek one bar (DE-19)", "step one bar at once"),
     _R("M-41", "G-OUTRANK", "replay Pause gated", r"(\| T2-13 \|[^|]*\| )not gated", r"\1T2"),
+    _file("M-42", "G-CITE", "a sibling pin on a wrong pushed commit", "pin", f"D03 {BASE}"),
 )
 # fmt: on
 
@@ -766,7 +767,11 @@ def read_tree() -> L.Tree:
         return p.read_text(encoding="utf-8") if p.exists() else ""
 
     files = {"spec": disk(SPEC_REL), "tool": disk(TOOL_REL), "lib": disk(LIB_REL)}
-    return L.Tree(files=files, changed=repo().changed_paths(repo().diff_base(BASE)))
+    tree = L.Tree(files=files, changed=repo().changed_paths(repo().diff_base(BASE)))
+    for k in docs(tree)[1]:  # on stderr, so --json stays JSON
+        say = f"PENDING {k} pin {SIBLINGS[k]} not yet pushed — cites into {k} checked at merge"
+        print(say, file=sys.stderr)
+    return tree
 
 
 def check() -> int:
@@ -786,7 +791,8 @@ def self_test() -> int:
 
 
 def repin() -> int:
-    for pin, now in L.repin_key_cites(KEY_CITES, docs()):
+    d, skip = docs(read_tree())
+    for pin, now in L.repin_key_cites([p for p in KEY_CITES if p.doc[:3] not in skip], d):
         print(f"{pin.doc}:{pin.line} -> {'gone' if now is None else now} {pin.needle!r}")
     return 0
 
@@ -798,8 +804,8 @@ def repin_ruled() -> int:
     head, _, rest = src.partition("RULED_PINS: tuple[str, ...] = (")
     _, _, tail = rest.partition("\n# ruled-pins:end")
     body = "".join(
-        "    " + " ".join(f'"{x}",' for x in lines[i : i + 4]) + "\n"
-        for i in range(0, len(lines), 4)
+        "    " + " ".join(f'"{x}",' for x in lines[i : i + 3]) + "\n"
+        for i in range(0, len(lines), 3)
     )
     p.write_text(f"{head}RULED_PINS: tuple[str, ...] = (\n{body})\n# ruled-pins:end{tail}", "utf-8")
     print(f"pinned {len(lines)} BQ lines")
