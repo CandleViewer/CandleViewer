@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://candleviewer.invalid/fixtures/oms/manifest.schema.json",
+  "title": "E29 OMS scenario manifest",
+  "description": "One per scenario directory (packages/fixtures/oms/<scenario>/manifest.json); README.md explains every field. Nothing here is live: a scenario delivers files of the shared corpus (packages/fixtures/bybit/<date>/) or derived files of its own directory. A bare file name is a file of the scenario's own directory; a corpus file is written ../bybit/<date>/rest|ws/<file>, from this pack's root as accounts/ writes it. This subset has no conditionals, so the rules that tie fields together (a delivered side, declared files, the evidence class, which injection fields go with which kind) are checked by services/api/tests/_oms_fixtures.py. Only the keywords the accounts pack's validator implements may appear here: type, required, properties, patternProperties, additionalProperties, enum, const, pattern, minLength, minimum, items, minItems, $ref.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "scenario",
+    "origin",
+    "description",
+    "environment",
+    "evidence",
+    "rules",
+    "cases",
+    "expected",
+    "consumers"
+  ],
+  "properties": {
+    "$schema": { "const": "../manifest.schema.json" },
+    "scenario": {
+      "description": "Equals the directory name.",
+      "$ref": "#/$defs/scenarioName"
+    },
+    "origin": {
+      "description": "Where the scenario comes from: the ticket's own fixture list, the black-box plan, or a threat-model abuse case (AC-nn).",
+      "type": "string",
+      "pattern": "^(ticket|plan|threat model AC-[0-9]{2})$"
+    },
+    "description": { "type": "string", "minLength": 1 },
+    "environment": {
+      "description": "The environment the scenario stands in for: the demo hosts only (C-2.11). It does not say a capture was made; evidence does.",
+      "const": "demo"
+    },
+    "evidence": {
+      "description": "The weakest class of what the scenario delivers: recorded (a demo capture), docs-transcribed (a documentation example) or derived (built from either; never a capture, never evidence of what the venue does). Checked against the corpus manifest.",
+      "enum": ["recorded", "docs-transcribed", "derived"]
+    },
+    "rules": {
+      "description": "The binding transition rules (24-internal-schemas.md section 8.2) the scenario exercises. Empty for an abuse case that no S-rule covers.",
+      "type": "array",
+      "items": { "enum": ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11"] }
+    },
+    "cases": {
+      "description": "The black-box plan's case ids the scenario serves. Empty until the plan's traceability table names the scenario.",
+      "type": "array",
+      "items": { "type": "string", "pattern": "^E29-TC-[0-9]{3}$" }
+    },
+    "rest": {
+      "description": "Stubbed REST calls keyed by '<METHOD> <path>'. A stub answers every call of its route the same way.",
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^(GET|POST) /v5/[a-z0-9-]+(/[a-z0-9-]+)*$": { "$ref": "#/$defs/restStub" }
+      }
+    },
+    "ws": {
+      "description": "The private WS side.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["private"],
+      "properties": {
+        "private": {
+          "description": "Files whose frames the private stream delivers, in this order, each file's lines in line order. A scenario's frames are their delivery order: a gap, a reversal or a repeat is a separate scenario, never random.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/wsPath" }
+        }
+      }
+    },
+    "files": {
+      "description": "Every file of this directory other than manifest.json, with where it comes from. Each is delivered by rest or ws, and each is derived.",
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z][a-z0-9_-]*[.]jsonl?$": { "$ref": "#/$defs/derivedFile" }
+      }
+    },
+    "inject": {
+      "description": "Faults laid over the shapes, applied in the order listed (README, 'Injection').",
+      "type": "array",
+      "items": { "$ref": "#/$defs/injection" }
+    },
+    "expected": {
+      "description": "The black-box outcome, in the plan's words; never an internal function or field.",
+      "type": "string",
+      "minLength": 1
+    },
+    "consumers": {
+      "description": "The tickets whose suites are to replay the scenario.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "pattern": "^E29-[A-Z][0-9]{2}$" }
+    }
+  },
+  "$defs": {
+    "scenarioName": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "restPath": {
+      "description": "A REST body: a .json file of this directory, or of the shared corpus's rest/ folder.",
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9_-]*[.]json|[.][.]/bybit/[0-9]{4}-[0-9]{2}-[0-9]{2}/rest/[A-Za-z0-9_-]+[.]json)$"
+    },
+    "wsPath": {
+      "description": "WS frames, one per line: a .jsonl file of this directory, or of the shared corpus's ws/ folder.",
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9_-]*[.]jsonl|[.][.]/bybit/[0-9]{4}-[0-9]{2}-[0-9]{2}/ws/[A-Za-z0-9_-]+[.]jsonl)$"
+    },
+    "corpusPath": {
+      "description": "A file of the shared corpus, by path from this pack.",
+      "type": "string",
+      "pattern": "^[.][.]/bybit/[0-9]{4}-[0-9]{2}-[0-9]{2}/(rest/[A-Za-z0-9_-]+[.]json|ws/[A-Za-z0-9_-]+[.]jsonl)$"
+    },
+    "restStub": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload"],
+      "properties": {
+        "payload": { "$ref": "#/$defs/restPath" },
+        "http_status": {
+          "description": "The HTTP status the stub answers with (200 when absent). A corpus file of a documentation example states none, so this is the scenario's choice, not evidence.",
+          "type": "integer",
+          "minimum": 100
+        },
+        "note": { "type": "string", "minLength": 1 }
+      }
+    },
+    "derivedFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["derived_from", "derivation"],
+      "properties": {
+        "derived_from": {
+          "description": "The corpus files the file is built from; each must exist. Re-pointed at recordings when E29-K01's findings land.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/corpusPath" }
+        },
+        "derivation": {
+          "description": "What was done to the sources, and nothing was invented beyond it.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "injection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["timeout", "http_5xx", "drop", "reorder", "duplicate"] },
+        "call": {
+          "description": "timeout and http_5xx: the REST call the fault hits, '<METHOD> <path>'.",
+          "type": "string",
+          "pattern": "^(GET|POST) /v5/[a-z0-9-]+(/[a-z0-9-]+)*$"
+        },
+        "frame": {
+          "description": "drop, reorder and duplicate: the index, from 0, of the frame the fault hits, in the delivered sequence as the injections before it left it.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "to": {
+          "description": "reorder: the index the frame moves to.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "note": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
