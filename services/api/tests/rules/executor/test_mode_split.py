@@ -48,7 +48,8 @@ from tests.rules.test_scope_wiring import A as ACCOUNT
 
 ACTOR = Actor(str(OWNER), "s1", frozenset({"rules:arm_live"}), is_owner=True, step_up_fresh=True)
 FIXTURE = Path(__file__).parents[2] / "fixtures/rule_ir/form_simple_0.json"
-PRICE = MetricRef.model_validate({"metric": "price", "params": {"n": 14}})
+# The key the BTCUSDT instance reads: the rule's ref names no symbol, so the instance binds it (E6).
+PRICE = MetricRef.model_validate({"metric": "price", "params": {"n": 14}, "symbol": "BTCUSDT"})
 NOTE: dict[str, Any] = {"channel": "ui", "severity": "info", "template": "x"}
 ONE_ACTION: tuple[dict[str, Any], ...] = (
     {"node_id": "a1", "type": "send_notification", "params": NOTE},

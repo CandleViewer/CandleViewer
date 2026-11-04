@@ -13,7 +13,7 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from candleviewer.rules.errors import ScopeForbiddenError
-from candleviewer.rules.evaluator.engine import scope_instance
+from candleviewer.rules.evaluator.engine import parse_instance, scope_instance
 from candleviewer.rules.ir.models import Action, RuleScope
 
 SKIPPED_REASON = "scope"
@@ -28,6 +28,10 @@ Reason = Literal[
     "algo_child",
     "out_of_scope",
 ]
+#: The cause a `rule_action_scope_denied` record names for an evaluation skipped because the
+#: instance may not read a metric ref its rule names (`EvaluationResult.binding_refused`): an
+#: evaluation skip, not a refusal by the scope gate, so it is not one of the `Reason`s.
+BINDING_CAUSE = "metric_ref_binding"
 EntityKind = Literal["open_position", "pending_order", "account"]
 #: The modes the evaluator runs a rule in (`rules.manager` imports it from here). A rule's mode is
 #: its stored row's, never the IR's own `mode` field, which can be stale (E35-S03, BQ-12).
@@ -243,14 +247,18 @@ def make_scope_gate(
     """Evaluator ``scope_gate``: re-resolves scope on every trigger; reason => skipped "scope"."""
 
     def gate(instance_key: str) -> str | None:
-        sym, _, acct = instance_key.partition("@")
-        ref = ScopeInstanceRef(
-            instance_key, None if sym == "*" else sym, None if acct == "*" else UUID(acct)
-        )
+        ref = instance_ref(instance_key)
         current = scope() if callable(scope) else scope  # runtime scope change: no restart
         return resolver.check_action(current, owner, environment, ref)
 
     return gate
+
+
+def instance_ref(instance_key: str) -> ScopeInstanceRef:
+    """The `ScopeInstanceRef` of a scope instance key (`parse_instance`): a ``*`` or empty part is
+    None, which the resolver refuses as it refuses no account (fail closed)."""
+    sym, acct = parse_instance(instance_key)
+    return ScopeInstanceRef(instance_key, sym, None if acct is None else UUID(acct))
 
 
 ActionDispatch = Callable[[ScopeInstanceRef], Awaitable[None]]
@@ -338,3 +346,21 @@ class ScopedActionEmitter:
             return False
         await self._sink(req)
         return True
+
+    async def binding_skipped(self, req: ActionRequest) -> bool:
+        """The one record of an episode of evaluations skipped because the instance may not read
+        a metric ref the rule names (`BINDING_CAUSE`): its cause and the instance it names, never
+        a metric value or another account (so not the rule's scope either). Nothing is sent and
+        no action is refused: the rule was not evaluated. Not counted in `denied_total`, which
+        counts the gate's refusals."""
+        await self._audit(
+            "rule_action_scope_denied",
+            {
+                "caller": str(req.owner),
+                "reason": BINDING_CAUSE,
+                "rule_id": req.rule_id,
+                "account": str(req.instance.account_id),
+                "symbol": str(req.instance.symbol),
+            },
+        )
+        return False

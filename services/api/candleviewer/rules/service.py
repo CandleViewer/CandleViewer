@@ -9,9 +9,10 @@ module, but it does no real work until its owning epic lands.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from time import monotonic
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID, uuid4
 
@@ -42,7 +43,7 @@ from candleviewer.rules.runner import (
     RuleEvaluationRunner,
     default_clocks,
 )
-from candleviewer.rules.scope import ActionRequest, EvaluableMode, ScopeInstanceRef
+from candleviewer.rules.scope import ActionRequest, EvaluableMode, instance_ref
 from candleviewer.rules.vocabulary import MetricRegistry, default_registry
 
 #: Bound on a dispatch's re-read of the rule's row (24 §11.5 check 1), the 2 s the manager gives
@@ -50,6 +51,9 @@ from candleviewer.rules.vocabulary import MetricRegistry, default_registry
 #: (`rule_dispatch_reread_failed_total{reason}`): `timeout`, no answer within it (or the store's
 #: own `TimeoutError`), or `store_error`, the read raised anything else.
 REREAD_TIMEOUT_S: Final = 2.0
+#: The skips the evaluator decides before it binds an instance's refs: they say nothing about the
+#: binding, so they neither start nor end a binding episode (`_binding_episode`).
+_UNBOUND_SKIPS: Final = frozenset({"disabled", "paused", "scope", "debounce"})
 
 
 def _log() -> Any:
@@ -351,20 +355,46 @@ class RulesService:
         dispatch.start()
         audits.start()
 
+        #: (rule id, instance) -> the version of its open binding episode (`_on_fire`).
+        binding_episodes: dict[tuple[str, str], int] = {}
+
+        def _binding_episode(result: EvaluationResult) -> bool:
+            """Whether `result` is the first evaluation of its (rule, instance) episode skipped
+            because the instance may not read a ref the rule names. The episode ends when the
+            instance's refs are next read (any result past the binding), and a new rule version
+            starts a new one, as it drops the evaluator's state; a skip decided before the refs
+            are bound (`_UNBOUND_SKIPS`) neither starts nor ends one."""
+            key = (result.rule_id, result.scope_instance)
+            if not result.binding_refused:
+                if result.skipped_reason not in _UNBOUND_SKIPS:
+                    binding_episodes.pop(key, None)
+                return False
+            if binding_episodes.get(key) == result.rule_version:
+                return False
+            binding_episodes[key] = result.rule_version
+            return True
+
         def _on_fire(item: EvaluableRule, result: EvaluationResult) -> None:
             """Offer one evaluation's actions, never awaited (C-2.20), each stamped with the stored
             row's mode as read with this tick's work list. Only a fired result's actions reach the
-            routing emitter (`_route`), on the fire queue, with the run row's facts; a
-            scope-skipped result's go through the audit-only one, on the audit queue: audited per
-            action, never dispatched, whatever the emitter's re-check finds, and never in a fire's
-            slot or lane. The tick's scope gate refused them, so each counts under `scope` as it
-            is offered, written or shed (BQ-5)."""
+            routing emitter (`_route`), on the fire queue, with the run row's facts; those of a
+            result the tick's scope gate skipped go through the audit-only one, on the audit
+            queue: audited per action, never dispatched, whatever the emitter's re-check finds,
+            and never in a fire's slot or lane. The gate refused them, so each counts under
+            `scope` as it is offered, written or shed (BQ-5). A binding refusal is an evaluation
+            skip, not a gate refusal (`EvaluationResult.binding_refused`): no action is refused
+            or counted, and only its episode's first offers one record-only job, which names the
+            cause and the instance (`ScopedActionEmitter.binding_skipped`)."""
             if emitter is None or audit_only is None or env is None:
                 return
             kind: JobKind
+            first_binding = _binding_episode(result)
+            emit: Callable[[ActionRequest], Awaitable[object]]
             if result.fired:
                 emit, queue, kind = emitter.emit, dispatch, "fire"
-            elif result.skipped_reason == "scope":
+            elif first_binding:
+                emit, queue, kind = audit_only.binding_skipped, audits, "scope_denial"
+            elif result.skipped_reason == "scope" and not result.binding_refused:
                 emit, queue, kind = audit_only.emit, audits, "scope_denial"
             else:
                 return
@@ -372,12 +402,9 @@ class RulesService:
             owner = _owner_uuid(rule)
             if owner is None:
                 return  # fail closed: no owner => no scope to resolve => no action
-            sym, _, acct = result.scope_instance.partition("@")
-            ref = ScopeInstanceRef(
-                result.scope_instance, None if sym == "*" else sym,
-                None if acct == "*" else UUID(acct),
-            )  # fmt: skip
+            ref = instance_ref(result.scope_instance)
             run_id = uuid4()  # the fire's id: its actions share it (24 §11.9)
+            actions = rule.actions[:1] if first_binding else rule.actions  # one record
             reqs = tuple(
                 ActionRequest(
                     rule_scope=rule.scope, owner=owner, environment=env, instance=ref,
@@ -385,9 +412,9 @@ class RulesService:
                     rule_id=str(rule.rule_id), version=rule.version, ir_hash=item.ir_hash,
                     run_id=run_id, armed_by=item.armed_by,
                 )
-                for action in rule.actions
+                for action in actions
             )  # fmt: skip
-            if kind == "scope_denial":
+            if kind == "scope_denial" and not first_binding:
                 for req in reqs:
                     self._metrics.refused(req.action_type, "scope")
             queue.offer(
@@ -420,18 +447,24 @@ class RulesService:
         def _on_error(exc: Exception) -> None:
             _log().error("rule evaluator tick failed", exc_info=exc)
 
+        # E6: the registry's scope per metric decides which open refs an instance binds.
+        scopes = MappingProxyType({d.name: d.scope for d in self._registry or ()})
+
         self.runner = RuleEvaluationRunner(
-            _evaluable, SnapshotBuilder(self.metric_source), _factory,
+            _evaluable, SnapshotBuilder(self.metric_source, scopes), _factory,
             self.evaluation_sink(), _on_error, on_fire=_on_fire,
         )  # fmt: skip
         self.runner.start()
 
-    def submit_tick(self, trigger_type: str, symbol: str | None = None) -> bool:
-        """Producer entry point (market/bar/snapshot adapters): queue an evaluation tick.
+    def submit_tick(
+        self, trigger_type: str, symbol: str | None = None, timeframe: str | None = None
+    ) -> bool:
+        """Producer entry point (market/bar/snapshot adapters): queue an evaluation tick; a bar
+        close names its `timeframe` so only the rules of that timeframe run.
         Returns False when the evaluator is disabled/stopped."""
         if self.runner is None:
             return False
-        self.runner.submit(EvalTick(trigger_type, symbol))
+        self.runner.submit(EvalTick(trigger_type, symbol, timeframe))
         return True
 
     async def stop(self, grace_s: float) -> None:

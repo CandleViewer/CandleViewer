@@ -48,6 +48,9 @@ def _log_error(exc: Exception) -> None:
 class EvalTick:
     trigger_type: str
     symbol: str | None = None
+    #: The bar timeframe of an ``on_bar_close`` tick (the IR's `Trigger.timeframe` string); an
+    #: ``on_bar_close`` tick without one matches no rule (fail closed). Other triggers ignore it.
+    timeframe: str | None = None
 
 
 EvaluatorFactory = Callable[[Rule, SnapshotBuilder], Evaluator]
@@ -61,6 +64,14 @@ def _instances(rule: Rule, tick: EvalTick) -> list[str]:
         symbols = (tick.symbol,)
     accounts: tuple[str | None, ...] = tuple(str(a) for a in rule.scope.account_ids) or (None,)
     return [scope_instance(s, a) for s in symbols for a in accounts]
+
+
+def _same_timeframe(rule: Rule, tick: EvalTick) -> bool:
+    """An ``on_bar_close`` rule runs only on a tick of its own timeframe; a bar-close tick that
+    names none matches no rule (missing -> skipped, fail closed)."""
+    if rule.trigger.type != "on_bar_close":
+        return True
+    return tick.timeframe is not None and rule.trigger.timeframe == tick.timeframe
 
 
 class RuleEvaluationRunner:
@@ -118,7 +129,7 @@ class RuleEvaluationRunner:
         self._snapshots.new_tick()
         for item in items:
             rule = item.rule
-            if rule.trigger.type != tick.trigger_type:
+            if rule.trigger.type != tick.trigger_type or not _same_timeframe(rule, tick):
                 continue
             ev = self._evaluators.get(str(rule.rule_id))
             if ev is None:
