@@ -125,13 +125,13 @@ CITE = re.compile(
 )
 ANCHOR = re.compile(r"(\S+?)<!--=([A-Z]+):([A-Za-z0-9]+)-->")
 D02_DECK = (574, 643)  # D02 section 10, rows 1 ... 70
-COMPONENT_LINES = {"SCR-061": 1512, "SCR-062": 1525, "SCR-130": 2750, "SCR-131": 2785}
-COMPONENT_LINES |= {"SCR-132": 2795, "SCR-133": 2808}
+COMPONENT_LINES = {"SCR-061": 1512, "SCR-062": 1526, "SCR-130": 2752, "SCR-131": 2788}
+COMPONENT_LINES |= {"SCR-132": 2799, "SCR-133": 2813}
 BUDGETS = {
-    "SCR133": (2810, r"<=\s*(\d+)\s*ms"),
-    "SCR062": (1524, r"under (\d+) ms scripting"),
+    "SCR133": (2815, r"<=\s*(\d+)\s*ms"),
+    "SCR062": (1525, r"under (\d+) ms scripting"),
     "SCR061": (1509, r"preview ≤(\d+) ms"),
-    "SCR131": (2784, r"targets <=(\d+) s"),
+    "SCR131": (2787, r"targets <=(\d+) s"),
 }
 HANDOFF_CMPS: tuple[str, ...] = (
     "CMP-254",
@@ -877,7 +877,7 @@ MUTATIONS: list[tuple[str, str, Callable[[Texts], Texts]]] = [
     ),
     ("MU-19", "G-AROW", sub("hand", "| A-1 | SCR-130 |", "| A-1 | SCR-131 |")),
     ("MU-20", "G-FILLED", sub("hand", "## §E Test hooks", "## §E Test hooks (T" + "BD)")),
-    ("MU-21", "G-CITE", sub("hand", "`D03`:388", "`D03`:389")),
+    ("MU-21", "G-CITE", sub("hand", "`D03`:411", "`D03`:412")),
     (
         "MU-22",
         "G-HYGIENE",
