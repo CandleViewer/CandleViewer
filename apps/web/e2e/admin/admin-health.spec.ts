@@ -6,7 +6,7 @@ import { installWsHarness, type WsHarness } from "../support/wsHarness";
 
 // E42-S06 (#1084) admin-health.spec: SCR-143 at /admin/health (E42-D05 §5), its reads answered at the
 // network layer and its `system` frames from the fixture gateway (no backend, C-13.5): the UI halves of
-// AD-S06-01, -03 and -04, D9's two worlds and both themes (HL-20).
+// AD-S06-01 to -04, D9's two worlds, the detail view and both themes (HL-20).
 
 type Replies = Parameters<typeof stubOpsReads>[1];
 const tile = (page: Page, name: string) => page.getByRole("region", { name, exact: true });
@@ -121,4 +121,28 @@ test("E42-S06 AD-S06-04 a failed report keeps the numbers stale with Retry; the 
   const rail = page.getByRole("navigation", { name: "Primary" });
   await rail.getByRole("link", { name: "Journal", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(/R-180/u);
+});
+
+test("E42-S06 AD-S06-02 the recorder's detail view lists its open incidents and links its screen", async ({
+  page,
+}) => {
+  await openHealth(page);
+  const heading = tile(page, "Recorder (recorder)").getByRole("link", {
+    name: "Recorder (recorder)",
+  });
+  await heading.click();
+  const back = page.getByRole("link", { name: "All components", exact: true });
+  await expect(back).toBeFocused();
+  await expect(
+    page.getByText("error · recorder gap on BTCUSDT · last seen 2026-10-22 12:00 UTC"),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open Recorder & storage" })).toHaveAttribute(
+    "href",
+    "/admin/recorder",
+  );
+  await expect(page.getByText("History isn't recorded yet.")).toBeVisible();
+  await expect(page).toHaveTitle("System health - Recorder (recorder) - CandleViewer");
+  await back.click();
+  await expect(heading).toBeFocused();
+  await expect(page).toHaveTitle("System health - CandleViewer");
 });
