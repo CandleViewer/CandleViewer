@@ -32,6 +32,8 @@ and compiles the rule and returns the `ir_hash` that is stored.
   (`packages/fixtures/golden/rule-ir/hash_vectors.json`) and refuses the rest as `SCHEMA_VIOLATION`
   (a UUID without hyphens, a number of 1e21 or more), never guessing. Enums, ranges and patterns are
   the server validator's (E35).
+- `toIr`'s IR is never sent: its `graph_layout` puts back every stored layout key (`extra`), and
+  what the client sends carries only positions, collapsed nodes and comments, the keys it owns.
 
 ## Tests
 
