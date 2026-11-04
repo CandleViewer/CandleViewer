@@ -312,6 +312,7 @@ def _runtime(
         stores=lambda: world.kept(replace(  # the lane's own writer is the world's (#913 L2)
             pg_stores(settings, metrics), accounts=InMemoryTradingAccountReads(row),
             audit=lambda _alarm: world.writer,
+            closed_pnl=None,  # no closed-PnL sync: these count the route's own venue calls
         )),
         pager=world.pager, now=world.clock, sleep=world.backoff, registry=sr.REGISTRY,
         fencing=world.unfenced, heartbeat=world.heartbeat,
