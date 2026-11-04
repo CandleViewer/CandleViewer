@@ -65,6 +65,7 @@ GAP_REASON: Final[dict[str, str]] = {
     "exchange_outage": "exchange_outage",
     "seq_jump": "seq_jump",
     "backpressure_drop": "backpressure_drop",
+    "maintenance_pause": "maintenance_pause",
 }
 #: E16-FR-03: the gap cause of hot-tier coverage that stored data does not back.
 UNVERIFIED_CAUSE: Final = "unverified_data"

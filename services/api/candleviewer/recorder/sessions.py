@@ -43,7 +43,12 @@ from candleviewer.recorder.metrics import (
 from candleviewer.recorder.models import RecorderSetChanged
 
 GapCause = Literal[
-    "ws_disconnect", "backpressure_drop", "process_restart", "seq_jump", "exchange_outage"
+    "ws_disconnect",
+    "backpressure_drop",
+    "process_restart",
+    "seq_jump",
+    "exchange_outage",
+    "maintenance_pause",
 ]
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 #: Default recorded streams (Postgres `stream_kind`) when the policy names none.

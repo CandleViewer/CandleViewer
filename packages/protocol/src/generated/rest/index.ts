@@ -8326,7 +8326,7 @@ export interface components {
           /** Format: date-time */
           from?: string;
           /**
-           * @description `backpressure_drop`: rows dropped under write backpressure, the level-3 write gate included; `seq_jump`: an order-book update-id jump. **Open-ended for readers:** a reason a client does not know is still a gap (C-6.3).
+           * @description `backpressure_drop`: rows dropped under write backpressure, the level-3 write gate included; `seq_jump`: an order-book update-id jump; `maintenance_pause`: capture held by maintenance mode with `keep_recorder: false` (an operator-requested hold, not data loss). **Open-ended for readers:** a reason a client does not know is still a gap (C-6.3).
            * @enum {string}
            */
           reason?:
@@ -8336,7 +8336,8 @@ export interface components {
             | "never_recorded"
             | "exchange_outage"
             | "backpressure_drop"
-            | "seq_jump";
+            | "seq_jump"
+            | "maintenance_pause";
           /** Format: date-time */
           to?: string;
         }[];
