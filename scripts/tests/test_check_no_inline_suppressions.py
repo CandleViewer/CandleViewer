@@ -322,11 +322,15 @@ def test_the_semgrep_rule_and_the_check_read_the_same_paths() -> None:
     text = (ROOT / ".semgrep/cv-drawings-text-to-html-sink.yml").read_text(encoding="utf-8")
     rule = yaml.safe_load(text)["rules"][0]
     # The drawing paths; the rule-graph slice is listed for the suppression check alone (below).
-    assert [*rule["paths"]["include"], GRAPH] == check.load_paths(ROOT / check.CONFIG)
+    assert set(rule["paths"]["include"]) == set(check.load_paths(ROOT / check.CONFIG)) - {GRAPH}
 
 
 def test_a_directive_in_the_rule_graph_slice_needs_the_security_teams_annotation(tmp_path, capsys):
     assert GRAPH in check.load_paths(ROOT / check.CONFIG)
-    probe = {f"{GRAPH[:-3]}/model/a.ts": "// eslint-disable-next-line no-restricted-syntax\n"}
-    code, err = _check(tmp_path, capsys, probe, GRAPH)
+    rel, bare = f"{GRAPH[:-3]}/model/a.ts", "// eslint-disable-next-line no-restricted-syntax"
+    code, err = _check(tmp_path, capsys, {rel: f"{bare}\n"}, GRAPH)
     assert code == 1 and "rule-builder-graph/model/a.ts:1: eslint-disable-next-line" in err
+    assert _check(tmp_path, capsys, {rel: f"{bare} -- {OK}\n"}, GRAPH) == (0, "")
+    other = OK.replace(OWNER, "@CandleViewer/frontend")
+    code, err = _check(tmp_path, capsys, {rel: f"{bare} -- {other}\n"}, GRAPH)
+    assert code == 1 and f"must be {OWNER} on a listed path" in err

@@ -29,7 +29,7 @@ const NO_ARMING =
 /** The literal of a request to arm or simulate: a string or a template with no expression. */
 const ARMING_LITERAL =
   ":matches(Literal[value=/^(armed|simulate)$/], TemplateElement[value.cooked=/^(armed|simulate)$/])";
-/** Where a rule-mode request carries its mode: a `mode` member, a `mode` prop or a mode helper. */
+/** Where a request carries its mode: a `mode` property, a JSX `mode` attribute or a mode helper. */
 const MODE_CARRIERS = [
   "Property[key.name='mode']",
   "Property[key.value='mode']",
@@ -39,8 +39,8 @@ const MODE_CARRIERS = [
 ];
 /**
  * The rule-builder-graph slice's no-restricted-syntax options. ESLint keeps one object's options
- * for a rule, the last to match a file, so every object that sets it for the slice spreads this
- * list: add a selector here, never in a second object (arming-boundary.test.ts allows one).
+ * for a rule, the last to match a file: the slice has one object that sets it, and it spreads this
+ * list. Add a selector here, never in a second object (arming-boundary.test.ts requires one).
  */
 export const RULE_GRAPH_SYNTAX = MODE_CARRIERS.map((carrier) => ({
   selector: `${carrier} ${ARMING_LITERAL}`,
@@ -161,9 +161,10 @@ export default tseslint.config(
   // E37-X01 (#1073, SR-E37-11): the node-graph editor never asks the server to arm or simulate a
   // rule. Its one mode call is "Disarm to edit" (`disabled`); `Arm…` opens SCR-085 (E37-D02 §2,
   // E37-D04 SC-8). This guard is a tripwire, not a control: it refuses a literal `armed` or
-  // `simulate` at a `mode` member, a `mode` prop or a mode helper in the slice, and the model's §5
-  // names what it does not see; the server's gates hold every arm. It is the slice's one
-  // no-restricted-syntax object and spreads RULE_GRAPH_SYNTAX. Stories are left out: a story
+  // `simulate` anywhere inside an object-literal property keyed `mode` (`"mode"` and `["mode"]`
+  // included), a JSX `mode` attribute, or the arguments of a call named `mode` or `*Mode`. The
+  // model's §5 names what it does not see; the server's gates hold every arm. It is the slice's
+  // one no-restricted-syntax object and spreads RULE_GRAPH_SYNTAX. Stories are left out: a story
   // renders an armed rule from a fixture and sends no request.
   {
     files: ["src/features/rule-builder-graph/**/*.{ts,tsx,mts,cts}"],

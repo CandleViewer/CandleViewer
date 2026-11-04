@@ -1,5 +1,6 @@
 // @vitest-environment node
-import { resolve } from "node:path";
+import { readdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ESLint, type Linter } from "eslint";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -17,14 +18,11 @@ import { contextsOf } from "../../../src/keymap/registry";
  */
 const WEB = resolve(import.meta.dirname, "../../..");
 const SLICE = "src/features/rule-builder-graph";
-const PROBES = [
-  `${SLICE}/__probe.tsx`,
-  `${SLICE}/model/__probe.ts`,
-  `${SLICE}/a11y/__probe.ts`,
-  `${SLICE}/data/__probe.ts`,
-  `${SLICE}/screen/__probe.tsx`,
-  `${SLICE}/canvas/__probe.tsx`,
-];
+/** The slice's directories as they stand, those its later PRs add, and one nested below them. */
+const NAMED = ". model a11y data screen canvas canvas/nodes/deep".split(" ");
+const TREE = readdirSync(resolve(WEB, SLICE), { encoding: "utf8", recursive: true });
+const DIRS = new Set([...NAMED, ...TREE.map((entry) => dirname(entry))]);
+const PROBES = [...DIRS].map((dir) => join(SLICE, dir, "__probe.tsx"));
 const OUTSIDE = "src/features/rule-arming/__probe.ts";
 const RULE = "no-restricted-syntax";
 /** The `Rules` context's commands as reviewed for #1073: a new one is read here before it lands. */
@@ -110,8 +108,11 @@ describe("the lint guard refuses an arm or simulate request in the rule-builder-
     // sets it for any slice path drops the guard's selectors there, or the guard drops its own.
     const url = pathToFileURL(resolve(WEB, "eslint.config.mjs")).href;
     const config = ((await import(url)) as { default: Linter.Config[] }).default;
-    const setters: Linter.Config[] = [];
-    for (const object of config.filter((o) => o.rules?.[RULE] !== undefined)) {
+    const setters = config.filter((o) => o.rules?.[RULE] !== undefined);
+    // An object with no `files` reaches every path, which the isolated runs below cannot show.
+    expect(setters.filter((o) => o.files === undefined)).toEqual([]);
+    const reaching: Linter.Config[] = [];
+    for (const object of setters) {
       const alone = new ESLint({
         cwd: WEB,
         overrideConfigFile: true,
@@ -121,12 +122,15 @@ describe("the lint guard refuses an arm or simulate request in the rule-builder-
           rules: { [RULE]: "error" },
         },
       });
-      for (const file of [...PROBES, ...PROBES.map((p) => p.replace(/\.tsx?$/, ".mts"))]) {
-        const reached = (await alone.calculateConfigForFile(resolve(WEB, file)))?.rules?.[RULE];
-        if (reached !== undefined && !setters.includes(object)) setters.push(object);
+      // A glob inside the slice reaches it whatever its directory; any other is tried on probes.
+      let reached = (object.files ?? []).flat().some((glob) => glob.startsWith(`${SLICE}/`));
+      for (const file of [...PROBES, ...PROBES.map((p) => p.replace(/tsx$/, "mts"))]) {
+        const rules = (await alone.calculateConfigForFile(resolve(WEB, file)))?.rules;
+        reached ||= rules?.[RULE] !== undefined;
       }
+      if (reached) reaching.push(object);
     }
-    expect(setters.map((object) => object.files)).toEqual([
+    expect(reaching.map((object) => object.files)).toEqual([
       ["src/features/rule-builder-graph/**/*.{ts,tsx,mts,cts}"],
     ]);
   });

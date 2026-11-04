@@ -172,7 +172,7 @@ def _runtime_modules() -> dict[str, Path]:
 
 
 def _key(node: ast.AST | None, aliases: frozenset[str]) -> bool:
-    """`node` names a presentation key: the string itself, or a name bound to it."""
+    """`node` names a presentation key: the string itself, or a name assigned it in the module."""
     if isinstance(node, ast.Constant):
         return node.value in PRESENTATION_KEYS
     return isinstance(node, ast.Name) and node.id in aliases
@@ -180,8 +180,8 @@ def _key(node: ast.AST | None, aliases: frozenset[str]) -> bool:
 
 def _reads(tree: ast.AST) -> list[int]:
     """The lines where `tree` reads a presentation key: an attribute, a subscript, a call of
-    `_READERS` or a `match` pattern naming one, as a string or through a name bound to one
-    (`key = "editor"`). Docstrings, comments and the keys of a dict literal read none."""
+    `_READERS` or a `match` pattern naming one, as a string or through a name assigned one in the
+    module (`key = "editor"`). Docstrings, comments and the keys of a dict literal read none."""
     bound = [
         (target, node.value)
         for node in ast.walk(tree)
@@ -272,6 +272,9 @@ def test_no_runtime_module_reads_the_presentation_block() -> None:
         sorted(set(modules) - _SCANNED),
         sorted(_SCANNED - set(modules)),
     )
+    # A module added directly under rules/ or alerts/ is read too, named in `_RUNTIME` or not.
+    for pkg in ("rules", "alerts"):
+        modules |= {p.relative_to(_CV).as_posix(): p for p in (_CV / pkg).glob("*.py")}
     reads = {
         name: lines
         for name, path in modules.items()

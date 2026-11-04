@@ -224,11 +224,13 @@ E15-T01's spec decision on #402, SR-E14-09).
   only the security team may own one, the ticket's Security-engineer review). A marker that opens a
   line inside a block comment counts (ESLint reads `/*`, a newline and `eslint-disable` as a
   directive; tsc reads any run of `/` and `*` before `@ts-...`), and so does each marker of a line.
+  The list also holds the rule-graph slice, for this check alone (E37-X01, SR-E37-11).
 - **Does not match:** a word in a string, a Markdown file, a directory symlink or `@ts-nocheck`
-  (typescript-eslint bans it). An annotated `eslint-disable` in a listed path still fails the lint:
+  (typescript-eslint bans it). An annotated `eslint-disable` in a drawing path still fails the lint:
   it is inert, so it warns.
+  In the rule-graph slice it is honoured, so the annotation is the gate.
 - **Extending:** add a glob to the JSON. Tests keep the lists honest: the Semgrep rule's
-  `paths.include` equals it, the ESLint proof lints a file under each `apps/web` entry, and a
+  `paths.include` equals its drawing paths, the ESLint proof lints a file under each `apps/web` drawing entry, and a
   tripwire fails when a `drawing*` directory (camel-cased `drawingTools` too) or `object-tree*` name
   appears under `apps/*/src` or
   `packages/*/src` outside it. Fixture: `scripts/tests/test_check_no_inline_suppressions.py`.
