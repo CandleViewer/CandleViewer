@@ -1638,7 +1638,7 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | OMS | `oms_ws_position_overtakes_total` | counter | `positions` frames published past their hold's bound (E29-T13, #4207; `23-ws-protocol.md` §6.2.3): a position that waited `HOLD_S` (1 s) for an unpublished fill of its key, or found its account's hold full (`HOLD_MAX`, 64 keys), and went out before that fill's `executions` and `orders` frames (§16.1 S5); no labels, `max_series` 1; the `oms_ws_position_overtake` log line names the account and symbol |
 | OMS | `oms_cancel_all_fold_members{outcome}` | histogram | members per cancel-all fold (24 §8.7; #913 slice 4, S4-F), observed once as each fold closes, by `outcome`: `sent`, its one venue cancel-all left, or `abandoned`, nothing was sent (a member left or was cut short, the gather's 1 s bound, or no spacer slot in time) and each member sent its own cancel, logged (`oms_cancel_all_fold_abandoned`); a fold takes two members or more; abandoned folds above 32 members bring the proposed fold cap M = 32 (`docs/security/threat-models/E29-oms.md` §12.2) |
 | OMS | `oms_closed_pnl_divergence_total` | counter | settled closed-PnL records found divergent (24 §8.13), one per `pnl.divergence_detected` written; no labels, `max_series` 1, and no account label (SR-125): the record and its WARNING log name the account; **warning alert on a sustained non-zero rate**, its rule and runbook landing with the series (E29-S06) |
-| OMS | `oms_closed_pnl_fetch_seconds{result}` | histogram | one read of an account's closed-PnL records from the venue, all its pages (24 §8.13, the `poll` lane), by `result`: `ok` or `failed`; no account label, `max_series` 2; dashboard; catalogued with its code (E29-S06) |
+| OMS | `oms_closed_pnl_fetch_seconds{result}` | histogram | one read of an account's closed-PnL records from the venue, all its pages (24 §8.13, the `poll` lane), by `result`: `ok` or `failed`, or `other_account` for a crossing between accounts, which a seed's positions read that meets one counts too; no account label, `max_series` 3; **ticket** `OmsClosedPnlAccountCrossing` when `other_account` rose in the hour (§12.5), else dashboard; catalogued with its code (E29-S06) |
 | OMS | `oms_rate_reject_total`, `bybit_rate_remaining{endpoint_group}` | counter/gauge | budget health; the submission pipeline counts both of its rate points, the headroom before the persist and a create refused its token (24 §8.4, E29-T04) |
 | OMS | `exchange_clock_drift_ms` | gauge | alert > 2000 ms (`BybitClockDriftCritical`) |
 | Rules | `rule_evaluations_total`, `rule_fires_total{rule_id}`, `rule_autodisarm_total` | counter | rule-storm detection |
@@ -1848,6 +1848,16 @@ id names another account, which the adapter dropped and counted (`24-internal-sc
 is held 9 h 30 m as the any-event tickets are, so a row refused at night is still sent at 07:00. Its
 component is `secrets`, which a Postgres outage never inhibits, as a credential signal stays visible
 then (SR-125). The series is unlabelled by account; the logs name it.
+
+Closed-PnL crossings (E29-S06, #981; the orchestrator's ruling of 2026-11-04; `system_ticket.yml`,
+`component: secrets`, runbook in `07-release-and-prr.md` section 9, promtool cases generated into
+`infra/prometheus/tests/system_alerts.test.yml`): Ticket — `OmsClosedPnlAccountCrossing`, when
+`oms_closed_pnl_fetch_seconds{result="other_account"}` rose in the last hour. The closed-PnL sync met a
+crossing between accounts: its account resolve, a record of its read or a position reading of its
+seed named another account (`24-internal-schemas.md` §8.13, C-2.11), and it kept nothing of it. As
+`BybitRowsRefusedAccount`, it is raised at most once an hour, held 9 h 30 m and of the `secrets`
+component, which a Postgres outage never inhibits. The series is unlabelled by account; the logs name
+it.
 
 Accounts set (E27-T04, #837, `infra/prometheus/alerts/accounts.yml`, runbooks in
 `07-release-and-prr.md` section 9, promtool cases generated into

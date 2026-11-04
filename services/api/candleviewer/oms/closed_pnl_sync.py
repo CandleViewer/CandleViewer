@@ -39,7 +39,8 @@ in flight per account, and a request made meanwhile is folded into the account's
 requests are a queue of at most `MAX_ACCOUNTS` accounts, one coalesced entry each: a request that
 would add an account past it is dropped and logged at ERROR, as no process trades that many
 (C-2.18). Every external await is bounded and a cancel is never swallowed. Each read is timed in
-`oms_closed_pnl_fetch_seconds`. Logs carry ids and kinds only, never a figure (C-12.6).
+`oms_closed_pnl_fetch_seconds` by `result` (`FETCH_RESULTS`), and a crossing between accounts, a
+read's or a seed's, apart. Logs carry ids and kinds only, never a figure (C-12.6).
 """
 
 from __future__ import annotations
@@ -80,6 +81,10 @@ READ_TIMEOUT_S: Final = 30.0  # one read, all its pages, as reconciliation's fet
 PENDING_LIMIT: Final = 200  # the records one poll reads (row 56); the rest wait for the next
 MAX_ACCOUNTS: Final = 256
 FETCH_SECONDS: Final = "oms_closed_pnl_fetch_seconds"
+#: Its `result`s: a read's `ok` or `failed`, and apart from them a crossing between accounts, the
+#: resolve, a record or a seed's position reading naming another (`_OtherAccount`, C-2.11), which
+#: the ticket `OmsClosedPnlAccountCrossing` reads (20 Sec.12.5).
+FETCH_RESULTS: Final = ("ok", "failed", "other_account")
 #: The order-entry gate's reason for an account with no usable key, as `commands` reads it.
 _NO_ACTIVE_KEY: Final = "no_active_key"
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
@@ -413,21 +418,25 @@ class ClosedPnlSync:
             records = await _bounded(read, READ_TIMEOUT_S)
             if any(r.account_id != account_id for r in records):
                 raise _OtherAccount
-        except Exception:
-            self._seconds.labels("failed").observe(clock() - began)
+        except Exception as exc:  # a crossing between accounts is counted apart (`FETCH_RESULTS`)
+            crossed = isinstance(exc, _OtherAccount)
+            self._seconds.labels("other_account" if crossed else "failed").observe(clock() - began)
             raise
         self._seconds.labels("ok").observe(clock() - began)
         return account, records
 
     async def _seed(self, account: AccountRef) -> None:
         """The ruled seed (module docstring): each key the venue states at size 0 and that holds
-        no confirmed flat gets that reading stored as one, dated by its `updatedTime`."""
+        no confirmed flat gets that reading stored as one, dated by its `updatedTime`. A reading
+        of another account is timed as a crossing (`other_account`), as a read's is."""
         if not self._router.headroom(account, LANE).available:
             raise _NoHeadroom
-        port = self._router.port_for(account.environment)
+        port, clock = self._router.port_for(account.environment), asyncio.get_running_loop().time
+        began = clock()
         readings = await _bounded(port.positions(account), READ_TIMEOUT_S)
         horizon, account_id = self._now() + MAX_FUTURE_SKEW, account.account_id  # after the read
         if any(p.account_id != account_id for p in readings):
+            self._seconds.labels("other_account").observe(clock() - began)
             raise _OtherAccount  # the seed fails, as a record fails the read, and is tried again
         for p in readings:
             at = _at(p.updated_at)
