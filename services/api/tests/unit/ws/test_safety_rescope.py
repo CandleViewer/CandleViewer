@@ -426,3 +426,26 @@ async def test_a_failed_reauth_whose_settle_raises_closes_the_socket(
         bye = await sock.sent.get()
         assert (bye["t"], bye["p"]["reason"]) == ("bye", "internal_error")
         await rig.close()
+
+
+async def test_an_owner_snap_with_a_faulty_raised_item_gets_no_clear_on_a_reauth() -> None:
+    """Snap, then a successful re-`auth` (its settle reconciles): nothing is sent for an item
+    whose body the fault check refused."""
+    item = {
+        "safety_class": "risk_lockout",
+        "environment": "live",
+        "state": "raised",
+        "affected_count": 1,
+        "since_ms": -1,
+        "_by_account": {str(ACC_A): {"affected_count": 1, "since_ms": _T0}},
+    }
+    rig, user = _rig(lambda: {"kind": "health", "safety_classes": [item]}), uuid.uuid4()
+    async with asyncio.timeout(_DEADLINE_S):
+        sock = await rig.connect(_as(user, "owner"))
+        assert sock.snap is not None
+        assert sock.snap["p"]["safety_classes"][0]["state"] == "raised"
+        rig.principals[user] = _as(user, "owner")  # a new snapshot: the settle reconciles
+        sock.feed({"t": "auth", "id": "re", "p": {"access_token": str(user)}})
+        assert (await sock.sent.get())["t"] == "auth_ok"
+        assert await _system(sock) == []
+        await rig.close()

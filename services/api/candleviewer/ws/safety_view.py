@@ -191,7 +191,9 @@ class SafetyEdges:
     ) -> None:
         """The `system` snap, cut under `principal`: keep each raised item of `body` as a body
         the fault check accepts, and nothing kept before it, and remember the items `view` (what
-        this connection was sent) shows raised."""
+        this connection was sent) shows raised, only for a key whose body was kept. A key whose
+        body was refused (the Owner is sent such an item whole) is never ended by a rescope:
+        it fails toward a stale `raised`, never a false `cleared`."""
         self.principal = principal
         self._bodies.clear()
         for item in _items(body.get(SAFETY_CLASSES)):
@@ -199,7 +201,7 @@ class SafetyEdges:
                 if not is_faulty(kept := _as_body(item)):
                     self._bodies[key] = kept
         for item in _items(view.get(SAFETY_CLASSES)):
-            if (key := _key(item)) is not None and item.get("state") == "raised":
+            if (key := _key(item)) in self._bodies and item.get("state") == "raised":
                 self._sent[key] = (item.get("affected_count"), item.get("since_ms"))
 
     def admit(self, body: Mapping[str, Any], view: Mapping[str, Any]) -> Mapping[str, Any] | None:

@@ -639,24 +639,37 @@ def test_an_unknown_class_reaches_nobody_and_is_marked_for_the_count() -> None:
     assert not is_unkeyed(_HALTED)
 
 
-@pytest.mark.parametrize(
-    "since",
-    [None, "x", -1, True],
-    ids=["missing", "text", "neg", "bool"],
-)
-def test_a_raised_item_whose_kept_body_is_faulty_is_unknown_and_never_ended(since: Any) -> None:
-    """The snap's cut and the kept body agree: an item the fault check refuses as a body shows
-    `unknown`, is not kept, and a rescope under the same scope sends nothing for it."""
+_FAULTY_ITEM_SHAPES: dict[str, dict[str, Any]] = {
+    "no-since": {"since_ms": None},
+    "text-since": {"since_ms": "x"},
+    "negative-since": {"since_ms": -1},
+    "bool-since": {"since_ms": True},
+    "no-breakdown": {"_by_account": None},
+}
+
+
+def _faulty_item(shape: str) -> dict[str, Any]:
     item: dict[str, Any] = {
         "safety_class": "risk_lockout",
         "environment": "live",
         "state": "raised",
         "affected_count": 1,
+        "since_ms": _T1,
         "_by_account": {str(ACC_A): {"affected_count": 1, "since_ms": _T1}},
     }
-    if since is not None:
-        item["since_ms"] = since
-    raw = {"kind": "health", "safety_classes": [item]}
+    for field, value in _FAULTY_ITEM_SHAPES[shape].items():
+        if value is None:
+            del item[field]
+        else:
+            item[field] = value
+    return item
+
+
+@pytest.mark.parametrize("shape", sorted(_FAULTY_ITEM_SHAPES))
+def test_a_raised_item_whose_kept_body_is_faulty_is_unknown_and_never_ended(shape: str) -> None:
+    """The snap's cut and the kept body agree: an item the fault check refuses as a body shows
+    `unknown`, is not kept, and a rescope under the same scope sends nothing for it."""
+    raw = {"kind": "health", "safety_classes": [_faulty_item(shape)]}
     snap = system_view(raw, MANAGER)
     assert snap is not None
     assert snap["safety_classes"] == [
@@ -665,3 +678,15 @@ def test_a_raised_item_whose_kept_body_is_faulty_is_unknown_and_never_ended(sinc
     edges, _ = _edges()
     edges.seed(raw, snap, MANAGER)
     assert edges.rescope(_view_of(MANAGER), _NOW, principal=MANAGER) == []
+
+
+@pytest.mark.parametrize("shape", sorted(_FAULTY_ITEM_SHAPES))
+def test_the_owners_raised_item_with_a_faulty_body_is_never_ended_by_a_rescope(shape: str) -> None:
+    """The Owner is sent the item whole (`raised`); its body is not kept, and so neither is
+    what was sent: a rescope sends nothing, never a `cleared`."""
+    raw = {"kind": "health", "safety_classes": [_faulty_item(shape)]}
+    snap = system_view(raw, OWNER)
+    assert snap is not None and snap["safety_classes"][0]["state"] == "raised"
+    edges, _ = _edges()
+    edges.seed(raw, snap, OWNER)
+    assert edges.rescope(_view_of(OWNER), _NOW, principal=OWNER) == []
