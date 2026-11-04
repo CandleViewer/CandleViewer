@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { skippedAlertEntries } from "./alert-surfaces";
 import { openScreen } from "./open";
 import { REPORT_DIR, SCREENS, SIGNED_IN_SCREENS } from "./screens";
 import { AXE_GATE_TAGS } from "./tags";
@@ -14,5 +15,8 @@ test("collect axe", async ({ page }) => {
     screens[s.id] = { violations: r.violations };
   }
   mkdirSync(REPORT_DIR, { recursive: true });
-  writeFileSync(`${REPORT_DIR}/axe.json`, JSON.stringify({ screens }, null, 2));
+  writeFileSync(
+    `${REPORT_DIR}/axe.json`,
+    JSON.stringify({ screens, skipped: skippedAlertEntries() }, null, 2),
+  );
 });

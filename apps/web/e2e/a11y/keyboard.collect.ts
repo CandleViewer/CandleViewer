@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { test } from "@playwright/test";
+import { skippedAlertEntries } from "./alert-surfaces";
 import { REPORT_DIR, SCREENS } from "./screens";
 
 const MAX_TABS = 80;
@@ -70,5 +71,8 @@ test("collect keyboard", async ({ page }) => {
     mouseEvents += n;
   }
   mkdirSync(REPORT_DIR, { recursive: true });
-  writeFileSync(`${REPORT_DIR}/keyboard.json`, JSON.stringify({ mouseEvents, perScreen, steps }, null, 2));
+  writeFileSync(
+    `${REPORT_DIR}/keyboard.json`,
+    JSON.stringify({ mouseEvents, perScreen, steps, skipped: skippedAlertEntries() }, null, 2),
+  );
 });
