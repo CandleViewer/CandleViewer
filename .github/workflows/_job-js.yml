@@ -15,7 +15,8 @@ name: _job-js
 on:
   workflow_call:
     inputs:
-      # false on a draft pull request (pr.yml): the unit suites and the build are skipped (#5506).
+      # false on a light pull request run (pr.yml, #5746: no `ci:full` label and, #5785, no C-10.2
+      # path, draft or not): the unit suites and the build are skipped (#5506).
       heavy:
         type: boolean
         default: true

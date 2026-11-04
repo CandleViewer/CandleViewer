@@ -17,8 +17,8 @@ name: _job-py
 #   py (after both): coverage combine -> coverage.xml + term report -> the
 #     addopts --cov-fail-under floor on the combined data -> uv build -> upload
 #     the `py-coverage` artifact (E03-T04's threshold gate owns the per-package
-#     floors) -> fail unless py-checks and every lane succeeded. On a draft PR (`heavy` false,
-#     #5506) the test, perf and coverage steps are skipped and it passes on py-checks alone.
+#     floors) -> fail unless py-checks and every lane succeeded. On a light PR run (`heavy` false,
+#     #5506, #5746) the test, perf and coverage steps are skipped and it passes on py-checks alone.
 #   `py-perf (N/3)` (parallel): pytest -m "perf and not flaky" --no-cov, the C-13.9
 #     wall-clock budgets, DB-backed ones included (testcontainers); `flaky`
 #     tests are quarantined per C-9.3. Three shards of the committed perf index
@@ -35,8 +35,10 @@ name: _job-py
 on:
   workflow_call:
     inputs:
-      # false on a draft pull request (pr.yml): py-checks runs, the test, perf and coverage jobs are
-      # skipped and `py` passes on py-checks alone (#5506). Always true on a ready PR and merge_group.
+      # false on a light pull request run (pr.yml, #5746: no `ci:full` label and, #5785, no C-10.2
+      # path, draft or not): py-checks runs, the test, perf and coverage jobs are skipped and `py`
+      # passes on py-checks alone (#5506). True on a merge group, a train and a `ci:full` or C-10.2
+      # pull request.
       heavy:
         type: boolean
         default: true
@@ -350,8 +352,8 @@ jobs:
         run: |
           echo "py-checks: $CHECKS_RESULT; py-tests (every lane): $TESTS_RESULT; heavy: $HEAVY"
           [ "$CHECKS_RESULT" = success ] || exit 1
-          # A draft (heavy=false) skipped every lane on purpose, so a skip passes there and only there;
-          # a ready PR and merge_group (heavy=true) need every lane to succeed (#5506).
+          # A light run (heavy=false) skipped every lane on purpose, so a skip passes there and only
+          # there; a heavy run (merge group, train, `ci:full`) needs every lane to succeed (#5506).
           if [ "$HEAVY" = false ]; then [ "$TESTS_RESULT" = skipped ]; else [ "$TESTS_RESULT" = success ]; fi
 
   # C-13.9 wall-clock budgets run in their own parallel job (#2185 follow-up): measured inside the

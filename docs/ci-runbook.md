@@ -390,25 +390,60 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   merge group", instead of CI-GATE-002. That rule is `MERGE_GROUP_ONLY` in
   `scripts/ci_gate_resolver.mjs`, which reads the event from `GITHUB_EVENT_NAME` (an unknown event
   is strict); it and the job's `if:` change together. A PR run that did start the lane (the opt-in
-  `run-audit-spike` label) and went red is still CI-GATE-001, and the lane red on a group drops its
-  PR from the queue. A PR can therefore be green and still fail in the queue on `integration`:
-  read the group's `integration` log, not the PR's.
-- #5506 (reverses #5154's success on a draft): a **draft** pull request runs the light set
-  (`changed-paths`, `gates`, `security-review-label`, `dependabot-alerts`, js lint and typecheck,
-  and `py-checks`); mark it ready for review to run the full matrix. The heavy jobs skip by their own
-  `if:` (`rule-roundtrip`, `contract`, `migrations`, `integration`, `security`, `coverage-thresholds`,
-  `e2e`, `a11y`, `engine-bench`), and `_job-js.yml` and `_job-py.yml` take a `heavy` input, false on
-  a draft, that skips `unit-frontend`, `unit-engine`, `build`, `py-tests`, `py-perf` and
-  `py-perf-index`. The `py` summary passes on `py-checks` alone when `heavy` is false and a skipped
-  test lane is accepted there only; a ready PR still needs every lane. The resolver reads the heavy
-  lanes' skip as deferred ("runs when the pull request leaves draft", `DRAFT_DEFERRED` in
-  `scripts/ci_gate_resolver.mjs`, fed `PR_DRAFT`), and a draft's `ci-required` fails with
-  **CI-GATE-005** ("draft pull request: the full matrix runs from ready_for_review"), so a draft
-  never reads as mergeable; the job still runs, since a skipped required check reads as a pass.
-  `ready_for_review` re-runs `pr.yml` with the flag false, and a merge group carries no draft flag,
-  so a queue run executes every lane. The recording-only `perf-engine-matrix.yml` chromium job
-  skips a draft the same way. Un-draft early enough for the full run to finish before READY; a red
-  `ci-required` on a draft is expected, not a broken CI.
+  `run-audit-spike` label, on a `ci:full` run since #5746) and went red is still CI-GATE-001, and
+  the lane red on a group drops its PR from the queue. A PR can therefore be green and still fail
+  in the queue on `integration`: read the group's `integration` log, not the PR's.
+- #5746 (extends #5506's draft light set to every pull request): a **pull request's own run is the
+  light set**, draft or not, unless the PR carries the **`ci:full`** label or touches a C-10.2
+  path. A run is heavy on a `merge_group`, on a merge train's `workflow_dispatch`, on a `ci:full`
+  pull request and, automatically, on a C-10.2 pull request (#5785): the `heavy` clause, the four
+  terms `github.event_name == 'merge_group'`, `github.event_name == 'workflow_dispatch'`,
+  `contains(github.event.pull_request.labels.*.name, 'ci:full')` and
+  `needs.security-review-label.outputs.security-path == 'true'` joined by `||`, restated in each
+  heavy lane's `if:` and in the `heavy` input of `js` and `py`. `security-path` is `main`'s C-10.2
+  decision: `security-review-label` runs `main`'s rule and outputs false only when it printed that
+  no security path is touched, so every lane needs that job and waits for it. The light set, every filter true, is 12 jobs:
+  `changed-paths`, `gates` (its `secret-scan` step runs gitleaks and trufflehog on every PR, light
+  or not), `security-review-label`, `dependabot-alerts`, `js / node-version-check`, `js / install`,
+  `js / lint`, `js / typecheck`, `py / py-checks`, `py / py`, `architecture` and `ci-required`
+  (a `py`-only PR 8, a docs-only one 5). The heavy lanes skip by their own `if:`
+  (`rule-roundtrip`, `contract`, `migrations`, `integration`, `security`, `coverage-thresholds`,
+  `e2e`, `a11y`, `engine-bench`), and the `heavy` input, false on a light run, skips
+  `unit-frontend`, `unit-engine`, `build`, `py-tests`, `py-perf` and `py-perf-index`; the `py`
+  summary passes on `py-checks` alone there and only there. The full run is 73 jobs on a `ci:full`
+  or C-10.2 pull request and 79 on a merge group or train (the `integration` lane's six jobs run there only),
+  by the workflow graph (`scripts/tests/test_pr_yml_gates.py` pins the counts).
+  - **`ci-required` on a pull request** reads each heavy lane's skip as deferred: a notice
+    "`<lane>`: skipped — deferred to the merge group" (`LIGHT_DEFERRED` in
+    `scripts/ci_gate_resolver.mjs`, fed `PR_FULL`, the label OR the C-10.2 output), never
+    CI-GATE-002, so a non-draft PR's `ci-required` is **green when the light set is** and the queue
+    can take it. A heavy lane that did run and went red is still CI-GATE-001. The merge group is
+    the real gate (C-9.1): every lane runs there and the resolver reads the flags on `pull_request`
+    only, so nothing is deferred. The step fails unless the resolver printed its
+    `ci-required conclusion:` line.
+  - **Precondition.** The light run is safe while the queue is on for `main`, or the merge train
+    is the only merge path; it fails only when neither holds. Then every PR must carry `ci:full`
+    before it merges, or #5746 is reverted first; a PR merged directly on a light green
+    `ci-required` would reach `main` without the heavy lanes (C-9.1). The resolver enforces the
+    queue half (#5785): `changed-paths` reads `GET repos/{repo}/rules/branches/main` with the job
+    token and outputs `queue=true` only when an active `merge_queue` rule is listed; on no such
+    rule or any API error it warns and outputs false, and the resolver (`MERGE_QUEUE`) then defers
+    nothing: each skipped heavy lane of a light run is CI-GATE-002 ("the merge queue on main is not
+    confirmed, so a light run defers nothing: label the PR ci:full").
+  - **A draft** runs the same light set and its `ci-required` fails with **CI-GATE-005** ("draft
+    pull request: ci-required passes once it is ready for review", #5506), `ci:full` or not: a
+    draft never reads as mergeable, and the job still runs, since a skipped required check reads as
+    a pass. A red `ci-required` on a draft is expected, not a broken CI.
+  - **`ci:full`** (a label; a lane or the orchestrator adds it): the PR's next run executes the
+    full matrix, judged as before #5746 (a skipped heavy lane is CI-GATE-002). Use it for a risky
+    change whose heavy lanes should go green before review rather than in the queue. A PR that
+    touches a C-10.2 path needs no label: its runs are full automatically (#5785), so the security
+    reviewer sees the `security` lane's SAST and SCA results, not only the queue. Adding the
+    label does not start a run (`pr.yml` does not run on `labeled`): push, or close and reopen the
+    PR. A light PR can therefore be green and still fail in the queue on a heavy lane: read the
+    group's log of that lane, not the PR's. The opt-in `run-audit-spike` job of `integration` now
+    starts only on a `ci:full` run too. The recording-only `perf-engine-matrix.yml` chromium job
+    still skips a draft only.
 - #4605: the lane is three job definitions. `integration-shard (N/4)` runs one shard of
   `pytest tests/integration -m "integration and not perf and not flaky"`, split by measured per-file
   duration (`tools/ci/integration_shards.py`; about 5-7 minutes a shard on the five runs its table
@@ -484,6 +519,9 @@ here, or the check fails the `governance` lane.
   its path filter said it applied. Compare `changed-paths` outputs against
   the lane's `if:` condition in `pr.yml` (a step's `if:` for a gate inside `gates`);
   this is almost always a filter/if mismatch introduced by an edit to `pr.yml` itself.
+  One exception (#5785): a reason ending "the merge queue on main is not confirmed, so a light run
+  defers nothing" means `changed-paths` found no active merge queue rule on `main` (its warning
+  says which); restore the rule, or label the PR `ci:full` and push, before anything merges.
 - **CI-GATE-003** (unpinned action / unsafe trigger): `tools/ci/check_action_pins.py`
   names the offending `uses:` line; replace the tag with the commit SHA
   GitHub shows for that release and keep the `# vX.Y.Z` comment.
@@ -493,7 +531,8 @@ here, or the check fails the `governance` lane.
   label was missing (an API error: re-run; over the API's 3000 files: split the PR). Never remove
   the label: the job does not re-check after a removal (pr.yml does not run on `unlabeled`), so the
   merge guard is the backstop.
-- **CI-GATE-005** (a draft pull request): expected; mark it ready for review to run the full matrix.
+- **CI-GATE-005** (a draft pull request): expected; mark it ready for review, and its next run's
+  `ci-required` reads the light set (#5746).
 
 ### CI-PIN-* — action-pin ledger (`tools/ci/check_action_pins.py`, `.github/actions-pins.md`)
 
@@ -1615,7 +1654,8 @@ section in the same sprint — do not just work around it and move on.
   (`tests/security/auth`, carved out of `contract-security-2`, which keeps the rest of
   `tests/security`, `tests/rules` and the admin storage contract; no file there collects a
   `postgres:16` module, so the Postgres pre-pull condition is unchanged) adds a nineteenth lane:
-  three more `py-tests` jobs in a run, 73 per PR run. The target: every `rest*` leg at 12 minutes
+  three more `py-tests` jobs in a run, 73 per full PR run (a `ci:full` one since #5746). The
+  target: every `rest*` leg at 12 minutes
   or less, and the critical path from about 26 to about 15 minutes. The coverage and `ci-required` wiring is unchanged, because
   `py_test_lanes.py data-files` expects one coverage file per manifest lane. Re-measure with
   `estimate` after the next runs and move paths again if either leg approaches the budget.

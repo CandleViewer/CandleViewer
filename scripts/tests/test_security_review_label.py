@@ -236,7 +236,13 @@ AUTH = "services/api/candleviewer/auth/sessions.py"
 def test_no_security_path_writes_nothing(capsys: pytest.CaptureFixture[str]) -> None:
     api = FakeApi(["docs/x.md", "apps/web/src/App.tsx"])
     assert (s.main([], api), api.posts()) == (0, [])
-    assert "no C-10.2 security path" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "no C-10.2 security path" in out
+    # #5785: pr.yml's security-review-label step reads this exact line as main's "no C-10.2 path"
+    # decision (any other output runs the full set): change the two together.
+    workflow = (ROOT / ".github" / "workflows" / "pr.yml").read_text(encoding="utf-8")
+    (line,) = re.findall(r"^          none='(.*)'$", workflow, re.M)
+    assert out.splitlines() == [line]
 
 
 def test_a_present_label_is_kept_and_the_matches_are_printed(
@@ -432,12 +438,15 @@ def test_until_main_has_the_script_the_job_labels_every_pr(tmp_path: Path) -> No
     gh.chmod(0o755)
     env = {"PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "EVENT_NAME": "pull_request"}
     env |= {"GITHUB_REPOSITORY": "o/r", "PR_NUMBER": "7", "GH_TOKEN": "t"}
+    env |= {"GITHUB_OUTPUT": str(tmp_path / "output")}
     run = subprocess.run([bash, "-c", JOB["steps"][1]["run"]], cwd=tmp_path, env=env, timeout=60)
     labels = "api --method POST repos/o/r/issues/7/labels -f labels[]=security-review --silent\n"
     assert (run.returncode, (tmp_path / "bin" / "gh.args").read_text(encoding="utf-8")) == (
         0,
         labels,
     )
+    # #5785: and the PR runs the full set, as a C-10.2 one does.
+    assert (tmp_path / "output").read_text(encoding="utf-8") == "security-path=true\n"
 
 
 def test_dependabot_labels_its_prs_up_front() -> None:

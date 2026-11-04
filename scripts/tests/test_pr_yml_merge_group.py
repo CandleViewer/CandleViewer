@@ -52,24 +52,31 @@ EVENT_READ = re.compile(
 )
 #: A condition is false on a merge group when one of its top-level `&&` terms is one of these.
 PR_GUARDS = ("github.event_name == 'pull_request'", "needs.changed-paths.outputs.pr != 'false'")
-#: The draft clause: true on a draft pull request's run only. Its pull-request read sits behind
-#: `github.event_name == 'pull_request'` in the same `&&`, so on a merge group or train it is false
-#: by construction and the read is never reached.
-DRAFT = "github.event_name == 'pull_request' && github.event.pull_request.draft == true"
-#: The resolver step's flag (PR_DRAFT): the plain path, which the governance proof of the step
-#: evaluates (paths only); empty on every event without a pull request, and the resolver reads it
-#: on pull_request only (GITHUB_EVENT_NAME), so no payload can defer a lane off a pull request.
+#: The heavy clause (#5746): true on a merge group, a merge train's dispatch, a pull request
+#: labelled `ci:full` and (#5785) one main's C-10.2 rule says touches a security path. Its
+#: pull-request reads come after `github.event_name == 'merge_group' ||
+#: github.event_name == 'workflow_dispatch'`, so on a merge group or train it is true by
+#: construction and the reads are never reached.
+FULL_FLAG = "contains(github.event.pull_request.labels.*.name, 'ci:full')"
+C102 = "needs.security-review-label.outputs.security-path == 'true'"
+FULL = f"{FULL_FLAG} || {C102}"
+HEAVY = "github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || "
+HEAVY += FULL
+#: The resolver step's flags: PR_DRAFT, the plain path (empty on every event without a pull
+#: request), and PR_FULL, the heavy clause's label and C-10.2 terms (false there). The resolver
+#: reads both on pull_request only (GITHUB_EVENT_NAME), so no payload can defer a lane off a pull
+#: request. MERGE_QUEUE (#5785) reads no event: `changed-paths`' `queue` output.
 DRAFT_FLAG = "github.event.pull_request.draft"
-#: The lanes pr.yml defers while the pull request is a draft, with the filters each starts on: the
-#: job's `if:` is those filters, then `&& !(DRAFT)`, and the resolver (DRAFT_DEFERRED in
-#: scripts/ci_gate_resolver.mjs, fed PR_DRAFT) reads their skip as deferred there. The run that
-#: `ready_for_review` starts, a merge group and a train run them.
-DRAFT_DEFERRED = {
+#: The lanes pr.yml runs on a heavy run only, with the filters each starts on: the job's `if:` is
+#: those filters, then `&& (HEAVY)`, and the resolver (LIGHT_DEFERRED in
+#: scripts/ci_gate_resolver.mjs, fed PR_FULL) reads their skip on any other pull request as
+#: deferred to the merge group. A merge group, a train and a `ci:full` pull request run them.
+LIGHT_DEFERRED = {
     "e2e": "needs.changed-paths.outputs.e2e == 'true'",
     "a11y": "needs.changed-paths.outputs.e2e == 'true'",
     "engine-bench": "(needs.changed-paths.outputs.engine == 'true' || "
     "needs.changed-paths.outputs.protocol == 'true')",
-    # #5506: a draft runs the light job set; these heavy lanes wait for ready_for_review too.
+    # #5506 (drafts) and #5746 (every pull request without `ci:full`): the light set skips these.
     "rule-roundtrip": "needs.changed-paths.outputs.rules == 'true'",
     "contract": "needs.changed-paths.outputs.protocol == 'true'",
     "migrations": "needs.changed-paths.outputs.migrations == 'true'",
@@ -79,10 +86,10 @@ DRAFT_DEFERRED = {
     "coverage-thresholds": "always() && (needs.changed-paths.outputs.js == 'true' || "
     "needs.changed-paths.outputs.py == 'true')",
 }
-#: Gated on a draft like the lanes above, but not in the resolver's DRAFT_DEFERRED: a pull
+#: Gated on a heavy run like the lanes above, but not in the resolver's LIGHT_DEFERRED: a pull
 #: request's run skips `integration` on every PR (MERGE_GROUP_ONLY defers it there).
-DRAFT_GATED_NOT_DEFERRED = {"integration": "needs.changed-paths.outputs.py == 'true'"}
-DRAFT_GATED = DRAFT_DEFERRED | DRAFT_GATED_NOT_DEFERRED
+HEAVY_GATED_NOT_DEFERRED = {"integration": "needs.changed-paths.outputs.py == 'true'"}
+HEAVY_GATED = LIGHT_DEFERRED | HEAVY_GATED_NOT_DEFERRED
 EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 FREEZE_UPLOAD = (
     "_job-security.yml:read-only-scans:"
@@ -127,11 +134,11 @@ EVENT_CONDITIONS = {
     "_job-integration.yml:integration": (
         "${{ github.event_name != 'pull_request' && !cancelled() }}"
     ),
-    # Deferred while the PR is a draft: the lane's filters, then `!(DRAFT)`, which is true on a
-    # merge group or train (the clause is false there), so a queue run keeps every one of them.
+    # Heavy runs only (#5746): the lane's filters, then `(HEAVY)`, which is true on a merge group
+    # or train by its first two terms, so a queue run keeps every one of them.
     **{
-        f"pr.yml:{lane}": f"${{{{ {filters} && !({DRAFT}) }}}}"
-        for lane, filters in DRAFT_GATED.items()
+        f"pr.yml:{lane}": f"${{{{ {filters} && ({HEAVY}) }}}}"
+        for lane, filters in HEAVY_GATED.items()
     },
     # The freeze proposal artifact for a dependency PR's reviewer; the freeze check still runs:
     FREEZE_UPLOAD: "${{ !cancelled() && steps.freeze.outcome == 'failure' && (github.actor == "
@@ -146,17 +153,18 @@ FALSE_ON_A_MERGE_GROUP = {
         FREEZE_UPLOAD,
     )
 }
-#: The draft clause's reads: one in each deferred lane's `if:`, one in the resolver step's env
-#: (PR_DRAFT). Each is false on a merge group or train by construction, its own event guard, and
-#: the job or value still runs there, so neither a PR guard nor a fallback applies to it.
-DRAFT_READS = {
+#: The heavy clause's reads: one in each heavy lane's `if:` and in the `heavy` input pr.yml passes
+#: the js and py lanes, true on a merge group or train by construction; and the resolver step's
+#: two flags (PR_DRAFT, PR_FULL), each empty or false there and read on pull_request only. The job
+#: or value still runs there, so neither a PR guard nor a fallback applies to it.
+HEAVY_READS = {
     (f"pr.yml:{lane}", EVENT_CONDITIONS[f"pr.yml:{lane}"].removeprefix("${{ ").removesuffix(" }}"))
-    for lane in DRAFT_GATED
-} | {("pr.yml:ci-required:Resolve ci-required conclusion", DRAFT_FLAG)}
-#: The `heavy` input pr.yml passes the js and py lanes (#5506): the draft clause, negated, behind the
-#: same event guard, so it is false by construction on a merge group or train (heavy is true there).
-HEAVY_INPUT = f"!({DRAFT})"
-DRAFT_READS |= {("pr.yml:js", HEAVY_INPUT), ("pr.yml:py", HEAVY_INPUT)}
+    for lane in HEAVY_GATED
+}
+HEAVY_READS |= {("pr.yml:js", HEAVY), ("pr.yml:py", HEAVY)}
+HEAVY_READS |= {
+    ("pr.yml:ci-required:Resolve ci-required conclusion", flag) for flag in (DRAFT_FLAG, FULL)
+}
 #: The secret-scan range's ends: a PR's, a merge group's, else a merge train's (#3783).
 SCAN = "github.event.pull_request.%s.sha || github.event.merge_group.%s_sha || inputs.train_%s"
 #: A merge train's base branch in a lane pr.yml calls, which sees its own inputs only (#3783).
@@ -177,7 +185,8 @@ EVENT_VALUES = [
     ("pr.yml:gates", SCAN % ("head", "head", "head")),
     ("pr.yml:ci-required", "needs.changed-paths.outputs.pr"),
     ("pr.yml:ci-required", DRAFT_FLAG),  # PR_DRAFT: empty off a pull request; read on one only
-    *[(f"pr.yml:{lane}", f"!({DRAFT})") for lane in ("js", "py")],  # the `heavy` input (#5506)
+    ("pr.yml:ci-required", FULL),  # PR_FULL: false off a pull request; read on one only
+    *[(f"pr.yml:{lane}", HEAVY) for lane in ("js", "py")],  # the `heavy` input (#5506, #5746)
     ("_job-migrations.yml:migrations", MIGRATIONS_BASE),  # the Alembic lock step
     ("_job-migrations.yml:migrations", MIGRATIONS_BASE),  # the QuestDB DDL lock step (#4014)
 ]
@@ -466,10 +475,14 @@ def test_pr_metadata_gates_run_on_pull_requests_only() -> None:
 
 def _value(expression: str, values: dict[str, str]) -> str:
     """A resolver env expression under `values`: a context path's value ('' when unset, as
-    GitHub renders a missing path)."""
+    GitHub renders a missing path), or PR_FULL, FULL_FLAG (read as `values[FULL_FLAG]`) OR its
+    C-10.2 term (#5785, the security-review-label output read as a path)."""
     path = re.fullmatch(r"\$\{\{ ([\w.-]+) \}\}", expression)
-    assert path, expression
-    return values.get(path[1], "")
+    if path:
+        return values.get(path[1], "")
+    assert expression == "${{ " + FULL + " }}", expression
+    c102 = values.get(C102.removesuffix(" == 'true'")) == "true"
+    return str(values.get(FULL_FLAG) == "true" or c102).lower()
 
 
 def _run(context: dict[str, str], event: str = "") -> subprocess.CompletedProcess[str]:
@@ -619,16 +632,16 @@ def test_resolver_writes_the_not_applicable_lane_to_the_job_summary(tmp_path: Pa
     assert "| engine-bench | not applicable |" in summary.read_text(encoding="utf-8")
 
 
-#: A draft pull request's run: PR_DRAFT renders true, and the deferred lanes' jobs skipped.
-DRAFT_RUN = {"github.event.pull_request.draft": "true"}
-
-
-#: A draft pull request's `ci-required` always fails (#5506): the full matrix runs from ready_for_review.
-DRAFT_GATE = "CI-GATE-005: draft pull request: the full matrix runs from ready_for_review"
+#: A draft pull request's run: PR_DRAFT renders true. A `ci:full` one: PR_FULL renders true.
+DRAFT_RUN = {DRAFT_FLAG: "true"}
+FULL_RUN = {FULL_FLAG: "true"}
+#: A draft pull request's `ci-required` always fails (#5506), `ci:full` or not.
+DRAFT_GATE = "CI-GATE-005: draft pull request: ci-required passes once it is ready for review"
 
 
 def test_resolver_fails_a_draft_even_when_every_lane_is_green() -> None:
     assert _resolve(DRAFT_RUN, "pull_request") == (1, {DRAFT_GATE})
+    assert _resolve(DRAFT_RUN | FULL_RUN, "pull_request") == (1, {DRAFT_GATE})
 
 
 @pytest.mark.parametrize("event", ["merge_group", "workflow_dispatch", ""])
@@ -636,68 +649,115 @@ def test_resolver_does_not_apply_the_draft_gate_off_a_pull_request(event: str) -
     assert _resolve(QUEUED | DRAFT_RUN, event) == (0, set())
 
 
-def test_resolver_passes_a_ready_pull_request_with_the_drafts_lanes_run() -> None:
+def test_resolver_passes_a_ready_pull_request_whatever_its_label() -> None:
     assert _resolve({}, "pull_request") == (0, set())
+    assert _resolve(FULL_RUN, "pull_request") == (0, set())
 
 
-@pytest.mark.parametrize("lane", sorted(DRAFT_DEFERRED))
-def test_resolver_reads_a_drafts_skipped_deferred_lane_as_deferred(lane: str) -> None:
-    proc = _run(DRAFT_RUN | {RESULTS[lane]: "skipped"}, "pull_request")
-    notice = [line for line in proc.stdout.splitlines() if line.startswith("::notice")]
-    # The only failure is the draft's own CI-GATE-005 (#5506): no CI-GATE-001/002 for the skip.
-    errors = {line for line in proc.stderr.splitlines() if line.startswith("CI-")}
-    assert (proc.returncode, errors) == (1, {DRAFT_GATE})
-    assert len(notice) == 1
-    assert notice[0].startswith(f"::notice title={lane} deferred::{lane}: skipped")
-    assert notice[0].endswith("runs when the pull request leaves draft")
+#: Every light-deferred lane skipped, as a pull request's light run reports them (#5746).
+LIGHT_RUN = {RESULTS[lane]: "skipped" for lane in LIGHT_DEFERRED} | INTEGRATION_SKIPPED
 
 
-@pytest.mark.parametrize("lane", sorted(DRAFT_DEFERRED))
-def test_resolver_requires_a_deferred_lane_once_the_pull_request_is_ready(lane: str) -> None:
-    # `ready_for_review` re-runs pr.yml with the flag false: a skip there is CI-GATE-002, as before.
-    assert _resolve({RESULTS[lane]: "skipped"}, "pull_request") == (1, {SKIP % lane})
+def test_resolver_passes_a_light_pull_request_run_and_names_each_deferred_lane() -> None:
+    """#5746 (Gherkin 1): the light set green, the heavy lanes deferred to the merge group."""
+    proc = _run(LIGHT_RUN, "pull_request")
+    notices = sorted(line for line in proc.stdout.splitlines() if line.startswith("::notice"))
+    assert (proc.returncode, "CI-GATE" in proc.stderr) == (0, False)
+    assert "ci-required conclusion: success" in proc.stdout
+    expected = [
+        f"::notice title={lane} deferred::{lane}: skipped — deferred to the merge group"
+        for lane in LIGHT_DEFERRED
+    ]
+    expected += [
+        "::notice title=integration deferred::integration: skipped — runs on the merge group"
+    ]
+    assert notices == sorted(expected)
+
+
+@pytest.mark.parametrize("lane", sorted(LIGHT_DEFERRED))
+def test_resolver_reads_a_light_runs_skipped_lane_as_deferred(lane: str) -> None:
+    for context, errors in (({}, set()), (DRAFT_RUN, {DRAFT_GATE})):
+        proc = _run(context | {RESULTS[lane]: "skipped"}, "pull_request")
+        notice = [line for line in proc.stdout.splitlines() if line.startswith("::notice")]
+        found = {line for line in proc.stderr.splitlines() if line.startswith("CI-")}
+        # A draft's only failure is its own CI-GATE-005 (#5506): no CI-GATE-001/002 for the skip.
+        assert (proc.returncode, found) == (1 if errors else 0, errors)
+        assert notice == [
+            f"::notice title={lane} deferred::{lane}: skipped — deferred to the merge group"
+        ]
+
+
+@pytest.mark.parametrize("lane", sorted(LIGHT_DEFERRED))
+def test_resolver_requires_a_deferred_lane_on_a_ci_full_pull_request(lane: str) -> None:
+    # A `ci:full` run starts every lane (#5746): a skip there is CI-GATE-002, as on a merge group.
+    assert _resolve(FULL_RUN | {RESULTS[lane]: "skipped"}, "pull_request") == (1, {SKIP % lane})
+
+
+#: #5785: a pull request that touches a C-10.2 path, as main's rule decided it.
+C102_RUN = {C102.removesuffix(" == 'true'"): "true"}
+#: #5785: `changed-paths` found no active merge queue rule on main, or could not read the rules.
+NO_QUEUE = "; the merge queue on main is not confirmed, so a light run defers nothing: label the"
+NO_QUEUE += " PR ci:full"
+
+
+@pytest.mark.parametrize("lane", sorted(LIGHT_DEFERRED))
+def test_resolver_requires_a_deferred_lane_on_a_c102_pull_request(lane: str) -> None:
+    # A C-10.2 pull request runs the full set automatically: a skip there is CI-GATE-002.
+    assert _resolve(C102_RUN | {RESULTS[lane]: "skipped"}, "pull_request") == (1, {SKIP % lane})
+
+
+@pytest.mark.parametrize("queue", ["false", ""])
+@pytest.mark.parametrize("lane", sorted(LIGHT_DEFERRED))
+def test_resolver_defers_nothing_on_a_light_run_without_the_merge_queue(
+    lane: str, queue: str
+) -> None:
+    context = {"needs.changed-paths.outputs.queue": queue, RESULTS[lane]: "skipped"}
+    assert _resolve(context, "pull_request") == (1, {SKIP % lane + NO_QUEUE})
 
 
 @pytest.mark.parametrize("event", ["merge_group", "workflow_dispatch", ""])
-@pytest.mark.parametrize("lane", sorted(DRAFT_DEFERRED))
+@pytest.mark.parametrize("lane", sorted(LIGHT_DEFERRED))
 def test_resolver_requires_a_deferred_lane_on_a_merge_group_and_a_train(
     lane: str, event: str
 ) -> None:
-    # The clause is false off pull_request whatever the payload holds, and the resolver reads the
-    # flag on pull_request only: no queue, train or unknown-event run defers them.
-    proc = _run(QUEUED | DRAFT_RUN | {RESULTS[lane]: "skipped"}, event)
-    errors = {line for line in proc.stderr.splitlines() if line.startswith("CI-")}
-    assert (proc.returncode, errors) == (1, {SKIP % lane})
-    assert "::notice" not in proc.stdout
+    # The resolver reads both flags on pull_request only: no queue, train or unknown-event run
+    # defers them, whatever the payload holds.
+    for flags in ({}, DRAFT_RUN, FULL_RUN):
+        proc = _run(QUEUED | flags | {RESULTS[lane]: "skipped"}, event)
+        errors = {line for line in proc.stderr.splitlines() if line.startswith("CI-")}
+        assert (proc.returncode, errors) == (1, {SKIP % lane})
+        assert "::notice" not in proc.stdout
 
 
 @pytest.mark.parametrize("result", ["failure", "cancelled"])
-def test_resolver_still_fails_a_draft_whose_deferred_lane_ran_red(result: str) -> None:
+def test_resolver_still_fails_a_light_run_whose_deferred_lane_ran_red(result: str) -> None:
+    assert _resolve({RESULTS["e2e"]: result}, "pull_request") == (1, {FAIL % ("e2e", result)})
     expected = (1, {FAIL % ("e2e", result), DRAFT_GATE})
     assert _resolve(DRAFT_RUN | {RESULTS["e2e"]: result}, "pull_request") == expected
 
 
-def test_resolver_defers_no_other_lane_on_a_draft() -> None:
+def test_resolver_defers_no_light_set_lane() -> None:
+    assert _resolve({RESULTS["py"]: "skipped"}, "pull_request") == (1, {SKIP % "py"})
     assert _resolve(DRAFT_RUN | {RESULTS["py"]: "skipped"}, "pull_request") == (
         1,
         {SKIP % "py", DRAFT_GATE},
     )
 
 
-def test_the_draft_deferred_lanes_are_the_ones_whose_job_skips_a_draft() -> None:
-    """The resolver's DRAFT_DEFERRED, the flag it reads and the lanes' job `if:` say the same."""
+def test_the_light_deferred_lanes_are_the_ones_whose_job_runs_on_a_heavy_run_only() -> None:
+    """The resolver's LIGHT_DEFERRED, the flags it reads and the lanes' job `if:` say the same."""
     script = (ROOT / "scripts" / "ci_gate_resolver.mjs").read_text(encoding="utf-8")
-    (listed,) = re.findall(r"DRAFT_DEFERRED = new Set\(\[(.*?)\]\)", script, re.DOTALL)
+    (listed,) = re.findall(r"LIGHT_DEFERRED = new Set\(\[(.*?)\]\)", script, re.DOTALL)
     skipping = {
         lane
         for lane, job in JOBS.items()
-        if " ".join(str(job.get("if", "")).split()).endswith(f" && !({DRAFT}) }}}}")
+        if " ".join(str(job.get("if", "")).split()).endswith(f" && ({HEAVY}) }}}}")
     }
-    assert skipping == set(DRAFT_GATED)
+    assert skipping == set(HEAVY_GATED)
     assert (
-        skipping - {"integration"} == set(re.findall(r'"([\w-]+)"', listed)) == set(DRAFT_DEFERRED)
+        skipping - {"integration"} == set(re.findall(r'"([\w-]+)"', listed)) == set(LIGHT_DEFERRED)
     )
-    assert set(DRAFT_DEFERRED) == {
+    assert set(LIGHT_DEFERRED) == {
         "e2e",
         "a11y",
         "engine-bench",
@@ -708,7 +768,10 @@ def test_the_draft_deferred_lanes_are_the_ones_whose_job_skips_a_draft() -> None
         "coverage-thresholds",
     }
     assert RESOLVER["env"]["PR_DRAFT"] == "${{ " + DRAFT_FLAG + " }}"
+    assert RESOLVER["env"]["PR_FULL"] == "${{ " + FULL + " }}"
+    assert RESOLVER["env"]["MERGE_QUEUE"] == "${{ needs.changed-paths.outputs.queue }}"
     assert 'process.env.PR_DRAFT === "true"' in script
+    assert 'process.env.PR_FULL === "true"' in script
 
 
 def test_the_engine_matrix_reruns_when_a_draft_becomes_ready() -> None:
@@ -826,8 +889,8 @@ def test_every_pull_request_read_is_guarded_or_has_a_merge_group_fallback() -> N
     # On a merge group or train these reads are empty: unguarded, one fails, hangs or skips a check
     # that matters for the tree. Guard it to pull_request, give it merge_group and train fallbacks
     # in the same `a || b || c`, or, if it is false on both by construction, review the exact read
-    # into EVENT_CONDITIONS and FALSE_ON_A_MERGE_GROUP (or DRAFT_READS) with the reason.
-    assert _unguarded_reads() == FALSE_ON_A_MERGE_GROUP | DRAFT_READS
+    # into EVENT_CONDITIONS and FALSE_ON_A_MERGE_GROUP (or HEAVY_READS) with the reason.
+    assert _unguarded_reads() == FALSE_ON_A_MERGE_GROUP | HEAVY_READS
 
 
 def test_every_condition_and_value_that_reads_the_event_is_reviewed() -> None:
