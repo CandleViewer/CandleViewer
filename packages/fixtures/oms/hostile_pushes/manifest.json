@@ -1,0 +1,29 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "hostile_pushes",
+  "origin": "threat model AC-26",
+  "description": "AC-26 (OM-T04): hostile pushes on a BTCUSDT limit buy of 0.1 at 95900.1 (derived frames, twelve in all), with the negative-fee fill delivered twice by the `duplicate` fault. Every hostile value sits in a field of the transcribed shape; none is secret-shaped. Read through today's adapter parser, the fee-rate frame is rejected as malformed and the others, the control-character id included, are read (test_oms_pack_adapter.py pins it).",
+  "environment": "demo",
+  "evidence": "derived",
+  "rules": ["S4", "S5", "S6"],
+  "cases": ["E29-TC-802"],
+  "ws": { "private": ["frames.jsonl"] },
+  "files": {
+    "frames.jsonl": {
+      "derived_from": [
+        "../bybit/2026-10-05/ws/private-order.jsonl",
+        "../bybit/2026-10-05/ws/private-execution.jsonl"
+      ],
+      "derivation": "Order rows: the transcribed option order push with these values changed and no key added or dropped: symbol and category (BTCUSDT, linear), order and link ids, side, order type, time in force, price, quantity, status, executed quantity, value and fee, remaining quantity and value, average price, created and updated times, and the push id and creation time. Execution pushes: the transcribed linear execution push with these values changed and no key added or dropped: order and link ids, execution id, side, order type, quantity, price, value, fee, order price and quantity, remaining quantity, times and sequence, and the push id and creation time. Order ids are UUID-shaped fabrications; link ids are of the `OUR_ID` form (24 section 8.3) for trade group 0f8e2b6c-3d4a-4b5c-9e7f-1a2b3c4d5e6f and account a1000000-0000-4000-8000-000000000001, the fixture ids of `tests/unit/oms/stream_world.py`; times count from 1746270400000 ms. Frame 0: the resting order. 1: a state stamped a day ahead (updated time +86400000 ms). 2: a legitimate later push (+2000 ms) that frame 1 must not hide. 3: an older state after frame 2 (+1000 ms). 4: executed quantity 0.5 above the quantity 0.1. 5: an execution of 0.5 above the order's 0.1. 6: a negative fee. 7: the execution id of frame 6 on another order. 8: a fee rate of 999999999.1, which no column holds. 9: an execution id holding a control character (U+0007). 10: the `Filled` push. 11: a `PartiallyFilled` push after it ended."
+    }
+  },
+  "inject": [
+    {
+      "kind": "duplicate",
+      "frame": 6,
+      "note": "The negative-fee fill is delivered twice: a repeated exec_id."
+    }
+  ],
+  "expected": "Never more than `qty` filled; a repeat is a no-op; a post-terminal push raises `ReconcileAnomaly`, is audited and alerts; a hostile fill is refused by B1's admission and quarantines the order once, or pages where its state cannot; a push stamped far ahead cannot hide the pushes after it (AC-26, OM-T04).",
+  "consumers": ["E29-X02", "E29-Q02"]
+}

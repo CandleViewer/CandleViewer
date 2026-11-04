@@ -43,7 +43,7 @@
       "items": { "enum": ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11"] }
     },
     "cases": {
-      "description": "The black-box plan's case ids the scenario serves. Empty until the plan's traceability table names the scenario.",
+      "description": "The black-box plan's case ids the scenario serves: its row of the plan's traceability table (section 9), which the pack checker compares.",
       "type": "array",
       "items": { "type": "string", "pattern": "^E29-TC-[0-9]{3}$" }
     },
@@ -68,6 +68,12 @@
           "items": { "$ref": "#/$defs/wsPath" }
         }
       }
+    },
+    "slots": {
+      "description": "A template's placeholders: each {{name}} in a delivered file of this directory, with the shape of the value a seed generates for it at test time. Never a value (README, 'Templates for AC-15').",
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": { "^[a-z][a-z0-9_]*$": { "$ref": "#/$defs/slot" } }
     },
     "files": {
       "description": "Every file of this directory other than manifest.json, with where it comes from. Each is delivered by rest or ws, and each is derived.",
@@ -123,6 +129,18 @@
           "minimum": 100
         },
         "note": { "type": "string", "minLength": 1 }
+      }
+    },
+    "slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shape", "length"],
+      "properties": {
+        "shape": {
+          "description": "What the generated value looks like: alnum (letters and digits, one of each at least), letters (mixed-case letters only), symbol (capitals and digits ending USDT, 20 characters at most), hex (lower-case) or digits.",
+          "enum": ["alnum", "letters", "symbol", "hex", "digits"]
+        },
+        "length": { "description": "Characters in the value.", "type": "integer", "minimum": 1 }
       }
     },
     "derivedFile": {

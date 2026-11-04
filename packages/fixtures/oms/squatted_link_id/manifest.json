@@ -1,0 +1,35 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "squatted_link_id",
+  "origin": "threat model AC-11",
+  "description": "AC-11 (OM-S05): our child's id (a Buy of 0.1) is already in use at the venue by a foreign Sell of 0.5 at 95900.1 that has filled. The create is refused as a duplicate (the transcribed `110072` row on `POST /v5/order/create`); the lookups find the foreign order under the child's id (a history reply holding it and an empty realtime reply, derived); its execution and its `Filled` push arrive under the child's id (derived frames). The duplicate text a filled order draws is not recorded: K01's `10001` waits for the findings PR.",
+  "environment": "demo",
+  "evidence": "derived",
+  "rules": ["S1", "S5", "S9"],
+  "cases": ["E29-TC-800"],
+  "rest": {
+    "POST /v5/order/create": { "payload": "../bybit/2026-10-05/rest/trading-error-110072.json" },
+    "GET /v5/order/history": { "payload": "history.json" },
+    "GET /v5/order/realtime": { "payload": "realtime.json" }
+  },
+  "ws": { "private": ["frames.jsonl"] },
+  "files": {
+    "frames.jsonl": {
+      "derived_from": [
+        "../bybit/2026-10-05/ws/private-order.jsonl",
+        "../bybit/2026-10-05/ws/private-execution.jsonl"
+      ],
+      "derivation": "Order rows: the transcribed option order push with these values changed and no key added or dropped: symbol and category (BTCUSDT, linear), order and link ids, side, order type, time in force, price, quantity, status, executed quantity, value and fee, remaining quantity and value, average price, created and updated times, and the push id and creation time. Execution pushes: the transcribed linear execution push with these values changed and no key added or dropped: order and link ids, execution id, side, order type, quantity, price, value, fee, order price and quantity, remaining quantity, times and sequence, and the push id and creation time. Order ids are UUID-shaped fabrications; link ids are of the `OUR_ID` form (24 section 8.3) for trade group 0f8e2b6c-3d4a-4b5c-9e7f-1a2b3c4d5e6f and account a1000000-0000-4000-8000-000000000001, the fixture ids of `tests/unit/oms/stream_world.py`; times count from 1746270400000 ms. The side is Sell and the quantity 0.5, against a child of Buy 0.1."
+    },
+    "history.json": {
+      "derived_from": ["../bybit/2026-10-05/rest/trading-order-history.json"],
+      "derivation": "The transcribed history reply with its one row's values changed and no key added or dropped: order and link ids (the foreign order's id and the child's link id), symbol, side, order type, time in force, price, quantity, status, executed quantity, value and fee, remaining quantity and value, average price, position index, reject reason and times. Order ids are UUID-shaped fabrications; link ids are of the `OUR_ID` form (24 section 8.3) for trade group 0f8e2b6c-3d4a-4b5c-9e7f-1a2b3c4d5e6f and account a1000000-0000-4000-8000-000000000001, the fixture ids of `tests/unit/oms/stream_world.py`; times count from 1746270400000 ms."
+    },
+    "realtime.json": {
+      "derived_from": ["../bybit/2026-10-05/rest/trading-order-realtime.json"],
+      "derivation": "The transcribed open-order reply with its list emptied and its cursor cleared: no key is added or dropped, and no open order exists because the squatting order has filled."
+    }
+  },
+  "expected": "The create is refused as a duplicate; the lookup mismatches before `submitted`; the OMS order is held for an operator and a P1 pages, never adopted; the foreign order is recorded `untracked` under `ext_key(orderId)` although the adapter reports it under the child's id; its fills reach that row on `exchange_order_id`, never the child; no second order exists (AC-11, OM-S05).",
+  "consumers": ["E29-X02", "E29-Q02"]
+}

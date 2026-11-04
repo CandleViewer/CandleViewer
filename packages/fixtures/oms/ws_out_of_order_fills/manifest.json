@@ -1,0 +1,26 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "ws_out_of_order_fills",
+  "origin": "ticket",
+  "description": "Three fills of 0.1 on a BTCUSDT limit buy of 0.3 at 95900.1, then the `Filled` push and an older `PartiallyFilled` push (derived frames, in seq order); the two `reorder` faults deliver the fills in reverse seq (3, 2, 1), before the order is bound. No recording shows the venue breaking S5: K01 decides whether it does.",
+  "environment": "demo",
+  "evidence": "derived",
+  "rules": ["S5"],
+  "cases": ["E29-TC-206", "E29-TC-255", "E29-TC-459", "E29-TC-559"],
+  "ws": { "private": ["frames.jsonl"] },
+  "files": {
+    "frames.jsonl": {
+      "derived_from": [
+        "../bybit/2026-10-05/ws/private-order.jsonl",
+        "../bybit/2026-10-05/ws/private-execution.jsonl"
+      ],
+      "derivation": "Order rows: the transcribed option order push with these values changed and no key added or dropped: symbol and category (BTCUSDT, linear), order and link ids, side, order type, time in force, price, quantity, status, executed quantity, value and fee, remaining quantity and value, average price, created and updated times, and the push id and creation time. Execution pushes: the transcribed linear execution push with these values changed and no key added or dropped: order and link ids, execution id, side, order type, quantity, price, value, fee, order price and quantity, remaining quantity, times and sequence, and the push id and creation time. Order ids are UUID-shaped fabrications; link ids are of the `OUR_ID` form (24 section 8.3) for trade group 0f8e2b6c-3d4a-4b5c-9e7f-1a2b3c4d5e6f and account a1000000-0000-4000-8000-000000000001, the fixture ids of `tests/unit/oms/stream_world.py`; times count from 1746270400000 ms. Frame 4 is an older state (updated time before frame 3's) after a newer one."
+    }
+  },
+  "inject": [
+    { "kind": "reorder", "frame": 2, "to": 0, "note": "Fill 3 arrives first." },
+    { "kind": "reorder", "frame": 2, "to": 1, "note": "Then fill 2, then fill 1: reverse seq." }
+  ],
+  "expected": "Held fills are applied in `(ts_exec, seq)` order once the order is bound and give the in-order totals; a push describing an older state is ignored, while a fill is always applied (E29-S04, a fill before its order's push; E29-T03, out-of-order pushes are ordered, a stale push is ignored, a fill never is).",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "store_unavailable",
+  "origin": "plan",
+  "description": "The transcribed accepted create reply (`rest/trading-create-reply.json`) the venue would give if it were ever asked. The store's outage is the harness's injection (E29-Q04's rows s9, s12 and s14), not a fault this pack can declare: its injection kinds are the venue's. Nothing is derived.",
+  "environment": "demo",
+  "evidence": "docs-transcribed",
+  "rules": ["S7", "S8"],
+  "cases": ["E29-TC-456", "E29-TC-506"],
+  "rest": {
+    "POST /v5/order/create": { "payload": "../bybit/2026-10-05/rest/trading-create-reply.json" }
+  },
+  "expected": "The refused write leaves the order unchanged in memory and on REST, nothing is sent, and `placeOrder` answers `503 store_unavailable`; when a create does reach the venue its write-ahead rows are already stored (E29-T03, write-ahead and Postgres authority; E29-T04, \"Order entry blocked when we cannot record it\").",
+  "consumers": ["E29-Q04", "E29-Q02"]
+}

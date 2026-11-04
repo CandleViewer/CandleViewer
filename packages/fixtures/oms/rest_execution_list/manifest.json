@@ -1,0 +1,15 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "rest_execution_list",
+  "origin": "ticket",
+  "description": "The execution read, `GET /v5/execution/list`: the transcribed reply, one ETHPERP Trade fill with an empty link id and a next-page cursor. Nothing is derived. Docs-transcribed: K01's execution lists replace it.",
+  "environment": "demo",
+  "evidence": "docs-transcribed",
+  "rules": ["S4", "S5"],
+  "cases": ["E29-TC-202", "E29-TC-206", "E29-TC-560"],
+  "rest": {
+    "GET /v5/execution/list": { "payload": "../bybit/2026-10-05/rest/trading-execution-list.json" }
+  },
+  "expected": "A backfill adds each fill once: an `exec_id` the stream already delivered is not counted again, a fill the gap missed is stored once, and the order ends as the exchange's (E29-S04, \"No double counting\"; E29-T05, a private session across a mid-sequence disconnect misses no execution).",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

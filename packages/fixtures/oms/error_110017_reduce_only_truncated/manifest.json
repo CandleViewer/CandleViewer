@@ -1,0 +1,15 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "error_110017_reduce_only_truncated",
+  "origin": "ticket",
+  "description": "The transcribed error-table row `110017` (code and text only) answering `POST /v5/order/create`, the call this corpus labels it with. Nothing is derived. Docs-transcribed: a follow-up capture of a reduce-only create while flat replaces it (ruling BQ-4).",
+  "environment": "demo",
+  "evidence": "docs-transcribed",
+  "rules": [],
+  "cases": ["E29-TC-053", "E29-TC-153", "E29-TC-809"],
+  "rest": {
+    "POST /v5/order/create": { "payload": "../bybit/2026-10-05/rest/trading-error-110017.json" }
+  },
+  "expected": "`110017` is `502 exchange_error` with `ret_code` 110017 and the venue's position unchanged: no opposite-side position exists (E29-S03, \"Never reverses\").",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

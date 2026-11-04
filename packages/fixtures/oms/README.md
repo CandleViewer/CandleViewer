@@ -10,9 +10,10 @@ plan's words. The pack models `../accounts/` (E27). It holds no recording: recor
 shared corpus `../bybit/<date>/` (C-13.5), and a scenario points at them. Every value is fabricated or
 copied from the corpus, and nothing here comes from a live call.
 
-**State.** This is the pack's infrastructure and one worked scenario, `ws_duplicate_exec`. The other
-scenarios, the check of the pack against the plan's traceability table and the AC-15 templates (below)
-follow in later PRs of #844.
+**State.** One folder for each row of the plan's traceability table (section 9) that is not
+`recorded`: 25 scenarios, none a recording. The one `recorded` row, `error_10001_duplicate_id`, is a
+reply no documentation shows and waits for E29-K01's findings PR; the S11 row has no folder (a
+unit-level contract, BQ-6). `credential_shaped_inputs` holds the AC-15 templates (below).
 
 ## What a scenario holds
 
@@ -38,7 +39,7 @@ oms/
 | ------------------ | ------------------------------------------------------------------------ | ------------------------------------------------- | --------------------------- |
 | `recorded`         | Captured, redacted: private data on demo, market data on the public host | the corpus                                        | none (E29-K01 records them) |
 | `docs-transcribed` | A documentation example, keys and values unchanged                       | the corpus: `rest/trading-*.json`, `ws/private-*` | the order path's files      |
-| `derived`          | Built from the two above: a composed sequence, a repeat, a changed value | a scenario directory, each file with its sources  | `ws_duplicate_exec`         |
+| `derived`          | Built from the two above: a composed sequence, a repeat, a changed value | a scenario directory, each file with its sources  | the scenarios' own files    |
 
 A `derived` file is a derivation, never evidence of what the venue does: it is outside the corpus
 drift check, so a changed field there fails nothing but this pack's checks. A scenario's `evidence`
@@ -68,15 +69,18 @@ conditionals cannot. In short:
   for (C-2.11), not a claim that anything was captured. `description` and `expected` are prose; the
   outcome is in the plan's words, never an internal function or field.
 - `rules` lists S1 to S11 (empty for an abuse case that no rule covers). `cases` lists the plan's
-  `E29-TC-nnn` ids; it stays empty until the plan's traceability table names the scenario.
-  `consumers` lists the tickets whose suites are to replay it.
+  `E29-TC-nnn` ids. `consumers` lists the tickets whose suites are to replay it. With `evidence`,
+  these four are the scenario's row of the plan's section 9 table, and the checker compares them.
 - `rest` maps `"<METHOD> <path>"` to a stub: `payload` (a corpus file or a derived file) and an
   optional `http_status` (200 when absent; a documentation example states none, so this is the
   scenario's choice, not evidence). A stub answers every call of its route the same way.
 - `ws.private` lists the files whose frames the private stream delivers, in this order. A fixture's
   frames are its delivery order: a gap, a reversal or a repeat is its own scenario, never random.
 - `files` declares each derived file: `derived_from` (corpus files that exist) and `derivation`
-  (what was done to them, and nothing was invented beyond it).
+  (what was done to them, and nothing was invented beyond it). A derived frame keeps the field paths
+  and types of its source's frame: only values change (the smoke test compares the shapes).
+- `slots` (a template only) names each `{{name}}` placeholder of the scenario's own files with the
+  `shape` and `length` of the value a seed generates for it at test time.
 - A scenario delivers something: at least one stub or one frame.
 
 **Injection.** `inject` lays faults over the shapes, applied in the order listed:
@@ -108,6 +112,7 @@ scenario.delivered_frames()  # the private frames to deliver: raw text, in order
 scenario.reply("POST", "/v5/order/create")  # .status, .body, .payload; UnstubbedCall if none
 scenario.injections  # every fault, as data; the harness applies the REST kinds
 scenario.canonical()  # the bytes two loads agree on
+scenario.render("seed")  # a template with its slots filled: .frames, .replies, .values, .leaks(*texts)
 ```
 
 Offline and deterministic: the loader opens files and nothing else, so no test of it can reach a
@@ -166,9 +171,13 @@ is not a bare token, so the field-by-field review under R-4 stays the control fo
   16 letters, digits or `+/=_-`, so they take a placeholder shorter than that or holding a character
   outside the set (`{{SLOT_1}}`, `<slot-1>` and `***` pass there; `PLACEHOLDER_SECRET_01` is flagged),
   and a field flagged from 8 characters takes `<sig>` or `***`.
-- The manifest names each slot. At test time a seed fills the slots: each value is generated in memory
-  from the seed alone, in the exact shape the case needs (a bare key, a signature, a header value), and
-  is never written to disk, logged or put in a failure message.
+- The manifest names each slot under `slots`: a `shape` (`alnum`, `letters`, `symbol`, `hex` or
+  `digits`) and a `length`. `render(seed)` fills the slots at test time: each value is generated in
+  memory from the seed and the slot's name alone, in the exact shape the case needs (a key, a
+  signature, a timestamp), and is never written to disk or logged. A `Rendered` keeps its text and
+  values out of `repr`, and `leaks(*texts)` names the slots whose value is in any text, never the
+  value, so a failure message holds none. The loader refuses a placeholder with no slot and a slot no
+  file uses.
 - The case asserts that the OMS's stored events, diagnostics, audit rows and logs hold none of the
   generated values.
 
@@ -179,9 +188,9 @@ is not a bare token, so the field-by-field review under R-4 stays the control fo
 | `pnpm --filter @candleviewer/fixtures lint` (`scripts/verify.mjs`)   | The redaction gate over `raw/`, `golden/`, `bybit/`, `accounts/`, `oms/`; the bare-key rule over the last two (js lane)      |
 | `python scripts/check_secrets_hygiene.py fixtures` (repo root)       | The field-name rules over every fixture directory; the bare-key rule over `accounts/` and `oms/` (security lane)             |
 | `tests/unit/fixtures_corpus/test_oms_pack_smoke.py` (`services/api`) | Per scenario: the schema, every file parses, `derived_from` exists, the evidence class, two byte-identical loads, no network |
+| `tests/unit/fixtures_corpus/test_oms_pack_adapter.py`                | `services/api`: each scenario read twice through the adapter's own parsers, the same reads both times (BQ-6)                 |
 
-The smoke test reads the scenario directories by name: adding one adds its checks. There is no check
-against the plan's traceability table yet; it lands with the scenarios, once the table is fixed.
+The two Python tests read the scenario directories by name: adding one adds its checks.
 
 ## Adding a scenario
 
@@ -189,6 +198,7 @@ against the plan's traceability table yet; it lands with the scenarios, once the
    makes the PR a `security-review` one, C-10.2).
 2. Deliver corpus files where one holds the shape; derive a file only for what no corpus file shows,
    and state in `derivation` exactly what was done. Never invent a payload shape.
-3. Set `evidence` to the weakest class delivered, `rules` and `expected` from the plan, and `cases`
-   once the plan's table names the scenario.
-4. Run the gates under R-4 and `pytest tests/unit/fixtures_corpus/test_oms_pack_smoke.py`.
+3. Add the scenario's row to the plan's section 9 table, then set `rules`, `cases`, `evidence` and
+   `consumers` from it (`evidence` is the weakest class delivered) and `expected` in the plan's words.
+4. Run the gates under R-4 and the two Python tests, `test_oms_pack_smoke.py` and
+   `test_oms_pack_adapter.py`, in `tests/unit/fixtures_corpus/`.

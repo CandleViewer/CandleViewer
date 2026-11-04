@@ -1,0 +1,15 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "rest_order_history",
+  "origin": "ticket",
+  "description": "The history read, `GET /v5/order/history`: the transcribed reply, one cancelled BTCUSDT PostOnly order and a next-page cursor, an order of nobody's we know. Nothing is derived. Docs-transcribed: K01's `retention` reads replace it.",
+  "environment": "demo",
+  "evidence": "docs-transcribed",
+  "rules": ["S1"],
+  "cases": ["E29-TC-601", "E29-TC-606", "E29-TC-610"],
+  "rest": {
+    "GET /v5/order/history": { "payload": "../bybit/2026-10-05/rest/trading-order-history.json" }
+  },
+  "expected": "A history that does not hold an `unknown` order counts one miss: the order stays `unknown` after the first pass and is rejected as `UNRESOLVED_AFTER_RECONCILE` after the second; a demo order past the retention span closes `DEMO_RETENTION_EXPIRED`, and a live order older than 24 hours is held and paged, never abandoned (E29-T06, \"Unresolvable order is abandoned deterministically\", \"A live unknown older than 24 hours is held, never abandoned\").",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

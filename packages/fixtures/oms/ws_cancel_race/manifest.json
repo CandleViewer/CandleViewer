@@ -1,0 +1,25 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "ws_cancel_race",
+  "origin": "ticket",
+  "description": "A BTCUSDT limit buy of 0.1 at 95900.1 that fills in full before the cancel lands: the resting order, the execution and the `Filled` push (derived frames), and the cancel's answer as the transcribed `110001` row on `POST /v5/order/cancel` (arrival order (b) of the plan's E29-TC-104; order (a), the fill while the cancel is pending, is the frames alone). The execution-first order is assumed; no recording shows a cancel that loses a race.",
+  "environment": "demo",
+  "evidence": "derived",
+  "rules": ["S3"],
+  "cases": ["E29-TC-104", "E29-TC-451"],
+  "rest": {
+    "POST /v5/order/cancel": { "payload": "../bybit/2026-10-05/rest/trading-error-110001.json" }
+  },
+  "ws": { "private": ["frames.jsonl"] },
+  "files": {
+    "frames.jsonl": {
+      "derived_from": [
+        "../bybit/2026-10-05/ws/private-order.jsonl",
+        "../bybit/2026-10-05/ws/private-execution.jsonl"
+      ],
+      "derivation": "Order rows: the transcribed option order push with these values changed and no key added or dropped: symbol and category (BTCUSDT, linear), order and link ids, side, order type, time in force, price, quantity, status, executed quantity, value and fee, remaining quantity and value, average price, created and updated times, and the push id and creation time. Execution pushes: the transcribed linear execution push with these values changed and no key added or dropped: order and link ids, execution id, side, order type, quantity, price, value, fee, order price and quantity, remaining quantity, times and sequence, and the push id and creation time. Order ids are UUID-shaped fabrications; link ids are of the `OUR_ID` form (24 section 8.3) for trade group 0f8e2b6c-3d4a-4b5c-9e7f-1a2b3c4d5e6f and account a1000000-0000-4000-8000-000000000001, the fixture ids of `tests/unit/oms/stream_world.py`; times count from 1746270400000 ms."
+    }
+  },
+  "expected": "A cancel that loses the race to a fill ends `filled` (or `partially_filled`), never `cancelled`; a cancel answered `110001` parks the order `unknown` with no second cancel, and reconciliation ends it with the exchange's state (E29-S02, \"Cancel that lost the race\"; E29-T03, \"Cancel loses the race to a fill\").",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

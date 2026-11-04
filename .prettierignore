@@ -174,3 +174,8 @@ docs/plan/backlog/_tools/published.json
 # E15-K01 (#371): the spike's results, written by docs/plan/spikes/E15-K01-harness/run.mjs (Prettier-formatted
 # when first committed) and never hand-edited; ignored so no later commit reflows the generated file
 docs/plan/spikes/E15-K01-results.json
+
+# E29-Q01: the OMS pack's derived REST bodies stay one compact line, as the corpus files they derive
+# from do (`packages/fixtures/bybit/*/` above); its manifests stay formatted.
+packages/fixtures/oms/*/*.json
+!packages/fixtures/oms/*/manifest.json

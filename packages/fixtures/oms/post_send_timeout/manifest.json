@@ -1,0 +1,18 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "post_send_timeout",
+  "origin": "ticket",
+  "description": "A create the venue received and accepted, answered with the transcribed accepted reply (`rest/trading-create-reply.json`), whose answer never returns: the `timeout` fault is the scenario. Nothing is derived.",
+  "environment": "demo",
+  "evidence": "docs-transcribed",
+  "rules": ["S1", "S8"],
+  "cases": ["E29-TC-112", "E29-TC-455", "E29-TC-503", "E29-TC-600", "E29-TC-700"],
+  "rest": {
+    "POST /v5/order/create": { "payload": "../bybit/2026-10-05/rest/trading-create-reply.json" }
+  },
+  "inject": [
+    { "kind": "timeout", "call": "POST /v5/order/create", "note": "The answer never returns." }
+  ],
+  "expected": "`202` with the order `unknown` and `reconciling: true`; the venue received one create under one `orderLinkId` and the process sent no second create; reconciliation then resolves it without a resend (E29-T04, \"Transport failure lands in Unknown, never in a retry\").",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

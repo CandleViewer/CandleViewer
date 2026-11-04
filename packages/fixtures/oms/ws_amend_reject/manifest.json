@@ -1,0 +1,25 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "ws_amend_reject",
+  "origin": "ticket",
+  "description": "A BTCUSDT limit buy of 0.010 at 63000 that rests, takes a fill of 0.004 while an amend awaits its answer, and stays live (derived frames), with the amend's refusal as the transcribed `110001` row on `POST /v5/order/amend`. No recording shows a refused amend (K01's amends are always valid), so the code and the absence of a push for the refusal are assumptions that a follow-up capture settles (ruling BQ-4).",
+  "environment": "demo",
+  "evidence": "derived",
+  "rules": ["S2", "S10"],
+  "cases": ["E29-TC-102", "E29-TC-112", "E29-TC-452", "E29-TC-458", "E29-TC-505"],
+  "rest": {
+    "POST /v5/order/amend": { "payload": "../bybit/2026-10-05/rest/trading-error-110001.json" }
+  },
+  "ws": { "private": ["frames.jsonl"] },
+  "files": {
+    "frames.jsonl": {
+      "derived_from": [
+        "../bybit/2026-10-05/ws/private-order.jsonl",
+        "../bybit/2026-10-05/ws/private-execution.jsonl"
+      ],
+      "derivation": "Order rows: the transcribed option order push with these values changed and no key added or dropped: symbol and category (BTCUSDT, linear), order and link ids, side, order type, time in force, price, quantity, status, executed quantity, value and fee, remaining quantity and value, average price, created and updated times, and the push id and creation time. Execution pushes: the transcribed linear execution push with these values changed and no key added or dropped: order and link ids, execution id, side, order type, quantity, price, value, fee, order price and quantity, remaining quantity, times and sequence, and the push id and creation time. Order ids are UUID-shaped fabrications; link ids are of the `OUR_ID` form (24 section 8.3) for trade group 0f8e2b6c-3d4a-4b5c-9e7f-1a2b3c4d5e6f and account a1000000-0000-4000-8000-000000000001, the fixture ids of `tests/unit/oms/stream_world.py`; times count from 1746270400000 ms."
+    }
+  },
+  "expected": "An amend the exchange rejects leaves the prior order live: REST shows the prior price and quantity and `lifecycle_state` `submitted` (or `partially_filled`), the order is never terminal, and a fill that arrives while the amend awaits its answer is deferred, not lost (E29-S02, \"Amend rejection leaves the order untouched\"; E29-T03, \"Amend rejection does not move the stop\").",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

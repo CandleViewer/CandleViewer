@@ -1,0 +1,17 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "error_10018_ip_rate_limit",
+  "origin": "ticket",
+  "description": "The documented `10018` shape (`rest/error_10018.json`, built by the corpus builder from the documentation on a kline route) answering a stop write, a cancel and a create. It is never provoked at the venue (ruling BQ-4). Nothing is derived.",
+  "environment": "demo",
+  "evidence": "derived",
+  "rules": [],
+  "cases": ["E29-TC-805"],
+  "rest": {
+    "POST /v5/position/trading-stop": { "payload": "../bybit/2026-10-05/rest/error_10018.json" },
+    "POST /v5/order/cancel": { "payload": "../bybit/2026-10-05/rest/error_10018.json" },
+    "POST /v5/order/create": { "payload": "../bybit/2026-10-05/rest/error_10018.json" }
+  },
+  "expected": "The IP hold is at least 600 s, capped at 900 s, and gates every REST path of every UID, stop and cancel included; the kill switch is unaffected (the R3 fixture class \"`10018` rate-limit\").",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

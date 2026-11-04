@@ -1,0 +1,15 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "error_110072_duplicate_link_id",
+  "origin": "ticket",
+  "description": "The transcribed error-table row `110072` (code and text only) answering `POST /v5/order/create`. Nothing is derived. Docs-transcribed: K01's `shapes` mode may record it.",
+  "environment": "demo",
+  "evidence": "docs-transcribed",
+  "rules": ["S1", "S9"],
+  "cases": ["E29-TC-507", "E29-TC-800", "E29-TC-809"],
+  "rest": {
+    "POST /v5/order/create": { "payload": "../bybit/2026-10-05/rest/trading-error-110072.json" }
+  },
+  "expected": "`110072` on a create is success-after-lookup after the full match, adopted or held, never a resend (E29-T04, \"Retry reuses the id\"; the R3 fixture class \"rejections\").",
+  "consumers": ["E29-Q02", "E29-Q04", "E29-X02"]
+}
