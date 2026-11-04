@@ -126,6 +126,14 @@ async def test_run_names_a_dropped_entry(capsys: pytest.CaptureFixture[str]) -> 
     assert "FAIL chain: first_bad_id=3 kind=prev_hash_mismatch" in capsys.readouterr().out
 
 
+async def test_run_names_a_reordered_entry(capsys: pytest.CaptureFixture[str]) -> None:
+    repo = await _repo(5)
+    second, third = repo.rows[1], repo.rows[2]
+    second["id"], third["id"] = third["id"], second["id"]
+    assert await _run(_Stores(repo)) == cli.EXIT_FAIL
+    assert "FAIL chain: first_bad_id=2 kind=prev_hash_mismatch" in capsys.readouterr().out
+
+
 async def test_run_names_a_forged_database_checkpoint(capsys: pytest.CaptureFixture[str]) -> None:
     repo = await _repo(3)
     repo.checkpoints[3] = {"head_hash": "d" * 64}
