@@ -60,7 +60,8 @@ def reorder() -> tuple[k.Node, tuple[str, list[str]]]:
 def row_menu() -> tuple[k.Node, tuple[str, list[str]]]:
     fid = "SCR-033/row-menu"
     first, last = k.W("W-16", 0), k.W("W-16", 1)
-    up = ui.t2_box(k.S("Move up"), name="menuitem Move up", typo=k.BODY, h=28, w=184, focused=True, rendering="2a",
+    # the item is 176 wide so its focus ring (+ 4 a side) is the wrapper's 184 and is never clipped (check_all)
+    up = ui.t2_box(k.S("Move up"), name="menuitem Move up", typo=k.BODY, h=28, w=176, focused=True, rendering="2a",
                    note='T2 2a (§1.4; E09-D09:49 gives menu items 2a): aria-disabled="true", arrow-reachable, '
                         'aria-describedby → its second line')
     up = ui.vbox("menuitem Move up with its reason", [up, ui.reason(first, 184, "T2 reason (W-16, second line)")],

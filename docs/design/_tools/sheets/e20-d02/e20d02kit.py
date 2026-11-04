@@ -66,7 +66,7 @@ VALIDATOR, PACKER, MKCALL = TOOLS / "validate_sheet.py", TOOLS / "compact.py", T
 COMPONENTS, TOKENS_FILE = TOOLS / "components.offline.json", TOOLS / "token-sync.json"
 HEAD = "the boards PR"  # the spec as built (§0 drawn, §19); re-pin DOCS when a further text fold lands
 DOCS = {  # key -> (repo-relative path, md5 at HEAD): every read is md5-checked
-    "spec": (_SPEC_PATH, "416c1519e1e6169a55b74455131fe031"),
+    "spec": (_SPEC_PATH, "558c4ba6afdb5eafb65d4ac6b2e922df"),
     "floor": ("docs/design/E18/E18-D02.md", "fd75a21fdc0b045c206182da712d94a8"),
     "fixture": ("packages/fixtures/bybit/2026-10-05/rest/instruments_before.json", "edd9dd2a060c51bd4bd1450307728ddf"),
 }

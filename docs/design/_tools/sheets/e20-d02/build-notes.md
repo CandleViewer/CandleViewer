@@ -108,5 +108,9 @@ reproduces the drawn sheets node for node (only those values differ from the she
    its marker is refused until it is measured. `check_all.py` asserts each pinned caption is drawn once, wrapped, with
    its pinned h.
 
+Folded with the redraw of board 07 (2026-11-04): its `Move up` menu item is 176 px wide, so the focus ring (4 px a
+side) is the 184 px item that holds it with its reason line and is no longer clipped; `check_all.py` fails any focus
+ring whose left edge plus width runs past the parent that clips it.
+
 Not folded (the PNGs are not redrawn; As built §19 records them): board 05's gear focus ring is clipped by the 28 px
 strip header row (only its sides show); board 10's `x(10:46)` edge label sits on same-grey candles on the dense frame.

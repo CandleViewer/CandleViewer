@@ -9,7 +9,8 @@ the synthetic-data and C-2.11 statement under the frames, the spec md5 pin in th
 source md5 pins, <= 10 boards with twins <= 1/3, §2's every state drawn on its §0 board, the T2 renderings (E09-D09
 §2.1: the CMP-019 lock, color.surface.raised + color.border.default, the label color.text.tertiary, the reason its
 own line in color.text.secondary), AC 3 (every breached cell on the greyscale frame carries its word and its glyph
-slot and no shade). Every Python child runs with -X utf8."""
+slot and no shade), no focus ring wider than the parent that clips it (its left edge, the flex parent's leading
+padding or its own x, plus its width within the parent's w). Every Python child runs with -X utf8."""
 from __future__ import annotations
 
 import hashlib
@@ -71,8 +72,45 @@ def tick_nodes(sheet: dict) -> list[str]:
             if n.get("t") == "text" and "`" in str(n.get("chars", ""))]
 
 
+def ring_overflows(sheet: dict) -> tuple[int, list[str]]:
+    """Every focus ring against the parent that holds (and clips) it: the ring's left edge (a flex parent's leading
+    padding, else the ring's own x) plus its width must lie within the parent's w, or Penpot cuts the ring's right
+    side (07's 192 px ring in its 184 px menu item, live check 2026-11-04). Parents that hug have no w and pass."""
+    rings, over = 0, []
+    for sec in sheet["sections"]:
+        for p, n in k.walk(sec["node"], sec["into"]):
+            if n["t"] != "board" or not n.get("w"):
+                continue
+            o = n.get("o") or {}
+            lead = k._px(o.get("pad")) + k._px(o.get("padX")) + k._px(o.get("padL"))
+            for c in n.get("kids") or []:
+                if not c.get("name", "").startswith("focus ring"):
+                    continue
+                rings += 1
+                left = lead if o.get("dir") and not c.get("abs") else float(c.get("x") or 0)
+                if left + k.est_width(c) > float(n["w"]) + 0.5:
+                    over.append(f"{p}/{c['name']} {left:g} + {k.est_width(c):g} > {n['w']}")
+    return rings, over
+
+
+def ring_checks() -> None:
+    total, over = 0, []
+    for nn in sorted(k.BOARDS):
+        r, o = ring_overflows(load(nn))
+        total += r
+        over += [f"{nn:02d} {x}" for x in o]
+    check(total > 0 and not over, f"focus rings: {total}, none wider than its container {over[:3]}")
+
+
 def mutation_checks() -> None:
-    """The backtick gate fires on a planted backtick (in memory; nothing is written)."""
+    """The backtick gate fires on a planted backtick, and the ring gate on a widened ring (in memory; nothing is
+    written)."""
+    raw7 = json.loads(json.dumps(load(7)))
+    ring = next(c for s in raw7["sections"] for _p, n in k.walk(s["node"]) for c in n.get("kids") or []
+                if n.get("w") and c.get("name", "").startswith("focus ring"))
+    ring["w"] = 10_000
+    check(not ring_overflows(load(7))[1] and len(ring_overflows(raw7)[1]) == 1,
+          "mutation: a widened focus ring fails the set")
     raw = load(1)
     mut = json.loads(json.dumps(raw))
     first = next(n for s in mut["sections"] for _p, n in k.walk(s["node"]) if n.get("t") == "text")
@@ -231,6 +269,7 @@ def main() -> int:
     t2_checks()
     ac3_checks()
     live_fold_checks()
+    ring_checks()
     mutation_checks()
     print(f"{'OK' if not FAILS else 'FAILED'}: {len(FAILS)} failures")
     return 1 if FAILS else 0
