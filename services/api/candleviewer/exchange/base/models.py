@@ -651,7 +651,9 @@ class Execution(BaseModel):
     follows 24 §8.1's `Execution`: `exchange_order_id` is the exchange's id of
     the order the execution fills, which B1 pairs it on (SR-E29-03), and
     `exec_type` and `fee_rate` are as `21-database-schema.md` §3.3.6 stores
-    them."""
+    them. `closed_size` is the venue's `closedSize` where the reply states it,
+    None for `execution/list`'s `""`; `position_idx` is None, as the venue's
+    fill has none: the store sets its order row's (24 §8.13, §14.4)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -670,6 +672,8 @@ class Execution(BaseModel):
     is_maker: bool
     exec_type: ExecType
     closed_pnl: Notional | None
+    closed_size: Qty | None = None
+    position_idx: Literal[0, 1, 2] | None = None
     ts_exec: TsUs
     ts_ingest: TsUs
     seq: int
@@ -699,24 +703,31 @@ class Position(BaseModel):
 
 
 class ClosedPnl(BaseModel):
-    """§14.4 `TradingPort.closed_pnl`. **Deviation, noted in the PR**: no
-    formal field list is given in §14.4; this mirrors the exchange's
-    `GET /v5/position/closed-pnl` response shape at the neutral-vocabulary
-    level (no `retCode`/camelCase, C-2.2). `order_id` is the OMS's local id:
-    an adapter leaves it `None`; `qty` is the size the record closed."""
+    """§14.4 `TradingPort.closed_pnl`: one closing order's record of
+    `GET /v5/position/closed-pnl` (24 §8.13). `exchange_order_id` is the
+    venue's `orderId`, None, never `""`, when the venue writes it empty
+    (counted `no_order_id`, §14.2 rule 12); `order_id` is the OMS's local id,
+    which an adapter leaves `None`. `side` is the closing order's, `qty` the
+    size the record closed, `open_fee` and `close_fee` the venue's where the
+    reply states them. `created_at` is the venue's `createdTime`, the closing
+    order's creation, never the position's open; `closed_at` its
+    `updatedTime`."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     account_id: AccountId
     symbol: Symbol
+    exchange_order_id: ExchangeOrderId | None = None
     order_id: OrderId | None = None
     side: Side
     qty: Qty
     avg_entry_price: Px
     avg_exit_price: Px
     closed_pnl: Notional
+    open_fee: Notional | None = None
+    close_fee: Notional | None = None
     leverage: Decimal
-    opened_at: TsUs
+    created_at: TsUs
     closed_at: TsUs
 
 
