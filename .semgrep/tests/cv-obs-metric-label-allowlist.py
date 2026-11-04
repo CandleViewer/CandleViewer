@@ -86,3 +86,8 @@ def ok_indicators_426(reg: object) -> None:
 
 def ok_generation_3641(reg: object) -> None:
     reg.histogram("cv_q_seconds", "help", ("generation",))  # ok: cv-obs-metric-label-allowlist
+
+
+def ok_rule_producers_5745(reg: object) -> None:
+    reg.counter("cv_y_total", "help", ("metric",))  # ok: cv-obs-metric-label-allowlist
+    reg.counter("cv_z_total", "help", ("producer",))  # ok: cv-obs-metric-label-allowlist
