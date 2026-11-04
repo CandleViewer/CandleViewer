@@ -2,7 +2,7 @@
 `setPositionLeverage`. Every answer the route gives, on the fakes of
 `tests/unit/api/test_position_leverage_route.py`, is a status 22 declares for the operation, with
 a body its response schema accepts (the same `deref` and JSON Schema 2020-12 the other order
-contract tests use; 401 is the session layer's, declared once in `info`)."""
+contract tests use; a `401` is step 1's, the shared `Unauthorized`)."""
 
 from __future__ import annotations
 
@@ -42,10 +42,20 @@ def _declared(status: int) -> Any:
     return media["schema"]
 
 
+def _declared_headers(status: int) -> set[str]:
+    """The response headers 22 names for `status`, lower-cased as the wire carries them."""
+    return {
+        name.lower()
+        for name in deref(_SPEC, _OPERATION["responses"][str(status)]).get("headers", {})
+    }
+
+
 #: (case, status, world, world change, caller, position, body, header changes)
 _CASES: list[tuple[str, int, Callable[[], World], Callable[[World], None], str, str, Any, Any]] = [
     ("ok", 200, World, _KEEP, "owner", ON_A, {"leverage": "12.5"}, {}),
+    ("replay", 200, World, _KEEP, "owner", ON_A, {"leverage": "12.5"}, {}),
     ("bad_id", 400, World, _KEEP, "owner", "x", {"leverage": "12"}, {}),
+    ("no_session", 401, World, _KEEP, "nobody", ON_A, {"leverage": "12"}, {}),
     ("no_key", 400, World, _KEEP, "owner", ON_A, {"leverage": "12"}, {"idempotency-key": None}),
     ("forbidden", 403, World, _KEEP, "viewer", ON_A, {"leverage": "12"}, {}),
     ("read_only", 403, World, _KEEP, "reader", ON_A, {"leverage": "12"}, {}),
@@ -86,6 +96,8 @@ async def test_contract_conformance(
         if case in ("rate", "reuse"):  # the minute's one change, or the key's first body
             first = sent if case == "reuse" else headers(who)
             assert (await client.put(path, json={"leverage": "11"}, headers=first)).is_success
+        if case == "replay":  # the same key and body again: the stored `200`
+            assert (await client.put(path, json=body, headers=sent)).status_code == 200
         answer = await client.put(path, json=body, headers=sent)
     assert answer.status_code == status, (case, answer.text)
     media = answer.headers["content-type"]
@@ -97,6 +109,9 @@ async def test_contract_conformance(
     assert errors == [], (case, errors)
     if status in (429, 503) and case in ("rate", "not_ready"):
         assert int(answer.headers["retry-after"]) >= 1
+    assert (answer.headers.get("idempotency-replayed") == "true") == (case == "replay"), case
+    if case == "replay":  # the header the 24 h record sends is one 22 declares for the `200`
+        assert "idempotency-replayed" in _declared_headers(status)
 
 
 def test_contract_conformance_covers_the_operation_this_pr_serves() -> None:

@@ -2,8 +2,8 @@
 operations this PR serves. Every answer each route gives, on the fakes of
 `tests/unit/api/oms_reads_world.py`, is validated against the response 22 declares for that
 operation and status (the same `deref` and JSON Schema 2020-12 the other order contract tests
-use), and every status a route answers is one 22 declares for it (401 is the session layer's,
-declared once in `info`). The RBAC cells are `tests/contract/rbac/matrix.yaml`'s; the
+use), and every status a route answers is one 22 declares for it (a `401` is step 1's, the
+shared `Unauthorized`). The RBAC cells are `tests/contract/rbac/matrix.yaml`'s; the
 `contract` CI job runs both, under no new check name (BQ-11)."""
 
 from __future__ import annotations
@@ -51,6 +51,7 @@ def _cases(operation: str) -> list[tuple[str, int, Callable[[World], None], str,
     keep: Callable[[World], None] = lambda w: None  # noqa: E731
     cases = [
         ("ok", 200, keep, "owner", {}),
+        ("session", 401, keep, "nobody", {}),  # step 1: no verified session
         ("forbidden", 403, keep, "bare", {}),
         ("store", 503, lambda w: setattr(w.store, "fail", True), "owner", {}),
         ("unwired", 503, lambda w: setattr(w, "composed", False), "owner", {}),
@@ -106,6 +107,14 @@ async def test_contract_conformance(
     )
     errors = [error.message for error in validator.iter_errors(answer.json())]
     assert errors == [], (case, errors)
+
+
+def test_every_read_declares_the_shared_unauthorized_for_its_missing_session() -> None:
+    """Step 1's `401` is the one shared `Unauthorized` on each of the seven reads (E29-Q02, #1147);
+    the `session` case above drives it and checks the body it answers."""
+    shared = {"$ref": "#/components/responses/Unauthorized"}
+    for operation, (template, _) in _ROUTES.items():
+        assert _SPEC["paths"][template]["get"]["responses"]["401"] == shared, operation
 
 
 def test_contract_conformance_covers_every_read_this_pr_serves() -> None:
