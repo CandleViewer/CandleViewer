@@ -31,7 +31,10 @@ tests/contract/test_e29_request_direction_contract.py::test_request_direction_a_
 tests/contract/test_e29_request_direction_contract.py::test_request_direction_an_unknown_body_member_is_refused | the seven E29 writes with a body | E29-TC-650, E29-TC-655
 tests/contract/test_e29_request_direction_contract.py::test_request_direction_a_member_of_the_wrong_type_is_refused | the eight E29 writes and four lists | E29-TC-650, E29-TC-655
 tests/contract/test_e29_request_direction_contract.py::test_request_direction_a_missing_required_member_is_refused | the E29 writes with a required member | E29-TC-650, E29-TC-655
-tests/contract/test_e29_request_direction_contract.py::test_request_direction_more_account_ids_than_22_allows_is_refused | listOrders, listPositions, listExecutions, listClosedPnl | E29-TC-655
+tests/contract/test_e29_request_direction_contract.py::test_request_direction_a_value_past_a_bound_22_declares_is_refused | the E29 writes and lists: past a maxItems, uniqueItems, minimum, maximum or maxLength | E29-TC-650, E29-TC-655
+tests/contract/test_e29_request_direction_contract.py::test_request_direction_an_absent_body_is_refused | the six E29 writes whose body 22 requires | E29-TC-650, E29-TC-655
+tests/contract/test_e29_request_direction_contract.py::test_request_direction_the_position_writes_refuse_a_body_with_400 | closePosition, reversePosition, closeAllPositions, setPositionLeverage: a refused body (F6) | E29-TC-650
+tests/contract/test_e29_request_direction_contract.py::test_request_direction_a_key_reused_for_another_body_of_close_all_is_409 | closeAllPositions: POST /positions/close-all, a reused key (F1) | E29-TC-650
 
 # C2: Schemathesis over the E29 operations, in process (tests/contract/test_e29_oms_schemathesis_contract.py)
 tests/contract/test_e29_oms_schemathesis_contract.py::test_e29_reads_schemathesis_fuzz | the seven E29 reads, fuzzed (Schemathesis) | E29-TC-650, E29-TC-655

@@ -6,20 +6,31 @@ operation takes in. One sweep over the eight writes (`placeOrder`, `amendOrder`,
 schemas: the sample is the first request example of the operation (else the simplest value its
 schema names; a world value where 22 cannot say what a route's rule needs), and each refused
 request is that sample with one member made to break its schema: an unknown member (a write must
-refuse one, C-6.3), a value of another type, a required member left out, more account ids than
-`maxItems` allows. The test first checks that 22 refuses the request, then asks the route on the
-fakes of its unit tests (`_e29_oms_world`): the sample is accepted (a `2xx` 22 lists), a broken
-one is refused with `400` or `422`, as 22 lists for the operation, a code of `x-error-codes` and
-the `Problem` body its response declares.
+refuse one, C-6.3), a value of another type, a value one past a bound 22 declares (`maxItems`,
+`uniqueItems`, `minimum`, `maximum`, `maxLength`), a required member left out, or the body 22
+requires left out. The test first checks that 22 refuses the request (and, for a bound, takes the
+value at it), then asks the route on the fakes of its unit tests (`_e29_oms_world`): the sample is
+accepted (a `2xx` 22 lists), a broken one is refused with `400` or `422`, as 22 lists for the
+operation, a code of `x-error-codes` with the status the registry pairs with it, and the `Problem`
+body its response declares.
+
+F6, ruled: `validation_failed` is `400` everywhere (22's registry). Until #5855's fix (item 3)
+moves them, `closePosition`, `reversePosition`, `closeAllPositions` and `setPositionLeverage` refuse
+a body `422 validation_failed`, as 22's `setPositionLeverage` prose still says; the pairing is
+relaxed on those four routes (`_F6`) and on no other, and a strict `xfail` pins the `400`: its flip
+deletes `_F6` and the marker.
 
 Left out, each for its reason: `X-CSRF-Token` (required by 22, but SR-041's guard is the composed
 app's middleware, which these worlds do not run, and it answers `403`); `If-Match` (a plain
-string: nothing to break); `X-Arm-Token` (an empty one reads as none, which a demo account never
-needs); an unknown query member of a list (the router ignores it, as every list does, and 22
-declares no refusal); the three reads by id (a path only: `test_oms_read_routes_contract` has
-their `400`); `setPositionTpSl` (no router serves it: `test_e29_oms_schemathesis_contract` pins
-that). 22's lookup members of `listOrders` (`idempotency_key`, `order_link_id`) are read by no
-route yet, so their wrong-type cases are `xfail` (strict): the lookup's change deletes the marker.
+string: nothing to break); `X-Arm-Token` (an empty one, or one over 256 characters, reads as none:
+a demo account never needs one, a live one answers `403 session_not_armed`); an unknown query
+member of a list (the router ignores it, as every list does, and 22 declares no refusal); the three
+reads by id (a path, whose `400` `test_oms_read_routes_contract` has, and `getOrder`'s
+`include_events`, unit-tested in `test_oms_reads_route`); `setPositionTpSl` (no router serves it:
+`test_e29_oms_schemathesis_contract` pins that). 22's lookup members of `listOrders`
+(`idempotency_key`, `order_link_id`) are read by no route yet, so their wrong-type cases are
+`xfail` (strict) and their bounds wait: #5552 implements the lookup, and its change deletes the
+marker.
 """
 
 from __future__ import annotations
@@ -49,14 +60,22 @@ _WRITES: Final = (
 )  # fmt: skip
 _LISTS: Final = ("listOrders", "listPositions", "listExecutions", "listClosedPnl")
 _FORMATS: Final = Draft202012Validator.FORMAT_CHECKER
-_CODES: Final = {entry["code"] for entry in SPEC["x-error-codes"]}
+_STATUS: Final = {entry["code"]: entry["status"] for entry in SPEC["x-error-codes"]}
 _ABSENT: Final = object()  # a member left out of a request
 #: What a route's rule needs and 22 cannot say: a leverage within the cap, the lists' account.
 _LEVERAGE: Final = {"leverage": "12.5"}
 _ACCOUNTS: Final = {"exchange_account_ids": [str(ACCOUNT_A)]}
 #: A body member's break: a value of another type than it takes (the first 22 refuses).
 _STRANGERS: Final[tuple[Any, ...]] = (12345, "x", True, [], {}, None)
-#: 22's lookup (#2303) names two members no route reads yet: a list ignores them.
+#: What 22 can bound a member by: the value one past each is a break.
+_BOUNDS: Final = ("maxItems", "uniqueItems", "minimum", "maximum", "maxLength")
+#: F6 (module docstring): the routes that refuse a body `422` until #5855 (item 3) moves them to
+#: the `400` the registry pairs with `validation_failed`.
+_F6: Final = frozenset(
+    {"closePosition", "reversePosition", "closeAllPositions", "setPositionLeverage"}
+)
+#: 22's lookup (#2303) names two members no route reads yet: a list ignores them. #5552 implements
+#: it and flips their cases (strict `xfail`): its change deletes this set and the marker.
 _UNREAD: Final = {
     ("listOrders", "query", "idempotency_key"),
     ("listOrders", "query", "order_link_id"),
@@ -107,6 +126,11 @@ def body_of(operation_id: str) -> tuple[dict[str, Any], Any] | None:
     return media["schema"], named[0] if named else _ABSENT
 
 
+def body_required(operation_id: str) -> bool:
+    """Whether 22 requires the request body of an operation (`requestBody.required`)."""
+    return bool(operation(operation_id)[2].get("requestBody", {}).get("required"))
+
+
 @dataclass(frozen=True)
 class Request:
     """One request as 22 splits it: path values, query, headers and the JSON body."""
@@ -127,7 +151,7 @@ class Request:
 
     def conforms(self) -> bool:
         """Whether 22 takes this request: each member sent meets its schema, each required one
-        is sent."""
+        is sent, and so is the body when 22 requires it."""
         sent = {"path": self.path_values, "query": self.query, "header": self.headers}
         for param in parameters(self.operation):
             held = sent[param["in"]]
@@ -136,6 +160,8 @@ class Request:
                     return False
             elif param.get("required"):
                 return False
+        if self.body is _ABSENT:
+            return not body_required(self.operation)
         found = body_of(self.operation)
         return found is None or accepts(found[0], self.body)
 
@@ -159,10 +185,13 @@ def valid_request(operation_id: str, served: Served) -> Request:
     return Request(operation_id, path_values, query, headers, body)
 
 
-async def send(request: Request, served: Served) -> httpx.Response:
-    """`request` to its operation's route, at the path and method 22 gives it."""
+async def send(request: Request, served: Served, *, raise_faults: bool = True) -> httpx.Response:
+    """`request` to its operation's route, at the path and method 22 gives it. A fault the route
+    lets out is raised, unless `raise_faults` is off: then it is the answer a client reads."""
     path, method, _ = operation(request.operation)
-    transport = httpx.ASGITransport(app=served.app, client=("127.0.0.1", 50000))
+    transport = httpx.ASGITransport(
+        app=served.app, raise_app_exceptions=raise_faults, client=("127.0.0.1", 50000)
+    )
     sent: dict[str, Any] = {} if request.body is _ABSENT else {"json": request.body}
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
         return await client.request(
@@ -173,12 +202,17 @@ async def send(request: Request, served: Served) -> httpx.Response:
 
 def refused(request: Request, answer: httpx.Response) -> None:
     """`answer` is a refusal as 22 declares it for the operation: a `400` or `422` it lists, a code
-    of the registry, and the `Problem` its response names."""
+    of the registry with the status the registry pairs with it (but `422 validation_failed` on the
+    `_F6` routes), and the `Problem` its response names."""
     responses = operation(request.operation)[2]["responses"]
     assert answer.status_code in (400, 422), answer.text
     assert str(answer.status_code) in responses, f"22 lists no {answer.status_code}"
     body = answer.json()
-    assert body["code"] in _CODES, body
+    code = body["code"]
+    assert code in _STATUS, body
+    f6 = code == "validation_failed" and request.operation in _F6  # the one pairing relaxed
+    paired = {_STATUS[code], *([422] if f6 else [])}
+    assert answer.status_code in paired, f"22 pairs {code} with {_STATUS[code]}: {answer.text}"
     assert answer.headers["content-type"].startswith("application/problem+json")
     (media,) = inline(responses[str(answer.status_code)])["content"].values()
     Draft202012Validator(media["schema"], format_checker=_FORMATS).validate(body)
@@ -199,7 +233,9 @@ def _members(*, required: bool) -> list[Any]:
     """`(operation, place, name)` of each member the sweep breaks, each a `pytest.param`: for a
     wrong type every member of a body, each path or query parameter and the key; for a missing
     one each required member of a body and the key (never `X-CSRF-Token`, module docstring)."""
-    unread = pytest.mark.xfail(strict=True, reason="22's lookup (#2303) is read by no route yet")
+    unread = pytest.mark.xfail(
+        strict=True, reason="22's lookup (#2303, implemented by #5552) is read by no route yet"
+    )
     found: list[tuple[str, str, str]] = []
     for operation_id in (*_WRITES, *_LISTS):
         body = body_of(operation_id)
@@ -223,6 +259,43 @@ def _schema_of(operation_id: str, place: str, name: str) -> Any:
         return found[0]["properties"][name]
     params = parameters(operation_id)
     return next(p["schema"] for p in params if (p["in"], p["name"]) == (place, name))
+
+
+def _bounds() -> list[Any]:
+    """`(operation, place, name, bound)` for each of `_BOUNDS` that 22 declares on a member the
+    sweep breaks, each a `pytest.param` (the lookup members of `_UNREAD` wait for their route)."""
+    found = []
+    for member in _members(required=False):
+        if member.values not in _UNREAD:
+            schema = _schema_of(*member.values)
+            found += [
+                pytest.param(*member.values, bound, id=f"{member.id}-{bound}")
+                for bound in _BOUNDS
+                if schema.get(bound, False) is not False
+            ]
+    return found
+
+
+def _uuids(count: int) -> list[str]:
+    """`count` distinct ids, the items of the lists 22 bounds."""
+    return [f"00000000-0000-4000-8000-{n:012d}" for n in range(1, count + 1)]
+
+
+def _beside(schema: Any, bound: str) -> tuple[Any, Any]:
+    """The value at the `bound` 22 declares on `schema` (22 takes it) and the first one past it."""
+    assert "items" not in schema or schema["items"].get("format") == "uuid", "extend _uuids"
+    limit = schema[bound]
+    match bound:
+        case "maxItems":
+            return _uuids(limit), _uuids(limit + 1)
+        case "uniqueItems":
+            return _uuids(2), _uuids(1) * 2
+        case "minimum":
+            return limit, limit - 1
+        case "maximum":
+            return limit, limit + 1
+        case _:  # maxLength
+            return "x" * limit, "x" * (limit + 1)
 
 
 async def _asked(operation_id: str, patched: pytest.MonkeyPatch) -> tuple[Request, Served]:
@@ -291,15 +364,66 @@ async def test_request_direction_a_missing_required_member_is_refused(
     refused(request, await send(request, served))
 
 
-@pytest.mark.parametrize("operation_id", _LISTS)
-async def test_request_direction_more_account_ids_than_22_allows_is_refused(
-    operation_id: str, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(("operation_id", "place", "name", "bound"), _bounds())
+async def test_request_direction_a_value_past_a_bound_22_declares_is_refused(
+    operation_id: str, place: str, name: str, bound: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """E29-TC-655: more than 25 account ids is `400 validation_failed`, with nothing read."""
+    """E29-TC-655: more than 25 account ids, a `limit` outside its range, a note too long: a `400
+    validation_failed` (for now a `422` on the `_F6` routes), with nothing read. 22 takes the value
+    at the bound, so the bound is the only break."""
     request, served = await _asked(operation_id, monkeypatch)
-    schema = _schema_of(operation_id, "query", "exchange_account_ids")
-    ids = [f"00000000-0000-4000-8000-{n:012d}" for n in range(1, schema["maxItems"] + 2)]
-    request = request.with_member("query", "exchange_account_ids", ids)
+    within, past = _beside(_schema_of(operation_id, place, name), bound)
+    assert request.with_member(place, name, within).conforms()
+    request = request.with_member(place, name, past)
     assert not request.conforms()
     refused(request, await send(request, served))
-    assert served.world.store.calls == []
+    assert (operation_id not in _LISTS) or served.world.store.calls == []  # a list read nothing
+
+
+@pytest.mark.parametrize("operation_id", [op for op in _WRITES if body_required(op)])
+async def test_request_direction_an_absent_body_is_refused(
+    operation_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E29-TC-655: a write whose body 22 requires, sent with none, is refused."""
+    request, served = await _asked(operation_id, monkeypatch)
+    request = replace(request, body=_ABSENT)
+    assert not request.conforms()
+    refused(request, await send(request, served))
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="F6 (#5855 item 3): the four position writes refuse a body 422, where validation_failed "
+    "is 400 everywhere; its fix flips this: delete _F6 and the marker",
+)
+@pytest.mark.parametrize("operation_id", sorted(_F6))
+async def test_request_direction_the_position_writes_refuse_a_body_with_400(
+    operation_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`validation_failed` is `400` (22's registry, F6 ruled): the four position writes answer a
+    body they refuse as every other write does."""
+    request, served = await _asked(operation_id, monkeypatch)
+    answer = await send(request.with_member("body", "unexpected_member", 1), served)
+    assert answer.status_code == 400, answer.text
+    assert answer.json()["code"] == "validation_failed"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="F1 (#5855): close-all lets IdempotencyKeyReuse escape, a 500 where 22 lists 409; "
+    "its fix deletes this marker",
+)
+async def test_request_direction_a_key_reused_for_another_body_of_close_all_is_409(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """22 lists `409 idempotency_key_reuse` for `closeAllPositions`: a key whose answer is stored,
+    sent again with another body, as a client reads it behind the app's error handler."""
+    request, served = await _asked("closeAllPositions", monkeypatch)
+    symbol = sample(_schema_of(request.operation, "body", "symbol"))
+    other = request.with_member("body", "symbol", symbol)
+    await send(request, served)
+    again = await send(other, served, raise_faults=False)
+    assert again.status_code == 409, again.text
+    assert again.json()["code"] == "idempotency_key_reuse"

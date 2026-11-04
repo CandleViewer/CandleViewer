@@ -2,10 +2,13 @@
 operations as they split a request, and the E29 routers on the fakes of their own unit tests.
 
 `create_app()` composes these routes with no OMS on its fake backend (`oms_runtime` and `oms_reads`
-are `None` there), so each answers `501` or `503` before it reads a request: the routes are driven
-as their own tests drive them, one app per group of operations, each the real router over the
-doubles of its unit tests (the exits' scripted facade, the read world's in-memory store, the
-position worlds' pipelines). The session is the hooks' (`supply`): the Owner's bearer,
+are `None` there), so each answers `501` or `503` to a valid request (a position write refuses an
+invalid body first: `closeAllPositions` parses it at `position_close.py:681`, before `runtime()` at
+`:697`): the routes are driven as their own tests drive them, one app per group of operations, each
+the real router over the doubles of its unit tests (the exits' scripted facade, the read world's
+in-memory store, the position worlds' pipelines). `build` reaches into those doubles (`_Endless`,
+`world.principals`, `rig.Risk`): a change to one fails the valid-sample tests, loudly. The session
+is the hooks' (`supply`): the Owner's bearer,
 the SR-041 token a write declares, the arm token a live order takes and a fresh `Idempotency-Key`.
 No operation of 22 takes a step-up but `setPositionTpSl` (`sl_loosen`), which no router serves.
 A support module (no `test_` prefix): pytest collects nothing from it.
@@ -86,7 +89,7 @@ def parameters(operation_id: str) -> list[dict[str, Any]]:
 
 def fresh_key() -> str:
     """An `Idempotency-Key` no other request of the process sent: a repeat under another body is
-    the hand-built modules' case (409), not the sweep's."""
+    the hand-built modules' case (409), but for the sweep's pin of F1 (`closeAllPositions`)."""
     return str(uuid.UUID(int=next(_KEYS)))
 
 
