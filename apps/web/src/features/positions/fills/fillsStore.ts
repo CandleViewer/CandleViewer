@@ -27,8 +27,8 @@
  *   directory, a narrowed `sub_ok` or the next snapshot settles who stayed (`takeSettled`), and
  *   REST brings their fills back. No read brings back a withdrawn, narrowed-away or over-cap
  *   account's fills (a withdrawn one's line can be dismissed; the account stays out until stop),
- *   and after `revoked`, a snapshot or not, no read applies until Retry. Any other reset voids the
- *   WS baseline and keeps the fills: they are records, and the next `snap` follows.
+ *   and after any `revoked`, no read applies until Retry or a snapshot lifts it. Any other reset
+ *   voids the WS baseline and keeps the fills: they are records, and the next `snap` follows.
  * - **Reads.** `readSignal()` is the signal of the REST reads that feed the store, and the feed
  *   drops the answer of an aborted one. A revoke lifted, by Retry or by a snapshot, starts them
  *   afresh: the reads asked before are aborted, and the next carry a new signal. Stop aborts all.
@@ -269,7 +269,7 @@ export function createFillsStore(): FillsStore {
       pending = null;
       narrowed = false; // ended: nothing is re-read or re-made until Retry
     } else {
-      revoked = true; // as after a snapshot: no read applies until Retry
+      revoked = true; // as after a snapshot: no read applies until Retry or a snapshot lifts it
       snapshotFailed = true; // refused before any snapshot: S-02, which the status reads first
     }
   }
@@ -383,7 +383,7 @@ export function createFillsStore(): FillsStore {
       touch();
     },
     applyRest(items) {
-      if (revoked) return; // no read applies until Retry (SR-E29-11)
+      if (revoked) return; // no read applies until Retry or a snapshot lifts it (SR-E29-11)
       for (const item of items) apply(item, "rest");
     },
     applyFrames(frames) {
@@ -425,8 +425,10 @@ export function createFillsStore(): FillsStore {
       const listed = [...heldAccounts(), ...(pending ?? []), ...(directory?.keys() ?? [])];
       const out = new Set(listed.filter((id) => !scope.has(id)));
       if (out.size === 0) return;
-      noteWithdrawn(out);
-      dropAccounts(out);
+      // a listed account the subscription left is out again on every later call: withdrawn once
+      const fresh = new Set([...out].filter((id) => !withdrawnIds.has(id)));
+      noteWithdrawn(fresh);
+      dropAccounts(fresh);
       if (pending === null) return;
       for (const id of out) pending.delete(id);
       settle(pending.size === 0);
