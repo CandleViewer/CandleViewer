@@ -214,6 +214,7 @@ describe("OI history read", () => {
       const onAnomaly = vi.fn();
       const out = await fetchOiHistory(req({ onAnomaly }));
       expect(out.kind === "ok" && out.truncated).toBe("newer");
+      expect(out.kind === "ok" && out.points).toHaveLength(2); // the valid points are still shown
       expect(onAnomaly).toHaveBeenCalledTimes(1); // once per read
       expect(onAnomaly).toHaveBeenCalledWith("cursor_missing");
     }
@@ -221,6 +222,27 @@ describe("OI history read", () => {
     const quiet = vi.fn();
     await fetchOiHistory(req({ onAnomaly: quiet })); // a clean read reports nothing
     expect(quiet).not.toHaveBeenCalled();
+  });
+
+  it("contains a throwing onAnomaly and skips it once the read is aborted", async () => {
+    apiFetch.mockResolvedValueOnce(
+      json(200, page(POINTS.slice(0, 2), { has_more: true, next_cursor: null })),
+    );
+    const onAnomaly = vi.fn(() => {
+      throw new Error("sink");
+    });
+    const out = await fetchOiHistory(req({ onAnomaly }));
+    expect(out.kind === "ok" && out.points).toHaveLength(2);
+    expect(onAnomaly).toHaveBeenCalledTimes(1);
+
+    const ctl = new AbortController();
+    apiFetch.mockImplementationOnce(async () => {
+      ctl.abort();
+      return json(200, page(POINTS.slice(0, 2), { has_more: true, next_cursor: null }));
+    });
+    const late = vi.fn();
+    await fetchOiHistory(req({ onAnomaly: late, signal: ctl.signal }));
+    expect(late).not.toHaveBeenCalled();
   });
 
   it("fails the whole read when a later page fails", async () => {

@@ -11,7 +11,15 @@ const dispatch: Report = (detail) => {
   window.dispatchEvent(new CustomEvent(THEME_ANALYTICS_EVENT, { detail }));
 };
 
-export function createOiAnalytics(report: Report = dispatch) {
+export function createOiAnalytics(sink: Report = dispatch) {
+  // a throwing sink never breaks the feed: the event is dropped
+  const report: Report = (detail) => {
+    try {
+      sink(detail);
+    } catch {
+      // analytics is best-effort
+    }
+  };
   return {
     /** D02 §14 `{mode, quadrant_colouring}`: E24-S02's toggle calls it (keys: #778's contract). */
     metricToggled: (mode: "absolute" | "delta", quadrantColouring: boolean): void =>

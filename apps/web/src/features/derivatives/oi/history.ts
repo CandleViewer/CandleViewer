@@ -212,7 +212,13 @@ export async function fetchOiHistory(req: HistoryRequest): Promise<HistoryResult
     const more = get(meta, "has_more") === true;
     if (more && (typeof next !== "string" || next === "")) {
       // `has_more` without a cursor: the rest cannot be read: said ("newer") and counted, never a silent ok
-      req.onAnomaly?.("cursor_missing");
+      if (!req.signal.aborted) {
+        try {
+          req.onAnomaly?.("cursor_missing"); // a throwing callback never rejects the read
+        } catch {
+          // the report is best-effort
+        }
+      }
       return done(byTime, coverage, gaps, "newer", malformed);
     }
     if (!more || typeof next !== "string") {

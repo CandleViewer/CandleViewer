@@ -9,14 +9,25 @@ describe("OI analytics", () => {
     analytics.backfillFailed("BTCUSDT", 400, "invalid_time_range");
     analytics.backfillFailed("BTCUSDT", 500, "Bad Thing: <x>");
     analytics.backfillFailed("BTCUSDT", 500, "a".repeat(41));
+    analytics.backfillFailed("BTCUSDT", 500, "a".repeat(40));
     analytics.backfillFailed("BTCUSDT", null, null);
     expect(report.mock.calls.map(([d]) => (d as { code: unknown }).code)).toEqual([
       "invalid_time_range",
       "other",
       "other",
+      "a".repeat(40),
       null,
     ]);
     expect(report.mock.calls[0]?.[0]).toMatchObject({ name: "oi_panel.backfill_failed" });
+  });
+
+  it("contains a throwing sink: no event method throws", () => {
+    const analytics = createOiAnalytics(() => {
+      throw new Error("sink");
+    });
+    expect(() => analytics.backfillFailed("BTCUSDT", 503, null)).not.toThrow();
+    expect(() => analytics.backfillAnomaly("BTCUSDT", "cursor_missing")).not.toThrow();
+    expect(() => analytics.metricToggled("delta", true)).not.toThrow();
   });
 
   it("counts a server contract breach with the anomaly's name and no value", () => {

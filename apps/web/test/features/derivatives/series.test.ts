@@ -176,6 +176,19 @@ describe("OI series reconciliation", () => {
     expect(s.latest()?.base).toBe(String(MAX_LIVE_ROWS + 4));
   });
 
+  it("marks the span of the evicted live bars as one live gap, never a line", () => {
+    const sec = 1_000; // ticks within LIVE_GAP_MS, so no seam of their own
+    const s = series(sec);
+    s.setHistory(HISTORY, COVERAGE, 5 * MIN);
+    const t0 = LAST_REST + 5 * MIN;
+    for (let i = 0; i < MAX_LIVE_ROWS; i += 1) s.addLive(at(t0 + i * sec, { base: String(i) }));
+    expect(s.gaps().filter((g) => g.kind === "live")).toEqual([]);
+    s.addLive(at(t0 + MAX_LIVE_ROWS * sec, { base: "x" })); // evicts the bar at t0
+    s.addLive(at(t0 + (MAX_LIVE_ROWS + 1) * sec, { base: "y" })); // and the next
+    const live = s.gaps().filter((g) => g.kind === "live");
+    expect(live).toEqual([{ fromMs: LAST_REST + 5 * MIN, toMs: t0 + 2 * sec, kind: "live" }]);
+  });
+
   it("keeps the last write per bar, and a repeated value only moves the as-of time", () => {
     const s = series();
     const t = Date.parse("2026-10-20T10:00:05Z");
