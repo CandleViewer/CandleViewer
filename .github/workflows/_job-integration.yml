@@ -256,7 +256,7 @@ jobs:
           cd services/api
           CV_PG_DSN=postgresql+asyncpg://cv:cv-chaos-ci@127.0.0.1:5432/candleviewer uv run alembic upgrade head
 
-      - name: Storage chaos scenarios (pytest -m "chaos and integration and not flaky")
+      - name: Storage chaos scenarios (pytest -m "chaos and integration and not flaky and not nightly")
         working-directory: services/api
         env:
           COMPOSE_PROJECT_NAME: cv-chaos # the one name tests/chaos/bars/_gate.py trusts
@@ -265,7 +265,8 @@ jobs:
           GF_SECURITY_ADMIN_PASSWORD: unused-ci
           MINIO_ROOT_PASSWORD: unused-ci
           CV_CHAOS_LOOPBACK_DIR: /mnt/cv-chaos-cold
-        run: uv run pytest tests/chaos -m "chaos and integration and not flaky" --no-cov -v -p no:randomly
+        # `nightly`: the OMS chaos Postgres tier (#1148), which its nightly job runs; never a merge group.
+        run: uv run pytest tests/chaos -m "chaos and integration and not flaky and not nightly" --no-cov -v -p no:randomly
 
       # GH-3087 regression check. S2 stops Postgres and starts it again; S3b and S8 then need it up.
       # `docker compose start` once exited 0 without starting it (S2 timed out, S3b and S8 got

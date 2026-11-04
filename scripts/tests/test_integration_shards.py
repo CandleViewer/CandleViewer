@@ -193,7 +193,7 @@ def test_what_runs_once_runs_in_the_stack_job_only() -> None:
         "verify_fixture_manifest.py",
         "uv run pytest tests/integration/pipeline",
         "tests/integration/security/test_sr047_listener_probe.py",
-        'uv run pytest tests/chaos -m "chaos and integration and not flaky"',
+        'uv run pytest tests/chaos -m "chaos and integration and not flaky and not nightly"',
         "tests/chaos/storage/test_stack_scenarios.py",
         "infra/grafana/tests/test_live_render.py",
     ]
