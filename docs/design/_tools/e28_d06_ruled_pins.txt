@@ -1,11 +1,11 @@
 # E28-D06 pins: one line per cited line, `KEY:line sha256[:12]` of its whitespace-
-# normalised text at a7d659a5be. Written only by --repin-ruled.
-14:1505 de31a1eb1db6
-22:7279 88d6e4c558a5
-22:17786 dffd7976cf98
-22:17827 90fbd08fb7aa
-22:17834 790f79dc7e87
-22:24848 361aa7bd58eb
+# normalised text at bc7788eba0. Written only by --repin-ruled.
+14:1507 de31a1eb1db6
+22:7371 88d6e4c558a5
+22:18000 dffd7976cf98
+22:18041 90fbd08fb7aa
+22:18048 790f79dc7e87
+22:25081 361aa7bd58eb
 D02:191 21f0446a68d2
 D02:194 1bb733f0ab0b
 D02:201 76da1e31ffda

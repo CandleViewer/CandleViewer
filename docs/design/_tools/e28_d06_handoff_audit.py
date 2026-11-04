@@ -3,8 +3,8 @@
 
 Standalone, offline, stdlib only; it runs no repo code and is run with `python3 -I`. It reads the
 pack (the spec, the hand-off, the copy deck) and the pins file from the working tree, and every
-cited file AS TEXT with `git show` at the pinned base (`BASE`). E28-D04 and E28-D05 have no PR yet:
-their rows join PR 1b by id and are re-cited at #840's and #841's heads once those open (the #842
+cited file AS TEXT with `git show` at the pinned base (`BASE`). E28-D04 and E28-D05 are merged
+(#5618, #5619; both in `BASE`): their rows join PR 1b and cite their merged lines (the #842
 ruling, 02). Default-deny: a gate that cannot read its input FAILs.
 
 Two stages, named by an explicit `--stage deck|full` (default `full`; never chosen by which files
@@ -24,8 +24,8 @@ Gates (each FAIL led by its name):
              row's `quote`, or its `text`; no placeholder word.
   G-STATUS   a merged row cites `22`, `14` or a D02 §10 row sourced (1) or (2); a RULED row cites
              D02 and never a D02 §10 row sourced (4); a row citing a (4) row is PROPOSED; an
-             E28-D03, E28-D04, E28-D05 or E28-D06 row is PROPOSED, a D04 row names R-3 and a D05
-             row R-4; at the full stage the spec's COUNT anchors equal the deck's counts.
+             E28-D03, E28-D04, E28-D05 or E28-D06 row is PROPOSED, a D04 row names R-3 and cites
+             `D04` lines only, a D05 row R-4 and `D05` lines only; at the full stage the spec's COUNT anchors equal the deck's counts.
   G-CODES    each of the ticket's eleven codes is a row's `code` or `rule`, or the header's alias
              of one (the deck is keyed by `22`'s served codes, C-6.1); spec section 8.2 lists them
              in order, each with a deck key that answers it.
@@ -89,10 +89,13 @@ TOOL_REL = "docs/design/_tools/e28_d06_handoff_audit.py"
 PINS_REL = "docs/design/_tools/e28_d06_ruled_pins.txt"
 OWN_FULL = (SPEC_REL, HAND_REL, DECK_REL, TOOL_REL, PINS_REL)
 OWN_DECK = (DECK_REL, TOOL_REL, PINS_REL)
-BASE = "a7d659a5bee5d06a28950f324800f84dc3853e6f"  # main when the BQ rulings were folded
+BASE = "bc7788eba0fc76622a5af9da7aa7db0f46610416"  # main with E28-D04 and E28-D05 merged
 D03_TEXT = "0af333fa0"  # E28-D03 PR 1 (#5463), merged in BASE
 BOARDS = "3b23ab11a"  # E28-D03 PR 2 (#5482), PENDING at this head: R-1, never read here
+D04_MERGE = "bc7788eba"  # E28-D04 (#840), merged as #5618
+D05_MERGE = "6170d577d"  # E28-D05 (#841), merged as #5619, in BASE unchanged
 SHAS = {"BASE": BASE[:10], "D03": D03_TEXT, "BOARDS": BOARDS}
+SHAS |= {"D04": D04_MERGE, "D05": D05_MERGE}
 PATHS: dict[str, str] = {
     "02": "docs/plan/02-definition-of-ready-done.md",
     "14": "docs/plan/14-screens-catalogue.md",
@@ -102,6 +105,8 @@ PATHS: dict[str, str] = {
     "23": "docs/plan/23-ws-protocol.md",
     "D02": "docs/design/E28/E28-D02.md",
     "D03": "docs/design/E28/E28-D03.md",
+    "D04": "docs/design/E28/E28-D04.md",
+    "D05": "docs/design/E28/E28-D05.md",
     "MX": "services/api/tests/contract/rbac/matrix.yaml",
     "ACT": "services/api/candleviewer/audit/actions.py",
     "CAL": "docs/plan/backlog/_tools/calendar_cv.py",
@@ -112,20 +117,21 @@ PATHS: dict[str, str] = {
     "E17-D01": "docs/design/E17/E17-D01.md",
     "README": "docs/design/README.md",
 }
-COPY_KEYS = ("D02", "D03", "14", "22", "E09-D09")  # a deck row's source may cite these only
+# a deck row's source may cite these only
+COPY_KEYS = ("D02", "D03", "D04", "D05", "14", "22", "E09-D09")
 CITE = re.compile(
-    r"`(\d\d|D02|D03|MX|ACT|CAL|E28J|E09-D09|E47-D04|E17-D01|README)`"
+    r"`(\d\d|D02|D03|D04|D05|MX|ACT|CAL|E28J|E09-D09|E47-D04|E17-D01|README)`"
     r":(\d+(?:–\d+)?(?:, :\d+(?:–\d+)?)*)"
 )
 ANCHOR = re.compile(r"(\S+?)<!--=([A-Z]+):([A-Za-z0-9]+)-->")
 D02_DECK = (574, 643)  # D02 section 10, rows 1 ... 70
-COMPONENT_LINES = {"SCR-061": 1510, "SCR-062": 1523, "SCR-130": 2748, "SCR-131": 2783}
-COMPONENT_LINES |= {"SCR-132": 2793, "SCR-133": 2806}
+COMPONENT_LINES = {"SCR-061": 1512, "SCR-062": 1525, "SCR-130": 2750, "SCR-131": 2785}
+COMPONENT_LINES |= {"SCR-132": 2795, "SCR-133": 2808}
 BUDGETS = {
-    "SCR133": (2808, r"<=\s*(\d+)\s*ms"),
-    "SCR062": (1522, r"under (\d+) ms scripting"),
-    "SCR061": (1507, r"preview ≤(\d+) ms"),
-    "SCR131": (2782, r"targets <=(\d+) s"),
+    "SCR133": (2810, r"<=\s*(\d+)\s*ms"),
+    "SCR062": (1524, r"under (\d+) ms scripting"),
+    "SCR061": (1509, r"preview ≤(\d+) ms"),
+    "SCR131": (2784, r"targets <=(\d+) s"),
 }
 HANDOFF_CMPS: tuple[str, ...] = (
     "CMP-254",
@@ -410,10 +416,11 @@ def g_status(t: Texts) -> list[Finding]:
         if owner in ("E28-D03", "E28-D04", "E28-D05", "E28-D06") and st != "PROPOSED":
             bad.append(("G-STATUS", f"{k}: {owner}'s string is {st}, not PROPOSED"))
         joined = " ".join(str(s) for s in r.get("source") or [])
-        if owner == "E28-D04" and ("(R-3)" not in joined or cs):
-            bad.append(("G-STATUS", f"{k}: a D04 row names R-3 and no line"))
-        if owner == "E28-D05" and ("(R-4)" not in joined or cs):
-            bad.append(("G-STATUS", f"{k}: a D05 row names R-4 and no line"))
+        keys = {key for key, _ in cs}
+        if owner == "E28-D04" and ("(R-3)" not in joined or keys != {"D04"}):
+            bad.append(("G-STATUS", f"{k}: a D04 row names R-3 and cites `D04` lines only"))
+        if owner == "E28-D05" and ("(R-4)" not in joined or keys != {"D05"}):
+            bad.append(("G-STATUS", f"{k}: a D05 row names R-4 and cites `D05` lines only"))
     return bad
 
 
@@ -841,7 +848,7 @@ MUTATIONS: list[tuple[str, str, Callable[[Texts], Texts]]] = [
     ("MU-9", "G-SCOPE", lambda t: replace(t, changed=[*(t.changed or []), PATHS["14"]])),
     ("MU-10", "G-DECK", deck_edit("e28.code.write_once", setter("id", "e28.code.write_ONCE"))),
     ("MU-11", "G-COMP", sub("spec", "| CMP-232 | LimitsChip", "| CMP-23x | LimitsChip")),
-    ("MU-12", "G-BIND", sub("spec", "`updated_at` (`22`:20134)", "`updated_on` (`22`:20134)")),
+    ("MU-12", "G-BIND", sub("spec", "`updated_at` (`22`:20367)", "`updated_on` (`22`:20367)")),
     ("MU-13", "G-BUDGET", sub("spec", "600<!--=BUD:SCR133-->", "650<!--=BUD:SCR133-->")),
     (
         "MU-14",
@@ -890,6 +897,7 @@ MUTATIONS: list[tuple[str, str, Callable[[Texts], Texts]]] = [
         "G-CODES",
         lambda t: replace(t, deck=(t.deck or "").replace('"aliases": {', '"x": {', 1)),
     ),
+    ("MU-29", "G-STATUS", deck_edit("e28.busy.saving", setter("owner", "E28-D05"))),
 ]
 
 
