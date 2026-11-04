@@ -7,7 +7,7 @@ needs `CV_REPO` naming a checkout and writes to the sibling `E19-D05-cap/` and `
 
 ## Sources (md5-pinned in `DOCS`; the kit refuses drifted bytes)
 
-- The spec, by repo-relative path in this checkout only (md5 `5f60e801`, the text with §0 and §16 recording the
+- The spec, by repo-relative path in this checkout only (md5 `3129e693`, the text with §0 and §16 recording the
   boards as drawn). §0's board table and not-drawn line,
   §2's motion table, §3's matrix, §4.1 / §4.2's tables, §8.1's flash table and §8.3's copy deck are parsed, never
   typed; every drawn word passes `k.S` (verbatim in the spec, D03 or D02, markdown marks dropped) or is a `copy_gap`
@@ -74,7 +74,7 @@ minute of prints one row under VAL that moves the developing area; HS-1 on two t
 - **Announcements (BQ-7 ruling).** A re-bucket or period change says only the action's D02 word once ("Profile settings applied.", "Period: {mode}") and its end is silent; D05 W-2 ("Recalculating") is the composite progress bar's name, never announced, and its frame is not drawn (§0). The busy bar shows after 300 ms (§6.1). The old W-2a is gone.
 - **Opacity stand-in (FALLBACKS alpha).** The renderer binds opacity only to a token and no token carries a key frame's
   value (R-3 adds none): 1 is solid, 0 absent, between is the shape's 1 px outline with the computed value in the
-  caption (accelerate at the middle: 0.372 progress; decelerate: 0.890).
+  caption (accelerate at the middle: 0.372 progress; standard, M-1 and M-9: 0.878).
 - **Strip form.** §0: frame 0, the middle and the end, the reduce strip beneath. A row that is a cut in every mode
   draws its normal strip once and states the reduce strip in words (the nodes are the same, R-6).
 - **Crop.** A key frame is a 280 px crop of the docked panel (header strip, plot, legend words); D03's controls rows
@@ -100,3 +100,11 @@ The ten boards were drawn and exported in one round; the record carried two geom
 
 A rebuild reproduces the drawn sheets node for node but for those values (checked by a geometry diff against the
 drawn set); the sheet notes also name the spec's new md5.
+
+## Boards-read fold (#5814, 2026-11-04)
+
+- **Easing.** M-1 and M-9 take `motion.easing.standard` (§2, R-3); boards 04 and 08 had drawn `decelerate`'s middle
+  (0.890). The middle is now 0.878 (board 08's opacity 0.88). The self-test checks each drawn middle against §2's easing.
+- **Candles under the legend.** Board 08's overlay crop clamps each wick and body to y ≥ the legend strip, so none
+  crosses the legend row; `check_all.py` flags a candle mark that crosses a text.
+- **Redrawn.** Boards 04 and 08 only; the other eight sheets are unchanged but for the spec md5 in their notes.

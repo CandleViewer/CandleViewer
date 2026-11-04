@@ -1,8 +1,8 @@
 """Scan the ten E19-D05 sheets (raw in the cap folder, packed in the v4 folder): validator (with the shared components
 list and the default token-sync.json), mkcall4 count, packed sha256 = raw sheet's, no inst, local icons only, no boolean wrap,
 no '/' in node names, no banned string, a "state:" caption per frame, table cells padded 8 px a side with their text
-inside (>= 16 px between texts), row / column overflow and sibling text overlap by the kit's estimates, the spec md5
-pin. Run: python3 -I -B check_all.py"""
+inside (>= 16 px between texts), row / column overflow and sibling text overlap by the kit's estimates, no candle
+wick or body crossing a text, the spec md5 pin. Run: python3 -I -B check_all.py"""
 from __future__ import annotations
 
 import hashlib
@@ -23,6 +23,9 @@ OVERLAY = re.compile(r"^(board marker|POC rail|nPOC ray|tested ray|VA bracket|br
                      r"header strip|plot|legend strip|busy bar|CMP-078|bar |VAH tick|VAL tick|region|axis|"
                      r"second tick|band start|cut |event \d+$|spoken|wick|body|overlay|strip \d+ cell \d+ · )",
                      re.DOTALL)
+
+
+CANDLE = re.compile(r"^(wick|body) \d+$")  # candle marks: exempt from the text-text estimate, never from a text
 
 
 GROUP = re.compile(r"^group \d{2}$", re.DOTALL)  # the kit's section groups (k.chunk): positions unchanged
@@ -120,6 +123,14 @@ def main() -> int:
                 flat = [y for x in n["kids"] for y in (x.get("kids") or [] if GROUP.match(x["name"]) else [x])]
                 boxes = [(x["name"], x.get("x", 0), x.get("y", 0), k.est_width(x), k.est_height(x))
                          for x in flat if x["t"] in ("text", "board") and not OVERLAY.match(x["name"])]
+                marks = [(x["name"], x.get("x", 0), x.get("y", 0), x.get("w", 0), x.get("h", 0))
+                         for x in flat if x["t"] == "rect" and CANDLE.match(x["name"])]
+                texts = [x for x in boxes if x[0] in {y["name"] for y in flat if y["t"] == "text"}]
+                for a in marks:
+                    for c2 in texts:
+                        if (a[1] < c2[1] + c2[3] and c2[1] < a[1] + a[3] and a[2] < c2[2] + c2[4]
+                                and c2[2] < a[2] + a[4]):
+                            bad.append(f"{p}: candle mark {a[0]!r} crosses text {c2[0]!r}")
                 for i, a in enumerate(boxes):
                     for c2 in boxes[i + 1:]:
                         if (a[1] < c2[1] + c2[3] - 1 and c2[1] < a[1] + a[3] - 1 and a[2] < c2[2] + c2[4] - 1

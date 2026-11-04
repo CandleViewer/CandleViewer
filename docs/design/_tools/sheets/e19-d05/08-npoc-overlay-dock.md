@@ -12,8 +12,8 @@ Board 08 of ten (§0 L113: SCR-038/npoc-fade-dark, SCR-038/npoc-tested-cut-dark,
 
 ## Validator and size
 
-- `08-npoc-overlay-dock.json: 0 errors, 1 warnings, 27 sections, 120272 bytes` (exit 0)
-- 27 sections, 120272 bytes
+- `08-npoc-overlay-dock.json: 0 errors, 1 warnings, 27 sections, 119648 bytes` (exit 0)
+- 27 sections, 119648 bytes
 
 ## Live checks (6)
 
@@ -68,7 +68,7 @@ Board 08 of ten (§0 L113: SCR-038/npoc-fade-dark, SCR-038/npoc-tested-cut-dark,
 
 ## Sources (5)
 
-- spec E19-D05.md md5 5f60e801 in this checkout (§0 L113; BQ-13 RULED: ACCEPT; no hand-off file, BQ-1)
+- spec E19-D05.md md5 3129e693 in this checkout (§0 L113; BQ-13 RULED: ACCEPT; no hand-off file, BQ-1)
 - D03 E19-D03.md md5 928db4e4 at 35032f521 (read via git show 35032f521; re-pinned when its PR merges)
 - D02 E19-D02.md md5 1299df3b at 3619e95c5 (read via git show 3619e95c5; re-pinned when its PR merges)
 - PRIM packages/ui/tokens/primitives.tokens.json md5 b5e47569 (motion durations and easings only)

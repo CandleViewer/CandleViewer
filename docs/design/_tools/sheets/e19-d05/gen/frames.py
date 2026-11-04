@@ -492,7 +492,7 @@ GROWTH_H = 360  # the growth arms' plot height (kit choice): 120 rows at 3 px; 5
 
 def f_growth_120(fid: str) -> tuple[Node, list[str]]:
     g = k.G120
-    keys = k.keyframes("fast", "decelerate")
+    keys = k.keyframes("fast", "standard")
     st = state_word(g.p1, k.U1)
     maxv = g.p1.max_vol
     k.derive(f"growth arm: {g.rows} visible rows of {g.row_ticks} ticks around the last price; the prints of "
@@ -874,10 +874,14 @@ def overlay_crop(name: str, alpha: float) -> Node:
                                text("CMP-199 legend row", leg, k.CAPTION, k.TEXT_1, x=INSET, y=4, w=CROP_W - 2 * INSET)]
     for i, b in enumerate(bars):
         x = round(i * slot + slot / 2)
-        kids.append(rect(f"wick {i}", 1, max(1, round(y_px(b.l) - y_px(b.h))), WICK, x=x, y=round(y_px(b.h))))
-        top, bot = y_px(max(b.o, b.c)), y_px(min(b.o, b.c))
-        kids.append(rect(f"body {i}", 5, max(1, round(bot - top)), CANDLE_UP if b.c >= b.o else CANDLE_DOWN,
-                         x=x - 2, y=round(top)))
+        # every candle mark is clamped to y >= OV_LEG: a wick or body above the plot never crosses the legend
+        w_top, w_bot = max(OV_LEG, y_px(b.h)), max(OV_LEG, y_px(b.l))
+        if y_px(b.l) >= OV_LEG:
+            kids.append(rect(f"wick {i}", 1, max(1, round(w_bot - w_top)), WICK, x=x, y=round(w_top)))
+        top, bot = max(OV_LEG, y_px(max(b.o, b.c))), max(OV_LEG, y_px(min(b.o, b.c)))
+        if y_px(min(b.o, b.c)) >= OV_LEG:
+            kids.append(rect(f"body {i}", 5, max(1, round(bot - top)), CANDLE_UP if b.c >= b.o else CANDLE_DOWN,
+                             x=x - 2, y=round(top)))
     maxv = max(pr.vol(r) for r in range(lo, hi))
     for r in range(lo, hi):
         v = pr.vol(r)
@@ -898,7 +902,7 @@ def overlay_crop(name: str, alpha: float) -> Node:
 
 
 def f_overlay_show(fid: str) -> tuple[Node, list[str]]:
-    keys = k.keyframes("fast", "decelerate")
+    keys = k.keyframes("fast", "standard")
     k.reading("R-K6: the overlay's DOM legend row mounts in frame 0 as a cut; only the canvas opacity uniform eases "
               "(§7.4 names one uniform)")
     normal = [(key_caption(key, f"overlay opacity {k.fmt_alpha(key.progress)}" +

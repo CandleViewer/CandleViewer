@@ -82,7 +82,7 @@ _PATHS = {
     "fixture": "packages/fixtures/bybit/2026-10-05/rest/instruments_before.json",
 }
 _MD5 = {
-    "spec": "5f60e8018b85c0936bcd84190040eb2b",
+    "spec": "3129e693cff3bde0d932b0b4fdd5aa74",
     "d03": "928db4e4b68dafe97694c6ec9a718c7b",
     "d02": "1299df3b853121295e018bed3b819262",
     "prim": "b5e4756938646d98fa8c4ba2d5322b4a",
@@ -1394,7 +1394,7 @@ def write_sheet(nn: int, frames: list[Node], ann: Node, *, notes: dict[str, Iter
     if bad or banned:
         raise RuntimeError(f"board {nn:02d}: lint {bad[:8]} banned {banned}")
     out = out_dir / (name or b.sheet)
-    out.write_text(json.dumps(sheet, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    out.write_text(json.dumps(sheet, ensure_ascii=False, indent=1) + "\n", encoding="utf-8", newline="\n")
     rc, msg = validate(out)
     if rc != 0:
         errs = [ln for ln in msg.splitlines() if "ERROR" in ln.upper()]
@@ -1433,9 +1433,9 @@ def write_md(nn: int, sheet_path: Path, *, summary: str = "") -> Path:
     if m:
         raise RuntimeError(f"md for board {nn:02d}: banned string {m.group(0)!r}")
     p = sp.parent / (sp.stem + ".md")
-    p.write_text(s, encoding="utf-8")
+    p.write_text(s, encoding="utf-8", newline="\n")
     if IN_REPO and sp.parent == CAP_DIR.resolve():  # the committed sidecar beside the kit, the same bytes
-        (KIT_DIR / p.name).write_text(s, encoding="utf-8")
+        (KIT_DIR / p.name).write_text(s, encoding="utf-8", newline="\n")
     return p
 
 
@@ -1466,7 +1466,7 @@ def pack_sheet(sheet_path: Path, out_dir: Path = V4_DIR) -> Path:
     abs_field = json.dumps(pf, ensure_ascii=False)
     if raw.count(abs_field) != 1:
         raise RuntimeError(f"{dst.name}: the pack source path occurs {raw.count(abs_field)} times")
-    dst.write_text(raw.replace(abs_field, json.dumps(src.name, ensure_ascii=False)), encoding="utf-8")
+    dst.write_text(raw.replace(abs_field, json.dumps(src.name, ensure_ascii=False)), encoding="utf-8", newline="\n")
     sh = json.loads(dst.read_text(encoding="utf-8"))
     if sh["compactOf"] != {"file": src.name, "sha256": hashlib.sha256(src.read_bytes()).hexdigest()}:
         raise RuntimeError(f"{dst.name}: compactOf {sh['compactOf']!r} is not the bare name and sha256 of {src.name}")
@@ -1615,6 +1615,17 @@ def selftest() -> int:
     sys.path.insert(0, str(KIT_DIR / "gen"))
     import registry  # noqa: PLC0415  (the frame builders import this kit)
     check(set(registry.BUILDERS) == {f for b in BOARDS.values() for f in b.frames}, "a builder for every frame")
+    mids = {e: f"{ease(e, 0.5):.3f}" for e in ("standard", "decelerate", "accelerate")}
+    check(len(set(mids.values())) == 3, f"easing midpoints differ: {mids}")
+
+    def _chars(n: Node) -> str:
+        return " ".join([str(n.get("chars", ""))] + [_chars(c) for c in n.get("kids") or []])
+
+    for case, fid in (("M-1", "SCR-038/growth-120-dark"), ("M-9", "SCR-038/overlay-show-dark")):
+        m = re.search(r"motion\.easing\.([a-z]+)", plain(CASES[case]["Duration · easing"]))
+        want = f"eased progress {ease(m.group(1), 0.5):.3f}" if m else "?"
+        node_, lines = registry.BUILDERS[fid]("dark")
+        check(want in _chars(node_), f"{case} midpoint: {fid} draws {want!r} (§2's easing)")
     NOTES.reset()
     fid = "SCR-038/developing-va-dark"
     node_, lines = registry.BUILDERS[fid]("dark")
