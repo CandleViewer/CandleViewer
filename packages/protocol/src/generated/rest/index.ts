@@ -1501,7 +1501,9 @@ export interface paths {
     put?: never;
     /**
      * Create an alert
-     * @description Alerts reuse the rule IR condition language but may only use notification actions —
+     * @description Its body bounds, write rate and refusal records: "Alert write bounds and refusal records"
+     *     in `info.description`.
+     *     Alerts reuse the rule IR condition language but may only use notification actions —
      *     an alert can never place an order. `trigger_mode` is `once` (fire and disable),
      *     `every_time`, or `once_per_bar`. Channels are `in_app`, `desktop`, `email`, `webhook`.
      *     A name the owner already uses for a live alert answers `409 conflict`. A `422` is
@@ -1535,7 +1537,9 @@ export interface paths {
     get: operations["getAlert"];
     /**
      * Replace an alert
-     * @description A name the owner already uses for another live alert answers `409 conflict`. A `422`
+     * @description Its body bounds, write rate and refusal records: "Alert write bounds and refusal records"
+     *     in `info.description`.
+     *     A name the owner already uses for another live alert answers `409 conflict`. A `422`
      *     is `rule_ir_invalid` or `validation_failed`, as for `createAlert` (#2748). A replace that
      *     sets `enabled` true on a disabled alert arms it and is held to the armed-alert cap of
      *     `createAlert` (`409 conflict`, `errors[].rule` `limit_reached`, example `armedAlertCap`);
@@ -1588,7 +1592,9 @@ export interface paths {
     get?: never;
     /**
      * Snooze an alert, or clear its snooze
-     * @description `until` is a future tz-aware instant (snoozed until then) or `null` (snooze cleared); a
+     * @description Its body bounds, write rate and refusal records: "Alert write bounds and refusal records"
+     *     in `info.description`.
+     *     `until` is a future tz-aware instant (snoozed until then) or `null` (snooze cleared); a
      *     past or offset-less instant, or one more than 30 days ahead (rule `until_too_far`), is
      *     `422 validation_failed`; a non-string `until` (e.g. a numeric epoch) is refused too. Audited as `alert.snoozed` /
      *     `alert.unsnoozed` (C-2.9). Another user's alert is `404`.
@@ -1638,7 +1644,8 @@ export interface paths {
      *     know whether the delivery is `acked`. A delivery that is unknown or not owned by the
      *     caller is **404** (never 403), and the refusal is audited (`alert.denied`): up to 20
      *     records per caller per hour, past which refusals are counted and the count is carried on
-     *     the caller's next written record (`after_state.suppressed_before`).
+     *     the caller's next written record (`after_state.suppressed_before`). The 20 are the alert
+     *     routes' one refusal budget ("Alert write bounds and refusal records" in `info.description`).
      */
     post: operations["ackAlertDelivery"];
     delete?: never;
@@ -1665,7 +1672,8 @@ export interface paths {
      *     `permission` carries the OS notification permission state observed by the shell
      *     (e.g. `granted`, `denied`, `default`). Body is closed (`extra: forbid`): unknown
      *     properties are rejected with 422. Only the delivery's owner may report (`scope: self`).
-     *     A caller lacking `alerts:write` receives **403** before any ownership check. For an authorised
+     *     A caller lacking `alerts:write` receives **403** before any ownership check, its refusal
+     *     recorded within the budget of "Alert write bounds and refusal records". For an authorised
      *     caller, a delivery that is unknown or not owned by the caller returns **404** (never 403), so
      *     existence is not leaked; cross-account reads and reports are refused identically.
      */
@@ -7820,6 +7828,7 @@ export interface components {
       title?: string;
     };
     AlertInput: {
+      /** @description An alert lists each channel once: a repeated channel is `422 validation_failed` (#5696). */
       channels: components["schemas"]["AlertChannel"][];
       condition_ir: components["schemas"]["AlertConditionIr"];
       /** @description Minimum seconds between two firings; omitted on create = 60, omitted on replace = unchanged (E40-D02 CC-5). */
@@ -15506,7 +15515,9 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
+      413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -15582,7 +15593,9 @@ export interface operations {
         };
       };
       412: components["responses"]["PreconditionFailed"];
+      413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -15616,6 +15629,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -15666,6 +15680,9 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
+      413: components["responses"]["PayloadTooLarge"];
+      422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -15708,7 +15725,9 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
@@ -15826,6 +15845,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
       503: components["responses"]["ServiceUnavailable"];
     };

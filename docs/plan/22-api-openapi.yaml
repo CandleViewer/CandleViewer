@@ -380,6 +380,37 @@ info:
     stored-rule cap (`createRule`). A rule action's own denial while the rule runs and the
     boot-time check of the system rules are never held to the cap.
 
+    ### Alert write bounds and refusal records (E40-X01, #5696)
+    The alert routes bound what a write reads and how often a user writes, before the body is
+    validated or the condition compiled, and hold the refusals they record to one budget per user.
+
+    * **Body.** `createAlert`, `updateAlert`, `setAlertEnabled`, `setAlertSnooze` and
+      `reportAlertDesktopOutcome` read at most 256 KiB (262,144 bytes) of body: a declared
+      `Content-Length` over it is refused before any byte is read, and a body sent without one at
+      the first chunk past it, `413 payload_too_large`. The body is JSON in UTF-8 (in any other
+      encoding it is the operation's `422` for a body that is not JSON), nested at most 67 levels
+      deep (the deepest `AlertConditionIr` the compiler takes, at 32 node levels) and holding at
+      most 4,096 values, counting each object, array and scalar but not the keys: past either it
+      is `422 validation_failed` with `errors[].rule` `json_too_deep` or `too_many_values`,
+      decided before the body is decoded (depth) or validated (values). The depth bound is 67,
+      where the rule routes' is 66, because the alert compiler takes a condition nested 67
+      levels deep, which 66 would refuse.
+    * **Write rate.** `createAlert`, `updateAlert`, `deleteAlert`, `setAlertEnabled` and
+      `setAlertSnooze` each take one token from the caller's bucket of 20, refilled at 60 a
+      minute, after the permission check and before any alert is read: a call that finds none is
+      `429 rate_limited` with `Retry-After` in whole seconds (this bucket sends no `RateLimit-*`
+      headers), and nothing changes. The inbox's writes take none.
+    * **Not recorded.** None of these refusals writes an audit record; each is counted.
+    * **Refusal records.** The refusals the alert routes record share one budget per acting user,
+      the bound of `alert.denied` on `ackAlertDelivery`: `rbac.denied` for a caller without the
+      operation's permission (its `403`, before any lookup), `alert.denied` for another user's
+      alert or delivery (the `404`) and `alert.scope_refused` (the `403` of an account outside the
+      caller's grants), up to 20 records in a rolling hour. Past it a refusal is answered the
+      same, writes no record and is counted, and the user's next written record of the three
+      carries the count as `after_state.suppressed_before`. A due record that cannot be written
+      is `503 audit_unavailable`, and nothing changes. `listNotifications` names no permission,
+      so it has no role refusal.
+
     ### RBAC
     Roles `owner` | `manager` | `viewer` map to permission codes (`orders:write`,
     `keys:manage`, …). Each operation lists them in `x-rbac.permissions`. In addition,
@@ -9850,6 +9881,8 @@ paths:
       operationId: createAlert
       summary: Create an alert
       description: |
+        Its body bounds, write rate and refusal records: "Alert write bounds and refusal records"
+        in `info.description`.
         Alerts reuse the rule IR condition language but may only use notification actions —
         an alert can never place an order. `trigger_mode` is `once` (fire and disable),
         `every_time`, or `once_per_bar`. Channels are `in_app`, `desktop`, `email`, `webhook`.
@@ -9939,7 +9972,9 @@ paths:
                           message: "You have reached the limit of 200 armed alerts. Disable one to arm another.",
                         },
                       ]
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /alerts/{alertId}:
@@ -9964,6 +9999,8 @@ paths:
       operationId: updateAlert
       summary: Replace an alert
       description: |
+        Its body bounds, write rate and refusal records: "Alert write bounds and refusal records"
+        in `info.description`.
         A name the owner already uses for another live alert answers `409 conflict`. A `422`
         is `rule_ir_invalid` or `validation_failed`, as for `createAlert` (#2748). A replace that
         sets `enabled` true on a disabled alert arms it and is held to the armed-alert cap of
@@ -10010,7 +10047,9 @@ paths:
                         },
                       ]
         "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [alerts]
@@ -10023,6 +10062,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /alerts/{alertId}/enabled:
@@ -10081,6 +10121,9 @@ paths:
                           message: "You have reached the limit of 200 armed alerts. Disable one to arm another.",
                         },
                       ]
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /alerts/{alertId}/snooze:
@@ -10090,6 +10133,8 @@ paths:
       operationId: setAlertSnooze
       summary: Snooze an alert, or clear its snooze
       description: |
+        Its body bounds, write rate and refusal records: "Alert write bounds and refusal records"
+        in `info.description`.
         `until` is a future tz-aware instant (snoozed until then) or `null` (snooze cleared); a
         past or offset-less instant, or one more than 30 days ahead (rule `until_too_far`), is
         `422 validation_failed`; a non-string `until` (e.g. a numeric epoch) is refused too. Audited as `alert.snoozed` /
@@ -10114,7 +10159,9 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /alerts/deliveries:
@@ -10185,7 +10232,8 @@ paths:
         know whether the delivery is `acked`. A delivery that is unknown or not owned by the
         caller is **404** (never 403), and the refusal is audited (`alert.denied`): up to 20
         records per caller per hour, past which refusals are counted and the count is carried on
-        the caller's next written record (`after_state.suppressed_before`).
+        the caller's next written record (`after_state.suppressed_before`). The 20 are the alert
+        routes' one refusal budget ("Alert write bounds and refusal records" in `info.description`).
       x-rbac: { permissions: [alerts:write], scope: self }
       x-idempotency: optional
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -10211,7 +10259,8 @@ paths:
         `permission` carries the OS notification permission state observed by the shell
         (e.g. `granted`, `denied`, `default`). Body is closed (`extra: forbid`): unknown
         properties are rejected with 422. Only the delivery's owner may report (`scope: self`).
-        A caller lacking `alerts:write` receives **403** before any ownership check. For an authorised
+        A caller lacking `alerts:write` receives **403** before any ownership check, its refusal
+        recorded within the budget of "Alert write bounds and refusal records". For an authorised
         caller, a delivery that is unknown or not owned by the caller returns **404** (never 403), so
         existence is not leaked; cross-account reads and reports are refused identically.
       x-rbac: { permissions: [alerts:write], scope: self }
@@ -10236,6 +10285,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -23355,7 +23405,14 @@ components:
         symbol: { oneOf: [{ $ref: "#/components/schemas/Symbol" }, { type: "null" }] }
         exchange_account_id: { type: ["string", "null"], format: uuid }
         trigger_mode: { type: string, enum: [once, every_time, once_per_bar], default: once }
-        channels: { type: array, minItems: 1, items: { $ref: "#/components/schemas/AlertChannel" } }
+        channels:
+          {
+            type: array,
+            minItems: 1,
+            uniqueItems: true,
+            items: { $ref: "#/components/schemas/AlertChannel" },
+            description: "An alert lists each channel once: a repeated channel is `422 validation_failed` (#5696).",
+          }
         condition_ir: { $ref: "#/components/schemas/AlertConditionIr" }
         message_template:
           {
