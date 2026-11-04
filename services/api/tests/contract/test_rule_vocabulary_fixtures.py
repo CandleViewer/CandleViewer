@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 from candleviewer.api.rules import make_rules_router
 from candleviewer.rules.vocabulary import build_vocabulary, default_registry
 from candleviewer.rules.vocabulary.catalogue import ARM_LIVE_PERMISSION
+from tests.rules._check_limiter import unthrottled
 
 GOLDEN = Path(__file__).resolve().parents[4] / "packages/fixtures/golden/rule-graph/vocabulary"
 SEED = json.loads(
@@ -129,6 +130,7 @@ def test_the_route_serves_each_fixture_to_its_persona(persona: str) -> None:
         default_registry,
         principal_resolver=_Resolver(_Principal(perms)),
         recorded_symbols=lambda: frozenset(RECORDED),
+        check_limiter=unthrottled(),
     )
     app.include_router(router)
     params = {} if symbol is None else {"symbol": symbol}
