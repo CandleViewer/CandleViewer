@@ -264,12 +264,12 @@ RULE_LEVELS: Final = ("global", "account", "symbol", "position", "trade_group")
 
 
 class RuleStore(Protocol):
-    """`get`, `put` and `all` read and write by id or whole (writes, the evaluator and the system
-    reads). Every read that answers a caller takes the caller's `RuleReadScope` in the query:
-    `scoped_page` (rows ordered by id, at most `limit`, after the id `after`, or the one id `only`),
-    `scoped_ids` and `name_taken` (the save's name check, G-14). `count_owned_live` is the
-    stored-rule cap's count (G-16): the rules one user owns that are not deleted, readable or
-    not."""
+    """`get`, `put` and `all` read and write by id or whole: `put` stores every write, and `get`
+    and `all` serve the Owner role's writes, the evaluator and the system reads. Every read that
+    answers a caller takes the caller's `RuleReadScope` in the query: `scoped_page` (rows ordered
+    by id, at most `limit`, after the id `after`, or the one id `only`), `scoped_ids` and
+    `name_taken` (the save's name check, G-14). `count_owned_live` is the stored-rule cap's count
+    (G-16): the rules one user owns that are not deleted, readable or not."""
 
     async def get(self, rule_id: str) -> RuleRow | None: ...
     async def put(self, row: RuleRow) -> None: ...
@@ -752,8 +752,9 @@ class RulesManager:
         ahead of its 404, since a write fails in full and records why (C-2.9): a rule outside the
         scope, a missing one and a deleted one are one read and one record, so neither the answer,
         its timing nor the caller's own audit view (SR-067) tells them apart (04 §7.3, #2626). The
-        Owner role reads by id, since no rule is hidden from it: its miss is a missing or deleted
-        rule, a 404 with no record. The plain reads pass no `op`: that is scoping, not a refusal."""
+        Owner role's write reads by id, since no rule is hidden from it: its miss is a missing or
+        deleted rule, a 404 with no record. The plain reads pass no `op` and take the scoped read
+        whatever the role: that is scoping, not a refusal."""
         if op is not None and actor.is_owner:
             return await self._row(rule_id)
         return await self._scoped_row(rule_id, actor, op)
@@ -761,12 +762,13 @@ class RulesManager:
     async def _scoped_row(self, rule_id: str, actor: Actor, op: str | None = None) -> RuleRow:
         """The point read by id: the store reads the one id inside the caller's scope; a rule
         outside it, missing or deleted is the same 404, recorded as a refusal of `op` when a write
-        names one and never on a plain read."""
+        names one and never on a plain read. The row must be the id asked for: a store that
+        ignored `only` and returned another rule is a miss, never that rule's row."""
         got = await self._s.scoped_page(
             read_scope(actor), mode=None, level=None, after=None, limit=1, only=rule_id
         )
         shown = self._rechecked(got, actor)
-        if not shown:
+        if not shown or shown[0].id != rule_id:
             if op is not None:
                 await self._refuse_scope(rule_id, op, "rule_not_visible", actor)
             raise RuleError(404, "not_found", "That rule does not exist.")
