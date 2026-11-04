@@ -11,11 +11,13 @@ pinned in `tests/integration/storage/test_notifications_union_pg.py`.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
+from pydantic import ValidationError
 
 from candleviewer.api import alert_deliveries
 from candleviewer.api._generated import openapi_models as api
@@ -167,3 +169,82 @@ def test_every_problem_code_the_routes_answer_is_catalogued_with_its_status() ->
     expected = {"audit_unavailable", "store_unavailable", "unauthenticated", "invalid_cursor"}
     assert expected <= {code for _, code in found}
     assert found <= catalogue | {(422, "validation_failed")}, found - catalogue
+
+
+@pytest.mark.parametrize(
+    ("body", "valid"),
+    [
+        ({"outcome": "skipped", "reason": "window_visible", "permission": "granted"}, True),
+        ({"outcome": "skipped", "reason": "desktop_off", "permission": "denied"}, True),
+        ({"outcome": "shown", "permission": "granted"}, True),
+        ({"outcome": "skipped", "permission": "granted"}, False),  # a skip says why
+        ({"outcome": "shown", "reason": "desktop_off", "permission": "granted"}, False),
+        ({"outcome": "skipped", "reason": "bored", "permission": "granted"}, False),
+    ],
+)
+def test_desktop_outcome_body_states_the_skipped_reason_conditional(
+    body: dict[str, Any], valid: bool
+) -> None:
+    """E40-D02 CC-17 (#1130 S1 lens m-1): `reason` is required with `skipped`, refused otherwise."""
+    op = _SPEC["paths"]["/alerts/deliveries/{deliveryId}/desktop-outcome"]["post"]
+    schema = op["requestBody"]["content"]["application/json"]["schema"]
+    errors = list(Draft202012Validator(schema).iter_errors(body))
+    assert (not errors) is valid
+
+
+_CONTEXT_SCHEMA = Draft202012Validator(
+    deref(_SPEC, _SPEC["components"]["schemas"]["AlertDeliveryContext"])
+)
+
+
+def _model_refuses(context: dict[str, Any]) -> bool:
+    try:
+        api.AlertDeliveryContext.model_validate(context)
+    except ValidationError:
+        return True
+    return False
+
+
+@pytest.mark.parametrize(
+    ("context", "model_refuses"),
+    [
+        ({"trigger_type": "t" * 1001}, True),
+        ({"symbol": "S" * 1001}, True),
+        ({"reason": "r" * 1001}, True),
+        ({"metric": "m" * 1001}, True),
+        # The key bound is `22`-only (`if: true` / `then:`): a `constr` key fails `mypy --strict`.
+        ({"values": {"k" * 65: "1"}}, False),
+        ({"values": {"price": "v" * 1001}}, True),
+        ({"values": {"price": float("inf")}}, True),
+        ({"values": {"price": float("-inf")}}, True),
+        ({"values": {f"m{i}": 1 for i in range(65)}}, True),
+    ],
+)
+def test_alert_delivery_context_bounds_are_contract(
+    context: dict[str, Any], model_refuses: bool
+) -> None:
+    """#5676 Major 1: every string at most 1,000 characters, `values` keys at most 64 and at most
+    64 entries, finite numbers only: `22` refuses each, and the generated model each bound it
+    still carries (C-6.2)."""
+    assert list(_CONTEXT_SCHEMA.iter_errors(context))
+    assert _model_refuses(context) is model_refuses
+
+
+def test_alert_delivery_context_nan_is_refused_by_the_model() -> None:
+    """A JSON-schema validator lets NaN through `maximum`, so the finite bound is the model's."""
+    assert _model_refuses({"values": {"price": float("nan")}})
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        {"trigger_type": "t" * 1000, "values": {"k" * 64: 1.5, "p": "v" * 1000}},
+        {"values": {f"m{i}": 1 for i in range(64)}},
+        {"values": {"hi": sys.float_info.max, "lo": -sys.float_info.max}},
+    ],
+)
+def test_alert_delivery_context_at_bound_is_accepted(context: dict[str, Any]) -> None:
+    """At each bound (#5676 Minor b): 64 entries, a 64-character key, 1,000 characters and the
+    largest finite float pass both `22` and the model."""
+    assert not list(_CONTEXT_SCHEMA.iter_errors(context))
+    assert not _model_refuses(context)

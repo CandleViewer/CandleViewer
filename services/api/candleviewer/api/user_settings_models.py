@@ -43,6 +43,7 @@ from urllib.parse import urlsplit
 import structlog
 from pydantic import BaseModel, ValidationError
 
+from candleviewer.alerts._generated.notification_overrides import LOCKED_CELLS
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.drawings_models import format_errors
 from candleviewer.domain.text import unpaired_surrogate
@@ -57,6 +58,8 @@ _MAX_ERRORS: Final = 20
 META: Final = "_meta"
 #: 22 `updateSettings`: set only through `armOneClickTrading` (SR-043), never through a patch.
 READ_ONLY: Final = frozenset({"trading.one_click_armed"})
+#: The SCR-115 matrix leaf, whose locked cells are refused false (E40-D02 CC-8).
+MATRIX: Final = "notifications.matrix"
 #: The credential-class leaves (21 Sec.12): their values leave their owner only as `masked()`.
 MASKED_LEAVES: Final = frozenset({"notifications.webhook_url"})
 #: A masked value's elided part, and the whole of a value with no scheme and host to keep.
@@ -152,9 +155,42 @@ def _no_constant(name: str) -> object:
     raise ValueError(name)  # NaN, Infinity and -Infinity are not JSON (RFC 8259)
 
 
+def _nested_model(annotation: object) -> type[BaseModel] | None:
+    """The generated object model a member holds (`NotificationSound | None` is its model)."""
+    for candidate in (annotation, *get_args(annotation)):
+        if isinstance(candidate, type) and issubclass(candidate, BaseModel):
+            return candidate
+    return None
+
+
+def _without_optional_nulls(model: type[BaseModel], value: dict[str, object]) -> dict[str, object]:
+    """`value` with every nested null left out where `model`'s member is optional (#4237: the
+    generated models refuse a sent null; 22 reads an absent and a null member alike). A null on a
+    member that has a non-null default (a sound's `volume`) stays, so the model refuses it."""
+    kept: dict[str, object] = {}
+    for key, member_value in value.items():
+        member = model.model_fields.get(key)
+        if member is None:
+            kept[key] = member_value  # `extra="forbid"` refuses it
+        elif member_value is None and not member.is_required() and member.default is None:
+            continue
+        elif (inner := _nested_model(member.annotation)) and isinstance(member_value, dict):
+            kept[key] = _without_optional_nulls(inner, member_value)
+        else:
+            kept[key] = member_value
+    return kept
+
+
 def canonical(leaf: Leaf, value: object) -> object:
-    """`value` as the leaf's generated model writes it; `ValidationError` when it refuses it."""
-    return leaf.model.model_validate({leaf.field: value}).model_dump(mode="json")[leaf.field]
+    """`value` as the leaf's generated model writes it; `ValidationError` when it refuses it.
+    A nested null on an optional member is dropped: an object leaf's absent and null members both
+    read as their default (22 `NotificationMatrix`, E40-D02 CC-8), and a stored `null` member would
+    break 22's own `Settings` schema when served. A leaf whose value is null is a reset, judged
+    before this is called."""
+    dumped = leaf.model.model_validate(
+        _without_optional_nulls(leaf.model, {leaf.field: value})
+    ).model_dump(mode="json", exclude_none=True)
+    return dumped[leaf.field]
 
 
 def _judge_group(group: str, members: dict[str, object], out: dict[str, object]) -> list[Any]:
@@ -172,7 +208,23 @@ def _judge_group(group: str, members: dict[str, object], out: dict[str, object])
                 out[key] = canonical(leaf, value)
             except ValidationError as exc:
                 errors += redact_structure(format_errors(exc, prefix=group))
+            else:
+                if key == MATRIX:
+                    errors += _locked_cells_muted(out[key])
     return errors
+
+
+def _locked_cells_muted(matrix: object) -> list[Any]:
+    """E40-D02 CC-8 (#1130): a cell the critical-override constant locks is never stored false,
+    server-side and behind no flag (C-4.14). Its `notifications.risk_channel_muted` record is
+    written by the preferences slice; a refusal without it is the safe half."""
+    rows = matrix if isinstance(matrix, dict) else {}
+    return [
+        _error(f"{MATRIX}.{category}.{channel}", "risk_channel_locked",
+               "Cannot be muted — critical.")
+        for category, channel in sorted(LOCKED_CELLS)
+        if isinstance(row := rows.get(category), dict) and row.get(channel) is False
+    ]  # fmt: skip
 
 
 def judge_patch(raw: bytes) -> dict[str, object]:

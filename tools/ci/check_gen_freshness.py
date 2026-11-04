@@ -104,8 +104,12 @@ CVWB_LAYOUT_TWIN = Path("services/api/candleviewer/ws/_generated/cvwb_layout.py"
 # runs tools/gen/export_instrument_policy_{rules,corpus}.py (stdlib only), which write
 # rules.json and corpus.json, the only files there.
 POLICY_GOLDENS = Path("packages/fixtures/golden/policy")
+# E40-S02 (#1130): the Python twin of the critical-override constant, written by
+# packages/protocol/scripts/generate-notification-overrides.mjs with its package `__init__`.
+OVERRIDES_TWIN = Path("services/api/candleviewer/alerts/_generated")
 EXTRA_GENERATED: tuple[Path, ...] = (
     CVWB_LAYOUT_TWIN,
+    OVERRIDES_TWIN,
     POLICY_GOLDENS,
     Path("packages/fixtures/golden/cvwb"),
     Path("tests/fuzz/ws-frames"),
@@ -119,6 +123,7 @@ GENERATED_PATHS: tuple[Path, ...] = (GENERATED_ROOT, *EXTRA_GENERATED)
 GENERATE_OUTPUTS: tuple[Path, ...] = (
     GENERATED_ROOT / "src" / "generated",
     CVWB_LAYOUT_TWIN,
+    OVERRIDES_TWIN,
     POLICY_GOLDENS,
 )
 # #3392: step 7 (CI-GEN-006). Every file each generator outside `pnpm generate` writes in

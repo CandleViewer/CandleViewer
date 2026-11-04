@@ -1618,6 +1618,36 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/alerts/deliveries/{deliveryId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        deliveryId: components["parameters"]["DeliveryId"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Read one alert delivery with the values it fired on (E40-D02 CC-2)
+     * @description **PROPOSED path** (the #1130 ruling, BQ-2): `/alerts/deliveries/{deliveryId}`.
+     *     The caller's own delivery, as `AlertDelivery`, plus its `context`: the values the
+     *     evaluator saw at fire time (SCR-092's detail drawer). `context` is served from a closed
+     *     allow-list of keys (`AlertDeliveryContext`); the evaluator's internal `condition_hash`
+     *     and `gates` are never served. A caller lacking `alerts:read` receives **403** before any
+     *     lookup. A delivery that is unknown or not owned by the caller is **404** (never 403), and
+     *     the foreign case is audited (`alert.denied`) under the same per-caller bound as
+     *     `ackAlertDelivery`. Self only: any query parameter is refused with `422` (SR-026), as
+     *     is a malformed `deliveryId`.
+     */
+    get: operations["getAlertDelivery"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/alerts/deliveries/{deliveryId}/ack": {
     parameters: {
       query?: never;
@@ -1661,9 +1691,14 @@ export interface paths {
     /**
      * Report the outcome of a desktop-channel delivery (Electron shell report-back)
      * @description The Electron shell reports what happened when it tried to show a `desktop`-channel alert
-     *     natively: `shown`, `blocked` (OS/user denied or focus-assist suppressed it) or `failed`.
-     *     `permission` carries the OS notification permission state observed by the shell
-     *     (e.g. `granted`, `denied`, `default`). Body is closed (`extra: forbid`): unknown
+     *     natively: `shown`, `blocked` (OS/user denied or focus-assist suppressed it), `failed`, or
+     *     `skipped` (E40-D02 CC-17: the shell chose not to show it, `reason` saying why:
+     *     `window_visible`, the app window was visible, or `desktop_off`, the user's
+     *     `notifications.desktop_enabled` is off). `skipped` settles the delivery `suppressed` with
+     *     `error` the reason and raises no channel-failure notice; `reason` is required with
+     *     `skipped` and refused with any other outcome (`422`). `permission` carries the OS
+     *     notification permission state observed by the shell (e.g. `granted`, `denied`,
+     *     `default`). Body is closed (`extra: forbid`): unknown
      *     properties are rejected with 422. Only the delivery's owner may report (`scope: self`).
      *     A caller lacking `alerts:write` receives **403** before any ownership check. For an authorised
      *     caller, a delivery that is unknown or not owned by the caller returns **404** (never 403), so
@@ -1685,7 +1720,13 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Acknowledge every unacknowledged delivery */
+    /**
+     * Acknowledge every unacknowledged delivery
+     * @description Acknowledges the caller's `sent` deliveries on every channel, in bounded batches: at
+     *     most 5,000 a request (10 batches of 500). An answer of exactly 5,000 means more may
+     *     remain, and the client calls again; `AlertUpdate.unacked_count` is no signal for this,
+     *     as it counts `in_app` rows only (E40-D02 CC-18).
+     */
     post: operations["ackAllAlertDeliveries"];
     delete?: never;
     options?: never;
@@ -6280,6 +6321,12 @@ export interface paths {
      *     the deployment default. `trading.one_click_armed` can only be set through the arming
      *     endpoint — attempting it here returns `validation_failed`.
      *
+     *     `notifications.matrix` refuses a locked cell set false (`risk_channel_locked`), `422
+     *     validation_failed` with nothing stored (E40-D02 CC-8); from the preferences slice of #1130
+     *     on, the attempt is also audited `notifications.risk_channel_muted` at high severity, and
+     *     sound as a row's only channel is refused the same way (`sound_only_channel`).
+     *     Preferences are the caller's own (`scope: self`): no field names another user.
+     *
      *     Self only: any query parameter is refused with `422` (SR-026).
      */
     patch: operations["updateSettings"];
@@ -7611,18 +7658,74 @@ export interface components {
       /** Format: uuid */
       alert_id?: string;
       channel?: components["schemas"]["AlertChannel"];
+      /** @description A `failed` row's error; a `suppressed` row's reason, one of `DeliverySuppressionReason` (CC-9). */
       error?: string | null;
       /** Format: date-time */
       fired_at?: string;
       /** Format: int64 */
       id?: number;
-      /** @description The delivery row `body`, falling back to `title` when `body` is empty. */
+      kind?: components["schemas"]["AlertDeliveryKind"];
+      /** @description The delivery row `body`, falling back to `title` when `body` is empty. A firing's `body` is its message template rendered at fire time with the values it fired on, or, for an empty template, the condition restated with those values (E40-D02 CC-1, D-17). Plain text, never markup: control and bidirectional-control characters are removed and a substituted value never carries `{{` or `}}`. The value of a metric of account or position scope, and every `position.*` placeholder, renders `—`, so no account data reaches any channel until an in-app-only body exists. */
       message?: string;
       severity?: components["schemas"]["Severity"];
+      /** @description Set on the `in_app` row of a firing a symbol mute or quiet hours silenced (E40-D02 CC-9, D-33, D-30): the row is recorded and kept in Notifications, and the client shows no toast and plays no sound for it; the firing's `desktop` row is settled `suppressed` with the same reason. Null otherwise. */
+      silenced?: components["schemas"]["AlertSilenceReason"] | null;
       status?: components["schemas"]["DeliveryStatus"];
+      /** @description Set on a `storm_summary` delivery only; null for every other kind. */
+      summary?: components["schemas"]["AlertDeliveryStormSummary"] | null;
       symbol?: components["schemas"]["Symbol"] | null;
+      /** @description A firing's title is the alert's name, as it was at fire time (E40-D02 CC-1); a notice's or a storm summary's is the server's own wording. Rows written before CC-1 hold the raw message template here. */
       title?: string;
     };
+    /** @description What the server recorded with the delivery, from a closed allow-list: a key the row holds outside this list is not served. Never `condition_hash` or `gates` (internal to the evaluator). A firing carries the trigger, symbol, times and `values`; a disarm notice `disarmed`, `reason`, `metric`; a failure notice `channel_failure`, `failed_delivery_id`; a storm summary `storm_summary`, `suppressed`, `symbols` and its window; a held firing `suppressed_reason`, and a delivery the dispatcher settled `suppressed` `suppression_reason`; a silenced firing `silenced`. Every key is optional; values are data, never markup. Each value has its declared type (a negative count is left out, a non-finite number is never served), and the answer is bounded (the ticket's Security notes): at most 64 `values`, each named in at most 64 characters, 100 `symbols`, and every string at most 1,000 characters. */
+    AlertDeliveryContext: {
+      /** @description Set by the once-per-bar gate. */
+      bar_open_ms?: number | null;
+      channel_failure?: boolean;
+      disarmed?: boolean;
+      /** @description Server evaluation time */
+      evaluated_at_ms?: number;
+      /** @description Exchange event time */
+      event_ts_ms?: number;
+      /** Format: int64 */
+      failed_delivery_id?: number;
+      metric?: string;
+      reason?: string;
+      silenced?: components["schemas"]["AlertSilenceReason"];
+      storm_summary?: boolean;
+      suppressed?: number;
+      suppressed_reason?: components["schemas"]["DeliverySuppressionReason"];
+      suppression_reason?: components["schemas"]["DeliverySuppressionReason"];
+      symbol?: string | null;
+      symbols?: string[];
+      trigger_type?: string;
+      /** @description Each metric the condition read, by metric name (at most 64 characters), as evaluated. A number is finite (NaN and the infinities are not JSON and are never served). */
+      values?: {
+        [key: string]: components["schemas"]["AlertDeliveryValue"];
+      };
+      window_end_ms?: number;
+      window_start_ms?: number;
+    };
+    /** @description `getAlertDelivery` (a PROPOSED path): one delivery and the values it fired on (E40-D02 CC-2). */
+    AlertDeliveryDetail: components["schemas"]["AlertDelivery"] & {
+      context: components["schemas"]["AlertDeliveryContext"];
+    };
+    /**
+     * @description What a delivery row records (E40-D02 CC-7, D-39): `firing` an alert firing (delivered or `suppressed`); `disarm_notice` the server disarming the alert because a data source was lost; `failure_notice` the in-app notice a failed channel raises; `storm_summary` the one in-app summary of the firings the storm gate held in a window (D01 G13). Derived from the row the server wrote, never from client input.
+     * @enum {string}
+     */
+    AlertDeliveryKind: "firing" | "disarm_notice" | "failure_notice" | "storm_summary";
+    /** @description The firings a storm summary stands for (E40-D02 CC-7; D01 G13): how many were held, the symbols they named in first-seen order, and the window they fell in. The window is null on a summary written before CC-7. */
+    AlertDeliveryStormSummary: {
+      count: number;
+      symbols: string[];
+      /** Format: date-time */
+      window_end: string | null;
+      /** Format: date-time */
+      window_start: string | null;
+    };
+    /** @description One `AlertDeliveryContext.values` entry: a string of at most 1,000 characters, a finite number, a boolean or `null`. */
+    AlertDeliveryValue: string | number | boolean | null;
     AlertInput: {
       channels: components["schemas"]["AlertChannel"][];
       condition_ir: components["schemas"]["AlertConditionIr"];
@@ -7641,6 +7744,11 @@ export interface components {
       message_template?: string;
       name: string;
       severity?: components["schemas"]["Severity"];
+      /**
+       * @description Whether this alert's firings play its category's tone (E40-D02 CC-8, D-11); omitted on create = true, omitted on replace = unchanged. The Alerts row's sound setting applies on top of it.
+       * @default true
+       */
+      sound: boolean;
       symbol?: components["schemas"]["Symbol"] | null;
       /**
        * @default once
@@ -7650,6 +7758,11 @@ export interface components {
       /** Format: uri */
       webhook_url?: string | null;
     };
+    /**
+     * @description Why a firing's optional channels were held (E40-D02 CC-9): `muted_symbol`, the symbol is on the owner's `notifications.muted_symbols`; `quiet_hours`, the firing fell inside the owner's `notifications.quiet_hours`. Neither ever holds a critical-override kind (`packages/protocol/notification-overrides.json`), and user alerts never override.
+     * @enum {string}
+     */
+    AlertSilenceReason: "muted_symbol" | "quiet_hours";
     /** @enum {string} */
     AlgoKind: "none" | "oco" | "iceberg" | "twap" | "chase" | "scaled" | "bracket";
     /**
@@ -8378,6 +8491,22 @@ export interface components {
     Decimal: string;
     /** @enum {string} */
     DeliveryStatus: "queued" | "sent" | "failed" | "suppressed" | "acked";
+    /**
+     * @description The closed set of reasons a delivery is `suppressed` (E40-D02 CC-9, CC-17), carried in `AlertDelivery.error` and the `context` keys `suppressed_reason` (the evaluator's storm gate) and `suppression_reason` (the dispatcher and the desktop report).
+     * @enum {string}
+     */
+    DeliverySuppressionReason:
+      | "storm"
+      | "email_relay_off"
+      | "webhook_disabled"
+      | "push_unavailable"
+      | "recipient_deleted"
+      | "unknown_channel"
+      | "owner_inactive"
+      | "muted_symbol"
+      | "quiet_hours"
+      | "window_visible"
+      | "desktop_off";
     /** @description Thresholds for the estimated detectors. Every detector here is a heuristic over anonymous public data; changing a threshold changes sensitivity, never correctness. */
     DetectorConfig: {
       absorption?: {
@@ -9963,6 +10092,11 @@ export interface components {
         [key: string]: unknown;
       };
     };
+    MutedSymbol: {
+      /** Format: date-time */
+      muted_at: string;
+      symbol: components["schemas"]["Symbol"];
+    };
     Note: components["schemas"]["NoteInput"] & {
       /** Format: uuid */
       author_user_id?: string;
@@ -9983,6 +10117,11 @@ export interface components {
       body?: string | null;
       /** Format: date-time */
       created_at: string;
+      /**
+       * Format: int64
+       * @description On an `alert` row, the `AlertDelivery.id` it shows (the id `ackAlertDelivery` and `getAlertDelivery`, a PROPOSED path, take; E40-D02 CC-20); null on every other kind.
+       */
+      delivery_id?: number | null;
       /** Format: uuid */
       exchange_account_id?: string | null;
       /**
@@ -9990,8 +10129,11 @@ export interface components {
        * @description Deterministic: uuid5(namespace, source_table + source_id), so the same source row always maps to the same notification id. The namespace is the fixed constant `x-cv-uuid5-namespace` below (24-internal-schemas.md §1.6).
        */
       id: string;
-      /** @enum {string} */
-      kind: "alert" | "rule" | "order" | "risk" | "system";
+      /**
+       * @description `recorder` (E40-D02 CC-6, D01 G2) names the recorder's own notices (SCR-115's Recorder row); no source serves it yet, so a `recorder` filter matches nothing until one does, as `risk` (E39) does today.
+       * @enum {string}
+       */
+      kind: "alert" | "rule" | "order" | "risk" | "system" | "recorder";
       /**
        * Format: date-time
        * @description `acked_at` for alert deliveries; always null for rule, order and system rows until their owners define read state. Order rows come from E29's `order_events`.
@@ -10008,6 +10150,62 @@ export interface components {
       symbol?: string | null;
       title: string;
     };
+    /** @description The Alerts row; its desktop column is per alert (`AlertInput.channels`, D-11). An absent or null cell reads as its default, as in `NotificationChannelSet`. */
+    NotificationAlertChannelSet: {
+      sound?: boolean;
+      toast?: boolean;
+    };
+    /**
+     * @description The six SCR-115 rows (E40-D02 §6.2), the matrix's and the sounds' keys.
+     * @enum {string}
+     */
+    NotificationCategory:
+      "alerts" | "rule_actions" | "order_rejects" | "risk_events" | "system_health" | "recorder";
+    /** @description One matrix row's optional channels; the Centre column is never a choice (D-28). An absent cell reads as its default (E40-D02 §6.2); a null cell sent in a patch is not stored, so it too reads as its default. A locked cell reads as on whatever is stored. */
+    NotificationChannelSet: {
+      desktop?: boolean;
+      sound?: boolean;
+      toast?: boolean;
+    };
+    /** @description The category x channel matrix (E40-D02 CC-8, D-28). One leaf: a patch sends the whole matrix. Refused with `422 validation_failed`, nothing stored, server-side and never behind a flag (C-4.14): a cell the critical-override constant locks (`packages/protocol/notification-overrides.json` `locked_cells`) set false, rule `risk_channel_locked`, the attempt audited `notifications.risk_channel_muted` at high severity from the preferences slice of #1130 on; and, from that slice on, a row whose sound is on with toast and desktop off, rule `sound_only_channel` (D-29; for the Alerts row, toast off). The critical-override kinds themselves have no cell: they are never mutable. An absent or null cell, or an absent row, reads as its default (E40-D02 §6.2), and a locked cell reads as on whatever is stored. */
+    NotificationMatrix: {
+      alerts?: components["schemas"]["NotificationAlertChannelSet"];
+      order_rejects?: components["schemas"]["NotificationChannelSet"];
+      recorder?: components["schemas"]["NotificationChannelSet"];
+      risk_events?: components["schemas"]["NotificationChannelSet"];
+      rule_actions?: components["schemas"]["NotificationChannelSet"];
+      system_health?: components["schemas"]["NotificationChannelSet"];
+    };
+    /** @description Quiet hours (E40-D02 CC-8, D-30): from `start` to `end`, local times in `tz`, an IANA zone (never an offset, so DST behaves); `end` before `start` crosses midnight. The server evaluates it in that zone; from the preferences slice of #1130 on, a zone its tz database lacks is `422`. */
+    NotificationQuietHours: {
+      enabled: boolean;
+      end: string;
+      start: string;
+      /**
+       * @description An IANA zone name. The pattern is checked now; a zone the server's tz database lacks is refused from the preferences slice of #1130 on.
+       * @example Europe/Berlin
+       */
+      tz: string;
+    };
+    NotificationSound: {
+      tone?: components["schemas"]["NotificationTone"];
+      /** @default 70 */
+      volume: number;
+    };
+    /** @description Each category's tone and volume, synced and typed server-side (E40-D02 CC-8, D-31; the #1130 ruling, BQ-4); the device keeps only playback. An absent category, tone or volume reads as its default (E40-D02 §6.5, §9.1); a null tone sent in a patch is not stored. */
+    NotificationSounds: {
+      alerts?: components["schemas"]["NotificationSound"];
+      order_rejects?: components["schemas"]["NotificationSound"];
+      recorder?: components["schemas"]["NotificationSound"];
+      risk_events?: components["schemas"]["NotificationSound"];
+      rule_actions?: components["schemas"]["NotificationSound"];
+      system_health?: components["schemas"]["NotificationSound"];
+    };
+    /**
+     * @description The four tones of E40-D02 §9.1 (D-36).
+     * @enum {string}
+     */
+    NotificationTone: "alert" | "urgent" | "reject" | "critical";
     /** @description A distance expressed in one of several units; resolved server-side to a price. */
     Offset: {
       atr_bar_type?: components["schemas"]["BarType"];
@@ -11967,9 +12165,17 @@ export interface components {
       notifications?: {
         desktop_enabled?: boolean;
         email_enabled?: boolean;
-        quiet_hours?: {
-          [key: string]: unknown;
-        } | null;
+        matrix?: components["schemas"]["NotificationMatrix"];
+        /** @description Symbols whose alerts are recorded but silenced (E40-D02 CC-8, D-33; `silenced` `muted_symbol` on the delivery). Each symbol at most once: a duplicate is refused with `422` from the preferences slice of #1130 on. */
+        muted_symbols?: components["schemas"]["MutedSymbol"][];
+        /** @description Typed in place of the earlier free-form object (E40-D02 CC-8, D-30); null = none set. A stored value of the earlier shape is left out of the answer, as any row `Settings` no longer accepts. */
+        quiet_hours?: components["schemas"]["NotificationQuietHours"] | null;
+        sounds?: components["schemas"]["NotificationSounds"];
+        /**
+         * @description How long a fired-alert toast stays (E40-D02 D-31); default `20s`. Error and Critical alerts always stay until dismissed, whatever this says.
+         * @enum {string}
+         */
+        toast_duration?: "5s" | "10s" | "20s" | "until_dismissed";
         /** @description A credential-bearing URL, which may embed a token. `GET` answers it in full to its owner only; a view-as read answers its masked form. It is never logged. A `settings.change` record carries its masked form, its scheme and host only: `scheme://host/…`, or `…` when it lacks either, when its host is neither a DNS name of letter, digit and hyphen labels nor an IP address free of a zone, or when it holds a tab or a line break. An empty value stays empty. */
         webhook_url?: string | null;
       };
@@ -15438,6 +15644,33 @@ export interface operations {
       503: components["responses"]["ServiceUnavailable"];
     };
   };
+  getAlertDelivery: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        deliveryId: components["parameters"]["DeliveryId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The delivery and its fire-time context. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AlertDeliveryDetail"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
   ackAlertDelivery: {
     parameters: {
       query?: never;
@@ -15494,13 +15727,27 @@ export interface operations {
       content: {
         "application/json": {
           /** @enum {string} */
-          outcome: "shown" | "blocked" | "failed";
+          outcome: "shown" | "blocked" | "failed" | "skipped";
           /**
            * @description OS notification permission observed by the shell; recorded in audit.
            * @enum {string}
            */
           permission: "granted" | "denied" | "default" | "unsupported";
-        };
+          /**
+           * @description Why a `skipped` delivery was not shown (CC-17); only with `skipped`.
+           * @enum {string}
+           */
+          reason?: "window_visible" | "desktop_off";
+        } & (
+          | {
+              /** @constant */
+              outcome?: "skipped";
+            }
+          | {
+              /** @enum {unknown} */
+              outcome?: "shown" | "blocked" | "failed";
+            }
+        );
       };
     };
     responses: {
@@ -19578,7 +19825,7 @@ export interface operations {
       query?: {
         /** @description Opaque forward cursor from `meta.next_cursor`. Cursors expire after 1 hour. */
         cursor?: components["parameters"]["Cursor"];
-        kind?: ("alert" | "rule" | "order" | "risk" | "system")[];
+        kind?: ("alert" | "rule" | "order" | "risk" | "system" | "recorder")[];
         /** @description Page size. */
         limit?: components["parameters"]["Limit"];
         unread_only?: boolean;

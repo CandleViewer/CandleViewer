@@ -1,0 +1,107 @@
+{
+  "$comment": "E40-S02 (#1130, BQ-5): the ONE critical-override constant. Source: E40-D01 section 5 (CO-1..CO-12, interim-accepted as PROPOSED, the owner ratifies on #958) and E40-D02 section 6.2 (the SCR-115 matrix). Compiled by packages/protocol/scripts/generate-notification-overrides.mjs into src/generated/notificationOverrides/index.ts and services/api/candleviewer/alerts/_generated/notification_overrides.py; never re-declared by hand.",
+  "version": 1,
+  "status": "PROPOSED",
+  "user_alerts_override": false,
+  "categories": [
+    "alerts",
+    "rule_actions",
+    "order_rejects",
+    "risk_events",
+    "system_health",
+    "recorder"
+  ],
+  "channels": ["toast", "centre", "desktop", "sound"],
+  "locked_cells": [
+    { "category": "order_rejects", "channel": "toast" },
+    { "category": "risk_events", "channel": "toast" }
+  ],
+  "overrides": [
+    {
+      "id": "CO-1",
+      "label": "Daily-loss lockout",
+      "category": "risk_events",
+      "toast": "banner",
+      "audience": "every_role"
+    },
+    {
+      "id": "CO-2",
+      "label": "Liquidation proximity",
+      "category": "risk_events",
+      "toast": "banner",
+      "audience": "every_role"
+    },
+    {
+      "id": "CO-3",
+      "label": "Connection lost with open positions",
+      "category": "system_health",
+      "toast": "banner",
+      "audience": "every_role"
+    },
+    {
+      "id": "CO-4",
+      "label": "Kill switch engaged",
+      "category": "risk_events",
+      "toast": "banner",
+      "audience": "every_role"
+    },
+    {
+      "id": "CO-5",
+      "label": "Trade group incomplete",
+      "category": "order_rejects",
+      "toast": "toast",
+      "audience": "every_role"
+    },
+    {
+      "id": "CO-6",
+      "label": "Position without an exchange stop",
+      "category": "risk_events",
+      "toast": "banner",
+      "audience": "every_role"
+    },
+    {
+      "id": "CO-7",
+      "label": "API key self-check failed",
+      "category": "system_health",
+      "toast": "toast",
+      "audience": "owner"
+    },
+    {
+      "id": "CO-8",
+      "label": "Recorder not writing",
+      "category": "recorder",
+      "toast": "toast",
+      "audience": "owner"
+    },
+    {
+      "id": "CO-9",
+      "label": "Disk threshold",
+      "category": "recorder",
+      "toast": "toast",
+      "audience": "owner"
+    },
+    {
+      "id": "CO-10",
+      "label": "Rate limit used up",
+      "category": "system_health",
+      "toast": "toast",
+      "audience": "owner"
+    },
+    {
+      "id": "CO-11",
+      "label": "Reconciliation mismatch",
+      "category": "system_health",
+      "toast": "toast",
+      "audience": "owner"
+    },
+    {
+      "id": "CO-12",
+      "label": "Rule engine errors",
+      "category": "system_health",
+      "toast": "banner",
+      "audience": "owner"
+    }
+  ],
+  "override_channels": ["toast", "desktop", "sound"],
+  "override_tone": "critical"
+}

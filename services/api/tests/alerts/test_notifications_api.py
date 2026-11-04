@@ -381,6 +381,7 @@ def test_every_answer_is_exactly_the_contracts_notification(env: Env) -> None:
                                                       ("system", 4))]  # fmt: skip
     items = env.c.get("/notifications").json()["items"]
     declared = set(load_openapi_spec()["components"]["schemas"]["Notification"]["properties"])
+    declared -= {"delivery_id"}  # E40-S02: served from slice 2 of #1130, which drops this
     assert len(items) == 4 and all(set(i) == declared for i in items)
 
 

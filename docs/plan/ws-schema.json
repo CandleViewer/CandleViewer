@@ -3180,10 +3180,12 @@
                 "enum": ["debug", "info", "warning", "error", "critical"]
               },
               "title": {
-                "type": "string"
+                "type": "string",
+                "maxLength": 1000
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "maxLength": 1000
               },
               "symbol": {
                 "oneOf": [
@@ -3210,6 +3212,58 @@
               },
               "error": {
                 "type": ["string", "null"]
+              },
+              "kind": {
+                "enum": ["firing", "disarm_notice", "failure_notice", "storm_summary"]
+              },
+              "silenced": {
+                "enum": ["muted_symbol", "quiet_hours", null]
+              },
+              "summary": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": ["count", "symbols", "window_start_ms", "window_end_ms"],
+                    "properties": {
+                      "count": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "symbols": {
+                        "type": "array",
+                        "maxItems": 100,
+                        "items": {
+                          "type": "string",
+                          "maxLength": 1000
+                        }
+                      },
+                      "window_start_ms": {
+                        "oneOf": [
+                          {
+                            "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "window_end_ms": {
+                        "oneOf": [
+                          {
+                            "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "additionalProperties": false

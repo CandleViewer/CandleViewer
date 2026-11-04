@@ -4350,22 +4350,39 @@ class RuleEvent(BaseModel):
     __null_refused = field_validator("id", "ts", "kind", "payload", mode="before")(_refuse_null)
 
 
-class AlertDelivery(BaseModel):
-    id: JsonInt | None = None
-    alert_id: UUID | None = None
-    channel: Literal["in_app", "email", "webhook", "push", "desktop"] | None = None
-    status: Literal["queued", "sent", "failed", "suppressed", "acked"] | None = None
-    severity: Literal["debug", "info", "warning", "error", "critical"] | None = None
-    title: str | None = None
-    message: Annotated[
-        str | None,
-        Field(description="The delivery row `body`, falling back to `title` when `body` is empty."),
-    ] = None
-    symbol: Symbol | None = None
-    fired_at: AwareDatetime | None = None
-    acked_at: AwareDatetime | None = None
-    error: str | None = None
-    __null_refused = field_validator("id", "alert_id", "channel", "status", "severity", "title", "message", "fired_at", mode="before")(_refuse_null)
+class Symbol3(RootModel[str]):
+    root: Annotated[str, Field(max_length=1000)]
+
+
+class AlertDeliveryStormSummary(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    count: Annotated[JsonInt, Field(ge=0)]
+    symbols: Annotated[list[Symbol3], Field(max_length=100)]
+    window_start: AwareDatetime | None
+    window_end: AwareDatetime | None
+
+
+class AlertDeliveryValue1(RootModel[str]):
+    root: Annotated[
+        str,
+        Field(
+            description="One `AlertDeliveryContext.values` entry: a string of at most 1,000 characters, a finite number, a boolean or `null`.",
+            max_length=1000,
+        ),
+    ]
+
+
+class AlertDeliveryValue2(RootModel[StrictFloat]):
+    root: Annotated[
+        StrictFloat,
+        Field(
+            description="One `AlertDeliveryContext.values` entry: a string of at most 1,000 characters, a finite number, a boolean or `null`.",
+            ge=-1.7976931348623157e308,
+            le=1.7976931348623157e308,
+        ),
+    ]
 
 
 class JournalTrade(BaseModel):
@@ -5345,19 +5362,6 @@ class Trading(BaseModel):
     __null_refused = field_validator("one_click_armed", "arm_timeout_seconds", "confirm_market_orders", "confirm_flatten", "default_environment", "default_qty_presets", mode="before")(_refuse_null)
 
 
-class Notifications(BaseModel):
-    desktop_enabled: StrictBool | None = None
-    email_enabled: StrictBool | None = None
-    webhook_url: Annotated[
-        str | None,
-        Field(
-            description="A credential-bearing URL, which may embed a token. `GET` answers it in full to its owner only; a view-as read answers its masked form. It is never logged. A `settings.change` record carries its masked form, its scheme and host only: `scheme://host/…`, or `…` when it lacks either, when its host is neither a DNS name of letter, digit and hyphen labels nor an IP address free of a zone, or when it holds a tab or a line break. An empty value stays empty."
-        ),
-    ] = None
-    quiet_hours: dict[str, Any] | None = None
-    __null_refused = field_validator("desktop_enabled", "email_enabled", mode="before")(_refuse_null)
-
-
 class Data(BaseModel):
     default_depth: JsonInt | None = None
     stale_badge_after_ms: JsonInt | None = None
@@ -5371,25 +5375,116 @@ class FieldMeta(BaseModel):
     __null_refused = field_validator("overridden", "updated_at", mode="before")(_refuse_null)
 
 
-class Settings(BaseModel):
-    appearance: Appearance | None = None
-    accessibility: Annotated[
-        Accessibility | None,
-        Field(description="SCR-117 preferences (E47-S07); closed enums, presentation-only."),
-    ] = None
-    chart: Chart | None = None
-    orderflow: Orderflow | None = None
-    trading: Trading | None = None
-    notifications: Notifications | None = None
-    data: Data | None = None
-    field_meta: Annotated[FieldMeta | None, Field(alias="_meta")] = None
-    __null_refused = field_validator("appearance", "accessibility", "chart", "orderflow", "trading", "notifications", "data", "field_meta", mode="before")(_refuse_null)
-
-
 class SettingsPatch(BaseModel):
     model_config = ConfigDict(
         extra="allow",
     )
+
+
+class NotificationCategory(
+    RootModel[
+        Literal[
+            "alerts", "rule_actions", "order_rejects", "risk_events", "system_health", "recorder"
+        ]
+    ]
+):
+    root: Annotated[
+        Literal[
+            "alerts", "rule_actions", "order_rejects", "risk_events", "system_health", "recorder"
+        ],
+        Field(
+            description="The six SCR-115 rows (E40-D02 §6.2), the matrix's and the sounds' keys."
+        ),
+    ]
+
+
+class NotificationChannelSet(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    toast: StrictBool | None = None
+    desktop: StrictBool | None = None
+    sound: StrictBool | None = None
+    __null_refused = field_validator("toast", "desktop", "sound", mode="before")(_refuse_null)
+
+
+class NotificationAlertChannelSet(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    toast: StrictBool | None = None
+    sound: StrictBool | None = None
+    __null_refused = field_validator("toast", "sound", mode="before")(_refuse_null)
+
+
+class NotificationMatrix(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    alerts: NotificationAlertChannelSet | None = None
+    rule_actions: NotificationChannelSet | None = None
+    order_rejects: NotificationChannelSet | None = None
+    risk_events: NotificationChannelSet | None = None
+    system_health: NotificationChannelSet | None = None
+    recorder: NotificationChannelSet | None = None
+    __null_refused = field_validator("alerts", "rule_actions", "order_rejects", "risk_events", "system_health", "recorder", mode="before")(_refuse_null)
+
+
+class NotificationSound(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    tone: Annotated[
+        Literal["alert", "urgent", "reject", "critical"] | None,
+        Field(description="The four tones of E40-D02 §9.1 (D-36)."),
+    ] = None
+    volume: Annotated[JsonInt, Field(ge=0, le=100, multiple_of=5)] = 70
+    __null_refused = field_validator("tone", mode="before")(_refuse_null)
+
+
+class NotificationSounds(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    alerts: NotificationSound | None = None
+    rule_actions: NotificationSound | None = None
+    order_rejects: NotificationSound | None = None
+    risk_events: NotificationSound | None = None
+    system_health: NotificationSound | None = None
+    recorder: NotificationSound | None = None
+    __null_refused = field_validator("alerts", "rule_actions", "order_rejects", "risk_events", "system_health", "recorder", mode="before")(_refuse_null)
+
+
+class NotificationQuietHours(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    enabled: StrictBool
+    start: Annotated[str, Field(pattern="^([01][0-9]|2[0-3]):[0-5][0-9]$")]
+    end: Annotated[str, Field(pattern="^([01][0-9]|2[0-3]):[0-5][0-9]$")]
+    tz: Annotated[
+        str,
+        Field(
+            description="An IANA zone name. The pattern is checked now; a zone the server's tz database lacks is refused from the preferences slice of #1130 on.\n",
+            examples=["Europe/Berlin"],
+            pattern="^[A-Za-z0-9_+./-]{1,64}$",
+        ),
+    ]
+
+
+class MutedSymbol(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    symbol: Annotated[
+        str,
+        Field(
+            description="Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
+            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            pattern="^[A-Z0-9]{2,20}USDT$",
+        ),
+    ]
+    muted_at: AwareDatetime
 
 
 class HotkeyBinding(BaseModel):
@@ -5928,7 +6023,12 @@ class Notification(BaseModel):
             description="Deterministic: uuid5(namespace, source_table + source_id), so the same source row always maps to the same notification id. The namespace is the fixed constant `x-cv-uuid5-namespace` below (24-internal-schemas.md §1.6).\n"
         ),
     ]
-    kind: Literal["alert", "rule", "order", "risk", "system"]
+    kind: Annotated[
+        Literal["alert", "rule", "order", "risk", "system", "recorder"],
+        Field(
+            description="`recorder` (E40-D02 CC-6, D01 G2) names the recorder's own notices (SCR-115's Recorder row); no source serves it yet, so a `recorder` filter matches nothing until one does, as `risk` (E39) does today.\n"
+        ),
+    ]
     severity: Literal["debug", "info", "warning", "error", "critical"]
     title: str
     body: str | None = None
@@ -5941,6 +6041,12 @@ class Notification(BaseModel):
     ] = None
     symbol: str | None = None
     exchange_account_id: UUID | None = None
+    delivery_id: Annotated[
+        JsonInt | None,
+        Field(
+            description="On an `alert` row, the `AlertDelivery.id` it shows (the id `ackAlertDelivery` and `getAlertDelivery`, a PROPOSED path, take; E40-D02 CC-20); null on every other kind.\n"
+        ),
+    ] = None
     source_id: Annotated[
         UUID | None,
         Field(
@@ -7811,6 +7917,129 @@ class ReverseAcceptance(BaseModel):
     ] = None
 
 
+class AlertDelivery(BaseModel):
+    id: JsonInt | None = None
+    alert_id: UUID | None = None
+    channel: Literal["in_app", "email", "webhook", "push", "desktop"] | None = None
+    status: Literal["queued", "sent", "failed", "suppressed", "acked"] | None = None
+    severity: Literal["debug", "info", "warning", "error", "critical"] | None = None
+    title: Annotated[
+        str | None,
+        Field(
+            description="A firing's title is the alert's name, as it was at fire time (E40-D02 CC-1); a notice's or a storm summary's is the server's own wording. Rows written before CC-1 hold the raw message template here.\n",
+            max_length=1000,
+        ),
+    ] = None
+    message: Annotated[
+        str | None,
+        Field(
+            description="The delivery row `body`, falling back to `title` when `body` is empty. A firing's `body` is its message template rendered at fire time with the values it fired on, or, for an empty template, the condition restated with those values (E40-D02 CC-1, D-17). Plain text, never markup: control and bidirectional-control characters are removed and a substituted value never carries `{{` or `}}`. The value of a metric of account or position scope, and every `position.*` placeholder, renders `—`, so no account data reaches any channel until an in-app-only body exists.\n",
+            max_length=1000,
+        ),
+    ] = None
+    symbol: Symbol | None = None
+    fired_at: AwareDatetime | None = None
+    acked_at: AwareDatetime | None = None
+    error: Annotated[
+        str | None,
+        Field(
+            description="A `failed` row's error; a `suppressed` row's reason, one of `DeliverySuppressionReason` (CC-9).\n"
+        ),
+    ] = None
+    kind: Annotated[
+        Literal["firing", "disarm_notice", "failure_notice", "storm_summary"] | None,
+        Field(
+            description="What a delivery row records (E40-D02 CC-7, D-39): `firing` an alert firing (delivered or `suppressed`); `disarm_notice` the server disarming the alert because a data source was lost; `failure_notice` the in-app notice a failed channel raises; `storm_summary` the one in-app summary of the firings the storm gate held in a window (D01 G13). Derived from the row the server wrote, never from client input.\n"
+        ),
+    ] = None
+    silenced: Annotated[
+        Literal["muted_symbol", "quiet_hours"] | None,
+        Field(
+            description="Set on the `in_app` row of a firing a symbol mute or quiet hours silenced (E40-D02 CC-9, D-33, D-30): the row is recorded and kept in Notifications, and the client shows no toast and plays no sound for it; the firing's `desktop` row is settled `suppressed` with the same reason. Null otherwise.\n"
+        ),
+    ] = None
+    summary: Annotated[
+        AlertDeliveryStormSummary | None,
+        Field(description="Set on a `storm_summary` delivery only; null for every other kind."),
+    ] = None
+    __null_refused = field_validator("id", "alert_id", "channel", "status", "severity", "title", "message", "fired_at", "kind", mode="before")(_refuse_null)
+
+
+class AlertDeliveryContext(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    trigger_type: Annotated[str | None, Field(max_length=1000)] = None
+    symbol: Annotated[str | None, Field(max_length=1000)] = None
+    event_ts_ms: Annotated[JsonInt | None, Field(description="Exchange event time")] = None
+    evaluated_at_ms: Annotated[JsonInt | None, Field(description="Server evaluation time")] = None
+    bar_open_ms: Annotated[JsonInt | None, Field(description="Set by the once-per-bar gate.")] = (
+        None
+    )
+    values: Annotated[
+        dict[str, AlertDeliveryValue1 | AlertDeliveryValue2 | StrictBool | None] | None,
+        Field(
+            description="Each metric the condition read, by metric name (at most 64 characters), as evaluated. A number is finite (NaN and the infinities are not JSON and are never served).\n",
+            max_length=64,
+        ),
+    ] = None
+    suppressed_reason: Annotated[
+        Literal[
+            "storm",
+            "email_relay_off",
+            "webhook_disabled",
+            "push_unavailable",
+            "recipient_deleted",
+            "unknown_channel",
+            "owner_inactive",
+            "muted_symbol",
+            "quiet_hours",
+            "window_visible",
+            "desktop_off",
+        ]
+        | None,
+        Field(
+            description="The closed set of reasons a delivery is `suppressed` (E40-D02 CC-9, CC-17), carried in `AlertDelivery.error` and the `context` keys `suppressed_reason` (the evaluator's storm gate) and `suppression_reason` (the dispatcher and the desktop report).\n"
+        ),
+    ] = None
+    suppression_reason: Annotated[
+        Literal[
+            "storm",
+            "email_relay_off",
+            "webhook_disabled",
+            "push_unavailable",
+            "recipient_deleted",
+            "unknown_channel",
+            "owner_inactive",
+            "muted_symbol",
+            "quiet_hours",
+            "window_visible",
+            "desktop_off",
+        ]
+        | None,
+        Field(
+            description="The closed set of reasons a delivery is `suppressed` (E40-D02 CC-9, CC-17), carried in `AlertDelivery.error` and the `context` keys `suppressed_reason` (the evaluator's storm gate) and `suppression_reason` (the dispatcher and the desktop report).\n"
+        ),
+    ] = None
+    silenced: Annotated[
+        Literal["muted_symbol", "quiet_hours"] | None,
+        Field(
+            description="Why a firing's optional channels were held (E40-D02 CC-9): `muted_symbol`, the symbol is on the owner's `notifications.muted_symbols`; `quiet_hours`, the firing fell inside the owner's `notifications.quiet_hours`. Neither ever holds a critical-override kind (`packages/protocol/notification-overrides.json`), and user alerts never override.\n"
+        ),
+    ] = None
+    disarmed: StrictBool | None = None
+    reason: Annotated[str | None, Field(max_length=1000)] = None
+    metric: Annotated[str | None, Field(max_length=1000)] = None
+    channel_failure: StrictBool | None = None
+    failed_delivery_id: Annotated[JsonInt | None, Field(ge=0)] = None
+    storm_summary: StrictBool | None = None
+    suppressed: Annotated[JsonInt | None, Field(ge=0)] = None
+    symbols: Annotated[list[Symbol3] | None, Field(max_length=100)] = None
+    window_start_ms: JsonInt | None = None
+    window_end_ms: JsonInt | None = None
+    __null_refused = field_validator("trigger_type", "event_ts_ms", "evaluated_at_ms", "values", "suppressed_reason", "suppression_reason", "silenced", "disarmed", "reason", "metric", "channel_failure", "failed_delivery_id", "storm_summary", "suppressed", "symbols", "window_start_ms", "window_end_ms", mode="before")(_refuse_null)
+
+
 class JournalTradeDetail(JournalTrade):
     mistakes: list[str] | None = None
     checklist: list[dict[str, Any]] | None = None
@@ -7877,6 +8106,54 @@ class IndicatorPresetInput(BaseModel):
         ),
     ] = False
     __null_refused = field_validator("style", mode="before")(_refuse_null)
+
+
+class Notifications(BaseModel):
+    desktop_enabled: StrictBool | None = None
+    email_enabled: StrictBool | None = None
+    webhook_url: Annotated[
+        str | None,
+        Field(
+            description="A credential-bearing URL, which may embed a token. `GET` answers it in full to its owner only; a view-as read answers its masked form. It is never logged. A `settings.change` record carries its masked form, its scheme and host only: `scheme://host/…`, or `…` when it lacks either, when its host is neither a DNS name of letter, digit and hyphen labels nor an IP address free of a zone, or when it holds a tab or a line break. An empty value stays empty."
+        ),
+    ] = None
+    quiet_hours: Annotated[
+        NotificationQuietHours | None,
+        Field(
+            description="Typed in place of the earlier free-form object (E40-D02 CC-8, D-30); null = none set. A stored value of the earlier shape is left out of the answer, as any row `Settings` no longer accepts.\n"
+        ),
+    ] = None
+    matrix: NotificationMatrix | None = None
+    sounds: NotificationSounds | None = None
+    toast_duration: Annotated[
+        Literal["5s", "10s", "20s", "until_dismissed"] | None,
+        Field(
+            description="How long a fired-alert toast stays (E40-D02 D-31); default `20s`. Error and Critical alerts always stay until dismissed, whatever this says.\n"
+        ),
+    ] = None
+    muted_symbols: Annotated[
+        list[MutedSymbol] | None,
+        Field(
+            description="Symbols whose alerts are recorded but silenced (E40-D02 CC-8, D-33; `silenced` `muted_symbol` on the delivery). Each symbol at most once: a duplicate is refused with `422` from the preferences slice of #1130 on.\n",
+            max_length=200,
+        ),
+    ] = None
+    __null_refused = field_validator("desktop_enabled", "email_enabled", "matrix", "sounds", "toast_duration", "muted_symbols", mode="before")(_refuse_null)
+
+
+class Settings(BaseModel):
+    appearance: Appearance | None = None
+    accessibility: Annotated[
+        Accessibility | None,
+        Field(description="SCR-117 preferences (E47-S07); closed enums, presentation-only."),
+    ] = None
+    chart: Chart | None = None
+    orderflow: Orderflow | None = None
+    trading: Trading | None = None
+    notifications: Notifications | None = None
+    data: Data | None = None
+    field_meta: Annotated[FieldMeta | None, Field(alias="_meta")] = None
+    __null_refused = field_validator("appearance", "accessibility", "chart", "orderflow", "trading", "notifications", "data", "field_meta", mode="before")(_refuse_null)
 
 
 class Job(BaseModel):
@@ -8275,6 +8552,10 @@ class ApiKeyWithVerification(BaseModel):
     verification: KeyVerificationPassed
 
 
+class AlertDeliveryDetail(AlertDelivery):
+    context: AlertDeliveryContext
+
+
 class OrderDiagnostics(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -8494,6 +8775,12 @@ class AlertInput(BaseModel):
     channels: Annotated[
         list[Literal["in_app", "email", "webhook", "push", "desktop"]], Field(min_length=1)
     ]
+    sound: Annotated[
+        StrictBool,
+        Field(
+            description="Whether this alert's firings play its category's tone (E40-D02 CC-8, D-11); omitted on create = true, omitted on replace = unchanged. The Alerts row's sound setting applies on top of it.\n"
+        ),
+    ] = True
     condition_ir: AlertConditionIr
     message_template: Annotated[
         str | None,
