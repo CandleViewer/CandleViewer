@@ -4,7 +4,7 @@ PR 1 audits the E12 surfaces that are built at the pin, per the ruling of record
 
 ## 0. Honest scope
 
-This is an **agent-run, offline** audit. No screen reader was operated, nobody tabbed a mounted chart, and nothing was zoomed by hand. Every verdict below is agent-run and marked (heuristic); every item that needs a person is an owner-run row (§6).
+This is an **agent-run, offline** audit. No screen reader was operated, nobody tabbed a mounted chart, and nothing was zoomed by hand (the layout criteria are listed as not run in §3.7). Every verdict below is agent-run and marked (heuristic); every item that needs a person is an owner-run row (§6).
 
 - **Pin:** `main` at `aa0a02b8c54c877c39718f101abf69467cb4a2d6` (tree `apps` `b8fbf0c2df34`); every cite below is read there.
 - **Reachability is cited, not re-derived:** E47-T01's rows (T01:178–185) put every E12 surface out of reach of a route: SCR-041 and SCR-048 built but not mounted, the rest not built. No route hosts `Chart`, `QuickSwitcher`, `PriceScaleMenu`, `ChartTablePanel` or `ChartErrorSurface`, so no Playwright collector can visit them.
@@ -52,19 +52,19 @@ This is an **agent-run, offline** audit. No screen reader was operated, nobody t
 - SCR-045: the grid keys, `Esc` back to the chart, Alt+T both ways, focus on the chart surface or the Table button and never the page (`ChartDataTable.test.tsx`, `ChartTablePanel.test.tsx`).
 - SCR-048: the card keeps focus, moves focus from the panes to its first stop and returns it on close (`ChartErrorSurface.test.tsx`, "focus in the panes moves to the card's first stop and returns to it on close").
 
-Four of those files already run axe-core on jsdom (colour contrast off): SCR-041, SCR-043, SCR-045 and SCR-048, each with 0 serious or critical. That is supplementary, layout-free evidence (jsdom has no layout, so contrast and target size cannot run there) and **not** AC 1 (N-4).
+Four of those files already run axe-core on jsdom (colour contrast off): SCR-041, SCR-043, SCR-045 and SCR-048, each with 0 serious or critical. That is supplementary, layout-free evidence (jsdom has no layout, so contrast and target size cannot run there) and **not** AC 1 (N-4). These runs evidence no layout-dependent criterion: target size, reflow, text spacing, focus appearance and forced colours are §3.7's rows, not covered by them.
 
 ### 3.2 This PR's tests (`apps/web/test/chart/a11y/e12Q07Audit.test.tsx`, 5 tests, all pass)
 
-| Test                                       | Oracle                                 | Measured (heuristic)                                                                                                                                       |
-| ------------------------------------------ | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Windowing at 100 000 bars, open and travel | D11:96 (60 rows, cap 200, 1,800 nodes) | at open 61 bar rows and 882 grid nodes; after 40 × ↓ and an expanded bar, 59 bar rows plus 3 level rows and 908 nodes; never above 200 rows or 1,800 nodes |
-| A forming-bar update at 100 000 bars       | the ticket's Performance notes         | one mutation record, 0 nodes added; the grid keeps its 459 nodes (the cursor on the latest bar)                                                            |
-| BG-09: a held ↓ in the table               | D11:537                                | 60 presses (2 s at 30 Hz): 0 polite writes; the reader follows focus                                                                                       |
-| BG-13: a forming value at 20 Hz for 60 s   | D11:541, `05`:185                      | 31 writes in 60 s through the polite writer, at most 1 in any 1 s window (the ceiling is 2); the last write is the latest value                            |
-| Parity: no footprint, delta and CVD absent | D07:238                                | every row's delta and CVD cell reads "—", never a digit                                                                                                    |
+| Test                                       | Oracle                                 | Measured (heuristic)                                                                                                                                                                                                            |
+| ------------------------------------------ | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windowing at 100 000 bars, open and travel | D11:96 (60 rows, cap 200, 1,800 nodes) | at open 61 bar rows and 882 grid nodes; after 40 × ↓ and an expanded bar, 59 bar rows plus 3 level rows and 908 nodes; never above 200 rows or 1,800 nodes                                                                      |
+| A forming-bar update at 100 000 bars       | the ticket's Performance notes         | one mutation record, 0 nodes added; the grid keeps its 459 nodes (the cursor on the latest bar)                                                                                                                                 |
+| BG-09: a held ↓ in the table               | D11:537                                | 60 presses (2 s at 30 Hz): 0 polite writes; the reader follows focus                                                                                                                                                            |
+| BG-13: a forming value at 20 Hz for 60 s   | D11:541, `05`:185                      | 31 writes in 60 s through the polite writer, at most 1 in any 1 s window (the ceiling is 2); the last write is the latest value. The writer alone: the combined cursor-plus-panel worst case (D11:552) is not built, so not run |
+| Parity: no footprint, delta and CVD absent | D07:238                                | every row's delta and CVD cell reads "—", never a digit                                                                                                                                                                         |
 
-The node count and the update cost are counted, not timed: a wall-clock budget belongs in a perf project, not in the unit run.
+The test asserts the caps and the 61 rows at open; the other node and row counts above were read from a one-off instrumented run of the same test and are reported, not asserted. The node count and the update cost are counted, not timed: a wall-clock budget belongs in a perf project, not in the unit run.
 
 ### 3.3 CMP-029 in Storybook
 
@@ -72,7 +72,7 @@ The node count and the update cost are counted, not timed: a wall-clock budget b
 
 ### 3.4 Contrast and non-colour cues
 
-`pnpm --filter @candleviewer/ui contrast:gate`: 516 pair checks, 81 CVD checks, 0 findings. Series marks against `color.surface.canvas` (3:1 floor):
+`pnpm --filter @candleviewer/ui contrast:gate`: 516 pair checks, 81 CVD checks, 0 findings. Series marks against `color.surface.canvas` (3:1 floor), read from the gate's `pairs` entries in its output `build/reports/contrast-matrix.json` under `packages/ui` (regenerated by reproduce step 3; the per-token rows are copied into the results file):
 
 | Token               | Dark | Light | High contrast |
 | ------------------- | ---- | ----- | ------------- |
@@ -90,11 +90,25 @@ Against E12-D10: every built moment is a cut in both modes (D10:55–62; only M-
 
 Run offline against D07:238 as the ruling asks; its outcome is routed to the coordinator and is not recorded here (BQ-0 rider).
 
+### 3.7 Layout criteria: not run
+
+Every criterion here needs a laid-out, mounted surface: jsdom has no layout and no E12 surface is on a route (§0). Each is **not run: not mounted** on SCR-041, SCR-043, the SCR-045 shell and SCR-048, and moves to OR-7 (§6) and the closing slice's sweep.
+
+| SC                                              | What it needs                                                     | Design oracle (cited, not run)                                             |
+| ----------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| 1.4.4 Resize text, 1.4.10 Reflow (200 %, 400 %) | the surfaces at 200 % and 400 % zoom and at the in-app text scale | `05`:165 and `05` R-12 (`05`:120); D07's stacked reflow at 200 % (D07:215) |
+| 1.4.12 Text spacing                             | the WCAG spacing overrides applied to the mounted surfaces        | none named in D07 or D11                                                   |
+| 2.5.8 Target size (minimum)                     | measured target boxes in a real layout                            | D11 rates it compliant (D11:654)                                           |
+| 2.4.7 Focus visible, 2.4.11 Focus not obscured  | the focus ring seen on each stop, unclipped, in a laid-out panel  | D11 rates both compliant (D11:651, :652)                                   |
+| Forced colours / high-contrast mode             | the OS forced-colours mode over the mounted surfaces              | the high-contrast token theme passes the gate (§3.4); the OS mode is unrun |
+
+The Storybook leg (§3.3) lays out CMP-029 in Chromium but does not zoom it or force colours, so it covers none of these rows.
+
 ## 4. Findings
 
-| #   | Where                        | SC    | Severity             | Evidence                                                                                                                       | Disposition                                                                   | Register        |
-| --- | ---------------------------- | ----- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- | --------------- |
-| F-1 | SCR-045, delta and CVD cells | 1.3.1 | moderate (heuristic) | the absent value is the bare glyph "—" in its cell; a reader at its default punctuation level may say nothing after the header | open: D07's named form ("no delta: bar from exchange klines") lands with #521 | report only (1) |
+| #   | Where                        | SC    | Severity             | Evidence                                                                                                                       | Disposition                                                                                                                 | Register        |
+| --- | ---------------------------- | ----- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| F-1 | SCR-045, delta and CVD cells | 1.3.1 | moderate (heuristic) | the absent value is the bare glyph "—" in its cell; a reader at its default punctuation level may say nothing after the header | open, owner: #521; D07's named form ("no delta: bar from exchange klines") lands with #521; severity provisional until OR-3 | report only (1) |
 
 1. F-1 is not a register row yet: `findings.json` admits a finding only on a screen its sweep audited (`covered` or `partial`), and SCR-045's row is E47-T01's "unreachable: not built" (C-3). The row is appended with the next free `A11Y-F` id once SCR-045 is mounted and swept, or when the coordinator rules another way (BQ-3's rider, a deviation recorded in §5).
 
@@ -125,14 +139,15 @@ No serious or critical finding is open on the built set. Notes that are not defe
 
 ## 6. Owner-run rows (the checklist, ≤ 10)
 
-| Row  | What the owner runs                                                                                                             | Standard              |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| OR-1 | NVDA + Electron, D11's script over the built rows, heard; the record follows `05` §8.4 (text transcripts, the E47-T04 template) | `05` §8.1 row 1       |
-| OR-2 | VoiceOver + Electron, the same                                                                                                  | `05` §8.1 row 4       |
-| OR-3 | NVDA + Chromium, the fast leg, including whether "—" is spoken in an SCR-045 delta cell (F-1)                                   | `05` §8.1 row 3       |
-| OR-4 | JAWS + Electron is not covered by this ticket; stated so it is not assumed                                                      | `05` §8.1 row 2       |
-| OR-5 | The sprint-review recording of SCR-042 once #535 lands, reviewed for incidental disclosure before it is attached                | the ticket's DoD      |
-| OR-6 | A waiver or a fix decision on F-1 under the delegation, and QA sign-off of this record                                          | the DoD's waiver line |
+| Row  | What the owner runs                                                                                                                                               | Standard              |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| OR-1 | NVDA + Electron, D11's script over the built rows, heard; the record follows `05` §8.4 (text transcripts, the E47-T04 template)                                   | `05` §8.1 row 1       |
+| OR-2 | VoiceOver + Electron, the same                                                                                                                                    | `05` §8.1 row 4       |
+| OR-3 | NVDA + Chromium, the fast leg, including whether "—" is spoken in an SCR-045 delta cell (F-1)                                                                     | `05` §8.1 row 3       |
+| OR-4 | JAWS + Electron is not covered by this ticket; stated so it is not assumed                                                                                        | `05` §8.1 row 2       |
+| OR-5 | The sprint-review recording of SCR-042 once #535 lands, reviewed for incidental disclosure before it is attached                                                  | the ticket's DoD      |
+| OR-6 | A waiver or a fix decision on F-1 under the delegation, and QA sign-off of this record                                                                            | the DoD's waiver line |
+| OR-7 | Once a route mounts them: zoom to 200 % and 400 %, text spacing, target size, focus appearance and forced colours on SCR-041, SCR-043, SCR-045 and SCR-048 (§3.7) | `05`:165, WCAG 2.2 AA |
 
 The heard passes are E12-D13's OR-3 (D13:514). An agent-run pass counts toward none of `05` §8.1 (`05`:293).
 

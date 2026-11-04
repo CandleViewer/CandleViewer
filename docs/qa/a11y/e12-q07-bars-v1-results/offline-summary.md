@@ -35,3 +35,11 @@ Pin `aa0a02b8c54c877c39718f101abf69467cb4a2d6` plus this PR's test file; run 202
 ## Contrast gate
 
 `contrast:gate`: 516 pair checks, 33 heatmap-stop checks, 81 CVD checks, 0 findings; data-ink 582 checks, 0 failing per theme; no-hue-alone ok.
+
+Series marks against `color.surface.canvas` (3:1 floor), copied from the gate's `pairs` entries (`build/reports/contrast-matrix.json` under `packages/ui`):
+
+| Token               | Dark | Light | High contrast |
+| ------------------- | ---- | ----- | ------------- |
+| `color.candle.up`   | 7.45 | 5.03  | 7.45          |
+| `color.candle.down` | 4.68 | 4.85  | 4.68          |
+| `color.candle.wick` | 5.96 | 6.36  | 5.96          |
