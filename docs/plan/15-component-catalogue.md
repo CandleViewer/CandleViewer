@@ -2429,6 +2429,7 @@ interface FootprintSeriesProps {
 - **Tokens**: `color.status.*`.
 - **Storybook**: OiOnly, FundingOnly, LiquidationBars, Combined.
 - **Tests**: unit, visual, axe, performance.
+- **As built (E24-S03, `FundingOnly`)**: `apps/web/src/features/funding/ui/FundingPane.tsx`, a named region ("Funding, {symbol}") with legend row 0 (label, the served interval), one `role="status"` node from mount, a state band (loading, none settled vs not recorded from `meta.coverage`, unavailable, `Retry` named "Retry loading Funding" with `Last loaded`), the engine's plot slot (empty until the linked sub-pane exists) and the D02 §11 table (CMP-049, tri-state sort by time or rate, gap rows in words, the newest 200 rows) shown while the SCR-054 group's "Show tables" (E24-D04 A-03) is pressed; the pane has no table toggle of its own. Its stories are registered in `packages/ui/.storybook/main.ts`.
 
 ### CMP-187 SpeedOfTapePane
 
