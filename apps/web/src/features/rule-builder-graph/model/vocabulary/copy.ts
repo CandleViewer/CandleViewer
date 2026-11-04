@@ -33,6 +33,34 @@ export const E36_COPY = {
     "Every position keeps a native stop — you can move it, not delete it.",
   "rules.editor.notice.native_stop_2":
     "Rules can tighten it, never remove it — the stop is held by the exchange, not by this app.",
+  // The rule sentence (E37-S02 slice 4): the safety line (frozen by E36-D05), the graph-only cards' sentences,
+  // the action phrases and the limit sentences E36-D05 keys (E36-D01 §5.3, §5.4 G6, §5.6).
+  "rules.editor.stop.tightens": "The stop only ever tightens.",
+  "rules.editor.card.within": "{A} happened within the last {w}",
+  "rules.editor.card.count": "{A} happened at least {n} times in {w}",
+  "rules.editor.card.stable": "{A} has not changed for {w}",
+  "rules.editor.action.phrase.tighten": "tighten the stop to {level}",
+  "rules.editor.action.phrase.breakeven":
+    "move the stop to break-even (your average entry) plus {n} ticks",
+  "rules.editor.action.phrase.scale_out": "scale out {amount} at {order type}",
+  "rules.editor.action.phrase.flatten": "flatten every position",
+  "rules.editor.action.phrase.halt": "halt new orders on this {scope} until the next UTC day",
+  "rules.editor.action.phrase.notify": "notify me ({channel}, {severity})",
+  "rules.editor.action.phrase.tag": "tag the journal {tag}",
+  "rules.editor.limit.once": "Once.",
+  "rules.editor.limit.once_position": "Once per position.",
+  "rules.editor.limit.once_day": "Once per day.",
+  "rules.editor.limit.once_group": "Once per group.",
+  "rules.editor.limit.once_lifetime": "Once in this rule's lifetime.",
+  "rules.editor.limit.cooldown": "At most every {d}.",
+  "rules.editor.limit.per_hour": "Up to {n} times an hour.",
+  "rules.editor.limit.per_day": "Up to {n} times a day.",
+  "rules.editor.limit.per_fire": "Only the first {n} actions run per firing.",
+  "rules.editor.limit.notional_fire": "At most {x} USDT per firing.",
+  "rules.editor.limit.notional_day": "At most {x} USDT a day.",
+  "rules.editor.limit.timeout": "Each check may take up to {n} ms.",
+  "rules.editor.limit.confirm": "Asks before acting (skipped if unanswered in 60 s).",
+  "rules.editor.limit.kill_switch": "Turns itself off after {n} errors in a row — you re-arm it.",
 } as const;
 
 /** E36-D05's operator verbs (`rules.editor.verb.<op>`): the one client table the design keys by operator id. */

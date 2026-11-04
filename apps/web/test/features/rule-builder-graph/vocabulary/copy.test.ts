@@ -12,6 +12,7 @@ import {
   text,
   verbOf,
 } from "../../../../src/features/rule-builder-graph/model/vocabulary/copy.js";
+import { PROPOSED_WORDS } from "../../../../src/features/rule-builder-graph/model/vocabulary/sentence.js";
 
 const ROOT = resolve(import.meta.dirname, "../../../../../..");
 
@@ -41,12 +42,26 @@ const D05 = new Map(
 const INSTANCES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   "rules.editor.announce.metrics": { n: "41" },
   "rules.editor.stop.kept": { price: "63,900.0" },
+  "rules.editor.action.phrase.tighten": { level: "2.0 × ATR(14) from the close" },
+  "rules.editor.action.phrase.breakeven": { n: "2" },
+  "rules.editor.action.phrase.scale_out": { amount: "33 %", "order type": "market" },
+  "rules.editor.action.phrase.halt": { scope: "account" },
+  "rules.editor.action.phrase.notify": { channel: "push", severity: "high" },
+  "rules.editor.limit.cooldown": { d: "60 s" },
+  "rules.editor.limit.per_hour": { n: "10" },
+  "rules.editor.limit.per_day": { n: "500" },
+  "rules.editor.limit.kill_switch": { n: "5" },
 };
 
 describe("the node library's copy, verbatim from the decks (E37-S02)", () => {
   it("each E36-D05 key reads as the deck does, byte for byte (an instance filled with its figures)", () => {
     for (const [key, template] of Object.entries(E36_COPY))
       expect(fill(template, INSTANCES[key]), key).toBe(E36[key]?.text);
+  });
+
+  it("the PROPOSED order phrase is E36-D05's rules.editor.action.phrase.order without its stop level", () => {
+    const order = fill(PROPOSED_WORDS.order, { side: "buy", size: "0.25", price: "market" });
+    expect(`${order} at 63,900`).toBe(E36["rules.editor.action.phrase.order"]?.text);
   });
 
   it("Gherkin 'Estimated metrics are badged as text': the estimated word and name are E36-D05's", () => {
