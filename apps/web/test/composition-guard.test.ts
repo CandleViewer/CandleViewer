@@ -24,6 +24,8 @@ const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
   "admin-connectivity":
     "E08-S12 (#5207) PR 1: SCR-147's pure core, flags off; PR 2 mounts it once #5330 and the R-id land",
   "chart-errors": "E11-S02 (#334): SCR-048 wraps <Chart>, which no screen mounts until SCR-030",
+  "chart-empty":
+    "E16-S05 (#487) web half: SCR-047's typed leaf (BQ-01); the SCR-030 pane (E12-S11 #451) mounts it",
   "chart-price-scale":
     "E11-S05 (#386): SCR-043 is a <Chart> child; no screen mounts one until SCR-030",
   positions: "E29-S01 (#911): SCR-063's data layer, dark until its closing PR mounts the panel",

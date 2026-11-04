@@ -160,6 +160,7 @@ describe("fetchCoverage", () => {
     apiFetch.mockResolvedValueOnce(json(200, COVERAGE));
     const out = await fetchCoverage("BTCUSDT", signal());
     expect(out?.kind).toBe("ok");
+    expect(out?.kind === "ok" ? out.coverage : null).toEqual(COVERAGE);
     expect(apiFetch.mock.calls[0]?.[0]).toBe("/api/v1/market/data-coverage?symbol=BTCUSDT");
   });
 
