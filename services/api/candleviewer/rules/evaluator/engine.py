@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Final
 
 from candleviewer.rules.evaluator.nodes import (
     EvalContext,
@@ -80,6 +81,11 @@ def parse_instance(instance: str) -> tuple[str | None, str | None]:
     """The inverse of `scope_instance`: ``(symbol, account)``, a ``*`` part as None."""
     sym, _, acct = instance.partition("@")
     return (None if sym in ("", "*") else sym), (None if acct in ("", "*") else acct)
+
+
+#: The skips `Evaluator._evaluate` decides before its scope gate runs: they say nothing of the
+#: gate, so they neither open nor end an episode of its refusals (`rules.scope.DenialEpisodes`).
+BEFORE_SCOPE_GATE: Final = frozenset({"disabled", "paused"})
 
 
 class Evaluator:
@@ -176,6 +182,7 @@ class Evaluator:
         if self.paused:
             self.stats.missed_triggers += 1
             return self._skip(instance, trigger_type, now, "paused")
+        # The skips above are `BEFORE_SCOPE_GATE`'s; a refusal of the gate carries its reason.
         refusal = None if self._scope_gate is None else self._scope_gate(instance)
         if refusal is not None:
             return self._skip(instance, trigger_type, now, "scope", refusal=refusal)
