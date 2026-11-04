@@ -945,6 +945,7 @@ Drag preview                Drop zones
 - **Stories:** US-IND-001, US-DRAW-008.
 - **UX research:** [e13-indicator-mental-models.md](../design/research/e13-indicator-mental-models.md) (E13-D01; key-map proposals and count-only referrer disclosure, R5).
 - **Wireframes:** [E13-D02.md](../design/E13/E13-D02.md) (E13-D02; greyscale wireframes with all states, keyboard contract and component-usage map; sixteen Penpot boards on page `E13-D02`, exports in `docs/design/E13/img/`).
+- **Drawing persistence (ADR-0045 Decision 7):** a drawing deleted here is soft-deleted and purged after 90 days. On the client (gated by ADR-0045's validation), an undo of a delete re-creates it under a new id, and an undo whose target was removed elsewhere is dropped and reported, never resurrected.
 - **Wireframes (drawings):** [E14-D02.md](../design/E14/E14-D02.md) (E14-D02; greyscale wireframes of the rail, the creation state machine, selection / edit states, the properties popover, the drawings branch and the keyboard path; fourteen Penpot boards (pending) on page `E14-D02 Drawing interaction wireframes`, exports to `docs/design/E14/img/`).
 - **Hi-fi:** [E13-D03.md](../design/E13/E13-D03.md) · [E13-D03-handoff.md](../design/E13/E13-D03-handoff.md) (E13-D03; owner approval pending; the dark / light × compact / comfortable frames of the manager, the slot-hued shape swatches, the count chip and the legend row states in colour; Penpot page by name + id in the spec).
 - **Hi-fi (drawings):** [E14-D07.md](../design/E14/E14-D07.md) · [E14-D07-handoff.md](../design/E14/E14-D07-handoff.md) (E14-D07; owner approval pending; the drawings branch in colour — the label templates per tool, the row states in dark / light, the sync markers, the 0 / 20 / 500 scale frames, the bulk bar and its confirms; Penpot page by name + id in the spec; board exports follow in `docs/design/E14/img/` (pending).)
@@ -971,9 +972,9 @@ Drag preview                Drop zones
 +---+
 ```
 
-- **Data:** drawings persist per symbol+user: `GET/POST /api/v1/drawings?symbol=`, `PUT/DELETE /api/v1/drawings/{drawingId}`; shared across synced panels on the same symbol.
+- **Data:** drawings persist per symbol+user: `GET/POST /api/v1/drawings?symbol=`, `PUT/DELETE /api/v1/drawings/{drawingId}`; shared across synced panels on the same symbol. Conflict and sync behaviour (ADR-0045 Decisions 5 and 6): an edit made in another session is rejected with `version_conflict`, the server version wins and the drawing is tagged "changed elsewhere" with one notice per episode; another tab or device is re-read on mount, on a conflict, and, PROPOSED, on becoming visible when the last read is older than 60 s, with no push (client, gated by ADR-0045's validation).
 - **Interactions:** keyboard tool selection (`Alt+L` trendline, `Alt+H` horizontal, `Alt+O` fib, `Alt+R` rect, `Alt+D` measure; interim keys, registered by E14-S10; the keyboard creation flow and the surrogate pattern: [E14-K01.md](spikes/E14-K01.md)); magnet snapping toggle `Ctrl+M`; drawings can be created entirely by keyboard via SCR-045's grid ("Create horizontal line at focused price").
-- **Validation:** a drawing needs ≥2 anchors before it persists; the position tool validates against tick/lot.
+- **Validation:** a drawing needs its tool's point count before it persists (`24` §1.7; ADR-0045 Decision 3). The position tool validates against tick/lot.
 - **A11y:** each drawing has an accessible name and is listed in SCR-036; property popovers are standard forms.
 - **Components:** CMP-008 NumericStepperInput, CMP-010 Slider, CMP-017 Popover, CMP-022 Kbd, CMP-031 ColorSwatch / ThemeChip, CMP-041 Menu, CMP-223 DrawingToolbar.
 - **Stories:** US-DRAW-001, US-DRAW-002, US-DRAW-003, US-DRAW-004, US-DRAW-005, US-DRAW-006, US-DRAW-007, US-DRAW-008, US-DRAW-009.
