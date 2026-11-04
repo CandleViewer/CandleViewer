@@ -1,6 +1,7 @@
 # E12 — STRIDE threat model: Bar builders, backfill and the `bars` topic
 
-- Ticket: E12-X01 (issue #346). Owner: Security engineer (CODEOWNER). Status: Approved (2026-10-13; see §12 review log).
+- Ticket: E12-X01 (issue #346). Owner: Security engineer (CODEOWNER). Status: Approved (2026-10-13; see §12 review log). E12-X04 review
+  (#538) read 2026-11-03: as-built residuals in §12.1, consumer note in §14; sign-off pending (P0 open).
 - Method: `docs/plan/04-security-program.md` §5 template (L x I = risk), STRIDE per epic (C-12.1). Reuses the
   exchange-boundary trust model of E08 (`e08-exchange-boundary.md`, W1-W11), the E08 ingestion controls
   (frame guard and print rejection, #1898; priority lanes, #1957) and the storage model of E07
@@ -168,19 +169,19 @@ Element ids are from §2. Row ids are `BR-nn`.
 
 ### 4.2 Tampering (integrity of evidence)
 
-| ID    | Element    | Threat                                                                                                                             | L   | I   | Risk     | Existing control / mitigation                                                                                                                                                                                                                                                                                                            | Residual | Owner            | Verify                 | Disp. |
-| ----- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------- | --- | --- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ---------------- | ---------------------- | ----- |
-| BR-06 | F1, F2, P2 | Out-of-order or duplicate prints produce divergent bars between live, replay and rebuild                                           | M   | H   | **High** | E08 dedup by `tradeId` and ordering at ingestion; builders are pure functions of one ordered stream (E12-T01 model, BI-1..BI-6); golden conformance across all six builders (E12-Q02); same builder code for live, replay and rebuild (C-2.15)                                                                                           | Medium   | E12-Q02, E12-T04 | unit, property, golden | M     |
-| BR-07 | P3, F6     | Kline backfill overwrites tick-built rows, or fills delta fields with zero, so a "zero delta" lie reaches CVD and rules            | M   | H   | **High** | Kline-sourced rows carry **null** delta fields (E12-S05 scope); source precedence tape > kline > Parquet; the `bars_time` write refuses to overwrite a `source=tape` row with a `source=kline` row (SR-E12-10); `meta.sources` states provenance                                                                                         | Medium   | E12-S05, E12-T02 | unit, integration      | M     |
-| BR-08 | F7, DS1    | Bar values altered in the store (direct SQL, bad migration, DEDUP UPSERT on `(ts, symbol, bar_param)` replaces a good row)         | L   | H   | Medium   | DEDUP UPSERT keys per `21-database-schema.md` §4.8; single writer (BR-05); `assert_persistable` rejects synthetic bars at the storage boundary (merged #1906); **row checksum column** over canonical OHLCV and delta so a read detects post-write edits (SR-E12-11)                                                                     | Medium   | E12-T02          | integration            | M     |
-| BR-09 | F10, P5    | A rebuild silently changes history without a `build_version` bump, or a half-finished rebuild becomes visible                      | M   | H   | **High** | `build_version` constant per builder family bumped by code change (E12-T02); rebuild writes a new **generation** and flips a pointer atomically, failed or cancelled generations are deleted (ADR-0033, **Accepted**); a rebuild at the same `build_version` must reproduce closed bars bit-for-bit or fail its parity check (SR-E12-13) | Medium   | E12-T02, E12-S12 | integration, golden    | M     |
-| BR-10 | F13, P6    | Reader serves rows at an older `build_version` than current code without saying so                                                 | M   | M   | Medium   | E12-T02: read serves them, schedules a background rebuild and marks `meta.sources`; every response also carries `build_version` and `spec_hash` (SR-E12-14)                                                                                                                                                                              | Low      | E12-T05          | contract               | M     |
-| BR-11 | P1, P2     | Pathological print (zero qty, off-tick, extreme size, NaN) shapes a bar, a renko brick count or a delta threshold                  | M   | H   | **High** | E08 plausibility layer rejects at ingestion (#1898); `Qty` and `Price` are `Decimal` with `allow_inf_nan=False` and `gt=0` on specs (merged #1906); builder refuses a print that would close (volume) or complete (renko) more than **1 000 bars or bricks** in one step (SR-E12-15)                                                     | Medium   | E12-S04, E08     | unit, property         | M     |
-| BR-12 | F8, DS4    | Tampered, truncated or hostile builder-state blob restored on boot (wrong spec, huge allocation, forged watermark skipping trades) | L   | H   | Medium   | msgpack with explicit `state_version`; corruption-safe read cold-starts (E12-T03); size ceiling, `spec_hash` check and watermark <= tape head check; `restore()` refuses on tick-size mismatch (ADR-0033, Accepted); blob `generation` is a floor claim, 0..2**52, checked on load; a discarded one only raises the epoch (SR-E12-12)    | Low      | E12-T03          | unit, integration      | M     |
-| BR-13 | P7, F16    | Frame tampering or reordering on the `bars` topic yields a client series that disagrees with the store                             | L   | M   | Low      | TLS on the tailnet hop; per-topic sequence numbers and gap-driven resync (23-ws §7); a `close` update is never coalesced away (E12-T06); the loss no sequence number shows (23-ws §3.4) is residual, §12                                                                                                                                 | Low      | E12-T06, E17     | contract               | R     |
-| BR-14 | F7, F13    | Decimal -> DOUBLE conversion at the storage boundary changes a price so two reads or a rebuild differ                              | M   | M   | Medium   | Conversion at the storage boundary only, with a documented, tested rounding rule (E12-T02); model stays exact; parity test compares re-read to rebuilt at stored precision                                                                                                                                                               | Low      | E12-T02, E12-Q02 | unit, golden           | M     |
-| BR-15 | DS5, P6    | `spec_hash` collision or a registry entry replaced so a `bar_param` resolves to a different spec                                   | L   | M   | Low      | sha256 over a canonical form with golden vectors (merged #1906); registry insert-only per hash; params re-parsed from the wire grammar, never trusted from a stored string                                                                                                                                                               | Low      | E12-T01          | unit                   | M     |
-| BR-16 | DS2, F11   | Parquet archive diverges from QuestDB (partial write, schema drift) so cold reads differ from hot reads                            | L   | M   | Low      | E07 archive adapter verifies row counts and a content hash before dropping a hot partition (E07 model); bars-specific: cold read-through uses the same row validator as hot reads                                                                                                                                                        | Low      | E07, E12-S05     | integration            | R     |
+| ID    | Element    | Threat                                                                                                                             | L   | I   | Risk     | Existing control / mitigation                                                                                                                                                                                                                                                                                                                                       | Residual | Owner            | Verify                 | Disp. |
+| ----- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------- | --- | --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ---------------- | ---------------------- | ----- |
+| BR-06 | F1, F2, P2 | Out-of-order or duplicate prints produce divergent bars between live, replay and rebuild                                           | M   | H   | **High** | E08 dedup by `tradeId` and ordering at ingestion; builders are pure functions of one ordered stream (E12-T01 model, BI-1..BI-6); golden conformance across all six builders (E12-Q02); same builder code for live, replay and rebuild (C-2.15); as built, a late print can amend a time bar ≤60 s after its close or join the open non-time bar (S02, #2013; §12.1) | Medium   | E12-Q02, E12-T04 | unit, property, golden | M     |
+| BR-07 | P3, F6     | Kline backfill overwrites tick-built rows, or fills delta fields with zero, so a "zero delta" lie reaches CVD and rules            | M   | H   | **High** | Kline-sourced rows carry **null** delta fields (E12-S05 scope); source precedence tape > kline > Parquet; the `bars_time` write refuses to overwrite a `source=tape` row with a `source=kline` row (SR-E12-10); `meta.sources` states provenance                                                                                                                    | Medium   | E12-S05, E12-T02 | unit, integration      | M     |
+| BR-08 | F7, DS1    | Bar values altered in the store (direct SQL, bad migration, DEDUP UPSERT on `(ts, symbol, bar_param)` replaces a good row)         | L   | H   | Medium   | DEDUP UPSERT keys per `21-database-schema.md` §4.8; single writer (BR-05); `assert_persistable` rejects synthetic bars at the storage boundary (merged #1906); **row checksum column** over canonical OHLCV and delta so a read detects post-write edits (SR-E12-11)                                                                                                | Medium   | E12-T02          | integration            | M     |
+| BR-09 | F10, P5    | A rebuild silently changes history without a `build_version` bump, or a half-finished rebuild becomes visible                      | M   | H   | **High** | `build_version` constant per builder family bumped by code change (E12-T02); rebuild writes a new **generation** and flips a pointer atomically, failed or cancelled generations are deleted (ADR-0033, **Accepted**); a rebuild at the same `build_version` must reproduce closed bars bit-for-bit or fail its parity check (SR-E12-13)                            | Medium   | E12-T02, E12-S12 | integration, golden    | M     |
+| BR-10 | F13, P6    | Reader serves rows at an older `build_version` than current code without saying so                                                 | M   | M   | Medium   | E12-T02: read serves them, schedules a background rebuild and marks `meta.sources`; every response also carries `build_version` and `spec_hash` (SR-E12-14)                                                                                                                                                                                                         | Low      | E12-T05          | contract               | M     |
+| BR-11 | P1, P2     | Pathological print (zero qty, off-tick, extreme size, NaN) shapes a bar, a renko brick count or a delta threshold                  | M   | H   | **High** | E08 plausibility layer rejects at ingestion (#1898); `Qty` and `Price` are `Decimal` with `allow_inf_nan=False` and `gt=0` on specs (merged #1906); builder refuses a print that would close (volume) or complete (renko) more than **1 000 bars or bricks** in one step (SR-E12-15)                                                                                | Medium   | E12-S04, E08     | unit, property         | M     |
+| BR-12 | F8, DS4    | Tampered, truncated or hostile builder-state blob restored on boot (wrong spec, huge allocation, forged watermark skipping trades) | L   | H   | Medium   | msgpack with explicit `state_version`; corruption-safe read cold-starts (E12-T03); size ceiling, `spec_hash` check and watermark <= tape head check; `restore()` refuses on tick-size mismatch (ADR-0033, Accepted); blob `generation` is a floor claim, 0..2**52, checked on load; a discarded one only raises the epoch (SR-E12-12)                               | Low      | E12-T03          | unit, integration      | M     |
+| BR-13 | P7, F16    | Frame tampering or reordering on the `bars` topic yields a client series that disagrees with the store                             | L   | M   | Low      | TLS on the tailnet hop; per-topic sequence numbers and gap-driven resync (23-ws §7); a `close` update is never coalesced away (E12-T06); the loss no sequence number shows (23-ws §3.4) is residual, §12                                                                                                                                                            | Low      | E12-T06, E17     | contract               | R     |
+| BR-14 | F7, F13    | Decimal -> DOUBLE conversion at the storage boundary changes a price so two reads or a rebuild differ                              | M   | M   | Medium   | Conversion at the storage boundary only, with a documented, tested rounding rule (E12-T02); model stays exact; parity test compares re-read to rebuilt at stored precision                                                                                                                                                                                          | Low      | E12-T02, E12-Q02 | unit, golden           | M     |
+| BR-15 | DS5, P6    | `spec_hash` collision or a registry entry replaced so a `bar_param` resolves to a different spec                                   | L   | M   | Low      | sha256 over a canonical form with golden vectors (merged #1906); registry insert-only per hash; params re-parsed from the wire grammar, never trusted from a stored string                                                                                                                                                                                          | Low      | E12-T01          | unit                   | M     |
+| BR-16 | DS2, F11   | Parquet archive diverges from QuestDB (partial write, schema drift) so cold reads differ from hot reads                            | L   | M   | Low      | E07 archive adapter verifies row counts and a content hash before dropping a hot partition (E07 model); bars-specific: cold read-through uses the same row validator as hot reads                                                                                                                                                                                   | Low      | E07, E12-S05     | integration            | R     |
 
 ### 4.3 Repudiation
 
@@ -199,7 +200,7 @@ Element ids are from §2. Row ids are `BR-nn`.
 | BR-22 | P6      | `include_delta` exposes recorded tape detail (delta, `min_delta`, `max_delta`, CVD) for symbols or windows the session should not see                      | L   | L   | Low    | The data is public aggregate market data (§6); the symbol must pass `instruments-info` validation and the caller's allowed-symbol list where one exists (SR-054); delta is null, never zero, on kline windows. **Re-opens if tape becomes account-scoped** (review date 2027-01-15, or earlier when the trigger fires) | Low      | E12-T05          | contract                 | M     |
 | BR-23 | P6      | Cross-user leakage through a shared cache or registry (another user's rebuild progress, subscription ack or error echoing their spec)                      | L   | L   | Low    | Acks and errors built from the caller's request only; registry keyed internally and never surfaced; progress frames sent only to the starter; IDOR test on `rebuild_id`                                                                                                                                                | Low      | E12-S12, E12-T06 | integration              | M     |
 | BR-24 | P6      | Verbose 422 or 500 bodies disclose internals (stack, SQL, file paths, QuestDB table names)                                                                 | L   | L   | Low    | RFC 7807 mapping at the edge only, no raw exception text (C-12.6); `BarSpecError` messages are fixed sentences that echo at most 32 characters of the input (merged #1906); parameterised SQL (Semgrep raw-SQL rule)                                                                                                   | Low      | E12-T05          | contract                 | M     |
-| BR-25 | F7, F13 | `param` or `symbol` reaches QuestDB as text and enables SQL or ILP injection (the value becomes a `bar_param` SYMBOL, a cache key and a topic segment)     | L   | H   | Medium | Strict per-type whitelist and `_UINT` regex in `from_wire`, 24-char cap, dot-free (merged #1906); **store `spec_hash`, never raw `param`, in the `bar_param` column**; parameterised queries only; ILP escaping in the write path                                                                                      | Low      | E12-T02, E12-X03 | unit, fuzz, static       | M     |
+| BR-25 | F7, F13 | `param` or `symbol` reaches QuestDB as text and enables SQL or ILP injection (the value becomes a `bar_param` SYMBOL, a cache key and a topic segment)     | L   | H   | Medium | Strict per-type whitelist and `_UINT` regex in `from_wire`, 24-char cap, dot-free (merged #1906); **`bar_param` stores the canonical wire form re-rendered from the parsed spec, never the raw `param`** (as built, 21 §4.8 deviation; §12.1); parameterised queries only; ILP escaping in the write path              | Low      | E12-T02, E12-X03 | unit, fuzz, static       | M     |
 | BR-26 | P1-P7   | Diagnostics or probe surface (`SCR-046`, the E12-Q03 probe, builder debug dumps, `bar_spec_registered` log with full spec) reachable in a production build | M   | M   | Medium | Probe and diagnostics are compiled out of production bundles and registered only behind a non-production environment check; `E12-X03` gate fails a production build that contains them; spec log lines carry no user identifiers (SR-E12-16)                                                                           | Low      | E12-X03, E12-Q03 | static, e2e (prod build) | M     |
 
 ### 4.5 Denial of service
@@ -353,35 +354,48 @@ E12-X02 (#452) executed the seeds it owns: `docs/security/abuse-cases/e12-bars.m
 Anything modelled as a threat with no detection signal generates an instrumentation ticket (§11); the signals
 below already exist in the ticket text or are requested.
 
-| Signal                                                             | Detects      | Source ticket               |
-| ------------------------------------------------------------------ | ------------ | --------------------------- |
-| `bars_rebuild_total{trigger}` rate per user                        | BR-09, BR-31 | E12-S12 (name per X01 body) |
-| `bar_rebuild_cancelled_total`, `bar_rebuild_duration_seconds`      | BR-31        | ADR-0033 (Accepted)         |
-| `api_request_rejected_total{reason="limit_exceeded"}`              | BR-27..BR-30 | E12-T05                     |
-| `ws_client_disconnect_overflow_total`                              | BR-32        | E17                         |
-| `cv_ws_resync_total{reason="generation_swap"}`                     | BR-31, BR-38 | E17 (23-ws §7.7)            |
-| `cv_ws_resync_total{reason="history_repair"}`                      | BR-38        | E17 (23-ws §7.7)            |
-| `bars_gap_detected_total`                                          | BR-06, BR-35 | E12-T03                     |
-| `exchange_response_invalid_total`                                  | BR-01, BR-02 | E08 / E12-S05               |
-| `bars_row_checksum_mismatch_total`                                 | BR-08        | requested (SR-E12-11)       |
-| `bars_blob_discarded_total{reason}`                                | BR-12        | shipped E12-T03 (#2030)     |
-| `bar_state_write_failed_total{stage}`                              | BR-12        | shipped E12-T06 (#2704)     |
-| `bars_source_overwrite_refused_total`                              | BR-07        | requested (SR-E12-10)       |
-| `bars_spec_cap_rejected_total{reason}` (reason = the cap)          | BR-30        | shipped E12-T03 (#2030)     |
-| `bars_backfill_pages_total`, `bars_backfill_aborted_total{reason}` | BR-33        | requested (SR-E12-08)       |
-| `bars_print_rejected_total{reason}`                                | BR-11        | shipped #2294               |
-| `ws_bars_seq_gap_total`                                            | BR-13        | shipped #2294               |
-| `bars_stale_build_version_total`                                   | BR-10        | shipped E12-T02 (#1998)     |
-| `bars_write_roundtrip_mismatch_total`                              | BR-14        | shipped #2294               |
-| `bars_spec_registry_conflict_total`                                | BR-15        | shipped #2294, not wired    |
-| `parquet_hot_cold_parity_mismatch_total{stream}`                   | BR-16        | shipped #2294               |
-| `bars_write_queue_depth`, `bars_write_saturation_total`            | BR-34        | shipped #1998, #2294        |
-| `bars_write_failed_total{reason}`                                  | BR-34        | shipped E12-T02 (#1998)     |
-| `bars_cold_read_duplicate_inflight_total`                          | BR-36        | shipped #2294               |
-| `bars_snapshot_write_seconds`, `bars_snapshot_bytes_total`         | BR-37        | shipped #2294               |
-| `bars_subscribe_snapshot_total{history}`                           | BR-38        | shipped #2294               |
+| Signal                                                                       | Detects      | Source ticket                 |
+| ---------------------------------------------------------------------------- | ------------ | ----------------------------- |
+| `bars_rebuild_total{trigger}` rate per user                                  | BR-09, BR-31 | E12-S12 (name per X01 body)   |
+| `bar_rebuild_cancelled_total`, `bar_rebuild_duration_seconds`                | BR-31        | not registered (E12-S12)      |
+| `api_request_rejected_total{reason="window_too_large"\|"out_of_range"}`      | BR-27..BR-30 | E12-T05                       |
+| `cv_ws_overflow_total{reason}`                                               | BR-32        | E17                           |
+| `cv_ws_resync_total{reason="generation_swap"}`                               | BR-31, BR-38 | E17 (23-ws §7.7)              |
+| `cv_ws_resync_total{reason="history_repair"}`                                | BR-38        | E17 (23-ws §7.7)              |
+| `bars_gap_detected_total`                                                    | BR-06, BR-35 | E12-T03                       |
+| `kline_backfill_pages_rejected_total{reason}`, `trade_prints_rejected_total` | BR-01, BR-02 | shipped E12-S05, E08          |
+| `bars_checksum_mismatch_total`                                               | BR-08        | shipped (SR-E12-11)           |
+| `bars_blob_discarded_total{reason}`                                          | BR-12        | shipped E12-T03 (#2030)       |
+| `bar_state_write_failed_total{stage}`                                        | BR-12        | shipped E12-T06 (#2704)       |
+| `bars_source_overwrite_refused_total`                                        | BR-07        | registered; unwired (E12-T05) |
+| `bars_spec_cap_rejected_total{reason}` (reason = the cap)                    | BR-30        | shipped E12-T03 (#2030)       |
+| `kline_backfill_pages_total{result}`, `kline_backfill_jobs_total{result}`    | BR-33        | shipped E12-S05 (SR-E12-08)   |
+| `bars_print_rejected_total{reason}`                                          | BR-11        | shipped #2294                 |
+| `ws_bars_seq_gap_total`                                                      | BR-13        | shipped #2294                 |
+| `bars_stale_build_version_total`                                             | BR-10        | shipped E12-T02 (#1998)       |
+| `bars_write_roundtrip_mismatch_total`                                        | BR-14        | shipped #2294                 |
+| `bars_spec_registry_conflict_total`                                          | BR-15        | shipped #2294, not wired      |
+| `parquet_hot_cold_parity_mismatch_total{stream}`                             | BR-16        | shipped #2294                 |
+| `bars_write_queue_depth`, `bars_write_saturation_total`                      | BR-34        | shipped #1998, #2294          |
+| `bars_write_failed_total{reason}`                                            | BR-34        | shipped E12-T02 (#1998)       |
+| `bars_cold_read_duplicate_inflight_total`                                    | BR-36        | shipped #2294                 |
+| `bars_snapshot_write_seconds`, `bars_snapshot_bytes_total`                   | BR-37        | shipped #2294                 |
+| `bars_subscribe_snapshot_total{history}`                                     | BR-38        | shipped #2294                 |
 
 Issue #2294 reused shipped series rather than add a second name for one count: BR-10's `bars_read_stale_build_version_total` is `bars_stale_build_version_total`, and BR-34's `bars_write_buffer_depth` and `bars_write_dropped_total` are `bars_write_queue_depth` (now set on every queued row, so a stalled sink shows while its producers wait) and `bars_write_failed_total` (the buffer itself never drops). BR-16's count covers every roll-off stream; bars are not rolled off to Parquet yet. BR-36's counts the cold kline reads that `/market/klines` serves; a `bars_cold_read_coalesced_total` waits for the single-flight that E12-T05 names. BR-15's is emitted by `SpecRegistry`, which the composed app does not build yet (the live `bar_param` path re-parses the wire grammar), so it reads 0 there. BR-13's is client-reported: a client can send a `sequence_gap` resync with no real gap, bounded by the 23-ws §7.5 resync limit, so it is cross-checked with `cv_ws_resync_total` before it is read as tampering.
+
+**Names as registered (E12-X04, 2026-11-03).** The table above uses the names the metrics catalogue
+(`observability/metrics_catalogue.py`) and the ingestion registry (`ingestion/metrics.py`) actually register.
+Three rows were renamed from the X01 draft: `bars_row_checksum_mismatch_total` is
+`bars_checksum_mismatch_total`; `exchange_response_invalid_total` is not one series but
+`kline_backfill_pages_rejected_total{reason}` (kline pages, SR-E12-09) plus `trade_prints_rejected_total` (E08
+trade frames); and `bars_backfill_pages_total` / `bars_backfill_aborted_total{reason}` are
+`kline_backfill_pages_total{result}` and the aborting outcomes of `kline_backfill_jobs_total{result}` (no test
+pins the abort outcome yet). `bars_rebuild_total{trigger}` does not exist: the rebuild runner is E12-S12's,
+and today only `bars_rebuild_scheduled_total` (no user label) counts the rebuilds a stale read requests.
+`bars_source_overwrite_refused_total` is registered, but the precedence check it counts is not yet on a served
+write path (BR-07, E12-T05). Two §10 expectations are not met as built: no alert rule watches the bars rejection
+or rebuild rates (tracked on #452, E12-X02), and served-bars log lines do not carry `build_version` (§12.1).
 
 ## 11. Control-to-ticket map
 
@@ -456,10 +470,12 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
     but does not prevent. Bounded by the project's single-host threat model (`04-security-program.md` §3) and
     tracked as **RSK-058** (Open, not accepted).
   - BR-13, the loss no sequence number shows (23-ws §3.4): an emission neither encoding can carry, or one the emit path skips for a sink that times out or raises, is dropped with no gap. The trace is `bar_emit_sink_errors_total{reason}`: `ws` and `ws_timeout` are the losses seen on the topic, `ws` for the emission neither encoding can carry (the WS sink is also named `ws`, so a WS sink that raises counts there too, and `ws_timeout` is its timeout); `questdb` and `questdb_timeout` are persistence misses with no gap on the wire; `series_store` and `series_store_timeout` are snapshot-side misses, not wire losses: the store lacks the emission, so a snapshot can lack that bar until a later close flags the gap and the series is read again. Its other reasons are not losses: `ws_no_scales` and `ws_binary_refused` count binary groups sent structured instead, which are delivered, and `ws_generation_swap` counts routine swaps (§7.4), whose signal is `cv_ws_resync_total` (BR-38). The symptom is a bar stuck at `confirm: false` while later indexes stream, until the series' next snapshot, which repairs the series but not necessarily that bar. A valid bar cannot cause the first case; the second is the existing sink isolation (24 §3.5). Owner E12-T06 (#399), reviewed 2026-10-16; to be re-checked at the E12-X04 sign-off.
-  - BR-17 (repudiation of which build produced a served bar): inherent High, residual Medium. The control
-    (`build_version`/`spec_hash`/`meta.sources` on every response, SR-E12-14) is not built until E12-T05/T06 add
-    it (requested on #398, #399); until then a disputed bar cannot be tied to a build, and a `build_version` only
-    maps to a commit if the build info records it. Owner-accepted risk is not requested; it is gated on E12-T05.
+  - BR-17 (repudiation of which build produced a served bar): inherent High, residual Medium. As built
+    (§12.1) the control (`build_version`/`spec_hash`/`meta.sources` on every response, SR-E12-14) is met on WS
+    (E12-T06, #399); on REST only `meta.sources` is served: `spec_hash` and `build_version` are contracted
+    (#5424) but not yet served (#5396 PR B; E12-T05, #398, closed without them). Until then a disputed REST bar
+    cannot be tied to a build, and a `build_version` only maps to a commit if the build info records it.
+    Owner-accepted risk is not requested; it is gated on #5396 PR B.
   - BR-28..BR-31 availability caps are starting values; a legitimate user at the per-user caps on a hot
     symbol still costs real CPU. Tracked as **RSK-059**.
   - BR-28's non-time estimate (#2093) has three residuals, all tracked in #3279. Renko's print count is
@@ -518,6 +534,7 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
       first; it counts and logs it and flips the xfails.
   - SR-E12-07's subscribe rate limit is built per connection (SR-193; #2293, built by #3301) and per user across a
     user's connections (#3476, K = 4), in each gateway process: a second one would keep its own (E17 model §10).
+- E12-X04 (2026-11-03): sign-off is refused while the P0 in §12.1 is open (the ticket's failure scenario).
 - A High residual with no mitigation and no Owner acceptance blocks the E12 epic DoD (ticket acceptance
   scenario). Currently none: every High row has a mitigating ticket; BR-09, BR-17 and BR-31 are the ones to watch (all depend on a ticket not yet built).
 - Owner acceptance recorded above; security-engineer sign-off by independent security review (PR #1981 r1/r2)
@@ -525,32 +542,116 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
   satisfied by this approval (T03 and T05 merged under it). The 2-hour workshop of the ticket's technical notes is replaced by this
   agent-written model plus the two independent reviews.
 
+### 12.1 Residual risk as built (E12-X04, 2026-11-03)
+
+This subsection describes what was **built**, from the E12-X04 white-box review (#538) of `main` plus the two
+in-flight PRs #5358 (E12-X02) and #5346 (E12-Q06). Where it disagrees with a row above or with the residual
+bullets of §12, this subsection is the as-built state and the row states the design. The build sha is recorded
+with the sign-off on the release-candidate build; until then this is a review read, not a sign-off. Wording is
+pattern-level by design: mechanics of open weaknesses are kept out of this public file.
+
+**Data classification:** public market data. No account-scoped data enters the bars path (§6 holds).
+
+**Controls verified as built** (present, reachable from a served path, and covered by a test that fails with the
+control removed): REST input caps (limit, response size, time and non-time windows, print estimate),
+refusal before any read and the refusal time budget, shared REST/WS parameter bounds, the closed bar-type
+whitelist, fixed-sentence problem responses, server-side `marketdata:read` on REST and WS, `Decimal`
+arithmetic with a single tested storage conversion, parameterised bar SQL and escaped ILP symbols, row
+checksums verified on read, dedup keys matching `21-database-schema.md` §4.8, the per-print bar cap,
+builder-state restore refusals, `spec_hash` golden vectors, spec caps (user, symbol, global), the bounded write
+queue with backpressure, exchange-clock time bars with gap detection, strict kline page validation, backfill
+page and job caps with jittered backoff and abort, WS subscription and resnapshot budgets, sequence-gap resync
+and generation-swap snapshots, WS build provenance, cross-user isolation, bounded tail reads, null (never zero)
+delta on kline windows, and an honest `recording_started_at`.
+
+**Built differently, verified equivalent:**
+
+- **BR-25:** `bar_param` stores the canonical wire form of the spec, not the `spec_hash`. The value is
+  re-rendered server-side from a whitelisted grammar, never copied from input, and bar SQL is parameterised, so
+  the injection the row models stays closed (`21-database-schema.md` §4.8, the E12-T02 deviation).
+- **BR-06:** dedup happens at ingestion, as modelled, but late prints are **not** ignored: a print up to 60 s
+  late amends the closed time bar it belongs to (re-emitted as an amend, `bars_amended_total`), a later one is
+  dropped and counted (`bars_late_trade_dropped_total`), and a non-time builder takes a late print into its
+  open bar (the S02 rule, still pending ratification in #2013). The result is still a pure function of the ordered tape, so
+  live, replay and rebuild agree; what changes is that a closed time bar can move within that 60 s window.
+- **§10 signals** exist under the names the catalogue registers (`kline_backfill_*`,
+  `trade_prints_rejected_total`, `bars_checksum_mismatch_total`); see the note under §10.
+- **Window caps** are enforced at the handler and again as a store-layer backstop; both were checked.
+
+**Open, not accepted** (each blocks sign-off unless fixed, accepted by the Owner in writing, or deferred with a
+dated ticket):
+
+- **P0, served-series integrity markers:** a closed bar the server built but did not store is now listed as a
+  range in `meta.coverage_holes` on bars REST, klines REST and the WS `bars` snapshot (#5432, the first step of
+  #5396 PR B). Still pending: the per-bar `gap_before`, `partial` and `tape_gap` flags on REST and WS, and the
+  listing of other in-window ranges a read cannot serve (both #5396 PR B); and a marker for a stored row that
+  fails its integrity check and is therefore not served (an E12-X02 integrity case, #452). Until these land, a
+  page or snapshot can be incomplete, or built across an unrecovered gap, without saying so. The contract for
+  the markers is merged (#5424). E12 cannot be signed off until this lands.
+- **High, REST provenance (SR-E12-14) and Medium, stale marking (BR-10):** bars REST responses do not yet carry
+  `spec_hash`, `build_version` or `stale_build`; the contract declares them (#5424) and the WS path sends its
+  equivalent. Fix in flight (#5396 PR B).
+- **Medium, rebuild (BR-09, SR-E12-13; SR-E12-05/06 Info):** `build_version` bump discipline is enforced; the
+  rebuild runner, atomic generation swap, same-version parity and the rebuild surface's limits, ownership,
+  audit and IDOR checks are not built (no rebuild surface is served yet). Owner E12-S12 (#535), which inherits the skipped cases.
+- **Medium, tape-over-kline precedence (BR-07, SR-E12-10):** implemented and unit-tested but not yet connected to
+  a served write path, so it protects nothing today; it needs an end-to-end test once a served write path
+  connects it. Open; tracked by #5627 (fix in review, #5635). The backfill run log exists: every backfill job
+  logs its symbol, interval, window, page and row counts and outcome; no test pins that record yet.
+- **Medium, single writer (BR-05):** synthetic-bar refusal is enforced; single-writer ownership of the bar
+  tables is not yet enforced in code; it needs a guard test. Open; tracked by #5626 (fix in review, #5634: a
+  static guard and reader verification). Runtime separation of the writer is not built; that is recorded on
+  #5626 as an owner decision.
+- **Medium, backfill budget lane (BR-33):** backfill never spends an account's order budget; the C-12.7 separation between backfill and order traffic, including the reserve, is only partly built (E34-T02, #859) and its abuse case is not yet tested.
+- **Medium, alerting:** no alert rule watches bars rejection or rebuild rates; each needs a runbook anchor and
+  a rule test. Open; tracked on #452 (E12-X02).
+- **Medium, SCR-048:** no web path shows a server bars rejection as the documented accessible error state; no
+  web client consumes bars REST/WS yet. Blocked on design #329.
+- **Low:** no per-user REST rate limit or coalescing of identical expensive reads (BR-36; its load run is
+  carried to #528, E12-Q05); served-bars log lines lack `build_version`; the web production-bundle guard has no
+  E12 identifiers registered and no test pins the absence of user identifiers in spec logs (BR-26, SR-E12-16).
+  Open; the last three are tracked on #538 (E12-X04), whose sign-off waits for each to be fixed or accepted.
+- **Low, bars store-failure handling (BR-27, SR-E12-01):** a bars read whose store does not answer, or answers
+  with a driver error, is not always bounded in time or mapped to 503. Open; tracked by #3287 (E12-X02).
+
+**Known residuals the model already accepts or tracks:** the row checksum detects naive edits only, not a
+deliberate edit by anyone with write access to the store (RSK-058); the renko window estimate is an estimate
+(#3279); rows dropped after write retries are exhausted are counted but not replayed (#531).
+
+**Not covered by this review:** penetration testing (E43, pre-live gate R4). This review is internal and does not
+substitute for it.
+
+**Sign-off is invalidated by:** a new bar type with a new parameter shape; account-scoped data entering the bars
+path; a privileged rebuild operation being added (E12-S12).
+
 ### Review log
 
-| Date       | Reviewer                                                | Result                                                   |
-| ---------- | ------------------------------------------------------- | -------------------------------------------------------- |
-| 2026-10-07 | author (E12-X01 agent)                                  | Draft submitted                                          |
-| 2026-10-07 | security review r1 (PR #1981)                           | REQUEST_CHANGES                                          |
-| 2026-10-07 | security review r2 (PR #1981)                           | APPROVE                                                  |
-| 2026-10-12 | QA Agent B (#346)                                       | FAIL, gaps closed by this amendment                      |
-| 2026-10-13 | orchestrator Agent A                                    | APPROVE; Owner acceptance per #1778 2026-10-12           |
-| 2026-10-13 | security-reviewer (sonnet, independent; PR #2306)       | APPROVE                                                  |
-| 2026-10-15 | code-reviewer #2 (sonnet, document integrity; PR #2306) | APPROVE                                                  |
-| 2026-10-15 | security-reviewer (Fable, independent; PR #2306)        | APPROVE at 4132550a with four Lows, closed in the rebase |
-| 2026-10-16 | author (E12-T06, #399)                                  | Sync with 23-ws                                          |
-| 2026-10-17 | author (SR-E12-02, #2093)                               | Non-time stored-print estimate built                     |
-| 2026-10-17 | code + security review r1 (#2093)                       | APPROVE ×2; minors folded or deferred to #3279           |
-| 2026-10-17 | code + security review r2 (#2093)                       | APPROVE ×2; minors folded                                |
-| 2026-10-18 | author (E12-T06, #399)                                  | SR-E12-07 per-connection rate, overflow built (D7)       |
-| 2026-10-18 | code + security review r1 (#399 D7)                     | Docs major and minors folded                             |
-| 2026-10-18 | author (E12-T06, #399)                                  | SR-E12-07 50 % share built, flag on (D8)                 |
-| 2026-10-18 | code + security review r1 (#399 D8)                     | APPROVE ×2; minors folded                                |
-| 2026-10-18 | author (SR-E12-07, #3476)                               | SR-E12-07 subscribe rate per user built                  |
-| 2026-10-19 | author (SR-E12-02, #2787 D2-M4)                         | WS non-time scan bounded by table rows                   |
-| 2026-10-20 | code + security review r1 (#2787 D2-M4)                 | APPROVE ×2; minors folded                                |
-| 2026-10-21 | author (SR-E12-02, #399 R1)                             | WS time scan bounded by table rows                       |
-| 2026-10-29 | author (#2294)                                          | Section 10 detection signals built                       |
-| 2026-10-31 | author (E12-T06, #399 R3)                               | Closing security record (§13); BR-23 test added          |
+| Date       | Reviewer                                                | Result                                                                                                                                                                                                                      |
+| ---------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-10-07 | author (E12-X01 agent)                                  | Draft submitted                                                                                                                                                                                                             |
+| 2026-10-07 | security review r1 (PR #1981)                           | REQUEST_CHANGES                                                                                                                                                                                                             |
+| 2026-10-07 | security review r2 (PR #1981)                           | APPROVE                                                                                                                                                                                                                     |
+| 2026-10-12 | QA Agent B (#346)                                       | FAIL, gaps closed by this amendment                                                                                                                                                                                         |
+| 2026-10-13 | orchestrator Agent A                                    | APPROVE; Owner acceptance per #1778 2026-10-12                                                                                                                                                                              |
+| 2026-10-13 | security-reviewer (sonnet, independent; PR #2306)       | APPROVE                                                                                                                                                                                                                     |
+| 2026-10-15 | code-reviewer #2 (sonnet, document integrity; PR #2306) | APPROVE                                                                                                                                                                                                                     |
+| 2026-10-15 | security-reviewer (Fable, independent; PR #2306)        | APPROVE at 4132550a with four Lows, closed in the rebase                                                                                                                                                                    |
+| 2026-10-16 | author (E12-T06, #399)                                  | Sync with 23-ws                                                                                                                                                                                                             |
+| 2026-10-17 | author (SR-E12-02, #2093)                               | Non-time stored-print estimate built                                                                                                                                                                                        |
+| 2026-10-17 | code + security review r1 (#2093)                       | APPROVE ×2; minors folded or deferred to #3279                                                                                                                                                                              |
+| 2026-10-17 | code + security review r2 (#2093)                       | APPROVE ×2; minors folded                                                                                                                                                                                                   |
+| 2026-10-18 | author (E12-T06, #399)                                  | SR-E12-07 per-connection rate, overflow built (D7)                                                                                                                                                                          |
+| 2026-10-18 | code + security review r1 (#399 D7)                     | Docs major and minors folded                                                                                                                                                                                                |
+| 2026-10-18 | author (E12-T06, #399)                                  | SR-E12-07 50 % share built, flag on (D8)                                                                                                                                                                                    |
+| 2026-10-18 | code + security review r1 (#399 D8)                     | APPROVE ×2; minors folded                                                                                                                                                                                                   |
+| 2026-10-18 | author (SR-E12-07, #3476)                               | SR-E12-07 subscribe rate per user built                                                                                                                                                                                     |
+| 2026-10-19 | author (SR-E12-02, #2787 D2-M4)                         | WS non-time scan bounded by table rows                                                                                                                                                                                      |
+| 2026-10-20 | code + security review r1 (#2787 D2-M4)                 | APPROVE ×2; minors folded                                                                                                                                                                                                   |
+| 2026-10-21 | author (SR-E12-02, #399 R1)                             | WS time scan bounded by table rows                                                                                                                                                                                          |
+| 2026-10-29 | author (#2294)                                          | Section 10 detection signals built                                                                                                                                                                                          |
+| 2026-10-31 | author (E12-T06, #399 R3)                               | Closing security record (§13); BR-23 test added                                                                                                                                                                             |
+| 2026-11-03 | E12-X04 review read (#538)                              | 54 controls: 36 present and tested, 4 built differently and equivalent, 4 weakly tested, 1 unreachable, 8 absent, 1 pending an in-flight PR. 13 findings: P0 1, High 1, Medium 7, Low 3, Info 1. Sign-off pending (P0 open) |
+| 2026-11-04 | author (E12-X04 fold, #538)                             | Rebased onto the coverage-hole serving (#5432); every open finding names its tracking issue. 14 findings: P0 1, High 1, Medium 7, Low 4, Info 1 (adds the store-failure Low, #3287)                                         |
 
 ## 13. E12-T06 closing security record (2026-10-31)
 
@@ -661,3 +762,63 @@ BR-11 / SR-E12-15 (#3867 `a5a49c4b9`) and BR-28 / RSK-059 (#4069 `e3b268931`, th
   evidence in CI.
 - **"Load test recorded."** The k6 bars load test moved to #568 and #528 (WS delivery, after #399); it is
   not part of this ticket's evidence.
+
+## 14. Consumer note (E12-X04): what E13, E18, E19, E23, E26 and E37 may assume
+
+Published by the E12-X04 review (#538, 2026-11-03) for the epics that consume bars: indicators (E13), footprint
+(E18), profiles (E19), CVD and delta panes (E23), replay (E26) and the rule node-graph editor (E37), whose rules
+the rule engine (E35) may evaluate to place live orders. It states the guarantees as built today
+and, as plainly, the ones that are **not** given. Design against this list; if a guarantee you need is not in
+it, assume it does not hold and ask on #538. Items marked _pending_ change when the named work merges; this
+section is updated in the same PR.
+
+**Guarantees (you may rely on these):**
+
+1. **Deterministic build.** The same ordered, deduplicated tape and the same `build_version` produce identical
+   closed bars on the live, replay and catch-up paths (golden conformance, E12-Q02). Duplicated trade frames
+   are dropped at ingestion by trade id (bounded per-symbol dedup window).
+2. **`build_version` provenance on WS.** Every WS `bars` snapshot carries `spec_hash`, the lowest
+   `build_version` among the bars it sends, and `meta.stale: true` while the series is quarantined or its trade
+   feed is behind (absent means false). _Pending on REST:_ see non-guarantee 2.
+3. **`confirm` semantics.** A bar is final only when delivered as confirmed. A confirmed close is never replaced
+   by an unconfirmed update. Under WS backpressure a dropped close is in the resnapshot only if it is among
+   the `history` newest bars; a client holding bars beyond the snapshot span, or subscribed with `history: 0`,
+   must re-read closed bars over REST `/market/bars` after any `snap`. A time bar may still be amended by a print up to 60 s late, delivered as an amend of
+   the same bar; later prints are dropped and counted. A non-time bar may absorb a late print into the open
+   bar. Treat "confirmed" as "final unless amended within 60 s of close", not as immutable.
+4. **`recording_started_at` honesty.** For non-time bars (tick, volume, delta, range, renko), a window that
+   begins before the recording start is refused, naming the recording start; time bars are not refused on this
+   ground. `meta.sources` never claims `tape` when no tape rows were served. Kline-sourced windows have **null**,
+   never zero, delta fields.
+5. **Generations.** A generation change on WS always arrives as a full snapshot, never as a delta.
+
+**Non-guarantees (you must NOT assume these):**
+
+1. **Partial and gap marking on bars and klines REST** — _pending: P0, #5396 PR B and #452._ Both
+   `GET /market/bars` and `GET /market/klines` list in `meta.coverage_holes` the ranges of closed bars the server
+   built but did not store (`/market/klines` also the part of a window after now). Not yet served: the per-bar
+   `gap_before`, `partial` and `tape_gap` flags and the other in-window ranges a read cannot serve (#5396 PR B),
+   and a marker for a stored row not served because it fails its integrity check (#452), so a missing bar can
+   still look like a quiet market. Until the P0 closes, do not treat a `/market/bars` or `/market/klines` page as
+   complete.
+2. **`build_version` provenance on REST** — _pending: #5396 PR B._ REST bars do not yet carry `spec_hash`,
+   `build_version` or `stale_build`. Treat REST provenance as unknown, not as current.
+3. **Rebuild.** No rebuild runs today: rows built by an older builder version are counted and a rebuild is
+   requested, but they are not healed. No atomic generation swap or same-version parity guarantee exists until
+   E12-S12 (#535).
+4. **Checksums as a security boundary.** Row checksums detect naive edits only, not a deliberate edit by
+   anyone with write access to the store; no exchange-side
+   checksum exists (ADR-0005).
+5. **Wall-clock alignment of non-time bars.** Tick, volume, delta, range and renko bars are not aligned to
+   wall-clock boundaries.
+6. **Recovery of lost rows.** Rows lost after write retries are exhausted in a long store outage are counted
+   (`bars_write_failed_total`) but not replayed (#531).
+7. **Gap marking on WS.** A WS `bars` snapshot lists in `meta.coverage_holes` the ranges of closed bars the
+   server built but did not store; WS `bars` items do not yet carry `gap_before`, `partial` or `tape_gap`
+   (declared in 23-ws, pending #5396 PR B), and deltas carry no ranges. A missing bar on WS can still look like
+   a quiet market.
+
+**For any path that can place orders (E37 rules run by E35):** gate on confirmed bars and, once served, on the provenance and gap
+markers. Until non-guarantees 1, 2 and 7 close, served series list only the ranges of closed bars the server
+did not store, with no per-bar gap marker: gate on WS confirmed bars for provenance, treat a confirmed time bar
+as final only 60 s after its close (guarantee 3), and do not treat any served series, REST or WS, as complete.
