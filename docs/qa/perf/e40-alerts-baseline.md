@@ -50,7 +50,9 @@ Plans and results follow the E17 and E29 pattern: results under `docs/qa/perf/`.
   5 000 ticks. CI runs it in the `py` job's `db-chaos-3` lane (`tools/ci/py-test-lanes.json`, `tests/integration/bench`) and,
   because `_job-integration.yml` runs `integration and not perf and not flaky` over every file under
   `tests/integration` (split by `tools/ci/integration_shards.py`), in one of its four shards; it never runs on the owner's host. It asserts the p95 and p99 budgets and prints one `E40Q02_PG_LEG=` JSON
-  line (also a JUnit property, `e40q02_pg_leg`).
+  line (also a JUnit property, `e40q02_pg_leg`, when a caller passes `--junitxml`). No CI call passes
+  `--junitxml` and the `py` lane has no `-rA`, so the first harvest of the baseline row reads the merge-group
+  `integration-shard` log.
 - **Sqlite leg, locally:** `cd services/api && uv run python -m benchmarks.alerts.latency_leg 20000`.
 - **K01 harness, locally:** `cd services/api && uv run python -m benchmarks.alerts.run out.json`.
 - **Unit checks (run in the PR lane):** `tests/alerts/test_alert_load_q02.py`: subscription sharing, storm

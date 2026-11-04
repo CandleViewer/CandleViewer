@@ -31,8 +31,13 @@ from tests.integration.storage import test_alerts_migration as _mig
 pytestmark = pytest.mark.integration
 pg_dsn = _mig.pg_dsn  # the module-scoped Postgres 16 container, migrated to head
 
-#: 1 897 firings on the local sqlite leg (the stream is seeded): enough samples for a p99.
+#: The seeded stream fires roughly 0.38 firings per tick (about 1 900 on the local sqlite leg
+#: at this tick count), so 5 000 ticks leave well over the 100 samples a p99 needs; the floor
+#: below is a derived bound, not a measured figure.
+MIN_P99_SAMPLES = 100
+FIRINGS_PER_TICK_FLOOR = 0.3
 TICKS = 5_000
+assert TICKS * FIRINGS_PER_TICK_FLOOR >= MIN_P99_SAMPLES
 
 
 def _count(dsn: str, sql: str, *params: object) -> int:

@@ -135,3 +135,13 @@ async def test_latency_leg_sqlite_is_deterministic_and_matches_the_k01_harness()
     k01 = run_option("separate", corpus(500, 500), ticks)
     assert k01.deliveries == len(a.samples_s)  # same stream, same firings, real evaluator
     assert a.row()["committed_firings"] == len(a.samples_s)
+
+
+def test_leg_result_pct_is_nearest_rank() -> None:
+    from benchmarks.alerts.latency_leg import LegResult
+
+    r = LegResult(store="x", ticks=0, alerts=0, samples_s=[float(i) for i in range(100, 0, -1)])
+    assert r.pct(0.95) == 95.0
+    assert r.pct(1.0) == 100.0
+    assert r.pct(0.5) == 50.0
+    assert LegResult(store="x", ticks=0, alerts=0).pct(0.95) == 0.0
