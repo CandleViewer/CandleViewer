@@ -11,17 +11,14 @@ repo code it runs is `contrast_ratio()` of `docs/design/_tools/contrast_check.py
 `simulate()` / `contrast_ratio()` / `delta_e76()` of `docs/research/_tools/cvd_simulate.py`,
 loaded by path; E19-D03's written figures are read from its text at its pin, never copied.
 
-Gates: G-CITE, G-KEYCITE, G-VERSION, G-AC, G-INBOX, G-DECISIONS, G-TABLE, G-KEYS, G-T2, G-LIVE,
-G-COLOUR, G-CONTRAST, G-CVD, G-VERDICT, G-FINDINGS, G-IDS, G-HANDOFF, G-ENV, G-MOTION, G-WALK,
-G-RULING, G-RULED, G-NOCLOSE, G-PUBLIC, G-HYGIENE, G-HELPER, G-UNTOUCHED, G-POINTER and G-MUTLIST
-(section 16.3 equals this tool's list). Pins (G-RULED): each BQ bullet's sha256[:16] in
-`RULED_PINS` below, no separate pins file (the ruling's hand-off-pack rule 2); `--repin-ruled`
+Gates: `GATES` below, as section 16.2 names them. Pins (G-RULED): each BQ bullet's sha256[:16]
+in `RULED_PINS` below, no separate pins file (the ruling's hand-off-pack rule 2); `--repin-ruled`
 is the only writer. The BQ list is comment 6598368330 on #501, RULED by comment 6608044786.
 
 Usage (from the repo root):
   python3 -I -B docs/design/_tools/e19_d06_a11y_review_audit.py --check | --json | --self-test
   python3 -I -B docs/design/_tools/e19_d06_a11y_review_audit.py --repin | --repin-ruled | --fill
-`--repin` prints where each key cite's words stand now; `--fill` writes sections 9 and 16.3.
+`--repin` prints where each key cite's words stand now; `--fill` writes section 9.
 Exit 0 = no FAIL; 1 = at least one FAIL.
 """
 
@@ -50,34 +47,26 @@ AMENDED = frozenset({6, 7, 8, 12, 13, 14, 15})  # the rest AGREE
 HELPER_SHA = "62b56d6446b218cd"  # sha256[:16] of the shared helper as landed
 
 PIN_MARK = "# ruled-" + "pins:"  # the block --repin-ruled rewrites
+# fmt: off
 # ruled-pins:begin (sha256[:16] of each BQ bullet; written by --repin-ruled only)
 RULED_PINS = (
-    "BQ-0 e15b4ee159e64764",
-    "BQ-1 1d531e6056af8027",
-    "BQ-2 3bea5f26fab87a9e",
-    "BQ-3 18b24acd51fde850",
-    "BQ-4 94c62cc11354b579",
-    "BQ-5 e17f624915c2ee08",
-    "BQ-6 d1d88118077edfff",
-    "BQ-7 00c19ce21a7a3c49",
-    "BQ-8 b6995fd458810cbf",
-    "BQ-9 2743dbd6cc066444",
-    "BQ-10 1b5cf514e50b53a8",
-    "BQ-11 4f3f5231422e5dbb",
-    "BQ-12 ce92980deacfea70",
-    "BQ-13 35e1c533e039681a",
-    "BQ-14 72c51605f39a5c1e",
+    "BQ-0 e15b4ee159e64764", "BQ-1 1d531e6056af8027", "BQ-2 3bea5f26fab87a9e",
+    "BQ-3 18b24acd51fde850", "BQ-4 94c62cc11354b579", "BQ-5 e17f624915c2ee08",
+    "BQ-6 d1d88118077edfff", "BQ-7 00c19ce21a7a3c49", "BQ-8 b6995fd458810cbf",
+    "BQ-9 2743dbd6cc066444", "BQ-10 1b5cf514e50b53a8", "BQ-11 4f3f5231422e5dbb",
+    "BQ-12 ce92980deacfea70", "BQ-13 35e1c533e039681a", "BQ-14 72c51605f39a5c1e",
     "BQ-15 a3cfb7aaa9bbca31",
 )
 # ruled-pins:end
+# fmt: on
 
 SPEC_REL = "docs/design/E19/E19-D06.md"
 TOOL_REL = "docs/design/_tools/e19_d06_a11y_review_audit.py"
 LIB_REL = "docs/design/_tools/spec_audit_lib.py"
 P14_REL = "docs/plan/14-screens-catalogue.md"
 OWN = (SPEC_REL, TOOL_REL, LIB_REL)
-# RULED BQ-14: the one link-only line this PR adds to `14`, under SCR-038's E19-D02 line.
-ANCHOR = "- **Wireframes (E19-D02):** [E19-D02.md](../design/E19/E19-D02.md) §2–§7"
+# RULED BQ-14: the one link-only line this PR adds to `14`, under SCR-038's E19-D04 line.
+ANCHOR = "- **Flows (E19-D04):** [E19-D04.md](../design/E19/E19-D04.md) §2–§7"
 POINTER = (
     "- **A11y review (E19-D06):** [E19-D06.md](../design/E19/E19-D06.md) §3, §7 (the table "
     "strategy and the announcement policy, text first, owner approval pending; a pointer only, "
@@ -85,34 +74,24 @@ POINTER = (
 )
 BACKLOG_REL = "docs/plan/backlog/E19.json"
 
-PLAN = {
-    "05": "docs/plan/05-accessibility-standard.md",
-    "11": "docs/plan/11-user-stories.md",
-    "14": "docs/plan/14-screens-catalogue.md",
-    "15": "docs/plan/15-component-catalogue.md",
-    "16": "docs/plan/16-design-system-brief.md",
-    "23": "docs/plan/23-ws-protocol.md",
-    "24": "docs/plan/24-internal-schemas.md",
-}
-KEYED = {
-    "D02": L.DocRef("docs/design/E19/E19-D02.md", BASE),
-    "D03": L.DocRef("docs/design/E19/E19-D03.md", D03_HEAD),
-    "D03H": L.DocRef("docs/design/E19/E19-D03-handoff.md", D03_HEAD),
-    "D04": L.DocRef("docs/design/E19/E19-D04.md", D04_HEAD),
-    "D05": L.DocRef("docs/design/E19/E19-D05.md", D05_HEAD),
-    "M": L.DocRef("docs/design/research/e19-profiles.md", BASE),
-    "DS": L.DocRef(".claude/rules/32-design-specs.md", BASE),
-    "E26-D02": L.DocRef("docs/design/E26/E26-D02.md", BASE),
-    "E47-D04": L.DocRef("docs/design/E47/E47-D04.md", BASE),
-    "E47-D06": L.DocRef("docs/design/E47/E47-D06.md", BASE),
-    "E47-D07": L.DocRef("docs/design/E47/E47-D07.md", BASE),
-    "E17-D02": L.DocRef("docs/design/E17/E17-D02.md", BASE),
-    "E12-D11": L.DocRef("docs/design/E12/E12-D11.md", BASE),
-    "E08-D12": L.DocRef("docs/design/E08/E08-D12.md", BASE),
-    "E09-D10": L.DocRef("docs/design/E09/E09-D10.md", BASE),
-    "README": L.DocRef("docs/design/README.md", BASE),
-    "KM": L.DocRef("apps/web/src/keymap/keymap.json", BASE),
-}
+# fmt: off
+PLAN = {k: f"docs/plan/{k}-{v}.md" for k, v in (
+    ("05", "accessibility-standard"), ("11", "user-stories"), ("14", "screens-catalogue"),
+    ("15", "component-catalogue"), ("16", "design-system-brief"), ("23", "ws-protocol"),
+    ("24", "internal-schemas"),
+)}
+KEYED = {k: L.DocRef(path, pin) for k, path, pin in (
+    ("D02", "docs/design/E19/E19-D02.md", BASE), ("D03", "docs/design/E19/E19-D03.md", D03_HEAD),
+    ("D03H", "docs/design/E19/E19-D03-handoff.md", D03_HEAD),
+    ("D04", "docs/design/E19/E19-D04.md", D04_HEAD),
+    ("D05", "docs/design/E19/E19-D05.md", D05_HEAD),
+    ("M", "docs/design/research/e19-profiles.md", BASE),
+    ("DS", ".claude/rules/32-design-specs.md", BASE), ("README", "docs/design/README.md", BASE),
+    ("KM", "apps/web/src/keymap/keymap.json", BASE),
+)} | {k: L.DocRef(f"docs/design/{k[:3]}/{k}.md", BASE) for k in (
+    "E26-D02", "E47-D04", "E47-D06", "E47-D07", "E17-D02", "E12-D11", "E08-D12", "E09-D10",
+)}
+# fmt: on
 _ALTS = "|".join(re.escape(k) for k in sorted(KEYED, key=len, reverse=True))
 # `NN`:line, KEY:line or `KEY`:line, with an optional –end.
 CITE_RE = re.compile(
@@ -223,16 +202,13 @@ LR_OBJECTS = ("level", "state", "action", "press", "silent")
 LR_POLITE = ("polite", "off")
 LR_RATES = ("the cadence", "≤ 1 per 5 s", "once", "once per press", "never")
 LR_SILENT_NEED = ("VAH or VAL", "print", "re-bucket", "patches", "reduce announcements")
+# fmt: off
 VERDICTS = (
-    "compliant if #5517 merges as is",
-    "compliant if #5553 merges as is",
-    "compliant if #5555 merges as is",
-    "compliant",
-    "at risk",
-    "non-compliant",
-    "out of scope —",
+    "compliant if #5517 merges as is", "compliant if #5553 merges as is",
+    "compliant if #5555 merges as is", "compliant", "at risk", "non-compliant", "out of scope —",
     "not yet decidable —",
 )
+# fmt: on
 CR_VERDICTS = ("compliant", "compliant if #5517 merges as is", "at risk")
 # Section 10.1 and the motion verdicts: one row per moving D05 section 2 entry.
 MOTION_HEAD = "### 10.1 Motion is never the only carrier"
@@ -244,14 +220,12 @@ DECISIONS = 10
 COLUMNS = ("Price", "Volume", "Delta", "% of POC", "Value area")
 COLUMN_ROWS = (("05", 208), ("E47-D06", 223))  # 0-based first row of each table
 NOT_COLUMNS = ("Buy", "Sell", "Trades", "Level", "TPO count")
+# fmt: off
 TABLE_NEED = (
-    "at most 200 rows mounted",
-    "`aria-rowcount`",
-    "`aria-rowindex`",
-    "above and below",
-    "the focused row stays mounted",
-    "**Rejected:**",
+    "at most 200 rows mounted", "`aria-rowcount`", "`aria-rowindex`", "above and below",
+    "the focused row stays mounted", "**Rejected:**",
 )
+# fmt: on
 HOLD = "**Hold:** #501 is not Done and E19-D07 (#502) does not start while a Blocking row stands"
 PARENT_RE = re.compile(r"#416 boards PR #5587|#438 boards PR|#439 boards PR|#500 boards PR")
 STORY_RE = re.compile(r"#638|#639|#640|#642|#679|#680|#681|#747|#748")
@@ -736,14 +710,10 @@ def g_pointer(t: L.Tree) -> list[str]:
     base = (repo().show(repo().diff_base(BASE), P14_REL) or "").splitlines()
     at = next((i for i, ln in enumerate(base) if ln.startswith(ANCHOR)), None)
     if at is None:
-        return ["SCR-038's E19-D02 line is not in `14`"]
+        return ["SCR-038's E19-D04 line is not in `14`"]
     want = base[: at + 1] + [POINTER] + base[at + 1 :]
     ok = t.text("p14").splitlines() == want
     return [] if ok else ["`14` is not its base plus the one pointer line under SCR-038"]
-
-
-def g_mutlist(t: L.Tree) -> list[str]:
-    return L.check_mutlist(spec(t), "### 16.3", MUTATIONS)
 
 
 # fmt: off
@@ -751,7 +721,6 @@ GATES = tuple(L.Gate("G-" + f.__name__[2:].upper(), f) for f in (
     g_cite, g_keycite, g_version, g_ac, g_inbox, g_decisions, g_table, g_keys, g_t2, g_live,
     g_colour, g_contrast, g_cvd, g_verdict, g_findings, g_ids, g_handoff, g_env, g_motion, g_walk,
     g_ruling, g_ruled, g_noclose, g_public, g_hygiene, g_helper, g_untouched, g_pointer,
-    g_mutlist,
 ))
 # fmt: on
 
@@ -841,15 +810,13 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "Shared gates for the per-spec", "Shared checks for the per-spec"),
     _M("M-37", "G-UNTOUCHED", "an owner document edited", "@changed",
        "", "docs/plan/05-accessibility-standard.md"),
-    _M("M-38", "G-MUTLIST", "the list drifts", "spec",
-       r"\| M-01 +\| G-CITE +\|", "| M-01 | G-AC |", regex=True),
-    _M("M-39", "G-MOTION", "a moving entry loses its static carrier", "spec",
+    _M("M-38", "G-MOTION", "a moving entry loses its static carrier", "spec",
        r"(\| D05 M-2 +\|[^|\n]*\| )[^|\n]*?( +\|)", r"\1—\2", regex=True),
-    _M("M-40", "G-MOTION", "the flash verdict dropped", "spec",
+    _M("M-39", "G-MOTION", "the flash verdict dropped", "spec",
        "| 2.3.1 / `05`:252 — nothing flashes", "| `05`:252 — nothing flashes"),
-    _M("M-41", "G-MOTION", "V-29 loses the in-app override", "spec",
+    _M("M-40", "G-MOTION", "V-29 loses the in-app override", "spec",
        "reduce, by OS or `Ctrl+Shift+M`, keeps meaning", "reduce, by the OS setting, keeps meaning"),
-    _M("M-42", "G-POINTER", "the `14` pointer line reworded", "p14",
+    _M("M-41", "G-POINTER", "the `14` pointer line reworded", "p14",
        "§3, §7 (the table strategy", "§3, §7 (the binding table strategy"),
 )
 # fmt: on
@@ -906,7 +873,8 @@ def repin_ruled() -> int:
     a = src.index(PIN_MARK + "begin")
     a = src.index("\n", a) + 1
     b = src.index(PIN_MARK + "end")
-    body = "RULED_PINS = (\n" + "".join(f'    "{x}",\n' for x in pins) + ")\n"
+    rows = (", ".join(f'"{x}"' for x in pins[i : i + 3]) for i in range(0, len(pins), 3))
+    body = "RULED_PINS = (\n" + "".join(f"    {r},\n" for r in rows) + ")\n"
     L.write_pins(p, src[:a] + body + src[b:])
     print(f"pinned {len(pins)} BQ lines")
     return 0
@@ -937,9 +905,8 @@ def fill() -> int:
     text = replace_table(text, "### 9.1", t91)
     text = replace_table(text, "### 9.2", t92)
     text = replace_table(text, "### 9.3", t93)
-    text = replace_table(text, "### 16.3", L.mutation_table(MUTATIONS))
     p.write_text(text, encoding="utf-8", newline="\n")
-    print("sections 9.1, 9.2, 9.3 and 16.3 written")
+    print("sections 9.1, 9.2 and 9.3 written")
     return 0
 
 
