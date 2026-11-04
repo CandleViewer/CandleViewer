@@ -104,7 +104,7 @@ Board 02 of ten (§0 L72: SCR-038/preset-save-dark, SCR-038/preset-conflict-dark
 
 ## Sources (8)
 
-- spec E19-D04.md md5 ede2cf4a in this checkout (§0 L72; BQ ruling RULED, comment 6585044844)
+- spec E19-D04.md md5 9e0d20c3 in this checkout (§0 L72; BQ ruling RULED, comment 6585044844)
 - D03 E19-D03.md md5 928db4e4 at 35032f521 (read via git show 35032f521; PR #5517 head; re-pinned when it merges)
 - D02 E19-D02.md md5 1299df3b at 3619e95c5 (read via checkout; merge commit of PR #5487)
 - D02E14 E14-D02.md md5 8560e306 at the base 95a625b09
