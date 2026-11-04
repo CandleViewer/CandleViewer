@@ -16,7 +16,8 @@
     "BlueOak-1.0.0",
     "Zlib",
     "Python-2.0.1",
-    "MIT-0"
+    "MIT-0",
+    "PostgreSQL"
   ],
   "needs_approval": {
     "$comment": "LGPL requires security + owner approval per SR-136. A licence in this list fails the build with CI-SEC-003 unless an accepted-risk entry (security/accepted-risks.yaml) names the exact finding id and is unexpired.",
