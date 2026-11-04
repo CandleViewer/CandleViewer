@@ -58,9 +58,7 @@ export const showingNewest = (shown: number, total: number): string =>
 export const NO_ROWS = "No open-interest points in view.";
 
 // E24-S02 (#777). D02 §15 / D03 §4, §6: the key row, the toggles and the table's new columns.
-export const MODE_GROUP = "Open interest display";
-export const MODE_ABSOLUTE = "Absolute";
-export const MODE_DELTA = "Delta";
+export const MODE_SWITCH = "Open interest, delta per bar";
 /** D03 S54-14. */
 export const QUADRANTS_OFF = "Quadrants off";
 export const KEY_PREFIX = "price · OI:";

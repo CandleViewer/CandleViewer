@@ -65,6 +65,8 @@ export function useUnclassifiedAnnouncement(
     if (!ready) return;
     if (baseline.current === null) {
       // the first reading is silent for the user; a steady gap still reaches telemetry, once per seed
+      // intended: the seed is taken (and reported) even while colouring is off, so a later switch-on compares
+      // against current state instead of announcing a stale one
       baseline.current = total;
       if (total > 0) onSeed?.(total, noSample);
       if (!enabled) setText("");

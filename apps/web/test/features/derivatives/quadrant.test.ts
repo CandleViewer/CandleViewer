@@ -225,6 +225,23 @@ describe("unclassified announcement (D04 LR-5)", () => {
     expect(onSeed).toHaveBeenCalledTimes(2);
   });
 
+  it("seeds and reports the first reading while colouring is off (so a later switch-on compares to now)", () => {
+    const onSeed = vi.fn();
+    const onAnnounce = vi.fn();
+    const off = { ...opts, enabled: false, onSeed };
+    const { result, rerender } = renderHook(
+      (p: { n: number; enabled: boolean }) =>
+        useUnclassifiedAnnouncement(p.n, p.n, 50, onAnnounce, { ...off, enabled: p.enabled }),
+      { initialProps: { n: 4, enabled: false } },
+    );
+    expect(onSeed).toHaveBeenCalledTimes(1);
+    expect(onSeed).toHaveBeenCalledWith(4, 4);
+    expect(result.current).toBe("");
+    rerender({ n: 4, enabled: true }); // switched on at the seeded count: nothing stale to announce
+    expect(result.current).toBe("");
+    expect(onAnnounce).not.toHaveBeenCalled();
+  });
+
   it("never speaks for a count flapping 0, 1, 0, 1", () => {
     const { result, rerender } = renderHook(
       ({ n }: { n: number }) => useUnclassifiedAnnouncement(n, n, 50, undefined, opts),

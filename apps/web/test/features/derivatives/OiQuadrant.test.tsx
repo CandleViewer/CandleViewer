@@ -73,14 +73,12 @@ describe("OI quadrants", () => {
       />,
     );
     expect(screen.queryByRole("button", { name: /colouring/i })).toBeNull();
-    const abs = screen.getByRole("button", { name: /Absolute/ });
-    const delta = screen.getByRole("button", { name: /Delta/ });
-    expect(abs.getAttribute("aria-pressed")).toBe("true");
-    expect(abs.textContent).toContain("✓"); // a marker beyond the fill
-    fireEvent.click(delta);
+    const sw = screen.getByRole("switch", { name: "Open interest, delta per bar" });
+    expect(sw).not.toBeChecked(); // off by default (A-08)
+    fireEvent.click(sw);
     expect(onModeChange).toHaveBeenCalledWith("delta");
     // the host owns the mode: with no new prop the display does not move
-    expect(abs.getAttribute("aria-pressed")).toBe("true");
+    expect(sw).not.toBeChecked();
     window.removeEventListener(THEME_ANALYTICS_EVENT, on);
     expect(seen.filter((d) => d["name"] === "oi_panel.metric_toggled")).toEqual([
       { name: "oi_panel.metric_toggled", mode: "delta", quadrant_colouring: true },
@@ -91,7 +89,7 @@ describe("OI quadrants", () => {
     const props = { symbol: "BTCUSDT", snapshot: INITIAL_OI_SNAPSHOT, onRetry: vi.fn() };
     const { rerender } = render(<OiPane {...props} bars={model()} />);
     const none = (): boolean =>
-      screen.queryByRole("group", { name: "Open interest display" }) === null;
+      screen.queryByRole("switch", { name: "Open interest, delta per bar" }) === null;
     expect(none()).toBe(true);
     rerender(<OiPane {...props} bars={model()} mode="delta" />); // no handler
     expect(none()).toBe(true);
@@ -127,11 +125,34 @@ describe("OI quadrants", () => {
       />,
     );
     expect(screen.getByText(/^price · OI:/)).toBeTruthy();
+    // the connected pane forwards neither mode nor handler until #5699: no switch
+    expect(screen.queryByRole("switch")).toBeNull();
+  });
+
+  it("is one Tab stop and a native button, so Space and Enter toggle it; checked follows the host (A-08)", () => {
+    const onModeChange = vi.fn();
+    const props = { symbol: "BTCUSDT", snapshot: INITIAL_OI_SNAPSHOT, onRetry: vi.fn() };
+    const { rerender, container } = render(
+      <OiPane {...props} bars={model()} mode="absolute" onModeChange={onModeChange} />,
+    );
+    const sw = screen.getByRole("switch", { name: "Open interest, delta per bar" });
+    // jsdom does not turn Space into a click as a browser does for a <button>; the kit's own test covers the keys
+    expect(sw.tagName).toBe("BUTTON");
+    const stops = container.querySelectorAll(".cv-oi-pane__modes button:not([tabindex='-1'])");
+    expect(stops).toHaveLength(1);
+    expect(screen.getAllByRole("switch")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /^(✓ )?(Absolute|Delta)$/ })).toBeNull();
+    fireEvent.click(sw); // what Space does on a focused button
+    expect(onModeChange).toHaveBeenLastCalledWith("delta");
+    rerender(<OiPane {...props} bars={model()} mode="delta" onModeChange={onModeChange} />);
+    expect(sw).toBeChecked();
+    fireEvent.click(sw);
+    expect(onModeChange).toHaveBeenLastCalledWith("absolute");
   });
 
   it("has no toggles or key row without the served bars (S01 unchanged)", () => {
     render(<OiPane symbol="BTCUSDT" snapshot={INITIAL_OI_SNAPSHOT} onRetry={vi.fn()} />);
-    expect(screen.queryByRole("group", { name: "Open interest display" })).toBeNull();
+    expect(screen.queryByRole("switch")).toBeNull();
   });
 
   it("puts the delta and the quadrant in words in the table, colouring on or off", () => {

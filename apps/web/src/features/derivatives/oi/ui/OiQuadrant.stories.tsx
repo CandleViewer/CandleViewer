@@ -101,13 +101,13 @@ export const LongText = {
         QUADRANT_SERIES,
         FIXTURE_ROWS,
         FIXTURE_BAR_MS,
-        "BTCUSDT",
+        "1000000BABYDOGEUSDT",
       )}
     />
   ),
 };
 
-/** Narrow with colouring off: "Quadrants off", the mode switch still in row 0. */
+/** Narrow with colouring off: "Quadrants off", the A-08 "Open interest, delta per bar" switch still in row 0. */
 export const Narrow360QuadrantsOff = {
   render: () => (
     <div style={{ inlineSize: "360px" }}>

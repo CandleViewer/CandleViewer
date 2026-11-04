@@ -2,7 +2,7 @@
 // (D03 S54-10, S54-14, S54-16). The key row names each quadrant with its count, in words and glyphs, so the
 // classification never rides on colour (greyscale, D03 §4). Presentational: the counts come from `countBars`.
 import type { JSX } from "react";
-import { Button } from "@candleviewer/ui";
+import { Toggle } from "@candleviewer/ui";
 import { QUADRANT_ORDER, QUADRANT_STYLE } from "../quadrant/quadrant";
 import type { QuadrantCounts } from "../quadrant/bars";
 import * as copy from "./copy";
@@ -16,28 +16,18 @@ export interface OiModeToggleProps {
 }
 
 /**
- * Legend row 0's Absolute / Delta switch (CN-7). Colouring has no control here: it is the `deriv`
- * settings popover's (D02 §10), so it only arrives as a prop. The pressed state is the fill plus a check.
+ * Legend row 0's mode switch (CN-7; E24-D04 A-08): one CMP-004 `switch`, off = absolute, on = delta per bar.
+ * Colouring has no control here: it is the `deriv` settings popover's (D02 §10), so it only arrives as a prop.
  */
 export function OiModeToggle({ mode, onModeChange, density }: OiModeToggleProps): JSX.Element {
-  const choice = (m: OiMode, label: string): JSX.Element => (
-    <Button
-      variant={mode === m ? "secondary" : "ghost"}
-      size="sm"
-      density={density}
-      aria-pressed={mode === m}
-      onClick={() => {
-        if (mode !== m) onModeChange(m);
-      }}
-    >
-      {mode === m ? <span aria-hidden="true">✓ </span> : null}
-      {label}
-    </Button>
-  );
   return (
-    <span role="group" aria-label={copy.MODE_GROUP} className="cv-oi-pane__modes">
-      {choice("absolute", copy.MODE_ABSOLUTE)}
-      {choice("delta", copy.MODE_DELTA)}
+    <span className="cv-oi-pane__modes">
+      <Toggle
+        label={copy.MODE_SWITCH}
+        checked={mode === "delta"}
+        onChange={(c) => onModeChange(c ? "delta" : "absolute")}
+        density={density}
+      />
     </span>
   );
 }
