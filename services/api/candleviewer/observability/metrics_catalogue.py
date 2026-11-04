@@ -2618,6 +2618,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=8,
     ),
     _s(
+        "cv_alert_armed_cap_refused_total",
+        "counter",
+        "refusals",
+        (),
+        "Alert writes refused at the per-user armed-alert cap (create, replace or enable).",
+        "dashboard only",
+        _L,
+        "E40",
+        max_series=1,
+    ),
+    _s(
         "cv_alert_compile_seconds",
         "histogram",
         "seconds",

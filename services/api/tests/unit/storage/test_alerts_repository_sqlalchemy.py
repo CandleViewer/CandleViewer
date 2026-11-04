@@ -109,6 +109,15 @@ class _Rel:
         yield SimpleNamespace(session=SimpleNamespace(execute=execute), commit=commit)
 
 
+_LOCK = _Result([])
+_NONE_ARMED = {"others": 0, "target_armed": False}
+
+
+def _cap_results(owner: str = "u1", updated_at: datetime = _T0) -> list[_Result]:
+    """Target, lock and count results, in the order a replace / enable executes them."""
+    return [_Result([{"owner": owner, "updated_at": updated_at}]), _LOCK, _Result([_NONE_ARMED])]
+
+
 def _repo(rel: _Rel) -> SqlAlchemyAlertRepository:
     return SqlAlchemyAlertRepository(rel)  # type: ignore[arg-type]  # structural fake
 
@@ -129,7 +138,7 @@ def test_array_literal() -> None:
 
 
 async def test_create_binds_params_commits_and_maps_row() -> None:
-    rel = _Rel(_Result([_mapping()]))
+    rel = _Rel(_LOCK, _Result([_NONE_ARMED]), _Result([_mapping()]))
     row = await _repo(rel).create(
         owner_user_id="u1",
         name="a1",
@@ -138,7 +147,9 @@ async def test_create_binds_params_commits_and_maps_row() -> None:
         channels=("in_app", "webhook"),
         webhook_url_enc=b"enc",
     )
-    sql, p = rel.calls[0]
+    assert "pg_advisory_xact_lock" in rel.calls[0][0] and rel.calls[0][1] == {"owner": "u1"}
+    assert "count(*)" in rel.calls[1][0] and rel.calls[1][1] == {"owner": "u1", "id": None}
+    sql, p = rel.calls[2]
     assert "INSERT INTO alerts" in sql and rel.commits == 1
     assert p["ir"] == json.dumps({"a": 2, "b": 1}) and p["channels"] == "{in_app,webhook}"
     assert p["url_enc"] == b"enc" and p["mode"] == "once"
@@ -192,16 +203,22 @@ def _update_kwargs() -> dict[str, Any]:
 
 
 async def test_update_success_uses_if_match_predicate() -> None:
-    rel = _Rel(_Result([_mapping(name="n")]))
+    rel = _Rel(*_cap_results(), _Result([_mapping(name="n")]))
     row = await _repo(rel).update("id-1", **_update_kwargs())
-    sql, p = rel.calls[0]
+    assert rel.calls[0][1] == {"id": "id-1"}
+    assert "pg_advisory_xact_lock" in rel.calls[1][0] and rel.calls[1][1] == {"owner": "u1"}
+    assert "count(*)" in rel.calls[2][0] and rel.calls[2][1] == {"owner": "u1", "id": "id-1"}
+    sql, p = rel.calls[3]
     assert "updated_at = :if_match" in sql and p["if_match"] == _T0
     assert row.name == "n" and rel.commits == 1
 
 
 async def test_update_stale_etag_raises_conflict() -> None:
+    # a stale token is left to the write: no lock, no count
+    rel = _Rel(*_cap_results(updated_at=_T0 + timedelta(seconds=1))[:1], _Result([]))
     with pytest.raises(AlertConflictError):
-        await _repo(_Rel(_Result([]))).update("id-1", **_update_kwargs())
+        await _repo(rel).update("id-1", **_update_kwargs())
+    assert len(rel.calls) == 2 and "updated_at = :if_match" in rel.calls[1][0]
 
 
 async def test_soft_delete_disables_and_reports_rowcount() -> None:
@@ -214,13 +231,26 @@ async def test_soft_delete_disables_and_reports_rowcount() -> None:
 
 
 async def test_set_enabled_and_snooze_return_rows_or_none() -> None:
-    rel = _Rel(_Result([_mapping(enabled=False)]), _Result([]), _Result([_mapping()]))
+    rel = _Rel(
+        _Result([_mapping(enabled=False)]),  # disarm: no lock, no count
+        *_cap_results(),
+        _Result([_mapping()]),  # enable of a live target
+        _Result([]),  # enable of a missing target: the target query finds nothing
+        _Result([]),
+        _Result([_mapping()]),  # snooze
+    )
     repo = _repo(rel)
     r = await repo.set_enabled("id-1", False)
     assert r is not None and r.enabled is False and rel.calls[0][1]["enabled"] is False
+    assert len(rel.calls) == 1
+    on = await repo.set_enabled("id-1", True)
+    assert on is not None and rel.commits == 2  # the disarm committed too
+    assert "pg_advisory_xact_lock" in rel.calls[2][0] and rel.calls[2][1] == {"owner": "u1"}
+    assert "count(*)" in rel.calls[3][0] and rel.calls[3][1] == {"owner": "u1", "id": "id-1"}
+    assert rel.calls[4][1] == {"id": "id-1", "enabled": True}
     assert await repo.set_enabled("missing", True) is None
     assert await repo.set_snooze("id-1", _T0) is not None
-    assert rel.calls[2][1]["until"] == _T0
+    assert rel.calls[-1][1]["until"] == _T0
 
 
 async def test_bump_fire_counters_and_load_armed() -> None:

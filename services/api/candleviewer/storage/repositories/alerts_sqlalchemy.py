@@ -6,6 +6,11 @@ dataclasses. `webhook_url_enc` / `webhook_secret_enc` are SECRET: the read path
 selects an explicit column allow-list (`ALERT_COLUMNS`) that never contains them.
 Cursor pagination is keyset (opaque base64 of `(ts, id)`), never OFFSET.
 Static, parameterised SQL only. Deliveries: `alert_deliveries_sqlalchemy.py`.
+
+Armed-alert cap (#1864): a write that arms an alert (a create with `enabled`, or a replace or
+`set_enabled` turning a disarmed alert's `enabled` on) takes the owner's advisory cap lock, then
+counts the owner's armed alerts and writes in the same transaction (`armed_breach`), as the
+drawings quota does (#2727). A disarm takes no lock and is never refused.
 """
 
 from __future__ import annotations
@@ -20,13 +25,16 @@ import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
 from candleviewer.storage.repositories.alerts import (
+    MAX_ARMED_ALERTS,
     AlertConflictError,
     AlertNameTakenError,
     AlertRow,
     Page,
+    armed_breach,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    SqlAlchemyUnitOfWork,
     constraint_of,
     query_failure,
     sqlstate_of,
@@ -199,11 +207,58 @@ _COUNT_ENABLED = sa.text(
     "SELECT enabled, count(*) AS n FROM alerts WHERE deleted_at IS NULL GROUP BY enabled"
 )
 _COUNT_PENDING = sa.text("SELECT count(*) FROM alert_deliveries WHERE status = 'queued'")
+# #1864: the owner's armed-alert cap lock, then its count. Race-free under READ COMMITTED, the
+# server default this engine keeps: each statement after the lock sees the previous holder's
+# commit (the drawings `_QUOTA_LOCK` reasoning, #2727). A disarm never takes it.
+_ARMED_LOCK = sa.text(
+    "SELECT pg_advisory_xact_lock(hashtextextended('cv.alerts_armed:' || CAST(:owner AS text), 0))"
+)
+# The owner's armed alerts other than `:id` (NULL on a create), and whether `:id` is armed.
+_ARMED_COUNT = sa.text(
+    "SELECT count(*) FILTER (WHERE id IS DISTINCT FROM CAST(:id AS uuid)) AS others, "
+    "coalesce(bool_or(id = CAST(:id AS uuid)), false) AS target_armed FROM alerts "
+    "WHERE owner_user_id = CAST(:owner AS uuid) AND enabled AND deleted_at IS NULL"
+)
+# The live target of a replace or `set_enabled`: its owner (for the lock) and concurrency token.
+_TARGET = sa.text(
+    "SELECT owner_user_id::text AS owner, updated_at FROM alerts "
+    "WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL"
+)
 
 
 class SqlAlchemyAlertRepository:
-    def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
+    def __init__(
+        self, relational: SqlAlchemyRelationalRepository, *, max_armed: int = MAX_ARMED_ALERTS
+    ) -> None:
         self._relational = relational
+        self._max_armed = max_armed
+
+    async def _hold_armed_cap(
+        self, uow: SqlAlchemyUnitOfWork, owner: str, alert_id: str | None
+    ) -> None:
+        """Arming `alert_id` (None: a new alert) for `owner`: take the cap lock, then refuse
+        with `AlertArmedLimitError` past the cap. Call inside the write's transaction."""
+        await uow.session.execute(_ARMED_LOCK, {"owner": owner})
+        got = (
+            (await uow.session.execute(_ARMED_COUNT, {"owner": owner, "id": alert_id}))
+            .mappings()
+            .one()
+        )
+        refused = armed_breach(
+            int(got["others"]), arming=not got["target_armed"], limit=self._max_armed
+        )
+        if refused is not None:
+            raise refused
+
+    async def _hold_arming_target(
+        self, uow: SqlAlchemyUnitOfWork, alert_id: str, if_match: datetime | None = None
+    ) -> None:
+        """A replace or `set_enabled` that sets `enabled`: hold the cap for its live target. A
+        missing target, or a stale `if_match`, is left to the write (404 / 412), never refused."""
+        target = (await uow.session.execute(_TARGET, {"id": alert_id})).mappings().first()
+        if target is None or (if_match is not None and target["updated_at"] != if_match):
+            return
+        await self._hold_armed_cap(uow, str(target["owner"]), alert_id)
 
     async def create(
         self,
@@ -245,6 +300,8 @@ class SqlAlchemyAlertRepository:
         }
         try:
             async with self._relational.unit_of_work() as uow:
+                if enabled:
+                    await self._hold_armed_cap(uow, owner_user_id, None)
                 row = (await uow.session.execute(_INSERT, params)).mappings().one()
                 await uow.commit()
         except IntegrityError as exc:
@@ -318,6 +375,8 @@ class SqlAlchemyAlertRepository:
         }
         try:
             async with self._relational.unit_of_work() as uow:
+                if enabled:
+                    await self._hold_arming_target(uow, alert_id, if_match)
                 row = (await uow.session.execute(_UPDATE, params)).mappings().first()
                 await uow.commit()
         except IntegrityError as exc:
@@ -333,7 +392,17 @@ class SqlAlchemyAlertRepository:
         return bool(getattr(res, "rowcount", 0))
 
     async def set_enabled(self, alert_id: str, enabled: bool) -> AlertRow | None:
-        return await self._one(_SET_ENABLED, {"id": alert_id, "enabled": enabled})
+        if not enabled:  # a disarm is never held to the cap
+            return await self._one(_SET_ENABLED, {"id": alert_id, "enabled": False})
+        async with self._relational.unit_of_work() as uow:
+            await self._hold_arming_target(uow, alert_id)
+            row = (
+                (await uow.session.execute(_SET_ENABLED, {"id": alert_id, "enabled": True}))
+                .mappings()
+                .first()
+            )
+            await uow.commit()
+        return None if row is None else _alert(row)
 
     async def set_snooze(self, alert_id: str, until: datetime | None) -> AlertRow | None:
         return await self._one(_SET_SNOOZE, {"id": alert_id, "until": until})

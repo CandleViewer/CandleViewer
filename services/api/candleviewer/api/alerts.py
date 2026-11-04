@@ -12,6 +12,12 @@ their declared query parameters (SR-026): any other key gets the shared 422 afte
 check and before the store is read. A create or update by anyone but the Owner needs a grant on
 every account the alert names (`exchange_account_id` and each account in the compiled
 condition); a refusal is a 403, audited first as `alert.scope_refused`.
+
+Armed-alert cap (#1864, 24 §19.104): a create, replace or `{enabled: true}` that would arm an
+alert past the owner's cap (`MAX_ARMED_ALERTS`) is refused by the store, which counts and writes
+in one transaction, with `409 conflict`, rule `limit_reached` and a message that names the cap,
+never a count; nothing is written and `on_cap_refused` counts it. The write-ahead audit record
+of the write stays as it is (ruling of record on #1864). A disarm is never refused.
 """
 
 # No `from __future__ import annotations`: FastAPI must evaluate `Depends(<closure>)` in the
@@ -42,6 +48,7 @@ from candleviewer.rules.manager import Actor
 from candleviewer.rules.vocabulary.registry import MetricRegistry
 from candleviewer.storage.errors import StorageConstraintViolated
 from candleviewer.storage.repositories.alerts import (
+    AlertArmedLimitError,
     AlertConflictError,
     AlertNameTakenError,
     AlertRepository,
@@ -63,6 +70,15 @@ OnCompile = Callable[[float, str | None], None]
 OnChange = Callable[[str], Awaitable[None]]
 #: Injected wall clock (tz-aware UTC) for the past-instant refusals.
 Clock = Callable[[], datetime]
+#: #1864: counts one write refused at the armed-alert cap (`cv_alert_armed_cap_refused_total`).
+OnCapRefused = Callable[[], None]
+#: The registered title of `conflict` (22 `x-error-codes`).
+CONFLICT_TITLE = "Concurrent modification or state conflict"
+
+
+def armed_cap_message(limit: int) -> str:
+    """The refusal of a write past the armed-alert cap: it names the cap, never a count."""
+    return f"You have reached the limit of {limit} armed alerts. Disable one to arm another."
 
 
 def _utc_now() -> datetime:
@@ -70,6 +86,10 @@ def _utc_now() -> datetime:
 
 
 async def _no_change(_alert_id: str) -> None:
+    return None
+
+
+def _no_count() -> None:
     return None
 
 
@@ -157,10 +177,11 @@ class _Deps:
         on_compile: OnCompile,
         on_change: OnChange = _no_change,
         clock: Clock = _utc_now,
+        on_cap_refused: OnCapRefused = _no_count,
     ) -> None:
         self.repo, self.registry, self.resolver = repo, registry, actor_resolver
         self.audit, self.on_compile, self.on_change = audit, on_compile, on_change
-        self.clock = clock
+        self.clock, self.on_cap_refused = clock, on_cap_refused
 
     def store(self) -> AlertRepository:
         r = self.repo()
@@ -212,8 +233,12 @@ def make_alerts_router(
     on_compile: OnCompile = lambda seconds, reason: None,
     on_change: OnChange = _no_change,
     clock: Clock = _utc_now,
+    on_cap_refused: OnCapRefused = _no_count,
 ) -> APIRouter:
-    d = _Deps(repo_provider, registry_provider, actor_resolver, audit, on_compile, on_change, clock)
+    d = _Deps(
+        repo_provider, registry_provider, actor_resolver, audit, on_compile, on_change, clock,
+        on_cap_refused,
+    )  # fmt: skip
     router = APIRouter(tags=["alerts"], route_class=_ProblemRoute)
 
     def need(
@@ -327,6 +352,14 @@ def make_alerts_router(
     def name_taken() -> _Problem:
         return _Problem(409, "conflict", "Conflict", "You already have an alert with this name.")
 
+    def armed_cap(exc: AlertArmedLimitError) -> _Problem:
+        """409 `conflict`, rule `limit_reached` on `enabled`: names the cap, never a count."""
+        d.on_cap_refused()
+        msg = armed_cap_message(exc.limit)
+        return _Problem(409, "conflict", CONFLICT_TITLE, msg,
+                        errors=[{"field": "enabled", "rule": "limit_reached",
+                                 "message": msg}])  # fmt: skip
+
     def refused_row() -> _Problem:
         """A value the stored alert's own rules refuse (#2748 (b)): 422, naming no constraint."""
         return _Problem(
@@ -364,6 +397,8 @@ def make_alerts_router(
             row = await d.store().create(
                 owner_user_id=actor.user_id, alert_id=alert_id, **fields(body, compiled)
             )
+        except AlertArmedLimitError as exc:
+            raise armed_cap(exc) from None
         except AlertNameTakenError:
             raise name_taken() from None
         except StorageConstraintViolated as refused:
@@ -401,6 +436,8 @@ def make_alerts_router(
             )
         except AlertConflictError:
             raise _stale() from None
+        except AlertArmedLimitError as exc:
+            raise armed_cap(exc) from None
         except AlertNameTakenError:
             raise name_taken() from None
         except StorageConstraintViolated as refused:
@@ -432,7 +469,10 @@ def make_alerts_router(
         await d.audit_event("alert.enabled" if body.enabled else "alert.disabled", actor, row.id,
                             before_state={"enabled": row.enabled},
                             after_state={"enabled": body.enabled})  # fmt: skip
-        new = await d.store().set_enabled(row.id, body.enabled)
+        try:
+            new = await d.store().set_enabled(row.id, body.enabled)
+        except AlertArmedLimitError as exc:
+            raise armed_cap(exc) from None
         if new is None:
             raise _not_found()
         await d.on_change(new.id)
@@ -483,4 +523,4 @@ def _stale() -> _Problem:
                     "The alert was changed by another session; reload and retry.")  # fmt: skip
 
 
-__all__ = ["READ", "WRITE", "AlertInput", "make_alerts_router"]
+__all__ = ["READ", "WRITE", "AlertInput", "armed_cap_message", "make_alerts_router"]
