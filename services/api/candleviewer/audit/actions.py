@@ -331,6 +331,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "maintenance.enabled",
         "maintenance.disabled",
         "settings.change",
+        # E40-S02 (#1130 slice 3, 24 Sec.19.106 CC-8): `PATCH /settings` tried to turn a locked
+        # notification matrix cell off; refused whole, audited at high severity.
+        "notifications.risk_channel_muted",
         # E42-T05 (SR-E42-11): an incident moved from `open` to `acknowledged`.
         "incident.acknowledged",
         "hotkey.trading_binding_changed",

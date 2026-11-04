@@ -58,9 +58,12 @@ _OB_DEAD = sa.text(
     "UPDATE outbox SET attempts = :attempts, last_error = :error, dead_at = now(), "
     "locked_by = NULL, locked_until = NULL WHERE id = :id"
 )
+#: `:silenced` (CC-9) is merged into `context` only when set: a mute or quiet hours held the firing.
 _AD_SENT = sa.text(
     "UPDATE alert_deliveries SET status = 'sent', sent_at = now(), attempt = :attempt, "
-    "http_status = :http, error_message = NULL WHERE id = :id AND status = 'queued'"
+    "http_status = :http, error_message = NULL, context = CASE WHEN CAST(:silenced AS text) "
+    "IS NULL THEN context ELSE context || jsonb_build_object('silenced', CAST(:silenced AS text)) "
+    "END WHERE id = :id AND status = 'queued'"
 )
 _AD_SUPPRESSED = sa.text(
     "UPDATE alert_deliveries SET status = 'suppressed', error_message = :reason, "
@@ -119,11 +122,13 @@ class SqlAlchemyAlertDispatchStore:
             await uow.session.execute(_OB_DONE, {"id": job.id, "attempts": job.attempts})
             await uow.commit()
 
-    async def settle_sent(self, job: Any, *, attempt: int, http_status: int | None) -> bool:
+    async def settle_sent(
+        self, job: Any, *, attempt: int, http_status: int | None, silenced: str | None = None
+    ) -> bool:
         async with self._relational.unit_of_work() as uow:
             run = uow.session.execute
             won = _rc(await run(_AD_SENT, {"id": job.delivery_id, "attempt": attempt,
-                                           "http": http_status}))  # fmt: skip
+                                           "http": http_status, "silenced": silenced}))  # fmt: skip
             await run(_OB_DONE, {"id": job.id, "attempts": job.attempts + 1})
             await uow.commit()
         return won > 0
