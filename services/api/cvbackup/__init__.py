@@ -11,5 +11,11 @@ the API's third-party packages (the `independence-backup-sidecar` and
 `forbidden-cvbackup-thirdparty` contracts of `services/api/.importlinter`): the standard library
 only. The wheel packages only `candleviewer`, the sdist excludes this package
 (`services/api/pyproject.toml`), and `infra/images/Dockerfile.api` copies only `candleviewer`, so
-the API image never carries it. Empty until #3319 B1b.
+the API image never carries it.
+
+Modules (#3319 B1b): `config`, `protocol` (the §15.8 codec), `server` (the socket), `paths`
+(confinement on the backup volume), `ledger` (its own run record), `floor` (the rules no request
+lifts), `ops` (plan, verify, remove; run and restore answer until B1c and B2) and `age_format`
+(the recipient fingerprint and the header check, no decryption). The run path (child processes,
+the age tool, the dump kinds) is B1c.
 """
