@@ -1,25 +1,53 @@
-import { test, expect } from "@playwright/test";
-import { ChartProbe } from "./chart-probe";
+import { expect, test } from "@playwright/test";
+import { axeFindings, goldenBars, openChart, patient } from "./bars-harness";
+import { BLOCKED } from "./blockers";
+import { COPY } from "./chart-probe";
 
-// E12-Q03 (#419). All cases are fixme: the chart workspace route, CMP-220/222, SCR-041/042/045/046
-// do not exist in apps/web yet. Un-fixme when the blocker named on each case lands.
-const BLOCKED_UI = "CMP-222 ChartTypeToggle (#244) + series types (#533) + SCR-045 (#521)";
+// E12-Q03 (#419), US-CHART-002: E12-TC-B01, B02, B05 (the volume pane, B03, is E12-S08's).
+const BARS = goldenBars("btcusdt-2026-09-01", "time:5");
 
 test.describe("series types (US-CHART-002)", () => {
-  test.fixme(true, `blocked: ${BLOCKED_UI}`);
-  test("candle -> OHLC -> line -> area -> Heikin-Ashi -> baseline issues no kline/bar refetch and keeps bar count", async ({
+  test.fixme(true, `blocked: ${BLOCKED.seriesTypes}`);
+
+  test("every CMP-222 type redraws from the same bars: no market read, same bar count", async ({
     page,
   }) => {
-    const probe = new ChartProbe(page);
-    await page.goto("/chart/BTCUSDT?interval=5m");
-    await expect(probe.dataRows.first()).toBeVisible();
-    const before = await probe.dataRows.count();
-    const requests = probe.trackMarketRequests();
-    for (const type of ["OHLC bar", "Line", "Area", "Heikin-Ashi", "Baseline"]) {
-      await page.getByRole("radio", { name: type }).click();
-      await expect(probe.dataRows).toHaveCount(before);
+    const { probe, backend } = await openChart(page, "BTCUSDT 5m", {
+      symbol: "BTCUSDT",
+      bars: BARS,
+    });
+    await patient(probe.seriesType(COPY.seriesTypes[0])).toBeChecked();
+    const reads = backend.marketReads.length;
+    for (const type of COPY.seriesTypes.slice(1)) {
+      await probe.seriesType(type).click();
+      await expect(probe.seriesType(type)).toBeChecked();
     }
-    expect(requests).toEqual([]);
+    await probe.openTableByKey();
+    expect(await probe.barsLoaded()).toBe(BARS.length);
+    expect(backend.marketReads).toHaveLength(reads);
+    expect(backend.refused).toEqual([]);
   });
-  test("volume sub-pane mounts as a linked pane sharing the time axis", async () => {});
+
+  test("candles to Heikin-Ashi issues no market read and keeps the bar count", async ({ page }) => {
+    const { probe, backend } = await openChart(page, "BTCUSDT 5m", {
+      symbol: "BTCUSDT",
+      bars: BARS,
+    });
+    const reads = backend.marketReads.length;
+    await probe.chartType.getByRole("checkbox", { name: COPY.heikinAshi }).check();
+    await probe.openTableByKey();
+    expect(await probe.barsLoaded()).toBe(BARS.length);
+    expect(backend.marketReads).toHaveLength(reads);
+  });
+
+  test("CMP-222 is operable by keyboard alone (B05) and passes axe", async ({ page }) => {
+    const { probe } = await openChart(page, "BTCUSDT 5m", { symbol: "BTCUSDT", bars: BARS });
+    await probe.seriesType(COPY.seriesTypes[0]).focus();
+    for (const type of COPY.seriesTypes.slice(1)) {
+      await page.keyboard.press("ArrowRight");
+      await expect(probe.seriesType(type)).toBeFocused();
+      await expect(probe.seriesType(type)).toBeChecked();
+    }
+    expect(await axeFindings(page)).toEqual([]);
+  });
 });

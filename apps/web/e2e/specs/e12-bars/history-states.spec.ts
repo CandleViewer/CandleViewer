@@ -1,30 +1,42 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { axeFindings, openChart, patient } from "./bars-harness";
+import { BLOCKED } from "./blockers";
+import { NO_BARS } from "../../../src/chart/a11y/copy";
+import { COPY } from "./chart-probe";
 
-// E12-Q03 (#419). All cases are fixme: the chart workspace route, CMP-220/222, SCR-041/042/045/046
-// do not exist in apps/web yet. Un-fixme when the blocker named on each case lands.
-const BLOCKED_UI = "SCR-047/SCR-048 (#329 design), days-to-load control";
+// E12-Q03 (#419), US-CHART-010 and US-MKT-008: E12-TC-A06, F02 and the SCR-048 failure scenario.
 
 test.describe("history states (US-CHART-010, US-MKT-008)", () => {
-  test.fixme(true, `blocked: ${BLOCKED_UI}`);
-  test("503 on /market/klines shows SCR-048 with retry and reason, not an empty chart", async ({
+  test.fixme(true, `blocked: ${BLOCKED.states}`);
+
+  test("503 on the market read shows SCR-048 with its cause and a keyboard retry", async ({
     page,
   }) => {
-    await page.route("**/market/klines*", (r) => r.fulfill({ status: 503, body: "{}" }));
-    await page.goto("/chart/BTCUSDT");
-    await expect(page.getByRole("alert")).toBeVisible();
-    await expect(page.getByRole("button", { name: /retry/i })).toBeVisible();
+    const { probe, backend } = await openChart(page, "BTCUSDT 1m", {
+      symbol: "BTCUSDT",
+      bars: [],
+      fail: { status: 503, code: "service_unavailable" },
+    });
+    await patient(probe.panel.getByText(COPY.feedFailed)).toBeVisible();
+    await expect(probe.panel.getByText(NO_BARS)).toHaveCount(0);
+    const retry = probe.panel.getByRole("button", { name: COPY.retry });
+    await retry.focus();
+    const reads = backend.marketReads.length;
+    await page.keyboard.press("Enter");
+    await patient.poll(() => backend.marketReads.length).toBeGreaterThan(reads);
+    expect(await axeFindings(page)).toEqual([]);
   });
+
   test("422 no_data_recorded shows SCR-047 naming the first available timestamp", async ({
     page,
   }) => {
-    await page.route("**/market/klines*", (r) =>
-      r.fulfill({
-        status: 422,
-        contentType: "application/json",
-        body: JSON.stringify({ code: "no_data_recorded" }),
-      }),
-    );
-    await page.goto("/chart/BTCUSDT");
-    await expect(page.getByText(/first available/i)).toBeVisible();
+    const { probe } = await openChart(page, "BTCUSDT 1m", {
+      symbol: "BTCUSDT",
+      bars: [],
+      fail: { status: 422, code: "no_data_recorded" },
+    });
+    await patient(probe.panel.getByText(COPY.historyStarts)).toBeVisible();
+    await expect(probe.panel.getByText(COPY.feedFailed)).toHaveCount(0);
+    expect(await axeFindings(page)).toEqual([]);
   });
 });

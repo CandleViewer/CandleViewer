@@ -1,17 +1,63 @@
-import { test, expect } from "@playwright/test";
-import { ChartProbe } from "./chart-probe";
+import { expect, test } from "@playwright/test";
+import { displayDecimal, formatBarTime } from "../../../src/chart/a11y/format";
+import { axeFindings, goldenBars, openChart, patient } from "./bars-harness";
+import { BLOCKED } from "./blockers";
 
-// E12-Q03 (#419). All cases are fixme: the chart workspace route, CMP-220/222, SCR-041/042/045/046
-// do not exist in apps/web yet. Un-fixme when the blocker named on each case lands.
-const BLOCKED_UI = "chart route + SCR-041 (E12-D04) + SCR-045 (#521) + SCR-046 (#523)";
+// E12-Q03 (#419), US-CHART-001: E12-TC-A04, A06 (plan `qa/plans/e12-bars-and-series-test-plan.md`).
+const BARS = goldenBars("btcusdt-2026-09-01", "time:1");
+const ONE_MINUTE = 60_000;
+const us = (t: string): number => Date.parse(t) * 1_000;
 
 test.describe("candles (US-CHART-001)", () => {
-  test.fixme(true, `blocked: ${BLOCKED_UI}`);
-  test("BTCUSDT 1m first/last bar in data table match GET /market/klines; forming bar updates without reload", async ({
+  test.fixme(true, `blocked: ${BLOCKED.table}`);
+
+  test("BTCUSDT 1m: the data table's first and last bars match the served klines", async ({
     page,
   }) => {
-    const probe = new ChartProbe(page);
-    await page.goto("/chart/BTCUSDT?interval=1m");
-    await expect(probe.dataRows.first()).toBeVisible();
+    const { probe, backend } = await openChart(page, "BTCUSDT 1m", {
+      symbol: "BTCUSDT",
+      bars: BARS,
+    });
+    await probe.openTableByKey();
+    await patient(probe.dataTable).toBeVisible();
+    await expect(probe.dataTable.locator(":focus")).toHaveCount(1);
+    expect(await probe.barsLoaded()).toBe(BARS.length);
+    for (const bar of [BARS[0], BARS.at(-1)]) {
+      if (bar === undefined) throw new Error("the golden has no bars");
+      const row = probe.barRow(formatBarTime(us(bar.t), ONE_MINUTE));
+      await page.keyboard.press(bar === BARS[0] ? "Control+Home" : "Control+End");
+      await expect(row).toContainText(displayDecimal(bar.o));
+      await expect(row).toContainText(displayDecimal(bar.c));
+    }
+    expect(backend.refused).toEqual([]);
+    expect(await axeFindings(page)).toEqual([]);
+  });
+
+  test("Escape leaves the table and focus returns to the chart view", async ({ page }) => {
+    const { probe } = await openChart(page, "BTCUSDT 1m", { symbol: "BTCUSDT", bars: BARS });
+    await probe.openTableByKey();
+    await patient(probe.dataTable).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(probe.dataTable).toHaveCount(0);
+    await expect(probe.chartButton).toHaveAttribute("aria-pressed", "true");
+  });
+});
+
+test.describe("forming bar (E12-TC-A04)", () => {
+  test.fixme(true, `blocked: ${BLOCKED.forming}`);
+
+  test("a trade into the forming bar updates its row in place, without a reload", async ({
+    page,
+  }) => {
+    const { probe, backend } = await openChart(page, "BTCUSDT 1m", {
+      symbol: "BTCUSDT",
+      bars: BARS,
+    });
+    await probe.openTableByKey();
+    const before = await probe.barsLoaded();
+    const reads = backend.marketReads.length;
+    // The bars-topic sender lands with the blocker; the update is asserted on the table only.
+    await patient.poll(() => probe.barsLoaded()).toBe(before);
+    expect(backend.marketReads).toHaveLength(reads);
   });
 });
