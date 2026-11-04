@@ -292,6 +292,18 @@ _DOCS_SHAPES: dict[str, tuple[str, str, str, str]] = {
     "trading-wallet-balance": ("GET /v5/account/wallet-balance", "account/wallet-balance", "*",
                                "a unified wallet with one BTC coin row"),
 }  # fmt: skip
+#: E29-Q01 (#844, ruling R2 as above): four more rows of the same error table (its `UTA` section,
+#: code and text only), read at the same docs commit on 2026-11-04. E29-K01's follow-up capture may
+#: replace 110017 and 110025; no demo run provokes 10006 or 110020, so they stay transcribed.
+#: name -> (the call the OMS suite stubs the row on, its code). The call is our label, not a
+#: documented fact: the error table names no call, and 10006 can answer any.
+_ERROR_ROWS_READ = "2026-11-04"
+_DOCS_ERROR_ROWS: dict[str, tuple[str, int]] = {
+    "trading-error-10006": ("POST /v5/order/create", 10006),
+    "trading-error-110017": ("POST /v5/order/create", 110017),
+    "trading-error-110020": ("POST /v5/order/create", 110020),
+    "trading-error-110025": ("POST /v5/position/switch-mode", 110025),
+}  # fmt: skip
 #: G-8b (#3963, ruling 11; the #1778 group A pattern, as R2): the private stream's documented
 #: frames, one per `ws/private-*.jsonl` file, each its page's sample as written (keys and values
 #: unchanged, whitespace compacted): a reply on the Connect page or a topic's Stream Example. No
@@ -461,6 +473,13 @@ def build() -> list[dict[str, Any]]:
                cap=4_000) | _TRANSCRIBED
         | {"source_url": _docs_url(page), "source_ref": f"{_DOCS_REF}:docs/v5/{page}.mdx"}
         for name, (stream, page, symbol, event) in _DOCS_SHAPES.items()
+    ]  # fmt: skip
+    m += [
+        _entry(f"rest/{name}.json", "*", route, f"error-table row {code} (UTA): code and text only",
+               host="bybit-exchange.github.io", cap=4_000) | _TRANSCRIBED
+        | {"capture_date": _ERROR_ROWS_READ, "retrieved": _ERROR_ROWS_READ,
+           "source_url": _docs_url("error"), "source_ref": f"{_DOCS_REF}:docs/v5/error.mdx"}
+        for name, (route, code) in _DOCS_ERROR_ROWS.items()
     ]  # fmt: skip
     m += [
         _entry(f"ws/{name}.jsonl", symbol, stream, event, host="bybit-exchange.github.io",

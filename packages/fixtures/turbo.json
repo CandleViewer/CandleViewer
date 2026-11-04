@@ -9,6 +9,7 @@
         "golden/**",
         "bybit/**",
         "accounts/**",
+        "oms/**",
         "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md"
       ]
     },
@@ -21,6 +22,7 @@
         "golden/**",
         "bybit/**",
         "accounts/**",
+        "oms/**",
         "vitest.config.mjs",
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
@@ -38,6 +40,7 @@
         "golden/**",
         "bybit/**",
         "accounts/**",
+        "oms/**",
         "vitest.config.mjs",
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",

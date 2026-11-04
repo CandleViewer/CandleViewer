@@ -1,0 +1,19 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "ws_duplicate_exec",
+  "origin": "ticket",
+  "description": "The private stream delivers one linear BTCUSDT fill twice: the same execution frame, with the same execId (an assumed redelivery; no recording shows one). The OMS counts the fill once.",
+  "environment": "demo",
+  "evidence": "derived",
+  "rules": ["S4"],
+  "cases": [],
+  "ws": { "private": ["frames.jsonl"] },
+  "files": {
+    "frames.jsonl": {
+      "derived_from": ["../bybit/2026-10-05/ws/private-execution.jsonl"],
+      "derivation": "The transcribed execution frame, twice, byte for byte. Nothing is edited or invented: the repeat is the scenario."
+    }
+  },
+  "expected": "A repeated exec_id changes nothing: one executions row, the order's cumulative quantity as the first frame left it, no new event, no lockout and no page (E29-T05, \"A duplicate push changes nothing\").",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

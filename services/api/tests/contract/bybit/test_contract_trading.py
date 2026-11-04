@@ -19,7 +19,10 @@ import pytest
 from candleviewer.domain.order_link import ext_key
 from candleviewer.exchange.base.errors import (
     DuplicateClientIdError,
+    ExchangeError,
+    InstrumentFilterError,
     NotFoundError,
+    RateLimitError,
     UnknownStateError,
 )
 from candleviewer.exchange.bybit import trading_parse as tp
@@ -36,7 +39,11 @@ TRANSCRIBED = {
     "rest/trading-closed-pnl.json",
     "rest/trading-create-batch-reply.json",
     "rest/trading-create-reply.json",
+    "rest/trading-error-10006.json",
     "rest/trading-error-110001.json",
+    "rest/trading-error-110017.json",
+    "rest/trading-error-110020.json",
+    "rest/trading-error-110025.json",
     "rest/trading-error-110072.json",
     "rest/trading-execution-list.json",
     "rest/trading-fee-rate.json",
@@ -46,6 +53,14 @@ TRANSCRIBED = {
     "rest/trading-set-leverage-reply.json",
     "rest/trading-trading-stop-reply.json",
     "rest/trading-wallet-balance.json",
+}
+#: The day each page was read; the four error rows E29-Q01 (#844) added were read on 2026-11-04.
+RETRIEVED = "2026-10-21"
+RETRIEVED_LATER = {
+    "rest/trading-error-10006.json": "2026-11-04",
+    "rest/trading-error-110017.json": "2026-11-04",
+    "rest/trading-error-110020.json": "2026-11-04",
+    "rest/trading-error-110025.json": "2026-11-04",
 }
 
 
@@ -65,7 +80,8 @@ def test_every_transcription_is_listed_with_its_source() -> None:
     entries = {e["path"]: e for e in manifest()["fixtures"] if e["path"] in TRANSCRIBED}
     assert set(entries) == TRANSCRIBED
     for entry in entries.values():
-        assert entry["source"] == "docs-transcribed" and entry["retrieved"] == "2026-10-21"
+        assert entry["source"] == "docs-transcribed"
+        assert entry["retrieved"] == RETRIEVED_LATER.get(entry["path"], RETRIEVED)
         assert entry["source_url"].startswith("https://bybit-exchange.github.io/docs/v5/")
         assert entry["source_ref"].startswith("github.com/bybit-exchange/docs@")
         assert entry["http_status"] is None  # no documentation page shows its example's status
@@ -259,3 +275,25 @@ def test_the_error_rows_map_to_the_taxonomy() -> None:
     assert isinstance(on_create, DuplicateClientIdError)
     assert isinstance(map_ret_code(missing["retCode"], missing["retMsg"]), NotFoundError)
     assert set(duplicate) == set(missing) == {"retCode", "retMsg"}  # the table shows no more
+
+
+@pytest.mark.parametrize(
+    ("path", "error_type", "filter_name"),
+    [
+        ("rest/trading-error-10006.json", RateLimitError, None),
+        ("rest/trading-error-110017.json", InstrumentFilterError, "reduce_only_violation"),
+        ("rest/trading-error-110020.json", InstrumentFilterError, "max_open_orders"),
+        ("rest/trading-error-110025.json", InstrumentFilterError, "position_mode_not_modified"),
+    ],
+)
+def test_the_added_error_rows_map_to_the_taxonomy(
+    path: str, error_type: type[ExchangeError], filter_name: str | None
+) -> None:
+    """E29-Q01 (#844): four more error-table rows, each read by the adapter's mapper as
+    `24-internal-schemas.md` section 8.6 reads it: its class and filter, the code and text kept."""
+    row = rest(path)
+    error = map_ret_code(row["retCode"], row["retMsg"])
+    assert type(error) is error_type
+    assert getattr(error, "filter_name", None) == filter_name
+    assert (error.exchange_ret_code, error.exchange_ret_msg) == (row["retCode"], row["retMsg"])
+    assert set(row) == {"retCode", "retMsg"}  # the table shows no more
