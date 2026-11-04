@@ -23,6 +23,7 @@ import asyncio
 import contextlib
 import hashlib
 import os
+import stat
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -222,6 +223,9 @@ class Ledger:
             if created:
                 os.fsync(directory)
         try:
+            info = os.fstat(fd)  # one regular file, as `paths.open_artefact` holds artefacts
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError("not one regular file")
             state = replay(_read_all(fd))
         except (ValueError, OSError):
             os.close(fd)
@@ -250,11 +254,13 @@ class Ledger:
             if a.state == "quarantined" and a.purge_after is not None and a.purge_after <= now
         ]  # fmt: skip
 
-    async def append(self, entry: str, backup_id: str, **members: object) -> None:
+    async def append(self, entry: str, backup_id: str, *, inline: bool = False,
+                     **members: object) -> None:  # fmt: skip
         """Append one entry, `fsync`ed before this returns; its fault leaves the record
-        unreadable (`LedgerUnreadable`). A cancel never cuts an append short (`uninterrupted`):
-        the entry still lands and counts, so a peer's cancel cannot leave the record unread."""
-        await uninterrupted(self._append(entry, backup_id, members), name="cvbackup.append")
+        unreadable (`LedgerUnreadable`). A cancel never cuts an append short (`uninterrupted`, or
+        `inline` from a caller already uninterrupted): the entry still lands and counts."""
+        work = self._append(entry, backup_id, members)
+        await (work if inline else uninterrupted(work, name="cvbackup.append"))
 
     async def _append(self, entry: str, backup_id: str, members: Mapping[str, object]) -> None:
         async with self._lock:

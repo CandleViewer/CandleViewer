@@ -16,7 +16,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 from cvbackup.ledger import Artefact, Ledger
-from cvbackup.paths import Root
+from cvbackup.paths import PathFault, Root
 
 
 class FloorRefusal(Exception):
@@ -34,6 +34,7 @@ class Floor:
     ) -> None:  # fmt: skip
         self._root, self._ledger = root, ledger
         self._run_cap, self._run_window, self._grace = run_cap, run_window, grace
+        self.failures = 0  # purges the volume refused, over this process's life
 
     def check_remove(self, artefact: Artefact) -> None:
         if self._ledger.newest(artefact.kind) == artefact.backup_id:
@@ -52,7 +53,11 @@ class Floor:
         purged = 0
         for artefact in self._ledger.due(now):
             name = artefact.name or ""  # every quarantined entry names its file (`ledger`)
-            await asyncio.to_thread(self._root.purge, name)
+            try:
+                await asyncio.to_thread(self._root.purge, name)
+            except PathFault:  # one entry never stops the sweep; it is tried again next time
+                self.failures += 1
+                continue
             await self._ledger.append("purged", artefact.backup_id)
             purged += 1
         return purged

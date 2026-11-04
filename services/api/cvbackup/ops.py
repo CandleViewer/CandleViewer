@@ -32,16 +32,10 @@ from uuid import uuid4
 from cvbackup import age_format
 from cvbackup.config import SidecarConfig
 from cvbackup.floor import Floor, FloorRefusal
-from cvbackup.ledger import (
-    Artefact,
-    Ledger,
-    LedgerUnreadable,
-    quarantine_name,
-    timestamp,
-)
+from cvbackup.ledger import Artefact, Ledger, LedgerUnreadable, quarantine_name, timestamp
 from cvbackup.paths import PathFault, Root
 from cvbackup.protocol import Request
-from cvbackup.tasks import spawn, uninterrupted
+from cvbackup.tasks import TaskLimit, spawn, uninterrupted
 
 KINDS: Final = frozenset({"pg_dump", "config_bundle"})
 CHUNK: Final = 1 << 20
@@ -93,6 +87,8 @@ class Ops:
             raise OpError(fault.code) from None
         except OSError:  # the volume's read or sync, past the walk
             raise OpError("volume_unavailable") from None
+        except TaskLimit:  # before any step: a removal's own entries append `inline`
+            raise OpError("busy") from None
 
     async def sweep(self) -> int:
         async with self._writing:
@@ -200,12 +196,11 @@ class Ops:
             name = quarantine_name(artefact.backup_id)
             moved = await asyncio.to_thread(self._root.quarantine, artefact.location, name)
             if not moved:  # nothing at its location: recorded gone, nothing left to purge
-                await self._ledger.append("purged", artefact.backup_id)
+                await self._ledger.append("purged", artefact.backup_id, inline=True)
                 return {"state": "already_removed", "purge_after": timestamp(now)}
             after = self._floor.purge_after(now)
-            await self._ledger.append(
-                "quarantined", artefact.backup_id, name=name, purge_after=timestamp(after)
-            )
+            await self._ledger.append("quarantined", artefact.backup_id, inline=True, name=name,
+                                      purge_after=timestamp(after))  # fmt: skip
             return {"state": "quarantined", "purge_after": timestamp(after)}
 
     async def _restore(self, request: Request, _: Progress) -> Result:

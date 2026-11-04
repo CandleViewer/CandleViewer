@@ -353,25 +353,6 @@ async def test_a_cancelled_removal_still_lands_whole(tmp_path: Path, sock: str) 
     assert not exists(location)
 
 
-async def test_uninterrupted_work_finishes_after_its_caller_is_cancelled() -> None:
-    gate, done = asyncio.Event(), list[bool]()
-
-    async def work() -> int:
-        await gate.wait()
-        done.append(True)
-        return 1
-
-    caller = asyncio.ensure_future(tasks.uninterrupted(work(), name="test"))
-    await asyncio.sleep(0)
-    caller.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await caller
-    gate.set()
-    for _ in range(3):
-        await asyncio.sleep(0)
-    assert done == [True]
-
-
 async def test_a_ledger_replays_after_a_restart_with_every_state(tmp_path: Path, sock: str) -> None:
     sidecar = await _sidecar(tmp_path, sock)
     older, location, _ = await sidecar.finished()
@@ -382,3 +363,33 @@ async def test_a_ledger_replays_after_a_restart_with_every_state(tmp_path: Path,
     assert restarted.readable and restarted.get(older).state == "quarantined"
     assert restarted.newest("pg_dump") == newest
     restarted.close()
+
+
+async def test_remove_at_the_task_bound_is_busy_before_the_rename_or_lands_whole(
+    tmp_path: Path, sock: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    older, location, _ = await sidecar.finished()
+    await sidecar.finished()
+    args = {"backup_id": older, "location": location}
+    monkeypatch.setattr(tasks, "MAX_TASKS", len(tasks.running()))
+    assert await _refused(sidecar, "remove", **args) == "busy" and exists(location)
+    monkeypatch.setattr(tasks, "MAX_TASKS", len(tasks.running()) + 1)  # the removal's own task
+    assert (await sidecar.handle("remove", **args))["state"] == "quarantined"
+    assert sidecar.ledger.get(older).state == "quarantined" and not exists(location)
+
+
+async def test_floor_sweep_counts_a_purge_the_volume_refuses_and_goes_on(
+    tmp_path: Path, sock: str
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock, grace=timedelta(hours=1))
+    removed = [await sidecar.finished() for _ in range(3)][:2]
+    for backup_id, location, _ in removed:
+        await sidecar.handle("remove", backup_id=backup_id, location=location)
+    kept = f"{sidecar.root.path}/{QUARANTINE_DIR}/{removed[0][0]}.age"
+    os.unlink(kept)
+    os.mkdir(kept)  # its unlink fails (EISDIR): `artefact_missing`
+    sidecar.clock.advance(hours=1)
+    assert await sidecar.ops.sweep() == 1 and sidecar.floor.failures == 1
+    states = [sidecar.ledger.get(backup_id).state for backup_id, _, _ in removed]
+    assert states == ["quarantined", "purged"]

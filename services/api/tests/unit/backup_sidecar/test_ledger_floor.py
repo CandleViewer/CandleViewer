@@ -6,6 +6,7 @@ in any window."""
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 from collections.abc import Callable
 from datetime import timedelta
@@ -107,6 +108,15 @@ async def test_a_ledger_reached_through_a_symlink_is_unreadable(tmp_path: Path, 
     moved = tmp_path / "elsewhere.jsonl"
     record.rename(moved)
     record.symlink_to(moved)
+    assert not (await _reloaded(tmp_path, sock)).readable
+
+
+async def test_a_ledger_not_one_regular_file_is_unreadable(tmp_path: Path, sock: str) -> None:
+    await _seeded(tmp_path, sock)
+    os.link(_record(tmp_path), tmp_path / "second-name")
+    assert not (await _reloaded(tmp_path, sock)).readable
+    _record(tmp_path).unlink()
+    os.mkfifo(_record(tmp_path))
     assert not (await _reloaded(tmp_path, sock)).readable
 
 
