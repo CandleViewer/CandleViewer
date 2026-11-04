@@ -18,8 +18,9 @@ from Postgres, equal to the venue, C-2.6 among it. Recovery is wall time: ready 
 restart and the startup pass within a cycle of that (`_pg.running`, as `test_startup_sweep_pg`
 bounds it), printed (`-rA`). Were the resumed create's lookup skipped, the re-send would meet the
 venue's refusal of the reused id and the lookup after it would bind the one order, but the venue
-would count two creates, which the oracle fails (the negative control). The venue derived
-in-test: derived, not evidence (E29-K01, #843)."""
+would count two creates, which the oracle fails (the negative control). Markers `chaos`,
+`integration` and `nightly` (`_pg`); the venue derived in-test: derived, not evidence (E29-K01,
+#843)."""
 
 from __future__ import annotations
 
@@ -41,7 +42,7 @@ from tests.chaos.oms.test_teeth import resent, unfound
 from tests.integration.oms.test_submission_pipeline_pg import _order, _orders
 from tests.unit.oms.submit_rig import STOP
 
-pytestmark = [pytest.mark.chaos, pytest.mark.integration]
+pytestmark = [pytest.mark.chaos, pytest.mark.integration, pytest.mark.nightly]
 node = _pg.node  # the module's Postgres 16; each test clones its database at head
 
 #: What a restart finds at each point: the order's state, and its creates at the venue.

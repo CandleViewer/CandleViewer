@@ -7,8 +7,8 @@ itself, paged (`oms_environment_lock_lost`, SEC-S3N-01's watchdog), and the orac
 equal to the venue once the node is back. A restart, the fenced process's way back, then takes the
 same request under the same key, unspent, and sends it once; the oracle again. With the node left
 up at that commit (`at_validate`'s stop disarmed), the same request is accepted and its create goes
-out: the refusal is the outage's (the negative control). Marker `chaos and integration` (`_pg`);
-the venue derived in-test: derived, not evidence (E29-K01, #843)."""
+out: the refusal is the outage's (the negative control). Markers `chaos`, `integration` and
+`nightly` (`_pg`); the venue derived in-test: derived, not evidence (E29-K01, #843)."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from candleviewer.oms.order_machine import OrderMachines
 from tests.chaos.oms import _pg
 from tests.chaos.oms._oracle import check
 
-pytestmark = [pytest.mark.chaos, pytest.mark.integration]
+pytestmark = [pytest.mark.chaos, pytest.mark.integration, pytest.mark.nightly]
 node = _pg.node  # the module's Postgres 16; each test clones its database at head
 
 FIRST, SECOND = 0x161, 0x162  # the two requests' client keys

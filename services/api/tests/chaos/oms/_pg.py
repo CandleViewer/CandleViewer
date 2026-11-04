@@ -1,7 +1,9 @@
 """E29-Q04's Postgres tier (#1148; the ruling's BQ-3 (a) and BQ-4): the OMS runtime as cv-api
 composes it (`OmsRuntime` over `pg_stores`, 20 Sec.6.2) on a real Postgres 16 node, the venue
-handed from one process to the next. Marker `chaos and integration`, which the PR lanes deselect
-(`_job-py.yml`); the nightly that runs it is slice 4's.
+handed from one process to the next. Markers `chaos`, `integration` and `nightly` (registered in
+`conftest.py`): the PR lanes deselect the tier (`_job-py.yml`), the merge group's integration step
+leaves it out (`not nightly`), and the nightly job, slice 4's, selects it
+(`-m "chaos and integration and nightly"`).
 
 **The node** (`node`): testcontainers' Postgres 16, published on loopback only (as
 `tests/integration/_refused.py` publishes its own) at a port picked here, so the node stopped and
