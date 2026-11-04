@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E20-D02 (#574) check: the Deep Stats wireframe spec (text leg; boards pending).
+"""E20-D02 (#574) check: the Deep Stats wireframe spec (the text leg and the boards).
 
 Stdlib only, offline and default-deny. The ruling of record (comment 6609847458, BQ-0) puts the
 shared machinery in `spec_audit_lib.py` beside this file, byte-identical to its content pin and
@@ -10,6 +10,10 @@ working tree. It runs no other repo code but the helper.
 
 Gates: G-CITE, G-QUOTE, G-AC, G-ROWS, G-MEMO, G-KEYS, G-GREY, G-SRC, G-BOARDS, G-BQ, G-AMEND,
 G-PIN, G-NOCLOSE, G-PUBLIC, G-MUTLIST (section 18.2 equals this tool's list) and G-T2.
+PR 2 (the boards): G-BOARDS takes a section 0 Status cell that is PENDING or drawn with its own PNG,
+whose size is the PNG's own header, and its dark gate, and the page id once a board is drawn;
+G-AMEND also allows the exports, the sheet kit and its MANIFEST and .prettierignore lines;
+`--self-test` runs three probes of those after section 18.2's list.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e20_d02_wires_audit.py --check | --self-test
@@ -28,6 +32,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
+from fnmatch import fnmatch
 from pathlib import Path
 
 _LIB = Path(__file__).resolve().parent / "spec_audit_lib.py"
@@ -48,6 +53,21 @@ TICKET = "E20-D02"
 SPEC_REL = "docs/design/E20/E20-D02.md"
 TOOL_REL = "docs/design/_tools/e20_d02_wires_audit.py"
 OWN = (SPEC_REL, TOOL_REL)
+# PR 2 (the boards): the exports, the sheet kit and its MANIFEST / .prettierignore lines
+OWN_GLOBS = (
+    "docs/design/E20/img/E20-D02-[0-9][0-9]-*.png",
+    "docs/design/_tools/sheets/e20-d02/*",
+    "docs/design/_tools/sheets/MANIFEST.sha256",
+    ".prettierignore",
+)
+PAGE_ID = "cb0c3916-2579-81a4-8008-e43075f0061d"  # page `E20-D02` of the file `E20-D02 boards`
+# a drawn section 0 Status cell: the board id, its PNG and size, frames, nodes and its dark gate (0 twins)
+DRAWN_CELL = re.compile(
+    r"drawn: board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
+    r"`(?P<png>docs/design/E20/img/E20-D02-(?P<nn>\d\d)-(?P<slug>[a-z0-9-]+)\.png)` "
+    r"\((?P<w>\d+) × (?P<h>\d+)\), (?P<frames>\d+) frames?, [\d,]+ nodes; "
+    r"dark gate PASS \(own [\d,]+ px, other [\d,]+ px\)"
+)
 LIB_REL = "docs/design/_tools/spec_audit_lib.py"
 BACKLOG_REL = "docs/plan/backlog/E20.json"
 MEMO_REL = "docs/design/research/e20-deep-stats.md"
@@ -83,7 +103,8 @@ BQ_HEADING = L.BQ_HEADING
 BQ_HEADING_LINE = f"{BQ_HEADING} … BQ-9 — RULED (comment {RULING})"
 BQ_STATUS = f"Status: **RULED (comment {RULING})** on the BQ list (comment {BQ_LIST})."
 AMENDED = frozenset({0, 1, 5})  # the ruling's three fixes; every other BQ is AGREE
-STATUSES = ("done", "text-only", "pending (boards)", "owner approval pending")
+# "drawn" is PR 2's status for a row the boards deliver
+STATUSES = ("done", "text-only", "pending (boards)", "drawn", "owner approval pending")
 KEYS_NEEDED = ("`Alt+↑`", "`Alt+↓`", "Move up", "Move down", "E47-D04", "keeps focus")
 SIGN_GLYPHS = ("▲", "▼")
 SRC_OK = ("footprint + trades", "`/market/footprint`", "`/market/metrics`", "D02-G")
@@ -333,12 +354,41 @@ def g_src(t: Tree) -> list[str]:
     return bad
 
 
+def png_size(rel: str) -> tuple[int, int] | None:
+    """The width and height in a PNG's IHDR header, or None when the file is missing or not a PNG."""
+    try:
+        head = (ROOT / rel).read_bytes()[:24]
+    except OSError:
+        return None
+    if head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+
+
+def drawn_cell(r: list[str]) -> list[str]:
+    """A drawn cell names its own board's PNG, its frame count from section 0, and the size in that
+    PNG's own header."""
+    m = DRAWN_CELL.fullmatch(r[3])
+    name = re.fullmatch(rf"`{TICKET} / (\d\d) ([a-z0-9-]+)`", r[1])
+    if not m or not name:
+        return [f"board {r[0]}: neither PENDING nor a drawn cell"]
+    frames = len(re.findall(r"`[^`]+`", r[2]))
+    if (m["nn"], m["slug"]) != name.groups() or int(m["frames"]) != frames:
+        return [f"board {r[0]}: its drawn cell is not its own PNG and frames"]
+    size = png_size(m["png"])
+    return [] if size == (int(m["w"]), int(m["h"])) else [f"board {r[0]}: PNG size {size}"]
+
+
 def g_boards(t: Tree) -> list[str]:
     got = t.rows("## 0. Status and the boards")
     bad = [] if 0 < len(got) <= 10 else [f"{len(got)} boards"]
     for r in got:
-        if len(r) < 4 or r[3] != "PENDING" or not r[1].startswith(f"`{TICKET} / {r[0]} "):
+        if len(r) < 4 or not r[1].startswith(f"`{TICKET} / {r[0]} "):
             bad.append(f"board {r[0] if r else '?'}")
+        elif r[3] != "PENDING":
+            bad += drawn_cell(r)
+    if any(len(r) > 3 and r[3] != "PENDING" for r in got) and f"page id `{PAGE_ID}`" not in t.spec:
+        bad.append("the page id")
     if "**Not drawn — the text is binding**" not in t.spec:
         bad.append("not-drawn paragraph")
     return bad
@@ -367,9 +417,11 @@ def g_bq(t: Tree) -> list[str]:
 
 
 def g_amend(t: Tree) -> list[str]:
-    """Only this pack's two files change; the helper may stand beside them untracked for a local
-    run until its carrier merges (its content pin is checked before any gate runs)."""
-    return [p for p in t.changed if p not in (*OWN, LIB_REL)]
+    """Only this pack's two files and the boards' own paths change; the helper may stand beside them
+    untracked for a local run until its carrier merges (its content pin is checked before any gate
+    runs)."""
+    own = (*OWN, LIB_REL)
+    return [p for p in t.changed if p not in own and not any(fnmatch(p, g) for g in OWN_GLOBS)]
 
 
 def g_pin(t: Tree) -> list[str]:
@@ -482,8 +534,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     _M("M-7", "G-GREY", "a breached cell loses its word", r"(breach-glyph slot +\| )Strong",
        r"\1—", True),
     _M("M-8", "G-SRC", "a row loses its source line", r"\n\| Range +\|[^\n]*", "", True),
-    _M("M-9", "G-BOARDS", "a board marked drawn in the text leg",
-       r"(`E20-D02 / 03 narrow-bar-readout`[^\n]*\| )PENDING", r"\1DRAWN", True),
+    _M("M-9", "G-BOARDS", "a drawn cell names another board's PNG",
+       "E20-D02-03-narrow-bar-readout.png` (", "E20-D02-04-thresholds-breached-greyscale.png` ("),
     _M("M-10", "G-BQ", "an AMEND recorded as AGREE", "the file name.** RULED: AMEND.",
        "the file name.** RULED: AGREE."),
     _M("M-11", "G-AMEND", "an owner document edited", "", "docs/plan/14-screens-catalogue.md",
@@ -497,6 +549,17 @@ MUTATIONS: tuple[Mutation, ...] = (
     _M("M-15", "G-MUTLIST", "the list drifts", r"(\| M-1 +\| )G-CITE", r"\1G-AC", True),
     _M("M-16", "G-T2", "the row menu's range ends drawn as 2b",
        r"(\(`SCR-033/row-menu`\) +\| range end [^|]*\| )2a inline", r"\g<1>2b", True),
+)  # fmt: skip
+
+# PR 2: probes of the drawn section 0 cells and the boards' own paths (run by --self-test, kept out of
+# section 18.2's list)
+PROBES: tuple[Mutation, ...] = (
+    _M("P-1", "G-BOARDS", "board 01's drawn cell loses its PNG",
+       "`docs/design/E20/img/E20-D02-01-strip-default-allrows.png` (3280 × 1934), ", ""),
+    _M("P-2", "G-BOARDS", "board 02's size is not its PNG's", "compact-and-collapse.png` (3280 × 1026)",
+       "compact-and-collapse.png` (3280 × 1027)"),
+    _M("P-3", "G-AMEND", "another ticket's sheet kit touched", "",
+       "docs/design/_tools/sheets/e47-d08/BUILD.md", changed=True),
 )  # fmt: skip
 
 
@@ -550,10 +613,16 @@ def self_test() -> int:
         ok = failed == [m.gate]
         bad += 0 if ok else 1
         print(f"{'ok ' if ok else 'BAD'} {m.mid} {m.gate}: {m.what} -> {failed}")
+    for m in PROBES:
+        failed = [n for n, d in run(m.apply(tree)) if d]
+        ok = failed == [m.gate]
+        bad += 0 if ok else 1
+        print(f"{'ok ' if ok else 'BAD'} {m.mid} {m.gate}: {m.what} -> {failed}")
     if [(ROOT / rel).read_bytes() for rel in OWN] != before:
         print("self-test: files on disk changed")
         return 1
-    print(f"self-test: {len(MUTATIONS) - bad} of {len(MUTATIONS)} mutations caught by their gate")
+    total = len(MUTATIONS) + len(PROBES)
+    print(f"self-test: {total - bad} of {total} mutations and probes caught by their gate")
     return 1 if bad else 0
 
 
@@ -568,7 +637,9 @@ def fill() -> int:
         f"| {m.mid:<{a}} | {m.gate:<{b}} | {m.what:<{c}} |" for m in MUTATIONS
     )
     start = spec.index("\n", spec.index("### 18.2 Mutations")) + 1
-    p.write_text(spec[:start] + "\n" + table + "\n", encoding="utf-8", newline="\n")
+    tail = spec.find("\n## ", start)  # the sections after 18.2 (the as-built record) are kept
+    rest = spec[tail:] if tail >= 0 else ""
+    p.write_text(spec[:start] + "\n" + table + "\n" + rest, encoding="utf-8", newline="\n")
     print("section 18.2 written")
     return 0
 
