@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { RULE_IR_SCHEMA } from "@candleviewer/protocol/rule-ir";
 import type { GraphNode } from "@candleviewer/rule-graph";
 import { describe, expect, it } from "vitest";
 import { fill, text } from "../../../../src/features/rule-builder-graph/model/vocabulary/copy.js";
@@ -10,6 +11,10 @@ import {
   type SentenceContext,
   type SentenceRule,
 } from "../../../../src/features/rule-builder-graph/model/vocabulary/sentence.js";
+import type {
+  RuleVocabulary,
+  VocabularyAction,
+} from "../../../../src/features/rule-builder-graph/model/vocabulary/types.js";
 import { extended, served, type Persona } from "./fixtures.js";
 
 const ROOT = resolve(import.meta.dirname, "../../../../../..");
@@ -24,12 +29,15 @@ type Condition = SentenceRule["conditions"];
 type Comparison = Extract<Condition, { left: unknown }>;
 type Operand = Comparison["left"];
 type Action = SentenceRule["actions"][number];
+type Actions = SentenceRule["actions"];
 
 const NAMES: Readonly<Record<string, string>> = { "acc-main": "Main", "acc-alt": "Alt" };
 const context = (persona: Persona = "manager"): SentenceContext => ({
   vocabulary: served(persona),
   accountName: (id) => NAMES[id],
 });
+const signalOf = (vocabulary: RuleVocabulary, id: string) =>
+  vocabulary.signals.find((s) => s.id === id) ?? expect.unreachable(`${id} is not served`);
 
 const metric = (id: string, more: Partial<Extract<Operand, { metric: string }>> = {}): Operand => ({
   metric: id,
@@ -58,6 +66,8 @@ const act = (type: Action["type"], params: Action["params"] = {}, more = {}): Ac
 const A = cmp("gt", metric("atr", { params: { n: 14 } }), value(2));
 const B = cmp("lt", metric("spread_bps"), value(8));
 const C = cmp("is_true", metric("position_open"));
+const temporal = (op: string, more = {}): Condition =>
+  ({ node_id: "t", op, window_ms: 60_000, child: A, ...more }) as Condition;
 const ATR = "ATR(14) is above 2";
 const SPREAD = "Spread (bps) is below 8 bps";
 const OPEN = "Position open";
@@ -84,7 +94,7 @@ const node = (type: GraphNode["type"], data: GraphNode["data"]): GraphNode => ({
 });
 
 describe("the rule sentence (E37-S02; E36-D01 R1, G1–G13, §5.6 by reference)", () => {
-  it("Gherkin 'Estimated metrics are badged as text': stop_run_detected carries '(estimated)' after its name in its fragment and in the rule sentence, and the sentence says E36-D05's estimated line before its safety line; distance_to_liquidity_cluster carries neither", () => {
+  it("Gherkin 'Estimated metrics are badged as text': stop_run_detected carries '(estimated)' after its name in its fragment and in the rule sentence, and the sentence says E36-D05's estimated line after the limits and before its safety line; distance_to_liquidity_cluster carries neither", () => {
     const stopRun = cmp("is_true", metric("stop_run_detected"));
     expect(fragmentOf(node("condition", { kind: "comparison", ...stopRun }), context())).toBe(
       "Stop-run detected (estimated)",
@@ -92,10 +102,11 @@ describe("the rule sentence (E37-S02; E36-D01 R1, G1–G13, §5.6 by reference)"
     const sentence = say({
       conditions: stopRun,
       actions: [act("tighten_stop", { mode: "atr", value: 2 })],
+      limits: { once: true },
     });
     expect(sentence).toBe(
-      "When a 1m bar closes on BTCUSDT (Main), if Stop-run detected (estimated): tighten the stop to " +
-        "2 × ATR(14) from the close. Uses an estimated detector — behaviour is heuristic. The stop only ever tightens.",
+      "When a 1m bar closes on BTCUSDT (Main), if Stop-run detected (estimated): tighten the stop to 2 × ATR(14) " +
+        "from the close. Once. Uses an estimated detector — behaviour is heuristic. The stop only ever tightens.",
     );
     const estimated = sentence.indexOf(text("rules.editor.summary.estimated"));
     expect(estimated).toBeGreaterThan(sentence.indexOf("(estimated)"));
@@ -135,6 +146,26 @@ describe("the rule sentence (E37-S02; E36-D01 R1, G1–G13, §5.6 by reference)"
       "When a 1m bar closes on BTCUSDT (Main), if ATR(14) is above 2: flatten every position, halt new orders " +
         "on this account until you resume them and signal out to other rules.",
     );
+    // Environments beyond demo end the scope clause; an on_error beyond the default follows the actions: the
+    // memo's sentence when every action holds it, else per action (both PROPOSED in the header).
+    const live = { level: "symbol", environments: ["live"] } as SentenceRule["scope"];
+    expect(say({ scope: live, actions: [act("emit_signal", {}, { on_error: "continue" })] })).toBe(
+      "When a 1m bar closes on every symbol, on LIVE, if ATR(14) is above 2: signal … to other rules. " +
+        "If an action fails, the rest still run.",
+    );
+    const after = (...errors: string[]): string | undefined =>
+      say({ actions: errors.map((e) => act("emit_signal", {}, { on_error: e })) as Actions })
+        .split("to other rules. ")
+        .at(1);
+    expect([
+      after("retry_once", "retry_once"),
+      after("continue", "abort_remaining", "retry_once"),
+      after("abort_remaining", "abort_remaining"),
+    ]).toEqual([
+      "A failed action is retried once, then the rest are skipped.",
+      "If action 1 fails, the rest still run. If action 3 fails, it is retried once, then the rest are skipped.",
+      undefined,
+    ]);
   });
 
   it("makes grouping audible (G2): 'and', 'either … or …', 'any of:', the graph-only 'none of:' and 'at least n of:', and brackets a nested group, as E36-D05's cards read", () => {
@@ -158,6 +189,28 @@ describe("the rule sentence (E37-S02; E36-D01 R1, G1–G13, §5.6 by reference)"
         .replace("…", `${ATR}, ${SPREAD}, ${OPEN}`),
     );
     expect(ifClause(group("all_of", [A]))).toBe(ATR);
+    // One input: none_of (the graph's NOT) and an n_of needing more keep their words, as the cards with one input
+    // read, bracketed as any nested group; all_of, any_of and an n_of needing one read as the input, in its place.
+    const NOT = fill((deck("rules.editor.card.none_of") ?? "").replace(", {B}", ""), { A: OPEN });
+    expect([
+      ifClause(group("none_of", [C])),
+      ifClause(group("all_of", [A, group("none_of", [C])])),
+      ifClause(group("any_of", [A, group("none_of", [C])])),
+      ifClause(temporal("sustained_for", { child: group("none_of", [C]) })),
+      ifClause(group("n_of", [C], 2)),
+      ifClause(group("all_of", [A, group("n_of", [C], 3)])),
+      ifClause(group("all_of", [A, group("n_of", [C], 1)])),
+      ifClause(group("any_of", [group("all_of", [group("any_of", [A, B])]), C])),
+    ]).toEqual([
+      NOT,
+      `${ATR} and (${NOT})`,
+      `either ${ATR} or (${NOT})`,
+      `(${NOT}) for at least 60 s`,
+      (deck("rules.editor.card.n_of") ?? "").replace("{n}", "2").replace("…", OPEN),
+      `${ATR} and (at least 3 of: ${OPEN})`,
+      `${ATR} and ${OPEN}`,
+      `either (either ${ATR} or ${SPREAD}) or ${OPEN}`,
+    ]);
   });
 
   it("says each operator with E36-D05's verb (G4), the three-operand, set, temporal and arithmetic forms as its cards do", () => {
@@ -181,8 +234,6 @@ describe("the rule sentence (E37-S02; E36-D01 R1, G1–G13, §5.6 by reference)"
     expect(
       ifClause(cmp("not_in_set", metric("position_side"), undefined, { set_values: ["short"] })),
     ).toBe("Position side is none of short");
-    const temporal = (op: string, more = {}): Condition =>
-      ({ node_id: "t", op, window_ms: 60_000, child: A, ...more }) as Condition;
     expect(ifClause(temporal("sustained_for"))).toBe(`${ATR} for at least 60 s`);
     expect(ifClause(temporal("sustained_for", { min_count: 3 }))).toBe(
       `${ATR} for at least 60 s on at least 3 readings`,
@@ -195,6 +246,9 @@ describe("the rule sentence (E37-S02; E36-D01 R1, G1–G13, §5.6 by reference)"
     );
     expect(ifClause(temporal("stable_for", { window_ms: 1500 }))).toBe(
       fill(deck("rules.editor.card.stable") ?? "", { A: ATR, w: "1.5 s" }),
+    );
+    expect(ifClause(temporal("sustained_for", { child: group("all_of", [A, B]) }))).toBe(
+      `(${ATR} and ${SPREAD}) for at least 60 s`,
     );
     const arithmetic = (op: string, operands: Operand[]): Operand =>
       ({ node_id: "x", op, operands }) as unknown as Operand;
@@ -221,6 +275,13 @@ describe("the rule sentence (E37-S02; E36-D01 R1, G1–G13, §5.6 by reference)"
       "minus Price is above 1",
       "Price as a percent of 2 is above 1",
     ]);
+    // An operand that is itself arithmetic is bracketed: the two nestings read apart.
+    const plus = arithmetic("add", [metric("price"), value(2)]);
+    const times = arithmetic("mul", [value(2), value(3)]);
+    expect([
+      ifClause(cmp("gt", arithmetic("mul", [plus, value(3)]), value(1))),
+      ifClause(cmp("gt", arithmetic("add", [metric("price"), times]), value(1))),
+    ]).toEqual(["(Price plus 2) times 3 is above 1", "Price plus (2 times 3) is above 1"]);
     // An operator with no keyed verb reads by its id, as slice 2a's verbOf does (G9).
     expect(ifClause(cmp("zz_op" as Comparison["op"], metric("price"), value(1)))).toBe(
       "Price zz_op 1",
@@ -248,6 +309,22 @@ describe("the rule sentence (E37-S02; E36-D01 R1, G1–G13, §5.6 by reference)"
     ).toBe("Funding rate on ETHUSDT is above 0 %");
     expect(ruleSentence(rule({ conditions: B }), context("unrecorded-solusdt"))).toContain(
       "Spread (bps) (not available — SOLUSDT is not on the recorded-symbol list · Start recording) is below 8 bps",
+    );
+    // "(estimated)" before an override; a Decimal string grouped, its digits as served; a ms one as a duration.
+    expect([
+      ifClause(cmp("changed", metric("market_regime", { timeframe: "5m" }))),
+      ifClause(cmp("between", metric("price"), value("63900"), { right2: value("64100.50") })),
+      ifClause(cmp("gte", metric("time_in_trade_ms"), value("300000"))),
+    ]).toEqual([
+      "Market regime (estimated) on the 5m changes",
+      "Price is between 63,900 and 64,100.50",
+      "Position age is at least 5 min",
+    ]);
+    // A served unit named like an Object member has no unit word.
+    const price = { ...signalOf(served("manager"), "price"), unit: "constructor" };
+    const odd = { vocabulary: { ...served("manager"), signals: [price] } };
+    expect(ruleSentence(rule({ conditions: cmp("gt", metric("price"), value(2)) }), odd)).toMatch(
+      /, if Price is above 2: /,
     );
   });
 
@@ -289,6 +366,10 @@ describe("the scope, the trigger and the limits (E36-D01 §5.6, G6)", () => {
       scoped({ level: "global", exclude_algo_children: false }),
       scoped({ level: "symbol", symbols: ["BTCUSDT"], applies_to: "pending_orders" }),
       scoped({ level: "position", applies_to: "account" }),
+      scoped({ level: "symbol", symbols: ["BTCUSDT"], environments: ["demo", "live", "live"] }),
+      scoped({ level: "symbol", symbols: ["BTCUSDT"], environments: ["testnet"] }),
+      scoped({ level: "symbol", symbols: ["BTCUSDT"], environments: ["demo"] }),
+      scoped({ level: "symbol", symbols: ["BTCUSDT"], environments: [] }),
     ]).toEqual([
       "on BTCUSDT, ETHUSDT (Main, Alt)",
       "on 4 symbols (3 accounts)",
@@ -298,6 +379,10 @@ describe("the scope, the trigger and the limits (E36-D01 §5.6, G6)", () => {
       "on every account, including algo child orders",
       "on BTCUSDT for pending orders",
       "on this position for the account",
+      "on BTCUSDT, on demo and LIVE",
+      "on BTCUSDT, on testnet",
+      "on BTCUSDT",
+      "on BTCUSDT, on …",
     ]);
     expect(say({ scope: { level: "symbol", account_ids: ["acc-x"] } })).not.toContain("acc-x");
   });
@@ -313,6 +398,7 @@ describe("the scope, the trigger and the limits (E36-D01 §5.6, G6)", () => {
       clause({ type: "on_metric_change", metric: "market_regime" }),
       clause({ type: "on_price_update", debounce_ms: 1000 }),
       clause({ type: "on_price_update", debounce_ms: 5000 }),
+      clause({ type: "on_price_update", debounce_ms: 0 }),
       clause({ type: "on_signal" }),
       clause({ type: "on_bar_close" }),
     ]).toEqual([
@@ -321,6 +407,7 @@ describe("the scope, the trigger and the limits (E36-D01 §5.6, G6)", () => {
       "When the Market regime (estimated) changes",
       "When a trade prints (at most once a second)",
       "When a trade prints (at most once every 5 s)",
+      "When a trade prints",
       "When another rule emits a signal",
       "When a bar closes",
     ]);
@@ -345,6 +432,7 @@ describe("the scope, the trigger and the limits (E36-D01 §5.6, G6)", () => {
       say({ limits, actions: [act("flatten_all_positions"), act("cancel_all_orders")] }).split(
         ": ",
       )[1] ?? "";
+    const NONE = "flatten every position and cancel every working order.";
     expect(
       limited({
         cooldown_ms: 1000,
@@ -357,7 +445,8 @@ describe("the scope, the trigger and the limits (E36-D01 §5.6, G6)", () => {
         require_confirmation: false,
         max_notional_per_fire: null,
       }),
-    ).toBe("flatten every position and cancel every working order.");
+    ).toBe(NONE);
+    expect(limited({ max_actions_per_fire: 2 })).toBe(NONE); // as many as the rule's two actions
     expect(
       limited({
         once: true,
@@ -375,7 +464,7 @@ describe("the scope, the trigger and the limits (E36-D01 §5.6, G6)", () => {
     ).toBe(
       "flatten every position and cancel every working order. Once. Once per day. " +
         `${deck("rules.editor.limit.cooldown")} ${deck("rules.editor.limit.per_hour")} Up to 400 times a day. ` +
-        "Only the first 1 actions run per firing. At most 2,500 USDT per firing. At most 10000 USDT a day. " +
+        "Only the first 1 actions run per firing. At most 2,500 USDT per firing. At most 10,000 USDT a day. " +
         `${deck("rules.editor.limit.confirm")} Each check may take up to 500 ms. ` +
         "Turns itself off after 3 errors in a row — you re-arm it.",
     );
@@ -384,6 +473,23 @@ describe("the scope, the trigger and the limits (E36-D01 §5.6, G6)", () => {
         (per) => limited({ once_per: per as "position" }).split(". ")[1],
       ),
     ).toEqual(["Once per position.", "Once per group.", "Once in this rule's lifetime."]);
+    // Each default left unsaid is the published rule IR schema's (P8): unsaid at it, said one past it.
+    const schema = RULE_IR_SCHEMA["$defs"] as Record<
+      string,
+      { properties: Record<string, object> }
+    >;
+    const onePast: Readonly<Record<string, string>> = {
+      cooldown_ms: "At most every 1.001 s.",
+      max_fires_per_hour: "Up to 61 times an hour.",
+      max_fires_per_day: "Up to 501 times a day.",
+      evaluation_timeout_ms: "Each check may take up to 251 ms.",
+      kill_switch_on_error_count: "Turns itself off after 6 errors in a row — you re-arm it.",
+    };
+    for (const [key, words] of Object.entries(onePast)) {
+      const { default: value } = schema["RuleLimits"]?.properties[key] as { default: number };
+      const at = (n: number) => limited({ [key]: n } as NonNullable<SentenceRule["limits"]>);
+      expect([at(value), at(value + 1)], key).toEqual([NONE, `${NONE} ${words}`]);
+    }
   });
 });
 
@@ -449,7 +555,7 @@ describe("each action's clause (E36-D01 §5.6)", () => {
       "cancel the working order",
       "cancel the working take_profit order",
       "cancel every working entry order",
-      "halt new orders on this symbol",
+      "halt new orders on this symbol for …",
       "resume new orders on this account (needs the live-arming permission)",
       "reduce leverage to 3×",
       "reduce leverage by 2×",
@@ -479,6 +585,18 @@ describe("each action's clause (E36-D01 §5.6)", () => {
     expect(ruleSentence(rule({ actions: [fresh] }), { vocabulary: extended() })).toContain(
       ": new action.",
     );
+    // One that can place orders (the flag absent, as `22` reads it, or true) says so, with its native stop.
+    const NEW = extended().actions.at(-1) as VocabularyAction;
+    const unflagged = { ...NEW };
+    Reflect.deleteProperty(unflagged, "places_orders");
+    const clauseOf = (entry: VocabularyAction): string | undefined =>
+      ruleSentence(rule({ actions: [fresh] }), { vocabulary: { ...extended(), actions: [entry] } })
+        .split(": ")
+        .at(-1);
+    expect([clauseOf(unflagged), clauseOf({ ...NEW, places_orders: true })]).toEqual([
+      "new action (places orders, with a native stop).",
+      "new action (places orders, with a native stop).",
+    ]);
   });
 
   it("says a targets other than the rule scope with the served sentence (G9), and a dry run, inside the action's clause", () => {
@@ -493,17 +611,23 @@ describe("each action's clause (E36-D01 §5.6)", () => {
     ]);
   });
 
-  it("closes with the safety line only when an action moves a stop (G7)", () => {
+  it("closes with the safety line only when an action moves a stop and none holds only_tighten at anything but true (G7)", () => {
     const ends = (actions: SentenceRule["actions"]): boolean =>
       say({ actions }).endsWith(text("rules.editor.stop.tightens"));
+    const loose = act("tighten_stop", { mode: "atr", value: 1, only_tighten: false });
     expect([
       ends([act("modify_stop_loss", { mode: "absolute", value: 1 })]),
-      ends([act("tighten_stop", { mode: "atr", value: 1 })]),
+      ends([act("tighten_stop", { mode: "atr", value: 1, only_tighten: true })]),
       ends([act("move_to_breakeven")]),
       ends([act("place_order", { side: "buy" })]),
       ends([act("modify_take_profit", { mode: "absolute", value: 1 })]),
       ends([act("flatten_all_positions"), act("log_journal_tag", { tag: "x" })]),
-    ]).toEqual([true, true, true, false, false, false]);
+      ends([act("move_to_breakeven"), loose]),
+    ]).toEqual([true, true, true, false, false, false, false]);
+    // No deck string says a stop may loosen (#4137): nothing stands in the line's place.
+    expect(say({ actions: [loose] })).toMatch(
+      /: tighten the stop to 1 × ATR\(14\) from the close\.$/,
+    );
   });
 });
 
@@ -575,6 +699,7 @@ describe("node fragments (E37-S02; E37-D05 `rules.graph.aria.node`)", () => {
       said("action", {}),
       said("action", { type: "zz_unserved", params: {} }),
       said("action", { type: "move_to_breakeven" }),
+      said("comment", { text: "" }),
     ]).toEqual([
       "…",
       "…",
@@ -590,11 +715,11 @@ describe("node fragments (E37-S02; E37-D05 `rules.graph.aria.node`)", () => {
       "…",
       "zz_unserved",
       "move the stop to break-even (your average entry) plus 2 ticks",
+      "…",
     ]);
     // A metric with no id, and an unavailable one served with no reason: "…" stands in, never a slot.
     const reasonless = served("unrecorded-solusdt");
-    const tape = reasonless.signals.find((s) => s.id === "tape_speed");
-    if (tape !== undefined) Reflect.deleteProperty(tape, "unavailable_reason");
+    Reflect.deleteProperty(signalOf(reasonless, "tape_speed"), "unavailable_reason");
     expect(
       fragmentOf(
         node("condition", { kind: "comparison", op: "changed", left: { metric: "tape_speed" } }),

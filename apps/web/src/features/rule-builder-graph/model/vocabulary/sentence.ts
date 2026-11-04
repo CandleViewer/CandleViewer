@@ -7,7 +7,7 @@
  * its name wherever it shows (G8). Feature-local until E36-T01's `summarise` replaces it. Pure: no React, no DOM.
  */
 import type { GraphNode, RuleIr } from "@candleviewer/rule-graph";
-import { stopLineOf, targetsSentence, type ActionTargets } from "./actions.js";
+import { placesOrders, stopLineOf, targetsSentence, type ActionTargets } from "./actions.js";
 import { clauseOf, fill, text, verbOf, type CopyKey } from "./copy.js";
 import type { RuleVocabulary, VocabularyAction, VocabularySignal } from "./types.js";
 
@@ -46,6 +46,7 @@ export const MEMO = {
   leverageBy: "reduce leverage by {by}×",
   halt: "halt new orders on this {scope}",
   haltManual: "until you resume them",
+  haltFor: "for {d}",
   resume: "resume new orders on this {scope} (needs the live-arming permission)",
   chase: "arm the chase limit",
   iceberg: "start an iceberg slice",
@@ -55,12 +56,14 @@ export const MEMO = {
   signal: "signal {signal_name} to other rules",
   dryRun: "— simulated, never sent",
   readings: "on at least {n} readings",
+  continues: "If an action fails, the rest still run.",
+  retries: "A failed action is retried once, then the rest are skipped.",
 } as const;
 
 /**
- * Two of E36-D01's phrases with no words written for them, PROPOSED here: `place_order` (§5.6 gives an instance,
- * "buy 0.25 at market with a native stop at 63,900"; the stop's level is not readable, its object is opaque) and
- * the arithmetic operators beyond R3's "{A} minus {B}" card.
+ * E36-D01's phrases with no words written for them, PROPOSED (the #950 addendum): `place_order` (§5.6's instance
+ * has the stop's level, which the opaque stop object does not give), the arithmetic beyond R3's "minus" card, a
+ * phrase-less action that places orders (with its stop, C-2.6), environments beyond demo, and per-action `on_error`.
  */
 export const PROPOSED_WORDS = {
   order: "{side} {size} at {price} with a native stop",
@@ -74,9 +77,14 @@ export const PROPOSED_WORDS = {
   abs: "the size of {A}",
   neg: "minus {A}",
   pct_of: "{A} as a percent of {B}",
+  placing: "{name} ({places}, with a native stop)",
+  environments: "on {environments}",
+  live: "LIVE",
+  continuesEach: "If action {n} fails, the rest still run.",
+  retriesEach: "If action {n} fails, it is retried once, then the rest are skipped.",
 } as const;
 
-/** The limits `22` `RuleLimits` defaults to: a limit is said only where it differs (G6, P8). */
+/** `22` `RuleLimits`' defaults, said only where a limit differs (G6, P8); the test pins them to `RULE_IR_SCHEMA`. */
 const DEFAULTS = { cooldown: 1000, hour: 60, day: 500, timeout: 250, errors: 5 } as const;
 
 /** G11's words after a constant, by the vocabulary's unit (ms reads as a duration). */
@@ -108,8 +116,20 @@ const say = (value: unknown): string =>
       ? String(value)
       : UNSET;
 
+/** A Decimal as `22` serves one (`Notional`, a non-integer constant): a string of digits. */
+const DECIMAL = /^-?\d+(?:\.\d+)?$/;
+
+/** A number's value as said: grouped as `say` groups a number, a Decimal string too, its digits as served. */
+const amount = (value: unknown): string =>
+  typeof value === "string" && DECIMAL.test(value)
+    ? value.replace(
+        /^(-?)(\d+)/,
+        (_, sign: string, whole: string) => sign + NUMBER.format(BigInt(whole)),
+      )
+    : say(value);
+
 /** G11: milliseconds as s or min ("60 s", "5 min"), below a second as ms. */
-export const duration = (ms: number): string =>
+const duration = (ms: number): string =>
   ms >= 120_000 && ms % 60_000 === 0
     ? `${ms / 60_000} min`
     : ms >= 1000
@@ -138,7 +158,26 @@ const GATES: Readonly<Record<string, CopyKey>> = {
   n_of: "rules.graph.node.gate_n_of",
 };
 
+/** A one-input gate reads as its input only where the evaluator does: `all_of`, `any_of`, an `n_of` needing one. */
+const passesThrough = (op: string | undefined, n: unknown): boolean =>
+  op === "all_of" || op === "any_of" || (op === "n_of" && typeof n === "number" && n <= 1);
+
 const firstLower = (words: string): string => words.charAt(0).toLowerCase() + words.slice(1);
+
+/** The served signals and actions by id, built once per vocabulary: fragments are read per node. */
+interface Lookup {
+  readonly signals: ReadonlyMap<string, VocabularySignal>;
+  readonly actions: ReadonlyMap<string, VocabularyAction>;
+}
+const LOOKUPS = new WeakMap<RuleVocabulary, Lookup>();
+const lookupOf = (vocabulary: RuleVocabulary): Lookup => {
+  const lookup = LOOKUPS.get(vocabulary) ?? {
+    signals: new Map(vocabulary.signals.map((s) => [s.id, s])),
+    actions: new Map(vocabulary.actions.map((a) => [a.id, a])),
+  };
+  LOOKUPS.set(vocabulary, lookup);
+  return lookup;
+};
 
 /** The words of one rule, or of one node: it notes whether an estimated metric was named (G8). */
 class Words {
@@ -150,8 +189,9 @@ class Words {
     private readonly context: SentenceContext,
     private readonly scopeSymbols: readonly string[] = [],
   ) {
-    this.signals = new Map(context.vocabulary.signals.map((s) => [s.id, s]));
-    this.actions = new Map(context.vocabulary.actions.map((a) => [a.id, a]));
+    const lookup = lookupOf(context.vocabulary);
+    this.signals = lookup.signals;
+    this.actions = lookup.actions;
   }
 
   /**
@@ -190,14 +230,20 @@ class Words {
     if (Object.hasOwn(tree, "operands")) return this.arithmetic(tree);
     if (!Object.hasOwn(tree, "const")) return UNSET;
     const constant = tree["const"];
-    if (unit === "ms" && typeof constant === "number") return duration(constant);
-    const word = unit === undefined ? undefined : UNIT_WORDS[unit];
-    return word === undefined ? say(constant) : `${say(constant)} ${word}`;
+    const ms = typeof constant === "string" && DECIMAL.test(constant) ? Number(constant) : constant;
+    if (unit === "ms" && typeof ms === "number") return duration(ms);
+    const word =
+      unit !== undefined && Object.hasOwn(UNIT_WORDS, unit) ? UNIT_WORDS[unit] : undefined;
+    return word === undefined ? amount(constant) : `${amount(constant)} ${word}`;
   }
 
+  /** G2's reason holds here too: an operand that is itself arithmetic is bracketed, "(Price plus 2) times 3". */
   arithmetic(node: Tree): string {
     const op = wordOf(node["op"]) ?? UNSET;
-    const parts = listOf(node["operands"]).map((o) => this.operand(o, undefined));
+    const parts = listOf(node["operands"]).map((o) => {
+      const said = this.operand(o, undefined);
+      return Object.hasOwn(treeOf(o), "operands") ? `(${said})` : said;
+    });
     const [a = UNSET, b = UNSET] = parts;
     if (op === "add" || op === "sub" || op === "mul" || op === "div") {
       return parts.join(` ${PROPOSED_WORDS[op]} `);
@@ -216,7 +262,7 @@ class Words {
     const right = this.operand(node["right"], unit);
     const tolerance = node["tolerance"];
     const within =
-      tolerance === undefined || tolerance === null ? "" : ` (within ${say(tolerance)})`;
+      tolerance === undefined || tolerance === null ? "" : ` (within ${amount(tolerance)})`;
     if (op === "is_true") return left;
     if (op === "is_false") return `not ${left}`;
     if (op === "in_set" || op === "not_in_set") {
@@ -253,13 +299,17 @@ class Words {
   /**
    * G2: "and", "either A or B", "any of: A, B, C", and the graph-only "none of: …" and "at least n of: …"
    * (E36-D05 `rules.editor.card.*`). A nested group is bracketed, "either (A and B) or C", except an
-   * "either … or …" closing an "and" list: "A and either B or C".
+   * "either … or …" closing an "and" list: "A and either B or C". A gate with one input that passes it through
+   * reads as that input in the gate's place; any other keeps its words ("none of: A" negates A).
    */
   group(node: Tree, parent: string | undefined, last: boolean): string {
     const op = wordOf(node["op"]);
     const kids = listOf(node["children"]);
+    if (kids.length === 1 && passesThrough(op, node["n"])) {
+      return this.condition(kids[0], parent, last);
+    }
     const parts = kids.map((kid, i) => this.condition(kid, op, i === kids.length - 1));
-    if (parts.length <= 1) return parts[0] ?? UNSET;
+    if (parts.length === 0) return UNSET;
     const either = op === "any_of" && parts.length === 2;
     const said =
       op === "all_of"
@@ -322,7 +372,7 @@ class Words {
   }
 
   private level(params: Tree): string {
-    const value = say(params["value"]);
+    const value = amount(params["value"]);
     const mode = wordOf(params["mode"]);
     if (mode === "absolute") return value;
     const template =
@@ -340,15 +390,15 @@ class Words {
 
   /** §5.6's phrase of one action, with its parameters; an action it has none for reads by its served name. */
   private phrase(type: string, p: Tree, served: VocabularyAction | undefined): string {
-    const amount = p["qty_pct"] !== undefined ? `${say(p["qty_pct"])} %` : say(p["qty"]);
+    const amountOf = p["qty_pct"] !== undefined ? `${amount(p["qty_pct"])} %` : amount(p["qty"]);
     const purpose = wordOf(p["purpose"]);
     const scope = say(p["scope"]);
     switch (type) {
       case "place_order":
         return fill(PROPOSED_WORDS.order, {
           side: say(p["side"]),
-          size: p["qty_mode"] === "profile" ? PROPOSED_WORDS.profileSize : say(p["qty"]),
-          price: p["order_type"] === "limit" ? say(p["price"]) : say(p["order_type"]),
+          size: p["qty_mode"] === "profile" ? PROPOSED_WORDS.profileSize : amount(p["qty"]),
+          price: p["order_type"] === "limit" ? amount(p["price"]) : say(p["order_type"]),
         });
       case "modify_stop_loss":
       case "tighten_stop":
@@ -359,15 +409,15 @@ class Words {
         const ticks =
           p["offset_ticks"] ??
           treeOf(treeOf(served?.params_schema?.["properties"])["offset_ticks"])["default"];
-        return text("rules.editor.action.phrase.breakeven", { n: say(ticks) });
+        return text("rules.editor.action.phrase.breakeven", { n: amount(ticks) });
       }
       case "scale_out":
         return text("rules.editor.action.phrase.scale_out", {
-          amount,
+          amount: amountOf,
           "order type": say(p["order_type"]),
         });
       case "scale_in":
-        return fill(MEMO.scaleIn, { amount });
+        return fill(MEMO.scaleIn, { amount: amountOf });
       case "cancel_order":
       case "cancel_all_orders": {
         const template = type === "cancel_order" ? MEMO.cancel : MEMO.cancelAll;
@@ -387,14 +437,19 @@ class Words {
         return MEMO.reverse;
       case "reduce_leverage":
         return p["target"] !== undefined
-          ? fill(MEMO.leverageTo, { target: say(p["target"]) })
-          : fill(MEMO.leverageBy, { by: say(p["by"]) });
-      case "halt_new_orders":
+          ? fill(MEMO.leverageTo, { target: amount(p["target"]) })
+          : fill(MEMO.leverageBy, { by: amount(p["by"]) });
+      case "halt_new_orders": {
+        const halt = fill(MEMO.halt, { scope });
+        // `duration_ms` has no field for its length yet (G6): "for …" until it has.
         return p["until"] === "next_utc_day"
           ? text("rules.editor.action.phrase.halt", { scope })
           : p["until"] === "manual"
-            ? `${fill(MEMO.halt, { scope })} ${MEMO.haltManual}`
-            : fill(MEMO.halt, { scope });
+            ? `${halt} ${MEMO.haltManual}`
+            : p["until"] === "duration_ms"
+              ? `${halt} ${fill(MEMO.haltFor, { d: UNSET })}`
+              : halt;
+      }
       case "resume_new_orders":
         return fill(MEMO.resume, { scope });
       case "arm_chase_limit":
@@ -419,8 +474,14 @@ class Words {
       }
       case "emit_signal":
         return fill(MEMO.signal, { signal_name: say(p["signal_name"]) });
-      default:
-        return firstLower(served?.display_name ?? type);
+      default: {
+        // A phrase-less action that can place orders (an absent flag counts, `22`) says so, with its native stop.
+        const name = firstLower(served?.display_name ?? type);
+        const places = text("rules.editor.action.places_orders");
+        return served !== undefined && placesOrders(served)
+          ? fill(PROPOSED_WORDS.placing, { name, places })
+          : name;
+      }
     }
   }
 
@@ -439,16 +500,27 @@ class Words {
     return said;
   }
 
-  /** Whether one of the actions moves a stop: the safety line closes the sentence (G7; E36-D05 FS frozen). */
-  movesAStop(actions: readonly unknown[]): boolean {
-    return actions.some((node) => {
-      const served = this.actions.get(wordOf(treeOf(node)["type"]) ?? "");
+  /** G7's frozen safety line: a stop moves and none holds `only_tighten` other than `true` (#4137: no other words). */
+  onlyTightens(actions: readonly unknown[]): boolean {
+    const stops = actions.map(treeOf).filter((node) => {
+      const served = this.actions.get(wordOf(node["type"]) ?? "");
       return served !== undefined && stopLineOf(served).ratchet !== undefined;
     });
+    const tightens = (params: Tree): boolean =>
+      !Object.hasOwn(params, "only_tighten") || params["only_tighten"] === true;
+    return stops.length > 0 && stops.every((node) => tightens(treeOf(node["params"])));
   }
 }
 
-/** §5.6 `RuleScope`: the scope clause opens the sentence, with `applies_to` and the algo children after it. */
+/** §5.6 `RuleScope.environments`: unsaid at the default, demo alone; LIVE as the memo writes it; empty is unset. */
+function environmentsOf(value: unknown): string | undefined {
+  const said = value === undefined ? ["demo"] : [...new Set(listOf(value).map(say))];
+  if (said.length === 1 && said[0] === "demo") return undefined;
+  const words = and(said.map((e) => (e === "live" ? PROPOSED_WORDS.live : e)));
+  return fill(PROPOSED_WORDS.environments, { environments: words });
+}
+
+/** §5.6 `RuleScope`: it opens the sentence, `applies_to`, the algo children and the environments after it. */
 function scopeClause(scope: Tree, context: SentenceContext): string {
   const symbols = listOf(scope["symbols"]).map(say);
   const ids = listOf(scope["account_ids"]).filter((id): id is string => typeof id === "string");
@@ -480,7 +552,25 @@ function scopeClause(scope: Tree, context: SentenceContext): string {
           ? MEMO.appliesAccount
           : undefined;
   const algo = scope["exclude_algo_children"] === false ? `, ${MEMO.algoChildren}` : "";
-  return `${opens}${applies === undefined ? "" : ` ${applies}`}${algo}`;
+  const environments = environmentsOf(scope["environments"]);
+  const runs = environments === undefined ? "" : `, ${environments}`;
+  return `${opens}${applies === undefined ? "" : ` ${applies}`}${algo}${runs}`;
+}
+
+/** §5.6 `Action.on_error` beyond the default: the memo's sentence when every action holds it, else per action. */
+const ON_ERROR: Readonly<Record<string, readonly [every: string, each: string]>> = {
+  continue: [MEMO.continues, PROPOSED_WORDS.continuesEach],
+  retry_once: [MEMO.retries, PROPOSED_WORDS.retriesEach],
+};
+
+function onErrorSentences(actions: readonly unknown[]): string[] {
+  const values = actions.map((action) => wordOf(treeOf(action)["on_error"]) ?? "");
+  const words = values.map((value) =>
+    Object.hasOwn(ON_ERROR, value) ? ON_ERROR[value] : undefined,
+  );
+  const [first] = words;
+  if (first !== undefined && values.every((value) => value === values[0])) return [first[0]];
+  return words.flatMap((pair, i) => (pair === undefined ? [] : [fill(pair[1], { n: `${i + 1}` })]));
 }
 
 /** G6: the limits that differ from the defaults, each a short sentence, in the memo's order. */
@@ -512,10 +602,10 @@ function limitSentences(limits: Tree, actionCount: number): string[] {
   }
   const fire = limits["max_notional_per_fire"];
   if (fire !== undefined && fire !== null)
-    add("rules.editor.limit.notional_fire", { x: say(fire) });
+    add("rules.editor.limit.notional_fire", { x: amount(fire) });
   const daily = limits["max_daily_notional"];
   if (daily !== undefined && daily !== null)
-    add("rules.editor.limit.notional_day", { x: say(daily) });
+    add("rules.editor.limit.notional_day", { x: amount(daily) });
   if (limits["require_confirmation"] === true) add("rules.editor.limit.confirm");
   const timeout = number("evaluation_timeout_ms");
   if (timeout !== undefined && timeout !== DEFAULTS.timeout) {
@@ -529,9 +619,10 @@ function limitSentences(limits: Tree, actionCount: number): string[] {
 }
 
 /**
- * The rule's sentence (R1): "{trigger} on {scope}, if {conditions}: {actions}." then the limits that differ,
- * "Uses an estimated detector — behaviour is heuristic." when a metric it names is estimated (G8), and the safety
- * line last when an action moves a stop (G7): "The stop only ever tightens."
+ * The rule's sentence (R1): "{trigger} on {scope}, if {conditions}: {actions}." then an `on_error` other than the
+ * default, the limits that differ, "Uses an estimated detector — behaviour is heuristic." when a metric it names is
+ * estimated (G8), and the safety line last when an action moves a stop and none may loosen it (G7): "The stop only
+ * ever tightens."
  */
 export function ruleSentence(rule: SentenceRule, context: SentenceContext): string {
   const scope = treeOf(rule.scope);
@@ -543,9 +634,10 @@ export function ruleSentence(rule: SentenceRule, context: SentenceContext): stri
   const done = and(actions.map((action) => words.action(treeOf(action))));
   return [
     `${trigger} ${scopeClause(scope, context)}, if ${conditions}: ${done}.`,
+    ...onErrorSentences(actions),
     ...limitSentences(treeOf(rule.limits), actions.length),
     ...(words.estimated ? [text("rules.editor.summary.estimated")] : []),
-    ...(words.movesAStop(actions) ? [text("rules.editor.stop.tightens")] : []),
+    ...(words.onlyTightens(actions) ? [text("rules.editor.stop.tightens")] : []),
   ].join(" ");
 }
 
@@ -566,6 +658,6 @@ export function fragmentOf(node: GraphNode, context: SentenceContext): string {
     case "action":
       return words.action(node.data);
     case "comment":
-      return say(node.data["text"]);
+      return wordOf(node.data["text"]) ?? UNSET;
   }
 }

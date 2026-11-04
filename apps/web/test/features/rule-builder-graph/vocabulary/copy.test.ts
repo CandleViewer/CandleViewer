@@ -12,6 +12,7 @@ import {
   text,
   verbOf,
 } from "../../../../src/features/rule-builder-graph/model/vocabulary/copy.js";
+import { PROPOSED_WORDS } from "../../../../src/features/rule-builder-graph/model/vocabulary/sentence.js";
 
 const ROOT = resolve(import.meta.dirname, "../../../../../..");
 
@@ -56,6 +57,11 @@ describe("the node library's copy, verbatim from the decks (E37-S02)", () => {
   it("each E36-D05 key reads as the deck does, byte for byte (an instance filled with its figures)", () => {
     for (const [key, template] of Object.entries(E36_COPY))
       expect(fill(template, INSTANCES[key]), key).toBe(E36[key]?.text);
+  });
+
+  it("the PROPOSED order phrase is E36-D05's rules.editor.action.phrase.order without its stop level", () => {
+    const order = fill(PROPOSED_WORDS.order, { side: "buy", size: "0.25", price: "market" });
+    expect(`${order} at 63,900`).toBe(E36["rules.editor.action.phrase.order"]?.text);
   });
 
   it("Gherkin 'Estimated metrics are badged as text': the estimated word and name are E36-D05's", () => {
