@@ -5832,6 +5832,7 @@ class FeatureFlagDependent(BaseModel):
             description="`true` when the active version's actions cannot be read: the rule counts as reading every flag the table names (fail closed), and `reads` is empty. Sent only as `true`.\n"
         ),
     ] = None
+    __null_refused = field_validator("unreadable", mode="before")(_refuse_null)
 
 
 class FeatureFlagWriteRefused(Problem):
@@ -5855,6 +5856,7 @@ class FeatureFlagWriteRefused(Problem):
             max_length=200,
         ),
     ] = None
+    __null_refused = field_validator("dependents", "missing", "unexpected", mode="before")(_refuse_null)
 
 
 class Backup(BaseModel):
