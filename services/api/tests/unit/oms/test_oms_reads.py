@@ -6,8 +6,10 @@ does not answer in time `StoreUnavailable`."""
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 import pytest
 from hypothesis import given, settings
@@ -15,9 +17,11 @@ from hypothesis import strategies as st
 
 from candleviewer.oms.errors import AccountScopeDenied, StoreUnavailable
 from candleviewer.oms.reads import OmsReads, aggregate_positions
+from candleviewer.oms.submit import entry_order_id
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.oms_reads import (
+    AnchoredTarget,
     ExecutionQuery,
     OrderQuery,
     PositionQuery,
@@ -107,6 +111,9 @@ class _Store:
     async def orders(self, *_a: Any, environment: str, **_k: Any) -> tuple[()]:
         return await self._answer("orders", environment)
 
+    async def anchored(self, created_by: UUID, keys: frozenset[UUID]) -> tuple[()]:
+        return await self._answer("anchored", str(created_by))
+
     async def order(self, *_a: Any, environment: str, **_k: Any) -> tuple[()]:
         return await self._answer("order", environment)
 
@@ -170,3 +177,57 @@ async def test_a_read_that_does_not_answer_in_its_bound_is_store_unavailable() -
 def test_a_reads_bound_is_only_ever_tightened(bound: float) -> None:
     with pytest.raises(ValueError, match="tightened"):
         OmsReads(_Store(), "demo", timeout_s=bound)  # type: ignore[arg-type]  # a port
+
+
+_KEY, _GROUP = UUID(int=0x2303), UUID(int=0x23A1)
+_REDUCE = UUID(int=0x23A2)
+
+
+@dataclass
+class _Lookup:
+    """Records the anchors asked for and the query the orders read is given (#2303)."""
+
+    targets: tuple[AnchoredTarget, ...]
+    asked: list[tuple[UUID, frozenset[UUID]]] = field(default_factory=list)
+    queries: list[OrderQuery] = field(default_factory=list)
+
+    async def anchored(self, created_by: UUID, keys: frozenset[UUID]) -> tuple[AnchoredTarget, ...]:
+        self.asked.append((created_by, keys))
+        return self.targets
+
+    async def orders(self, _scope: Any, query: OrderQuery, **_k: Any) -> tuple[()]:
+        self.queries.append(query)
+        return ()
+
+
+async def test_a_key_lookup_reads_the_callers_anchors_then_their_orders_by_id() -> None:
+    """#2303: the anchors of the scope's principal alone; an entry's order named from its group
+    as a repeat names it (`entry_order_id`), a reduce-only one by its own id; no key, no anchor
+    read."""
+    store = _Lookup((AnchoredTarget(None, _GROUP), AnchoredTarget(_REDUCE, None)))
+    reads = OmsReads(store, "demo")  # type: ignore[arg-type]  # a recording port
+    query = OrderQuery(idempotency_keys=frozenset({_KEY}), states=frozenset({"filled"}))
+    await reads.orders(_OWNER, query, after=None, limit=5)
+    assert store.asked == [(USERS["owner"], frozenset({_KEY}))]
+    [read] = store.queries
+    assert read.order_ids == frozenset({entry_order_id(_GROUP), _REDUCE})
+    assert read.states == {"filled"} and read.idempotency_keys == {_KEY}  # the rest kept
+    await reads.orders(_OWNER, OrderQuery(), after=None, limit=5)
+    assert len(store.asked) == 1 and store.queries[-1].order_ids is None
+
+
+async def test_keys_that_name_nothing_read_an_empty_id_set_never_every_order() -> None:
+    store = _Lookup(())
+    reads = OmsReads(store, "demo")  # type: ignore[arg-type]  # a recording port
+    await reads.orders(_OWNER, OrderQuery(idempotency_keys=frozenset({_KEY})), after=None, limit=5)
+    assert store.queries[-1].order_ids == frozenset()
+
+
+async def test_a_failing_anchor_read_is_store_unavailable_and_reads_no_order() -> None:
+    store = _Store(StorageTierUnavailable("down"))
+    reads = OmsReads(store, "demo")  # type: ignore[arg-type]  # a recording port
+    with pytest.raises(StoreUnavailable):
+        await reads.orders(
+            _OWNER, OrderQuery(idempotency_keys=frozenset({_KEY})), after=None, limit=5
+        )
+    assert [name for name, _ in store.seen] == ["anchored"]

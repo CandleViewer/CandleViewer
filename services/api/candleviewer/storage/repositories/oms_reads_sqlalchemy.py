@@ -11,6 +11,9 @@ A page of orders or fills is read per account (`LATERAL` over the settled accoun
 each by its `(account, time DESC)` index (`ix_orders_recent`, `ix_exec_acct_time`) from the
 keyset's scalar bound (`time <= :at`, the id breaking a tie), and merged in the database: no read
 sorts every matching row, and a deep page starts where the cursor left off (#4997).
+`anchored_statement` reads the caller's own `placeOrder` anchors by (`created_by`, `operation`,
+`client_ref`) on `ux_ia_principal_ref` (#2303); it holds the principal, not an account, and the
+orders it names are then read in scope like any other.
 """
 
 from __future__ import annotations
@@ -21,7 +24,13 @@ from uuid import UUID
 
 import sqlalchemy as sa
 
-from candleviewer.db.models import executions, orders, positions, trade_group_legs
+from candleviewer.db.models import (
+    executions,
+    idempotency_anchors,
+    orders,
+    positions,
+    trade_group_legs,
+)
 from candleviewer.domain.primitives import Environment
 from candleviewer.storage.repositories.accounts import AccountScope
 from candleviewer.storage.repositories.executions import ExecutionRow
@@ -30,6 +39,7 @@ from candleviewer.storage.repositories.oms_reads import (
     CLOSING_EXEC_TYPES,
     MAX_ORDER_EXECUTIONS,
     MAX_POSITIONS,
+    AnchoredTarget,
     ExecutionQuery,
     Keyset,
     ListedExecution,
@@ -39,6 +49,7 @@ from candleviewer.storage.repositories.oms_reads import (
     PositionOutOfScope,
     PositionQuery,
     PositionsTooMany,
+    require_resolved,
 )
 from candleviewer.storage.repositories.orders import (
     EVENT_FIELDS,
@@ -63,10 +74,14 @@ from candleviewer.storage.repositories.positions_sqlalchemy import POSITION_COLU
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyUnitOfWork
 
 _O, _X, _P, _L = orders.c, executions.c, positions.c, trade_group_legs.c
+_A = idempotency_anchors.c
 #: Statements without `scope_clause` over their rows' account (a unit test pins the set): the fills
-#: of an order its caller read in scope in the same transaction, by that account, and the probe of
-#: the account holding a position id, for a refusal's audit alone, never served.
-UNSCOPED: Final = frozenset({"order_fills_statement", "position_holder_statement"})
+#: of an order its caller read in scope in the same transaction, by that account, the probe of
+#: the account holding a position id, for a refusal's audit alone, never served, and the caller's
+#: own anchors, held by their principal, whose orders are then read in scope.
+UNSCOPED: Final = frozenset(
+    {"anchored_statement", "order_fills_statement", "position_holder_statement"}
+)
 
 
 def _literals(name: str, values: Collection[str]) -> sa.BindParameter[Any]:
@@ -124,6 +139,10 @@ def orders_statement(
         stmt = stmt.where(_text(_O.symbol) == query.symbol)
     if query.trade_group_id is not None:
         stmt = stmt.where(_L.trade_group_id == query.trade_group_id)
+    if query.order_ids is not None:
+        stmt = stmt.where(_O.id.in_(sorted(query.order_ids)))
+    if query.order_link_ids:
+        stmt = stmt.where(_O.order_link_id.in_(sorted(query.order_link_ids)))
     if query.since is not None:
         stmt = stmt.where(_O.created_ts >= query.since)
     if query.until is not None:
@@ -131,6 +150,15 @@ def orders_statement(
     if after is not None:
         stmt = stmt.where(*_before(_O.created_ts, _O.id, after))
     return _merged(scoped, stmt.order_by(_O.created_ts.desc(), _O.id.desc()), "created_ts", limit)
+
+
+def anchored_statement(created_by: UUID, keys: Collection[UUID]) -> sa.Select[Any]:
+    """The targets of the caller's own `placeOrder` anchors under `keys`, as `client_ref` holds
+    them (canonical lower-case UUID text), on `ux_ia_principal_ref`."""
+    refs = sorted(str(key) for key in keys)
+    return sa.select(_A.order_id, _A.trade_group_id).where(
+        _A.created_by == created_by, _A.operation == "placeOrder", _A.client_ref.in_(refs)
+    )
 
 
 def _fills() -> tuple[sa.FromClause, sa.ColumnElement[Any]]:
@@ -224,6 +252,10 @@ def _execution(row: Mapping[str, Any]) -> ListedExecution:
     return ListedExecution(found, row["trade_group_id"])
 
 
+def _uuid(value: object) -> UUID | None:
+    return None if value is None else UUID(str(value))
+
+
 def _position(row: Mapping[str, Any]) -> PositionRow:
     return PositionRow(**{c.name: row[c.name] for c in POSITION_COLUMNS})
 
@@ -244,13 +276,23 @@ class SqlAlchemyOmsReads(CappedStore):
         after: Keyset | None, limit: int,
     ) -> tuple[ListedOrder, ...]:  # fmt: skip
         require_limit(limit)
+        require_resolved(query)
         async with self._unit_of_work() as uow:
             accounts = await self._settled(uow, scope, environment, query.accounts)
-            if not accounts or query.wanted_states() == frozenset():
+            if not accounts or frozenset() in (query.wanted_states(), query.order_ids):
                 return ()
             stmt = orders_statement(scope, query, environment, accounts, after, limit)
             rows = (await uow.session.execute(stmt)).mappings()
             return tuple(ListedOrder(order_row(r), r["trade_group_id"]) for r in rows)
+
+    async def anchored(self, created_by: UUID, keys: frozenset[UUID]) -> tuple[AnchoredTarget, ...]:
+        if not keys:
+            return ()
+        async with self._unit_of_work() as uow:
+            rows = (await uow.session.execute(anchored_statement(created_by, keys))).mappings()
+            return tuple(
+                AnchoredTarget(_uuid(r["order_id"]), _uuid(r["trade_group_id"])) for r in rows
+            )
 
     async def order(
         self, scope: AccountScope, order_id: UUID, *, environment: Environment, events: bool
@@ -334,6 +376,7 @@ class SqlAlchemyOmsReads(CappedStore):
 
 
 __all__ = [
-    "UNSCOPED", "SqlAlchemyOmsReads", "executions_statement", "order_fills_statement",
-    "orders_statement", "position_holder_statement", "position_statement", "positions_statement",
+    "UNSCOPED", "SqlAlchemyOmsReads", "anchored_statement", "executions_statement",
+    "order_fills_statement", "orders_statement", "position_holder_statement",
+    "position_statement", "positions_statement",
 ]  # fmt: skip

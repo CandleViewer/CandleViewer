@@ -20,6 +20,7 @@ from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
 from candleviewer.storage.repositories.executions import ExecutionRow
 from candleviewer.storage.repositories.oms_reads import (
     NON_TERMINAL_STATES,
+    AnchoredTarget,
     ExecutionQuery,
     Keyset,
     OrderDetail,
@@ -43,6 +44,7 @@ from tests.unit.storage.test_orders_store import (
 
 T0 = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
 FOREIGN, GROUP, POSITION = uuid.UUID(int=9), uuid.UUID(int=4), uuid.UUID(int=6)
+KEY = uuid.UUID("6F1C2B7E-3A4D-4E5F-8A6B-7C8D9E0F1A2B")  # a client's key, as it may arrive
 _GRANT = GrantScope(USER, frozenset({ACCOUNT}))
 _OWNER = OwnerScope(USER)
 _AFTER = Keyset(T0, ORDER)
@@ -62,6 +64,7 @@ _STATEMENTS: dict[str, Any] = {
     "positions_statement": mod.positions_statement(_GRANT, PositionQuery(), "demo", (ACCOUNT,)),
     "position_statement": mod.position_statement(_GRANT, POSITION, "demo"),
     "position_holder_statement": mod.position_holder_statement(POSITION),
+    "anchored_statement": mod.anchored_statement(USER, {KEY}),
 }
 _VIEW = "uaa.can_view AND NOT uaa.frozen)"
 
@@ -71,7 +74,9 @@ def test_every_statement_but_two_holds_the_viewing_scope_and_the_environment() -
     predicate and the process's environment; the two `UNSCOPED` ones are pinned."""
     own = {n for n, v in vars(mod).items() if getattr(v, "__module__", None) == mod.__name__}
     assert {n for n in own if n.endswith("_statement")} == set(_STATEMENTS)  # none dodges
-    assert mod.UNSCOPED == {"order_fills_statement", "position_holder_statement"}
+    assert mod.UNSCOPED == {
+        "anchored_statement", "order_fills_statement", "position_holder_statement",
+    }  # fmt: skip
     for name, stmt in _STATEMENTS.items():
         sql = _sql(stmt)
         scoped = _VIEW in sql and "exchange_accounts.env = " in sql
@@ -104,6 +109,31 @@ def test_the_order_list_renders_its_filters_its_keyset_and_newest_first() -> Non
         r"ORDER BY orders.created_ts DESC, orders.id DESC \s+LIMIT \$\d+::INTEGER\) AS page", sql
     )
     assert re.search(r"ORDER BY page.created_ts DESC, page.id DESC \s+LIMIT \$\d+::INTEGER$", sql)
+
+
+def test_the_lookup_reads_the_callers_own_place_order_anchors_by_their_unique_key() -> None:
+    """#2303: by (`created_by`, `operation`, `client_ref`), `ux_ia_principal_ref`'s columns, the
+    key as `client_ref` holds it (canonical lower-case text); never another principal's."""
+    stmt = _STATEMENTS["anchored_statement"]
+    sql = _sql(stmt)
+    assert "idempotency_anchors.created_by = $" in sql
+    assert "idempotency_anchors.operation = $" in sql
+    assert "idempotency_anchors.client_ref IN ($" in sql
+    params = list(stmt.compile().params.values())
+    assert USER in params and "placeOrder" in params and [str(KEY).lower()] in params
+    assert "request_sha256" not in sql  # the fingerprint is never read back (21 Sec.12)
+
+
+def test_the_order_list_renders_the_lookups_ids_and_links() -> None:
+    query = OrderQuery(
+        idempotency_keys=frozenset({KEY}), order_ids=frozenset({ORDER}),
+        order_link_ids=frozenset({"ext-" + "a" * 32}),
+    )  # fmt: skip
+    sql = _sql(mod.orders_statement(_GRANT, query, "demo", (ACCOUNT,), None, 10))
+    assert "orders.id IN ($" in sql and "orders.order_link_id IN ($" in sql
+    assert _VIEW in sql  # the anchored orders are read in scope like any other
+    plain = _sql(mod.orders_statement(_GRANT, OrderQuery(), "demo", (ACCOUNT,), None, 10))
+    assert "orders.id IN" not in plain and "order_link_id IN" not in plain
 
 
 def test_open_only_alone_is_the_non_terminal_set_held_and_untracked_included() -> None:
@@ -266,3 +296,29 @@ async def test_an_orders_fills_past_their_cap_are_flagged() -> None:
     found = await store.order(_GRANT, ORDER, environment="demo", events=False)
     assert isinstance(found, OrderDetail) and found.more_executions
     assert len(found.executions) == MAX_ORDER_EXECUTIONS and not found.more_events
+
+
+async def test_the_anchors_map_their_targets_and_no_key_reads_nothing() -> None:
+    store, rel = _store(
+        _Result([{"order_id": None, "trade_group_id": GROUP}, {"order_id": ORDER,
+                 "trade_group_id": None}])
+    )  # fmt: skip
+    found = await store.anchored(USER, frozenset({KEY}))
+    assert found == (AnchoredTarget(None, GROUP), AnchoredTarget(ORDER, None))
+    assert len(rel.statements) == 1
+    store, rel = _store()
+    assert await store.anchored(USER, frozenset()) == () and rel.statements == []
+
+
+async def test_keys_that_name_no_order_read_nothing_past_the_accounts() -> None:
+    """A lookup whose keys named no order of the caller's is an empty page, after the accounts
+    settle, so a named account outside the scope still refuses the whole read."""
+    resolved = OrderQuery(idempotency_keys=frozenset({KEY}), order_ids=frozenset())
+    store, rel = _store(_Result([{"id": ACCOUNT}]))
+    assert await store.orders(_GRANT, resolved, environment="demo", after=None, limit=5) == ()
+    assert len(rel.statements) == 1
+    with pytest.raises(ValueError, match="Idempotency-Key"):  # never served unresolved
+        await store.orders(
+            _GRANT, OrderQuery(idempotency_keys=frozenset({KEY})), environment="demo",
+            after=None, limit=5,
+        )  # fmt: skip

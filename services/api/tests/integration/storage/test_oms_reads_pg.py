@@ -7,7 +7,9 @@ B's rows reach a grant under no filter combination, a named B refuses the whole 
 id reads as missing), the environment ("Aggregate positions never mix environments": a demo
 store never reads the live account, an Owner's included), the keyset over every row once, the
 filters, `listClosedPnl`'s interim source, and #915's performance note: `GET /orders?open_only`
-and `GET /positions` at 1,000 orders, p95 under 150 ms (the store's statements, without HTTP)."""
+and `GET /positions` at 1,000 orders, p95 under 150 ms (the store's statements, without HTTP).
+#2303's lookup too: the caller's own `placeOrder` anchors alone, and their orders, or the orders
+of an `order_link_id`, in scope ("Scope is enforced on the lookup")."""
 
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ from sqlalchemy.dialects.postgresql import psycopg as pg_psycopg
 from candleviewer.oms.reads import aggregate_positions
 from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
 from candleviewer.storage.repositories.oms_reads import (
+    AnchoredTarget,
     ExecutionQuery,
     Keyset,
     OrderDetail,
@@ -371,3 +374,33 @@ async def test_pages_read_their_index_in_order_and_never_sort_every_row(
             nodes, text = _plan(pg_dsn, stmt)
             print(f"\n--- {name}: {index}\n{text}")  # the PR's evidence (`-s`)
             _assert_indexed(nodes, index, len(accounts), limit)
+
+
+_ANCHOR = (
+    "INSERT INTO idempotency_anchors (id, created_by, operation, client_ref, request_sha256, "
+    "order_id) VALUES (%s, %s, 'placeOrder', %s, %s, %s)"
+)
+
+
+async def test_scope_is_enforced_on_the_lookup(
+    pg_dsn: str, store: SqlAlchemyOmsReads, world: dict[str, object]
+) -> None:
+    """#2303, in SQL: a key reads its principal's own anchors alone (`ux_ia_principal_ref`), and
+    the orders they name, or an `order_link_id`'s, are read in scope: the manager's key on B, the
+    owner's key on A and B's link id each read no row for the manager."""
+    manager, a1, b1, a2 = world["manager"], world["a1"], world["b1"], world["a2"]
+    assert isinstance(manager, UUID) and isinstance(a1, UUID) and isinstance(b1, UUID)
+    assert isinstance(a2, UUID)
+    mine, on_b, owners = uuid4(), uuid4(), uuid4()
+    for who, key, target in ((manager, mine, a1), (manager, on_b, b1), (OWNER, owners, a2)):
+        tg._sql(pg_dsn, _ANCHOR, uuid4(), who, str(key), "0" * 64, target)
+    found = await store.anchored(manager, frozenset({mine, on_b, owners}))
+    assert set(found) == {AnchoredTarget(a1, None), AnchoredTarget(b1, None)}  # never the owner's
+    assert await store.anchored(OWNER, frozenset({mine})) == ()
+    scope = _grant(world)
+    keys = frozenset({mine, on_b})
+    assert await _orders(store, scope, idempotency_keys=keys, order_ids=frozenset({a1, b1})) == [a1]
+    assert await _orders(store, scope, idempotency_keys=keys, order_ids=frozenset()) == []
+    assert await _orders(store, scope, order_link_ids=frozenset({f"ext-{b1.hex}"})) == []
+    owner = OwnerScope(OWNER)
+    assert await _orders(store, owner, order_link_ids=frozenset({f"ext-{b1.hex}"})) == [b1]

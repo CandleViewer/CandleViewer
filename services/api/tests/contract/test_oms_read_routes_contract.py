@@ -8,6 +8,7 @@ declared once in `info`). The RBAC cells are `tests/contract/rbac/matrix.yaml`'s
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -15,8 +16,9 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.storage.repositories.oms_reads import AnchoredTarget
 from tests.openapi_helpers import deref
-from tests.unit.api.oms_reads_world import ACCOUNT_B, MISSING, World, bearer
+from tests.unit.api.oms_reads_world import ACCOUNT_B, MISSING, USERS, World, bearer
 
 _SPEC: Any = load_openapi_spec()  # a parsed YAML document, walked untyped
 _A1 = "00000000-0000-0000-0000-000000000a01"
@@ -31,6 +33,15 @@ _ROUTES: dict[str, tuple[str, str]] = {
     "listExecutions": ("/executions", "/executions"),
     "listClosedPnl": ("/executions/closed-pnl", "/executions/closed-pnl"),
 }
+#: The owner's `placeOrder` key whose reduce-only order is the seed's first (#2303).
+_LOOKUP_REF = str(uuid.UUID("6f1c2b7e-3a4d-4e5f-8a6b-7c8d9e0f1a2b"))
+
+
+def _anchored(world: World) -> None:
+    target = AnchoredTarget(world.store.orders[0][0].id, None)
+    world.store.anchors[(USERS["owner"], uuid.UUID(_LOOKUP_REF))] = target
+
+
 _SCOPED = {"listOrders", "listPositions", "listExecutions", "listClosedPnl"}
 _LISTS = {"listOrders", "listExecutions", "listClosedPnl"}
 
@@ -57,6 +68,11 @@ def _cases(operation: str) -> list[tuple[str, int, Callable[[World], None], str,
     ]
     if operation == "getOrder":
         cases += [("events", 200, keep, "owner", {"include_events": "true"})]
+    if operation == "listOrders":  # #2303's lookup: found, never admitted, malformed
+        cases += [("lookup", 200, _anchored, "owner", {"idempotency_key": _LOOKUP_REF})]
+        cases += [("lookup_unknown", 200, keep, "owner", {"idempotency_key": _LOOKUP_REF})]
+        cases += [("lookup_bad", 400, keep, "owner", {"idempotency_key": "nope"})]
+        cases += [("link_bad", 400, keep, "owner", {"order_link_id": "nope"})]
     if operation == "listPositions":
         cases += [("aggregate", 200, keep, "owner", {"aggregate": "true", "open_only": "false"})]
     if operation in _SCOPED:

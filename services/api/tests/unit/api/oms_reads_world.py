@@ -2,7 +2,8 @@
 `OmsReads` over an in-memory store that answers as the SQL does (`oms_reads_sqlalchemy`): the
 scope settles the named accounts all or nothing (the store's own `settle_accounts`), an Owner
 views every account of the process's environment, a grant only its own, and nothing of another
-environment is ever read. Postgres proves the SQL itself (`tests/integration/storage/
+environment is ever read; `anchors` are the principals' `placeOrder` anchors, read by their
+principal alone (#2303). Postgres proves the SQL itself (`tests/integration/storage/
 test_oms_reads_pg.py`). A support module: pytest collects nothing from it."""
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from candleviewer.storage.repositories.executions import ExecutionRow
 from candleviewer.storage.repositories.oms_reads import (
     CLOSING_EXEC_TYPES,
     MAX_ORDER_EXECUTIONS,
+    AnchoredTarget,
     ExecutionQuery,
     Keyset,
     ListedExecution,
@@ -40,6 +42,7 @@ from candleviewer.storage.repositories.oms_reads import (
     OrderQuery,
     PositionOutOfScope,
     PositionQuery,
+    require_resolved,
 )
 from candleviewer.storage.repositories.orders import (
     MAX_EVENT_PAGE,
@@ -184,6 +187,8 @@ class Store:
     fills: list[tuple[ExecutionRow, uuid.UUID | None]] = field(default_factory=list)
     positions: list[PositionRow] = field(default_factory=list)
     events: dict[uuid.UUID, list[OrderEventRow]] = field(default_factory=dict)
+    #: (principal, key) -> the anchor's target, as `ux_ia_principal_ref` holds it (#2303).
+    anchors: dict[tuple[uuid.UUID, uuid.UUID], AnchoredTarget] = field(default_factory=dict)
     calls: list[str] = field(default_factory=list)
     fail: bool = False
 
@@ -214,6 +219,7 @@ class Store:
         self, scope: AccountScope, query: OrderQuery, *, environment: str, after: Keyset | None,
         limit: int,
     ) -> tuple[ListedOrder, ...]:  # fmt: skip
+        require_resolved(query)
         reach = self._reach(scope, environment, query.accounts)
         states = query.wanted_states()
         rows = [
@@ -223,10 +229,22 @@ class Store:
             and (not query.intents or o.intent in query.intents)
             and query.symbol in (None, o.symbol)
             and query.trade_group_id in (None, g)
+            and (query.order_ids is None or o.id in query.order_ids)
+            and (not query.order_link_ids or o.order_link_id in query.order_link_ids)
             and (query.since is None or o.created_ts >= query.since)
             and (query.until is None or o.created_ts < query.until)
         ]  # fmt: skip
         return self._page(rows, after, limit)
+
+    async def anchored(
+        self, created_by: uuid.UUID, keys: frozenset[uuid.UUID]
+    ) -> tuple[AnchoredTarget, ...]:
+        self.calls.append("anchored")
+        if self.fail:
+            raise StorageQueryFailed("57014")
+        return tuple(
+            t for (who, key), t in self.anchors.items() if who == created_by and key in keys
+        )
 
     async def order(
         self, scope: AccountScope, order_id: uuid.UUID, *, environment: str, events: bool
@@ -311,6 +329,7 @@ class ReadStore:
         self.position, self.executions, self.closed_pnl = (
             store.position, store.executions, store.closed_pnl,
         )  # fmt: skip
+        self.anchored = store.anchored
 
 
 def seeded() -> Store:
@@ -351,7 +370,7 @@ class World:
     viewing: ViewAsRequestContext | None = None
 
     def app(self) -> FastAPI:
-        reads = OmsReads(ReadStore(self.store), "demo") if self.composed else None  # type: ignore[arg-type]  # the in-memory port
+        reads = OmsReads(ReadStore(self.store), "demo") if self.composed else None
         app = FastAPI()
         app.include_router(
             make_oms_reads_router(
