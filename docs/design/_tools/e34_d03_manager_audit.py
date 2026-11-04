@@ -24,13 +24,14 @@ Gates (each FAIL led by its name; spec §12):
     outside §5. G-COUNT no client safety count (G-12); every unserved figure or action stamped.
   G-MERGED E34-D01 / E34-D02, and any CMP id `15` lacks, only on a request row, never by line.
   G-CITE cites in range and pinned. G-HYGIENE no closing keyword, local path, URL, agent name,
-    double brace, tag line or deny word. G-SCOPE only the spec, this tool, the pins and the seven
-    board PNGs.
+    double brace, tag line or deny word. G-SCOPE only the spec, this tool, the pins, the seven
+    board PNGs and their seven greyscale exports.
   G-ID the shared cell's CMP id (BQ-06) is never written, in any case, anywhere in the spec.
   G-BOARDS the boards as built: every §0 frame row reads "drawn"; §0.1 records the page by name and
     id and one row per board (its PNG, size, sha256 and board id), each PNG in the tree with that
-    size and sha256; §0.2 embeds each PNG once, at one 40-hex commit, by its raw form (the one URL
-    G-HYGIENE allows), and that commit holds each PNG as a blob equal to the tree's.
+    size and sha256; one greyscale row per board (its PNG in the tree, the board's size, its
+    sha256); §0.2 embeds each PNG once, at one 40-hex commit, by its raw form (the one URL
+    G-HYGIENE allows), and that commit holds each PNG (git cat-file -e) as a blob equal to the tree's.
 
 Usage (from the repo root): python3 -I docs/design/_tools/e34_d03_manager_audit.py
   --check | --self-test | --fill (§8's figures) | --repin-ruled (the pins' only writer)
@@ -60,7 +61,8 @@ IMG_DIR = "docs/design/E34/img"
 BOARD_SLUGS = {"01": "scr-062-list", "02": "scr-062-failure", "03": "scr-062-truth", "04": "scr-062-confirms",
                "05": "scr-062-empty-gated", "06": "ds-contributions", "07": "scr-062-light-twin"}  # fmt: skip
 IMG_PATHS = tuple(f"{IMG_DIR}/E34-D03-{n}-{s}.png" for n, s in BOARD_SLUGS.items())
-OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL, *IMG_PATHS)
+GREY_PATHS = tuple(f"{IMG_DIR}/E34-D03-{n}-{s}-greyscale.png" for n, s in BOARD_SLUGS.items())
+OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL, *IMG_PATHS, *GREY_PATHS)
 BASE = "a7d659a5bee5d06a28950f324800f84dc3853e6f"  # origin/main when written; re-pinned by content
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
@@ -730,6 +732,19 @@ def g_boards(t: Texts) -> list[str]:
             bad.append(f"§0.1 board {n}: sha256 is not {name}'s")
         if size is None or f"{size[0]} × {size[1]}" != r[2]:
             bad.append(f"§0.1 board {n}: size {r[2]} is not {name}'s {size}")
+    grey = {r[0]: r for r in table_rows(built, "G") if len(r) > 3 and re.fullmatch(r"G\d\d", r[0])}
+    for n, slug in BOARD_SLUGS.items():
+        g, name = grey.get("G" + n), f"E34-D03-{n}-{slug}-greyscale.png"
+        if g is None or g[1].strip("`") != name or g[2] != (rows.get(n) or ["", "", "?"])[2]:
+            bad.append(f"§0.1 has no greyscale row for board {n} ({name}) at the board's size")
+            continue
+        f = ROOT / IMG_DIR / name
+        data = f.read_bytes() if f.exists() else b""
+        size = png_size(data)
+        if hashlib.sha256(data).hexdigest() != g[3].strip("`") or size is None:
+            bad.append(f"§0.1 greyscale {n}: {IMG_DIR}/{name} is missing or not its sha256")
+        elif f"{size[0]} × {size[1]}" != g[2]:
+            bad.append(f"§0.1 greyscale {n}: size {g[2]} is not {name}'s {size}")
     embeds = [m for m in (EMBED.match(ln) for ln in t.spec.split("\n")) if m]
     shas = {m.group(3) for m in embeds}
     got = sorted((m.group(1), m.group(2), m.group(4)) for m in embeds)
@@ -888,6 +903,8 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-BOARDS", "malform board 01's id", set_cell("01", 4, "`307e836f`")),
     ("G-BOARDS", "embed board 01 at another commit", lambda t: replace(t, spec=re.sub(r"(CandleViewer/CandleViewer/)[0-9a-f]{40}/", r"\g<1>" + "0" * 40 + "/", t.spec, count=1))),
     ("G-BOARDS", "drop board 03's embed", drop_row("![E34-D03 / 03 ")),
+    ("G-BOARDS", "drop board 02's greyscale row", drop_row("| G02 ")),
+    ("G-BOARDS", "type greyscale 04's sha256 off", set_cell("G04", 3, "`" + "0" * 64 + "`")),
     ("G-BOARDS", "move all seven embeds to the base, which holds no PNG", lambda t: replace(t, spec=re.sub(r"(CandleViewer/CandleViewer/)[0-9a-f]{40}/", r"\g<1>" + BASE + "/", t.spec))),
 )  # fmt: skip
 
