@@ -1,6 +1,9 @@
 # E29-Q02 (#1147): the OMS contract cases the conformance report expects, one test function per line
 # as `module::test | surface | plan cases`. The plan cases are E29-TC-nnn of
-# docs/qa/e29-oms-test-plan.md (E29-Q01 #844), the ones the test gives contract evidence for.
+# docs/qa/e29-oms-test-plan.md (E29-Q01 #844), the ones the test gives contract evidence for: the
+# client-visible half of each Oracle (the status, the body, the headers). The effect clauses (what
+# was sent, what was audited) stay with the unit tests the plan lists, so a row here is not full
+# coverage of its plan case.
 # test_e29_q02_report.py keeps this list equal to the tests the listed modules define;
 # tests/contract/e29_q02_report.py gives each one its row and _conformance_report.py prints its
 # outcome per run. A test added or removed changes this list in the same commit; a later slice

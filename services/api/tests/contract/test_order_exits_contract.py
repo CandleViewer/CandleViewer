@@ -2,11 +2,15 @@
 `cancelOrder` and `cancelAllOrders`, given by the mounted routes on the fakes of their unit tests
 (`test_order_exits_route`, `test_order_amend_route`, `test_order_cancel_all_route`). An answer
 meets 22 for its status as a client sees it: the media type, the body against the schema (2020-12,
-format checker) with no member the schema leaves undeclared, each header sent declared there with
-its type, `Retry-After` equal to `retry_after_seconds`, and a problem's `code` the registry's for
-that status (E29-TC-650, E29-TC-655). The unit tests keep the behaviour; a case here asserts what a
-client reads. Every status 22 declares has a case, each reachable on the fakes (the coverage test
-pins it). `e29_q02_cases.txt` maps each test to its plan cases (`docs/qa/e29-oms-test-plan.md`)."""
+format checker) with no member the schema leaves undeclared, each of `Retry-After`,
+`Idempotency-Replayed` and `ETag` that it sends declared there with its type, `Retry-After` equal
+to `retry_after_seconds`, and a problem's `code` the registry's for that status (E29-TC-650,
+E29-TC-655); a status case also pins which answers carry `Retry-After`. The unit tests keep the
+behaviour (what was sent, what was audited); a case here asserts what a client reads. Every status
+22 declares has a case, each reachable on the fakes (the coverage test pins it).
+`e29_q02_cases.txt` maps each test to the client-visible half of its plan cases
+(`docs/qa/e29-oms-test-plan.md`). Not driven here, left to the unit tests: a Manager's request on a
+recorded stop's row (E29-TC-107) and on an `unknown` order it placed (E29-TC-652)."""
 
 from __future__ import annotations
 
@@ -223,6 +227,15 @@ _CANCEL_ALL: dict[str, Case] = {
     "503": ("store_unavailable", partial(_cancel_all, change=_scope_down)),
 }
 _TABLES = {"amendOrder": _AMEND, "cancelOrder": _CANCEL, "cancelAllOrders": _CANCEL_ALL}
+#: The cases whose answer 22 gives a `Retry-After` (its prose on each operation, and
+#: `ServiceUnavailable` for a cancel-all's scope outage): an amend's `idempotency_in_flight` 409,
+#: each 429 and each 503 `store_unavailable`. The other 26 carry none; a cancel's `conflict` and a
+#: cancel-all's `idempotency_key_reuse` 409s are no wait.
+_RETRY = frozenset({
+    ("amendOrder", "409"), ("amendOrder", "429"), ("amendOrder", "503"),
+    ("cancelOrder", "429"), ("cancelOrder", "503"),
+    ("cancelAllOrders", "429"), ("cancelAllOrders", "503"),
+})  # fmt: skip
 
 
 async def _answers(operation: str, status: str) -> dict[str, Any]:
@@ -231,6 +244,7 @@ async def _answers(operation: str, status: str) -> dict[str, Any]:
     assert answer.status_code == int(status), f"{operation}: {answer.status_code} {answer.text}"
     body = conforms(operation, answer)
     assert body.get("code") == code
+    assert ("retry-after" in answer.headers) == ((operation, status) in _RETRY)
     return body
 
 
@@ -356,8 +370,9 @@ async def test_order_exit_by_a_manager_answers_the_status_its_scope_gives_it(
 async def test_amend_order_that_re_pairs_a_tp_sl_pair_is_202_with_both_sides_and_its_etag(
     rig: SubmitRig,
 ) -> None:
-    """E29-TC-509: the stop tightened beside a new price, under `If-Match`, is sent with the
-    take-profit at its current value, and the order answers with both."""
+    """E29-TC-509: the stop tightened beside a new price, under `If-Match`, goes to the venue as one
+    amend carrying the new price, the new stop and the take-profit at its current value (the pair
+    re-sent whole), and the order answers 202 with its `ETag` and both sides."""
     world, row = await am.amendable(rig)
     version = rig.machines.version(row.id)
     assert version is not None
@@ -365,6 +380,8 @@ async def test_amend_order_that_re_pairs_a_tp_sl_pair_is_202_with_both_sides_and
     answer = await am.patch(world, row.id, body, if_match=order_etag(row.id, version))
     order = conforms("amendOrder", answer)
     assert answer.status_code == 202 and "etag" in answer.headers
+    [sent] = am.amends(rig)
+    assert (sent.price, sent.stop_loss, sent.take_profit) == (60100, 58500, 64000)
     assert [Decimal(order[side]) for side in ("price", "stop_loss", "take_profit")] == [
         Decimal("60100"), Decimal("58500"), Decimal("64000"),
     ]  # fmt: skip
@@ -425,13 +442,14 @@ async def test_cancel_all_orders_by_a_manager_answers_the_status_its_scope_gives
     results: int | None,
 ) -> None:  # fmt: skip
     """E29-TC-110: a listed account outside the grants refuses the whole request; none listed is
-    the granted accounts alone."""
+    the granted accounts alone; no answer names an account the Manager may not trade."""
     world = ca.World()
     _managing(*grants)(world)
     answer = await ca.post(world, who, {"exchange_account_ids": [str(i) for i in ids]})
     body = conforms("cancelAllOrders", answer)
     assert (answer.status_code, body.get("code")) == (status, code)
     assert results is None or len(body["results"]) == results
+    assert _B in grants or str(_B) not in answer.text  # only a granted account is named
 
 
 async def test_cancel_all_orders_counts_in_affected_only_the_orders_its_selection_takes() -> None:
