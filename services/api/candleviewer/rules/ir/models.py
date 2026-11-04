@@ -8,6 +8,7 @@ control (nothing may be smuggled into a stored IR). The IR is data, never code (
 from __future__ import annotations
 
 import math
+from collections.abc import Hashable
 from decimal import Decimal, DecimalException
 from typing import Annotated, Any, Literal
 
@@ -35,6 +36,11 @@ METRIC_PATTERN = r"^[a-z][a-z0-9_]{1,48}$"
 MAX_BOOLEAN_CHILDREN = 32
 MAX_ARITHMETIC_OPERANDS = 8
 MAX_ACTIONS = 10
+#: The most accounts a rule's scope lists, each once (22 `RuleIrScope.account_ids`, `maxItems`);
+#: an empty list is every account the rule's owner holds a grant on.
+MAX_SCOPE_ACCOUNTS = 100
+#: The most environments a rule's scope names, each once (22 `RuleIrScope.environments`).
+MAX_SCOPE_ENVIRONMENTS = 3
 MIN_WINDOW_MS = 100
 MAX_WINDOW_MS = 86_400_000
 
@@ -253,14 +259,34 @@ class Action(BaseModel):
     dry_run_only: bool = False
 
 
+def _each_once(what: str) -> AfterValidator:
+    """The refusal of a list that names one `what` twice (22 `uniqueItems`). Entries compare as the
+    model reads them: two spellings of one account's UUID are one account."""
+
+    def once(items: tuple[Hashable, ...]) -> tuple[Hashable, ...]:
+        if len(set(items)) != len(items):
+            raise PydanticCustomError("non_unique_items", f"List each {what} once.")
+        return items
+
+    return AfterValidator(once)
+
+
 class RuleScope(BaseModel):
     model_config = _CFG
     level: Literal["global", "account", "symbol", "position", "trade_group"]
-    account_ids: tuple[AccountId, ...] = ()
+    account_ids: Annotated[
+        tuple[AccountId, ...],
+        Field(max_length=MAX_SCOPE_ACCOUNTS, json_schema_extra={"uniqueItems": True}),
+        _each_once("account"),
+    ] = ()
     symbols: tuple[Symbol, ...] = ()
     applies_to: Literal["open_positions", "pending_orders", "account", "any"] = "any"
     # SAFE DEFAULT (24-internal-schemas.md 11.5 E12): demo only. Never widen.
-    environments: tuple[Environment, ...] = ("demo",)
+    environments: Annotated[
+        tuple[Environment, ...],
+        Field(max_length=MAX_SCOPE_ENVIRONMENTS, json_schema_extra={"uniqueItems": True}),
+        _each_once("environment"),
+    ] = ("demo",)
     exclude_algo_children: bool = True
 
 

@@ -4146,10 +4146,12 @@ class RuleIrScope(BaseModel):
         extra="forbid",
     )
     level: Literal["global", "account", "symbol", "position", "trade_group"]
-    account_ids: list[UUID] = []
+    account_ids: Annotated[list[UUID], Field(max_length=100)] = []
     symbols: Annotated[list[Symbol], Field(validate_default=True)] = []
     applies_to: Literal["open_positions", "pending_orders", "account", "any"] = "any"
-    environments: list[Literal["live", "demo", "testnet"]] = ["demo"]
+    environments: Annotated[list[Literal["live", "demo", "testnet"]], Field(max_length=3)] = [
+        "demo"
+    ]
     exclude_algo_children: StrictBool = True
 
 

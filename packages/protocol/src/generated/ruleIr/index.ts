@@ -210,9 +210,19 @@ export interface RuleLimits {
   require_confirmation?: boolean;
 }
 export interface RuleScope {
+  /**
+   * @maxItems 100
+   */
   account_ids?: string[];
   applies_to?: "open_positions" | "pending_orders" | "account" | "any";
-  environments?: ("live" | "demo" | "testnet")[];
+  /**
+   * @maxItems 3
+   */
+  environments?:
+    | []
+    | ["live" | "demo" | "testnet"]
+    | ["live" | "demo" | "testnet", "live" | "demo" | "testnet"]
+    | ["live" | "demo" | "testnet", "live" | "demo" | "testnet", "live" | "demo" | "testnet"];
   exclude_algo_children?: boolean;
   level: "global" | "account" | "symbol" | "position" | "trade_group";
   symbols?: string[];
@@ -565,8 +575,10 @@ export const RULE_IR_SCHEMA: { readonly [key: string]: unknown } = deepFreeze({
         account_ids: {
           default: [],
           items: { format: "uuid", type: "string" },
+          maxItems: 100,
           title: "Account Ids",
           type: "array",
+          uniqueItems: true,
         },
         applies_to: {
           default: "any",
@@ -577,8 +589,10 @@ export const RULE_IR_SCHEMA: { readonly [key: string]: unknown } = deepFreeze({
         environments: {
           default: ["demo"],
           items: { enum: ["live", "demo", "testnet"], type: "string" },
+          maxItems: 3,
           title: "Environments",
           type: "array",
+          uniqueItems: true,
         },
         exclude_algo_children: { default: true, title: "Exclude Algo Children", type: "boolean" },
         level: {
