@@ -81,7 +81,9 @@ PATHS: dict[str, str] = {
 }
 A_PATHS = (PATHS["16"], PATHS["14"])  # the A-rows' targets (§15), applied in PR 2
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL, *A_PATHS)
-E47_REF = "1c5320c49fe521725ae9bb4814c2b49b49ef067c"  # #5444's merge; same blobs as its head e60fe7baa5
+E47_REF = (
+    "1c5320c49fe521725ae9bb4814c2b49b49ef067c"  # #5444's merge; same blobs as its head e60fe7baa5
+)
 REF_OF = {"E47D08": E47_REF}  # every other key is read at BASE (D08 since #5425 merged)
 DASH = "\u2013"  # the en dash of a cited range
 CITE = re.compile(
@@ -89,12 +91,8 @@ CITE = re.compile(
     r"(\d+(?:\u2013\d+)?(?:, :\d+(?:\u2013\d+)?)*)"
 )
 ANCHOR = re.compile(r"`?([^\s<|(`]+)`?<!--=([A-Z]+:[A-Za-z0-9.]+)-->")
-CLOSING = re.compile(
-    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE
-)
-LOCAL_PATH = re.compile(
-    "/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b"
-)  # assembled
+CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.IGNORECASE)
+LOCAL_PATH = re.compile("/" + "home/|/Users/|[A-Za-z]:\\\\|\\bwt-" + "notes\\b")  # assembled
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
 URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
 # assembled, so the list never spells the words it refuses
@@ -114,9 +112,7 @@ DENY = (
     "gh" + "sa",
     "pre-" + "auth",
 )
-MS_LITERAL = re.compile(
-    r"(?<![\w.>])\d[\d.,]*\s?ms\b"
-)  # an anchored value ends "-->" before " ms"
+MS_LITERAL = re.compile(r"(?<![\w.>])\d[\d.,]*\s?ms\b")  # an anchored value ends "-->" before " ms"
 MOMENTS = ("(a)", "(b)", "(c)", "(d)")
 T2_ROWS = ("M-06", "M-08")  # BQ-15: the rows that show `Retry` / `Cancel` under view-as
 BLOCK_HEAD = re.compile(
@@ -375,9 +371,7 @@ def g_cite(t: Texts, vals: dict[str, str]) -> list[str]:
     pinned = parse_pins(t.pins)
     for label, h in hashes.items():
         if label not in pinned:
-            bad.append(
-                f"cite {label} is unpinned: verify it by content, then --repin-ruled"
-            )
+            bad.append(f"cite {label} is unpinned: verify it by content, then --repin-ruled")
         elif pinned[label] != h:
             bad.append(
                 f"cite {label}: the line at its base is not the pinned content (moved or edited)"
@@ -492,9 +486,7 @@ def g_applied(t: Texts, vals: dict[str, str]) -> list[str]:
         return ["cannot read `16` or `14` in the working tree or at the merge-base"]
     got = split_block(t16)
     if got is None:
-        return [
-            "A-1: `16` does not carry exactly one 'Chart bar-band motion (E12-D10; ...)' block"
-        ]
+        return ["A-1: `16` does not carry exactly one 'Chart bar-band motion (E12-D10; ...)' block"]
     i, j, n, ls = got
     if ls[:i] + ls[j:] != m16.split("\n"):
         bad.append(
@@ -510,9 +502,7 @@ def g_applied(t: Texts, vals: dict[str, str]) -> list[str]:
     if BLOCK_LEAD not in body:
         bad.append("A-1: the block's Spec / Tokens line is not the tool's")
     rows = [
-        [c.strip() for c in ln.strip().strip("|").split("|")]
-        for ln in body
-        if ln.startswith("| ")
+        [c.strip() for c in ln.strip().strip("|").split("|")] for ln in body if ln.startswith("| ")
     ]
     want = [BLOCK_COLS, *block_rows(t.spec)]
     have = [r for r in rows if not all(set(c) <= {"-", ":"} for c in r)]
@@ -531,12 +521,8 @@ def g_applied(t: Texts, vals: dict[str, str]) -> list[str]:
     if ptr is None:
         bad.append("A-2: §15 carries no pointer line")
     else:
-        a = next(
-            (k for k, ln in enumerate(m14l) if ln.startswith("### SCR-030 ")), None
-        )
-        b = next(
-            (k for k, ln in enumerate(m14l) if ln.startswith("### SCR-031 ")), None
-        )
+        a = next((k for k, ln in enumerate(m14l) if ln.startswith("### SCR-030 ")), None)
+        b = next((k for k, ln in enumerate(m14l) if ln.startswith("### SCR-031 ")), None)
         if a is None or b is None:
             bad.append("A-2: the SCR-030 entry is not found at the merge-base")
         else:
@@ -604,15 +590,10 @@ def changed_paths() -> list[str] | None:
 
 def load() -> Texts:
     spec = (ROOT / SPEC_REL).read_text(encoding="utf-8")
-    pins = (
-        (ROOT / PINS_REL).read_text(encoding="utf-8")
-        if (ROOT / PINS_REL).exists()
-        else ""
-    )
+    pins = (ROOT / PINS_REL).read_text(encoding="utf-8") if (ROOT / PINS_REL).exists() else ""
     mb = (git("merge-base", "HEAD", "origin/main") or "").strip()
     tree = {
-        p: (ROOT / p).read_text(encoding="utf-8") if (ROOT / p).exists() else None
-        for p in A_PATHS
+        p: (ROOT / p).read_text(encoding="utf-8") if (ROOT / p).exists() else None for p in A_PATHS
     }
     base = {p: (git("show", f"{mb}:{p}") if mb else None) for p in A_PATHS}
     return Texts(spec, pins, changed_paths(), {}, tree, base)
@@ -622,9 +603,7 @@ def tree_sub(rel: str, old: str, new: str, count: int = 1) -> Callable[[Texts], 
     def f(t: Texts) -> Texts:
         text = t.tree.get(rel) or ""
         if text.count(old) != count:
-            raise SystemExit(
-                f"self-test: {rel} carries {old[:50]!r} {text.count(old)} times"
-            )
+            raise SystemExit(f"self-test: {rel} carries {old[:50]!r} {text.count(old)} times")
         return replace(t, tree={**t.tree, rel: text.replace(old, new)})
 
     return f
@@ -644,9 +623,7 @@ def drop_tree_line(rel: str, lead: str) -> Callable[[Texts], Texts]:
 def sub(old: str, new: str) -> Callable[[Texts], Texts]:
     def f(t: Texts) -> Texts:
         if t.spec.count(old) != 1:
-            raise SystemExit(
-                f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times"
-            )
+            raise SystemExit(f"self-test: the spec carries {old[:50]!r} {t.spec.count(old)} times")
         return replace(t, spec=t.spec.replace(old, new))
 
     return f
@@ -797,15 +774,11 @@ def selftest() -> tuple[bool, list[str]]:
     base = replace(load(), changed=list(OWN_PATHS))
     before = base.spec
     found = audit(base)
-    out = [f"self-test: baseline {len(found)} FAIL"] + [
-        f"  baseline {g}: {m}" for g, m in found
-    ]
+    out = [f"self-test: baseline {len(found)} FAIL"] + [f"  baseline {g}: {m}" for g, m in found]
     ok = not found
     for i, (gate, what, fn) in enumerate(MUTATIONS, 1):
         gates = sorted({g for g, _ in audit(fn(base))})
-        good = gates == sorted(
-            gate.split("+")
-        )  # a §2 edit also desyncs `16`'s rendered block
+        good = gates == sorted(gate.split("+"))  # a §2 edit also desyncs `16`'s rendered block
         ok &= good
         out.append(
             f"{'ok  ' if good else 'FAIL'} M-{i} {gate}: {what} -> {', '.join(gates) or 'none'}"
