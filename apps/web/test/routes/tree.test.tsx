@@ -90,6 +90,19 @@ describe("route tree x RBAC matrix", () => {
     );
   });
 
+  it.each(["manager", "viewer"] as const)(
+    "renders 404 and sends no ops read for a %s at R-350 /admin/health",
+    async (role) => {
+      const f = vi.fn();
+      vi.stubGlobal("fetch", f);
+      claimsFor(role);
+      renderAt("/admin/health");
+      const notFound = { name: "Page not found", level: 1 } as const;
+      await waitFor(() => expect(screen.getByRole("heading", notFound)).toBeInTheDocument());
+      expect(f.mock.calls.filter(([u]) => String(u).includes("/api/v1/admin/"))).toEqual([]);
+    },
+  );
+
   // The first admin render in this file loads the admin area's code, SCR-120 included: its own budget.
   it(
     "renders /admin for an owner with no step-up dialog and no step-up request (#2725)",
@@ -224,6 +237,7 @@ const bandLabel = (id: string): string => (id === "R-300" ? "Overview" : (ROUTE_
 const PAGE_H1: Readonly<Record<string, string>> = {
   "R-300": "Overview", // SCR-120 (E42-S01)
   "R-303": "Invite user",
+  "R-350": "System health", // SCR-143 (E42-S06)
   "R-354": "Security centre",
   "R-360": "R-360 — owned by E09",
 };
