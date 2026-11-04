@@ -13,6 +13,7 @@ import statistics
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,17 @@ HTTP = [route for route, spec in _ROUTES.items() if spec[3]]  # the routes that 
 _PER_REQUEST_HEADERS = frozenset({"x-correlation-id", "date"})
 _TIMING_FLOOR_S = 0.05
 _WRITE = pytest.mark.parametrize("route", WRITES)
+
+
+@dataclass
+class _Asked:
+    """What the calls on one rule left: the last answer, the time each took, the refusal records
+    written and the store reads made."""
+
+    answer: Any = None
+    times: list[float] = field(default_factory=list)
+    records: list[dict[str, Any]] = field(default_factory=list)
+    reads: list[Any] = field(default_factory=list)
 
 
 class _Trail:
@@ -169,12 +181,23 @@ async def test_owner_view_keeps_the_full_refusal_row_for_a_hidden_and_a_missing_
     assert [e.detail for e in own] == [{}, {}]
 
 
-def _owners_rule(world: World, account: uuid.UUID) -> tuple[str, str]:
-    """The Owner's rule on `account`, outside both Managers' scope: its id and its version id."""
-    body = {"ir": _ir(name="hidden", scope={"level": "account", "account_ids": [str(account)]})}
+def _owners_rule(world: World, account: uuid.UUID, name: str) -> tuple[str, str]:
+    """The Owner's rule `name` on `account`, outside both Managers' scope: its id and its version
+    id."""
+    body = {"ir": _ir(name=name, scope={"level": "account", "account_ids": [str(account)]})}
     made = world.client.post("/rules", json=body, headers=bearer("owner"))
     assert made.status_code == 201, made.text
     return str(made.json()["id"]), str(made.json()["version"]["id"])
+
+
+def _owners_cases(world: World, account: uuid.UUID) -> tuple[dict[str, str], str]:
+    """`_cases` over HTTP: the ids a refused write names by case, with the first rule's version
+    id, which every call names."""
+    hidden, vid = _owners_rule(world, account, "hidden")
+    gone, _ = _owners_rule(world, account, "gone")
+    removed = world.client.delete(f"/rules/{gone}", headers=bearer("owner"))
+    assert removed.status_code == 204, removed.text
+    return {"hidden": hidden, "missing": MISSING, "deleted": gone}, vid
 
 
 @pytest.mark.parametrize("route", HTTP)
@@ -185,39 +208,43 @@ def test_a_write_on_an_unseen_rule_and_on_a_missing_one_answer_identically_and_b
     world: World, route: str, actor: str, account: uuid.UUID
 ) -> None:
     """AC-3a (KV-I13's rules): equal status, body (byte for byte) and headers but the per-request
-    ones; each call is one read in the caller's scope that returns nothing, never a read by id, and
-    one `rule.scope_refused`, alike but for the id asked for; medians of five within 10x, or both
-    under 50 ms (a loose bound)."""
-    hidden, vid = _owners_rule(world, account)
+    ones, for a rule outside the caller's scope, a missing one and a deleted one; each call is one
+    read in the caller's scope that returns nothing, never a read by id, and one
+    `rule.scope_refused`, alike but for the id asked for; medians of five within 10x, or all under
+    50 ms (a loose bound)."""
+    ids, vid = _owners_cases(world, account)
     method, path, body, op = _ROUTES[route]
     headers = {**bearer(actor), "Idempotency-Key": "k"}
-    answers, records, reads, medians = [], [], [], []
-    for rid in (hidden, MISSING):
-        world.audit.records.clear()
-        world.rule_store.reads.clear()
-        times = []
-        for _ in range(5):
+    asked = {case: _Asked() for case in CASES}
+    for _ in range(5):  # a round asks each case in turn, so a burst of load reaches all three
+        for case, a in asked.items():
+            logged, looked = len(world.audit.records), len(world.rule_store.reads)
+            url = path.format(rid=ids[case], vid=vid)
             started = time.perf_counter()
-            url = path.format(rid=rid, vid=vid)
-            resp = world.client.request(method, url, json=body(vid), headers=headers)
-            times.append(time.perf_counter() - started)
-        assert (resp.status_code, resp.json()["code"]) == (404, "not_found"), resp.text
-        answers.append(resp)
-        medians.append(statistics.median(times))
-        mine = [r for r in world.audit.records if r["action"] == "rule.scope_refused"]
-        named = [r.pop("rule_id") for r in mine]
-        assert named == [rid] * 5, f"{rid}: one record per refused write"
-        records.append(mine)
-        reads.append(world.rule_store.reads[:])
-    assert answers[0].status_code == answers[1].status_code
-    assert answers[0].content == answers[1].content, "the body is an existence oracle"
-    heads = [{k: v for k, v in r.headers.items() if k not in _PER_REQUEST_HEADERS} for r in answers]
-    assert heads[0] == heads[1]
+            a.answer = world.client.request(method, url, json=body(vid), headers=headers)
+            a.times.append(time.perf_counter() - started)
+            fresh = world.audit.records[logged:]
+            a.records += [r for r in fresh if r["action"] == "rule.scope_refused"]
+            a.reads += world.rule_store.reads[looked:]
+    for case, a in asked.items():
+        assert (a.answer.status_code, a.answer.json()["code"]) == (404, "not_found"), a.answer.text
+        named = [r.pop("rule_id") for r in a.records]
+        assert named == [ids[case]] * 5, f"{case}: one record per refused write"
+    hidden, missing, deleted = asked.values()
+    assert hidden.answer.status_code == missing.answer.status_code == deleted.answer.status_code
+    contents = (hidden.answer.content, missing.answer.content, deleted.answer.content)
+    assert contents[0] == contents[1] == contents[2], "the body is an existence oracle"
+    heads = [
+        {k: v for k, v in a.answer.headers.items() if k not in _PER_REQUEST_HEADERS}
+        for a in asked.values()
+    ]
+    assert heads[0] == heads[1] == heads[2]
     who = str(user_id_of(actor))
     refusal = {"action": "rule.scope_refused", "op": op, "reason": "rule_not_visible", "actor": who}
-    assert records[0] == records[1] == [refusal] * 5
+    assert hidden.records == missing.records == deleted.records == [refusal] * 5
     scope = GrantRead(who, frozenset(str(a) for a in actor_grants(actor)))
-    assert reads[0] == reads[1] == [("scoped_page", scope, ())] * 5
+    assert hidden.reads == missing.reads == deleted.reads == [("scoped_page", scope, ())] * 5
+    medians = [statistics.median(a.times) for a in asked.values()]
     fast = max(medians) < _TIMING_FLOOR_S
     assert fast or max(medians) < 10 * min(medians), f"timing differs by over 10x: {medians}"
 
@@ -265,19 +292,20 @@ async def _unwritable(action: str, payload: dict[str, Any]) -> None:
 @_WRITE
 async def test_an_unrecorded_refusal_answers_a_hidden_and_a_missing_rule_alike(route: str) -> None:
     """AC-4 (chaos scenario 10, C-13.6): a refusal whose record cannot be written is
-    `RuleRefusalUnrecorded` with the same cause on both paths, and nothing changes. The hook fails
-    at once, so no bound is waited out."""
+    `RuleRefusalUnrecorded` with the same cause for a rule outside the caller's scope, a missing
+    one and a deleted one, and nothing changes. The hook fails at once, so no bound is waited
+    out."""
     store = InMemoryRuleStore()
     m = RulesManager(store, default_registry(), audit=_unwritable)
     actor, account = MANAGERS["manager_with_grant"]
     ids, vid = await _cases(m, account)
     before = copy.deepcopy(store._rows)
     causes = []
-    for case in ("hidden", "missing"):
+    for case in CASES:
         with pytest.raises(RuleRefusalUnrecorded) as lost:
             await WRITES[route](m, ids[case], vid, actor)
         causes.append(type(lost.value.__cause__))
-    assert causes == [AuditUnavailable, AuditUnavailable]
+    assert causes == [AuditUnavailable] * 3
     assert store._rows == before
 
 
@@ -285,9 +313,9 @@ async def test_an_unrecorded_refusal_answers_a_hidden_and_a_missing_rule_alike(r
 def test_an_unrecorded_refusal_answers_a_hidden_and_a_missing_rule_alike_over_http(
     world: World, monkeypatch: pytest.MonkeyPatch, route: str
 ) -> None:
-    """AC-4 over HTTP: the two answers are equal, status and body, and nothing changes; `PUT
-    /rules/{id}` names its `503 audit_unavailable`."""
-    hidden, vid = _owners_rule(world, FOREIGN)
+    """AC-4 over HTTP: the three answers are equal, status and body, each a `503
+    audit_unavailable` on every write route, and nothing changes."""
+    ids, vid = _owners_cases(world, FOREIGN)
     kept = copy.deepcopy(world.rule_store._rows)
     sink = world.audit.emit
 
@@ -299,13 +327,14 @@ def test_an_unrecorded_refusal_answers_a_hidden_and_a_missing_rule_alike_over_ht
     method, path, body, _ = _ROUTES[route]
     headers = {**bearer("manager_with_grant"), "Idempotency-Key": "k"}
     answers = [
-        world.client.request(method, path.format(rid=rid, vid=vid), json=body(vid), headers=headers)
-        for rid in (hidden, MISSING)
+        world.client.request(
+            method, path.format(rid=ids[case], vid=vid), json=body(vid), headers=headers
+        )
+        for case in CASES
     ]
-    assert answers[0].status_code == answers[1].status_code >= 500
-    assert answers[0].content == answers[1].content
-    if route == "update":
-        assert (answers[0].status_code, answers[0].json()["code"]) == (503, "audit_unavailable")
+    assert [a.status_code for a in answers] == [503] * 3
+    assert answers[0].json()["code"] == "audit_unavailable"
+    assert answers[0].content == answers[1].content == answers[2].content
     assert world.rule_store._rows == kept
 
 

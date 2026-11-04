@@ -120,6 +120,13 @@ class _Unscoped(Recording):
         return rows[:limit]
 
 
+class _Audits(list[tuple[str, dict[str, Any]]]):
+    """A manager's audit hook that keeps every record it is handed, in order."""
+
+    async def __call__(self, action: str, payload: dict[str, Any]) -> None:
+        self.append((action, payload))
+
+
 @dataclass(frozen=True)
 class V:
     """One version: the accounts its scope names, and one in a metric reference or a nested
@@ -245,31 +252,37 @@ async def test_reads_by_id_take_the_scoped_point_read() -> None:
     assert (missing.value.status, missing.value.message) == (404, "That version does not exist.")
 
 
-@pytest.mark.parametrize("faulty", [False, True], ids=["scoped", "unscoped"])
-async def test_a_write_on_a_rule_outside_the_scope_records_its_refusal_as_before(
-    faulty: bool,
-) -> None:
+async def test_a_write_on_a_rule_outside_the_scope_records_its_refusal_as_before() -> None:
     """A write reads the rule in the caller's scope as the plain reads do (#2626) and fails in full
-    with its refusal recorded first (C-2.9, 04 §7.3), even when a store that lost its predicate
-    returns the row: the re-check drops it and logs its id."""
-    audits: list[tuple[str, dict[str, Any]]] = []
-
-    async def audit(action: str, payload: dict[str, Any]) -> None:
-        audits.append((action, payload))
-
-    store = _Unscoped() if faulty else Recording()
+    with its refusal recorded first (C-2.9, 04 §7.3)."""
+    audits = _Audits()
+    store = Recording()
     store.seed(theirs := _rule(_rid(2), OTHER, (A,)))
-    m = RulesManager(store, default_registry(), audit=audit)
+    m = RulesManager(store, default_registry(), audit=audits)
+    with pytest.raises(RuleError) as refused:
+        await m.delete(theirs.id, _actor(MGR, A))
+    assert (refused.value.status, refused.value.code) == (404, "not_found")
+    refusal = {"rule_id": theirs.id, "op": "delete", "reason": "rule_not_visible", "actor": MGR}
+    assert audits == [("rule.scope_refused", refusal)]
+    point = {"mode": None, "level": None, "after": None, "limit": 1, "only": theirs.id}
+    assert store.reads == [("scoped_page", GrantRead(MGR, frozenset({A})), point)]
+    assert not store._rows[theirs.id].deleted
+
+
+async def test_a_write_on_a_row_a_store_returns_outside_the_scope_is_refused_and_recorded() -> None:
+    """The re-check (C-12.4): a store that lost its predicate returns the other user's row; it is
+    dropped and its id logged, and the write is refused and recorded as one on a rule outside the
+    scope is (#2626)."""
+    audits = _Audits()
+    store = _Unscoped()
+    store.seed(theirs := _rule(_rid(2), OTHER, (A,)))
+    m = RulesManager(store, default_registry(), audit=audits)
     with capture_logs() as logs, pytest.raises(RuleError) as refused:
         await m.delete(theirs.id, _actor(MGR, A))
     assert (refused.value.status, refused.value.code) == (404, "not_found")
     refusal = {"rule_id": theirs.id, "op": "delete", "reason": "rule_not_visible", "actor": MGR}
     assert audits == [("rule.scope_refused", refusal)]
-    if not faulty:  # `_Unscoped` logs no read
-        point = {"mode": None, "level": None, "after": None, "limit": 1, "only": theirs.id}
-        assert store.reads == [("scoped_page", GrantRead(MGR, frozenset({A})), point)]
-    found = [e["rule_ids"] for e in logs if e["event"] == "rules.scope_mismatch"]
-    assert found == ([[theirs.id]] if faulty else [])
+    assert [e["rule_ids"] for e in logs if e["event"] == "rules.scope_mismatch"] == [[theirs.id]]
     assert not store._rows[theirs.id].deleted
 
 
