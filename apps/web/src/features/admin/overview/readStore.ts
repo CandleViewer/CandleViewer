@@ -137,6 +137,12 @@ export interface AdminReadStore {
   readonly hold: (ids: readonly ReadId[]) => () => void;
   /** A tile's Retry: reads `ids` now, whatever their age; `origin` names the tile shown loading. */
   readonly retry: (ids: readonly ReadId[], origin: string) => void;
+  /**
+   * A page read outside this store answered `403` (E42-S02's users reads): the area is withdrawn as a refusal of
+   * one of its own reads withdraws it (BQ-8, S-5330-03): every read in flight is aborted, every answer dropped,
+   * nothing more is asked, and every entry keeps the refusal with its Ref. The first refusal stands.
+   */
+  readonly deny: (refId: string | undefined) => void;
   /** Tests only: back to the first state, with every read and timer stopped. */
   readonly reset: () => void;
 }
@@ -312,6 +318,18 @@ export function createAdminReadStore(deps: AdminReadDeps): AdminReadStore {
     },
     retry: (ids, origin) => {
       for (const id of ids) start(id, origin);
+    },
+    deny: (refId) => {
+      if (withdrawn()) return; // the first refusal stands
+      abortAll();
+      const refusal: ReadEntry<never> = Object.freeze({
+        phase: "denied",
+        refId,
+        answeredAt: deps.now(),
+        inFlight: false,
+      });
+      state = Object.fromEntries(READ_IDS.map((id) => [id, refusal])) as unknown as AdminReadState;
+      notify();
     },
     reset: () => {
       stopAll();
