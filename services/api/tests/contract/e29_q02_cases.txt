@@ -1,9 +1,10 @@
 # E29-Q02 (#1147): the OMS contract cases the conformance report expects, one test function per line
 # as `module::test | surface | plan cases`. The plan cases are E29-TC-nnn of
 # docs/qa/e29-oms-test-plan.md (E29-Q01 #844), the ones the test gives contract evidence for.
-# test_e29_q02_report.py keeps this list equal to the tests the listed modules define, and
-# tests/contract/e29_q02_report.py prints each one's outcome per run. A test added or removed
-# changes this list in the same commit; a later slice adds its modules' lines here.
+# test_e29_q02_report.py keeps this list equal to the tests the listed modules define;
+# tests/contract/e29_q02_report.py gives each one its row and _conformance_report.py prints its
+# outcome per run. A test added or removed changes this list in the same commit; a later slice
+# adds its modules' lines here.
 
 # C1: the exit routes, every status 22 declares (tests/contract/test_order_exits_contract.py)
 tests/contract/test_order_exits_contract.py::test_amend_order_each_declared_status_answers_as_22_declares_it | amendOrder: PATCH /orders/{orderId} | E29-TC-650, E29-TC-655, E29-TC-509, E29-TC-111
