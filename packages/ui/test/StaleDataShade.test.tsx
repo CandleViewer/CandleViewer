@@ -11,7 +11,7 @@ import {
 } from "../src/index.js";
 import * as stories from "../src/components/StaleDataShade.stories.js";
 import { seriousViolations } from "./axe.js";
-import { cascadedProperty } from "./cascade.js";
+import { cascadedProperty, specificity, topLevelRules } from "./cascade.js";
 import { shippedComponentsCss } from "./componentsCss.js";
 import { find, loadCss } from "./css-contract.js";
 import { mount } from "./theme/mount.js";
@@ -60,7 +60,9 @@ describe("StaleDataShade (CMP-078)", () => {
 
   it("owns no live region and never announces (the host says one sentence per episode)", async () => {
     for (const state of ["fresh", "stale", "escalated", "stale-server", "disconnected"] as const) {
-      const host = await mount(<Host id={`w-${state}`} state={state} ageMs={15_000} strip="Stale 15 s." />);
+      const host = await mount(
+        <Host id={`w-${state}`} state={state} ageMs={15_000} strip="Stale 15 s." />,
+      );
       expect(host.querySelector("[role=status], [role=alert], [aria-live]"), state).toBeNull();
     }
   });
@@ -78,6 +80,23 @@ describe("StaleDataShade (CMP-078)", () => {
     const real = await mount(<Host id="d" state="stale" ageMs={0} />);
     expect(real.querySelector(".cv-freshness-chip")).not.toBeNull();
   });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "a non-finite age (%s) is no age: no chip, no 'Last update 0 s ago', no 'last data 00:00' (C-2.12)",
+    async (bad) => {
+      for (const state of ["stale", "escalated"] as const) {
+        const host = await mount(<Host id={`n-${state}`} state={state} ageMs={bad} />);
+        expect(host.querySelector(".cv-freshness-chip"), state).toBeNull();
+        expect(host.querySelector(`#n-${state}`), state).toHaveTextContent(/^Not up to date$/);
+      }
+      const gone = await mount(<Host id="n-d" state="disconnected" ageMs={bad} />);
+      expect(gone.querySelector("#n-d")).toHaveTextContent(/^Disconnected$/);
+      const lastGood = await mount(<Host id="n-l" state="stale" lastGoodTs={bad} />);
+      expect(lastGood.querySelector("#n-l")).toHaveTextContent(/^Not up to date$/);
+      const since = await mount(<Host id="n-s" state="stale-server" sinceTs={bad} />);
+      expect(since.querySelector("#n-s")).toHaveTextContent(/^Stale \(server\)$/);
+    },
+  );
 
   it.each([
     [
@@ -148,9 +167,9 @@ describe("staledatashade.css contract", () => {
     );
     expect(scrim).toContain("var(--color-surface-overlay)");
     expect(scrim).toContain("var(--opacity-scrim)");
-    expect(find(css.normal, ".cv-stale-shade--disconnected .cv-stale-shade__dim", "pointer-events")).toContain(
-      "auto",
-    );
+    expect(
+      find(css.normal, ".cv-stale-shade--disconnected .cv-stale-shade__dim", "pointer-events"),
+    ).toContain("auto");
     expect(find(css.forced, ".cv-stale-shade__dim", "background")).toContain("transparent");
     expect(find(css.forced, ".cv-stale-shade__text", "border")).toContain("CanvasText");
   });
@@ -175,8 +194,98 @@ describe("staledatashade.css in the shipped components.css", () => {
     const row = host.querySelectorAll("tr")[1] as HTMLElement;
     const cell = row.querySelector("td") as HTMLElement;
     const sheet = shippedComponentsCss();
-    expect(cascadedProperty(sheet, row, "background")).toBe("var(--color-data-confidence-stale-surface)");
+    expect(cascadedProperty(sheet, row, "background")).toBe(
+      "var(--color-data-confidence-stale-surface)",
+    );
     expect(cascadedProperty(sheet, cell, "color")).toBe("var(--color-data-confidence-stale-text)");
+  });
+});
+
+// The precedence (staledatashade.css, `15` CMP-078 "As built"): the user's selected / current row state wins over the
+// stale tint, at rest and on hover; every other row keeps the tint over zebra and hover. `:hover` cannot match in
+// jsdom, so the sheet is rewritten with `[data-hover]` (the same specificity weight as the pseudo-class).
+describe("a stale row beside the selected and current row states (E29-S07 review)", () => {
+  const SELECTED = "var(--color-action-selected)";
+  const CURRENT = "var(--color-surface-selected)";
+  const TINT = "var(--color-data-confidence-stale-surface)";
+  const sheet = shippedComponentsCss().replace(/:hover/g, "[data-hover]");
+
+  async function row(
+    attrs: Record<string, string>,
+  ): Promise<{ row: HTMLElement; cell: HTMLElement }> {
+    const host = await mount(
+      <table>
+        <tbody>
+          <tr className={`cv-table__row ${staleDataRowClassName("stale") ?? ""}`} {...attrs}>
+            <td className="cv-table__cell">x</td>
+          </tr>
+        </tbody>
+      </table>,
+    );
+    const tr = host.querySelector("tr") as HTMLElement;
+    return { row: tr, cell: tr.querySelector("td") as HTMLElement };
+  }
+
+  it.each([
+    ["rest", {}],
+    ["hover", { "data-hover": "" }],
+  ] as const)(
+    "a selected stale row keeps the selected fill and its own text at %s",
+    async (_n, extra) => {
+      const { row: tr, cell } = await row({ "aria-selected": "true", ...extra });
+      expect(cascadedProperty(sheet, tr, "background")).toBe(SELECTED);
+      expect(cascadedProperty(sheet, cell, "color")).not.toBe(
+        "var(--color-data-confidence-stale-text)",
+      );
+    },
+  );
+
+  it.each([
+    ["rest", {}],
+    ["hover", { "data-hover": "" }],
+  ] as const)(
+    "a current stale row keeps the current fill and its own text at %s",
+    async (_n, extra) => {
+      const { row: tr, cell } = await row({ "aria-current": "true", ...extra });
+      expect(cascadedProperty(sheet, tr, "background")).toBe(CURRENT);
+      expect(cascadedProperty(sheet, cell, "color")).not.toBe(
+        "var(--color-data-confidence-stale-text)",
+      );
+    },
+  );
+
+  it("an unselected stale row keeps the tint over the zebra and hover fills", async () => {
+    for (const extra of [
+      {},
+      { "data-hover": "" },
+      { "aria-selected": "false" },
+      { "aria-current": "false" },
+    ]) {
+      const { row: tr, cell } = await row(extra);
+      expect(cascadedProperty(sheet, tr, "background"), JSON.stringify(extra)).toBe(TINT);
+      expect(cascadedProperty(sheet, cell, "color")).toBe(
+        "var(--color-data-confidence-stale-text)",
+      );
+    }
+  });
+
+  it("no tint rule matches a selected or current row, and the two hover rules stay at (0,3,0)", () => {
+    const hover = topLevelRules(sheet).filter((r) =>
+      /^\.cv-table__row\[aria-(selected|current)="true"\]\[data-hover\]$/.test(r.selector),
+    );
+    expect(hover.map((r) => r.selector).sort()).toEqual([
+      '.cv-table__row[aria-current="true"][data-hover]',
+      '.cv-table__row[aria-selected="true"][data-hover]',
+    ]);
+    for (const r of hover) expect(specificity(r.selector)).toEqual([0, 3, 0]);
+    const tints = topLevelRules(css.normal)
+      .map((r) => r.selector.replace(/\s+/g, ""))
+      .filter((sel) => sel.startsWith(".cv-table__row.cv-stale-row."));
+    expect(tints).toHaveLength(8); // four states: the background rule and the cell colour rule
+    for (const t of tints) {
+      expect(t).toContain(':not([aria-selected="true"]):not([aria-current="true"])');
+      expect(specificity(t)[1]).toBeGreaterThanOrEqual(5);
+    }
   });
 });
 
