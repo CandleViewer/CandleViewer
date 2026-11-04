@@ -414,6 +414,22 @@ async def test_a_record_naming_another_account_fails_the_read_and_keeps_nothing(
     assert r.counted() == {"ok": 0, "failed": 1}
 
 
+@virtual
+async def test_another_accounts_record_after_the_accounts_own_fails_the_whole_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r = rig(readings=[_reading()])
+    theirs = _record(exchange_order_id="b-order").model_copy(update={"account_id": ACCOUNT_B})
+
+    async def closed_pnl(account: AccountRef, start: int, end: int) -> list[ClosedPnl]:
+        return [_record(), theirs]  # the asked account's own record first
+
+    monkeypatch.setattr(r.venue, "closed_pnl", closed_pnl)
+    assert not await r.sync.read(ACCOUNT_A)
+    assert r.store.rows == {} and r.venue.position_reads == 0
+    assert r.counted() == {"ok": 0, "failed": 1}
+
+
 # --- the seed (the orchestrator's ruling, 2026-11-04 15:51Z) --------------------------------------
 
 
@@ -423,7 +439,7 @@ async def test_the_seed_stores_a_flat_only_from_a_venue_size_0_reading() -> None
     (the transcribed row with `size` changed), a missing one (SOLUSDT) and one dated past the skew
     store none."""
     ahead = _reading(symbol="XRPUSDT").model_copy(update={"updated_at": _us(T0) + 6_000_000})
-    readings = [_reading(), _reading(symbol="ETHUSDT", size="0.4"), ahead]
+    readings = [_reading(symbol="ETHUSDT", size="0.4"), _reading(), ahead]  # each skip goes on
     r = rig(readings=readings)
     r.sync.start([ACCOUNT_A])
     await asyncio.sleep(1)
@@ -437,13 +453,15 @@ async def test_the_seed_stores_a_flat_only_from_a_venue_size_0_reading() -> None
 
 @virtual
 async def test_a_key_holding_a_confirmed_flat_gets_no_second_seed_and_an_account_one_read() -> None:
-    r = rig(readings=[_reading()])
+    """A non-zero ETH, BTC holding its flat, then a fresh size 0 SOL: SOL alone is seeded."""
+    readings = [_reading(symbol="ETHUSDT", size="0.4"), _reading(), _reading(symbol="SOLUSDT")]
+    r = rig(readings=readings)
     r.store.flats[("BTCUSDT", 2)] = (T0 - timedelta(days=1),)
     r.sync.start([ACCOUNT_A])
     await asyncio.sleep(1)
     r.sync.reconnected(ACCOUNT_A)
     await asyncio.sleep(1)
-    assert r.store.snapshots == [] and r.venue.position_reads == 1
+    assert [s.symbol for s in r.store.snapshots] == ["SOLUSDT"] and r.venue.position_reads == 1
     await r.sync.stop()
 
 
@@ -461,10 +479,11 @@ async def test_a_seed_that_fails_is_tried_again_and_the_records_are_kept_meanwhi
 
 @virtual
 async def test_a_flat_the_venue_states_during_a_slow_positions_read_is_seeded() -> None:
-    """The skew runs from the clock read after the positions read: 8 s into a 10 s one is in it."""
-    r = rig(readings=[_reading().model_copy(update={"updated_at": _us(T0) + 8_000_000})], pause=10)
+    """The skew runs from the clock read after the positions read: 12 s into a 10 s one is within
+    its 5 s, past the clock itself."""
+    r = rig(readings=[_reading().model_copy(update={"updated_at": _us(T0) + 12_000_000})], pause=10)
     assert await r.sync.read(ACCOUNT_A)
-    assert [s.exchange_updated_ts for s in r.store.snapshots] == [T0 + timedelta(seconds=8)]
+    assert [s.exchange_updated_ts for s in r.store.snapshots] == [T0 + timedelta(seconds=12)]
 
 
 @virtual
@@ -489,6 +508,31 @@ async def test_a_seed_reading_of_another_account_fails_the_seed_and_the_records_
     assert set(r.store.rows) == {record_id(ACCOUNT_A, XID)}
     failed = [e["kind"] for e in logs if e["event"] == "closed_pnl_flat_seed_failed"]
     assert failed == ["_OtherAccount"] * 2
+
+
+@virtual
+async def test_another_accounts_reading_after_the_accounts_own_fails_the_whole_seed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r, walks = rig(records=[_record()]), list[str]()
+    theirs = _reading(symbol="ETHUSDT").model_copy(update={"account_id": ACCOUNT_B})
+    walk = r.store.walk_flats
+
+    async def positions(account: AccountRef) -> list[Position]:
+        return [_reading(), theirs]  # the asked account's own reading first
+
+    async def walk_flats(account_id: UUID, symbol: str, *rest: Any) -> tuple[datetime, ...]:
+        walks.append(symbol)
+        return await walk(account_id, symbol, *rest)
+
+    monkeypatch.setattr(r.venue, "positions", positions)
+    monkeypatch.setattr(r.store, "walk_flats", walk_flats)
+    with capture_logs() as logs:
+        assert await r.sync.read(ACCOUNT_A)
+    assert (r.store.snapshots, walks) == ([], [])
+    assert set(r.store.rows) == {record_id(ACCOUNT_A, XID)}
+    failed = [e["kind"] for e in logs if e["event"] == "closed_pnl_flat_seed_failed"]
+    assert failed == ["_OtherAccount"]
 
 
 # --- the merge (24 Sec.8.13: several records under one orderId) ---------------------------------
