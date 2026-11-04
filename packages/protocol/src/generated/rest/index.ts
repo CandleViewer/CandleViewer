@@ -6307,7 +6307,9 @@ export interface paths {
      *     `notifications.matrix` refuses a locked cell set false (`risk_channel_locked`), `422
      *     validation_failed` with nothing stored (E40-D02 CC-8); from the preferences slice of #1130
      *     on, the attempt is also audited `notifications.risk_channel_muted` at high severity, and
-     *     sound as a row's only channel is refused the same way (`sound_only_channel`).
+     *     sound as a row's only channel is refused the same way (`sound_only_channel`), as are a
+     *     symbol twice in `notifications.muted_symbols` (`duplicate_symbol`) and a
+     *     `notifications.quiet_hours.tz` the server's tz database lacks (`unknown_timezone`).
      *     Preferences are the caller's own (`scope: self`): no field names another user.
      *
      *     Self only: any query parameter is refused with `422` (SR-026).
@@ -10159,7 +10161,7 @@ export interface components {
       rule_actions?: components["schemas"]["NotificationChannelSet"];
       system_health?: components["schemas"]["NotificationChannelSet"];
     };
-    /** @description Quiet hours (E40-D02 CC-8, D-30): from `start` to `end`, local times in `tz`, an IANA zone (never an offset, so DST behaves); `end` before `start` crosses midnight. The server evaluates it in that zone; from the preferences slice of #1130 on, a zone its tz database lacks is `422`. */
+    /** @description Quiet hours (E40-D02 CC-8, D-30): from `start` to `end`, local times in `tz`, an IANA zone (never an offset, so DST behaves); `end` before `start` crosses midnight. The server evaluates it in that zone; from the preferences slice of #1130 on, a zone its tz database lacks is `422`, rule `unknown_timezone`. */
     NotificationQuietHours: {
       enabled: boolean;
       end: string;
@@ -12149,7 +12151,7 @@ export interface components {
         desktop_enabled?: boolean;
         email_enabled?: boolean;
         matrix?: components["schemas"]["NotificationMatrix"];
-        /** @description Symbols whose alerts are recorded but silenced (E40-D02 CC-8, D-33; `silenced` `muted_symbol` on the delivery). Each symbol at most once: a duplicate is refused with `422` from the preferences slice of #1130 on. */
+        /** @description Symbols whose alerts are recorded but silenced (E40-D02 CC-8, D-33; `silenced` `muted_symbol` on the delivery). Each symbol at most once: a duplicate is refused with `422`, rule `duplicate_symbol`, from the preferences slice of #1130 on. */
         muted_symbols?: components["schemas"]["MutedSymbol"][];
         /** @description Typed in place of the earlier free-form object (E40-D02 CC-8, D-30); null = none set. A stored value of the earlier shape is left out of the answer, as any row `Settings` no longer accepts. */
         quiet_hours?: components["schemas"]["NotificationQuietHours"] | null;

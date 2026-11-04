@@ -7,6 +7,8 @@ cannot become the only channel"."""
 from __future__ import annotations
 
 import json
+from importlib.util import find_spec
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,6 +20,20 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.writer import AuditUnavailable
 from tests.unit.api.test_user_settings_router import _MANAGER, _OWNER, _Env, _problem
 
+_REPO = Path(__file__).resolve().parents[5]
+_ROW_CATEGORY = {
+    "Alerts": "alerts",
+    "Rule actions": "rule_actions",
+    "Order rejects": "order_rejects",
+    "Risk events": "risk_events",
+    "System health": "system_health",
+    "Recorder": "recorder",
+}
+#: Legacy aliases resolve from the `tzdata` package (its own runtime-dependency PR, E40-S02).
+_NEEDS_TZDATA = pytest.mark.skipif(
+    find_spec("tzdata") is None,
+    reason="the tzdata package is not installed; the host zone data lacks the legacy links",
+)
 _QH = {"enabled": True, "start": "22:00", "end": "07:00", "tz": "Europe/Berlin"}
 _MUTE = {"symbol": "ETHUSDT", "muted_at": "2026-11-03T14:02:00Z"}
 
@@ -87,7 +103,10 @@ def test_judge_patch_refuses_a_symbol_muted_twice() -> None:
     assert _ok({"notifications": {"muted_symbols": two}}) == {"notifications.muted_symbols": two}
 
 
-@pytest.mark.parametrize("tz", ["Mars/Olympus", "Europe/Nowhere", "../etc", "UTC+1"])
+@pytest.mark.parametrize(
+    "tz",
+    ["Mars/Olympus", "Europe/Nowhere", "../etc", "UTC+1", "localtime", "Factory", "posixrules"],
+)
 def test_judge_patch_refuses_a_zone_the_tz_database_lacks(tz: str) -> None:
     assert _rules({"notifications": {"quiet_hours": {**_QH, "tz": tz}}}) == [
         ("notifications.quiet_hours.tz", "unknown_timezone")
@@ -96,6 +115,40 @@ def test_judge_patch_refuses_a_zone_the_tz_database_lacks(tz: str) -> None:
 
 def test_judge_patch_takes_a_known_zone() -> None:
     assert _ok({"notifications": {"quiet_hours": _QH}}) == {"notifications.quiet_hours": _QH}
+
+
+@pytest.mark.parametrize(
+    "tz",
+    [
+        *(
+            pytest.param(name, marks=_NEEDS_TZDATA)
+            for name in ("Asia/Calcutta", "US/Eastern", "Europe/Kiev")
+        ),
+        "Europe/Kyiv",
+    ],
+)
+def test_judge_patch_takes_a_legacy_alias_a_browser_reports(tz: str) -> None:
+    qh = {**_QH, "tz": tz}
+    assert _ok({"notifications": {"quiet_hours": qh}}) == {"notifications.quiet_hours": qh}
+
+
+def _design_defaults() -> dict[str, tuple[bool, bool, bool]]:
+    """E40-D02 §6.2's top-level rows as (toast, desktop, sound); "per alert" desktop reads off."""
+    doc = (_REPO / "docs" / "design" / "E40" / "E40-D02.md").read_text("utf-8")
+    table = doc.split("### 6.2 The matrix", 1)[1].split("\n### ", 1)[0]
+    rows: dict[str, tuple[bool, bool, bool]] = {}
+    for line in table.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 5 or cells[0].startswith(("·", "Row", "-")):
+            continue
+        category = _ROW_CATEGORY[cells[0].split(":")[0].split(" (")[0]]
+        on = [c.startswith(("on", "locked on")) for c in (cells[1], cells[3], cells[4])]
+        rows[category] = (on[0], on[1], on[2])
+    return rows
+
+
+def test_matrix_defaults_match_the_design_table_cell_by_cell() -> None:
+    assert dict(m.MATRIX_DEFAULTS) == _design_defaults()
 
 
 def test_patch_refused_keeps_every_locked_cell_past_the_error_bound() -> None:
