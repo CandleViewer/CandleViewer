@@ -1,0 +1,335 @@
+{
+  "pack": "E49-D03",
+  "version": "v2 (RULED, comment 6643525794)",
+  "base": "506c6e12f",
+  "header": "The machine-readable lexicon of E49-D03 (docs/design/E49/E49-D03.md section 3.1), the interface the E49-S06 banned-synonym lint reads (section 9); its schema is held by the pack's audit (G-SCHEMA). One approved UI term per concept, its scoped banned synonyms and a pointer to the concept's definition (04 section 17, 20 section 18) or its owner, never a second definition. A banned term matches as a whole word, case-insensitive, with an optional s / es / ed ending and a space or a hyphen between words, never inside a phrase the concept's optional unless list holds, and binds only inside its concept's scope. deck_hits lists every match in the merged copy decks at the base: [deck, key, term, verdict]; a verdict is 'other: <sense>' (out of the concept's scope) or 'P2' / 'P3' with its finding and A-row. A key is the JSON path of the string's parent, dot-joined (a JSONL row by its id). frozen lists the twelve read-aloud strings and their hooks (section 6.3). PROPOSED until the owner approves.",
+  "concepts": [
+    {
+      "id": "L-01",
+      "concept": "Trade group",
+      "approved": "trade group",
+      "banned": ["basket", "batch"],
+      "scope": "a string naming the group of child orders; Bybit's batch endpoint and feed batches are other senses",
+      "owner": "`20` :2002; `04` :2008"
+    },
+    {
+      "id": "L-02",
+      "concept": "Fan-out",
+      "approved": "fan-out",
+      "banned": ["fanout"],
+      "scope": "a user-visible string; state ids such as `fanout-all-or-none` are ids",
+      "owner": "`20` :2002; `04` :2008"
+    },
+    {
+      "id": "L-03",
+      "concept": "Native SL (the protective order)",
+      "approved": "exchange-side stop-loss",
+      "banned": ["exchange stop", "hard stop"],
+      "scope": "a string naming the protective order, never inside 'exchange stop-loss'; 'native SL' is the engineering term",
+      "owner": "`04` :2014; CONSTITUTION :128; `14` :3127",
+      "unless": ["exchange stop-loss"]
+    },
+    {
+      "id": "L-04",
+      "concept": "Demo trading",
+      "approved": "Demo",
+      "banned": ["testnet", "sandbox", "paper environment"],
+      "scope": "a string naming the environment in UI chrome; the adapter's `testnet` configuration is not UI",
+      "owner": "`04` :2024; CONSTITUTION :158; `05` :150"
+    },
+    {
+      "id": "L-05",
+      "concept": "the live environment",
+      "approved": "Live",
+      "banned": ["production", "real mode"],
+      "scope": "a string naming the environment",
+      "owner": "CONSTITUTION :158; `05` :150"
+    },
+    {
+      "id": "L-06",
+      "concept": "paper execution mode",
+      "approved": "paper",
+      "banned": [],
+      "scope": "never an environment (L-04)",
+      "owner": "D03E38 :97"
+    },
+    {
+      "id": "L-07",
+      "concept": "paper matcher figures",
+      "approved": "simulated",
+      "banned": [],
+      "scope": "the matcher's figures only",
+      "owner": "D03E38 :97"
+    },
+    {
+      "id": "L-08",
+      "concept": "Arm toggle",
+      "approved": "arm",
+      "banned": [],
+      "scope": "one-click trading and rules",
+      "owner": "`04` :2003; `05` :34; `E30-D06:strings.ticket.order.arm.announce.armed`"
+    },
+    {
+      "id": "L-09",
+      "concept": "disarming",
+      "approved": "disarm",
+      "banned": [],
+      "scope": "one-click trading and rules",
+      "owner": "`E09-D12:strings.lock.expired.body`"
+    },
+    {
+      "id": "L-10",
+      "concept": "Kill switch",
+      "approved": "kill switch",
+      "banned": ["emergency stop", "panic button"],
+      "scope": "a string naming the control: spaced as a noun, hyphenated attributively; CMP-211's name is an id",
+      "owner": "`04` :2012; D03E10 :79"
+    },
+    {
+      "id": "L-11",
+      "concept": "the freeze action",
+      "approved": "freeze",
+      "banned": [],
+      "scope": "the verb and its button; the risk lockout (SCR-073) is not a freeze",
+      "owner": "CONSTITUTION :799; `14` :1747"
+    },
+    {
+      "id": "L-12",
+      "concept": "the flatten action",
+      "approved": "flatten",
+      "banned": ["square off"],
+      "scope": "the action and its button",
+      "owner": "`11` :5107; `14` :2732"
+    },
+    {
+      "id": "L-13",
+      "concept": "the reduce-only flag",
+      "approved": "reduce-only",
+      "banned": ["close-only"],
+      "scope": "an order flag",
+      "owner": "`14` :1823"
+    },
+    {
+      "id": "L-14",
+      "concept": "estimated output",
+      "approved": "estimated",
+      "banned": ["detected", "confirmed", "signal"],
+      "scope": "a string that qualifies an estimated value (CMP-227's data contract); never 'Order confirmed', never a rule's signal id",
+      "owner": "`15` :2960; `24` :1135"
+    },
+    {
+      "id": "L-15",
+      "concept": "recorded history",
+      "approved": "recorded history",
+      "banned": [],
+      "scope": "the stored data, never its playback",
+      "owner": "`14` :3104; `11` :4093"
+    },
+    {
+      "id": "L-16",
+      "concept": "replay session",
+      "approved": "replay",
+      "banned": ["playback"],
+      "scope": "the session, never the stored data",
+      "owner": "`11` :4253"
+    },
+    {
+      "id": "L-17",
+      "concept": "workspace",
+      "approved": "workspace",
+      "banned": [],
+      "scope": "the saved whole, never its arrangement",
+      "owner": "`11` :2758"
+    },
+    {
+      "id": "L-18",
+      "concept": "layout",
+      "approved": "layout",
+      "banned": [],
+      "scope": "the arrangement, never the saved whole",
+      "owner": "`11` :2738"
+    },
+    {
+      "id": "L-19",
+      "concept": "rule",
+      "approved": "rule",
+      "banned": [],
+      "scope": "never a notification",
+      "owner": "`11` :3615"
+    },
+    {
+      "id": "L-20",
+      "concept": "alert",
+      "approved": "alert",
+      "banned": ["alarm"],
+      "scope": "never the definition that acts",
+      "owner": "`11` :4432"
+    },
+    {
+      "id": "L-21",
+      "concept": "Owner role",
+      "approved": "Owner",
+      "banned": ["administrator", "superuser"],
+      "scope": "a role's display name; `24`'s lower-case values are machine ids",
+      "owner": "CONSTITUTION :790; `24` :5171"
+    },
+    {
+      "id": "L-22",
+      "concept": "Manager role",
+      "approved": "Manager",
+      "banned": [],
+      "scope": "a role's display name; `24`'s lower-case values are machine ids",
+      "owner": "CONSTITUTION :790–791; `24` :5171"
+    },
+    {
+      "id": "L-23",
+      "concept": "Viewer role",
+      "approved": "Viewer",
+      "banned": ["read-only user"],
+      "scope": "a role's display name; `24`'s lower-case values are machine ids",
+      "owner": "CONSTITUTION :792; `24` :5171"
+    },
+    {
+      "id": "L-24",
+      "concept": "iceberg algo",
+      "approved": "iceberg order",
+      "banned": [],
+      "scope": "the algo; the detector's output is 'iceberg (estimated)' (L-14)",
+      "owner": "`E33-D06:strings.start.iceberg`"
+    }
+  ],
+  "deck_hits": [
+    ["E08-D13", "strings.d08.W-3", "signal", "P2: F-4, A-3"],
+    ["E08-D13", "strings.e17d2.B.2", "confirmed", "other: a server or exchange confirmation"],
+    ["E08-D13", "strings.e17d2.B.11", "confirmed", "other: a server or exchange confirmation"],
+    ["E08-D13", "strings.e17d2.C.14", "exchange stop", "P3: F-2, A-1"],
+    ["E08-D13", "strings.e17d2.R.10", "confirmed", "other: a server or exchange confirmation"],
+    ["E09-D12", "strings.warn.body", "detected", "other: the idle timer"],
+    ["E14-D12", "entries.d06:52", "exchange stop", "P3: F-2, A-1"],
+    ["E16-D06", "script.SR-01", "batch", "other: a script note, not a UI string"],
+    ["E16-D06", "script.SR-02", "batch", "other: a script note, not a UI string"],
+    ["E16-D06", "script.SR-03", "batch", "other: a script note, not a UI string"],
+    ["E16-D06", "script.SR-05", "batch", "other: a script note, not a UI string"],
+    ["E16-D06", "script.SR-06", "batch", "other: a script note, not a UI string"],
+    ["E24-D05", "derivatives.liq.completeness", "batch", "other: Bybit's feed batches"],
+    [
+      "E29-D06",
+      "strings.acct.reconciling.line",
+      "confirmed",
+      "other: a server or exchange confirmation"
+    ],
+    [
+      "E29-D06",
+      "strings.acct.desync.line",
+      "confirmed",
+      "other: a server or exchange confirmation"
+    ],
+    [
+      "E29-D06",
+      "strings.acct.stale.details",
+      "confirmed",
+      "other: a server or exchange confirmation"
+    ],
+    [
+      "E29-D06",
+      "strings.acct.reassure.false",
+      "confirmed",
+      "other: a server or exchange confirmation"
+    ],
+    ["E29-D06", "strings.corr.tooltip", "detected", "other: when a correction was found"],
+    ["E29-D06", "strings.corr.description", "detected", "other: when a correction was found"],
+    [
+      "E29-D06",
+      "strings.blotter.ui.amend.confirmed",
+      "confirmed",
+      "other: a server or exchange confirmation"
+    ],
+    [
+      "E29-D06",
+      "strings.blotter.ui.offline_notice",
+      "confirmed",
+      "other: a server or exchange confirmation"
+    ],
+    [
+      "E29-D06",
+      "strings.sl.ws_down.acked",
+      "confirmed",
+      "other: a server or exchange confirmation"
+    ],
+    ["E30-D06", "strings.ticket.order.sl.note", "exchange stop", "P3: F-2, A-1"],
+    ["E30-D06", "strings.ticket.order.stop_pending.flattened", "exchange stop", "P3: F-2, A-1"],
+    ["E30-D06", "strings.ticket.order.stop_pending.pending", "exchange stop", "P3: F-2, A-1"],
+    ["E32-D07", "entries.d02:ladder.totals", "batch", "other: Bybit's batch request"],
+    [
+      "E32-D07",
+      "entries.d02:e32.offline.age",
+      "confirmed",
+      "other: a server or exchange confirmation"
+    ],
+    [
+      "E32-D07",
+      "entries.d03:e32.offline.age",
+      "confirmed",
+      "other: a server or exchange confirmation"
+    ],
+    ["E32-D07", "entries.d03:sl.note", "exchange stop", "P3: F-2, A-1"],
+    ["E32-D07", "entries.d04:ladder.risk.line", "batch", "other: Bybit's batch request"],
+    [
+      "E32-D07",
+      "entries.d04:e32.offline.age",
+      "confirmed",
+      "other: a server or exchange confirmation"
+    ],
+    [
+      "E32-D07",
+      "entries.d05:sltp.pending.held.read",
+      "confirmed",
+      "other: a server or exchange confirmation"
+    ],
+    [
+      "E32-D07",
+      "entries.d05:sl.ws_down.acked",
+      "confirmed",
+      "other: a server or exchange confirmation"
+    ],
+    [
+      "E32-D07",
+      "entries.d05:e32.offline.age",
+      "confirmed",
+      "other: a server or exchange confirmation"
+    ],
+    [
+      "E32-D07",
+      "entries.d05:trail.structure",
+      "confirmed",
+      "other: a swing low, not a CMP-227 output"
+    ],
+    ["E33-D06", "strings.stop.at_bybit.2", "confirmed", "other: a server or exchange confirmation"],
+    ["E34-D05", "e34.shared.group.protected", "exchange stop", "P3: F-2, A-1"],
+    ["E34-D05", "e34.shared.stop.pending", "confirmed", "other: a server or exchange confirmation"],
+    ["E34-D05", "e34.shared.unwind.incomplete", "exchange stop", "P3: F-2, A-1"],
+    ["E34-D05", "e34.cell.ls11", "confirmed", "other: a server or exchange confirmation"],
+    [
+      "E35-D05",
+      "strings.rules.reason.block.confirmation_expired",
+      "confirmed",
+      "other: a person's confirmation"
+    ],
+    ["E36-D05", "strings.rules.templates.title.t9", "detected", "P2: F-3, A-2"],
+    ["E36-D05", "strings.rules.io.reason.too_large", "batch", "other: an API request batch"]
+  ],
+  "frozen": [
+    ["RA-01", "E30-D06:strings.ticket.confirm.env.live"],
+    ["RA-02", "E30-D06:strings.ticket.confirm.env.demo"],
+    ["RA-03", "frozen.scr072.freeze_body"],
+    ["RA-04", "frozen.scr010.flatten_all"],
+    ["RA-05", "E38-D06:strings.env.confirm_live.field"],
+    ["RA-06", "E08-D13:strings.e17d2.B.2"],
+    ["RA-07", "E08-D13:strings.e17d2.B.3"],
+    ["RA-08", "E27-D06:e27.scr129.confirm.disable_leave"],
+    ["RA-09", "E30-D06:strings.ticket.defaults.destructive.hold"],
+    ["RA-10", "frozen.scr153.exchange_down"],
+    ["RA-11", "E30-D06:strings.ticket.ratelimit.held"],
+    ["RA-12", "E30-D06:strings.ticket.order.arm.live_dialog"]
+  ]
+}
