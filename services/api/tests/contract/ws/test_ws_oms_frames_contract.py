@@ -108,7 +108,9 @@ def open_states() -> frozenset[str]:
     read from its text as `_harness.wire_error_codes` reads Sec.10.2: what stays in the live view,
     independent of the store's `OPEN_STATES`, which the producer's rule reads."""
     text = h.PROTOCOL_DOC.read_text(encoding="utf-8")
-    listed = re.search(r"open orders, those in (.+?) \(never", text[text.index("#### 6.2.3 ") :])
+    start = text.index("#### 6.2.3 ")
+    section = text[start : text.index("### 6.3", start)]
+    listed = re.search(r"open orders, those in (.+?) \(never", section)
     assert listed is not None, "23 Sec.6.2.3 no longer lists the open order states as read here"
     return frozenset(re.findall(r"`(\w+)`", listed[1]))
 
@@ -448,11 +450,13 @@ def test_a_members_values_are_the_schemas_and_the_producers_both_ways(member: st
     assert declared - emitted == UNSENT.get(member, set()), f"{member}: declared, never sent"
 
 
-#: Members a schema declares that no item builder sends, by family, with why (23 Sec.6.2.3).
+#: Members a schema declares that no item builder sends, by family, with why (23 Sec.6.2.3 states
+#: the omissions for orders and positions; the executions one is the row's, below).
 OMITTED: Final = {
     "orders": ({"trade_group_id", "algo_kind"}, "the order row holds neither"),
     "executions": ({"trade_group_id"},
-                   "the fill row has no group (23 states the omission for the others only)"),
+                   "the fill row holds no group id, only its leg's (`trade_group_leg_id`);"
+                   " 23 Sec.6.2.3 states this omission for orders and positions only"),
     "positions": ({"margin_mode", "realised_pnl_session", "r_multiple", "native_stop_present",
                    "trade_group_id"}, "the position row cannot tell them"),
 }  # fmt: skip
