@@ -3,12 +3,14 @@
 import type { JSX, ReactNode } from "react";
 import { useOiFeed, type OiFeedHookOptions } from "../useOiFeed";
 import { INITIAL_OI_SNAPSHOT, useOiSnapshot } from "../oiFeed";
-import { OiPane } from "./OiPane";
+import { OiPane, type OiPaneProps } from "./OiPane";
 import type { OiDelta } from "./OiReadout";
 
 export interface ConnectedOiPaneProps extends OiFeedHookOptions {
   readonly symbol: string;
   readonly delta?: OiDelta | undefined;
+  readonly bars?: OiPaneProps["bars"];
+  readonly instrumentBaseCoin?: OiPaneProps["instrumentBaseCoin"];
   readonly plot?: ReactNode;
   readonly visible?: { readonly fromMs: number; readonly toMs: number } | undefined;
 }
@@ -16,6 +18,8 @@ export interface ConnectedOiPaneProps extends OiFeedHookOptions {
 export function ConnectedOiPane({
   symbol,
   delta,
+  bars,
+  instrumentBaseCoin,
   plot,
   visible,
   ...feedOptions
@@ -28,6 +32,8 @@ export function ConnectedOiPane({
       snapshot={feed === null ? INITIAL_OI_SNAPSHOT : snapshot}
       onRetry={() => feed?.retry()}
       delta={delta}
+      bars={bars}
+      instrumentBaseCoin={instrumentBaseCoin}
       plot={plot}
       visible={visible}
     />

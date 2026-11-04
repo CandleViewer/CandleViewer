@@ -6,6 +6,7 @@ import { FreshnessMarker, KeyValueRow } from "@candleviewer/ui";
 import type { OiRow } from "../series";
 import type { StaleTier } from "../freshness";
 import * as copy from "./copy";
+import { quadrantReading, type QuadrantWire } from "../quadrant/quadrant";
 import { compact, groupedDecimal, signedDecimal } from "./format";
 
 export interface OiDelta {
@@ -13,6 +14,8 @@ export interface OiDelta {
   readonly value: string | null;
   /** The unit word, from the served descriptor; never hard-coded here. */
   readonly unit: string;
+  /** E24-S02: the served quadrant for the bar; `null` = unclassified, absent = not given. */
+  readonly quadrant?: QuadrantWire | null;
 }
 
 export interface OiReadoutProps {
@@ -20,6 +23,8 @@ export interface OiReadoutProps {
   readonly baseUnit: string;
   readonly quoteUnit: string;
   readonly delta?: OiDelta | undefined;
+  /** E24-S02: quadrant colouring on (D03 S54-13: the crosshair reads the quadrant in words). */
+  readonly showQuadrant?: boolean;
   readonly stale: {
     readonly tier: StaleTier;
     readonly ageMs: number;
@@ -59,6 +64,7 @@ export function OiReadout({
   baseUnit,
   quoteUnit,
   delta,
+  showQuadrant = false,
   stale,
 }: OiReadoutProps): JSX.Element {
   const staleChip =
@@ -92,6 +98,12 @@ export function OiReadout({
             )
           }
           missingLabel="no change for this bar"
+        />
+      )}
+      {delta === undefined || !showQuadrant || delta.quadrant === undefined ? null : (
+        <KeyValueRow
+          label={copy.QUADRANT_LABEL}
+          value={delta.quadrant === null ? copy.UNCLASSIFIED : quadrantReading(delta.quadrant)}
         />
       )}
     </dl>

@@ -56,3 +56,20 @@ export const CLIPPED = "(clipped)";
 export const showingNewest = (shown: number, total: number): string =>
   `Showing the newest ${String(shown)} of ${total.toLocaleString("en-US")}.`;
 export const NO_ROWS = "No open-interest points in view.";
+
+// E24-S02 (#777). D02 §15 / D03 §4, §6: the key row, the toggles and the table's new columns.
+export const MODE_SWITCH = "Open interest, delta per bar";
+/** D03 S54-14. */
+export const QUADRANTS_OFF = "Quadrants off";
+export const KEY_PREFIX = "price · OI:";
+/** D03 S54-16 / BQ-3: only where the OI feed holds no point for the bar. */
+export const UNCLASSIFIED_NO_SAMPLE = "unclassified (no OI sample)";
+/** BQ-3: every other null, until #723 serves a reason beside it (flat bar vs no sample). */
+export const UNCLASSIFIED = "unclassified";
+export const keyCount = (words: string, n: number): string => `${words} ${String(n)}`;
+export const unclassifiedCount = (n: number, noSample: boolean): string =>
+  `${String(n)} ${noSample ? UNCLASSIFIED_NO_SAMPLE : UNCLASSIFIED}`;
+export const COL_DELTA = (unit: string | null): string =>
+  unit === null ? "Δ per bar" : `Δ per bar (${unit})`;
+export const COL_QUADRANT = "Quadrant";
+export const QUADRANT_LABEL = "Price · OI";
