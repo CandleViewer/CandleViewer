@@ -376,6 +376,8 @@ jobs:
               - 'tools/contracts/**'
               - 'tools/errorcodes/**'
               - 'tools/ga_defects/**'
+              # The GA pack health check (E49-Q01); governance runs its tests in scripts/tests.
+              - 'tools/qa/**'
               - 'tools/triage/**'
               # Python under docs/ (the design-audit tools) is scanned too; #4325 merged a design
               # tool green without the scan (#4348). It sat in `py` until the py lane, which runs

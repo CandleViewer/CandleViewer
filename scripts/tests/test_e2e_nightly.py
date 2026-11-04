@@ -173,7 +173,9 @@ def test_e2e_nightly_reads_contents_only_and_one_job_can_open_issues() -> None:
     doc = _load(NIGHTLY)
     assert doc["permissions"] == {"contents": "read"}
     held = {name: job.get("permissions") for name, job in doc["jobs"].items()}
-    assert held == {"e2e": None, "report": {"issues": "write"}}
+    # E49-Q01 (#1335): ga-pack-health reads this run's and past runs' artifacts, and writes none.
+    health = {"contents": "read", "actions": "read"}
+    assert held == {"e2e": None, "report": {"issues": "write"}, "ga-pack-health": health}
 
 
 def test_e2e_nightly_report_runs_only_the_gh_cli_for_a_red_scheduled_run() -> None:
@@ -375,4 +377,4 @@ def test_e2e_nightly_adds_no_check_a_required_context_names() -> None:
     lane = _load(LANE_FILE)["jobs"]
     checks = {f"{jobs['e2e']['name']} / {job.get('name', name)}" for name, job in lane.items()}
     checks |= {job["name"] for job in jobs.values()}
-    assert len(checks) == len(lane) + 2 and not checks & required
+    assert len(checks) == len(lane) + 3 and not checks & required

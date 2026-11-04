@@ -93,7 +93,8 @@ scheduled (.github/workflows/governance*.yml, cold-cache.yml, a11y-, e2e- and st
 │                           scheduled run is reported as e2e-nightly's is (A11Y-G0xx; below)
 ├─ e2e-nightly            → _job-e2e.yml on main, e2e-electron included, non-required; a red
 │                           scheduled run comments on its tracker issue or opens one
-│                           (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001; below)
+│                           (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001; below); the read-only
+│                           ga-pack-health job checks the GA pack (CI-E2E-006/007)
 └─ storybook-nightly      → _job-a11y.yml's storybook job alone on main, non-required; a red
                             scheduled run is reported as e2e-nightly's is (CI-A11Y-002..004; below)
 
@@ -719,6 +720,27 @@ ran.
   never go over WS matched no specs — either the tag was renamed/removed by
   accident or the harness itself regressed. This must never silently pass;
   restore the tag or the specs it should match.
+- **CI-E2E-006** (GA pack over its wall-clock budget, E49-Q01): e2e-nightly's
+  `e2e-nightly-ga-pack-health` job measured more than 2,700 s from the first
+  shard job's `started_at` to the last shard job's `completed_at` (the pack's
+  45 minutes; runner queueing before the first shard starts is not counted).
+  The job summary names the time and the shard count; on Mondays it also shows
+  a recomputed shard map (greedy, longest spec first) and its predicted longest
+  shard. Rebalance the shards or trim the pack in a PR; never raise a job's
+  `timeout-minutes` to fit. Not enforcing until S6 (the nightly's
+  ga-pack-health job is continue-on-error).
+- **CI-E2E-007** (unowned or overdue Playwright quarantine, E49-Q01): a test
+  whose title carries `@flaky` has no `ticket: <KEY>`, `owner: <login>` or
+  `quarantined: YYYY-MM-DD` marker on its line or the line above, or was
+  quarantined more than 10 working days ago (C-9.3). Add the missing marker, or
+  fix or delete the test (§9). The same job's flake report lists, per test over
+  this run and the last ten scheduled nights' reduced shard reports (kept 14
+  days), the passes on retry and the failures of the `--retries=1` runs. The
+  ticket, date and age parts are already enforced by the existing C-9.3 checks
+  (`test:toolchain`, `gate:flaky-quarantine`); the owner check and the nightly
+  job are not enforcing until S6 (the nightly's ga-pack-health job is
+  continue-on-error). Keep a `@flaky` test's title on one line: the checks read
+  the tag from the line that opens the test.
 - **CI-A11Y-001** (new serious/critical axe-core violation): open the axe
   report artifact, find the new violation's rule id and selector, fix the
   markup (see `docs/plan/05-accessibility-standard.md`) — never suppress a

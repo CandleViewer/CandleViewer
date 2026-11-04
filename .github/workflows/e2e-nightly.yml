@@ -14,7 +14,8 @@ name: e2e-nightly
 # nightlies do. Only the `report` job can write; it runs no checkout and no action.
 # No concurrency group (#3449), as in most nightlies: no run waits in a pending slot that a later
 # one can take. A group shared with manual runs let two dispatches drop the scheduled run.
-# Cost: seven jobs of about 1 to 1.5 minutes each (pr.yml medians), capped by CV_CI_TIMEOUT_MINUTES.
+# Cost: seven jobs of about 1 to 1.5 minutes each (pr.yml medians), plus the short read-only
+# ga-pack-health job (E49-Q01), each capped by CV_CI_TIMEOUT_MINUTES.
 
 on:
   schedule:
@@ -72,3 +73,59 @@ jobs:
               "it (docs/ci-runbook.md section 2)."
             exit 1
           fi
+
+  # E49-Q01 (#1335 BQ-4, BQ-5): the GA pack's health, read-only (the `report` job stays the only
+  # writer). It reads this run's jobs and shard reports and the last ten scheduled nights' reports
+  # through the Actions API, then runs tools/qa/ga_pack_health.py, which writes the job summary:
+  # CI-E2E-006 (wall-clock, first shard start to last shard end, over 2,700 s) and CI-E2E-007
+  # (an unowned or overdue `@flaky` Playwright test), the flake report and, on Mondays, the shard
+  # map (never committed). No job here gets the pack's 45 minutes as a timeout.
+  ga-pack-health:
+    name: e2e-nightly-ga-pack-health
+    needs: e2e
+    if: ${{ always() }}
+    # Not enforcing until S6 accepts the pack as the GA reference; S6 flips it to enforcing in its
+    # own PR, and from then a red ga-pack-health is a red nightly (C-9.2).
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 20) }}
+    permissions:
+      contents: read
+      actions: read # this run's jobs and artifacts, and past nightly runs' artifacts
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches with git
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Fetch this run's jobs and shard reports, and the last ten scheduled nights' reports
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ga="$RUNNER_TEMP/ga"
+          mkdir -p "$ga/current" "$ga/history"
+          gh api --paginate "repos/$GH_REPO/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
+            --jq '.jobs[]' > "$ga/jobs.jsonl"
+          gh run download "$GITHUB_RUN_ID" --pattern 'e2e-*-report*' --dir "$ga/current" \
+            || echo "::warning::no shard report in this run"
+          ids=$(gh run list --workflow e2e-nightly.yml --event schedule --status completed \
+            --limit 11 --json databaseId --jq '.[].databaseId')
+          n=0
+          for id in $ids; do
+            [[ "$id" =~ ^[0-9]+$ && "$id" != "$GITHUB_RUN_ID" ]] || continue
+            [ "$n" -lt 10 ] || break
+            n=$((n + 1))
+            gh run download "$id" --pattern 'e2e-*-report*' --dir "$ga/history/$id" \
+              || echo "run $id has no shard report (older than the upload, or expired)"
+          done
+
+      - name: GA pack health (CI-E2E-006, CI-E2E-007, flake report, Monday shard map)
+        run: |
+          ga="$RUNNER_TEMP/ga"
+          python -m tools.qa.ga_pack_health --jobs "$ga/jobs.jsonl" --current "$ga/current" \
+            --history "$ga/history" --today "$(date -u +%F)"
