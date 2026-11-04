@@ -5799,6 +5799,12 @@ export interface paths {
      *     `field`, and nothing is stored. A save does not store `description`, `editor`, `tags` or
      *     `graph_layout` yet (`RuleInput`).
      *
+     *     **A rule's account list (E35, #5691).** `ir.scope.account_ids` holds at most 100
+     *     accounts, each once (`RuleIrScope`): a list past the bound, or one that names an account
+     *     twice, is refused `422 rule_ir_invalid` (`path` `/scope/account_ids`) before the scope
+     *     check, for every role, with no audit record, and nothing is stored. A list within the
+     *     bound then meets the scope check, each listed account against the saver's grants.
+     *
      *     **Limits on what a save holds (E35, #4834).** A `note` is at most 280 characters, counted
      *     in Unicode code points: a longer one is refused whole, never shortened, with
      *     `422 rule_ir_invalid`, `errors[].field` `note` and `errors[].rule` `max_length` (example
@@ -5913,7 +5919,7 @@ export interface paths {
     /**
      * Compile an editor model into canonical rule IR
      * @description Accepts either editor's native model and returns canonical IR plus its `ir_hash`. Compiling the form model and the graph model of the same rule MUST produce an identical hash; that equality is the round-trip guarantee asserted by the contract tests in 24-internal-schemas.md section 11.4.
-     *     Limited as `validateRule` is: one token bucket per user, shared by both, past which a call is `429 rate_limited` with `Retry-After` and writes no audit record. A model that would compile to a rule over the bound of 1,000 condition nodes (`RuleIr`), for either editor, is refused `422 rule_ir_invalid` (example `conditionNodes`).
+     *     Limited as `validateRule` is: one token bucket per user, shared by both, past which a call is `429 rate_limited` with `Retry-After` and writes no audit record. A model that would compile to a rule over the bound of 1,000 condition nodes (`RuleIr`), for either editor, is refused `422 rule_ir_invalid` (example `conditionNodes`). A model whose scope is past the account-list bound of `RuleIrScope`, or names an account twice, is refused `422 rule_ir_invalid` (`errors[].field` `scope.account_ids`).
      */
     post: operations["compileRule"];
     delete?: never;
@@ -6276,7 +6282,9 @@ export interface paths {
      *     so a refused caller takes no token and a throttled call's body is never read.
      *     A rule over the bound of 1,000 condition nodes (`RuleIr`) is not a refusal here: it is
      *     `200` with `valid: false` and one error, code `schema_error`, class `syntax`, path
-     *     `conditions`, found before the schema and semantic checks.
+     *     `conditions`, found before the schema and semantic checks. A scope past the account-list
+     *     bound of `RuleIrScope`, or naming an account twice, is `200` with `valid: false` and one
+     *     error, code `schema_error`, class `syntax`, path `scope.account_ids`.
      */
     post: operations["validateRule"];
     delete?: never;
@@ -11742,6 +11750,18 @@ export interface components {
      *     outside `ir` (`RuleInput`), and the version it stores echoes exactly them; inside `ir`,
      *     `RuleMetricRef.account_id` may also name one (`RuleIr`). An empty list means every
      *     account the rule's owner holds a grant on when the rule fires.
+     *
+     *     A scope lists at most 100 accounts, each once: a longer list, or one that names an
+     *     account twice, is refused. Two entries are one account when they read as the same UUID,
+     *     whatever their spelling (`uniqueItems` compares text, so the server's check is the
+     *     stricter one). A save (`createRule`, `updateRule`) answers `422 rule_ir_invalid` with
+     *     `path` `/scope/account_ids`, `compileRule` answers `422 rule_ir_invalid` with
+     *     `errors[].field` `scope.account_ids`, and `validateRule` answers `200` with `valid: false`
+     *     and a `schema_error` at `scope.account_ids`. The refusal is decided on the list alone,
+     *     before the scope check and for every role, so it names no account and writes no audit
+     *     record. A scope names at most 3 environments, each once, and a longer list or a repeat
+     *     there is refused in the same way, before the scope check, at `/scope/environments`
+     *     (`scope.environments` on `validateRule` and `compileRule`).
      */
     RuleIrScope: {
       /** @default [] */
