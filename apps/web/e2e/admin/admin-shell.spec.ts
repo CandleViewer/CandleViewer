@@ -103,6 +103,7 @@ async function challengedInvite(page: Page): Promise<{ creates: string[]; stepUp
       ? r.fulfill(
           json(
             {
+              // e2e-egress: an RFC 7807 problem type id, never fetched
               type: "https://candleviewer.local/errors/step_up_required",
               title: "A dangerous action needs a live step-up elevation for its action class",
               status: 403,

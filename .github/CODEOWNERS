@@ -134,6 +134,7 @@
 /apps/desktop/src/preload/              @CandleViewer/security @CandleViewer/frontend @basiltt
 /apps/desktop/src/main/csp.ts           @CandleViewer/security @CandleViewer/devsecops @basiltt
 /apps/web/index.html                    @CandleViewer/security @CandleViewer/frontend @basiltt
+/apps/web/test/e2e-egress.test.ts       @CandleViewer/security @CandleViewer/frontend @basiltt
 /tools/ci/electron_hardening_*          @CandleViewer/security @CandleViewer/devsecops @basiltt
 
 # ---------------------------------------------------------------------------

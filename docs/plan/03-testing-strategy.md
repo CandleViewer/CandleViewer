@@ -342,6 +342,7 @@ Applied by reviewers (code owners) on every PR, in addition to functional code r
 - [ ] Any new enum that is persisted carries `x-db-enum` (and an explicit `x-db-enum-superset` if the API accepts request-time values the database never stores).
 - [ ] Any new UI component has a Storybook story (default + interaction) and passes axe-core in that story.
 - [ ] No test relies on live Bybit endpoints; all network calls in tests are mocked/fixture-backed (checked in CI via network-allowlist lint).
+      The lint is `apps/web/test/e2e-egress.test.ts` (E49-Q01, `unit-frontend`, `CI-E2E-005`): no e2e source names a host past loopback by the `isLocal` pattern, the host allowlist stays empty, and a `@ga-regression` spec runs behind the egress guard; a socket opened inside a shared or service worker is not seen, a gap row in the pack's coverage map.
 - [ ] Error paths (5xx, rate-limit, disconnect) are exercised, not just the happy path, for any new external-integration code.
 - [ ] Coverage delta does not regress the package's gate (§2); if it does, the PR must add tests or justify the exception with a reviewer override.
 - [ ] Security-sensitive changes (auth, keys, RBAC, audit log) have a corresponding negative-authorization test (verify the disallowed action is actually rejected, not just that the allowed action succeeds).
