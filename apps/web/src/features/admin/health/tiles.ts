@@ -63,7 +63,7 @@ const TONE: Readonly<Record<RecordState, SystemHealthTileTone>> = {
 };
 /** No probe line for `disk` and `secrets`, whose probe is no round trip (DJ). */
 const NO_PROBE: ReadonlySet<string> = new Set(["disk", "secrets"]);
-const ANCHOR = /^[a-z0-9_]{1,64}$/;
+export const ANCHOR = /^[a-z0-9_]{1,64}$/;
 /** A runbook links only a same-origin path [BQ-14]. */
 const SAME_ORIGIN = /^\/(?![/\\])[\w\-./~%#?=&]*$/;
 

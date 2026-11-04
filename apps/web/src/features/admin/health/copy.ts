@@ -1,8 +1,8 @@
 /**
  * SCR-143's words (E42-S06): E42-D05 §15's `health.*`, `stops.*` and `hint.*`, D03's `tile.*` and
  * `meta.asof`. Cited strings are verbatim; the rest are §15's PROPOSED ones, owner E42-D05, and the
- * lines this build adds are marked PROPOSED here: the client's words for a failed read, never the
- * server's `detail` [BQ-14].
+ * lines this build adds are marked PROPOSED here: the detail view's [BQ-11], and the client's words
+ * for a failed read, never the server's `detail` [BQ-14].
  */
 import { STOPS as CITED_STOPS } from "../overview/copy";
 
@@ -38,6 +38,27 @@ export const HEALTH_COPY = {
   bannerDown: (labels: string): string => `Down: ${labels}. Each tile says what stops working.`,
   announce: (label: string, word: string): string => `Health: ${label} ${word}.`,
   recovered: (label: string): string => `Health: ${label} healthy again.`,
+  noHistory: "History isn't recorded yet.",
+  /** PROPOSED (CG-20): the drill-down's metrics wait for a read. */
+  noMetrics: "Last-hour metrics aren't recorded yet.",
+  drill: {
+    /** Each link's arrow is drawn beside it, hidden from the accessibility tree. */
+    recorder: "Open Recorder & storage",
+    /** PROPOSED [BQ-11]: the detail view's way back to the tiles. */
+    back: "All components",
+    /** PROPOSED [BQ-11]: a `?component=` no tile has; the link's name is never shown. */
+    unknown: "No such component.",
+    /** PROPOSED: the document title's words for that view (A-1084P1-d04). */
+    unknownTitle: "No such component",
+    /** PROPOSED [BQ-11]: what the incident list is, said so. */
+    filtered: "Its open incidents, from the newest 100 open ones:",
+    none: "No open incidents for this component.",
+    unread: "Its open incidents can't be read right now.",
+    row: (severity: string, title: string, lastSeen: string): string =>
+      `${severity} · ${title} · last seen ${lastSeen} UTC`,
+    /** `incident.withheld`: a title the server could not clean. */
+    withheld: "Details withheld — they couldn't be cleaned of sensitive text.",
+  },
   /** D4: the client tile, and the 143-C1 item with no component (CG-18). */
   client: { label: "Chart engine (this session)", none: "No chart open in this window" },
   algo: { label: "Algo engine" },

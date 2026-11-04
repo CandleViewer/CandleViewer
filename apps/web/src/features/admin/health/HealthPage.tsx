@@ -3,10 +3,11 @@
  * and [Re-read], the overall and incidents lines, the outage banner, a CMP-178 tile per served
  * component, the clock and the fixed tiles, and the build line. Each tile selects its own model, so
  * a frame that changes one component renders one tile (D5); the reads run on mount and Re-read only
- * (D6). Voice is the shell announcer's, and telemetry is the analytics seam and one
- * `performance.measure`, no transport of its own.
+ * (D6). `?component=` opens a component's detail view [BQ-11]. Voice is the shell announcer's, and
+ * telemetry is the analytics seam and one `performance.measure`, no transport of its own.
  */
 import { memo, useCallback, useEffect, useRef, type CSSProperties, type JSX } from "react";
+import { useSearchParams } from "react-router";
 import {
   Button,
   Callout,
@@ -21,6 +22,7 @@ import { OVERVIEW_COPY } from "../overview/copy";
 import { hms } from "../overview/tileModels";
 import { routerLink } from "../routerLink";
 import { AdminDenied } from "../shell/AdminDenied";
+import { ComponentDetail } from "./ComponentDetail";
 import { HEALTH_COPY as COPY } from "./copy";
 import { healthStore, useHealthHold, useHealthSelector, type HealthState } from "./healthStore";
 import * as tiles from "./tiles";
@@ -97,10 +99,11 @@ function OverallLine(): JSX.Element | null {
   return line === undefined ? null : <p style={LINE}>{line}</p>;
 }
 
-function Grid({ lines }: { readonly lines: tiles.PageLines }): JSX.Element {
+/** The page's state lines, over the tiles and over a detail view alike (A-1084P1-d02). */
+function StateLines({ lines }: { readonly lines: tiles.PageLines }): JSX.Element {
   const { banner, report } = lines;
   return (
-    <div style={STACK}>
+    <>
       <OverallLine />
       {lines.incidents === undefined ? null : <p style={LINE}>{lines.incidents}</p>}
       {report === undefined ? null : (
@@ -117,6 +120,14 @@ function Grid({ lines }: { readonly lines: tiles.PageLines }): JSX.Element {
           {banner.safe ? SYSTEM_HEALTH_TILE_COPY.stillSafe : undefined}
         </Callout>
       )}
+    </>
+  );
+}
+
+function Grid({ lines }: { readonly lines: tiles.PageLines }): JSX.Element {
+  return (
+    <div style={STACK}>
+      <StateLines lines={lines} />
       <div style={GRID}>
         {lines.names.map((name) => (
           <ComponentTile key={name} name={name} />
@@ -152,9 +163,21 @@ function useRenderBudget(settled: boolean): void {
   }, [settled]);
 }
 
-/** Focus (§4): a report Retry that a good read takes away hands it to Re-read, never to `<body>`. */
-function useFocusReturns(retry: boolean): void {
+/**
+ * Focus (§4): closing a detail view hands it to that tile's heading link, or to Re-read when no
+ * tile has that name (A-1084P1-d03); a report Retry that a good read takes away hands it to Re-read,
+ * never to `<body>`.
+ */
+function useFocusReturns(component: string | null, retry: boolean): void {
+  const last = useRef(component);
   const retried = useRef(retry);
+  useEffect(() => {
+    const was = last.current;
+    last.current = component;
+    if (was === null || component !== null) return;
+    const link = document.getElementById(`health-${was}`)?.querySelector<HTMLElement>("h2 a");
+    (link ?? document.querySelector<HTMLElement>("[data-health-reread]"))?.focus();
+  }, [component]);
   useEffect(() => {
     const was = retried.current;
     retried.current = retry;
@@ -166,11 +189,12 @@ function useFocusReturns(retry: boolean): void {
 
 export function HealthPage(): JSX.Element {
   useHealthHold();
+  const component = useSearchParams()[0].get("component");
   const denied = useHealthSelector(selectDenied);
   const lines = useHealthSelector(tiles.pageLines);
   useHealthVoice(useHealthSelector(tiles.voiceStates), lines.report);
   useRenderBudget(lines.settled);
-  useFocusReturns(lines.report !== undefined);
+  useFocusReturns(component, lines.report !== undefined);
   if (denied !== null) return <AdminDenied refId={denied.refId} />;
   const asOf = lines.asOf === undefined ? COPY.allUtc : OVERVIEW_COPY.meta(hms(lines.asOf));
   const reread = (
@@ -193,7 +217,14 @@ export function HealthPage(): JSX.Element {
           </>
         }
       />
-      <Grid lines={lines} />
+      {component === null ? (
+        <Grid lines={lines} />
+      ) : (
+        <div style={STACK}>
+          <StateLines lines={lines} />
+          <ComponentDetail name={component} />
+        </div>
+      )}
     </ScreenRoot>
   );
 }
