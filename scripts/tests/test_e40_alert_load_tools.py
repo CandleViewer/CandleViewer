@@ -8,12 +8,16 @@ the parts that need neither k6 nor a database: the frame checks (lib/frames.js, 
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import importlib.util
 import json
 import shutil
 import subprocess
+import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -124,18 +128,58 @@ def test_the_gate_warns_until_a_baseline_is_recorded_and_fails_over_five_percent
     None
 ):
     cmp = _module("compare_baseline")
-    run = {"metrics": {"alerts_ack_ms": {"values": {"p(95)": 106.0}}}}
+    runs = [{"metrics": {"alerts_ack_ms": {"values": {"p(95)": 106.0}}}}] * 3
     spec = {"ack": {"metric": "alerts_ack_ms", "stat": "p(95)", "value": 100.0}}
     assert (
-        cmp.compare([run], {"mode": "warn-only", "metrics": spec})["rows"][0]["verdict"]
+        cmp.compare(runs, {"mode": "warn-only", "metrics": spec})["rows"][0]["verdict"]
         == "WARN"
     )
-    assert cmp.compare([run], {"mode": "gate", "metrics": spec})["status"] == "FAIL"
+    assert cmp.compare(runs, {"mode": "gate", "metrics": spec})["status"] == "FAIL"
     spec["ack"]["value"] = 101.0
-    assert cmp.compare([run], {"mode": "gate", "metrics": spec})["status"] == "PASS"
+    assert cmp.compare(runs, {"mode": "gate", "metrics": spec})["status"] == "PASS"
     baseline = json.loads((KIT / "baseline.json").read_text(encoding="utf-8"))
     assert baseline["mode"] == "warn-only"
     assert all(m["value"] is None for m in baseline["metrics"].values())
+
+
+def _ack_runs(*p95: float) -> list[dict[str, Any]]:
+    return [{"metrics": {"alerts_ack_ms": {"values": {"p(95)": v}}}} for v in p95]
+
+
+@pytest.mark.parametrize("n", [1, 2])
+def test_the_gate_fails_on_fewer_than_three_runs_and_warns_in_warn_only(n: int) -> None:
+    cmp = _module("compare_baseline")
+    spec = {"ack": {"metric": "alerts_ack_ms", "stat": "p(95)", "value": 100.0}}
+    gate = cmp.compare(_ack_runs(*[90.0] * n), {"mode": "gate", "metrics": spec})
+    assert gate["status"] == "FAIL" and gate["rows"][0]["verdict"] == "FAIL"
+    assert f"({n} of 3 runs)" in cmp.markdown(gate)
+    warn = cmp.compare(_ack_runs(*[90.0] * n), {"mode": "warn-only", "metrics": spec})
+    assert warn["status"] == "PASS" and warn["rows"][0]["verdict"] == "WARN"
+    spec["ack"]["value"] = None  # no baseline yet
+    three = cmp.compare(_ack_runs(90.0, 95.0, 99.0), {"mode": "gate", "metrics": spec})
+    assert three["status"] == "PASS" and three["rows"][0]["verdict"] == "NO-BASELINE"
+
+
+def test_the_gate_counts_a_run_that_wrote_no_summary(tmp_path: Path) -> None:
+    cmp, base = _module("compare_baseline"), tmp_path / "b.json"
+    spec = {"ack": {"metric": "alerts_ack_ms", "stat": "p(95)", "value": 100.0}}
+    base.write_text(json.dumps({"mode": "gate", "metrics": spec}), encoding="utf-8")
+    files = [tmp_path / f"run-{i}.json" for i in range(3)]
+    for f, run in zip(files, _ack_runs(90.0, 91.0, 92.0), strict=True):
+        f.write_text(json.dumps(run), encoding="utf-8")
+    args = ["--baseline", str(base), "--out-dir", str(tmp_path / "o"), *map(str, files)]
+    assert cmp.main(args) == 0
+    files[2].unlink()  # the third run crashed before it wrote its summary
+    assert cmp.main(args) == 1
+
+
+def test_only_the_single_notifications_run_lowers_the_minimum() -> None:
+    base = json.loads((KIT / "baseline.json").read_text(encoding="utf-8"))
+    lowered = {k: m["min_runs"] for k, m in base["metrics"].items() if "min_runs" in m}
+    assert lowered == {"notifications_p95_ms": 1}
+    one = {"metrics": {"http_req_duration{endpoint:notifications}": {"p(95)": 1.0}}}
+    row = _module("compare_baseline").compare([one], base)["rows"][2]
+    assert (row["runs"], row["verdict"]) == ([1.0], "NO-BASELINE")
 
 
 def test_the_gate_refuses_a_summary_that_holds_setup_data(tmp_path: Path) -> None:
@@ -246,23 +290,47 @@ def test_the_seed_refuses_a_broad_users_pattern(pattern: str) -> None:
         _module("seed_alerts").check_users_like(pattern)
 
 
-@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "[::1]", "postgres"])
+@pytest.mark.parametrize(
+    "host", ["127.0.0.1", "localhost", "[::1]", "postgres", "LOCALHOST", "Postgres"]
+)
 def test_the_seed_accepts_a_loopback_or_compose_dsn(host: str) -> None:
-    _module("seed_alerts").check_dsn(
-        f"postgresql+asyncpg://cv:pw@{host}:5432/candleviewer"
-    )
+    seed = _module("seed_alerts")
+    seed.check_dsn(f"postgresql+asyncpg://cv:pw@{host}:5432/candleviewer")
+    seed.check_dsn(f"postgresql+asyncpg://cv@{host}/candleviewer")
+    # the nightly's DSN: a 64-hex password (openssl rand -hex 32)
+    seed.check_dsn(f"postgresql+asyncpg://cv:{'0a' * 32}@{host}:5432/candleviewer")
+
+
+# Each literal names the check that must refuse it, so deleting any one check fails its case.
+_A = "postgresql+asyncpg://cv"
 
 
 @pytest.mark.parametrize(
-    "dsn",
-    ["postgresql+asyncpg://cv:pw@db.example.com:5432/candleviewer",
-     "postgresql+asyncpg://cv:pw@10.0.0.5/candleviewer",
-     "postgresql:///candleviewer",
-     "postgresql://cv:pw@127.0.0.1/candleviewer?host=db.example.com",
-     "postgresql://cv:pw@127.0.0.1:5432,db.example.com:5432/candleviewer"],
+    ("dsn", "match"),
+    [(f"{_A}:pw@db.example.com:5432/candleviewer", "not loopback or compose"),
+     (f"{_A}:pw@10.0.0.5/candleviewer", "not loopback or compose"),
+     (f"{_A}@[::ffff:127.0.0.1]/candleviewer", "not loopback or compose"),
+     ("postgresql:///candleviewer", "host part is ambiguous"),
+     (f"{_A}@/candleviewer", "missing or not plain"),
+     (f"{_A}:pw@127.0.0.1/candleviewer?host=db.example.com", "query string or fragment"),
+     (f"{_A}@127.0.0.1/candleviewer?", "query string or fragment"),
+     (f"{_A}@127.0.0.1/candleviewer#x", "query string or fragment"),
+     (f"{_A}:pw@127.0.0.1:5432,db.example.com:5432/candleviewer", "more than one host"),
+     (f"{_A}:p@db.example.com@127.0.0.1/candleviewer", "more than one @"),
+     (f"{_A}:p@[db.example.com]@[::1]:5432/candleviewer", "more than one @"),
+     (f"{_A}:p%40db.example.com@127.0.0.1/candleviewer", "host part is ambiguous"),
+     (f"{_A}@%6c%6fcalhost/candleviewer", "host part is ambiguous"),
+     (f"{_A}@127.0.0.1%2Fdb.example.com/candleviewer", "host part is ambiguous"),
+     (f"{_A}@[::1%25eth0]/candleviewer", "host part is ambiguous"),
+     (f"{_A}@127.0.0.1\\.example.com/candleviewer", "host part is ambiguous"),
+     (f"{_A}@127.0.0.1:/candleviewer", "host part is ambiguous"),
+     (f"{_A}@localhost./candleviewer", "missing or not plain"),
+     (f"{_A}@[::1/candleviewer", "does not parse"),
+     (f"{_A}@127.0.0.1:x/candleviewer", "port is not a number"),
+     ("mysql://cv@127.0.0.1/candleviewer", "not Postgres")],
 )  # fmt: skip
-def test_the_seed_refuses_a_non_local_dsn(dsn: str) -> None:
-    with pytest.raises(SystemExit, match="refusing"):
+def test_the_seed_refuses_a_non_local_or_ambiguous_dsn(dsn: str, match: str) -> None:
+    with pytest.raises(SystemExit, match=f"refusing: .*{match}"):
         _module("seed_alerts").check_dsn(dsn)
 
 
@@ -280,6 +348,83 @@ def test_the_seed_refuses_a_stack_that_is_not_a_perf_stack(
     with pytest.raises(SystemExit, match=match):
         _module("seed_alerts").check_stack(*counts)
     _module("seed_alerts").check_stack(0, 0, 0)
+
+
+class _Conn:
+    """A stub asyncpg connection: records each call, in order, and never writes anything."""
+
+    def __init__(self, log: list[str], stack: dict[str, int]) -> None:
+        self.log, self.stack = log, stack
+
+    async def fetchrow(self, query: str, *args: object) -> dict[str, int]:
+        self.log.append("stack" if "FROM api_keys" in query else "fetchrow")
+        return self.stack
+
+    @contextlib.asynccontextmanager
+    async def transaction(self) -> AsyncIterator[None]:
+        self.log.append("transaction")
+        yield
+
+    async def fetch(self, query: str, *args: object) -> list[dict[str, int]]:
+        await self.execute(query)
+        return [{"id": 1, "owner_user_id": 2}]
+
+    async def execute(self, query: str, *args: object) -> None:
+        self.log.append("write")
+
+    async def close(self) -> None:
+        self.log.append("close")
+
+
+_GOOD_DSN = "postgresql+asyncpg://cv@127.0.0.1:5432/candleviewer"
+_CLEAN = {"others": 0, "real_accounts": 0, "api_keys": 0}
+
+
+def _run_seed(
+    monkeypatch: pytest.MonkeyPatch, dsn: str, users_like: str, stack: dict[str, int]
+) -> list[str]:
+    log: list[str] = []
+
+    async def connect(dsn: str) -> _Conn:
+        log.append(f"connect {dsn}")
+        return _Conn(log, stack)
+
+    monkeypatch.setitem(sys.modules, "asyncpg", SimpleNamespace(connect=connect))
+    try:
+        asyncio.run(_module("seed_alerts").seed(dsn, users_like, 1_000, 10, 10, 10))
+    except SystemExit as exc:
+        log.append(f"refused {exc}")
+    return log
+
+
+@pytest.mark.parametrize(
+    ("dsn", "users_like", "match"),
+    [(_GOOD_DSN, "perf-%", "users-like"),
+     ("postgresql+asyncpg://cv@db.example.com/candleviewer", "perf-0123abcd-%", "DSN host")],
+)  # fmt: skip
+def test_seed_refuses_before_it_connects(
+    monkeypatch: pytest.MonkeyPatch, dsn: str, users_like: str, match: str
+) -> None:
+    log = _run_seed(monkeypatch, dsn, users_like, _CLEAN)
+    assert len(log) == 1 and log[0].startswith("refused") and match in log[0]
+
+
+@pytest.mark.parametrize("bad", ["others", "real_accounts", "api_keys"])
+def test_seed_reads_the_stack_and_refuses_before_any_write(
+    monkeypatch: pytest.MonkeyPatch, bad: str
+) -> None:
+    log = _run_seed(monkeypatch, _GOOD_DSN, "perf-0123abcd-%", {**_CLEAN, bad: 1})
+    assert log[:2] == [f"connect {_GOOD_DSN.replace('+asyncpg', '')}", "stack"]
+    assert log[2] == "close" and log[3].startswith("refused") and len(log) == 4
+
+
+def test_seed_checks_the_stack_before_its_one_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log = _run_seed(monkeypatch, _GOOD_DSN, "perf-0123abcd-%", _CLEAN)
+    assert log[1:3] == ["stack", "transaction"]
+    assert log.index("write") > log.index("transaction")
+    assert log[-1] == "close" and not any(x.startswith("refused") for x in log)
 
 
 def test_the_seed_queries_the_tables_its_refusal_reads() -> None:

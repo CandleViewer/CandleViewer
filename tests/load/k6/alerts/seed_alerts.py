@@ -31,13 +31,16 @@ import os
 import re
 import sys
 import uuid
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 ALERT_SHARE = 0.6
 USERS_LIKE = re.compile(r"perf-[0-9a-f]{8}-%")
 LOCAL_HOSTS = frozenset(
     {"127.0.0.1", "localhost", "::1", "postgres"}
 )  # postgres: compose
+DSN_SCHEMES = frozenset({"postgresql", "postgresql+asyncpg"})
+# userinfo and host: no percent-encoding, no zone id, no backslash or space (C-2.11)
+_NETLOC = re.compile(r"[A-Za-z0-9._~:@\[\]-]+")
 _STACK = (
     "SELECT (SELECT count(*) FROM users WHERE username NOT LIKE $1) AS others,"
     " (SELECT count(*) FROM exchange_accounts WHERE env IN ('live', 'demo')) AS real_accounts,"
@@ -108,16 +111,35 @@ def check_users_like(pattern: str) -> None:
 
 
 def check_dsn(dsn: str) -> None:
-    """Only a loopback or compose-local Postgres; a `host` query parameter could redirect it."""
-    parts = urlsplit(dsn)
-    if "host" in parse_qs(parts.query):
-        raise SystemExit("refusing: the DSN names a host in its query string")
-    if "," in parts.netloc:
+    """Only a loopback or compose-local Postgres, compared exactly; anything a driver could read
+    differently from `urlsplit` (a query, a host list, a second `@`, an encoded host) is refused."""
+    try:
+        parts = urlsplit(dsn)
+    except ValueError:  # an unbalanced IPv6 bracket
+        raise SystemExit("refusing: the DSN does not parse") from None
+    if parts.scheme not in DSN_SCHEMES:
+        raise SystemExit(f"refusing: DSN scheme {parts.scheme!r} is not Postgres")
+    if parts.query or parts.fragment or "?" in dsn or "#" in dsn:
+        raise SystemExit("refusing: the DSN has a query string or fragment")
+    netloc = parts.netloc
+    if "," in netloc:
         raise SystemExit("refusing: the DSN lists more than one host")
-    if parts.hostname not in LOCAL_HOSTS:
-        raise SystemExit(
-            f"refusing: DSN host {parts.hostname!r} is not loopback or compose"
-        )
+    if netloc.count("@") > 1:
+        raise SystemExit("refusing: the DSN has more than one @")
+    if not _NETLOC.fullmatch(netloc):
+        raise SystemExit("refusing: the DSN host part is ambiguous")
+    hostspec = netloc[netloc.find("@") + 1 :].lower()  # as asyncpg: after the FIRST @
+    try:
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        raise SystemExit("refusing: the DSN port is not a number") from None
+    if host is None or host.endswith("."):
+        raise SystemExit(f"refusing: DSN host {host!r} is missing or not plain")
+    shown = f"[{host}]" if ":" in host else host
+    if hostspec not in (shown, f"{shown}:{port}"):
+        raise SystemExit("refusing: the DSN host part is ambiguous")
+    if host not in LOCAL_HOSTS:
+        raise SystemExit(f"refusing: DSN host {host!r} is not loopback or compose")
 
 
 def check_stack(others: int, real_accounts: int, api_keys: int) -> None:

@@ -9,6 +9,8 @@ A spec's optional `skip_if_has` names a metric: a summary holding it is left out
 `/notifications` run's plain http_req_duration is not a WS run's). A metric without a baseline value is reported, never gated; a baseline whose `mode` is
 `warn-only` (until a reviewed PR records CI-runner numbers, BQ-04) WARNs instead of failing, as
 the E08 pack's laptop baselines do. Any other `mode` is refused (a typo must not disable the gate).
+A metric read from fewer than MIN_RUNS summaries (a spec's `min_runs` overrides it) FAILs in `gate`
+and WARNs in `warn-only`: a run that wrote no summary never turns the median of three into one of two.
 Exit 1 on a FAIL, an unknown `mode`, or a summary that holds setup_data.
 """
 
@@ -21,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 TOLERANCE = 0.05  # 06 section 7.4: over 5 % on the median of the runs' p95s
+MIN_RUNS = 3  # the median of three; a spec's `min_runs` may lower it
 MODES = ("gate", "warn-only")
 
 
@@ -53,8 +56,11 @@ def compare(
         ]
         median = statistics.median(got) if got else None
         base, verdict = spec.get("value"), "NO-BASELINE"
+        need = int(spec.get("min_runs", MIN_RUNS))
         if median is None:
             verdict = "MISSING"
+        elif len(got) < need:  # a run that wrote no summary: never a median of fewer
+            verdict = "WARN" if baseline["mode"] == "warn-only" else "FAIL"
         elif base is not None:
             over = median > base * (1 + TOLERANCE)
             verdict = (
@@ -68,6 +74,7 @@ def compare(
             {
                 "name": name,
                 "runs": got,
+                "min_runs": need,
                 "median": median,
                 "baseline": base,
                 "verdict": verdict,
@@ -90,6 +97,8 @@ def markdown(report: dict[str, Any]) -> str:
     ]
     for r in report["rows"]:
         runs = ", ".join(f"{x:.1f}" for x in r["runs"]) or "none"
+        if 0 < len(r["runs"]) < r["min_runs"]:
+            runs += f" ({len(r['runs'])} of {r['min_runs']} runs)"
         med = "n/a" if r["median"] is None else f"{r['median']:.1f}"
         lines.append(
             f"| {r['name']} | {runs} | {med} | {r['baseline']} | {r['verdict']} |"

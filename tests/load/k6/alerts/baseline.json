@@ -20,7 +20,8 @@
     "notifications_p95_ms": {
       "metric": "http_req_duration{endpoint:notifications}",
       "stat": "p(95)",
-      "value": null
+      "value": null,
+      "min_runs": 1
     },
     "window_gap_p95_ms": {
       "metric": "alerts_window_gap_ms",

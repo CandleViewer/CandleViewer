@@ -123,6 +123,7 @@ export function drive(data) {
   const page = http.get(`${BASE}/alerts/deliveries?unacked_only=true&limit=50`, auth(s));
   const ids = page.status === 200 ? page.json("items").map((d) => d.id) : [];
   check(ids, { "the Owner has deliveries to ack": (x) => x.length > 0 });
+  if (ids.length === 0) return sleep(1); // nothing to ack: never spin GETs for the rest of the run
   for (const id of ids) {
     const t0 = Date.now();
     const r = http.post(`${BASE}/alerts/deliveries/${id}/ack`, null, auth(s));

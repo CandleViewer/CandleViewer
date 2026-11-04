@@ -36,8 +36,10 @@ set `CV_E40_SOAK_GATE` to `"1"` in the job `env` of `.github/workflows/perf-aler
 (`notifications_p95_ms`; its plain `http_req_duration` is kept out of the WS metric), and compares each with this baseline at +5 % (06 §7.4, C-13.9). It writes `compare.json`
 and `compare.md` to the artifact and the run summary.
 
-- `warn-only` (now): a value over +5 % WARNs, and a `null` value is reported as `NO-BASELINE`.
-- `gate`: a value over +5 %, or a missing metric, fails the run. The `perf-alerts` nightly issue is then filed.
+- `warn-only` (now): a value over +5 % or a metric read from too few runs WARNs, and a `null` value is reported as
+  `NO-BASELINE`.
+- `gate`: a value over +5 %, a missing metric, or a metric read from fewer than three runs (`min_runs`: one for
+  `notifications_p95_ms`, the single `/notifications` run) fails the run. The `perf-alerts` nightly issue is then filed.
 
 ## Moving the baseline
 
