@@ -327,6 +327,19 @@ variables, with those the compose file requires, which the audit slice's `docker
 `e2e/support/real/failureArtefacts.ts` reads. The test clock moves auth time, so the database must
 be a throwaway one (C-2.11): `down -v` it after.
 
+To triage a red `e2e-admin-real` run (#1215, E42-Q02's admin lane: `e2e/playwright.admin-stack.config.ts`
+runs the `*.stack.ts` specs, one at a time, against a throwaway stack built as `e2e-auth-real`'s), read
+it as above: the same steps, the same `api.log`, `correlation-ids.json` and `audit-log-slice.json` in
+`e2e-admin-real-failure`, the same secret check before any upload. Its users are seeded by role
+(`FIXTURE_OWNERS`, `FIXTURE_MANAGERS`, `FIXTURE_VIEWERS`, one per test that claims the role): "the users
+file has no …" or "all N fixture users are claimed" means the workflow seeds too few. Each run keeps its
+budgeted timings 14 days, pass or fail, as `e2e-admin-timings`: one `<case>.json` per case with the
+budget, the figure observed on the server's audit stamps, the runner's figure beside it, the build and
+the run. A timing over its budget is a defect to file against the owning story, never a budget to move.
+It runs nightly at 03:39 UTC and on dispatch, never on a pull request. A red run on main files an
+issue: its `report` job comments on the open "test: e2e-admin-real nightly failed" issue, or opens
+one (`_nightly-issue.yml`, the `e2e-admin-real` signal); a dispatch on a branch files nothing.
+
 To triage a red `dast-rules` or `dast-market` run (#3991: `dast-rules-nightly.yml` and
 `dast-market-nightly.yml`, through `_dast-low-priv.yml`, as a synthetic Viewer), find the step that
 failed: "Start the API" as above; "Write the plan" means the contract has no path on the profile's
