@@ -2481,7 +2481,7 @@ async def frames_until(ws: Any, book_deltas: int) -> list[dict[str, Any]]:
 def fanout_count() -> float:
     """The in-process fan-out histogram's count. The harness backend runs in this process, so
     its `/metrics` serves the process-global registry: whatever an earlier test observed
-    (tests/unit/ws/test_withdrawn_grant_frames.py leaves 64) is already in it (#5751)."""
+    (for example tests/unit/ws/test_withdrawn_grant_frames.py) is already in it (#5751)."""
     return cv_ws_fanout_seconds.labels().reading()[0][-1]
 
 
@@ -2489,10 +2489,11 @@ def fanout_count() -> float:
 def prior_fanout_count(request: pytest.FixtureRequest) -> Iterator[float]:
     """`leftover` plays an earlier test that left observations behind (the #5751 order
     dependence); the cells are restored after, so no other test sees them."""
-    cells = cv_ws_fanout_seconds.labels()._cells
+    cells = cv_ws_fanout_seconds.labels()._cells  # private on purpose: FastHistogram has no reset
     saved = list(cells)
     if request.param:
         cv_ws_fanout_seconds.labels().observe(0.001, 64)
+        assert fanout_count() >= 64  # the plant is visible, so the leftover case means something
     yield fanout_count()
     cells[:] = saved
 
