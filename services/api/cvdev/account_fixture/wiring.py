@@ -26,8 +26,9 @@ import httpx
 import structlog
 
 from candleviewer.account_fixture_wiring import AccountFixture, AccountFixtureRefused, PrivateSocket
+from candleviewer.ingestion.service import IngestionService
 from candleviewer.settings import Settings
-from cvdev.account_fixture import boot, guards
+from cvdev.account_fixture import boot, guards, synthetic_ticker
 from cvdev.account_fixture import pack as account_pack
 from cvdev.account_fixture.control import FixtureClock, KeyStates
 from cvdev.account_fixture.pack import Pack, fixture_key_ids
@@ -42,6 +43,7 @@ _REFUSED: Final = "CV_ACCOUNT_FIXTURE refuses boot: "
 BUILD_REFUSAL: Final = _REFUSED + "the fixture pair could not be built from its pack and dir"
 BUILT_ONCE: Final = _REFUSED + "the fixture pair is built once a process"
 NOT_BUILDABLE: Final = _REFUSED + "the boot guard needs this package's door and the read-only gate"
+NO_DOOR: Final = _REFUSED + "the synthetic ticker needs this package's door"
 UNGUARDED: Final = _REFUSED + "the fixture pair is built only on its boot guard's passed record"
 
 
@@ -202,3 +204,13 @@ async def guard_boot(
     passed = await boot.run(settings, pack=pack)
     await fixture.arm(passed, gate, pack)
     return passed
+
+
+def attach_tickers(
+    settings: Settings, fixture: AccountFixture, ingestion: IngestionService
+) -> None:
+    """E29-Q03: the synthetic ticker stream on this package's door, which prices nothing until
+    `arm` (`synthetic_ticker`); a handle that is not the door refuses boot."""
+    if not isinstance(fixture, FixtureDoor):
+        raise AccountFixtureRefused(NO_DOOR)
+    synthetic_ticker.attach(settings, fixture, ingestion)
