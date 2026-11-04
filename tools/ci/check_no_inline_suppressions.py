@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E14-X03 (#549; DR6, SR-E14-01): no silent suppression in the drawing render paths.
+"""E14-X03 (#549; DR6, SR-E14-01): no silent suppression on a listed path.
 
 Under the globs of `tools/ci/no-inline-suppression-paths.json` (relative to the repo root; a ticket
 that adds drawing or object-tree code extends the list), a comment holding `eslint-disable`, an
@@ -107,9 +107,9 @@ def findings_in(path: Path, rel: str, today: date) -> list[str]:
             problems = field_problems(comment, today)
             owner = field(comment, "owner")
             if len(re.findall(r"(?<![\w-])owner=", comment)) > 1:
-                problems.append("a suppression on a drawing path names one owner, not several")
+                problems.append("a suppression on a listed path names one owner, not several")
             if owner and owner != OWNER:
-                problems.append(f"suppression owner {owner!r} must be {OWNER} on a drawing path")
+                problems.append(f"suppression owner {owner!r} must be {OWNER} on a listed path")
             if problems:
                 found.append(f"{rel}:{n}: {m.group('marker')}: {'; '.join(problems)}")
     return found

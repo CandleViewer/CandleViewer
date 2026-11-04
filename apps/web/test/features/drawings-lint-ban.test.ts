@@ -14,9 +14,11 @@ const WEB = resolve(import.meta.dirname, "../..");
 const LISTED = JSON.parse(
   readFileSync(resolve(WEB, "../../tools/ci/no-inline-suppression-paths.json"), "utf8"),
 ) as { paths: string[] };
+/** The slice (E37-X01) is listed for the suppression check alone, not as a drawing path. */
+const SLICE = "apps/web/src/features/rule-builder-graph/**";
 /** `apps/web/src/objecttree/**` -> `src/objecttree/__probe.tsx`, a file the ban must cover. */
 const BANNED = LISTED.paths
-  .filter((path) => path.startsWith("apps/web/src/"))
+  .filter((path) => path.startsWith("apps/web/src/") && !path.includes("/rule-builder-graph/"))
   .map((path) => path.replace(/^apps\/web\//, "").replace(/\/\*\*$/, "/__probe.tsx"));
 const FREE = "src/features/indicators/__probe.tsx";
 /** Every root as ECMAScript modules of either kind: TypeScript's `.mts` and `.cts`. */
@@ -84,8 +86,10 @@ beforeAll(async () => {
 }, 120_000);
 
 describe("the drawing render paths ban raw HTML and an inline switch-off", () => {
-  it("lists the web app's drawing roots", () => {
-    expect(BANNED.length).toBeGreaterThan(0);
+  it("lists the web app's drawing roots: the registry's apps/web/src entries but the slice", () => {
+    const roots = LISTED.paths.filter((path) => path.startsWith("apps/web/src/") && path !== SLICE);
+    expect(BANNED.map((file) => `apps/web/${file.replace("__probe.tsx", "**")}`)).toEqual(roots);
+    expect(roots.length).toBeGreaterThan(0);
   });
 
   it.each(BANNED)(

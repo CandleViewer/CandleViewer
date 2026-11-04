@@ -314,7 +314,23 @@ def test_every_drawing_or_object_tree_path_is_a_listed_one() -> None:
     assert _unlisted(ROOT, check.load_paths(ROOT / check.CONFIG)) == []
 
 
+#: E37-X01 (#1073; SR-E37-11): the node-graph editor's slice, whose arming guard is a lint tripwire.
+GRAPH = "apps/web/src/features/rule-builder-graph/**"
+
+
 def test_the_semgrep_rule_and_the_check_read_the_same_paths() -> None:
     text = (ROOT / ".semgrep/cv-drawings-text-to-html-sink.yml").read_text(encoding="utf-8")
     rule = yaml.safe_load(text)["rules"][0]
-    assert rule["paths"]["include"] == check.load_paths(ROOT / check.CONFIG)
+    # The drawing paths; the rule-graph slice is listed for the suppression check alone (below).
+    assert set(rule["paths"]["include"]) == set(check.load_paths(ROOT / check.CONFIG)) - {GRAPH}
+
+
+def test_a_directive_in_the_rule_graph_slice_needs_the_security_teams_annotation(tmp_path, capsys):
+    assert GRAPH in check.load_paths(ROOT / check.CONFIG)
+    rel, bare = f"{GRAPH[:-3]}/model/a.ts", "// eslint-disable-next-line no-restricted-syntax"
+    code, err = _check(tmp_path, capsys, {rel: f"{bare}\n"}, GRAPH)
+    assert code == 1 and "rule-builder-graph/model/a.ts:1: eslint-disable-next-line" in err
+    assert _check(tmp_path, capsys, {rel: f"{bare} -- {OK}\n"}, GRAPH) == (0, "")
+    other = OK.replace(OWNER, "@CandleViewer/frontend")
+    code, err = _check(tmp_path, capsys, {rel: f"{bare} -- {other}\n"}, GRAPH)
+    assert code == 1 and f"must be {OWNER} on a listed path" in err

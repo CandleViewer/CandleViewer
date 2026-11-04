@@ -1,9 +1,10 @@
 {
-  "description": "The drawing render paths (E14-X03, #549): no eslint-disable, eslint config comment, @ts-ignore, @ts-expect-error or nosem... comment without an annotation owned by @CandleViewer/security. Extend it when a ticket adds drawing or object-tree code; keep it equal to the paths of .semgrep/cv-drawings-text-to-html-sink.yml.",
+  "description": "The drawing render paths (E14-X03, #549) and the node-graph editor's slice (E37-X01, #1073: an inline directive must not lift its arming guard unreviewed): no eslint-disable, eslint config comment, @ts-ignore, @ts-expect-error or nosem... comment without an annotation owned by @CandleViewer/security. Extend it when a ticket adds drawing or object-tree code; keep its drawing paths equal to the paths of .semgrep/cv-drawings-text-to-html-sink.yml.",
   "paths": [
     "apps/web/src/features/drawings/**",
     "apps/web/src/drawings/**",
     "apps/web/src/objecttree/**",
-    "packages/chart-engine/src/layers/drawings/**"
+    "packages/chart-engine/src/layers/drawings/**",
+    "apps/web/src/features/rule-builder-graph/**"
   ]
 }
