@@ -19,6 +19,7 @@ from candleviewer import audit_chain_verify as entry
 from candleviewer.admin import audit_chain_verify as cli
 from candleviewer.audit.checkpoint import run_checkpoint
 from candleviewer.audit.hashing import ChainHasherBusy
+from candleviewer.audit.query import AuditQueryService
 from candleviewer.audit.repository import HASHED_FIELDS
 from candleviewer.storage.errors import AuditEntryTooLarge
 from candleviewer.storage.guarded_privileges import GUARDED_PRIVILEGES
@@ -254,6 +255,42 @@ async def test_a_stop_is_never_a_pass_and_names_no_driver_text(
     assert "audit-db" not in out and stores.disposed
 
 
+async def test_a_stop_after_a_failed_check_keeps_the_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class _Down(_Stores):
+        async def held_privileges(self, *args: Any) -> dict[tuple[str, str], frozenset[str]]:
+            return {}
+
+        async def chain_definition(self) -> str | None:
+            raise AuditReadFailed("08006")
+
+    stores = _Down(await _repo(1))
+    assert await _run(stores) == cli.EXIT_FAIL
+    out = capsys.readouterr().out
+    assert "FAIL grants" in out and "STOPPED: store_unavailable sqlstate=08006" in out
+
+
+async def test_a_walk_short_of_the_whole_chain_is_never_a_pass(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    original = AuditQueryService.run_verify
+
+    async def partial(self: Any, plan: Any, **kw: Any) -> Any:
+        return (await original(self, plan, **kw)).model_copy(update={"full_chain": False})
+
+    monkeypatch.setattr(AuditQueryService, "run_verify", partial)
+    assert await _run(_Stores(await _repo(2))) == cli.EXIT_STOPPED
+    assert "STOPPED: internal_error (RuntimeError)" in capsys.readouterr().out
+
+
+async def test_a_stored_value_that_is_not_a_hash_is_not_printed() -> None:
+    repo = await _repo(1)
+    repo.rows[0]["entry_hash"] = "\x1b[2Jforged"
+    (finding,) = await cli.compare_heads(repo, [cli.FileHead(1, "e" * 64)], head_id=1)
+    assert finding.detail.endswith("chain not a hash)") and "\x1b" not in finding.detail
+
+
 async def test_the_whole_run_is_bounded_by_its_timeout(capsys: pytest.CaptureFixture[str]) -> None:
     class _Slow(_Stores):
         async def chain_definition(self) -> str | None:
@@ -330,6 +367,7 @@ def test_main_invalid_settings_name_only_the_class(
         (["--checkpoint-sha256", "ABC"], "--checkpoint-sha256 must be 64"),
         (["--timeout", "0"], "--timeout must be above 0"),
         (["--timeout", "21601"], "--timeout must be above 0"),
+        (["--checkpoint-sha256", "0" * 64], "--checkpoint-sha256 needs --checkpoint-file"),
     ],
 )
 def test_main_refuses_bad_arguments_before_any_connection(

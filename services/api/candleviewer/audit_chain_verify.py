@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from candleviewer.admin import audit_chain_verify as flow
+from candleviewer.observability.logging import configure_logging
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.break_glass_cli_sqlalchemy import (
     SqlAlchemyAuditVerifyDatabase,
@@ -26,8 +27,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def connect() -> SqlAlchemyAuditVerifyDatabase | None:
-    """The stores from the settings, or `None` when no read-only login is set. No I/O."""
+    """The stores from the settings, or `None` when no read-only login is set. No I/O. Logging
+    is configured first, with its redaction (C-12.6), as `audit_ack_break` does."""
     settings = Settings()
+    configure_logging(
+        env=settings.environment.value, level=settings.log_level, fmt=settings.log_format
+    )
     if settings.audit_verify_dsn is None:
         return None
     return SqlAlchemyAuditVerifyDatabase(

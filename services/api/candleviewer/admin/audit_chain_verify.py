@@ -113,9 +113,9 @@ class FileHead:
 
 
 class _Stopped(Exception):
-    def __init__(self, reason: str, checked: int) -> None:
+    def __init__(self, reason: str, checked: int, failed: int) -> None:
         super().__init__(reason)
-        self.reason, self.checked = reason, checked
+        self.reason, self.checked, self.failed = reason, checked, failed
 
 
 def _out(line: str) -> None:
@@ -132,6 +132,8 @@ def main(argv: Sequence[str] | None = None, *, connect: Callable[[], VerifyStore
         return _usage(f"--timeout must be above 0 and at most {TIMEOUT_MAX_S:.0f} s")
     if args.checkpoint_sha256 is not None and not _SHA256.fullmatch(args.checkpoint_sha256):
         return _usage("--checkpoint-sha256 must be 64 lower-case hex digits")
+    if args.checkpoint_sha256 is not None and args.checkpoint_file is None:
+        return _usage("--checkpoint-sha256 needs --checkpoint-file")
     data = None
     if args.checkpoint_file is not None:
         try:
@@ -193,9 +195,9 @@ async def run(
     """One check over `stores`, whose pool is released at the end."""
     try:
         found = await _checks(stores, check_only, data, sha256, batch, timeout_s)
-    except _Stopped as stop:
+    except _Stopped as stop:  # a check that already failed keeps its exit code: never softened
         _out(f"STOPPED: {stop.reason} (entries_checked={stop.checked}); result unknown")
-        return EXIT_STOPPED
+        return EXIT_FAIL if stop.failed else EXIT_STOPPED
     finally:
         await _dispose(stores)
     _out(f"RESULT: {'FAIL' if found else 'PASS'} ({len(found)} FAIL)")
@@ -210,10 +212,10 @@ async def _checks(
     batch: int,
     timeout_s: float,
 ) -> list[Finding]:
-    checked = 0
+    checked, found = 0, list[Finding]()
     try:
         async with asyncio.timeout(timeout_s):
-            found = await definitions(stores)
+            await definitions(stores, found)
             if check_only:
                 return found
             query = AuditQueryService(stores.audit_log)
@@ -223,6 +225,8 @@ async def _checks(
             finally:
                 query.close()
             checked = result.entries_checked
+            if plan.from_id is not None and not result.full_chain:  # a pass covers the whole chain
+                raise RuntimeError("the walk did not cover genesis to the head")
             note = f"entries_checked={checked}, head id {plan.head_id}"
             if not result.verified:
                 kind = result.kind or "unknown"
@@ -241,7 +245,7 @@ async def _checks(
                 found += _section("checkpoint-file", problems, f"{len(heads)} heads")
             return found
     except Exception as exc:  # a stop: never a pass (a cancel is no `Exception`: it propagates)
-        raise _Stopped(stop_reason(exc), checked) from None
+        raise _Stopped(stop_reason(exc), checked, len(found)) from None
 
 
 def stop_reason(exc: BaseException) -> str:
@@ -260,16 +264,18 @@ def stop_reason(exc: BaseException) -> str:
     return f"{VerifyStopReason.INTERNAL_ERROR.value} ({type(exc).__name__}{suffix})"
 
 
-async def definitions(stores: VerifyStores) -> list[Finding]:
-    """The grants, the guard triggers and the deployed `audit_chain()` field order."""
+async def definitions(stores: VerifyStores, found: list[Finding]) -> list[Finding]:
+    """The grants, the guard triggers and the deployed `audit_chain()` field order, each
+    section's findings added to `found` as soon as it ends (a later stop keeps them)."""
     held = await stores.held_privileges(
         list(EXPECTED_GRANTS), list(AUDIT_TABLES), list(TABLE_PRIVILEGES)
     )
-    found = _section("grants", check_grants(held))
+    found += _section("grants", check_grants(held))
     found += _section("triggers", check_triggers(await stores.triggers(list(AUDIT_TABLES))))
     order = framed_fields(await stores.chain_definition() or "")
     fields = [] if order == ("prev_hash", *HASHED_FIELDS) else [Finding("fields", f"{order}")]
-    return found + _section("fields", fields)
+    found += _section("fields", fields)
+    return found
 
 
 def check_grants(held: dict[tuple[str, str], frozenset[str]]) -> list[Finding]:
@@ -341,7 +347,8 @@ async def compare_heads(
             kind = ChainBreakKind.CHECKPOINT_MISSING
         else:
             kind = ChainBreakKind.CHECKPOINT_MISMATCH
-        detail = f"first_bad_id={head.head_id} kind={kind} (file {head.head_hash}, chain {stored})"
+        shown = stored if stored is None or _SHA256.fullmatch(stored) else "not a hash"
+        detail = f"first_bad_id={head.head_id} kind={kind} (file {head.head_hash}, chain {shown})"
         found.append(Finding("checkpoint-file", detail))
     return found
 
