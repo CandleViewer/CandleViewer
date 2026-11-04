@@ -42,10 +42,12 @@ from candleviewer.alerts.ports import (
     MetricChildLike,
 )
 from candleviewer.observability import spawn
+from candleviewer.rules.errors import ConstantTypeError
 from candleviewer.rules.evaluator import MetricSource, SnapshotBuilder
 from candleviewer.rules.evaluator.nodes import (
     EvalContext,
     InstanceState,
+    check_constants,
     evaluate,
     referenced_metrics,
 )
@@ -246,7 +248,8 @@ class AlertEvaluator:
         try:
             a = state_of(row)
             cond = AlertCondition.model_validate(row.condition_ir)
-        except ValidationError:
+            check_constants(cond.conditions)  # the rule load's check: alerts share the evaluator
+        except (ValidationError, ConstantTypeError):
             _log().error("alert_condition_invalid", alert_id=row.id)
             return
         if old is not None and old.condition_hash == a.condition_hash:

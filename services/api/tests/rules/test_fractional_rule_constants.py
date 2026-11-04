@@ -8,8 +8,9 @@ is; the Postgres store writes it as JSON text and reads it back with `json.loads
 hand the load the same document.
 
 The dump writes a `Decimal` constant as its text (`"0.2"`), so the evaluator reads decimal text as
-the number it spells (`Literal_.value`). A constant it cannot read as its place needs is refused
-at load (`check_constants`, through `quarantine_path`) and never evaluated.
+the number it spells (`Literal_.value`, read once per load). A constant it cannot read as its place
+needs is refused at save (the validator runs `check_constants`) and at load (`quarantine_path`, and
+an alert's load), and never evaluated.
 """
 
 from __future__ import annotations
@@ -48,6 +49,8 @@ from candleviewer.rules.manager import (
     quarantine_path,
 )
 from candleviewer.rules.vocabulary import default_registry
+from tests.alerts._evaluator_env import Row, make, row
+from tests.alerts._evaluator_env import ir as alert_ir
 from tests.rules.test_validator_endpoints import _PERF_SAMPLES, _assert_median_within, _sample_ms
 
 FIX = Path(__file__).parents[1] / "fixtures/rule_ir"
@@ -425,6 +428,17 @@ async def test_a_save_refuses_a_constant_the_evaluator_cannot_read(
     field = "conditions.right" if beside else "conditions.left.operands[1]"
     issue = {"field": field, "rule": "type_mismatch", "message": NOT_A_NUMBER}
     assert (refused.value.code, refused.value.extra["errors"]) == ("rule_ir_invalid", [issue])
+
+
+async def test_an_alert_whose_constant_its_place_cannot_read_is_parked_at_load() -> None:
+    """Alerts share the evaluator, so their load runs the rules' check: a stored alert holding such
+    a constant is never subscribed, and a sound one beside it is."""
+    parked = alert_ir("gt")
+    parked["conditions"]["right"] = {"const": "5%"}
+    ev, *_ = make(row("sound"), Row("parked", condition_ir=parked, condition_hash="h-parked"))
+    await ev.warm_up()
+    assert list(ev.alerts) == ["sound"]
+    assert [s.members for s in ev.subscriptions.values()] == [{"sound"}]
 
 
 #: An enum constant as long as a rule body holds (the body bound, 2,000,000 bytes, is the only bound
