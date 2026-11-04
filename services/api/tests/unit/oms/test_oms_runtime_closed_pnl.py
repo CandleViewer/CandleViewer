@@ -222,9 +222,12 @@ async def test_without_reconciliation_the_stand_in_stays_bare_and_without_its_st
     assert bool(_reads(world)) is synced
 
 
-async def test_a_sync_that_cannot_start_is_paged_and_ready_stands(
+async def test_a_sync_start_the_lane_does_not_confirm_is_paged_and_ready_stands(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Paged as unconfirmed, not as unstarted: a start whose answer the bound cut off may have
+    run. `ready` stands and `/readyz` reads `ok`."""
+
     def refused(self: ClosedPnlSync, accounts: Iterable[AccountId]) -> bool:
         raise RuntimeError("the sync's start")
 
@@ -232,11 +235,37 @@ async def test_a_sync_that_cannot_start_is_paged_and_ready_stands(
     world = keyed(Synced())
     with capture_logs() as logs:
         async with started(world.runtime()) as runtime:
-            await until(lambda: "oms_closed_pnl_sync_unstarted" in world.pager.calls)
+            await until(lambda: bool(_sync_pages(world)))
             assert (runtime.state, runtime.readiness, runtime.readyz) == ("ok", "ok", "ok")
-    unstarted = [(e["error"], e["log_level"]) for e in logs
-                 if e["event"] == "oms_closed_pnl_sync_unstarted"]  # fmt: skip
-    assert unstarted == [("RuntimeError", "critical")]
+    assert _sync_pages(world) == ["oms_closed_pnl_sync_start_unconfirmed"]
+    unconfirmed = [(e["error"], e["log_level"]) for e in logs
+                   if e["event"] == "oms_closed_pnl_sync_start_unconfirmed"]  # fmt: skip
+    assert unconfirmed == [("RuntimeError", "critical")]
+
+
+async def test_an_account_a_start_skips_is_logged_under_its_callers_own_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The accounts read at start serve reconciliation's jobs and the sync: a keyless account is
+    logged once under each one's own event, never twice under reconciliation's."""
+
+    async def opened(self: ReconcileJobs, accounts: Iterable[AccountId]) -> None:
+        return None
+
+    monkeypatch.setattr(ReconcileJobs, "start", opened)
+    world = keyed(Synced(handover_store=_Store(), reconcile_reads=Reads()))
+    keyless = AccountId(UUID(int=0xC1))
+    InMemorySubmissionStore(world.store).seed_account(cr.ref(keyless, "demo"))
+    world.accounts.append(TradingAccountRow(keyless, "demo", "100002", False, None))
+    with capture_logs() as logs:
+        async with started(world.runtime()):
+            await until(lambda: bool(_reads(world)))  # the sync has started
+    skipped = sorted((e["event"], e["account_id"], e["reason"]) for e in logs
+                     if e["event"].endswith("_account_skipped"))  # fmt: skip
+    assert skipped == [
+        ("oms_closed_pnl_account_skipped", str(keyless), "OrderEntryRefused"),
+        ("oms_reconcile_account_skipped", str(keyless), "OrderEntryRefused"),
+    ]
 
 
 async def test_a_sync_whose_task_ended_unasked_is_paged_once_and_degrades_readyz_alone(
