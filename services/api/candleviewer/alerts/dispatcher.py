@@ -31,6 +31,12 @@ adapter, and settles delivery + outbox row in one store call:
   not active is settled `suppressed` / `owner_inactive` (`recipient_deleted` once the owner row is
   gone), final and not announced on the `alerts` topic; an owner whose status cannot be read leaves
   the row leased (read again after the lease, never dead-lettered). Both are counted;
+- the owner's notification settings (#1130 slice 3, 24 §19.106 CC-9), read after the owner gate
+  through `prefs` (`alerts.preferences`; once per owner per batch, bounded): a symbol mute or
+  quiet hours sends a firing's `in_app` row with `silenced` set and settles its `desktop` row
+  `suppressed` with the same reason, and `desktop_enabled` false settles a desktop row
+  `suppressed` / `desktop_off`. The read is the delivery owner's, never anyone else's; a read that
+  fails or times out is logged and delivers unsuppressed (a mute is a comfort, a delivery is safe);
 - `webhook` (flag `alerts_webhook_enabled`, E40-S03) and `push` (out of scope) are
   registered but disabled -> `suppressed`. `desktop` awaits the Electron shell's outcome
   (report-back lands with the `alerts` WS topic, PR 2) and stays `queued` until then.
@@ -42,7 +48,7 @@ import asyncio
 import contextlib
 import random
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -51,6 +57,13 @@ import structlog
 
 from candleviewer.alerts.outbox import TOPIC_ALERT_DELIVER
 from candleviewer.alerts.owners import OwnerGate, SkipReason
+from candleviewer.alerts.preferences import (
+    DELIVER,
+    Decision,
+    DeliveryPrefs,
+    PrefsSource,
+    decide,
+)
 from candleviewer.observability import spawn
 from candleviewer.observability.redaction import redact_text
 
@@ -72,10 +85,13 @@ DEPTH_EVERY_S = 15.0
 #: on it, so a stalled read (a lock wait, a busy server) must not hold up the claims behind it.
 DEPTH_TIMEOUT_S = 5.0
 
-#: Bounded `suppressed` reason codes (stored in `error_message` and `context`).
+#: Bounded `suppressed` reason codes (stored in `error_message` and `context`): the dispatcher's
+#: and CC-9's (22 `DeliverySuppressionReason` less the evaluator's `storm`). `window_visible` is
+#: only ever the shell's report (CC-17); the dispatcher writes the other three of CC-9.
 SUPPRESSION_REASONS: frozenset[str] = frozenset(
     {"email_relay_off", "webhook_disabled", "push_unavailable", "recipient_deleted",
-     "unknown_channel", "owner_inactive"}
+     "unknown_channel", "owner_inactive", "muted_symbol", "quiet_hours", "window_visible",
+     "desktop_off"}
 )  # fmt: skip
 
 
@@ -134,6 +150,8 @@ class Delivery(Protocol):
     def body(self) -> str: ...
     @property
     def queued_at(self) -> datetime: ...
+    @property
+    def context(self) -> Mapping[str, Any]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,8 +185,11 @@ class DispatchStore(Protocol):
         """Rows of *topic* neither processed nor dead: the backlog (`cv_outbox_depth`)."""
         ...
 
-    async def settle_sent(self, job: OutboxJob, *, attempt: int, http_status: int | None) -> bool:
-        """Conditional `queued -> sent` + outbox `processed_at`, one transaction."""
+    async def settle_sent(
+        self, job: OutboxJob, *, attempt: int, http_status: int | None, silenced: str | None = None
+    ) -> bool:
+        """Conditional `queued -> sent` + outbox `processed_at`, one transaction; `silenced`, when
+        set, is merged into the row's `context` in the same update (CC-9)."""
         ...
 
     async def settle_processed(self, job: OutboxJob) -> None:
@@ -303,6 +324,7 @@ class AlertDispatcher:
         rng: Callable[[], float] = random.random,
         metric: Metric = _no_metric,
         on_change: Callable[[Sequence[int]], Awaitable[None]] | None = None,
+        prefs: PrefsSource | None = None,
         batch: int = 64,
         lease_s: float = 60.0,
         interval_s: float = 1.0,
@@ -318,6 +340,8 @@ class AlertDispatcher:
         self._batch, self._lease, self._interval = batch, lease_s, interval_s
         self._depth_every, self._monotonic = depth_every_s, monotonic
         self._depth_timeout = depth_timeout_s
+        self._prefs = prefs
+        self._prefs_seen: dict[str, DeliveryPrefs | None] = {}  # per owner, one batch
         self._depth_due: float | None = None  # monotonic time of the next sample; None: at once
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -328,6 +352,7 @@ class AlertDispatcher:
             topic=TOPIC_ALERT_DELIVER, worker=self._worker, lease_s=self._lease, limit=self._batch
         )
         changed: list[int] = []
+        self._prefs_seen = {}  # read afresh each batch: a change applies from the next poll
         for job in jobs:
             if self._stopping:  # draining: the rest stay leased and are replayed later
                 break
@@ -354,11 +379,20 @@ class AlertDispatcher:
                 if await self._store.settle_suppressed(job, reason=reason):
                     self._count(d.channel, "suppressed")
             return False  # final, and not announced on the `alerts` topic
+        decision = await self._decide(d)
+        if decision.action == "suppress" and decision.reason in SUPPRESSION_REASONS:
+            won = await self._store.settle_suppressed(job, reason=decision.reason)
+            if won:
+                self._count(d.channel, "suppressed")
+            return won
+        silenced = decision.reason if decision.action == "silence" else None
         adapter = self._adapters.get(d.channel)
         out = await self._deliver(adapter, d)
         attempt = min(job.attempts + 1, MAX_ATTEMPT_COLUMN)
         if out.kind == "sent":
-            won = await self._store.settle_sent(job, attempt=attempt, http_status=out.http_status)
+            won = await self._store.settle_sent(
+                job, attempt=attempt, http_status=out.http_status, silenced=silenced
+            )
             if won:
                 self._count(d.channel, "sent")
                 self._metric("cv_alert_delivery_attempts", ()).observe(job.attempts + 1)
@@ -382,6 +416,26 @@ class AlertDispatcher:
         if d.user_id is None:
             return "inactive"
         return (await self._owners.skipped({d.user_id}, fresh=True)).get(d.user_id)
+
+    async def _decide(self, d: Delivery) -> Decision:
+        """CC-9 for `d`, over its owner's settings (the row's `user_id`, which the owner gate has
+        just found active). No source, no owner, or an unreadable read: deliver."""
+        if self._prefs is None or d.user_id is None or d.channel not in ("in_app", "desktop"):
+            return DELIVER
+        owner = d.user_id
+        if owner not in self._prefs_seen:
+            try:
+                self._prefs_seen[owner] = await self._prefs.prefs(owner)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # a timeout included: never hold the poll loop
+                _log().warning("alert_prefs_unreadable", delivery_id=d.id,
+                               error=type(exc).__name__)  # fmt: skip
+                self._prefs_seen[owner] = None
+        prefs = self._prefs_seen[owner]
+        if prefs is None:
+            return DELIVER
+        return decide(channel=d.channel, context=d.context, prefs=prefs, now=self._now())
 
     async def _deliver(self, adapter: ChannelAdapter | None, d: Delivery) -> Outcome:
         if adapter is None:

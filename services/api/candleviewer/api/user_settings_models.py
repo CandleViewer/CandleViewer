@@ -43,7 +43,8 @@ from urllib.parse import urlsplit
 import structlog
 from pydantic import BaseModel, ValidationError
 
-from candleviewer.alerts._generated.notification_overrides import LOCKED_CELLS
+from candleviewer.alerts._generated.notification_overrides import CATEGORIES, LOCKED_CELLS
+from candleviewer.alerts.preferences import zone
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.drawings_models import format_errors
 from candleviewer.domain.text import unpaired_surrogate
@@ -60,6 +61,20 @@ META: Final = "_meta"
 READ_ONLY: Final = frozenset({"trading.one_click_armed"})
 #: The SCR-115 matrix leaf, whose locked cells are refused false (E40-D02 CC-8).
 MATRIX: Final = "notifications.matrix"
+MUTED_SYMBOLS: Final = "notifications.muted_symbols"
+QUIET_HOURS: Final = "notifications.quiet_hours"
+#: The refusal rule whose attempt is audited `notifications.risk_channel_muted` (CC-8).
+RISK_CHANNEL_LOCKED: Final = "risk_channel_locked"
+#: A matrix cell's value when the patch leaves it absent (E40-D02 §6.2's defaults, D01 §4/§7): per
+#: category, (toast, desktop, sound); the Alerts row has no desktop cell (per alert, D-11), so its
+#: desktop reads off for the sound-only rule. A locked cell reads on whatever is sent. A hand copy
+#: of the §6.2 table, pinned to it cell by cell by the unit tests; C-16.5 follow-up: a `defaults`
+#: block in `packages/protocol/notification-overrides.json`, generated like the locked cells.
+MATRIX_DEFAULTS: Final[Mapping[str, tuple[bool, bool, bool]]] = MappingProxyType({
+    "alerts": (True, False, True), "rule_actions": (True, False, False),
+    "order_rejects": (True, False, True), "risk_events": (True, True, True),
+    "system_health": (True, False, False), "recorder": (True, False, False),
+})  # fmt: skip
 #: The credential-class leaves (21 Sec.12): their values leave their owner only as `masked()`.
 MASKED_LEAVES: Final = frozenset({"notifications.webhook_url"})
 #: A masked value's elided part, and the whole of a value with no scheme and host to keep.
@@ -105,11 +120,13 @@ GROUPS: Final = frozenset(key.partition(".")[0] for key in LEAVES)
 
 
 class PatchRefused(Exception):
-    """The patch breaks 22's `Settings`: `errors` are the contract's `errors[]` entries."""
+    """The patch breaks 22's `Settings`: `errors` are the contract's `errors[]` entries, and
+    `locked` the matrix cells it tried to turn off (read before `errors` is cut to its bound, so
+    the `notifications.risk_channel_muted` record never loses one)."""
 
-    def __init__(self, errors: list[dict[str, str]]) -> None:
+    def __init__(self, errors: list[dict[str, str]], locked: list[str] | None = None) -> None:
         super().__init__("the settings patch is invalid")
-        self.errors = errors
+        self.errors, self.locked = errors, locked or []
 
 
 def _log() -> Any:
@@ -209,18 +226,70 @@ def _judge_group(group: str, members: dict[str, object], out: dict[str, object])
             except ValidationError as exc:
                 errors += redact_structure(format_errors(exc, prefix=group))
             else:
-                if key == MATRIX:
-                    errors += _locked_cells_muted(out[key])
+                errors += _leaf_rules(key, out[key])
     return errors
+
+
+def _leaf_rules(key: str, value: object) -> list[Any]:
+    """The rules of a leaf its generated model cannot state (#1130 slice 3, E40-D02 CC-8)."""
+    if key == MATRIX:
+        return _locked_cells_muted(value) + _sound_only(value)
+    if key == MUTED_SYMBOLS:
+        return _duplicate_symbols(value)
+    if key == QUIET_HOURS and isinstance(value, dict) and zone(str(value.get("tz"))) is None:
+        return [_error(f"{QUIET_HOURS}.tz", "unknown_timezone", "Not a known IANA time zone.")]
+    return []
+
+
+def _cell(row: dict[str, object], channel: str, default: bool) -> bool:
+    v = row.get(channel)
+    return v if isinstance(v, bool) else default
+
+
+def _sound_only(matrix: object) -> list[Any]:
+    """D-29: a row's sound needs its toast or its desktop, each read with its default; a locked
+    cell reads on, so a locked row is never sound-only."""
+    rows = matrix if isinstance(matrix, dict) else {}
+    errors: list[Any] = []
+    for category in CATEGORIES:
+        row = rows.get(category)
+        row = row if isinstance(row, dict) else {}
+        toast, desktop, sound = MATRIX_DEFAULTS[category]
+        seen = [_cell(row, ch, d) or (category, ch) in LOCKED_CELLS
+                for ch, d in (("toast", toast), ("desktop", desktop))]  # fmt: skip
+        if category == "alerts":
+            seen[1] = False  # no desktop cell: per alert
+        if _cell(row, "sound", sound) and not any(seen):
+            errors.append(_error(f"{MATRIX}.{category}.sound", "sound_only_channel",
+                                 "Sound may never be the only channel."))  # fmt: skip
+    return errors
+
+
+def _duplicate_symbols(muted: object) -> list[Any]:
+    """CC-8: each symbol is muted at most once."""
+    seen: set[str] = set()
+    for i, item in enumerate(muted if isinstance(muted, list) else []):
+        symbol = item.get("symbol") if isinstance(item, dict) else None
+        if isinstance(symbol, str):
+            if symbol in seen:
+                return [_error(f"{MUTED_SYMBOLS}.{i}.symbol", "duplicate_symbol",
+                               "Each symbol is muted at most once.")]  # fmt: skip
+            seen.add(symbol)
+    return []
+
+
+def locked_cells_refused(errors: Iterable[Mapping[str, str]]) -> list[str]:
+    """The matrix cells a refused patch tried to turn off (`risk_channel_locked`), by path."""
+    return sorted(e["field"] for e in errors if e.get("rule") == RISK_CHANNEL_LOCKED)
 
 
 def _locked_cells_muted(matrix: object) -> list[Any]:
     """E40-D02 CC-8 (#1130): a cell the critical-override constant locks is never stored false,
-    server-side and behind no flag (C-4.14). Its `notifications.risk_channel_muted` record is
-    written by the preferences slice; a refusal without it is the safe half."""
+    server-side and behind no flag (C-4.14); the router audits the attempt
+    `notifications.risk_channel_muted` (`locked_cells_refused`)."""
     rows = matrix if isinstance(matrix, dict) else {}
     return [
-        _error(f"{MATRIX}.{category}.{channel}", "risk_channel_locked",
+        _error(f"{MATRIX}.{category}.{channel}", RISK_CHANNEL_LOCKED,
                "Cannot be muted — critical.")
         for category, channel in sorted(LOCKED_CELLS)
         if isinstance(row := rows.get(category), dict) and row.get(channel) is False
@@ -250,7 +319,7 @@ def judge_patch(raw: bytes) -> dict[str, object]:
         else:
             errors += _judge_group(group, members, out)
     if errors:
-        raise PatchRefused(errors[:_MAX_ERRORS])
+        raise PatchRefused(errors[:_MAX_ERRORS], locked=locked_cells_refused(errors))
     return out
 
 
