@@ -1,7 +1,9 @@
 """#415 (E17-X02) slice k: the nightly fuzz time-boxes every WS fuzz target, with a weekend run.
 
 `fuzz-nightly.yml` runs every `fuzz`-marked test of services/api/tests/unit/ws in its python job and
-both `test:fuzz` projects in its typescript job. `CV_FUZZ_BUDGET_SECONDS` is how long a job fuzzes
+both `test:fuzz` projects in its typescript job; the python job then runs the E12-X02 bars REST
+property (#452) in a step of its own, a fixed count of derandomised examples whose timeout is
+sized from that count. `CV_FUZZ_BUDGET_SECONDS` is how long a job fuzzes
 for: 30 minutes on a night from Sunday to Friday (decision D2 of #415, which also asks for a weekend
 run), 3 hours on Saturday. The weekend length, its 240-minute timeout and the weekly hours are this
 slice's choice, not D2's. The Saturday cron (or the `weekend` input of a manual run) also picks the
@@ -17,8 +19,10 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -34,6 +38,14 @@ DOC: dict[Any, Any] = yaml.safe_load(
 API_TESTS = ROOT / "services" / "api" / "tests"
 WS_TESTS = API_TESTS / "unit" / "ws"
 JOBS = ("python", "typescript")
+BARS_FUZZ = API_TESTS / "security" / "bars" / "test_param_fuzz.py"
+#: The most one bars example may take on a runner, in seconds: about three times the 35 ms one
+#: took on a loaded 8-core box (the 300-example PR-lane property in 10.6 s, #452), so a slower
+#: night still ends inside the step's timeout.
+BARS_EXAMPLE_CEILING_S = 0.1
+#: The least a job timeout leaves past its fuzzing for setup: checkout, uv, `uv sync --frozen` and
+#: the encrypt and upload steps.
+SETUP_MINUTES = 15
 BUDGET = {False: 30 * 60, True: 3 * 60 * 60}  # seconds a job fuzzes for: a night's, the weekend's
 LOCAL = not os.environ.get("CI")  # off CI a missing tool skips a test; on CI it fails the test
 #: `(github.event.schedule == '<cron>' || inputs.weekend) && <long> || <short>`: GitHub's `&&` and
@@ -298,7 +310,9 @@ def test_the_web_fuzz_project_needs_no_built_workspace_package() -> None:
 def test_each_timeout_covers_the_budget_with_setup_headroom(job: str) -> None:
     for weekend, seconds in BUDGET.items():
         timeout = _pick(DOC["jobs"][job]["timeout-minutes"], weekend=weekend)
-        assert seconds // 60 + 15 <= timeout <= seconds // 60 + 60, (weekend, timeout)
+        bars = int(_bars_step()["timeout-minutes"]) if job == "python" else 0  # its own step
+        fuzzing = seconds // 60 + bars
+        assert fuzzing + SETUP_MINUTES <= timeout <= fuzzing + 60, (weekend, timeout)
 
 
 def test_saturday_runs_the_weekend_budget_and_each_other_night_the_nightly_one() -> None:
@@ -317,3 +331,52 @@ def test_saturday_runs_the_weekend_budget_and_each_other_night_the_nightly_one()
         assert [_pick(value, schedule=night) for night in nights] == [short] * len(nights)
         assert _pick(value, schedule=saturday) == long
         assert (_pick(value, weekend=True), _pick(value)) == (long, short)  # by hand: ticked or not
+
+
+def _bars_step() -> dict[str, Any]:
+    steps: list[dict[str, Any]] = DOC["jobs"]["python"]["steps"]
+    (step,) = [s for s in steps if "tests/security/bars" in s.get("run", "")]
+    return step
+
+
+def _bars_examples() -> int:
+    """`max_examples` of the bars file's NIGHTLY settings, the run size the step inherits."""
+    for node in ast.parse(BARS_FUZZ.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "NIGHTLY":
+            assert isinstance(node.value, ast.Call)
+            (size,) = [k.value for k in node.value.keywords if k.arg == "max_examples"]
+            return int(ast.literal_eval(size))
+    raise AssertionError("no NIGHTLY settings in the bars fuzz file")
+
+
+def test_the_bars_step_runs_the_one_fuzz_test_of_the_bars_file_whatever_the_ws_step_did() -> None:
+    tests = [
+        node.name
+        for node in ast.parse(BARS_FUZZ.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        and "pytest.mark.fuzz" in {ast.unparse(d) for d in node.decorator_list}
+    ]
+    assert tests == ["test_param_fuzz_nightly_every_answer_meets_the_oracle"]
+    step = _bars_step()
+    args = shlex.split(step["run"])
+    assert args[:4] == ["uv", "run", "pytest", "tests/security/bars/test_param_fuzz.py"]
+    assert args[args.index("-m") + 1] == "fuzz and not flaky" and "--no-cov" in args
+    assert step["if"] == "${{ !cancelled() }}"  # a red WS night still fuzzes the bars routes
+    steps = DOC["jobs"]["python"]["steps"]
+    assert steps.index(step) == steps.index(_fuzz("python")) + 1
+
+
+def test_the_bars_step_keeps_a_failing_query_out_of_the_public_log() -> None:
+    # derandomised: a failure replays from the commit, so the log needs no input (#415)
+    assert "derandomize=True" in BARS_FUZZ.read_text(encoding="utf-8")
+    args = shlex.split(_bars_step()["run"])
+    assert {"--tb=no", "-rN", "-q"} <= set(args) and "CV_FUZZ" not in _bars_step()["run"]
+
+
+def test_the_bars_step_timeout_is_sized_from_its_examples() -> None:
+    examples = _bars_examples()
+    assert examples >= 5_000  # "several thousand" per the ticket, both routes
+    needed = math.ceil(examples * BARS_EXAMPLE_CEILING_S / 60)
+    step_timeout = int(_bars_step()["timeout-minutes"])
+    assert needed <= step_timeout <= 2 * needed  # the job's room for it: the timeout test above
+
