@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
+from candleviewer.rules.errors import ConstantTypeError
+from candleviewer.rules.evaluator.nodes import check_constants
 from candleviewer.rules.ir import (
     BooleanNode,
     Comparison,
@@ -176,6 +178,16 @@ class _Validator:
             for i, ch in enumerate(n.children):
                 self.condition(ch, f"{path}.children[{i}]")
 
+    def constants(self, conditions: Any) -> None:
+        """#5807: a constant the evaluator cannot read for its place (`check_constants`, which the
+        load runs too) is refused here, past the unit checks that read `5%`, `NaN` or `1_000` as
+        numbers and a product or a quotient as any unit."""
+        try:
+            check_constants(conditions)
+        except ConstantTypeError as exc:
+            path = "".join(f"[{p}]" if isinstance(p, int) else f".{p}" for p in exc.loc[1:-1])
+            self.err(f"{exc.loc[0]}{path}", "type_mismatch", exc.reason)
+
     # ----- actions and safety ---------------------------------------------------------------
     def actions(self) -> None:
         r = self.rule
@@ -239,6 +251,8 @@ class _Validator:
             if self.registry.get(r.trigger.metric) is None:
                 self.err("trigger.metric", "unknown_metric", f"Trigger metric '{r.trigger.metric}' is not in the vocabulary.")  # fmt: skip
         self.condition(r.conditions, "conditions")
+        if not self.out.errors:
+            self.constants(r.conditions)
         self.actions()
         self.out.estimated_evaluations_per_minute = estimate_evaluations_per_minute(r)
         self.guards()
