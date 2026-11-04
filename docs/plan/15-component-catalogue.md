@@ -1572,6 +1572,7 @@ interface TradeGroupSummary {
 - **Data contract**: `nextFundingTime`/`rate` sourced from Bybit's funding-rate WS stream (`tickers.{symbol}`) or REST fallback poll.
 - **Storybook**: Positive, Negative, UnderOneMinute.
 - **Tests**: unit, visual, axe.
+- **As built (E24-S04, #779)**: `rateExtra?: ReactNode`, the host's words after the rate ("/ 8 h · 10.95 % p.a. · predicted (estimated)", or "Funding n/a" with no `rate`), rendered as given between the rate and the count and omitted while `notTrading`. The component computes nothing: the host formats the interval, the server's `annualised_pct` and the CMP-227 chip. Storybook adds WithRateExtra and RateExtraNoRate.
 
 ### CMP-127 LiquidationMarker (chart annotation)
 
@@ -2965,6 +2966,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Data contract**: the chip exists when the series item carries `estimated: true` (`23` §14.7), the descriptor `confidence: "estimated"` (`24` §7.1; `22` `MetricSeries.estimated`) or a Derived value inherits `estimated=True` (`25` §1) — never from a catalogue adjective; the drawer reads `GET /detectors/methodology`; the provider emits `methodology.opened{detector}` (transport: E25-D05 G9).
 - **Storybook**: Inline, Marker, Section, SizeSm, SizeMd, Hover, FocusVisible, Active, TooltipOpen, WithConfidenceWord, WithStaleFreshnessMarker, CalloutComposition, LongDetectorName, HighContrast, Greyscale, ReducedMotion, OutsideProviderThrows.
 - **Tests**: unit (the provider requirement throws; no `host`-mode badge renders outside a bound native `<button>`; the name carries the word), visual, axe; plus a **catalogue-level test** asserting that every screen listed in `14-screens-catalogue.md` §12.3 under "(estimated) labelling" renders this component, a composition test asserting CMP-227 + CMP-239 never collapse into a single accessible name, and a pane-level assertion that no `marker` renders without a visible (estimated) word in the same pane.
+- **As built (E24-S04, #779)**: `name?: string`, the display name in the accessible name "Estimated, <name>" (default: the detector's own name, "Funding rate" for `funding`; PROPOSED) and `tooltip?: string` (CMP-016, the provenance sentence first); `EstimatedMethodologyProvider`'s `openMethodology(detector, opener)` receives the activated badge element, to which the host returns focus on close (`document.activeElement` is `body` after a mouse click in Safari and in Firefox on macOS); a badge outside the provider throws `EstimatedBadgeOutsideProviderError`. The `static` variant is deferred (no consumer yet). The provider's `methodology.opened{detector}` emission is not built: its transport is E25-D05 G9 (TODO in the provider). Storybook ships Inline, Marker, Section, SizeSm, SizeMd, WithConfidenceWord, LongDetectorName, Hover, FocusVisible, Active, TooltipOpen, Opens, WithStaleFreshnessMarker, CalloutComposition, Greyscale, HighContrast, LightTheme, ReducedMotion and OutsideProviderThrows.
 
 ### CMP-228 PreviewTile
 

@@ -38,6 +38,7 @@ import "../src/components/divider.css";
 import "../src/components/drawer.css";
 import "../src/components/emptystate.css";
 import "../src/components/errorstate.css";
+import "../src/components/estimatedbadge.css";
 import "../src/components/fields.css";
 import "../src/components/filedrop.css";
 import "../src/components/filterbar.css";
