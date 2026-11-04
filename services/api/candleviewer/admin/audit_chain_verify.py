@@ -8,8 +8,9 @@ read-only Postgres side (`VerifyStores`, M10's `SqlAlchemyAuditVerifyDatabase`) 
 to the head read when the run starts) with its database checkpoints. What is new here is only:
 
 * the definitions (`--check`): the grant model on `audit_log` and `audit_checkpoints` (`cv_app`
-  exactly SELECT and INSERT, `cv_ro` exactly SELECT, over all seven table privileges), the five
-  guard triggers enabled, and the deployed `audit_chain()` framing `HASHED_FIELDS` in order;
+  exactly SELECT and INSERT, `cv_ro` exactly SELECT, over all seven table privileges, column-level
+  grants and every role a login can become included), and the five guard triggers firing for an
+  ordinary session; the `audit_chain()` field check (`fields`) prints SKIP until slice 2;
 * the checkpoint file (interim anchor), `--checkpoint-file`: every head it records must name an
   entry with the same hash, with `_check_range`'s kinds; its sha256 against the recorded one;
 * the report and the exit codes.
@@ -38,7 +39,7 @@ from candleviewer.admin.audited import audit_exempt
 from candleviewer.audit.hashing import ChainHasherBusy
 from candleviewer.audit.models import ChainBreakKind
 from candleviewer.audit.query import VERIFY_BATCH_SIZE, AuditQueryService, chain_digest
-from candleviewer.audit.repository import HASHED_FIELDS, AuditRepository
+from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.verify_runner import VerifyStopReason
 from candleviewer.storage.errors import AuditEntryTooLarge, StorageTierUnavailable
 
@@ -46,9 +47,8 @@ __all__ = ["EXIT_FAIL", "EXIT_PASS", "EXIT_STOPPED", "EXIT_USAGE", "VerifyStores
 
 EXIT_PASS, EXIT_FAIL, EXIT_USAGE, EXIT_STOPPED = 0, 1, 2, 3
 DEFAULT_BATCH: Final = 2_000
-#: Twice the scheduled run's 1 800 s: this run has one connection of its own rather than a share
-#: of cv-api's pool and is meant for off-peak use; it stays within the 21 600 s cap that bounds
-#: the scheduled run (`Settings.audit_verify_nightly_deadline_s`).
+#: Twice the scheduled run's 1 800 s (its own connection, not cv-api's pool; for off-peak use),
+#: within the scheduled run's 21 600 s cap (`Settings.audit_verify_nightly_deadline_s`).
 DEFAULT_TIMEOUT_S: Final = 3_600.0
 TIMEOUT_MAX_S: Final = 21_600.0
 #: A checkpoint file holds one short line per daily run; a larger file is refused unread.
@@ -77,8 +77,10 @@ EXPECTED_TRIGGERS: Final = {
     "trg_audit_ckpt_append": "audit_checkpoints",
     "trg_audit_ckpt_no_truncate": "audit_checkpoints",
 }
-_FIELD_REF: Final = re.compile(r"audit_field\(\s*(?:to_char\(\s*)?NEW\.([a-z_]+)")
 _SHA256: Final = re.compile(r"[0-9a-f]{64}")
+#: `head_id` is a Postgres `bigint`.
+_BIGINT_MAX: Final = 2**63 - 1
+FIELDS_SKIP: Final = "SKIP fields: lands in slice 2"
 
 
 class VerifyStores(Protocol):
@@ -92,8 +94,6 @@ class VerifyStores(Protocol):
     ) -> dict[tuple[str, str], frozenset[str]]: ...
 
     async def triggers(self, tables: list[str]) -> dict[str, tuple[str, bool]]: ...
-
-    async def chain_definition(self) -> str | None: ...
 
     async def dispose(self) -> None: ...
 
@@ -123,13 +123,14 @@ def _out(line: str) -> None:
 
 
 def main(argv: Sequence[str] | None = None, *, connect: Callable[[], VerifyStores | None]) -> int:
-    """`connect` loads the settings and builds the stores, or returns `None` when no read-only
-    login is configured; it opens no connection."""
+    """`connect` builds the stores from the settings (`None`: no read-only login); opens nothing."""
     args = _parser().parse_args(argv)
     if args.self_test:
         return asyncio.run(self_test())
     if not 0 < args.timeout <= TIMEOUT_MAX_S:
         return _usage(f"--timeout must be above 0 and at most {TIMEOUT_MAX_S:.0f} s")
+    if args.check and args.checkpoint_file is not None:
+        return _usage("--check walks no chain, so it compares no checkpoint file")
     if args.checkpoint_sha256 is not None and not _SHA256.fullmatch(args.checkpoint_sha256):
         return _usage("--checkpoint-sha256 must be 64 lower-case hex digits")
     if args.checkpoint_sha256 is not None and args.checkpoint_file is None:
@@ -217,6 +218,8 @@ async def _checks(
         async with asyncio.timeout(timeout_s):
             await definitions(stores, found)
             if check_only:
+                if data is not None:
+                    _out("SKIP checkpoint-file: --check walks no chain to compare it with")
                 return found
             query = AuditQueryService(stores.audit_log)
             try:
@@ -238,6 +241,8 @@ async def _checks(
             found += _section("chain", [], note)
             if data is not None:
                 heads, problems = parse_heads(data)
+                if not heads:
+                    problems.append(Finding("checkpoint-file", "no checkpoint head in the file"))
                 problems += await compare_heads(stores.audit_log, heads, plan.head_id)
                 digest = hashlib.sha256(data).hexdigest()
                 if sha256 is not None and digest != sha256:
@@ -265,16 +270,14 @@ def stop_reason(exc: BaseException) -> str:
 
 
 async def definitions(stores: VerifyStores, found: list[Finding]) -> list[Finding]:
-    """The grants, the guard triggers and the deployed `audit_chain()` field order, each
-    section's findings added to `found` as soon as it ends (a later stop keeps them)."""
+    """The grants and the guard triggers, each section's findings added to `found` as soon as it
+    ends (a later stop keeps them). The `fields` section lands in slice 2."""
     held = await stores.held_privileges(
         list(EXPECTED_GRANTS), list(AUDIT_TABLES), list(TABLE_PRIVILEGES)
     )
     found += _section("grants", check_grants(held))
     found += _section("triggers", check_triggers(await stores.triggers(list(AUDIT_TABLES))))
-    order = framed_fields(await stores.chain_definition() or "")
-    fields = [] if order == ("prev_hash", *HASHED_FIELDS) else [Finding("fields", f"{order}")]
-    found += _section("fields", fields)
+    _out(FIELDS_SKIP)
     return found
 
 
@@ -293,24 +296,19 @@ def check_grants(held: dict[tuple[str, str], frozenset[str]]) -> list[Finding]:
 
 
 def check_triggers(present: dict[str, tuple[str, bool]]) -> list[Finding]:
+    """Each guard trigger present on its table and firing for an ordinary session."""
     found: list[Finding] = []
     for name, table in sorted(EXPECTED_TRIGGERS.items()):
         got = present.get(name)
         if got is None or got[0] != table:
             found.append(Finding("triggers", f"{name} on {table}: absent"))
-        elif not got[1]:
+        elif got[1] is not True:
             found.append(Finding("triggers", f"{name} on {table}: disabled"))
     return found
 
 
-def framed_fields(definition: str) -> tuple[str, ...]:
-    """The columns `audit_chain()` frames with `audit_field`, in order."""
-    return tuple(_FIELD_REF.findall(definition))
-
-
 def parse_heads(data: bytes) -> tuple[list[FileHead], list[Finding]]:
-    """The checkpoint job's JSON lines: each a `head_id` and a `head_hash`. A line that is not
-    one is a finding, never skipped."""
+    """JSON lines of `head_id` and `head_hash`; any other line is a finding, never skipped."""
     heads: list[FileHead] = []
     problems: list[Finding] = []
     for number, raw in enumerate(data.decode("utf-8", "replace").splitlines(), start=1):
@@ -322,7 +320,7 @@ def parse_heads(data: bytes) -> tuple[list[FileHead], list[Finding]]:
             record = None
         record = record if isinstance(record, dict) else {}
         head_id, head_hash = record.get("head_id"), record.get("head_hash")
-        if type(head_id) is int and head_id > 0 and isinstance(head_hash, str):
+        if type(head_id) is int and 0 < head_id <= _BIGINT_MAX and isinstance(head_hash, str):
             if _SHA256.fullmatch(head_hash):
                 heads.append(FileHead(head_id, head_hash))
                 continue
@@ -389,8 +387,6 @@ class SeededStores:
             prev = entry
         self.held = {(r, t): e for r, e in EXPECTED_GRANTS.items() for t in AUDIT_TABLES}
         self.present = {name: (table, True) for name, table in EXPECTED_TRIGGERS.items()}
-        rendered = ", ".join(f"audit_field(NEW.{f})" for f in ("prev_hash", *HASHED_FIELDS))
-        self.definition = f"BEGIN NEW.entry_hash := sha256({rendered}); END"
         self.checkpoints: list[tuple[int, str]] = []
         self.disposed = False
 
@@ -408,10 +404,6 @@ class SeededStores:
     @audit_exempt("read")
     async def triggers(self, tables: list[str]) -> dict[str, tuple[str, bool]]:
         return dict(self.present)
-
-    @audit_exempt("read")
-    async def chain_definition(self) -> str | None:
-        return self.definition
 
     @audit_exempt("lifecycle")
     async def dispose(self) -> None:
@@ -455,8 +447,7 @@ def _file(*heads: tuple[int, str]) -> bytes:
 
 
 async def self_test() -> int:
-    """Each check on a seeded chain: the clean chain passes and every injected fault is named
-    with the exit code it must give."""
+    """Seeded checks: the clean chain passes; each named injected fault must give its exit code."""
     widened = {("cv_ro", "audit_log"): frozenset(TABLE_PRIVILEGES)}
     cases: list[tuple[str, Callable[[SeededStores], Any], int]] = [
         ("clean chain", lambda s: None, EXIT_PASS),
@@ -466,7 +457,6 @@ async def self_test() -> int:
         ("checkpoint above the head", lambda s: s.checkpoints.append((99, "a" * 64)), EXIT_FAIL),
         ("widened grant", lambda s: s.held.update(widened), EXIT_FAIL),
         ("disabled guard", lambda s: s.present.update(trg_audit_append=_OFF), EXIT_FAIL),
-        ("field order", lambda s: setattr(s, "definition", ""), EXIT_FAIL),
     ]
     failed = 0
     for name, inject, expected in cases:

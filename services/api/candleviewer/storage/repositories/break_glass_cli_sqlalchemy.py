@@ -59,9 +59,8 @@ PING_TIMEOUT_S = 5.0
 
 class _CliDatabase:
     """What every CLI run shares: its pool, named for the run, the journal's stores and the
-    cv-api probe. `cli` is the name's prefix. `read_only` opens every session with
-    `default_transaction_read_only = on` (in the startup packet), so no statement of the run can
-    write, whatever the login."""
+    cv-api probe. `cli` is the name's prefix. `read_only` puts `default_transaction_read_only = on`
+    in each session's startup packet: no statement of the run can write, whatever the login."""
 
     def __init__(self, dsn: str, cli: str, *, read_only: bool = False) -> None:
         suffix = f"{cli}:{os.urandom(4).hex()}"
@@ -129,35 +128,35 @@ class SqlAlchemyAuditAckDatabase(_CliDatabase):
         self.owners = SqlAlchemyActiveOwners(self._relational)
 
 
-#: (role, table, privilege, held) for each named role, table of schema `public` and privilege.
+#: (role, table, privilege, held) per named role, `public` table and privilege. Held: the role or
+#: any role it is a member of (inherited or by `SET ROLE`) holds it on the table, through PUBLIC
+#: too, or on any of its columns (column grants exist for SELECT, INSERT, UPDATE, REFERENCES only).
 _HELD: Final = sa.text(
     "SELECT r.rolname AS role, c.relname AS table_name, p.priv AS privilege, "
-    "has_table_privilege(r.oid, c.oid, p.priv) AS held "
+    "EXISTS (SELECT 1 FROM pg_roles m WHERE pg_has_role(r.oid, m.oid, 'MEMBER') AND "
+    "CASE WHEN p.priv = ANY(ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) "
+    "THEN has_any_column_privilege(m.oid, c.oid, p.priv) "
+    "ELSE has_table_privilege(m.oid, c.oid, p.priv) END) AS held "
     "FROM pg_roles r CROSS JOIN pg_class c "
     "JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public' "
     "CROSS JOIN unnest(CAST(:privileges AS text[])) AS p(priv) "
     "WHERE r.rolname = ANY(CAST(:roles AS text[])) "
     "AND c.relname = ANY(CAST(:tables AS name[])) AND c.relkind = 'r' ORDER BY 1, 2, 3"
 )
+#: A trigger fires for an ordinary session only in state 'O' (origin) or 'A' (always): 'D' never
+#: fires and 'R' only under `session_replication_role = replica`.
 _TRIGGERS: Final = sa.text(
-    "SELECT t.tgname AS name, c.relname AS table_name, t.tgenabled <> 'D' AS enabled "
+    "SELECT t.tgname AS name, c.relname AS table_name, t.tgenabled IN ('O', 'A') AS enabled "
     "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
     "JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public' "
     "WHERE NOT t.tgisinternal AND c.relname = ANY(CAST(:tables AS name[])) ORDER BY 1"
-)
-#: The deployed `public.audit_chain()`, as Postgres renders it.
-_CHAIN_FUNCTION: Final = sa.text(
-    "SELECT pg_get_functiondef(p.oid) AS definition FROM pg_proc p "
-    "JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public' "
-    "WHERE p.proname = 'audit_chain' AND p.pronargs = 0"
 )
 
 
 class SqlAlchemyAuditVerifyDatabase(_CliDatabase):
     """An offline chain check's stores (#1238): `audit_log` with the in-app verify reads and their
-    budgets, and three catalogue reads, on sessions that are all read-only. Tables and the
-    function are looked up in schema `public`, never through the `search_path`. A catalogue read
-    that fails raises `AuditReadFailed` with the SQLSTATE only (C-12.6)."""
+    budgets, and two catalogue reads, all on read-only sessions; tables in schema `public`, never
+    via `search_path`. A failed catalogue read raises `AuditReadFailed`, SQLSTATE only (C-12.6)."""
 
     def __init__(self, dsn: str, *, statement_timeout_ms: int, max_entry_bytes: int) -> None:
         super().__init__(dsn, "audit-verify", read_only=True)
@@ -180,14 +179,9 @@ class SqlAlchemyAuditVerifyDatabase(_CliDatabase):
         return {pair: frozenset(privileges) for pair, privileges in held.items()}
 
     async def triggers(self, tables: list[str]) -> dict[str, tuple[str, bool]]:
-        """Trigger name -> (its table, enabled) for the user triggers on `tables`."""
+        """User trigger on `tables` -> (its table, whether it fires for an ordinary session)."""
         rows = await self._read(_TRIGGERS, {"tables": tables})
-        return {str(r["name"]): (str(r["table_name"]), bool(r["enabled"])) for r in rows}
-
-    async def chain_definition(self) -> str | None:
-        """The deployed `audit_chain()` definition, or `None` when there is none."""
-        rows = await self._read(_CHAIN_FUNCTION, {})
-        return str(rows[0]["definition"]) if rows else None
+        return {str(r["name"]): (str(r["table_name"]), r["enabled"] is True) for r in rows}
 
     async def _read(self, statement: sa.TextClause, params: dict[str, Any]) -> list[Any]:
         state: str | None = None

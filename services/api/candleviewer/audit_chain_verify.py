@@ -1,13 +1,12 @@
-"""Offline, read-only audit-chain check (E43-T10, #1238):
+"""Offline, read-only audit-chain check (E43-T10, #1238; `docs/ops/runbooks/audit-chain-verify.md`):
 `python -m candleviewer.audit_chain_verify [--checkpoint-file FILE [--checkpoint-sha256 HEX]]
 [--batch N] [--timeout S] | --check | --self-test`.
-Runbook: `docs/ops/runbooks/audit-chain-verify.md`.
 
-A thin composition like `audit_ack_break.py`: it imports no `audit` (C-3.3). The login is
-`Settings.audit_verify_dsn` (`CV_AUDIT_VERIFY_DSN`, a read-only login such as `cv_ro`); unset, the
-tool refuses to run and never falls back to `CV_PG_DSN`. The flow (`admin.audit_chain_verify`)
-runs over the CLI's read-only Postgres side, under the in-app verify's statement budget and entry
-cap. It opens no socket but the database's, and prints no connection string.
+A thin composition like `audit_ack_break.py`, importing no `audit` (C-3.3). The login is
+`Settings.audit_verify_dsn` (`CV_AUDIT_VERIFY_DSN`, read-only, such as `cv_ro`); unset, the tool
+refuses to run, never falling back to `CV_PG_DSN`. The flow (`admin.audit_chain_verify`) runs over
+the CLI's read-only Postgres side under the in-app verify's statement budget and entry cap, opens
+no socket but the database's and prints no connection string.
 """
 
 from __future__ import annotations

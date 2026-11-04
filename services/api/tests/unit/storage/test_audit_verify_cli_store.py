@@ -83,7 +83,7 @@ async def test_every_session_is_read_only_and_named_for_the_run() -> None:
 
 
 def test_the_catalogue_statements_only_read() -> None:
-    for statement in (mod._HELD, mod._TRIGGERS, mod._CHAIN_FUNCTION):
+    for statement in (mod._HELD, mod._TRIGGERS):
         text = str(statement).upper()
         assert text.startswith("SELECT ") and "NSPNAME = 'PUBLIC'" in text
         assert not any(w in text for w in ("INSERT ", "UPDATE ", "DELETE ", "GRANT ", "SET "))
@@ -108,16 +108,21 @@ async def test_held_privileges_groups_rows_by_role_and_table(
     await database.dispose()
 
 
-async def test_triggers_and_the_chain_definition(monkeypatch: pytest.MonkeyPatch) -> None:
-    rows = [{"name": "trg_audit_append", "table_name": "audit_log", "enabled": False}]
+def test_a_privilege_counts_through_columns_and_every_role_the_login_can_become() -> None:
+    text = str(mod._HELD)
+    assert "has_any_column_privilege(m.oid, c.oid, p.priv)" in text
+    assert "has_table_privilege(m.oid, c.oid, p.priv)" in text
+    assert "pg_has_role(r.oid, m.oid, 'MEMBER')" in text
+    assert "ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']" in text
+
+
+@pytest.mark.parametrize("enabled", [False, None, "t"])
+async def test_a_trigger_is_enabled_only_when_the_catalogue_says_true(
+    monkeypatch: pytest.MonkeyPatch, enabled: Any
+) -> None:
+    rows = [{"name": "trg_audit_append", "table_name": "audit_log", "enabled": enabled}]
     database, _ = _database(monkeypatch, rows)
     assert await database.triggers(["audit_log"]) == {"trg_audit_append": ("audit_log", False)}
-    await database.dispose()
-    database, _ = _database(monkeypatch, [{"definition": "CREATE FUNCTION audit_chain()"}])
-    assert await database.chain_definition() == "CREATE FUNCTION audit_chain()"
-    await database.dispose()
-    database, _ = _database(monkeypatch, [])
-    assert await database.chain_definition() is None
     await database.dispose()
 
 

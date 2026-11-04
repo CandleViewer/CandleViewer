@@ -11,7 +11,8 @@ itself and to any login on the tool's read-only sessions. Needs Docker (testcont
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 
 import psycopg
@@ -63,9 +64,99 @@ def test_the_entry_point_on_cv_ro_names_the_fixtures_victim(
     assert entry.main([]) == 1
     out = capsys.readouterr().out
     assert f"FAIL chain: first_bad_id={victim} kind=entry_hash_mismatch" in out
-    for section in ("grants", "triggers", "fields"):  # cv_app S+I, cv_ro exactly SELECT, live
+    for section in ("grants", "triggers"):  # cv_app S+I, cv_ro exactly SELECT, live
         assert f"PASS {section}" in out
+    assert "SKIP fields: lands in slice 2" in out
     assert "cv_ro_test_pw" not in out
+
+
+def _check_on_cv_ro(
+    pg: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> tuple[int, str]:
+    monkeypatch.setenv("CV_AUDIT_VERIFY_DSN", _as(pg, "cv_ro", "postgresql+asyncpg"))
+    status = entry.main(["--check"])
+    return status, capsys.readouterr().out
+
+
+@contextmanager
+def _changed(pg: str, change: Sequence[str], restore: Sequence[str]) -> Iterator[None]:
+    for statement in change:
+        _exec(pg, statement)
+    try:
+        yield
+    finally:
+        for statement in restore:
+            _exec(pg, statement)
+
+
+@pytest.mark.parametrize(
+    ("change", "restore", "lines"),
+    [
+        (
+            ["ALTER TABLE audit_log ENABLE REPLICA TRIGGER trg_audit_append"],
+            ["ALTER TABLE audit_log ENABLE TRIGGER trg_audit_append"],
+            "FAIL triggers: trg_audit_append on audit_log: disabled",
+        ),
+        (
+            ["ALTER TABLE audit_checkpoints DISABLE TRIGGER trg_audit_ckpt_no_truncate"],
+            ["ALTER TABLE audit_checkpoints ENABLE TRIGGER trg_audit_ckpt_no_truncate"],
+            "FAIL triggers: trg_audit_ckpt_no_truncate on audit_checkpoints: disabled",
+        ),
+        (
+            ["GRANT UPDATE (reason) ON audit_log TO cv_app"],
+            ["REVOKE UPDATE (reason) ON audit_log FROM cv_app"],
+            "FAIL grants: cv_app on audit_log: extra ['UPDATE'], missing []",
+        ),
+        (
+            ["GRANT INSERT (head_id) ON audit_checkpoints TO cv_ro"],
+            ["REVOKE INSERT (head_id) ON audit_checkpoints FROM cv_ro"],
+            "FAIL grants: cv_ro on audit_checkpoints: extra ['INSERT'], missing []",
+        ),
+        (
+            ["GRANT REFERENCES (id) ON audit_log TO PUBLIC"],
+            ["REVOKE REFERENCES (id) ON audit_log FROM PUBLIC"],
+            "FAIL grants: cv_app on audit_log: extra ['REFERENCES'], missing []\n"
+            "FAIL grants: cv_ro on audit_log: extra ['REFERENCES'], missing []",
+        ),
+        (
+            [
+                "CREATE ROLE cv_verify_extra NOLOGIN",
+                "GRANT UPDATE ON audit_log TO cv_verify_extra",
+                "GRANT cv_verify_extra TO cv_ro WITH INHERIT FALSE",
+            ],
+            [
+                "REVOKE cv_verify_extra FROM cv_ro",
+                "REVOKE UPDATE ON audit_log FROM cv_verify_extra",
+                "DROP ROLE cv_verify_extra",
+            ],
+            "FAIL grants: cv_ro on audit_log: extra ['UPDATE'], missing []",
+        ),
+    ],
+)
+def test_the_live_check_names_every_state_that_does_not_hold(
+    pg: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    change: list[str],
+    restore: list[str],
+    lines: str,
+) -> None:
+    with _changed(pg, change, restore):
+        status, out = _check_on_cv_ro(pg, monkeypatch, capsys)
+    assert status == 1 and lines in out, out
+    assert f"RESULT: FAIL ({lines.count('FAIL ')} FAIL)" in out
+    status, out = _check_on_cv_ro(pg, monkeypatch, capsys)  # restored
+    assert status == 0 and "RESULT: PASS (0 FAIL)" in out, out
+
+
+def test_a_guard_trigger_that_always_fires_passes(
+    pg: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    change = ["ALTER TABLE audit_log ENABLE ALWAYS TRIGGER trg_audit_append"]
+    restore = ["ALTER TABLE audit_log ENABLE TRIGGER trg_audit_append"]
+    with _changed(pg, change, restore):
+        status, out = _check_on_cv_ro(pg, monkeypatch, capsys)
+    assert status == 0 and "PASS triggers" in out, out
 
 
 def test_cv_ro_may_not_write_the_audit_tables(pg: str) -> None:

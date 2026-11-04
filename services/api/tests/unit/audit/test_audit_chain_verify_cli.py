@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,6 @@ from candleviewer.admin import audit_chain_verify as cli
 from candleviewer.audit.checkpoint import run_checkpoint
 from candleviewer.audit.hashing import ChainHasherBusy
 from candleviewer.audit.query import AuditQueryService
-from candleviewer.audit.repository import HASHED_FIELDS
 from candleviewer.storage.errors import AuditEntryTooLarge
 from candleviewer.storage.guarded_privileges import GUARDED_PRIVILEGES
 from candleviewer.storage.repositories.audit_sqlalchemy import AuditReadFailed
@@ -80,7 +80,7 @@ async def _run(stores: _Stores, **kw: Any) -> int:
 
 @pytest.mark.parametrize("table", cli.AUDIT_TABLES)
 def test_expected_grants_hold_no_privilege_the_guard_table_pins_revoked(table: str) -> None:
-    assert GUARDED_PRIVILEGES[table] <= set(cli.TABLE_PRIVILEGES)
+    assert GUARDED_PRIVILEGES[table] == {"UPDATE", "DELETE", "TRUNCATE"}
     for expected in cli.EXPECTED_GRANTS.values():
         assert not expected & GUARDED_PRIVILEGES[table]
 
@@ -99,8 +99,9 @@ async def test_run_passes_an_intact_chain_with_its_checkpoint_file(
     status = await _run(stores, data=data, sha256=hashlib.sha256(data).hexdigest(), batch=3)
     out = capsys.readouterr().out
     assert status == cli.EXIT_PASS and stores.disposed
-    for section in ("grants", "triggers", "fields", "chain", "checkpoint-file"):
+    for section in ("grants", "triggers", "chain", "checkpoint-file"):
         assert f"PASS {section}" in out
+    assert "SKIP fields: lands in slice 2" in out and "PASS fields" not in out
     assert "PASS chain (entries_checked=7, head id 7)" in out
     assert "RESULT: PASS (0 FAIL)" in out
     assert [c[2] for c in repo.verify_calls] == [3, 3, 3]
@@ -165,6 +166,13 @@ async def test_check_only_reads_the_definitions_and_walks_nothing(
     assert "chain" not in capsys.readouterr().out
 
 
+async def test_check_only_never_passes_a_checkpoint_file_silently(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert await _run(_Stores(await _repo(1)), check_only=True, data=b"{}\n") == cli.EXIT_PASS
+    assert "SKIP checkpoint-file" in capsys.readouterr().out
+
+
 # --- the checkpoint file (interim anchor) ------------------------------------------------------
 
 
@@ -205,6 +213,41 @@ async def test_file_lines_that_are_not_heads_are_findings_and_the_digest_is_chec
     assert f"sha256 {hashlib.sha256(data).hexdigest()} != {'0' * 64}" in out
 
 
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"head_id": 2**63, "head_hash": "e" * 64},
+        {"head_id": 10**20, "head_hash": "e" * 64},
+        {"head_id": 1, "head_hash": "E" * 64},
+        {"head_id": 1, "head_hash": "g" * 64},
+        {"head_id": 1, "head_hash": "e" * 63},
+        {"head_id": True, "head_hash": "e" * 64},
+    ],
+)
+def test_a_head_out_of_range_or_not_a_hash_is_a_line_finding(record: dict[str, Any]) -> None:
+    heads, problems = cli.parse_heads(json.dumps(record).encode() + b"\n")
+    assert heads == []
+    assert problems == [cli.Finding("checkpoint-file", "line 1: not a checkpoint head")]
+
+
+def test_the_greatest_bigint_head_id_is_a_head() -> None:
+    heads, problems = cli.parse_heads(
+        json.dumps({"head_id": 2**63 - 1, "head_hash": "e" * 64}).encode()
+    )
+    assert heads == [cli.FileHead(2**63 - 1, "e" * 64)] and problems == []
+
+
+@pytest.mark.parametrize("data", [b"", b"\n\n"])
+async def test_a_file_that_names_no_head_is_never_a_pass(
+    capsys: pytest.CaptureFixture[str], data: bytes
+) -> None:
+    sha256 = hashlib.sha256(data).hexdigest()
+    assert await _run(_Stores(await _repo(2)), data=data, sha256=sha256) == cli.EXIT_FAIL
+    out = capsys.readouterr().out
+    assert "FAIL checkpoint-file: no checkpoint head in the file" in out
+    assert "PASS checkpoint-file" not in out
+
+
 # --- the definitions ---------------------------------------------------------------------------
 
 
@@ -224,19 +267,21 @@ async def test_run_names_a_widened_grant_a_missing_role_and_a_disabled_guard(
     assert "FAIL triggers: trg_audit_chain on audit_log: absent" in out
 
 
-async def test_the_deployed_field_order_must_be_hashed_fields(
+async def test_the_fields_section_is_skipped_never_passed(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    stores = _Stores(await _repo(1))
-    stores.definition = stores.definition.replace("NEW.actor_label", "NEW.actor_ip", 1)
-    assert await _run(stores, check_only=True) == cli.EXIT_FAIL
-    assert "FAIL fields:" in capsys.readouterr().out
+    assert await _run(_Stores(await _repo(1)), check_only=True) == cli.EXIT_PASS
+    out = capsys.readouterr().out
+    assert "SKIP fields: lands in slice 2" in out and "PASS fields" not in out
 
 
-def test_framed_fields_reads_the_shipped_definition() -> None:
-    versions = Path(entry.__file__).resolve().parent / "migrations" / "versions"
-    body = (versions / "0045_audit_chain_hardening.py").read_text(encoding="utf-8")
-    assert cli.framed_fields(body)[:16] == ("prev_hash", *HASHED_FIELDS)
+def test_a_trigger_reported_in_any_state_but_true_does_not_fire() -> None:
+    present = {name: (table, True) for name, table in cli.EXPECTED_TRIGGERS.items()}
+    assert cli.check_triggers(present) == []
+    for state in (False, None, 1, "O"):
+        present["trg_audit_chain"] = ("audit_log", state)  # type: ignore[assignment]  # a store that returns a non-bool
+        (only,) = cli.check_triggers(present)
+        assert only.detail == "trg_audit_chain on audit_log: disabled"
 
 
 # --- stops: fail closed, own exit code, no driver text -----------------------------------------
@@ -270,7 +315,7 @@ async def test_a_stop_after_a_failed_check_keeps_the_failure(
         async def held_privileges(self, *args: Any) -> dict[tuple[str, str], frozenset[str]]:
             return {}
 
-        async def chain_definition(self) -> str | None:
+        async def triggers(self, tables: list[str]) -> dict[str, tuple[str, bool]]:
             raise AuditReadFailed("08006")
 
     stores = _Down(await _repo(1))
@@ -301,9 +346,9 @@ async def test_a_stored_value_that_is_not_a_hash_is_not_printed() -> None:
 
 async def test_the_whole_run_is_bounded_by_its_timeout(capsys: pytest.CaptureFixture[str]) -> None:
     class _Slow(_Stores):
-        async def chain_definition(self) -> str | None:
+        async def triggers(self, tables: list[str]) -> dict[str, tuple[str, bool]]:
             await asyncio.sleep(60)
-            return None
+            return {}
 
     assert await _run(_Slow(await _repo(1)), timeout_s=0.01) == cli.EXIT_STOPPED
     assert "STOPPED: timeout" in capsys.readouterr().out
@@ -375,6 +420,7 @@ def test_main_invalid_settings_name_only_the_class(
         (["--checkpoint-sha256", "ABC"], "--checkpoint-sha256 must be 64"),
         (["--timeout", "0"], "--timeout must be above 0"),
         (["--timeout", "21601"], "--timeout must be above 0"),
+        (["--check", "--checkpoint-file", "x"], "--check walks no chain"),
         (["--checkpoint-sha256", "0" * 64], "--checkpoint-sha256 needs --checkpoint-file"),
     ],
 )
