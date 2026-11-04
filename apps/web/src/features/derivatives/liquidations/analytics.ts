@@ -6,6 +6,11 @@ import type { LiquidatedSide } from "./side";
 
 export type Report = (detail: Readonly<Record<string, unknown>>) => void;
 
+/** A server's problem `code` reaches analytics only as a short token; anything else reads "other". */
+const CODE = /^[a-z0-9_]{1,40}$/;
+const token = (code: string | null): string | null =>
+  code === null ? null : CODE.test(code) ? code : "other";
+
 const dispatch: Report = (detail) => {
   window.dispatchEvent(new CustomEvent(THEME_ANALYTICS_EVENT, { detail }));
 };
@@ -15,9 +20,12 @@ export function createLiqAnalytics(report: Report = dispatch) {
     /** D02 §6 / §14: a feed row activated (the crosshair moves to its time). */
     printClicked: (symbol: string, side: LiquidatedSide, clusterSize: number): void =>
       report({ name: "liquidation.print_clicked", symbol, side, cluster_size: clusterSize }),
-    /** The ticket's error event when the backfill read fails; `null` = no answer. */
+    /**
+     * The ticket's error event when the backfill read fails; `null` = no answer. PROPOSED: the name is this PR's
+     * (D02 §14 names only `liquidation.print_clicked`).
+     */
     backfillFailed: (symbol: string, status: number | null, code: string | null): void =>
-      report({ name: "liquidation.backfill_failed", symbol, status, code }),
+      report({ name: "liquidation.backfill_failed", symbol, status, code: token(code) }),
   };
 }
 

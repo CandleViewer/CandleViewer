@@ -10,6 +10,8 @@ export const ROW_BUCKET_MS = 250;
 /** One feed row: a print, or a bucket of prints (`prints > 1`, `price` the average, `tsMs` the bucket start). */
 export interface FeedRow extends HeldPrint {
   readonly prints: number;
+  /** `price` is a served average (or the lone print's own `p`); `false` when a member had no served notional. */
+  readonly avgServed: boolean;
 }
 
 const bucketOf = (p: HeldPrint): number => Math.floor(p.tsMs / ROW_BUCKET_MS);
@@ -17,7 +19,7 @@ const bucketOf = (p: HeldPrint): number => Math.floor(p.tsMs / ROW_BUCKET_MS);
 function merge(group: readonly HeldPrint[]): FeedRow {
   const [newest] = group;
   if (newest === undefined) throw new RangeError("an empty bucket");
-  if (group.length === 1) return { ...newest, prints: 1 };
+  if (group.length === 1) return { ...newest, prints: 1, avgServed: true };
   let size = parseDec("0");
   let notional = parseDec("0");
   let served = true;
@@ -38,6 +40,7 @@ function merge(group: readonly HeldPrint[]): FeedRow {
     notionalUsd: served ? formatDec(notional) : null,
     clusterSize: cluster,
     prints: group.length,
+    avgServed: avg !== null,
   };
 }
 
@@ -49,7 +52,9 @@ export function feedRows(newestFirst: readonly HeldPrint[], max: number): FeedRo
     const key = `${String(bucketOf(p))}|${p.side}`;
     let group = groups.get(key);
     if (group === undefined) {
-      if (order.length === max) break; // older prints only fill older rows
+      // past `max` rows a print of a new (bucket, side) is skipped, but one of a kept row is still added, so every
+      // drawn row's sums cover all of its held prints (review A, exact sums)
+      if (order.length === max) continue;
       group = [];
       groups.set(key, group);
       order.push(key);

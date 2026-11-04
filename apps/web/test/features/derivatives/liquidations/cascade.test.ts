@@ -16,9 +16,14 @@ describe("summaryText (D04 AN-4, F-1 PROPOSED)", () => {
     [0.6, "on both sides"],
     [1 / 3, "mostly shorts liquidated"],
     [0, "mostly shorts liquidated"],
-    [null, "on both sides"],
   ])("long share %s reads %s", (share, words) => {
     expect(summaryText(1_240, share)).toBe(`Liquidations: 1,240 per second, ${words}.`);
+  });
+});
+
+describe("summaryText with an unknown split", () => {
+  it("names no side when no notional was served", () => {
+    expect(summaryText(1_240, null)).toBe("Liquidations: 1,240 per second.");
   });
 });
 
@@ -29,6 +34,14 @@ describe("CascadeSummary", () => {
     expect(s.observe(10, 1, 100)).toBe("Liquidations: 10 per second, mostly longs liquidated.");
     expect(s.observe(800, 1, 5_099)).toBeNull();
     expect(s.observe(800, 0.5, 5_100)).toBe("Liquidations: 800 per second, on both sides.");
+  });
+
+  it("consumes nothing while the region's budget refuses, so the next evaluation is still the leading edge", () => {
+    const s = new CascadeSummary();
+    expect(s.observe(40, 1, 0, () => false)).toBeNull();
+    expect(s.observe(40, 1, 100, () => true)).toBe(
+      "Liquidations: 40 per second, mostly longs liquidated.",
+    );
   });
 
   it("says at most 2 summaries at 500 prints/s for 10 s through the feed, each naming the rate", () => {

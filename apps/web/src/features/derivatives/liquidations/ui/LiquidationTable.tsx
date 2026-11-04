@@ -4,7 +4,7 @@
 // never the only signal; each number keeps its unit in its accessible name.
 // Rows are D02 §6's 250 ms buckets per side (BQ 5, ruled 6612481277): a bucket of many prints shows the count, the
 // total size, "avg" and the average bankruptcy price, and the total notional (`buckets.ts`).
-import type { JSX } from "react";
+import { useEffect, useId, useRef, type JSX } from "react";
 import { Table, type TableColumn } from "@candleviewer/ui";
 import type { FeedRow } from "../buckets";
 import { SIDE_GLYPHS, SIDE_WORDS } from "../side";
@@ -25,6 +25,8 @@ export interface LiquidationTableProps {
   /** Newest first; the caller bounds them. */
   readonly rows: readonly FeedRow[];
   readonly emptyState: JSX.Element;
+  /** Rows activate (the crosshair): the grid is described by the hint that says so. */
+  readonly activatable?: boolean;
 }
 
 export function LiquidationTable({
@@ -32,7 +34,17 @@ export function LiquidationTable({
   baseUnit,
   rows,
   emptyState,
+  activatable = false,
 }: LiquidationTableProps): JSX.Element {
+  const hintId = useId();
+  const box = useRef<HTMLDivElement>(null);
+  // CMP-049 takes no grid-level description, so the hint is attached to its grid element after each commit
+  useEffect(() => {
+    const grid = box.current?.querySelector('[role="grid"]');
+    if (grid === null || grid === undefined) return;
+    if (activatable) grid.setAttribute("aria-describedby", hintId);
+    else grid.removeAttribute("aria-describedby");
+  });
   const ref = rows[0]?.tsMs ?? 0; // a row from another UTC day than the newest carries its date (PROPOSED)
   const columns: TableColumn<FeedRow>[] = [
     {
@@ -75,9 +87,11 @@ export function LiquidationTable({
       align: "end",
       minWidthEm: 9,
       cell: (r) =>
-        r.prints > 1
-          ? withUnit(`${copy.AVG} ${groupedDecimal(r.price)}`, "USDT")
-          : withUnit(groupedDecimal(r.price), "USDT"),
+        r.prints === 1
+          ? withUnit(groupedDecimal(r.price), "USDT")
+          : r.avgServed
+            ? withUnit(`${copy.AVG} ${groupedDecimal(r.price)}`, "USDT")
+            : copy.NO_NOTIONAL, // no average without every member's served notional (PROPOSED)
     },
     {
       id: "notional",
@@ -97,14 +111,21 @@ export function LiquidationTable({
     },
   ];
   return (
-    <Table
-      grid
-      columns={columns}
-      rows={rows}
-      rowKey={(r) => String(r.seq)}
-      caption={copy.tableCaption(symbol)}
-      density="compact"
-      emptyState={emptyState}
-    />
+    <div ref={box}>
+      {activatable ? (
+        <p id={hintId} className="cv-visually-hidden">
+          {copy.ACTIVATE_HINT}
+        </p>
+      ) : null}
+      <Table
+        grid
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => String(r.seq)}
+        caption={copy.tableCaption(symbol)}
+        density="compact"
+        emptyState={emptyState}
+      />
+    </div>
   );
 }

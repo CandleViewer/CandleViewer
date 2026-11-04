@@ -38,11 +38,15 @@ export function useLiquidationFeed(
   const { paneId, fromMs, toMs } = options;
   const minNotionalUsd = feedFilter(options.minNotionalUsd);
   const loadRef = useRef(options.loadHistory ?? fetchLiquidationHistory);
-  loadRef.current = options.loadHistory ?? fetchLiquidationHistory;
   const clockRef = useRef(options.clock);
-  clockRef.current = options.clock;
   const analyticsRef = useRef(options.analytics ?? defaultAnalytics);
-  analyticsRef.current = options.analytics ?? defaultAnalytics;
+  // the latest props, kept in refs after each commit (never written during render); declared before the feed's
+  // effect, so a start reads this render's values
+  useEffect(() => {
+    loadRef.current = options.loadHistory ?? fetchLiquidationHistory;
+    clockRef.current = options.clock;
+    analyticsRef.current = options.analytics ?? defaultAnalytics;
+  });
   const client = useSyncExternalStore(subscribeActiveClient, getActiveClient, getActiveClient);
   const [feed, setFeed] = useState<LiqFeedHandle | null>(null);
 

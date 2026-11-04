@@ -29,6 +29,8 @@ export const tableCaption = (symbol: string): string =>
 export const COL_TIME = "Time (UTC)";
 export const COL_SIDE = "Liquidated side";
 export const COL_PRINTS = "Prints";
+/** PROPOSED: the grid's description, so the row activation is discoverable (a11y review). */
+export const ACTIVATE_HINT = "Enter moves the chart crosshair to this print.";
 /** D02 §6's bucket row: the average bankruptcy price is labelled. */
 export const AVG = "avg";
 export const colSize = (base: string): string => `Size (${base})`;

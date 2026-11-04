@@ -34,6 +34,7 @@ export const EXAMPLE_PRINT: FeedRow = {
   notionalUsd: "202473.60",
   clusterSize: 1,
   prints: 1,
+  avgServed: true,
 };
 export const DESIGN_ROW: FeedRow = {
   seq: 1,
@@ -44,6 +45,7 @@ export const DESIGN_ROW: FeedRow = {
   notionalUsd: "41210.10",
   clusterSize: 8,
   prints: 1,
+  avgServed: true,
 };
 
 /** D02 §6's cascade rows, verbatim: one 500 ms push of 620 prints in one 250 ms bucket per side. */
@@ -57,6 +59,7 @@ export const CASCADE_ROWS: FeedRow[] = [
     notionalUsd: "3960000.00",
     clusterSize: 600,
     prints: 600,
+    avgServed: true,
   },
   {
     seq: 658,
@@ -67,6 +70,7 @@ export const CASCADE_ROWS: FeedRow[] = [
     notionalUsd: "99120.00",
     clusterSize: 20,
     prints: 20,
+    avgServed: true,
   },
 ];
 

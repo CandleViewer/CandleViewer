@@ -154,6 +154,22 @@ describe("LiquidationPane (CMP-186, the feed)", () => {
     expect(grid().contains(document.activeElement)).toBe(true);
   });
 
+  it("never says avg for a bucket whose average is not served", () => {
+    const row = { ...stories.DESIGN_ROW, prints: 2, notionalUsd: null, avgServed: false };
+    render(
+      <LiquidationPane
+        symbol="BTCUSDT"
+        onRetry={noop}
+        snapshot={{ ...stories.base, rows: [row] }}
+      />,
+    );
+    const cells = within(bodyRows()[0] ?? grid())
+      .getAllByRole("gridcell")
+      .map((c) => c.textContent);
+    expect(cells[4]).toBe("not served");
+    expect(grid().textContent).not.toContain("avg");
+  });
+
   it("never shows another symbol's held rows, and never counts backfill as new", () => {
     const { rerender } = render(
       <LiquidationPane symbol="BTCUSDT" onRetry={noop} snapshot={stories.base} defaultPaused />,
@@ -186,6 +202,35 @@ describe("LiquidationPane (CMP-186, the feed)", () => {
       "82751.20",
       "62880.00",
     ]);
+    // the activation is discoverable: the grid is described by the hint (PROPOSED copy)
+    const hint = document.getElementById(grid().getAttribute("aria-describedby") ?? "");
+    expect(hint?.textContent).toBe("Enter moves the chart crosshair to this print.");
+  });
+
+  it("names no hint without activation, and ignores a click that ends a text selection", () => {
+    const onPrintActivate = vi.fn();
+    const { rerender } = render(
+      <LiquidationPane symbol="BTCUSDT" onRetry={noop} snapshot={stories.base} />,
+    );
+    expect(grid().hasAttribute("aria-describedby")).toBe(false);
+    rerender(
+      <LiquidationPane
+        symbol="BTCUSDT"
+        onRetry={noop}
+        snapshot={stories.base}
+        onPrintActivate={onPrintActivate}
+      />,
+    );
+    const selection = vi
+      .spyOn(window, "getSelection")
+      .mockReturnValue({ isCollapsed: false } as unknown as Selection);
+    const cell = within(bodyRows()[0] ?? grid()).getAllByRole("gridcell")[3];
+    if (cell === undefined) throw new Error("no cell");
+    fireEvent.click(cell);
+    expect(onPrintActivate).not.toHaveBeenCalled();
+    selection.mockRestore();
+    fireEvent.click(cell);
+    expect(onPrintActivate).toHaveBeenCalledTimes(1);
   });
 
   it("dates a row from another UTC day than the newest", () => {
