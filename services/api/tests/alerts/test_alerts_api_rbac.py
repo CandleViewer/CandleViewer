@@ -7,6 +7,8 @@ from typing import Any
 import pytest
 from _alert_api_env import PRICE_CROSS, USER_A, Env
 
+from candleviewer.api.alerts import AlertInput
+
 ROUTES: list[tuple[str, str, Any, str]] = [
     ("GET", "/alerts", None, "alerts:read"),
     ("POST", "/alerts", PRICE_CROSS, "alerts:write"),
@@ -32,6 +34,8 @@ def test_every_route_forbidden_without_its_permission(
     r = env.c.request(method, path.format(id=aid), json=body)
     assert r.status_code == 403 and r.json()["required_permissions"] == [perm]
     assert len(env.repo.rows) == 1 and not env.repo.deleted
+    # The role refusal is recorded (#5696): one `rbac.denied` after the create's record.
+    assert env.audit.actions() == ["alert.created", "rbac.denied"]
 
 
 @pytest.mark.parametrize(("method", "path", "body", "perm"), ROUTES)
@@ -125,6 +129,30 @@ def test_create_invalid_body_422(env: Env, over: dict[str, Any]) -> None:
     r = env.c.post("/alerts", json=PRICE_CROSS | over)
     assert r.status_code == 422 and r.json()["code"] == "validation_failed"
     assert env.repo.rows == {}
+
+
+@pytest.mark.parametrize("op", ["create", "update"])
+def test_alert_listing_a_channel_twice_is_422_and_changes_nothing(env: Env, op: str) -> None:
+    """An alert lists each channel once (#5696; 22 `AlertInput.channels`, `uniqueItems`): a
+    repeated channel is the route's 422 before anything is written, with no record."""
+    path = "/alerts" if op == "create" else f"/alerts/{env.create()['id']}"
+    before, seen = dict(env.repo.rows), len(env.audit.calls)
+    body = PRICE_CROSS | {"channels": ["in_app", "desktop", "in_app"]}
+    r = env.c.request("POST" if op == "create" else "PUT", path, json=body)
+    assert (r.status_code, r.json()["code"]) == (422, "validation_failed")
+    assert [(e["field"], e["rule"]) for e in r.json()["errors"]] == [("channels", "unique_items")]
+    assert env.repo.rows == before and env.audit.calls[seen:] == []
+
+
+def test_alert_takes_each_distinct_channel() -> None:
+    """Each of the five channels once passes the model, and distinct deliverable channels are
+    stored as sent (#5696)."""
+    every = ("in_app", "email", "webhook", "push", "desktop")
+    assert AlertInput.model_validate(PRICE_CROSS | {"channels": every}).channels == every
+    env = Env()
+    assert env.create(channels=["in_app", "email", "desktop"])["channels"] == [
+        "in_app", "email", "desktop"
+    ]  # fmt: skip
 
 
 def test_create_non_json_body_422(env: Env) -> None:

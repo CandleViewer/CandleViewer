@@ -1,6 +1,6 @@
-"""E40-T04 inbox RBAC: every route's permission (403 before any lookup), 401 without a session,
-fail-closed 501 when no resolver is wired, 503 without a store, and SR-026's declared-query
-allow-list on the list."""
+"""E40-T04 inbox RBAC: every route's permission (403 before any lookup, recorded as `rbac.denied`
+within the alert routes' refusal budget, #5696), 401 without a session, fail-closed 501 when no
+resolver is wired, 503 without a store, and SR-026's declared-query allow-list on the list."""
 
 from __future__ import annotations
 
@@ -35,7 +35,8 @@ def test_every_route_is_403_without_its_permission_and_changes_nothing(
     r = env.c.request(method, path.format(id=d.id), json=body)
     assert r.status_code == 403 and r.json()["required_permissions"] == [perm]
     assert env.store.rows[d.id] == d and env.store.rows[sent.id] == sent
-    assert env.audit.calls == []
+    ((action, record),) = env.audit.calls  # the role refusal's record, and nothing else
+    assert (action, record["reason"]) == ("rbac.denied", f"missing_permission:{perm}:self")
 
 
 @pytest.mark.parametrize(("method", "path", "body", "perm"), ROUTES)

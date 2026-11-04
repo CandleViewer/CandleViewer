@@ -18,6 +18,14 @@ alert past the owner's cap (`MAX_ARMED_ALERTS`) is refused by the store, which c
 in one transaction, with `409 conflict`, rule `limit_reached` and a message that names the cap,
 never a count; nothing is written and `on_cap_refused` counts it. The write-ahead audit record
 of the write stays as it is (ruling of record on #1864). A disarm is never refused.
+
+The write bounds (E40-X01, #5696; 22 "Alert write bounds and refusal records"), in order: the
+permission (`alerts_http.caller`); then each of the five writes takes a token from its caller's
+bucket (a 429 with `Retry-After` when none is left), so a refused caller spends none and a probe
+of another user's id spends one before the alert is read; then the lookup; then the body
+(`alert_body.read_alert_body`) before it is validated, the grants checked or the condition
+compiled. The refusal records share one budget per acting user with the inbox router
+(`RefusalRecords`); the bounds' refusals are counted, never recorded.
 """
 
 # No `from __future__ import annotations`: FastAPI must evaluate `Depends(<closure>)` in the
@@ -27,20 +35,23 @@ import re
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Final, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic_core import PydanticCustomError
 
 from candleviewer.alerts.compiler import AlertCompiler, validate_template
 from candleviewer.alerts.errors import AlertIrInvalid
+from candleviewer.api.alert_body import OnRefused, read_alert_body
+from candleviewer.api.alert_deliveries import DenialBudget
+from candleviewer.api.alerts_http import READ, WRITE, RefusalRecords, caller
 from candleviewer.api.alerts_http import Problem as _Problem
 from candleviewer.api.alerts_http import ProblemRoute as _ProblemRoute
-from candleviewer.api.alerts_http import caller
+from candleviewer.api.drawings_limiter import DrawingsWriteLimiter
 from candleviewer.api.view_as_subject import acting_user
-from candleviewer.audit.models import AuditOutcome
 from candleviewer.domain.text import refuse_unstorable_text
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.rules.ir.accounts import collect_account_ids
@@ -55,7 +66,10 @@ from candleviewer.storage.repositories.alerts import (
     AlertRow,
 )
 
-READ, WRITE = "alerts:read", "alerts:write"
+#: The per-user write bucket of the five `/alerts` writes (#5696): a burst of 20, refilled at 60 a
+#: minute, the drawings bucket's numbers in an instance of its own.
+ALERT_WRITES_PER_MINUTE: Final = 60
+ALERT_WRITE_BURST: Final = 20
 #: SR-026 (#2632): declared query parameters (22-api-openapi.yaml) of `listAlerts` (`Cursor`,
 #: `Limit`, `enabled`, `SymbolQueryOptional`) and `getAlert` (none); any other key is refused.
 LIST_ALERTS_QUERY = frozenset({"cursor", "limit", "enabled", "symbol"})
@@ -93,6 +107,10 @@ def _no_count() -> None:
     return None
 
 
+def _uncounted(*_args: str) -> None:
+    return None
+
+
 class AlertInput(BaseModel):
     """`AlertInput`; `extra="forbid"` so unknown top-level keys (e.g. `actions`) are refused."""
 
@@ -116,6 +134,14 @@ class AlertInput(BaseModel):
     @classmethod
     def _storable_name(cls, value: str) -> str:
         return refuse_unstorable_text(value)
+
+    @field_validator("channels")
+    @classmethod
+    def _each_channel_once(cls, value: tuple[Channel, ...]) -> tuple[Channel, ...]:
+        """22 `AlertInput.channels` (`uniqueItems`, #5696): an alert lists each channel once."""
+        if len(set(value)) != len(value):
+            raise PydanticCustomError("unique_items", "An alert lists each channel once.")
+        return value
 
 
 #: The furthest a snooze may reach (a snooze is a pause, not a way to retire an alert).
@@ -234,46 +260,74 @@ def make_alerts_router(
     on_change: OnChange = _no_change,
     clock: Clock = _utc_now,
     on_cap_refused: OnCapRefused = _no_count,
+    *,
+    denials: DenialBudget | None = None,
+    write_limiter: DrawingsWriteLimiter | None = None,
+    on_refused: OnRefused = _uncounted,
+    on_held: Callable[[], None] = _uncounted,
 ) -> APIRouter:
+    """*denials*: the refusal-record budget, the one the app hands the inbox router too (a fresh
+    `DenialBudget` if None); *write_limiter*: the writes' bucket (`ALERT_WRITE_BURST`,
+    `ALERT_WRITES_PER_MINUTE` if None); *on_refused* counts a bound's refusal by its reason and
+    *on_held* a refusal record the budget held (module docstring)."""
     d = _Deps(
         repo_provider, registry_provider, actor_resolver, audit, on_compile, on_change, clock,
         on_cap_refused,
     )  # fmt: skip
     router = APIRouter(tags=["alerts"], route_class=_ProblemRoute)
+    records = RefusalRecords(audit, DenialBudget() if denials is None else denials, on_held)
+    bucket = (  # not `or`: an injected limiter with no bucket yet has a length of 0
+        DrawingsWriteLimiter(per_minute=ALERT_WRITES_PER_MINUTE, burst=ALERT_WRITE_BURST)
+        if write_limiter is None
+        else write_limiter
+    )
 
     def need(
-        perm: str, query: frozenset[str] | None = None
-    ) -> Callable[[Request], Awaitable[Actor]]:
+        perm: str, query: frozenset[str] | None = None, *, limited: bool = False
+    ) -> Callable[..., Awaitable[Actor]]:
         """*query*: the operation's declared query parameters; any other key is refused (SR-026)
-        once the caller holds *perm*, before anything is read (`alerts_http.caller`)."""
-        return caller(d.resolver, perm, query)
+        once the caller holds *perm*, before anything is read (`alerts_http.caller`). *limited*:
+        a write, which then takes a token, a 429 when none is left, before anything is read."""
+        gate = caller(d.resolver, perm, query, refused=records.forbidden)
+        if not limited:
+            return gate
+
+        async def dep(actor: Annotated[Actor, Depends(gate)]) -> Actor:
+            if (retry := bucket.try_take(acting_user(actor.user_id))) is not None:
+                on_refused("rate_limited")
+                raise _Problem(429, "rate_limited", "Per-user API rate limit exceeded",
+                               f"Alert writes are limited per user; retry in {retry} s.",
+                               retry_after_seconds=retry)  # fmt: skip
+            return actor
+
+        return dep
 
     def owned(
-        perm: str, query: frozenset[str] | None = None
+        perm: str, query: frozenset[str] | None = None, *, limited: bool = False
     ) -> Callable[..., Awaitable[tuple[Actor, AlertRow]]]:
         """`scope: self`: someone else's alert is indistinguishable from a missing one."""
-        gate = need(perm, query)
+        gate = need(perm, query, limited=limited)
 
         async def dep(alertId: UUID, actor: Annotated[Actor, Depends(gate)]) -> Any:
             row = await d.store().get(str(alertId))
             if row is None:
                 raise _not_found()
             if row.owner_user_id != actor.user_id:
-                await d.audit_event("alert.denied", actor, str(alertId),
-                                    outcome=AuditOutcome.DENIED,
-                                    reason="alert owned by another user")  # fmt: skip
+                await records.write_refusal("alert.denied", actor, kind="alert",
+                                            object_id=str(alertId),
+                                            reason="alert owned by another user")  # fmt: skip
                 raise _not_found()
             return actor, row
 
         return dep
 
-    lister, writer = need(READ, LIST_ALERTS_QUERY), need(WRITE)
-    owned_r, owned_w = owned(READ, GET_ALERT_QUERY), owned(WRITE)
+    lister, writer = need(READ, LIST_ALERTS_QUERY), need(WRITE, limited=True)
+    owned_r, owned_w = owned(READ, GET_ALERT_QUERY), owned(WRITE, limited=True)
 
     async def refuse_scope(actor: Actor, alert_id: str, op: str) -> None:
         """C-2.9: a write refused for an ungranted account is audited first, before the 403."""
-        await d.audit_event("alert.scope_refused", actor, alert_id, outcome=AuditOutcome.DENIED,
-                            reason="account_not_granted", after_state={"op": op})  # fmt: skip
+        await records.write_refusal("alert.scope_refused", actor, kind="alert", object_id=alert_id,
+                                    reason="account_not_granted", after={"op": op})  # fmt: skip
 
     async def parse(
         request: Request,
@@ -283,7 +337,7 @@ def make_alerts_router(
         stored_expiry: datetime | None = None,
     ) -> tuple[AlertInput, Any]:
         try:
-            body = AlertInput.model_validate(await request.json())
+            body = AlertInput.model_validate(await read_alert_body(request, on_refused))
         except ValidationError as exc:
             errs = exc.errors(include_url=False, include_input=False)[:20]
             raise _Problem(422, "validation_failed", "Invalid alert", "The alert body is invalid.",
@@ -462,7 +516,7 @@ def make_alerts_router(
     ) -> Response:
         actor, row = got
         try:
-            body = _EnabledBody.model_validate(await request.json())
+            body = _EnabledBody.model_validate(await read_alert_body(request, on_refused))
         except (ValueError, ValidationError):
             raise _Problem(422, "validation_failed", "Invalid body",
                            "Body must be {\"enabled\": true|false}.") from None  # fmt: skip
@@ -484,7 +538,7 @@ def make_alerts_router(
     ) -> Response:
         actor, row = got
         try:
-            body = _SnoozeBody.model_validate(await request.json())
+            body = _SnoozeBody.model_validate(await read_alert_body(request, on_refused))
         except (ValueError, ValidationError):
             raise _Problem(422, "validation_failed", "Invalid body",
                            "Body must be {\"until\": <UTC instant>|null}.") from None  # fmt: skip
@@ -523,4 +577,12 @@ def _stale() -> _Problem:
                     "The alert was changed by another session; reload and retry.")  # fmt: skip
 
 
-__all__ = ["READ", "WRITE", "AlertInput", "armed_cap_message", "make_alerts_router"]
+__all__ = [
+    "ALERT_WRITES_PER_MINUTE",
+    "ALERT_WRITE_BURST",
+    "READ",
+    "WRITE",
+    "AlertInput",
+    "armed_cap_message",
+    "make_alerts_router",
+]

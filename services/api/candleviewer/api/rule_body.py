@@ -2,6 +2,7 @@
 `api/rules.py` (validate, compile) reads its bodies the same way, as `api/drawings.py` reads one:
 under `MAX_RULE_BODY_BYTES` before the body is buffered whole (413 `payload_too_large`), then
 strict UTF-8 nested no deeper than a rule needs. Each router answers a bad body in its own shape.
+The alert routes read theirs through `read_capped` too, under their bounds (`api/alert_body.py`).
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ def _declared_length(raw: str) -> int | None:
     return int(raw) if _LENGTH.fullmatch(raw) else None
 
 
-async def _read_capped(request: Request, cap: int) -> bytes | None:
+async def read_capped(request: Request, cap: int) -> bytes | None:
     """The raw body, or None past `cap` bytes, before it is buffered whole: a declared length over
     `cap` is refused unread and a stream stops one chunk past it, as in `api/drawings.py`."""
     declared = _declared_length(request.headers.get("content-length", ""))
@@ -55,7 +56,7 @@ async def read_object(
 ) -> dict[str, Any] | JSONResponse | None:
     """The JSON object sent (else None), the 413 past the ceiling, or the router's `bad(detail)`
     for a body nested deeper than a rule needs, checked before anything decodes it."""
-    raw = await _read_capped(request, MAX_RULE_BODY_BYTES)
+    raw = await read_capped(request, MAX_RULE_BODY_BYTES)
     if raw is None:
         detail = f"The request body exceeds {MAX_RULE_BODY_BYTES} bytes."
         problem = {"type": "https://candleviewer.local/errors/payload_too_large",
@@ -72,4 +73,4 @@ async def read_object(
     return body if isinstance(body, dict) else None
 
 
-__all__ = ["MAX_JSON_DEPTH", "MAX_RULE_BODY_BYTES", "read_object"]
+__all__ = ["MAX_JSON_DEPTH", "MAX_RULE_BODY_BYTES", "read_capped", "read_object"]

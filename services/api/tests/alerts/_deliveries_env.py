@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer.api.alert_deliveries import DenialBudget, make_alert_deliveries_router
 from candleviewer.api.alerts import make_alerts_router
+from candleviewer.api.drawings_limiter import DrawingsWriteLimiter
 from candleviewer.rules.manager import Actor
 from candleviewer.rules.vocabulary import default_registry
 from candleviewer.storage.repositories.alert_deliveries_sqlalchemy import DeliveryRow
@@ -152,10 +153,22 @@ class FakeDeliveryStore:
 
 
 class Env:
-    """Both routers mounted as `create_app()` mounts them; `user`/`perms` switch the caller."""
+    """Both routers mounted as `create_app()` mounts them, over one refusal-record budget
+    (`denials`, a fresh one if None); `user`/`perms` switch the caller. `limiter` replaces the CRUD
+    router's write bucket; `refused` lists the bounds' refusals by reason and `held` counts the
+    refusal records the budget held (#5696)."""
 
-    def __init__(self, *, wired: bool = True, denials: DenialBudget | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        wired: bool = True,
+        denials: DenialBudget | None = None,
+        limiter: DrawingsWriteLimiter | None = None,
+    ) -> None:
         self.store, self.audit, self.metrics = FakeDeliveryStore(), Audit(), Metrics()
+        self.refused: list[str] = []
+        self.held: list[None] = []
+        budget = DenialBudget() if denials is None else denials
         self.changes: list[list[int]] = []
         self.change_fails = False
         self.change_hangs = False
@@ -182,11 +195,22 @@ class Env:
                 metric=self.metrics,
                 now=lambda: T0 + timedelta(hours=1),
                 on_change=on_change,
-                denials=denials,
+                denials=budget,
+                on_refused=self.refused.append,
+                on_held=lambda: self.held.append(None),
             )
         )
         app.include_router(
-            make_alerts_router(lambda: FakeAlertRepo(), default_registry, resolve, self.audit)
+            make_alerts_router(
+                lambda: FakeAlertRepo(),
+                default_registry,
+                resolve,
+                self.audit,
+                denials=budget,
+                write_limiter=limiter,
+                on_refused=self.refused.append,
+                on_held=lambda: self.held.append(None),
+            )
         )
         self.c = TestClient(app)
 

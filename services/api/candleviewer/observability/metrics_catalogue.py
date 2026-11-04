@@ -2769,6 +2769,32 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E40",
         buckets=(1, 2, 3, 4, 6, 8, 10),
     ),
+    # #5696 (E40-X01): the alert write bounds' refusals, none recorded, by a closed `reason`
+    # (`api/alert_body.REFUSAL_REASONS`), and the refusal records the per-user budget held. Never a
+    # user, an alert or an account.
+    _s(
+        "cv_alert_write_refused_total",
+        "counter",
+        "refusals",
+        ("reason",),
+        "Alert writes refused at a bound, by reason: body_too_large, json_too_deep, "
+        "too_many_values or rate_limited.",
+        "ticket on sustained growth",
+        _L,
+        "E40",
+        max_series=4,
+    ),
+    _s(
+        "cv_alert_refusal_records_held_total",
+        "counter",
+        "records",
+        (),
+        "Alert route refusal records held past the per-user budget, carried by the next record.",
+        "dashboard only",
+        _L,
+        "E40",
+        max_series=1,
+    ),
     _s(
         "cv_drawings_batch_ops",
         "histogram",

@@ -260,6 +260,7 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
     r["rule_actions_blocked_total"].labels("unavailable").inc()
     r["rule_dispatch_reread_failed_total"].labels("timeout").inc()
     r["rule_records_shed_total"].labels("refused_fire").inc()
+    r["cv_alert_write_refused_total"].labels("rate_limited").inc()  # #5696
     text = generate_latest(m.registry).decode()
     families = {f.name: f for f in text_string_to_metric_families(text)}
     for spec in registered_specs():
