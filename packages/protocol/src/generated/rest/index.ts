@@ -7682,9 +7682,9 @@ export interface components {
       symbol?: string | null;
       symbols?: string[];
       trigger_type?: string;
-      /** @description Each metric the condition read, by metric name, as evaluated. A number is finite (NaN and the infinities are not JSON and are never served). */
+      /** @description Each metric the condition read, by metric name (at most 64 characters), as evaluated. A number is finite (NaN and the infinities are not JSON and are never served). */
       values?: {
-        [key: string]: string | number | boolean | null;
+        [key: string]: components["schemas"]["AlertDeliveryValue"];
       };
       window_end_ms?: number;
       window_start_ms?: number;
@@ -7707,6 +7707,8 @@ export interface components {
       /** Format: date-time */
       window_start: string | null;
     };
+    /** @description One `AlertDeliveryContext.values` entry: a string of at most 1,000 characters, a finite number, a boolean or `null`. */
+    AlertDeliveryValue: string | number | boolean | null;
     AlertInput: {
       channels: components["schemas"]["AlertChannel"][];
       condition_ir: components["schemas"]["AlertConditionIr"];

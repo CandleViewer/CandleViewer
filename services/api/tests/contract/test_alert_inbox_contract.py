@@ -11,6 +11,7 @@ pinned in `tests/integration/storage/test_notifications_union_pg.py`.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -191,24 +192,59 @@ def test_desktop_outcome_body_states_the_skipped_reason_conditional(
     assert (not errors) is valid
 
 
+_CONTEXT_SCHEMA = Draft202012Validator(
+    deref(_SPEC, _SPEC["components"]["schemas"]["AlertDeliveryContext"])
+)
+
+
+def _model_refuses(context: dict[str, Any]) -> bool:
+    try:
+        api.AlertDeliveryContext.model_validate(context)
+    except ValidationError:
+        return True
+    return False
+
+
+@pytest.mark.parametrize(
+    ("context", "model_refuses"),
+    [
+        ({"trigger_type": "t" * 1001}, True),
+        ({"symbol": "S" * 1001}, True),
+        ({"reason": "r" * 1001}, True),
+        ({"metric": "m" * 1001}, True),
+        # The key bound is `22`-only (`if: true` / `then:`): a `constr` key fails `mypy --strict`.
+        ({"values": {"k" * 65: "1"}}, False),
+        ({"values": {"price": "v" * 1001}}, True),
+        ({"values": {"price": float("inf")}}, True),
+        ({"values": {"price": float("-inf")}}, True),
+        ({"values": {f"m{i}": 1 for i in range(65)}}, True),
+    ],
+)
+def test_alert_delivery_context_bounds_are_contract(
+    context: dict[str, Any], model_refuses: bool
+) -> None:
+    """#5676 Major 1: every string at most 1,000 characters, `values` keys at most 64 and at most
+    64 entries, finite numbers only: `22` refuses each, and the generated model each bound it
+    still carries (C-6.2)."""
+    assert list(_CONTEXT_SCHEMA.iter_errors(context))
+    assert _model_refuses(context) is model_refuses
+
+
+def test_alert_delivery_context_nan_is_refused_by_the_model() -> None:
+    """A JSON-schema validator lets NaN through `maximum`, so the finite bound is the model's."""
+    assert _model_refuses({"values": {"price": float("nan")}})
+
+
 @pytest.mark.parametrize(
     "context",
     [
-        {"trigger_type": "t" * 1001},
-        {"symbol": "S" * 1001},
-        {"reason": "r" * 1001},
-        {"metric": "m" * 1001},
-        {"values": {"k" * 65: "1"}},
-        {"values": {"price": "v" * 1001}},
-        {"values": {"price": float("nan")}},
-        {"values": {"price": float("inf")}},
-        {"values": {f"m{i}": 1 for i in range(65)}},
+        {"trigger_type": "t" * 1000, "values": {"k" * 64: 1.5, "p": "v" * 1000}},
+        {"values": {f"m{i}": 1 for i in range(64)}},
+        {"values": {"hi": sys.float_info.max, "lo": -sys.float_info.max}},
     ],
 )
-def test_alert_delivery_context_bounds_are_contract(context: dict[str, Any]) -> None:
-    """#5676 Major 1: every string at most 1,000 characters, `values` keys at most 64, finite
-    numbers only: the generated model refuses each (C-6.2)."""
-    with pytest.raises(ValidationError):
-        api.AlertDeliveryContext.model_validate(context)
-    at_bound = {"trigger_type": "t" * 1000, "values": {"k" * 64: 1.5, "p": "v" * 1000}}
-    api.AlertDeliveryContext.model_validate(at_bound)
+def test_alert_delivery_context_at_bound_is_accepted(context: dict[str, Any]) -> None:
+    """At each bound (#5676 Minor b): 64 entries, a 64-character key, 1,000 characters and the
+    largest finite float pass both `22` and the model."""
+    assert not list(_CONTEXT_SCHEMA.iter_errors(context))
+    assert not _model_refuses(context)
