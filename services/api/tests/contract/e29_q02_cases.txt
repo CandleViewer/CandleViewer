@@ -26,7 +26,7 @@ tests/contract/test_order_exits_contract.py::test_cancel_all_orders_by_a_manager
 tests/contract/test_order_exits_contract.py::test_cancel_all_orders_counts_in_affected_only_the_orders_its_selection_takes | cancelAllOrders: POST /orders/cancel-all | E29-TC-114
 
 # C3: the OMS's private WS payloads against 23 Sec.15, and a grant withdrawn mid-subscription
-# (tests/contract/ws/test_ws_oms_frames_contract.py; the AC-06 module follows)
+# (tests/contract/ws/test_ws_oms_frames_contract.py, test_ws_oms_scope_revocation_contract.py)
 tests/contract/ws/test_ws_oms_frames_contract.py::test_orders_deltas_of_every_change_kind_conform_in_every_stored_state | WS orders deltas: change x state | E29-TC-450, E29-TC-751
 tests/contract/ws/test_ws_oms_frames_contract.py::test_orders_an_open_only_subscriber_gets_a_closing_step_as_a_removal_alone | WS orders deltas: open_only removal | E29-TC-751
 tests/contract/ws/test_ws_oms_frames_contract.py::test_an_account_with_no_rows_gets_an_empty_snapshot_that_conforms | WS orders, executions and positions: empty snapshot | E29-TC-751
@@ -39,3 +39,5 @@ tests/contract/ws/test_ws_oms_frames_contract.py::test_wallet_a_balance_turns_st
 tests/contract/ws/test_ws_oms_frames_contract.py::test_a_members_values_are_the_schemas_and_the_producers_both_ways | WS orders, executions, positions and wallet: vocabularies | E29-TC-450, E29-TC-751, E29-TC-351
 tests/contract/ws/test_ws_oms_frames_contract.py::test_a_payload_with_a_renamed_or_dropped_member_fails_the_check_naming_it | WS private payloads: contract drift (AC2) | E29-TC-751, E29-TC-012
 tests/contract/ws/test_ws_oms_frames_contract.py::test_a_producer_that_renames_a_member_fails_on_the_first_frame_that_carries_it | WS orders: contract drift on the wire (AC2) | E29-TC-751
+tests/contract/ws/test_ws_oms_scope_revocation_contract.py::test_a_grant_lost_on_one_of_two_accounts_narrows_the_topic_and_its_rows_never_arrive | WS private topics: a grant lost on one of two accounts (AC-06) | E29-TC-011, E29-TC-752
+tests/contract/ws/test_ws_oms_scope_revocation_contract.py::test_a_withdrawn_only_grant_ends_the_topic_and_a_new_sub_for_it_is_refused_and_audited | WS private topics: the only grant lost (AC-06) | E29-TC-011, E29-TC-752
