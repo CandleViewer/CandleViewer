@@ -1,0 +1,86 @@
+# E29-X02 (#982); OM-I05; SR-E29-08 (threat model §6 items 2 and 4); C-12.6. A write to
+# `order_events.payload` that skips `redact_exchange_payload()`, in the ticket's redact-call form:
+# `NewOrderEvent.payload` is a plain `Mapping`, so the record-type form has nothing to key on yet.
+# What it sees and misses: docs/plan/security/ci-gates-e29.md#cv-oms-order-events-unredacted.
+rules:
+  - id: cv-oms-order-events-unredacted
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A write to `order_events.payload` that does not pass through `redact_exchange_payload()`
+      (OM-I05; SR-E29-08, threat model §6; C-12.6): the table is append-only and kept
+      indefinitely, so a key, a signature or an `auth` frame stored once cannot be removed. Write
+      `"payload": redact_exchange_payload(event.payload)`, as `orders_sqlalchemy._event_values`
+      does, through the Core builder, never text SQL, an `INSERT ... SELECT` or a change to the
+      payload after it was redacted. Rule doc:
+      docs/plan/security/ci-gates-e29.md#cv-oms-order-events-unredacted.
+    metadata:
+      rule-id: cv-oms-order-events-unredacted
+      threat: [OM-I05]
+      sr: [SR-E29-08]
+      references:
+        - docs/security/threat-models/E29-oms.md §6, OM-I05, SR-E29-08
+        - docs/plan/security/ci-gates-e29.md
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  from $MODULE import order_events
+                  ...
+              - pattern-inside: |
+                  from $MODULE import order_events as $TABLE
+                  ...
+          - pattern-either:
+              - pattern: '{..., "payload": $VALUE, ...}'
+              - pattern: $TARGET["payload"] = $VALUE
+              - pattern: $STMT.values(..., payload=$VALUE, ...)
+              - pattern: dict(..., payload=$VALUE, ...)
+              - pattern: $DICT.update(..., payload=$VALUE, ...)
+              - pattern: $DICT.setdefault("payload", $VALUE)
+              - pattern: $TARGET["payload"][$KEY] = $VALUE
+          - pattern-not: '{..., "payload": redact_exchange_payload(...), ...}'
+          - pattern-not: '{..., "payload": $REDACTOR.redact_exchange_payload(...), ...}'
+          - pattern-not: '{..., "payload": {}, ...}'
+          - pattern-not: $TARGET["payload"] = redact_exchange_payload(...)
+          - pattern-not: $TARGET["payload"] = $REDACTOR.redact_exchange_payload(...)
+          - pattern-not: $STMT.values(..., payload=redact_exchange_payload(...), ...)
+          - pattern-not: $STMT.values(..., payload=$REDACTOR.redact_exchange_payload(...), ...)
+          - pattern-not: dict(..., payload=redact_exchange_payload(...), ...)
+          - pattern-not: dict(..., payload=$REDACTOR.redact_exchange_payload(...), ...)
+          - pattern-not: dict(..., payload={}, ...)
+          - pattern-not: $DICT.update(..., payload=redact_exchange_payload(...), ...)
+          - pattern-not: $DICT.update(..., payload=$REDACTOR.redact_exchange_payload(...), ...)
+          - pattern-not: $DICT.setdefault("payload", redact_exchange_payload(...))
+          - pattern-not: $DICT.setdefault("payload", $REDACTOR.redact_exchange_payload(...))
+          - pattern-not: $TARGET["payload"][$KEY] = redact_exchange_payload(...)
+          - pattern-not: $TARGET["payload"][$KEY] = $REDACTOR.redact_exchange_payload(...)
+          - focus-metavariable: $VALUE
+      # A payload changed in place after it was redacted, and an `INSERT ... SELECT`, whose payload
+      # the database picks: neither passes through the redactor in Python. Same import gate.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  from $MODULE import order_events
+                  ...
+              - pattern-inside: |
+                  from $MODULE import order_events as $TABLE
+                  ...
+          - pattern-either:
+              - pattern: $TARGET["payload"].update(...)
+              - pattern: $STMT.from_select(...)
+          - pattern-not: $TARGET["payload"].update(redact_exchange_payload(...))
+          - pattern-not: $TARGET["payload"].update($REDACTOR.redact_exchange_payload(...))
+      - patterns:
+          - pattern-either:
+              - pattern: $SA.insert($MODULE.order_events).values(..., payload=$VALUE, ...)
+              - pattern: $SA.update($MODULE.order_events).values(..., payload=$VALUE, ...)
+          - pattern-not: $SA.$WRITE($MODULE.order_events).values(..., payload=redact_exchange_payload(...), ...)
+          - pattern-not: $SA.$WRITE($MODULE.order_events).values(..., payload=$REDACTOR.redact_exchange_payload(...), ...)
+          - focus-metavariable: $VALUE
+      - pattern-regex: >-
+          (?i)\b(?:insert\s+into\s+(?:\w+\.)?"?order_events"?\s*(?:\(|select\b|values\b|default\b)|update\s+(?:only\s+)?(?:\w+\.)?"?order_events"?(?:\s+(?:as\s+)?\w+)?\s+set\b|copy\s+(?:\w+\.)?"?order_events"?\s*(?:\(|from\b))
+    paths:
+      include:
+        - "services/api/candleviewer/**"
+      exclude:
+        - "services/api/candleviewer/migrations/**"

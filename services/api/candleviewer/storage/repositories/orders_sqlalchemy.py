@@ -320,6 +320,7 @@ def in_scope_statement(
         .subquery("scoped")
     )  # fmt: skip
     held = orders.alias("held")
+    # nosemgrep: cv-oms-unscoped-select reason=refusal-audit-holder owner=@CandleViewer/security review=2027-02-04  # noqa: E501 - semgrep marker format is fixed
     holder = sa.select(held.c.exchange_account_id).where(held.c.id == order_id).scalar_subquery()
     probe = sa.select(holder.label("holder")).subquery("probe")
     return sa.select(probe.c.holder, *scoped.c).select_from(probe.outerjoin(scoped, sa.true()))
@@ -344,6 +345,7 @@ def accounts_in_scope_statement(
 
 
 def link_taken_statement(order_link_id: str) -> sa.Select[Any]:
+    # nosemgrep: cv-oms-unscoped-select reason=global-link-check owner=@CandleViewer/security review=2027-02-04  # noqa: E501 - semgrep marker format is fixed
     return sa.select(sa.exists().where(_O.order_link_id == order_link_id))
 
 

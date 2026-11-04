@@ -1,0 +1,94 @@
+# E29-X02 (#982); C-2.2, C-12.7; OM-E03, OM-D03, OM-I05. No network client imported or built in an
+# OMS module: narrowed from "any exchange call outside the adapter package", as
+# `cv-adapter-isolation` bans the vendor's identifiers and CONSTITUTION.md §3 lets M14 import the
+# adapter. What it sees and misses: docs/plan/security/ci-gates-e29.md#cv-oms-no-network-client.
+rules:
+  - id: cv-oms-no-network-client
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A network client in an OMS module (C-2.2; C-12.7; threat model OM-E03, OM-D03, OM-I05): the
+      OMS reaches the exchange only through the adapter's port, which signs with M2, spends the
+      per-UID rate budget and its reserve, keeps demo and live apart and builds the allow-listed
+      record `order_events` stores. A client made here bypasses all four. Fix: call the
+      `TradingPort` the runtime hands the OMS; an adapter change belongs in `exchange/`. Rule doc:
+      docs/plan/security/ci-gates-e29.md#cv-oms-no-network-client.
+    metadata:
+      rule-id: cv-oms-no-network-client
+      threat: [OM-E03, OM-D03, OM-I05]
+      references:
+        - CONSTITUTION.md C-2.2, C-12.7, section 3 (M14)
+        - docs/security/threat-models/E29-oms.md OM-E03, OM-D03, OM-I05
+        - docs/plan/security/ci-gates-e29.md
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: import $NET
+              - pattern: import $NET as $ALIAS
+              - pattern: from $NET import $NAME
+              - pattern: from $NET import $NAME as $ALIAS
+          - metavariable-regex:
+              metavariable: $NET
+              regex: ^(?:httpx|httpcore|aiohttp|requests|urllib3|urllib\.request|http\.client|websockets?|socket|ssl|grpc|pycurl|treq)(?:\.\w+)*$
+          - pattern-not-inside: |
+              if TYPE_CHECKING:
+                  ...
+          - pattern-not-inside: |
+              if typing.TYPE_CHECKING:
+                  ...
+      # Semgrep's `if TYPE_CHECKING:` pattern above also matches an `if` that has an `else` (or an
+      # `elif`), whose other branch runs: that `if` is reported on its own line when the branch
+      # imports a client.
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  if TYPE_CHECKING:
+                      ...
+                  else:
+                      $...RUNTIME
+              - pattern: |
+                  if typing.TYPE_CHECKING:
+                      ...
+                  else:
+                      $...RUNTIME
+          - metavariable-pattern:
+              metavariable: $...RUNTIME
+              pattern-either:
+                - patterns:
+                    - pattern-either:
+                        - pattern: import $NET
+                        - pattern: import $NET as $ALIAS
+                        - pattern: from $NET import $NAME
+                        - pattern: from $NET import $NAME as $ALIAS
+                    - metavariable-regex:
+                        metavariable: $NET
+                        regex: ^(?:httpx|httpcore|aiohttp|requests|urllib3|urllib\.request|http\.client|websockets?|socket|ssl|grpc|pycurl|treq)(?:\.\w+)*$
+                - pattern: from urllib import request
+                - pattern: from http import client
+      - pattern: from urllib import request
+      - pattern: from http import client
+      - pattern: httpx.$CALL(...)
+      - pattern: httpcore.$CALL(...)
+      - pattern: aiohttp.$CALL(...)
+      - pattern: urllib3.$CALL(...)
+      - pattern: websockets.$CALL(...)
+      - pattern: grpc.$CALL(...)
+      - pattern: pycurl.$CALL(...)
+      - pattern: treq.$CALL(...)
+      - pattern: urllib.request.$CALL(...)
+      - pattern: http.client.$CALL(...)
+      - pattern: asyncio.open_connection(...)
+      - pattern: asyncio.open_unix_connection(...)
+      - pattern: $LOOP.create_connection(...)
+      - pattern: $LOOP.sock_connect(...)
+      - patterns:
+          - pattern-either:
+              - pattern: importlib.import_module($MODNAME, ...)
+              - pattern: __import__($MODNAME, ...)
+          - metavariable-regex:
+              metavariable: $MODNAME
+              regex: ^["']?(?:httpx|httpcore|aiohttp|requests|urllib3|urllib\.request|http\.client|websockets?|socket|ssl|grpc|pycurl|treq)(?:\.\w+)*["']?$
+    paths:
+      include:
+        - "services/api/candleviewer/oms/**"
+        - "services/api/candleviewer/oms_*.py"

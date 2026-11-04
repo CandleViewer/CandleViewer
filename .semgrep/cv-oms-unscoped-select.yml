@@ -1,0 +1,92 @@
+# E29-X02 (#982); OM-I01, OM-E01; SR-051, SR-E29-13; C-12.4. A select of `orders`, `positions` or
+# `executions` rows in an OMS store with no account in its chain. A read unscoped by design carries
+# a reviewed `nosemgrep: cv-oms-unscoped-select reason= owner= review=` on the line above it. What
+# it sees and misses: docs/plan/security/ci-gates-e29.md#cv-oms-unscoped-select.
+rules:
+  - id: cv-oms-unscoped-select
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A select of `orders`, `positions` or `executions` rows with no account scope (OM-I01, OM-E01;
+      SR-051, SR-E29-13; C-12.4): a store read the order and position routes reach must hold the
+      account in SQL, so a foreign id is answered as a missing one. Add
+      `.where(<table>.exchange_account_id == account_id)`, or the principal's
+      `scope_clause(scope, environment, account, trade=...)`. A read unscoped by design carries a
+      reviewed `nosemgrep: cv-oms-unscoped-select reason=<token> owner=@<h> review=<date>` on the
+      line above it. Rule doc: docs/plan/security/ci-gates-e29.md#cv-oms-unscoped-select.
+    metadata:
+      rule-id: cv-oms-unscoped-select
+      threat: [OM-I01, OM-E01]
+      sr: [SR-051, SR-E29-13]
+      references:
+        - docs/security/threat-models/E29-oms.md OM-I01, OM-E01, SR-E29-13
+        - docs/plan/security/ci-gates-e29.md
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern: $SA.select(..., <... $TABLE ...>, ...)
+                  - pattern: select(..., <... $TABLE ...>, ...)
+                  - pattern: $TABLE.select(...)
+              - metavariable-regex:
+                  metavariable: $TABLE
+                  regex: ^(?:\w+\.)?(?:orders|positions|executions|ORDER_COLUMNS|POSITION_COLUMNS|EXECUTION_COLUMNS)$
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      $ALIAS = $TABLE.c
+                      ...
+                  - pattern-inside: |
+                      $ALIAS = $TABLE.alias(...)
+                      ...
+                  - pattern-inside: |
+                      $ALIAS, $B = $TABLE.c, $Y
+                      ...
+                  - pattern-inside: |
+                      $B, $ALIAS = $Y, $TABLE.c
+                      ...
+                  - pattern-inside: |
+                      $ALIAS, $B, $C = $TABLE.c, $Y, $Z
+                      ...
+                  - pattern-inside: |
+                      $B, $ALIAS, $C = $Y, $TABLE.c, $Z
+                      ...
+                  - pattern-inside: |
+                      $B, $C, $ALIAS = $Y, $Z, $TABLE.c
+                      ...
+                  - pattern-inside: |
+                      $ALIAS, $B, $C, $D = $TABLE.c, $X, $Y, $Z
+                      ...
+                  - pattern-inside: |
+                      $B, $ALIAS, $C, $D = $X, $TABLE.c, $Y, $Z
+                      ...
+                  - pattern-inside: |
+                      $B, $C, $ALIAS, $D = $X, $Y, $TABLE.c, $Z
+                      ...
+                  - pattern-inside: |
+                      $B, $C, $D, $ALIAS = $X, $Y, $Z, $TABLE.c
+                      ...
+              - metavariable-regex:
+                  metavariable: $TABLE
+                  regex: ^(?:\w+\.)?(?:orders|positions|executions)$
+              - pattern-either:
+                  - pattern: $SA.select(..., <... $ALIAS ...>, ...)
+                  - pattern: select(..., <... $ALIAS ...>, ...)
+                  - pattern: $ALIAS.select(...)
+      - pattern-not-inside: $Q.where(..., <... $COL.exchange_account_id == $ACCOUNT ...>, ...)
+      - pattern-not-inside: $Q.where(..., <... $ACCOUNT == $COL.exchange_account_id ...>, ...)
+      - pattern-not-inside: $Q.where(..., <... $COL.exchange_account_id.in_(...) ...>, ...)
+      - pattern-not-inside: $Q.where(..., <... scope_clause(...) ...>, ...)
+      - pattern-not-inside: $Q.where(..., <... $MOD.scope_clause(...) ...>, ...)
+      - pattern-not-inside: $Q.filter(..., <... $COL.exchange_account_id == $ACCOUNT ...>, ...)
+      - pattern-not-inside: $Q.filter(..., <... $ACCOUNT == $COL.exchange_account_id ...>, ...)
+      - pattern-not-inside: $Q.filter(..., <... $COL.exchange_account_id.in_(...) ...>, ...)
+      - pattern-not-inside: $Q.filter(..., <... scope_clause(...) ...>, ...)
+      - pattern-not-inside: $Q.filter_by(..., exchange_account_id=$ACCOUNT, ...)
+    paths:
+      include:
+        - "services/api/candleviewer/storage/repositories/orders*.py"
+        - "services/api/candleviewer/storage/repositories/oms_*.py"
+        - "services/api/candleviewer/storage/repositories/positions*.py"
+        - "services/api/candleviewer/storage/repositories/executions*.py"
+        - "services/api/candleviewer/storage/repositories/recorded_stops*.py"

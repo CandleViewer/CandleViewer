@@ -1,0 +1,52 @@
+# E29-X02 (#982); SR-E29-03, threat model §5.3; OM-S05, OM-T10; C-2.10. Only the collision-checked
+# allocator (`oms/order_link_allocator.py`) builds an `AllocatedOrderLinkId`. What it sees and
+# misses: docs/plan/security/ci-gates-e29.md#cv-oms-link-id-constructor.
+rules:
+  - id: cv-oms-link-id-constructor
+    languages: [python]
+    severity: ERROR
+    message: >-
+      An `AllocatedOrderLinkId` built outside the allocator (SR-E29-03, threat model §5.3; OM-S05,
+      OM-T10; C-2.10): the order path persists and sends only an id `OrderLinkIdAllocator.allocate`
+      returned, which checked it against every `orders` row (24 §8.3 rule 5). An id made
+      elsewhere skips that check, so a reused id could adopt another order's exchange history.
+      Fix: `await allocator.allocate(OrderLinkIdParts.generate(...))`. Rule doc:
+      docs/plan/security/ci-gates-e29.md#cv-oms-link-id-constructor.
+    metadata:
+      rule-id: cv-oms-link-id-constructor
+      threat: [OM-S05, OM-T10]
+      sr: [SR-E29-03]
+      references:
+        - docs/security/threat-models/E29-oms.md §5.3, SR-E29-03
+        - docs/plan/24-internal-schemas.md §8.3 rule 5
+        - docs/plan/security/ci-gates-e29.md
+    pattern-either:
+      - pattern: AllocatedOrderLinkId(...)
+      - pattern: $MODULE.AllocatedOrderLinkId(...)
+      - pattern: AllocatedOrderLinkId.__new__(...)
+      - pattern: $MODULE.AllocatedOrderLinkId.__new__(...)
+      - pattern: object.__new__(AllocatedOrderLinkId, ...)
+      - pattern: |
+          class $SUB(..., AllocatedOrderLinkId, ...):
+              ...
+      - pattern: |
+          class $SUB(..., $MODULE.AllocatedOrderLinkId, ...):
+              ...
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $ALLOCATED = await $ALLOCATOR.allocate(...)
+                  ...
+              - pattern-inside: |
+                  $ALLOCATED = $ALLOCATOR.allocate(...)
+                  ...
+          - pattern-either:
+              - pattern: replace($ALLOCATED, ...)
+              - pattern: dataclasses.replace($ALLOCATED, ...)
+              - pattern: copy.replace($ALLOCATED, ...)
+              - pattern: copy.copy($ALLOCATED)
+    paths:
+      include:
+        - "services/api/candleviewer/**"
+      exclude:
+        - "services/api/candleviewer/oms/order_link_allocator.py"
