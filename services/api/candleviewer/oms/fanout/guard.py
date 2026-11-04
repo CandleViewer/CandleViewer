@@ -5,12 +5,19 @@
 S4-S serves the order path: `max_mkt_order_qty` for a market leg (the comparator leaves it to its
 caller, #2635), the OMS's `TradingSwitches` and fence, and its `RiskGate`, which is
 `InterimRiskGate` today (demo admitted unevaluated, any other environment `risk_state_unavailable`).
-A port that raises refuses the leg, logged by account and error class alone (C-12.6). When #908 or
-#954 lands, only the composition root's binding changes.
+A port that raises refuses the leg, logged by account and error class alone (C-12.6); a leg whose
+effect opens a position (any but `REDUCE`; the planner's legs are entries) is counted fail-closed
+too (`fail_closed`, `cv_risk_guard_fail_closed_total`, E28-T04 BQ-8(a)). The guard cannot tell the
+preview from E34's submit (both run the planner, so what is previewed is sent), so a preview's
+refused leg counts as well: the port that raised would refuse that leg's entry on the submit. The
+counter call never raises out of `refusal` (`LegGuard` must not raise). When #954 lands, only the
+composition root's binding changes.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import suppress
 from typing import Final, Literal, Protocol, cast, get_args
 
 import structlog
@@ -50,8 +57,14 @@ class LegGuard(Protocol):
 class S4SGuard:
     """`LegGuard` over #913 S4-S's order path (module docstring)."""
 
-    def __init__(self, risk_gate: ports.RiskGate, switches: ports.TradingSwitches) -> None:
-        self._risk_gate, self._switches = risk_gate, switches
+    def __init__(
+        self,
+        risk_gate: ports.RiskGate,
+        switches: ports.TradingSwitches,
+        *,
+        fail_closed: Callable[[], None] = lambda: None,
+    ) -> None:
+        self._risk_gate, self._switches, self._fail_closed = risk_gate, switches, fail_closed
 
     def refusal(
         self, order: ports.SizedOrder, *, profile: AccountProfile, instrument: Instrument
@@ -68,6 +81,9 @@ class S4SGuard:
             account_id, error = str(order.account_id), type(exc).__name__
             log = structlog.get_logger(__name__)  # per call: never a stale processor chain (#2008)
             log.error("trade_group_guard_failed", account_id=account_id, error=error)
+            if order.effect is not ports.OrderEffect.REDUCE:  # a position-opening leg (BQ-8(a))
+                with suppress(Exception):  # a counter's fault never turns a refusal into a raise
+                    self._fail_closed()
             return "risk_state_unavailable"
         if decision.allowed is True:
             return None

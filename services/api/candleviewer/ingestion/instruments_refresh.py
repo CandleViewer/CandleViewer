@@ -233,7 +233,8 @@ class InstrumentsRefreshScheduler:
         self._tiers_incomplete, self._tiers_streak = False, 0
         #: S4-S-c: `start()`'s refresh spends at most a quarter of its timeout on the tiers.
         self._starting = False
-        #: S-RL: when a symbol's last tier fetch failed (the on-demand cooldown's start).
+        #: S-RL: when a symbol's last tier fetch failed (the on-demand cooldown's start); dropped
+        #: when a fetch succeeds (`tier_fetch_failed`).
         self._tier_failed_us: dict[str, int] = {}
         #: S4-S-d: when each requested symbol's fetch was last kicked, within the last window.
         self._tier_kicked_us: dict[str, int] = {}
@@ -464,6 +465,12 @@ class InstrumentsRefreshScheduler:
         task.add_done_callback(self._tier_kicks.discard)
         return None
 
+    def tier_fetch_failed(self, symbol: str) -> bool:
+        """E28-T04 (#908): whether `symbol`'s last tier fetch failed, no fetch succeeding since
+        (`_tier_failed_us`); a memory read, never a fetch, so the order path's lane reads it in
+        place. False for a symbol not asked yet or whose first fetch has not ended."""
+        return symbol in self._tier_failed_us
+
     def _remember_tier_symbol(self, symbol: str) -> None:
         """Join `symbol` to the refreshed set within `TIER_SYMBOLS_MAX`; a full set is warned of
         once per `TIER_REQUEST_WINDOW_S`, with no symbol list."""
@@ -511,6 +518,7 @@ class InstrumentsRefreshScheduler:
                 try:
                     async with asyncio.timeout(RISK_LIMITS_FETCH_TIMEOUT_S):
                         tiers[symbol] = tuple(await fetch(symbol))
+                    self._tier_failed_us.pop(symbol, None)
                 except Exception as exc:  # the budget's cancellation is not an Exception
                     self._tier_failed_us[symbol] = self._now_us()
                     get_logger(__name__).warning(

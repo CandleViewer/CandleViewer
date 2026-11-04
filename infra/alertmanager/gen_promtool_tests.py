@@ -277,6 +277,8 @@ _DOWN, _NEVER = _health("down", "no_success"), _health("down", "never_connected"
 _INTO_DOWN, _SILENT = _health("down", "no_success", moved=True), _health("degraded", "ws_silent")
 # Down at 6 min and still down; down from 6 min to 10 min and back at 11 min.
 _STAYS_DOWN, _BACK_UP, _ZERO = "0+0x5 1+0x20", "0+0x5 1+0x4 0+0x15", "0+0x25"
+# #908 (E28-T04): the order-path guard's fail-closed counter, bound at 0 from process start.
+_FAIL_CLOSED = 'cv_risk_guard_fail_closed_total{env="live"}'
 _WARN = 'cv_key_rotation_notices_total{env="live",state="warn"}'
 _OVERDUE = 'cv_key_rotation_notices_total{env="live",state="overdue"}'
 # One overdue key, counted at 6 min and again a day later.
@@ -444,6 +446,14 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("20h", False, {_OVERDUE: _A_DAY_APART}),
         ("1447m", True, {_OVERDUE: _A_DAY_APART}),
         ("6m", False, {_OVERDUE: _ZERO, _WARN: _RISE}),
+    ),
+    # #908 (E28-T04): one fail-closed refusal at 6 min pages at once and while it is in the 5 m
+    # window (10 m), then resolves (17 m); a flat count (an old refusal) is silent.
+    "RiskGuardFailClosed": (
+        ("6m", True, {_FAIL_CLOSED: _STAYS_DOWN}),
+        ("10m", True, {_FAIL_CLOSED: _STAYS_DOWN}),
+        ("17m", False, {_FAIL_CLOSED: _STAYS_DOWN}),
+        ("10m", False, {_FAIL_CLOSED: _FLAT}),
     ),
     # #836: a latch fires and holds until the restart that rebinds the gauge at 0. While a key
     # fails it is quiet (KeySelfCheckFailed fires); once that key passes, the latch fires again.

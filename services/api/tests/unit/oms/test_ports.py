@@ -459,8 +459,24 @@ def test_interim_risk_gate_refuses_every_order_outside_demo(environment: Environ
     assert decision.evaluated_at == NOW and decision.cap is None
 
 
-def test_interim_risk_gate_refuses_a_live_reduce_only_order_too() -> None:
-    order = _order("live", reduce_only=True, effect=OrderEffect.REDUCE, intent="scale_out")
+@pytest.mark.parametrize("environment", ["live", "testnet"])
+def test_interim_risk_gate_admits_an_order_that_only_reduces_in_every_environment(
+    environment: Environment,
+) -> None:
+    """E28-T04 BQ-6(a), C-2.6: a protective close is never refused for a risk state the interim
+    gate cannot read (`reduce_exemptions.EXEMPTIONS`, the risk gate's row)."""
+    order = _order(environment, reduce_only=True, effect=OrderEffect.REDUCE, intent="scale_out")
+    decision = InterimRiskGate(now=lambda: NOW).check(order, profile=None)
+    assert decision == RiskDecision(allowed=True, evaluated_at=NOW)
+
+
+@pytest.mark.parametrize("environment", ["live", "testnet"])
+def test_interim_risk_gate_still_refuses_a_reduce_only_order_not_shown_to_reduce(
+    environment: Environment,
+) -> None:
+    """By effect, never by label: a reduce-only order whose read showed no position to reduce is
+    an entry, and is refused as one."""
+    order = _order(environment, reduce_only=True, effect=OrderEffect.ENTRY, intent="scale_out")
     assert not InterimRiskGate(now=lambda: NOW).check(order, profile=None).allowed
 
 
@@ -530,13 +546,16 @@ def test_no_arm_records_never_logs_the_token() -> None:
 
 
 def test_the_interim_ports_refuse_every_live_order() -> None:
-    """R4, fail closed on live: the bundle never admits a live order, reduce-only included."""
+    """R4, fail closed on live: the bundle never admits a live order, reduce-only included: the
+    risk gate refuses a live entry, and admits an order that only reduces (E28-T04 BQ-6(a), C-2.6),
+    which the arm records still refuse until E30-S04 binds them."""
     ports = SubmissionPorts.interim(now=lambda: NOW)
-    for order in (_order("live"), _order("live", reduce_only=True, effect=OrderEffect.REDUCE)):
-        assert not ports.risk_gate.check(order, profile=_profile()).allowed
-        held = ArmToken(_ISSUED)
-        verdict = ports.arm_records.check(session_id=SESSION, environment="live", token=held)
-        assert verdict == FAILED
+    reduce = _order("live", reduce_only=True, effect=OrderEffect.REDUCE)
+    assert not ports.risk_gate.check(_order("live"), profile=_profile()).allowed
+    assert ports.risk_gate.check(reduce, profile=_profile()).allowed
+    held = ArmToken(_ISSUED)  # the arm records judge the environment, whatever the order
+    verdict = ports.arm_records.check(session_id=SESSION, environment="live", token=held)
+    assert verdict == FAILED
 
 
 # --- the startup announcement and oms_interim_ports ----------------------------------------------

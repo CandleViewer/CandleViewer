@@ -55,3 +55,18 @@ groups:
         annotations:
           summary: "An API key is overdue for rotation (never auto-disabled)"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-keyrotationoverdue"
+      - alert: RiskGuardFailClosed
+        # E28-T04 (#908, E28 threat model PF-D03, BQ-8(a)): the order-path guard refused a
+        # position-opening order because an input it needs was not there (an unread figure or
+        # profile, a risk gate that raised or had no state, a trade-group leg whose guard port
+        # raised). The interim risk gate's by-design refusals are never counted. The counter is
+        # bound at 0 from process start, so the first refusal is an increase. A condition page:
+        # its [RESOLVED] means none in the last 5 minutes. Never per account (SR-125).
+        expr: sum by (env) (increase(cv_risk_guard_fail_closed_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: risk_guard
+        annotations:
+          summary: "The order-path guard refused an entry for a missing input (fail closed)"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-riskguardfailclosed"

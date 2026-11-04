@@ -42,6 +42,11 @@ class Catalogue:
             raise RuntimeError("catalogue fault")
         return self.drop
 
+    def tier_fetch_failed(self, symbol: str) -> bool:
+        if self.drop == "raise":
+            raise RuntimeError("catalogue fault")
+        return False
+
 
 def _dropped(metrics: Metrics, reason: str) -> float:
     labels = {"env": "demo", "reason": reason}
@@ -87,6 +92,36 @@ async def test_the_caller_never_waits_while_the_fetch_hangs() -> None:
     await _turned()
     assert fetch.calls == ["BTCUSDT"] and len(sched._tier_kicks) == 1
     await sched.stop()
+
+
+async def test_tiers_failed_reads_the_catalogues_last_fetch_in_place() -> None:
+    """#908: a symbol not asked yet has not failed; once its fetch fails it has, until one
+    succeeds; the bridge reads the catalogue in place, no fetch of its own."""
+    fetch = _Fetch()
+    sched = InstrumentsRefreshScheduler(
+        fetch_instruments_info=_catalogue, repository=_Repo(), now_us=_Clock(),
+        fetch_risk_limits=fetch, on_demand_timeout_s=60.0, on_demand_cooldown_s=0.0,
+    )  # fmt: skip
+    await sched.refresh_now()
+    bridge = _bridge(sched, asyncio.get_running_loop(), Metrics("demo"))
+    assert not bridge.tiers_failed("BTCUSDT")
+    fetch.fail = True
+    assert await sched.ensure_risk_limits("BTCUSDT") is None
+    assert bridge.tiers_failed("BTCUSDT") and fetch.calls == ["BTCUSDT"]
+    fetch.fail = False
+    assert await sched.ensure_risk_limits("BTCUSDT") is not None
+    assert not bridge.tiers_failed("BTCUSDT")
+
+
+def test_tiers_failed_answers_failed_when_the_catalogue_read_raises() -> None:
+    loop = asyncio.new_event_loop()
+    try:
+        bridge = _bridge(Catalogue(drop="raise"), loop, Metrics("demo"))
+        with capture_logs() as logs:
+            assert bridge.tiers_failed("BTCUSDT")  # fail closed: the refusal counts
+    finally:
+        loop.close()
+    assert [entry["event"] for entry in logs] == ["oms_tier_failure_unread"]
 
 
 def test_the_pending_cap_drops_further_requests_and_counts_them() -> None:
@@ -162,6 +197,7 @@ async def test_no_catalogue_composed_binds_the_no_op() -> None:
         deps = runtime._composed().submission._deps
         assert deps.tier_requests is NO_TIER_REQUESTS
         assert deps.tier_requests.request_tiers("BTCUSDT") is None
+        assert not deps.tier_requests.tiers_failed("BTCUSDT")
 
 
 async def test_the_composition_hands_the_bridge_to_the_runtime() -> None:

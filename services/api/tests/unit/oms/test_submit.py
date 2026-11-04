@@ -31,6 +31,7 @@ from structlog.testing import capture_logs
 from candleviewer.accounts.errors import ProfileUnavailableError
 from candleviewer.accounts.profile_cache import EffectiveProfiles
 from candleviewer.accounts.profiles import AccountProfile, profile_values
+from candleviewer.accounts.sizer_metrics import SizerMetrics
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.errors import (
@@ -65,6 +66,7 @@ from candleviewer.oms.errors import (
     ProfileNotFound,
     RateBudgetExceeded,
     RiskRefused,
+    SizingUnavailable,
     StopRequestPending,
     StoreUnavailable,
     TickSizeViolation,
@@ -75,9 +77,16 @@ from candleviewer.oms.idempotency import STUCK_AFTER_S, AnchorService, Fresh, Re
 from candleviewer.oms.order_link import OrderLinkIdParts
 from candleviewer.oms.order_link_allocator import MAX_SEQ_INCREMENTS
 from candleviewer.oms.order_machine import OrderMachines
-from candleviewer.oms.ports import KeyedRecord, RequestRecord, SizingRequest, StopOffset
+from candleviewer.oms.ports import (
+    KeyedRecord,
+    NoDayFigures,
+    RequestRecord,
+    SizingRequest,
+    StopOffset,
+)
 from candleviewer.oms.reconcile_standing import STALE_DETAIL
 from candleviewer.oms.repository import IdempotencyAnchorRepository
+from candleviewer.oms.sizing import EntrySizer
 from candleviewer.oms.submit import (
     PLACE_WAIT_S,
     READ_RETRY_AFTER_S,
@@ -91,6 +100,7 @@ from candleviewer.oms.submit import (
     entry_order_id,
 )
 from candleviewer.oms_wiring import InterimKillSwitch, TradingSwitchesBinding
+from candleviewer.risk.models import RiskDecision, RiskRefusal
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -119,6 +129,7 @@ from tests.unit.oms.submit_rig import (
     profile,
     rigged,
 )
+from tests.unit.oms.submit_rig import instrument as sr_instrument
 
 _DUP = OmsErrorCode.DUPLICATE_CLIENT_ID.value
 
@@ -384,7 +395,8 @@ async def test_an_entry_with_no_profile_is_refused_403(rig: SubmitRig) -> None:
     """D11: no profile allows nothing; never a default (SR-E28-24)."""
     rig.profiles.held.clear()
     refused = await _refused(rig)
-    assert isinstance(refused, RiskRefused)
+    assert isinstance(refused, RiskRefused) and refused.cap == "profile_disabled"  # E28-T04
+    assert _denied(rig)[0].detail["gate"] == "profile_disabled"
     _nothing_done(rig)
 
 
@@ -2312,3 +2324,262 @@ async def test_a_pager_that_fails_is_logged_never_the_answer(
     with capture_logs() as logs:
         assert isinstance(await _refused(rig), StoreUnavailable)
     assert any(line["event"] == "oms_pager_failed" for line in logs)
+
+
+# --- the order-path guard's evidence (E28-T04, #908; 24 Sec.15.5, Sec.8.4) ------------------------
+
+_DOGE = "DOGEUSDT"
+
+
+def _guard_count(rig: SubmitRig, gate: str) -> float:
+    return rig.count("cv_risk_guard_refusals_total", gate=gate)
+
+
+async def test_a_symbol_refusal_records_its_gate_before_it_is_raised(rig: SubmitRig) -> None:
+    """BQ-4(a): one `orders.submit` `denied` record, written ahead of the 403 (C-2.9), names the
+    gate; no figure rides a symbol refusal; the refusal is counted by its class."""
+    rig.profiles.held[(cr.ACCOUNT, None)] = profile(allowed_symbols=["ETHUSDT"])
+    refused = await _refused(rig)
+    assert isinstance(refused, RiskRefused)
+    [record] = _denied(rig)
+    assert (record.reason, record.detail["gate"]) == ("risk_limit_breached", "symbol_not_allowed")
+    assert "limit" not in record.detail and "observed" not in record.detail
+    assert _guard_count(rig, "symbol") == 1 and rig.count("cv_risk_guard_fail_closed_total") == 0
+    _nothing_done(rig)
+
+
+async def test_a_crafted_order_for_an_unlisted_symbol_sends_nothing(rig: SubmitRig) -> None:
+    """AC1 (BQ-2(a)): DOGEUSDT, listed but off the account's allow-list, is `403
+    risk_limit_breached` with zero calls on the `FakeTradingPort`, and the record names the
+    account, the symbol and the gate."""
+    rig.instruments.listed[_DOGE] = sr_instrument(symbol=_DOGE, base_coin="DOGE")
+    refused = await _refused(rig, entry(symbol=_DOGE))
+    assert (problem_for(refused).status, problem_for(refused).code) == (403, "risk_limit_breached")
+    assert rig.port.demo.calls == [] and rig.port.live.calls == []
+    [record] = _denied(rig)
+    assert (record.account_id, record.detail["symbol"]) == (cr.ACCOUNT, _DOGE)
+    assert record.detail["gate"] == "symbol_not_allowed"
+    _nothing_done(rig)
+
+
+class _CapGate:
+    """A risk gate refusing every order on `cap`, with its figures (E39-S01's shape)."""
+
+    def __init__(self, cap: str, limit: str, actual: str, code: Any = None) -> None:
+        self.cap, self.limit, self.actual = cap, Decimal(limit), Decimal(actual)
+        self.code = code or RiskRefusal.RISK_LIMIT_BREACHED
+
+    def check(self, order: Any, *, profile: Any) -> RiskDecision:
+        return RiskDecision(
+            allowed=False, code=self.code, message="refused", cap=self.cap, limit=self.limit,
+            actual=self.actual, evaluated_at=cr.EPOCH,
+        )  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("cap", "figured"),
+    [("max_open_positions", True), ("max_position_notional", True), ("max_order_qty", False)],
+)
+async def test_a_cap_refusal_records_gate_limit_and_observed_never_a_price(
+    monkeypatch: pytest.MonkeyPatch, cap: str, figured: bool
+) -> None:
+    """BQ-5(a): a profile cap's `limit` and `observed` ride the record as decimal strings; any
+    other cap's figures (a quantity, a price) never do, and no log line carries them (C-12.6). The
+    problem body carries none of the three."""
+    monkeypatch.setattr(b01, "_ATTEMPTS", OrderedDict())
+    async with rigged(risk=_CapGate(cap, "3.50", "4.125")) as rig:
+        with capture_logs() as logs:
+            refused = await _refused(rig)
+        assert isinstance(refused, RiskRefused) and refused.cap == cap
+        [record] = _denied(rig)
+        assert (record.detail["step"], record.detail["gate"]) == ("risk", cap)
+        expected = {"limit": "3.50", "observed": "4.125"} if figured else {}
+        assert {k: record.detail[k] for k in ("limit", "observed") if k in record.detail} == (
+            expected
+        )
+        assert not [line for line in logs if {"3.50", "4.125"} & {str(v) for v in line.values()}]
+        assert "3.50" not in str(problem_for(refused)) and cap not in str(refused)
+        assert _guard_count(rig, "risk_gate") == 1
+        assert rig.count("cv_risk_guard_fail_closed_total") == 0  # a breach is no missing input
+
+
+async def test_guard_gate_order_and_cap_boundaries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SR-053, BQ-9(a): `main`'s order, pinned. With every later gate tripped too, the clock
+    answers first, then the read-only gate, the profile's symbol list, the size step's caps, the
+    risk gate and the switches; each refusal is one record, nothing sent. The caps themselves are
+    E39-S01's (#954, F-25): here the size step's cap and the risk gate's boundary figures."""
+    stages: list[tuple[str, str, str | None]] = [
+        ("clock", "clock_drift", None),
+        ("read_only", "trading_disabled", None),
+        ("symbol", "risk_limit_breached", "symbol_not_allowed"),
+        ("caps", "risk_limit_breached", "max_position_notional"),
+        ("risk", "risk_limit_breached", "max_open_positions"),
+        ("switches", "trading_disabled", None),
+    ]
+    for first, (_, code, gate) in enumerate(stages):
+        monkeypatch.setattr(b01, "_ATTEMPTS", OrderedDict())
+        async with rigged(risk=_CapGate("max_open_positions", "3", "3")) as rig:
+            tripped = {name for name, _, _ in stages[first:]}
+            if "clock" in tripped:
+                rig.port.health.measure(offset_ms=5_000)
+            rig.read_only.is_read_only = "read_only" in tripped
+            if "risk" not in tripped:
+                rig.pipeline._ports = replace(rig.pipeline._ports, risk_gate=_Admit())
+            over: dict[str, Any] = {"max_position_notional": "50"} if "caps" in tripped else {}
+            if "symbol" in tripped:
+                over["allowed_symbols"] = ["ETHUSDT"]
+            rig.profiles.held[(cr.ACCOUNT, None)] = profile(**over)
+            rig.port.switches.refusals[cr.ACCOUNT] = TradingDisabled()
+            request = entry(sizing=SizingRequest(mode="profile"), stop_loss=None, take_profit=None)
+            refused = await _refused(rig, request)
+            [record] = _denied(rig)
+            assert (problem_for(refused).code, record.detail.get("gate")) == (code, gate), first
+            if gate == "max_open_positions":  # at the boundary: observed == limit is refused
+                assert (record.detail["limit"], record.detail["observed"]) == ("3", "3")
+            assert rig.calls() == []
+
+
+class _Admit:
+    def check(self, order: Any, *, profile: Any) -> RiskDecision:
+        return RiskDecision(allowed=True, evaluated_at=cr.EPOCH)
+
+
+class _Raises:
+    def check(self, order: Any, *, profile: Any) -> RiskDecision:
+        raise RuntimeError("the risk state store is down")
+
+
+@pytest.mark.parametrize("kind", ["entry", "reduce"])
+async def test_a_risk_gate_that_raises_counts_fail_closed_for_an_entry_only(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """BQ-8(a): a guard port that raised refuses (an internal error, recorded), and an entry's
+    refusal is counted fail-closed; an order that only reduces is not position-opening."""
+    monkeypatch.setattr(b01, "_ATTEMPTS", OrderedDict())
+    async with rigged(risk=_Raises()) as rig:
+        rig.port.demo.seed_position(_position())
+        with pytest.raises(RuntimeError):
+            await rig.submit(entry() if kind == "entry" else flatten())
+        expected = 1 if kind == "entry" else 0
+        assert rig.count("cv_risk_guard_fail_closed_total") == expected
+        assert "place_order" not in rig.calls()
+
+
+async def test_a_risk_gate_with_no_state_counts_fail_closed_but_the_interim_gate_does_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BQ-8(a): `risk_state_unavailable` from a real gate is a missing input; the interim gate's
+    by-design refusal of a live entry is not (`oms_interim_ports` shows it)."""
+    monkeypatch.setattr(b01, "_ATTEMPTS", OrderedDict())
+    unavailable = RiskRefusal.RISK_STATE_UNAVAILABLE
+    async with rigged(risk=_CapGate("max_open_positions", "1", "1", unavailable)) as rig:
+        await _refused(rig)
+        assert rig.count("cv_risk_guard_fail_closed_total") == 1
+    monkeypatch.setattr(b01, "_ATTEMPTS", OrderedDict())
+    async with rigged() as rig:  # the interim gate
+        rig.profiles.held[(cr.LIVE_ACCOUNT, None)] = profile(cr.LIVE_ACCOUNT)
+        refused = await _refused(rig, entry(account_id=cr.LIVE_ACCOUNT))
+        assert isinstance(refused, RiskRefused)
+        assert rig.count("cv_risk_guard_fail_closed_total") == 0
+        assert _denied(rig)[0].detail["gate"] == "risk_gate"
+
+
+async def test_an_unread_figure_or_profile_counts_fail_closed(rig: SubmitRig) -> None:
+    """BQ-8(a): an entry the size step could not size (`sizing_unavailable`) and an entry whose
+    profile could not be read (`store_unavailable`) are each counted once."""
+    rig.figures.known = rig.figures.known.model_copy(update={"equity": None})  # figure_unknown
+    refused = await _refused(rig, entry(sizing=SizingRequest(mode="profile"), stop_loss=None,
+                                        take_profit=None))  # fmt: skip
+    assert problem_for(refused).code == "sizing_unavailable"
+    assert rig.count("cv_risk_guard_fail_closed_total") == 1
+    rig.profiles.refuse = ProfileUnavailableError("the store timed out")
+    assert isinstance(await _refused(rig), StoreUnavailable)
+    assert rig.count("cv_risk_guard_fail_closed_total") == 2
+
+
+async def test_a_tier_ask_pending_is_not_counted_fail_closed(rig: SubmitRig) -> None:
+    """Fable 1 on #908: a symbol whose leverage tiers are not fetched yet is the by-design lazy
+    fetch (S4-S-d), not a missing input: still 503 `sizing_unavailable` with `tiers_pending`,
+    the tiers asked once, but never counted fail-closed, so it never pages."""
+    rig.figures.known = rig.figures.known.model_copy(update={"maintenance_margin_rate": None})
+    refused = await _refused(rig, entry(sizing=SizingRequest(mode="profile"), stop_loss=None,
+                                        take_profit=None))  # fmt: skip
+    assert isinstance(refused, SizingUnavailable) and refused.tiers_pending
+    assert (problem_for(refused).code, refused.detail) == ("sizing_unavailable", "tiers_pending")
+    assert rig.tiers.asked == [SYMBOL]
+    assert rig.count("cv_risk_guard_fail_closed_total") == 0
+
+
+async def test_a_failed_tier_fetch_is_counted_fail_closed(rig: SubmitRig) -> None:
+    """#908: a symbol whose last tier fetch failed is an outage, not the lazy fetch: still 503
+    `sizing_unavailable` with `detail` `tiers_pending` and the tiers asked again, but not typed
+    `tiers_pending`, so a tier fetch that keeps failing is counted fail-closed and pages."""
+    rig.figures.known = rig.figures.known.model_copy(update={"maintenance_margin_rate": None})
+    rig.tiers.failed.add(SYMBOL)
+    refused = await _refused(rig, entry(sizing=SizingRequest(mode="profile"), stop_loss=None,
+                                        take_profit=None))  # fmt: skip
+    assert isinstance(refused, SizingUnavailable) and not refused.tiers_pending
+    assert (problem_for(refused).code, refused.detail) == ("sizing_unavailable", "tiers_pending")
+    assert rig.tiers.asked == [SYMBOL]
+    assert rig.count("cv_risk_guard_fail_closed_total") == 1
+
+
+@pytest.mark.parametrize(
+    "unknown",
+    ["equity", "available_margin", "committed_risk", "realised_loss_today", "taker_fee_rate"],
+)
+async def test_a_figure_outage_on_an_untiered_symbol_counts_fail_closed(
+    rig: SubmitRig, unknown: str
+) -> None:
+    """Security delta 1(a) on #908: the tiers missing and a wallet figure unknown too is a figure
+    outage, not the lazy tier fetch: plain 503 `sizing_unavailable` (never `tiers_pending`),
+    counted fail-closed once; the tiers are still asked. Every wallet figure the size step reads
+    before the rate is a case, so `_rate_alone_unknown` keyed on any one of them fails here."""
+    rig.figures.known = rig.figures.known.model_copy(
+        update={"maintenance_margin_rate": None, unknown: None}
+    )
+    refused = await _refused(rig, entry(sizing=SizingRequest(mode="profile"), stop_loss=None,
+                                        take_profit=None))  # fmt: skip
+    assert isinstance(refused, SizingUnavailable) and not refused.tiers_pending
+    assert refused.detail == SizingUnavailable.default_detail
+    assert rig.tiers.asked == [SYMBOL]
+    assert rig.count("cv_risk_guard_fail_closed_total") == 1
+
+
+async def test_the_interim_figures_refusal_of_a_live_entry_is_not_fail_closed(
+    rig: SubmitRig,
+) -> None:
+    """`NoDayFigures` refuses every live entry by design: not counted (BQ-8(a))."""
+    rig.pipeline._deps = replace(rig.pipeline._deps, figures=NoDayFigures())
+    rig.pipeline._sizer = EntrySizer(
+        NoDayFigures(), SizerMetrics.register(rig.metrics), tier_requests=rig.tiers
+    )
+    refused = await _refused(rig)
+    assert problem_for(refused).code == "sizing_unavailable"
+    assert rig.count("cv_risk_guard_fail_closed_total") == 0
+
+
+@dataclass
+class _Ticking:
+    """An admitting risk gate that moves the pipeline's injected monotonic clock by `step_s`."""
+
+    clock: cr.Monotonic
+    step_s: float
+
+    def check(self, order: Any, *, profile: Any) -> RiskDecision:
+        self.clock.s += self.step_s
+        return RiskDecision(allowed=True, evaluated_at=cr.EPOCH)
+
+
+async def test_the_guard_time_is_observed_once_per_order(rig: SubmitRig) -> None:
+    """`cv_risk_guard_seconds`: the validator and the risk gate, timed once on the pipeline's
+    injected monotonic clock, refused or not: the admitted order observes exactly the time its
+    gate took, the validator's refusal (before the gate) exactly none."""
+    gate = _Ticking(rig.port.monotonic, 0.004)
+    rig.pipeline._ports = replace(rig.pipeline._ports, risk_gate=gate)
+    await rig.submit()
+    refused = await _refused(rig, entry(price=Decimal("60000.05")), context(client_ref=uuid4()))
+    assert isinstance(refused, TickSizeViolation)  # refused by the validator, inside the timing
+    assert rig.count("cv_risk_guard_seconds_count") == 2
+    assert rig.count("cv_risk_guard_seconds_sum") == pytest.approx(0.004)
+    assert rig.count("cv_risk_guard_seconds_bucket", le="0.005") == 2

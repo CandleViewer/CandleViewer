@@ -83,7 +83,10 @@ or 502, once the order is recorded and sent, or raises the refusal the route ren
    `failed`; a `held` order's leg is left as it is), the outcome's record and the metrics.
 
 Every refusal is audited (`orders.submit`, outcome `denied`, its problem code) before it is
-raised; one whose record does not land is answered 503 `audit_unavailable` instead (C-2.9). Each
+raised; one whose record does not land is answered 503 `audit_unavailable` instead (C-2.9). A guard
+refusal's record names its `gate`, and for a profile cap its `limit` and `observed` (24 Sec.15.5,
+E28-T04), and is counted by its gate's class (`cv_risk_guard_refusals_total`); a position-opening
+order refused for a guard input that was not there is counted fail-closed, which pages. Each
 record names the requesting principal and carries the request's correlation id ([AUDIT-REQUEST-ID],
 #3990). Once the anchor exists, the bounds (`SEND`'s write, `place_wait_s`, `result_wait_s`, then
 the anchor's, the leg's and the group's compare-and-sets and the outcome's record, each
@@ -124,6 +127,7 @@ from candleviewer.accounts.errors import (
     ProfileUnavailableError,
     TradeGroupStaleError,
 )
+from candleviewer.accounts.profile_caps import PROFILE_CAPS
 from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.accounts.sizer_metrics import SizerMetrics
 from candleviewer.accounts.trade_group_repository import TradeGroupRepository
@@ -152,6 +156,7 @@ from candleviewer.exchange.base.models import AccountRef, OrderLane
 from candleviewer.observability.metrics import BoundedMetric, Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.observability.tracing import inject_context, span
+from candleviewer.risk.models import RiskRefusal
 from candleviewer.settings import OMS_PRICE_BAND_DEFAULT, OMS_PRICE_BAND_MAX, OMS_PRICE_BAND_MIN
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
@@ -226,6 +231,7 @@ from .ports import (
     AuditOutcome,
     AuditSeverity,
     Instruments,
+    Interim,
     KeyedRecord,
     MarketReading,
     OrderEffect,
@@ -249,6 +255,7 @@ from .ports import (
     TradingAccounts,
     TradingSwitches,
 )
+from .reduce_exemptions import refusal_gate
 from .routing import RoutedPositions, TradingRouter, Transport
 from .sizing import SIZING_RETRY_AFTER_S, EntryIntent, EntrySize, EntrySizer
 from .validator import EXEMPT_FIELD, EXEMPT_WHOLE_CLOSE, Validator, closes_whole
@@ -587,6 +594,8 @@ class _Trace:
     #: whether the whole close's `min_order_qty` exemption let the order through (ruling (a)).
     closable: Qty | None = None
     exempt: bool = False
+    #: A position-opening order refused for a guard input that was not there (BQ-8(a)).
+    fail_closed: bool = False
     validating: ExitStack = field(default_factory=ExitStack)
     result: str | None = None
 
@@ -831,6 +840,13 @@ class OrderSubmission:
         self._rejected = counter("oms_submit_rejected_total")
         self._clock_blocked = counter("oms_clock_drift_blocked_total").child()
         self._rate_rejected = counter("oms_rate_reject_total").child()
+        self._guard_refused = counter("cv_risk_guard_refusals_total")
+        self._fail_closed = counter("cv_risk_guard_fail_closed_total").child()
+        guard = specs["cv_risk_guard_seconds"]
+        self._guard_seconds = metrics.histogram(
+            guard.name, guard.help, guard.labels, buckets=guard.buckets or (),
+            max_series=guard.max_series,
+        ).child()  # fmt: skip
 
     async def submit(self, request: OrderRequest, context: SubmitContext) -> SubmitOutcome:
         """The request's answer (module docstring), or its refusal, recorded first (C-2.9). It is
@@ -868,7 +884,7 @@ class OrderSubmission:
         # The venue's own rule, read off its capability record, never a constant here (C-2.2).
         venue = self._router.port_for(account.environment).capabilities
         instrument = await self._instrument(request.symbol)
-        profile = await self._profile(request)
+        profile = await self._profile(trace)
         bare = request.reduce_only and not venue.supports_reduce_only_tpsl
         turn = None if request.reduce_only else await self._turn(account)
         try:
@@ -909,18 +925,17 @@ class OrderSubmission:
         trace.step = "classify"
         sized = await self._sized(trace, account, instrument, profile, bare=bare)
         trace.step = "validate"
-        self._validator.check_order(
-            sized, instrument=instrument, profile=profile, position_qty=trace.closable
-        )
-        whole = closes_whole(sized, trace.closable)
-        trace.exempt = whole and sized.qty < instrument.min_order_qty
-        trace.step = "risk"
-        decision = self._ports.risk_gate.check(sized, profile=profile)
-        if not decision.allowed:
-            _log().info(
-                "oms_submit_risk_refused", account_id=str(request.account_id), code=decision.code
+        started = self._monotonic()
+        try:
+            self._validator.check_order(
+                sized, instrument=instrument, profile=profile, position_qty=trace.closable
             )
-            raise RiskRefused(cap=decision.cap)
+            whole = closes_whole(sized, trace.closable)
+            trace.exempt = whole and sized.qty < instrument.min_order_qty
+            trace.step = "risk"
+            self._risk_verdict(trace, sized, profile)
+        finally:  # the guard's own time, refused or not: no I/O runs in it
+            self._guard_seconds.observe(self._monotonic() - started)
         trace.step = "switches"
         switched_off = self._switched_off(trace, account)
         if switched_off is not None:
@@ -945,6 +960,27 @@ class OrderSubmission:
             trace.step = "answer"
             return await self._answer(trace, persisted, watch, transport)
 
+    def _risk_verdict(
+        self, trace: _Trace, sized: SizedOrder, profile: AccountProfile | None
+    ) -> None:
+        """Step 5: the risk gate's verdict on the sized order, or its refusal, which carries the
+        cap and its figures (24 Sec.15.5). A gate that raises, or that answers it has no state to
+        judge by, refuses a position-opening order fail-closed (BQ-8(a)); the interim gate's
+        by-design refusals are not counted (`oms_interim_ports` shows them)."""
+        gate = self._ports.risk_gate
+        opening = sized.effect is not OrderEffect.REDUCE
+        try:
+            decision = gate.check(sized, profile=profile)
+        except Exception:
+            trace.fail_closed = opening
+            raise
+        if decision.allowed:
+            return
+        unavailable = decision.code is RiskRefusal.RISK_STATE_UNAVAILABLE
+        trace.fail_closed = opening and unavailable and not isinstance(gate, Interim)
+        _log().info("oms_submit_risk_refused", account_id=str(sized.account_id), code=decision.code)
+        raise RiskRefused(cap=decision.cap, limit=decision.limit, observed=decision.actual)
+
     async def _account(self, account_id: AccountId) -> AccountRef:
         """The account the order is signed for, by its id alone (SR-E27-21)."""
         account = await self._store_read(self._deps.accounts.trading_account(account_id))
@@ -959,12 +995,19 @@ class OrderSubmission:
             raise OrderInvalid(message, errors=(FieldError("symbol", "listed", message),))
         return instrument
 
-    async def _profile(self, request: OrderRequest) -> AccountProfile | None:
+    async def _profile(self, trace: _Trace) -> AccountProfile | None:
         """The effective profile (24 Sec.9.3). A named `profile_id` the account does not hold,
         another account's, a deleted one or one that does not exist, is 404 `not_found`, the same
         answer for each (22 `PlaceOrderRequest`), whatever the order's kind. With none named, an
         account with no default answers None: an entry is then refused at the check (D11), never
-        sized from a default (SR-E28-24)."""
+        sized from a default (SR-E28-24). An entry's profile that cannot be read is a guard input
+        that is not there: counted as fail-closed (BQ-8(a)). The count reads the request's
+        `reduce_only` label, deliberately: this step runs before step 3d's read classifies the
+        order's effect, so nothing better is known yet. That is safe because the label only
+        decides the count, never the answer: the order is refused `503` either way, and a client
+        that labels an entry reduce-only hides at most its own refusal from the page, never opens
+        exposure (24 Sec.15.5)."""
+        request = trace.request
         try:
             async with asyncio.timeout(self._store_timeout_s):
                 return await self._deps.profiles.get_effective_profile(
@@ -976,6 +1019,7 @@ class OrderSubmission:
             return None
         except (TimeoutError, ProfileUnavailableError, StorageError) as exc:
             _log().warning("oms_submit_profile_unread", failure=type(exc).__name__)
+            trace.fail_closed = not request.reduce_only
             raise StoreUnavailable from None
 
     async def _sized(
@@ -1826,6 +1870,8 @@ class OrderSubmission:
             "environment": trace.environment,
             "order_link_id": link,
         }
+        if isinstance(error, RiskRefused):
+            detail |= _guard_detail(error, trace.step)
         _log().warning(
             "oms_submit_refused",
             code=problem.code,
@@ -1848,6 +1894,22 @@ class OrderSubmission:
             )
             raise AuditNotDurable("the refusal's record did not land") from None
         self._rejected.labels(problem.code).inc()
+        if isinstance(error, RiskRefused):
+            self._guard_refused.labels(refusal_gate(error.cap, trace.step)).inc()
+        if trace.fail_closed or self._figure_unread(error, request):
+            self._fail_closed.inc()
+
+    def _figure_unread(self, error: Exception, request: OrderRequest) -> bool:
+        """An entry the size step could not size for a figure it could not read (`503
+        sizing_unavailable`, BQ-8(a)); not when the figures port is the interim one (`NoDayFigures`
+        on live, which refuses every entry by design and `oms_interim_ports` shows), and not for
+        a symbol whose leverage tiers are still being fetched (`SizingUnavailable.tiers_pending`,
+        the by-design lazy fetch of S4-S-d, a transient no input outage explains; a symbol whose
+        last tier fetch failed is counted). Like `_profile`'s count it reads the `reduce_only`
+        label: the refusal stands either way."""
+        if not isinstance(error, SizingUnavailable) or error.tiers_pending:
+            return False
+        return not request.reduce_only and not isinstance(self._deps.figures, Interim)
 
     def _request_record(
         self,
@@ -1942,6 +2004,22 @@ def _anchor(
         trade_group_id=trade_group_id,
         order_id=order_id,
     )
+
+
+#: The caps whose figures a refusal's record may carry: a USD notional, a fraction, a count, a
+#: leverage or a per-minute rate, never a price or a quantity (24 Sec.15.5, C-12.6).
+_FIGURED_CAPS: Final = frozenset(cap.field for cap in PROFILE_CAPS)
+
+
+def _guard_detail(error: RiskRefused, step: str) -> dict[str, str | None]:
+    """A guard refusal's evidence in its record (24 Sec.15.5): its `gate`, and for a profile cap
+    the risk gate named, the `limit` and the `observed` value as plain decimal strings."""
+    out: dict[str, str | None] = {"gate": error.cap or refusal_gate(None, step).value}
+    if error.cap in _FIGURED_CAPS:
+        for key, figure in (("limit", error.limit), ("observed", error.observed)):
+            if figure is not None and figure.is_finite():
+                out[key] = format(figure, "f")
+    return out
 
 
 def _persist_refusal(refused: OrderStepRefused) -> OmsError:

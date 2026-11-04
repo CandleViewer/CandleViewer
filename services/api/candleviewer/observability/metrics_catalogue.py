@@ -71,6 +71,8 @@ FRAME_ENCODE_BUCKETS: Final = (
     5e-2,
     1e-1,
 )
+#: The order-path guard's time (E28-T04): edges around the 5 ms p95 it may add (US-PROF-004).
+RISK_GUARD_BUCKETS: Final = (5e-5, 1e-4, 2.5e-4, 5e-4, 1e-3, 2.5e-3, 5e-3, 0.01, 0.025)
 #: Frame size, 64 B to the 4 MiB frame limit (23 section 3.6), a factor of 4 apart.
 FRAME_BYTES_BUCKETS: Final = (64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304)
 #: The HELP of the two frame series too (`ws/metrics.py` imports them). A data frame is
@@ -3706,6 +3708,52 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _P,
         "E29",
         max_series=22,
+    ),
+    # --- Order-path guard (E28-T04 #908, 24 Sec.15.5, E28 threat model 8.2) ---------------------
+    # Counted by oms.submit; never an account, a symbol or a figure (PF-I07).
+    _s(
+        "cv_risk_guard_refusals_total",
+        "counter",
+        "refusals",
+        ("gate",),
+        "placeOrder refusals by the order-path guard (403 risk_limit_breached), counted once each "
+        "refusal's orders.submit record landed, by the guard's class: profile, symbol, caps or "
+        "risk_gate (oms.reduce_exemptions.RefusalGate).",
+        "dashboard (growth = probing for a widening path, PF-T03 to PF-T07)",
+        _L,
+        "E28",
+        max_series=4,
+    ),
+    _s(
+        "cv_risk_guard_fail_closed_total",
+        "counter",
+        "refusals",
+        (),
+        "Position-opening orders refused because an input the order-path guard needs was not "
+        "there: any sizing_unavailable except tiers_pending (the symbol's maintenance margin "
+        "rate the only unknown figure, its tiers being fetched and its last tier fetch not "
+        "failed), so a failed tier fetch counts and a per-account sizing-turn timeout counts "
+        "too; an unreadable profile; a risk gate that raised "
+        "or had no state; a non-reduce trade-group leg (a preview's included) whose guard port "
+        "raised. The interim ports' by-design refusals are excluded (BQ-8(a)). Before the "
+        "effect is classified (the profile "
+        "and figure reads) the request's reduce_only label decides the count; the refusal "
+        "stands either way. Counted once the refusal's record landed.",
+        "any increase (page RiskGuardFailClosed)",
+        _L,
+        "E28",
+    ),
+    _s(
+        "cv_risk_guard_seconds",
+        "histogram",
+        "seconds",
+        (),
+        "The order-path guard's own time on one placeOrder: Validator.check_order on the sized "
+        "order and the risk gate's verdict, synchronous, no I/O (US-PROF-004: <= 5 ms p95).",
+        "dashboard",
+        _L,
+        "E28",
+        RISK_GUARD_BUCKETS,
     ),
     _s(
         "oms_exit_refused_total",

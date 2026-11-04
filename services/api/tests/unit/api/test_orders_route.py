@@ -829,6 +829,23 @@ async def test_the_body_is_read_strictly_audited_and_refused_before_the_pipeline
     assert (world.audit.actions(), world.oms.submission.submitted) == (["orders.submit"], [])
 
 
+@pytest.mark.parametrize(
+    "hint",
+    [{"risk_checked": True}, {"profile_snapshot": {"max_leverage_cap": "100"}}],
+    ids=["risk_checked", "profile_snapshot"],
+)
+async def test_a_client_risk_checked_field_is_refused_400(hint: dict[str, Any]) -> None:
+    """AC8 (E28-T04, SR-E28-05): a client's claim that the order was already checked, or a
+    profile of its own, is never read: `PlaceOrderRequest` forbids extra members, so the body is
+    `400 validation_failed` (`extra_forbidden`), recorded, and the pipeline never runs."""
+    world = World()
+    answer = await post(world, body=BODY | hint)
+    assert (answer.status_code, answer.json()["code"]) == (400, "validation_failed")
+    [field] = hint
+    assert (field, "extra_forbidden") in {(e["field"], e["rule"]) for e in answer.json()["errors"]}
+    assert (world.audit.actions(), world.oms.submission.submitted) == (["orders.submit"], [])
+
+
 async def test_the_pipeline_gets_the_request_as_read_with_its_key_and_fingerprint() -> None:
     world = World()
     await post(world, "manager", BODY | {"profile_id": str(FOREIGN), "note": "breakout"})

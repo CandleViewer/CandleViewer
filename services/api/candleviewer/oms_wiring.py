@@ -593,6 +593,8 @@ class InstrumentCatalogue(Protocol):
 
     def request_tiers(self, symbol: str) -> Literal["full", "stopped"] | None: ...
 
+    def tier_fetch_failed(self, symbol: str) -> bool: ...
+
 
 def _tiers(catalogue: InstrumentCatalogue | None) -> Tiers:
     """A symbol's risk-limit tiers from the catalogue's snapshot, read in place (no fetch on the
@@ -1321,6 +1323,15 @@ class ServedTierRequests:
             self._serving.notify(self._land, symbol)
         except Exception as exc:  # a request's failure is never its caller's
             _log().error("oms_tier_request_failed", error=type(exc).__name__)
+
+    def tiers_failed(self, symbol: Symbol) -> bool:
+        """The catalogue's `tier_fetch_failed`, read in place on the lane (a dict lookup, no I/O,
+        as `_tiers` reads its snapshot); a read that raises answers failed, so it is counted."""
+        try:
+            return self._catalogue.tier_fetch_failed(symbol)
+        except Exception as exc:  # fail closed: the refusal counts
+            _log().error("oms_tier_failure_unread", error=type(exc).__name__)
+            return True
 
     async def close(self) -> None:
         """The runtime's stop: the symbols still waiting are dropped, none will land."""
@@ -3325,7 +3336,11 @@ class OmsRuntime:
             instruments = InstrumentsBinding(ingestion.instruments)
             # E28-T05 S3c: the preview's reads, the order path's own; its prices ask no demand
             preview = PreviewParts(
-                S4SGuard(ports.risk_gate, submits), ports.stop_resolver, instruments,
+                S4SGuard(
+                    ports.risk_gate, submits,
+                    fail_closed=_counter(metrics, "cv_risk_guard_fail_closed_total").child().inc,
+                ),
+                ports.stop_resolver, instruments,
                 ReferencePricesBinding(tickers), PreviewFigures(accounts, figures),
             )  # fmt: skip
             validator = Validator(read_only_gate=self._read_only)

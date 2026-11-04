@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections import OrderedDict
 from collections.abc import Iterator
 from typing import Any
 
@@ -19,14 +20,19 @@ from hypothesis import strategies as st
 
 from candleviewer.accounts.profiles import SymbolEntries, SymbolScope
 from candleviewer.domain.primitives import AccountId
+from candleviewer.oms.errors import RiskRefused
+from candleviewer.oms.ports import SubmitActor
+from candleviewer.statechart.bindings import b01_order as b01
 from tests.contract.rbac.rbac_harness import ABSENT, FOREIGN, GRANTED, bearer
 from tests.contract.test_account_profile_write_cells import _step_up
 from tests.contract.test_account_profile_writes_provider import _ALT, _RISK, ALT
 from tests.security.e28._world import GROUP, LIVE, READ_LOGS, E28World, request_id, state
+from tests.unit.api import test_orders_route as orders_route
 from tests.unit.api.test_trade_group_definition_create import A, L, payload
 from tests.unit.api.test_trade_group_definition_update import CORE3
 from tests.unit.api.test_trade_group_preview_route import body
-from tests.unit.oms.submit_rig import instrument, profile
+from tests.unit.oms import command_rig as cr
+from tests.unit.oms.submit_rig import context, entry, instrument, profile, rigged
 
 M, PREVIEW = "manager_with_grant", "/trade-groups/preview"
 PROFILES, PREVIEWED = f"/exchange-accounts/{GRANTED}/profiles", "trade_group.previewed"
@@ -328,3 +334,50 @@ def test_ac15_one_account_repeated_in_the_legs_is_422_before_any_read(
     assert resp.status_code == 422
     assert len(unchanged.preview.read) == reads
     assert len(records) == 1 and records[0][0] == PREVIEWED
+
+
+# --- E28-T04 (#908): the order path, a DOGEUSDT submit to account B ---------------------------
+
+_DOGE = "DOGEUSDT"
+
+
+@pytest.mark.parametrize(
+    ("who", "account", "code"),
+    [("viewer", "own", "forbidden"), ("manager", "foreign", "account_scope_denied")],
+    ids=["forbidden_role", "idor_spoofed_account"],
+)
+async def test_e28_t04_an_order_outside_the_callers_rights_is_refused_before_any_read(
+    who: str, account: str, code: str
+) -> None:
+    """SR-052, SR-E28-21 on `POST /orders`: a role without `orders:write`, and a Manager naming a
+    spoofed `exchange_account_id` it holds no grant on, are `403` with one `rbac.denied` record
+    and nothing reaching the pipeline: the account is never read for them."""
+    world = orders_route.World()
+    body = orders_route.BODY | {"symbol": _DOGE}
+    if account == "foreign":
+        body |= {"exchange_account_id": str(orders_route.FOREIGN)}
+    answer = await orders_route.post(world, who, body)
+    assert (answer.status_code, answer.json()["code"]) == (403, code)
+    assert world.audit.actions() == ["rbac.denied"]
+    assert world.oms.submission.submitted == []
+
+
+async def test_e28_t04_a_granted_manager_cannot_place_a_symbol_off_the_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SR-054, PF-T07: as a granted Manager, DOGEUSDT (listed, but off the account's allow-list)
+    is `403 risk_limit_breached` with zero venue calls, and its `orders.submit` `denied` record,
+    written first, names the account, the symbol and the gate."""
+    monkeypatch.setattr(b01, "_ATTEMPTS", OrderedDict())
+    manager = SubmitActor(user_id=uuid.uuid4(), role="manager", session_id=uuid.uuid4(), ip=None)
+    async with rigged() as rig:
+        rig.instruments.listed[_DOGE] = instrument(symbol=_DOGE, base_coin="DOGE")
+        with pytest.raises(RiskRefused):
+            await rig.submit(entry(symbol=_DOGE), context(actor=manager))
+        assert rig.calls() == [] and rig.written() == (0, 0, 0, 0)
+        [record] = rig.records("orders.submit")
+        assert (record.outcome, record.reason, record.actor.role) == (
+            "denied", "risk_limit_breached", "manager",
+        )  # fmt: skip
+        assert (record.account_id, record.detail["symbol"]) == (cr.ACCOUNT, _DOGE)
+        assert record.detail["gate"] == "symbol_not_allowed"

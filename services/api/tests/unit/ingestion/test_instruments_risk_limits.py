@@ -131,6 +131,25 @@ async def test_a_failed_tier_fetch_in_a_refresh_leaves_the_symbol_unknown_not_st
     assert await sched.ensure_risk_limits("BTCUSDT") == _tiers("BTCUSDT")
 
 
+async def test_tier_fetch_failed_holds_from_a_failed_refresh_fetch_until_one_succeeds() -> None:
+    """#908: the order path's read of a symbol's last tier fetch, in memory: not failed before
+    any fetch, failed after a refresh's fetch fails, cleared by a refresh's that succeeds."""
+    fetch = _Fetch()
+    sched = _sched(fetch)
+    await sched.refresh_now()
+    assert not sched.tier_fetch_failed("BTCUSDT")  # not asked yet: never failed
+    await sched.ensure_risk_limits("BTCUSDT")
+    fetch.fail = True
+    await sched.refresh_now()
+    assert sched.tier_fetch_failed("BTCUSDT") and not sched.tier_fetch_failed("ETHUSDT")
+    fetch.fail = False
+    await sched.refresh_now()
+    assert not sched.tier_fetch_failed("BTCUSDT")
+    calls = len(fetch.calls)
+    sched.tier_fetch_failed("BTCUSDT")
+    assert len(fetch.calls) == calls  # a read, never a fetch
+
+
 async def test_ensure_risk_limits_waits_out_a_cooldown_after_a_failed_fetch() -> None:
     fetch, clock = _Fetch(), _Clock()
     sched = _sched(fetch, clock=clock)

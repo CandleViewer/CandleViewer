@@ -192,11 +192,15 @@ class Validator:
         )
         if order.effect is not OrderEffect.REDUCE:
             if profile is None:
-                raise RiskRefused("No profile allows this order.")
+                raise _profile_refusal("No profile allows this order.", "profile_disabled")
             if not (profile.enabled and profile.trading_enabled):
-                raise RiskRefused("The account's profile is not enabled for trading.")
-            if not symbol_allowed(profile, instrument):
-                raise RiskRefused("The account's profile does not allow this symbol.")
+                message = "The account's profile is not enabled for trading."
+                raise _profile_refusal(message, "profile_disabled")
+            scope = SymbolScope.of(profile)
+            if not scope.allows(instrument):
+                rule = "symbol_not_allowed" if not scope.admits(instrument) else "symbol_denied"
+                message = "The account's profile does not allow this symbol."
+                raise _profile_refusal(message, rule)
             errors += _leverage_errors(profile, instrument)
         _refuse(errors)
 
@@ -264,6 +268,13 @@ def symbol_allowed(profile: AccountProfile, instrument: Instrument) -> bool:
     any symbol (the deny side fails closed). An empty allow-list allows nothing. `SymbolScope`
     judges it, as it judges a profile save, so the two never disagree (PF-T07)."""
     return SymbolScope.of(profile).allows(instrument)
+
+
+def _profile_refusal(message: str, rule: str) -> RiskRefused:
+    """A refusal by the profile (`403 risk_limit_breached`), its gate named as the size step names
+    its own skips (22 `placeOrder`'s sizer mapping): `profile_disabled`, `symbol_not_allowed` or
+    `symbol_denied` (E28-T04: the record's `gate`, 24 Sec.15.5)."""
+    return RiskRefused(message, errors=(FieldError("symbol", rule, message),))
 
 
 def _policy_error(violation: FilterViolation) -> FieldError:

@@ -413,3 +413,14 @@ groups:
         annotations:
           summary: "Expected metric cv_key_rotation_notices_total is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      # #908 (E28-T04): the series behind the RiskGuardFailClosed page, bound at 0 from process
+      # start by the metric catalogue (register_r0) and by the submission pipeline.
+      - alert: ExpectedMetricMissingCvRiskGuardFailClosedTotal
+        expr: absent(cv_risk_guard_fail_closed_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric cv_risk_guard_fail_closed_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
