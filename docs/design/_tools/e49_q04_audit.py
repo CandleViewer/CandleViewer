@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""E49-Q04 (#1362) audit: the black-box state-matrix test plan, slice A.
+"""E49-Q04 (#1362) audit: the black-box state-matrix test plan, slice A1.
 
 Offline and default-deny. The shared gates (git, cites, the BQ section, G-T2 markers, closing
 keywords, hygiene, public text, G-UNTOUCHED, the runner and the mutation harness) live in
 `spec_audit_lib.py`, imported from beside this file and never copied; this file keeps only this
 plan's rows. It reads, AS TEXT at a pinned commit, the plan and repo texts the plan cites at the
-base, E49-D02 at PR #5877's head (cited "if it merges as is"), and, from the working tree, the plan
-and itself. It runs no repo code.
+base, E49-D02 at PR #5877's head and the E49-Q01 pack at PR #5850's (each cited "if it merges as
+is"), and, from the working tree, the plan and itself. It runs no repo code.
 
-Gates: G-CITE, G-SCRSET, G-CELLS, G-TOKENS, G-BUILD, G-ASSERT, G-ANALYTICS, G-T2, G-RULING,
-G-CHECKLIST, G-NOCLOSE, G-PUBLIC, G-UNTOUCHED and G-MUTLIST (section 14.2 equals this list).
-The BQ list (comment 6642015197) is not ruled yet: G-RULING checks the pending form; no pins file.
+Gates: G-CITE, G-PINS, G-SCRSET, G-CELLS, G-HOST, G-TOKENS, G-BUILD, G-ROUTE, G-ASSERT,
+G-ANALYTICS, G-T2, G-HARNESS, G-PACK, G-RULING, G-CHECKLIST, G-NOCLOSE, G-PUBLIC, G-UNTOUCHED and
+G-MUTLIST (section 14.2 equals this list). G-RULING checks the RULED form of the ruling of record
+(comment 6643527392 on the BQ list 6642015197); the ruled cites are pinned by needle (G-PINS).
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e49_q04_audit.py --check | --self-test | --table
@@ -28,19 +29,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "d5f2e0bc1"  # origin/main as read; the plan cites every plan and repo text here
-D02_HEAD = "bc0c643e9"  # PR #5877 (E49-D02, #1331) head as read
-BQ_LIST = "6642015197"  # the BQ list on #1362
+BASE = "1708e0ad3"  # origin/main as read; the plan cites every plan and repo text here
+D02_HEAD = "bc0c643e9"  # PR #5877 (E49-D02, #1331) head as ruled
+PACK_HEAD = "eda159017"  # PR #5850 (E49-Q01's pack, #1335) head as ruled
+RULING = "6643527392"  # the ruling of record on #1362 (the BQ list is 6642015197)
+_AG, _AM = "AGREE +rider", "AMEND"
+VERDICTS = (_AG, _AM, _AG, _AG, _AM, _AG, _AM, _AM, _AG, _AG)  # BQ-0 ... BQ-9 as ruled
+_EN = "\u2013"  # the en dash of a cite range
 
-SPEC_REL = "docs/qa/test-plans/e49-state-matrix.md"
+SPEC_REL = "docs/qa/e49-state-matrix-test-plan.md"
 TOOL_REL = "docs/design/_tools/e49_q04_audit.py"
 LIB_REL = "docs/design/_tools/spec_audit_lib.py"
 CAT_REL = "docs/plan/14-screens-catalogue.md"
+T03_REL = "docs/plan/03-testing-strategy.md"
 OWN = (SPEC_REL, TOOL_REL)
+POINTER = {T03_REL: (2, 0)}  # the `03` §11.1 pointer paragraph (BQ-0 e): two added lines, exactly
 CEILING = 1500  # C-4.8's counted ceiling, added lines over this slice's files
 
 PLAN = {
-    "03": "docs/plan/03-testing-strategy.md",
+    "03": T03_REL,
     "05": "docs/plan/05-accessibility-standard.md",
     "14": CAT_REL,
     "15": "docs/plan/15-component-catalogue.md",
@@ -58,7 +65,41 @@ KEYED = {
     "SEV": L.DocRef("apps/web/src/features/symbol-search/searchEvents.ts", BASE),
     "D14E08": L.DocRef("docs/design/E08/E08-D14.md", BASE),
     "E40Q": L.DocRef("docs/qa/test-plans/e40-alerts.md", BASE),
+    "THS": L.DocRef("apps/web/src/shell/bootstrap/themeStore.ts", BASE),
+    "ADN": L.DocRef("apps/web/src/features/admin/shell/AdminDenied.tsx", BASE),
+    "MAN": L.DocRef("apps/web/src/routes/manifest.ts", BASE),
+    "TREE": L.DocRef("apps/web/src/routes/tree.tsx", BASE),
+    "WSH": L.DocRef("apps/web/e2e/support/wsHarness.ts", BASE),
+    "SYS": L.DocRef("apps/web/e2e/shell/system-states.spec.ts", BASE),
+    "MRS": L.DocRef("apps/web/e2e/motion-reduce.spec.ts", BASE),
+    "E17P": L.DocRef("qa/plans/e17-regression-pack.md", BASE),
+    "D17": L.DocRef("docs/design/E17/E17-D02.md", BASE),
+    "D30": L.DocRef("docs/design/E30/E30-D03.md", BASE),
+    "GAP": L.DocRef("docs/qa/e49-ga-regression-pack.md", PACK_HEAD),
+    "GAT": L.DocRef("apps/web/e2e/support/gaPack.ts", PACK_HEAD),
 }
+ADMIN_AREA = "apps/web/src/features/admin/shell/AdminArea.tsx"
+# The ruled cites (comment 6643527392), each pinned by the text its line must carry (G-PINS).
+PINS: tuple[tuple[str, L.KeyCite], ...] = (
+    ("THS :20", L.KeyCite("THS", 20, '"cv:analytics"')),
+    ("ADN :34", L.KeyCite("ADN", 34, "variant")),
+    ("`22` :3273", L.KeyCite("22", 3273, "rbac.denied")),
+    ("`14` :3166", L.KeyCite("14", 3166, "error.403_shown")),
+    ("MRS :22", L.KeyCite("MRS", 22, '"demo"')),
+    ("E17P :23", L.KeyCite("E17P", 23, "not wired")),
+    (f"SYS :6{_EN}10", L.KeyCite("SYS", 9, "deferred rows")),
+    ("BUNDLE :14, :34", L.KeyCite("BUNDLE", 34, "lib: { entry:")),
+    ("WSH :233", L.KeyCite("WSH", 233, '"welcome"')),
+    ("TREE :48", L.KeyCite("TREE", 48, "LoginScreen")),
+    ("MAN :29", L.KeyCite("MAN", 29, '"R-001"')),
+    ("D02 :671", L.KeyCite("D02", 671, "States/<frame>")),
+    ("X01 :97, :123", L.KeyCite("X01", 123, "AC-16")),
+    ("D30 :265, :268", L.KeyCite("D30", 268, "never held")),
+    ("D17 :9, :429", L.KeyCite("D17", 429, "C7")),
+    ("GAT :9", L.KeyCite("GAT", 9, "state-matrix")),
+    ("GAP :52", L.KeyCite("GAP", 52, "parked")),
+    (f"GAP :8{_EN}11", L.KeyCite("GAP", 8, "@ga-area-<slug>")),
+)
 CITE_RE = L.cite_regex(KEYED, ranges=True, spaced=True)
 MIN_CITES = 120  # a broken grammar parses far fewer
 
@@ -87,7 +128,27 @@ SCR14_RE = re.compile(r"^### (SCR-\d{3}) — ", re.MULTILINE)
 RN1_ROWS = frozenset(f"SCR-{n}" for n in range(150, 160))
 L1_ROWS = frozenset({"SCR-010"})
 OF_ROWS = frozenset({"SCR-010", "SCR-001"})
-HEADING = f"## The questions BQ-0 … BQ-9 — defaults built; ruling pending (comment {BQ_LIST})"
+HEADING = f"## The questions BQ-0 … BQ-9 — RULED (comment {RULING})"
+HOST_TYPE_RE = re.compile(r"(Modal|Menus?|Banner|Blocking banner|Global banner)\b(?!/)")
+TYPE14_RE = re.compile(r"^- \*\*Type:\*\* (.*)$", re.MULTILINE)
+ROUTE14_RE = re.compile(r"\*\*Route:\*\* `(/[^`]*)`")
+MANIFEST_RE = re.compile(r'id: "(R-\d+)",\s*path: "([^"]+)"')
+BRANCH_RE = re.compile(
+    r'if \(routeId === "(R-\d+)"\)(.*?)(?=\n  if \(|\n  return |\n}\n)', re.DOTALL
+)
+ALIAS_RE = re.compile(r'entry\.id === "(R-\d+)"\) return redirect\("([^"]+)"\)')
+HARNESS_NEEDS = (
+    "a named panel's throw",
+    "**degraded, empty, error and loading**",
+    "API origin is loopback",
+    "**new main-entry",
+    "**proposed on #1362 first**",
+)
+PACK_NEEDS = (
+    "**`@ga-regression` plus exactly one `@ga-area-state-matrix`**",
+    "A `pending` cell emits **no test**",
+    "the panel-throw cells are `.flagged.ts`",
+)
 _SENSITIVE = re.compile(r"key|tok" + r"en|sec" + r"ret|au" + r"th", re.IGNORECASE)
 _HEX = re.compile(r"\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b")
 
@@ -106,6 +167,39 @@ def docs() -> L.Docs:
 @functools.cache
 def catalogue_ids() -> tuple[str, ...]:
     return tuple(SCR14_RE.findall(repo().show(BASE, CAT_REL) or ""))
+
+
+@functools.cache
+def entries14() -> dict[str, str]:
+    """SCR id -> its `14` entry's text at the base."""
+    text = repo().show(BASE, CAT_REL) or ""
+    heads = list(SCR14_RE.finditer(text))
+    ends = [m.start() for m in heads[1:]] + [len(text)]
+    return {m.group(1): text[m.start() : e] for m, e in zip(heads, ends, strict=True)}
+
+
+def host_typed(sid: str) -> bool:
+    m = TYPE14_RE.search(entries14().get(sid, ""))
+    return m is not None and HOST_TYPE_RE.match(m.group(1)) is not None
+
+
+@functools.cache
+def route_status() -> dict[str, str]:
+    """Route path -> `shipped` or `pending`, read from the manifest and the element the tree
+    resolves for each id (a stub or a placeholder is `pending`; an alias takes its target's)."""
+    by_path = {
+        p: i
+        for i, p in MANIFEST_RE.findall(repo().show(BASE, "apps/web/src/routes/manifest.ts") or "")
+    }
+    tree = repo().show(BASE, "apps/web/src/routes/tree.tsx") or ""
+    real = {
+        i
+        for src in (tree, repo().show(BASE, ADMIN_AREA) or "")
+        for i, body in BRANCH_RE.findall(src)
+        if "StubRoute" not in body and "Placeholder" not in body
+    }
+    real |= {i for i, target in ALIAS_RE.findall(tree) if by_path.get(target) in real}
+    return {p: ("shipped" if i in real else "pending") for p, i in by_path.items()}
 
 
 def line14(n: int) -> str:
@@ -162,7 +256,7 @@ def g_cells(t: L.Tree) -> list[str]:
     for r in matrix(t):
         sid, cells, naby = r[0], r[3], r[4]
         if cells == "—":
-            if naby not in rns:
+            if naby.split(" ")[0] not in rns:
                 bad.append(f"{sid}: row-level N/A {naby!r} is no RN rule")
             if naby == "RN-1":
                 rn1.add(sid)
@@ -182,6 +276,22 @@ def g_cells(t: L.Tree) -> list[str]:
             bad.append(f"{sid}: columns {missing} neither listed nor excused, or listed twice")
     if rn1 != RN1_ROWS:
         bad.append(f"RN-1 rows {sorted(rn1 ^ RN1_ROWS)} differ from SCR-150 … SCR-159")
+    return bad
+
+
+def g_host(t: L.Tree) -> list[str]:
+    rows = {r[0]: r for r in matrix(t) if len(r) >= 5}
+    bad: list[str] = []
+    for sid, r in rows.items():
+        m = re.fullmatch(r"RN-4 \(host (SCR-\d{3})\)", r[4]) if r[3] == "—" else None
+        if host_typed(sid) and r[3] != "—":
+            bad.append(f"{sid}: a modal, menu or banner with cells")
+        if r[4].startswith("RN-4") and (m is None or not host_typed(sid)):
+            bad.append(f"{sid}: RN-4 needs a host-typed row and `RN-4 (host SCR-nnn)`")
+        elif m and rows.get(m.group(1), ["", "", "", "—"])[3] == "—":
+            bad.append(f"{sid}: host {m.group(1)} is not a cell row")
+    if sum(map(host_typed, catalogue_ids())) < 40:
+        bad.append("the `14` types are not readable")
     return bad
 
 
@@ -216,6 +326,21 @@ def g_build(t: L.Tree) -> list[str]:
         elif tag != "`pending`":
             bad.append(f"{sid}: tag {tag!r}")
     return bad
+
+
+def g_route(t: L.Tree) -> list[str]:
+    status, bad, n = route_status(), [], 0
+    if len(status) < 50:
+        return ["the route manifest is not readable"]
+    for r in matrix(t):
+        m = ROUTE14_RE.search(entries14().get(r[0], ""))
+        if m is None:
+            continue
+        n += 1
+        want = status.get(m.group(1), "pending")
+        if not r[2].startswith(f"`{want}`"):
+            bad.append(f"{r[0]}: route {m.group(1)} is {want} in the manifest")
+    return bad + ([] if n >= 20 else [f"only {n} route rows read"])
 
 
 def g_assert(t: L.Tree) -> list[str]:
@@ -254,6 +379,26 @@ def g_analytics(t: L.Tree) -> list[str]:
     return bad
 
 
+def g_pins(t: L.Tree) -> list[str]:
+    spec = t.text("spec")
+    bad = [f"the ruled cite {c!r} is gone from the plan" for c, _ in PINS if c not in spec]
+    return bad + L.check_key_cites([k for _, k in PINS], docs())
+
+
+def g_harness(t: L.Tree) -> list[str]:
+    block = sec(t, "## 7. The state-injection harness")
+    return [f"section 7 lacks {x!r}" for x in HARNESS_NEEDS if x not in block]
+
+
+def g_pack(t: L.Tree) -> list[str]:
+    block = sec(t, "### 8.2 The generated specs")
+    bad = [f"section 8.2 lacks {x!r}" for x in PACK_NEEDS if x not in block]
+    for n, ln in enumerate(t.text("spec").split("\n"), 1):
+        if "`@state-matrix`" in ln and not re.search(r"\bnever\b|\bnot\b", ln):
+            bad.append(f"spec:{n}: a bare `@state-matrix` tag")
+    return bad
+
+
 def g_t2(t: L.Tree) -> list[str]:
     block = sec(t, "## 5. Trading safety")
     return L.t2_markers(block) + L.no_disabled_tokens(t.text("spec"))
@@ -263,10 +408,10 @@ def g_ruling(t: L.Tree) -> list[str]:
     return L.check_ruling(
         t.text("spec"),
         heading_line=HEADING,
-        list_ref=BQ_LIST,
+        list_ref=RULING,
         count=10,
-        verdict=lambda n: "ORCH-default built",
-        forbid=("RULED",),
+        verdict=lambda n: f"RULED {VERDICTS[n]}:",
+        forbid=("ORCH-default", "ruling pending"),
     )
 
 
@@ -292,8 +437,8 @@ def g_public(t: L.Tree) -> list[str]:
 
 
 def g_untouched(t: L.Tree) -> list[str]:
-    bad = L.untouched(t.changed, OWN, (), {}, t.numstat, owner_prefixes=(LIB_REL,))
-    added = sum((t.numstat.get(p) or (0, 0))[0] for p in OWN)
+    bad = L.untouched(t.changed, OWN, (), POINTER, t.numstat, owner_prefixes=(LIB_REL,))
+    added = sum((t.numstat.get(p) or (0, 0))[0] for p in (*OWN, *POINTER))
     return bad + ([f"{added} added lines over {CEILING}"] if added > CEILING else [])
 
 
@@ -303,8 +448,9 @@ def g_mutlist(t: L.Tree) -> list[str]:
 
 # fmt: off
 GATES = tuple(L.Gate("G-" + f.__name__[2:].upper().replace("_", "-"), f) for f in (
-    g_cite, g_scrset, g_cells, g_tokens, g_build, g_assert, g_analytics, g_t2, g_ruling,
-    g_checklist, g_noclose, g_public, g_untouched, g_mutlist,
+    g_cite, g_pins, g_scrset, g_cells, g_host, g_tokens, g_build, g_route, g_assert,
+    g_analytics, g_t2, g_harness, g_pack, g_ruling, g_checklist, g_noclose, g_public,
+    g_untouched, g_mutlist,
 ))
 # fmt: on
 
@@ -330,7 +476,7 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-9", "G-BUILD", "a shipped path that names no id", "spec",
        "`features/alerts/AlertsScreen.tsx`", "`features/alerts/alertsStore.ts`"),
     _M("M-10", "G-BUILD", "an unknown build tag", "spec",
-       r"(\| SCR-003 \|[^\n]*)`pending`", r"\1`planned`", regex=True),
+       r"(\| SCR-060 \|[^\n]*)`pending`", r"\1`planned`", regex=True),
     _M("M-11", "G-ASSERT", "an assertion without a status", "spec",
        r"(\| SA-RL-3 \|[^\n]*\| )ruled( +\|)", r"\1maybe\2", regex=True),
     _M("M-12", "G-ASSERT", "a column loses its section", "spec",
@@ -344,10 +490,10 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "`shell.window_restored`", "`shell.window_reopened`"),
     _M("M-16", "G-T2", "the T2 rows lose the opacity ban", "spec",
        "`color.text.disabled`, never `opacity.disabled`", "`color.text.disabled`"),
-    _M("M-17", "G-RULING", "the heading claims a ruling", "spec",
-       "— defaults built; ruling pending (comment", "— RULED (comment"),
-    _M("M-18", "G-RULING", "a bullet loses its verdict", "spec",
-       "ORCH-default built: JSON with", "ORCH-default: JSON with"),
+    _M("M-17", "G-RULING", "the heading loses the ruling", "spec",
+       "— RULED (comment", "— defaults built; ruling pending (comment"),
+    _M("M-18", "G-RULING", "an AMEND read as an AGREE", "spec",
+       "RULED AMEND: the sink", "RULED AGREE +rider: the sink"),
     _M("M-19", "G-CHECKLIST", "an eleventh item", "spec",
        "its state set (DoD 11).\n", "its state set (DoD 11).\n11. One more.\n"),
     _M("M-20", "G-NOCLOSE", "a closing keyword", "spec", _D, _D + "\n" + "Clo" + "ses #1362.\n"),
@@ -361,6 +507,22 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-26", "G-UNTOUCHED", "over the counted ceiling", f"@numstat:{SPEC_REL}", "", "1600 0"),
     _M("M-27", "G-MUTLIST", "the list drifts", "spec",
        "| M-1  | G-CITE      |", "| M-1  | G-CELLS     |"),
+    _M("M-28", "G-PINS", "a ruled cite moved off its line", "spec", "MRS :22", "MRS :21"),
+    _M("M-29", "G-HOST", "a host-owned modal given cells", "spec",
+       r"(\| SCR-123 \|[^\n]*?\| )—( +\| )RN-4 \(host SCR-121\)( *)\|",
+       r"\1`ER`\2NR-2, NR-4, NR-5, NR-6, NR-7, NR-8, NR-9, NR-10, NR-11, NR-12, NR-13\3|",
+       regex=True),
+    _M("M-30", "G-HOST", "an RN-4 host that is no cell row", "spec",
+       "RN-4 (host SCR-090)", "RN-4 (host SCR-015)"),
+    _M("M-31", "G-ROUTE", "a stub route tagged shipped", "spec",
+       r"(\| SCR-140 \|[^\n]*?)`pending`( *)",
+       r"\1`shipped` (`features/recorder/RecorderScreen.tsx`)\2",
+       regex=True),
+    _M("M-32", "G-HARNESS", "the harness may force a healthier state", "spec",
+       "**degraded, empty, error and loading**", "**any**"),
+    _M("M-33", "G-PACK", "a bare pack tag", "spec",
+       "**`@ga-regression` plus exactly one `@ga-area-state-matrix`**", "**`@state-matrix`**"),
+    _M("M-34", "G-UNTOUCHED", "the `03` pointer grows", f"@numstat:{T03_REL}", "", "5 0"),
 )
 # fmt: on
 
@@ -374,7 +536,7 @@ def read_tree() -> L.Tree:
             "tool": (ROOT / TOOL_REL).read_text(encoding="utf-8"),
         },
         changed=repo().changed_paths(base),
-        numstat={rel: repo().numstat(base, rel) for rel in OWN},
+        numstat={rel: repo().numstat(base, rel) for rel in (*OWN, *POINTER)},
     )
 
 

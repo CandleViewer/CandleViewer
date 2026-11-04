@@ -313,6 +313,8 @@ Full program owned by `04-security-program.md`; testing-strategy responsibilitie
 
 Every story (per Definition of Ready, `02-definition-of-ready-done.md`) ships with a **test plan** authored or reviewed by QA before development starts, covering: Gherkin acceptance criteria verification steps, negative/edge cases, data setup (which fixtures), and explicit out-of-scope notes. Test plans live inline in the backlog ticket so they travel with it: not as a separate `test_plan` JSON field, but as the mandated `## Test plan` section of the ticket `body` (see `docs/plan/backlog/schema/README.md`, which is the single source of truth for the ticket schema, C-16.5). If a future ticket needs a structured, non-prose test plan, add it there first as an optional schema field before any ticket relies on it.
 
+Panel and page state coverage is expanded, as E49-Q04's `## Test plan` allows, in `docs/qa/e49-state-matrix-test-plan.md`: the black-box state matrix over every `14` SCR id and the ten state patterns, its non-conformance baseline at `docs/plan/backlog/artifacts/e49-state-matrix-baseline.md`. The plan owns its rules; this paragraph only points to it.
+
 ### 11.2 Exploratory charters
 
 Time-boxed (60–120 min) exploratory sessions run by QA once a story reaches "In Test," using a **charter** format: mission, areas to probe, oracles (what "looks wrong"), and a debrief note. Charters are scheduled per epic at minimum for: OMS/order-path edge cases, rule-engine boundary conditions, multi-account fan-out edge cases, chart-engine visual correctness at extreme zoom/density, and admin/RBAC boundary probing. Charter notes and any bugs found are attached to the epic.
