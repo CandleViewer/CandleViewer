@@ -45,6 +45,9 @@ OUTAGE = (
 )
 pytestmark = [pytest.mark.chaos, pytest.mark.integration]
 BEFORE, AFTER = 20, 20  # firings committed before the stop, and after the recovery
+# Once BEFORE firings are committed and the outage has not begun, each further firing is followed by
+# this many loop yields (a count, not a wall-clock wait), so the burst cannot outrun the stop.
+THROTTLE_YIELDS = 25
 
 
 @pytest.fixture(autouse=True)
@@ -73,6 +76,9 @@ async def test_a_postgres_restart_mid_burst_loses_and_duplicates_nothing() -> No
             committed[0] += 1
             after += back.is_set()
             await asyncio.sleep(0)  # a yield: the dispatcher's loop runs between firings
+            if committed[0] >= BEFORE and not failed[0] and not back.is_set():
+                for _ in range(THROTTLE_YIELDS):  # throttle the pre-outage tail: bounded by count
+                    await asyncio.sleep(0)
 
     d.start()
     task = asyncio.ensure_future(burst())
