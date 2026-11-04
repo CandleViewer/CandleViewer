@@ -1,7 +1,7 @@
 """The closed-PnL sync (E29-S06 #981 slice 3; 24 Sec.8.13 "The sync"), on the fake clock of
 `VirtualTimeLoop`: every wait runs on fake seconds, so no test sleeps in real time. The venue's
 records are the transcribed `rest/trading-closed-pnl.json` row as a USDT one (its `symbol`
-changed), and the position readings the recorded `ws/private-position.jsonl` row, a size 0; each
+changed), and the readings the docs-transcribed `ws/private-position.jsonl` row, a size 0; each
 variant changes the values it names. The seed is the orchestrator's ruling of 2026-11-04 (15:51Z).
 """
 
@@ -71,7 +71,7 @@ def _record(**over: Any) -> ClosedPnl:
 
 
 def _reading(**changed: str) -> Position:
-    """The recorded position push's row (BTCUSDT, `positionIdx` 2, size 0), values changed."""
+    """The docs-transcribed position push (BTCUSDT, `positionIdx` 2, size 0), values changed."""
     body = json.loads(frames("ws/private-position.jsonl")[0])
     body["data"][0] |= changed
     pushed = pp.classify(json.dumps(body))
@@ -99,6 +99,9 @@ class Venue:
     seed_failures: list[Exception] = field(default_factory=list)
     available: bool = True
     gate: asyncio.Event | None = None
+    pause: float = 0.0  # each positions read's, on the loop's clock
+    records_of: Any = None  # the account its records name, when set; else the one asked
+    readings_of: Any = None  # the account its position readings name, likewise
     reads: list[tuple[float, int, int]] = field(default_factory=list)
     lanes: list[RateLane] = field(default_factory=list)
     position_reads: int = 0
@@ -121,15 +124,18 @@ class Venue:
                 await self.gate.wait()
             if self.failures:
                 raise self.failures.pop(0)
-            return [r.model_copy(update={"account_id": account.account_id}) for r in self.records]
+            named = {"account_id": self.records_of or account.account_id}
+            return [r.model_copy(update=named) for r in self.records]
         finally:
             self.in_flight -= 1
 
     async def positions(self, account: AccountRef) -> list[Position]:
         self.position_reads += 1
+        await asyncio.sleep(self.pause)
         if self.seed_failures:
             raise self.seed_failures.pop(0)
-        return [p.model_copy(update={"account_id": account.account_id}) for p in self.readings]
+        named = {"account_id": self.readings_of or account.account_id}
+        return [p.model_copy(update=named) for p in self.readings]
 
 
 @dataclass
@@ -189,9 +195,12 @@ class Store:
         return snapshot
 
 
+@dataclass
 class Accounts:
+    named: Any = None  # the account every resolve answers, when set; else the one asked
+
     async def trading_account(self, account_id: Any) -> AccountRef:
-        return account(account_id)
+        return account(self.named or account_id)
 
 
 @dataclass
@@ -209,10 +218,10 @@ class Rig:
         return {k: seen.get(f"{FETCH_SECONDS}_count{{result={k}}}", 0) for k in ("ok", "failed")}
 
 
-def rig(at: datetime = T0, **venue: Any) -> Rig:
+def rig(at: datetime = T0, resolve: Any = None, **venue: Any) -> Rig:
     v, store, metrics, loop = Venue(**venue), Store(), Metrics("demo"), asyncio.get_running_loop()
     sync = ClosedPnlSync(
-        accounts=Accounts(), router=v, records=store, closes=store, snapshots=store,
+        accounts=Accounts(resolve), router=v, records=store, closes=store, snapshots=store,
         metrics=metrics, now=lambda: at + timedelta(seconds=loop.time()),
     )  # fmt: skip
     return Rig(v, store, metrics, sync)
@@ -389,13 +398,29 @@ async def test_stop_ends_the_task_and_a_later_request_reads_nothing() -> None:
     assert r.times() == [0] and r.sync.fault is None and not r.sync.start([ACCOUNT_A])
 
 
+@virtual
+async def test_a_resolve_naming_another_account_fails_the_read_before_any_venue_call() -> None:
+    r = rig(resolve=ACCOUNT_B, records=[_record()], readings=[_reading()])
+    assert not await r.sync.read(ACCOUNT_A)
+    assert (r.venue.lanes, r.venue.reads, r.venue.position_reads) == ([], [], 0)
+    assert r.store.rows == {} and r.store.snapshots == [] and r.counted() == {"ok": 0, "failed": 1}
+
+
+@virtual
+async def test_a_record_naming_another_account_fails_the_read_and_keeps_nothing() -> None:
+    r = rig(records=[_record()], readings=[_reading()], records_of=ACCOUNT_B)
+    assert not await r.sync.read(ACCOUNT_A)
+    assert r.store.rows == {} and r.store.snapshots == [] and r.venue.position_reads == 0
+    assert r.counted() == {"ok": 0, "failed": 1}
+
+
 # --- the seed (the orchestrator's ruling, 2026-11-04 15:51Z) --------------------------------------
 
 
 @virtual
 async def test_the_seed_stores_a_flat_only_from_a_venue_size_0_reading() -> None:
     """A size 0 the venue states is stored, dated by its `updatedTime`; a non-zero first reading
-    (the recorded row with `size` changed), a missing one (SOLUSDT) and one dated past the skew
+    (the transcribed row with `size` changed), a missing one (SOLUSDT) and one dated past the skew
     store none."""
     ahead = _reading(symbol="XRPUSDT").model_copy(update={"updated_at": _us(T0) + 6_000_000})
     readings = [_reading(), _reading(symbol="ETHUSDT", size="0.4"), ahead]
@@ -432,6 +457,38 @@ async def test_a_seed_that_fails_is_tried_again_and_the_records_are_kept_meanwhi
     await asyncio.sleep(1)
     assert [s.symbol for s in r.store.snapshots] == ["BTCUSDT"] and r.venue.position_reads == 2
     await r.sync.stop()
+
+
+@virtual
+async def test_a_flat_the_venue_states_during_a_slow_positions_read_is_seeded() -> None:
+    """The skew runs from the clock read after the positions read: 8 s into a 10 s one is in it."""
+    r = rig(readings=[_reading().model_copy(update={"updated_at": _us(T0) + 8_000_000})], pause=10)
+    assert await r.sync.read(ACCOUNT_A)
+    assert [s.exchange_updated_ts for s in r.store.snapshots] == [T0 + timedelta(seconds=8)]
+
+
+@virtual
+async def test_a_slow_seed_delays_none_of_the_records_writes() -> None:
+    r = rig(records=[_record()], readings=[_reading()], pause=10)
+    r.store.orders[XID], r.store.closes[ORDER] = (ORDER, "filled"), Decimal(3)
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(1)  # the seed's positions read takes 10 s
+    assert r.store.rows[record_id(ACCOUNT_A, XID)].final_at is not None and not r.store.snapshots
+    await asyncio.sleep(10)
+    assert [s.symbol for s in r.store.snapshots] == ["BTCUSDT"]
+    await r.sync.stop()
+
+
+@virtual
+async def test_a_seed_reading_of_another_account_fails_the_seed_and_the_records_settle() -> None:
+    """As a record fails the read, and the seed is tried again at the next read."""
+    r = rig(records=[_record()], readings=[_reading()], readings_of=ACCOUNT_B)
+    with capture_logs() as logs:
+        assert await r.sync.read(ACCOUNT_A) and await r.sync.read(ACCOUNT_A)
+    assert r.store.snapshots == [] and r.venue.position_reads == 2
+    assert set(r.store.rows) == {record_id(ACCOUNT_A, XID)}
+    failed = [e["kind"] for e in logs if e["event"] == "closed_pnl_flat_seed_failed"]
+    assert failed == ["_OtherAccount"] * 2
 
 
 # --- the merge (24 Sec.8.13: several records under one orderId) ---------------------------------
