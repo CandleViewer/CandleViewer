@@ -27,6 +27,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from candleviewer.alerts.compiler import AlertCompiler
+from candleviewer.alerts.errors import AlertIrInvalid
 from candleviewer.alerts.models import AlertCondition
 from candleviewer.rules.errors import ConstantTypeError
 from candleviewer.rules.evaluator import EvaluationResult, Evaluator, MetricValue, SnapshotBuilder
@@ -197,7 +199,10 @@ _WIDEST = "1" + "0" * 63  # a 64-character plain form: the widest number the IR 
 _INDIC = chr(0x661) + chr(0x662)  # Arabic-Indic "12": `Decimal` reads it, the IR does not
 _HUGE, _TINY = "1E+9999999999999999999", "1E-9999999999999999999"  # past the `decimal` module
 _EXACT = "0.1" + "0" * 29 + "1"  # 31 significant digits: past the context's 28
-_PADDED = "1." + "0" * MAX_NUMBER_TEXT  # a number the IR holds, spelled past the read's bound
+# The bound is exact: text of `MAX_NUMBER_TEXT` characters is read, one more character is not.
+_AT_BOUND = "1." + "0" * (MAX_NUMBER_TEXT - 2)  # a number the IR holds, in that many characters
+_PADDED = _AT_BOUND + "0"  # the same number, one character past the bound
+_WIDE = "1" * MAX_NUMBER_TEXT  # decimal text past the IR's range, in that many characters
 
 
 @pytest.mark.parametrize(
@@ -212,6 +217,7 @@ _PADDED = "1." + "0" * MAX_NUMBER_TEXT  # a number the IR holds, spelled past th
         (" 0.2", " 0.2"), ("1_000", "1_000"), (_INDIC, _INDIC), ("1e", "1e"),
         (".", "."), ("", ""), (_WIDEST + "0", _WIDEST + "0"), ("1E+99999", "1E+99999"),
         (_HUGE, _HUGE), (_TINY, _TINY), (_PADDED, _PADDED),
+        pytest.param(_AT_BOUND, Decimal(1), id="a-number-at-the-bound"),
     ],
     ids=repr,
 )  # fmt: skip
@@ -226,7 +232,8 @@ def test_literal_value_reads_a_number_as_a_decimal_and_other_text_as_itself(
     ("op", "const"),
     [("eq", "long"), ("neq", "flat"), ("eq", True), ("changed", "up"), ("eq", "0.2"),
      ("gt", "-5E-7"), ("gt", "+.5"), ("between", 3), ("crosses_above", Decimal("0.1")),
-     ("eq", _PADDED)],  # past the bound, text is an enum value, never parsed
+     ("eq", _PADDED),  # past the bound, text is an enum value, never parsed
+     pytest.param("eq", _WIDE + "1", id="eq-wide-one-past-the-bound")],
 )  # fmt: skip
 def test_check_constants_passes_a_constant_its_place_reads(op: str, const: Any) -> None:
     check_constants(_rule(_cmp(op, const)).conditions)
@@ -237,7 +244,8 @@ def test_check_constants_passes_a_constant_its_place_reads(op: str, const: Any) 
     [("gte", "abc"), ("lt", False), ("lte", "0.2x"), ("between", "x"), ("outside", True),
      ("crosses_above", "up"), ("crosses_below", "NaN"), ("crosses_below", "up"), ("eq", "5%"),
      ("neq", "NaN"), ("eq", " 1"), ("changed", "Infinity"), ("eq", "1E+99999"), ("eq", _HUGE),
-     ("neq", _TINY), ("gt", _HUGE), ("gt", _PADDED)],
+     ("neq", _TINY), ("gt", _HUGE), ("gt", _PADDED),
+     pytest.param("eq", _WIDE, id="eq-wide-at-the-bound")],
 )  # fmt: skip
 def test_check_constants_refuses_a_constant_its_place_cannot_read(op: str, const: Any) -> None:
     with pytest.raises(ConstantTypeError) as refused:
@@ -395,6 +403,16 @@ def test_reading_the_constants_leaves_the_dump_and_the_hash_as_they_were() -> No
         lit.__setattr__("const", "0.3")
 
 
+@pytest.mark.parametrize("deep", [False, True], ids=["shallow", "deep"])
+def test_a_copy_that_sets_the_constant_reads_the_new_one(deep: bool) -> None:
+    """The cached read belongs to its instance: a copy given another `const` reads that one, and
+    the literal it was copied from keeps its own."""
+    lit = Literal_(const="0.2")
+    assert lit.value == Decimal("0.2")  # read, and cached
+    moved = lit.model_copy(update={"const": "0.3"}, deep=deep)
+    assert (moved.value, lit.value) == (Decimal("0.3"), Decimal("0.2"))
+
+
 def test_no_enum_value_of_the_vocabulary_is_decimal_text() -> None:
     """An enum value compares as text, so none may spell a number the read would take; each one
     passes the load check under `eq`."""
@@ -428,6 +446,21 @@ async def test_a_save_refuses_a_constant_the_evaluator_cannot_read(
     field = "conditions.right" if beside else "conditions.left.operands[1]"
     issue = {"field": field, "rule": "type_mismatch", "message": NOT_A_NUMBER}
     assert (refused.value.code, refused.value.extra["errors"]) == ("rule_ir_invalid", [issue])
+
+
+def test_an_alert_save_refuses_a_constant_the_evaluator_cannot_read() -> None:
+    """The alert compiler runs the same validator: `5%` beside a product, which the unit checks
+    take for a number, is refused when the alert is saved, not parked when it is loaded."""
+    raw = {
+        "ir_version": 1,
+        "trigger": {"type": "on_price_update"},
+        "conditions": _cmp("neq", "5%", _quotient(1) | {"op": "mul"}),
+    }
+    with pytest.raises(AlertIrInvalid) as refused:
+        AlertCompiler(default_registry()).compile(raw)
+    assert refused.value.reason == "schema"
+    issue = ("conditions.right", "type_mismatch", NOT_A_NUMBER)
+    assert [(i.field, i.rule, i.message) for i in refused.value.issues] == [issue]
 
 
 async def test_an_alert_whose_constant_its_place_cannot_read_is_parked_at_load() -> None:

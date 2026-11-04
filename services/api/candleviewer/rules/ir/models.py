@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Mapping
 from decimal import Decimal, DecimalException
 from functools import cached_property
-from typing import Annotated, Any, Final, Literal
+from typing import Annotated, Any, Final, Literal, Self
 
 from pydantic import (
     AfterValidator,
@@ -181,7 +182,8 @@ class Literal_(BaseModel):
         ``Decimal``, decimal text too (a stored version holds a ``Decimal`` const as its text), and
         other text as itself, an enum value. Read once per instance, so once per load. ``const``
         itself is never re-typed, and the cached read sits outside the fields: equality, hashing,
-        the dumps and the content hash read ``const`` alone, so every hash stays as it is."""
+        the dumps and the content hash read ``const`` alone, so every hash stays as it is.
+        The cached read belongs to its instance: never assign ``value``."""
         c = self.const
         if isinstance(c, bool | Decimal):
             return c
@@ -189,6 +191,14 @@ class Literal_(BaseModel):
             return Decimal(c)
         number = decimal_text(c)
         return c if number is None else number
+
+    def model_copy(self, *, update: Mapping[str, object] | None = None, deep: bool = False) -> Self:
+        """A copy; one that sets ``const`` reads that constant, not the cached read of the literal
+        it was copied from (the copy takes the instance's ``__dict__``, the cached read in it)."""
+        copied = super().model_copy(update=update, deep=deep)
+        if update and "const" in update:
+            copied.__dict__.pop("value", None)
+        return copied
 
 
 class ArithmeticNode(BaseModel):
