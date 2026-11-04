@@ -22,8 +22,9 @@ Plans and results follow the E17 and E29 pattern: results under `docs/qa/perf/`.
 
 - **Load.** The E40-K01 corpus and stream (`services/api/benchmarks/alerts/harness.py`): 500 alerts over 20 symbols
   (`corpus(500, 500)`), a seeded random walk per symbol (seed 7), one tick every 5 ms of exchange time on a seeded
-  symbol order. Every alert is `every_time`, no cooldown, `in_app` only. The K01 "500 distinct" corpus draws its
-  thresholds from 4 values per symbol, so it holds **80** distinct conditions, and both legs share 80 subscriptions.
+  symbol order. Every alert is `every_time`, no cooldown, `in_app` only. The corpus draws its thresholds from 4 values
+  per symbol, so its measured bound is **80** distinct conditions, and both legs share 80 subscriptions. 500
+  distinct conditions remain the ticket's design target, not a property of this corpus.
 - **Evaluator.** `benchmarks/alerts/latency_leg.py` drives the shipped `AlertEvaluator` (gating, storm suppressor and
   owner gate at their defaults), one `process()` per tick, in order. K01's own harness runs E35's `Evaluator` and a
   stand-in; the leg runs what ships.
@@ -95,6 +96,7 @@ the window end one summary delivery stating 5 (asserted for even spacing and for
 3. **The latency sample is an upper bound.** It starts at the tick, not at the instant the condition evaluated true.
 4. **No `e40_regression` marker.** Registering one is not a one-line change: the existing packs (`e08_regression`,
    `e09_regression`) come with a path-tagging module and a plan file. The marker is slice 5's (BQ-10).
-5. **The K01 corpus holds 80 distinct conditions, not 500.** The 500 alerts draw thresholds from 4 values per
-   symbol; the 40-condition sharing check uses its own corpus (unit level).
+5. **The corpus bound is 80 distinct conditions (measured).** The 500 alerts draw thresholds from 4 values per
+   symbol; 500 distinct conditions stay the ticket's design target. The 40-condition sharing check uses its own
+   corpus (unit level).
 6. **The frontend frame budget** of the storm scenario waits on the shipped UI (BQ-07).
