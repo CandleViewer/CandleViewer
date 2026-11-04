@@ -1,0 +1,3 @@
+# tests/load lives outside services/api, so services/api's config is inherited explicitly (as
+# tests/perf/ws/ruff.toml does). No rule is relaxed: the admin harness is linted as the API is.
+extend = "../../../services/api/pyproject.toml"
