@@ -424,7 +424,7 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-1", "G-MAPPING", 'a reduce cell says only "disabled"', "spec",
        "| removed: the static two-tone fill; the host's words after 5 s ", "| disabled "),
     _M("M-2", "G-NUMERIC", "a numeric value animates, graded conformant", "spec",
-       "never animates: an overlay above the cell", "a count-up to the new value"),
+       "never animates: an overlay layer on the cell", "a count-up to the new value"),
     _M("M-3", "G-CITE", "a cite past the end of `14`", "spec", "(`14` :1942)", "(`14` :99999)"),
     _M("M-4", "G-AC", "a scenario name reworded", "spec",
        'AC "Numeric readouts do not animate"', 'AC "Numbers do not animate"'),
