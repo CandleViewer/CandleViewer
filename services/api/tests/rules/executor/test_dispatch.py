@@ -33,6 +33,7 @@ from candleviewer.settings import Settings
 from tests.rules.executor.request_builders import Counted, Records, action_request
 from tests.rules.executor.test_mode_split import NOTE, Rig
 from tests.rules.test_evaluator import Clock
+from tests.rules.test_scope_applies_to import APPLIES_TO
 from tests.rules.test_scope_wiring import OWNER, A, B, Source
 
 GUARD_S = 10.0  # a wait's bound: only a regression reaches it
@@ -528,16 +529,23 @@ async def test_a_fire_hands_its_run_rows_facts_to_the_records(rig: DispatchRig) 
     assert (run.trigger_reason, dict(run.input_snapshot)) == ("fill", {"price": "150.5"})
 
 
+@pytest.mark.parametrize("applies_to", APPLIES_TO)
 async def test_the_recheck_before_a_retry_runs_check_one_then_the_scope_recheck(
-    rig: DispatchRig, monkeypatch: pytest.MonkeyPatch
+    rig: DispatchRig, monkeypatch: pytest.MonkeyPatch, applies_to: str
 ) -> None:
     """`RulesService._recheck`, the hook `retry_once` runs before its retry (24 §11.9): with no
     scope resolver, or a grant withdrawn since, it is `scope`; a row no longer armed, on another
-    `ir_hash` or unread is `mode_changed`, check 1 first; else nothing refuses (`None`)."""
+    `ir_hash` or unread is `mode_changed`, check 1 first; else nothing refuses (`None`), for a
+    rule on each `applies_to` (#5817: never refused for its own)."""
     rid = await rig.add("armed")
     row = await rig.row(rid)
     scope = RuleScope.model_validate(
-        {"level": "account", "account_ids": [str(A)], "symbols": ["BTCUSDT"]}
+        {
+            "level": "account",
+            "account_ids": [str(A)],
+            "symbols": ["BTCUSDT"],
+            "applies_to": applies_to,
+        }
     )
     req = action_request(
         scope, OWNER, ScopeInstanceRef(f"BTCUSDT@{A}", "BTCUSDT", A), rule_id=rid,
