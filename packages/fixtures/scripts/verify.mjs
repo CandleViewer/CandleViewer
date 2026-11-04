@@ -2,7 +2,8 @@
 // land in E08). Fails if any file under raw/, golden/, bybit/, accounts/, oms/ or webhook/
 // looks like it contains a credential (API key, signature, PEM block, bearer
 // token); accounts/ and oms/ also get the bare key-shape check, and accounts/ the pack checks,
-// the comparison with the E27 test plan's section 9.3 table included (E27-Q01).
+// the comparison with the E27 test plan's section 9.3 table included (E27-Q01). oms/ gets the
+// comparison of each scenario folder with its row of the E29 plan's section 9 table (E29-Q01).
 // This is the control named in the ticket's Security notes for the
 // "recorded fixture leaks credentials" threat (E02-X01).
 // CI runs it through the package `lint` script (ESLint, this script, then the Vitest suite):
@@ -11,6 +12,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve } from "node:path";
 import { PLAN_FILE, PLAN_SCENARIOS, checkPack, findKeyShapedTokens } from "./accounts-pack.mjs";
+import { OMS_PLAN_FILE, checkOmsPack } from "./oms-pack.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(__dirname, "..");
@@ -117,46 +119,71 @@ function packProblems(dir, planFile) {
   }
 }
 
+function omsCheck(dir, planFile) {
+  try {
+    return checkOmsPack(dir, { plan: readFileSync(planFile, "utf8") });
+  } catch (error) {
+    return {
+      problems: [`the OMS pack or plan cannot be read (${error.code ?? error.name})`],
+      pending: [],
+    };
+  }
+}
+
 /**
  * Every finding for the package at `root`: the redaction gate over the data directories, the
- * bare key-shape rule over accounts/ and oms/, and the accounts pack checks, against the test plan
- * at `planFile`.
+ * bare key-shape rule over accounts/ and oms/, the accounts pack checks against the test plan at
+ * `planFile`, and the oms/ checks against the OMS plan at `omsPlanFile`.
  * Returns instead of exiting (tests).
  */
-export function runVerify(root = packageRoot, planFile = PLAN_FILE) {
+export function runVerify(root = packageRoot, planFile = PLAN_FILE, omsPlanFile = OMS_PLAN_FILE) {
   const { files, findings } = verifyDirectories(
     DATA_DIRS.map((d) => join(root, d)),
     KEY_SHAPE_PACKS.map((d) => join(root, d)),
   );
-  return { files, findings, packProblems: packProblems(join(root, PACK_DIR), planFile) };
+  const oms = omsCheck(join(root, OMS_PACK_DIR), omsPlanFile);
+  const problems = packProblems(join(root, PACK_DIR), planFile);
+  return {
+    files,
+    findings,
+    packProblems: problems,
+    omsProblems: oms.problems,
+    omsPending: oms.pending,
+  };
 }
 
-function main(root, planFile) {
-  const { files, findings, packProblems: problems } = runVerify(root, planFile);
+function main(root, planFile, omsPlanFile) {
+  const r = runVerify(root, planFile, omsPlanFile);
   const lines = [
-    ...findings.map((f) => `  - ${relative(root, f.file)}: matched "${f.pattern}"`),
-    ...problems.map((p) => `  - ${PACK_DIR}/${p}`),
+    ...r.findings.map((f) => `  - ${relative(root, f.file)}: matched "${f.pattern}"`),
+    ...r.packProblems.map((p) => `  - ${PACK_DIR}/${p}`),
+    ...r.omsProblems.map((p) => `  - ${OMS_PACK_DIR}/${p}`),
   ];
   if (lines.length > 0) {
     console.error(
-      "[fixtures-verify] FAILED — possible credential leak(s) or accounts pack problem(s):\n" +
+      "[fixtures-verify] FAILED — possible credential leak(s) or pack problem(s):\n" +
         lines.join("\n"),
     );
     process.exit(1);
   }
   console.log(
-    `[fixtures-verify] OK (${files.length} file(s) scanned, no matches; ` +
-      `accounts pack sound, ${PLAN_SCENARIOS.length} scenarios matching the test plan).`,
+    `[fixtures-verify] OK (${r.files.length} file(s) scanned, no matches; ` +
+      `accounts pack sound, ${PLAN_SCENARIOS.length} scenarios matching the test plan; ` +
+      `oms pack matching section 9 of the OMS plan, ${r.omsPending.length} row(s) pending).`,
   );
 }
 
 // Only run when executed directly (not when imported by tests importing
 // `scanForSecrets`), so the test suite can exercise the pure function
 // without triggering `process.exit`. Optional arguments name another package
-// root and another test plan (the tests' planted copies); the defaults are this
-// package and qa/plans/e27-accounts-test-plan.md.
+// root and two other test plans (the tests' planted copies); the defaults are this package,
+// qa/plans/e27-accounts-test-plan.md and docs/qa/e29-oms-test-plan.md.
 const isMain = process.argv[1] && import.meta.url === new URL(process.argv[1], "file://").href;
 if (isMain) {
-  const [root, planFile] = process.argv.slice(2);
-  main(root ? resolve(root) : packageRoot, planFile ? resolve(planFile) : PLAN_FILE);
+  const [root, planFile, omsPlanFile] = process.argv.slice(2);
+  main(
+    root ? resolve(root) : packageRoot,
+    planFile ? resolve(planFile) : PLAN_FILE,
+    omsPlanFile ? resolve(omsPlanFile) : OMS_PLAN_FILE,
+  );
 }

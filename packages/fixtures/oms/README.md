@@ -186,11 +186,16 @@ is not a bare token, so the field-by-field review under R-4 stays the control fo
 | Where                                                                | Runs                                                                                                                         |
 | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `pnpm --filter @candleviewer/fixtures lint` (`scripts/verify.mjs`)   | The redaction gate over `raw/`, `golden/`, `bybit/`, `accounts/`, `oms/`; the bare-key rule over the last two (js lane)      |
+| `pnpm --filter @candleviewer/fixtures lint` (`oms-pack.mjs`)         | Each scenario folder against its row of the plan's section 9 table: Rules, Cases, Evidence, Consumers (js lane)              |
 | `python scripts/check_secrets_hygiene.py fixtures` (repo root)       | The field-name rules over every fixture directory; the bare-key rule over `accounts/` and `oms/` (security lane)             |
 | `tests/unit/fixtures_corpus/test_oms_pack_smoke.py` (`services/api`) | Per scenario: the schema, every file parses, `derived_from` exists, the evidence class, two byte-identical loads, no network |
 | `tests/unit/fixtures_corpus/test_oms_pack_adapter.py`                | `services/api`: each scenario read twice through the adapter's own parsers, the same reads both times (BQ-6)                 |
 
-The two Python tests read the scenario directories by name: adding one adds its checks.
+The two Python tests read the scenario directories by name: adding one adds its checks. The checker
+reads the plan's section 9 table (`docs/qa/e29-oms-test-plan.md`): a folder with no row fails, a row
+that disagrees with its folder fails, a row with no folder yet is pending (the `recorded` row waits
+for E29-K01's findings PR), and the S11 row has no folder (BQ-6): its folder test is skipped and its
+Rules and Cases cells are still read.
 
 ## Adding a scenario
 

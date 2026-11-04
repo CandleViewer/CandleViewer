@@ -446,6 +446,7 @@ describe("planted failures on a copy of the pack", () => {
     cpSync(ACCOUNTS_DIR, pack(), { recursive: true });
     const corpus = join("bybit", "2026-10-05", "rest");
     cpSync(join(packageRoot, corpus), join(sandbox, corpus), { recursive: true });
+    cpSync(join(packageRoot, "oms"), join(sandbox, "oms"), { recursive: true }); // E29-Q01's checks
   };
 
   afterEach(() => rmSync(sandbox, { recursive: true, force: true }));
