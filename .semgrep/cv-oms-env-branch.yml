@@ -1,7 +1,7 @@
 # E29-X02 (#982); 24-internal-schemas.md §14.2 rule 3, §17.4 L2; C-2.11; OM-E03. A test of the
-# environment against one of its values. A fail-closed `if` whose body only raises, with no call or
-# `await` in the raise, stays legal, with `ruleid` fixtures around it; a branch by design carries a
-# reviewed `nosemgrep`.
+# environment against one of its values. A fail-closed `if` whose body only raises, with no
+# `await` and no call but the class's own in the raise, stays legal, with `ruleid` fixtures around
+# it; a branch by design carries a reviewed `nosemgrep`.
 # What it sees and misses: docs/plan/security/ci-gates-e29.md#cv-oms-env-branch.
 rules:
   - id: cv-oms-env-branch
@@ -12,8 +12,8 @@ rules:
       C-2.11; threat model OM-E03): behaviour that differs by venue or environment is read off
       `ExchangeCapabilities` or another record the composition root builds, never branched on
       `env == "live"`, a member such as `Environment.LIVE`, or a set of them. A test whose `if`
-      body only raises (a fail-closed self-check, the raise holding no call, `await` or walrus) is
-      legal; compare two environments for C-2.11's isolation. A branch by design carries a
+      body only raises (a fail-closed self-check: no `await`, no walrus, no call but the class's
+      own) is legal; compare two environments for C-2.11's isolation. A branch by design carries a
       reviewed `nosemgrep: cv-oms-env-branch reason=<token> owner=@<h> review=<date>` on the line
       above it. Rule doc: docs/plan/security/ci-gates-e29.md#cv-oms-env-branch.
     metadata:
@@ -102,9 +102,9 @@ rules:
                   raise ...
       # Semgrep's `if` pattern above also matches an `if` that has an `else` (or an `elif`), whose
       # other branch is environment-specific behaviour: that `if` is reported on its own line. So
-      # is a raise-only `if` that does more than raise: a call or an `await` in the raise's
-      # arguments does work for one environment, and a walrus in the condition binds the test
-      # for a later branch.
+      # is a raise-only `if` that does more than raise: a call in the raise's arguments, an `await`
+      # or a call to anything but a class (a CapWords name) anywhere in the raise does work for one
+      # environment, and a walrus in the condition binds the test for a later branch.
       - patterns:
           - pattern-either:
               - pattern: |
@@ -118,12 +118,19 @@ rules:
               - pattern: |
                   if $COND:
                       raise $EXC(..., $KEY=<... $FN(...) ...>, ...)
-              - pattern: |
-                  if $COND:
-                      raise $EXC(..., <... await $AWAITED ...>, ...)
-              - pattern: |
-                  if $COND:
-                      raise $EXC(..., $KEY=<... await $AWAITED ...>, ...)
+              - patterns:
+                  - pattern: |
+                      if $COND:
+                          raise $RAISED
+                  - metavariable-pattern:
+                      metavariable: $RAISED
+                      pattern-either:
+                        - pattern: await $AWAITED
+                        - patterns:
+                            - pattern: $MAKER(...)
+                            - metavariable-regex:
+                                metavariable: $MAKER
+                                regex: ^(?!(?:\w+\.)*_*[A-Z]\w*$)
               - patterns:
                   - pattern: |
                       if $COND:

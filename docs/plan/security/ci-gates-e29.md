@@ -198,8 +198,10 @@ would retire its exception.
   `oms_stream_wiring.refuse_live_without_freeze`, the reconcile wiring's and the reconcile job's
   always-remediate checks, `DayRiskFigures`' constructor and the runtime's machine-event sink check.
   An `if` that raises and has an `else` or an `elif`, or whose body does more than raise, is reported
-  on its `if` line, and so is a raise-only `if` that does work for one environment: a call or an
-  `await` in the raise's arguments (`raise Refused(_open_live_route(port))`), or a walrus in its
+  on its `if` line, and so is a raise-only `if` that does work for one environment: a call in the
+  raise's arguments (`raise Refused(_open_live_route(port))`); an `await`, or a call to anything but
+  a class named in CapWords, anywhere in the raise (`raise _open_live_route(port)`,
+  `raise await ready`, `raise Refused if _open_live_route(port) else Unready`); or a walrus in its
   condition, which keeps the test for a later branch (`(live := env == "live")`); the fixture holds
   each.
 - **Does not match:** a comparison of two environment values (C-2.11's isolation checks:
@@ -210,9 +212,11 @@ would retire its exception.
   `ExchangeCapabilities` is), a boolean computed elsewhere (`is_live`), an environment under a name
   the pattern lacks, an environment enum imported under a name without `Env` (`PE.LIVE`), a value
   tested for membership in the environment (`"live" in env`), `operator.contains`. In a raise-only
-  `if`: an exception used as control flow (`raise _UseTradeSocket`, which an `except` one frame up
-  answers with the live work) and an exception whose constructor does work, both of which read as a
-  bare raise.
+  `if`: a call or an `await` in its condition after the environment test
+  (`env == "live" and await open_live(port)`), where four of the seven checks call a predicate; an
+  exception used as control flow (`raise _UseTradeSocket`, which an `except` one frame up answers
+  with the live work); and a class, or a function named like one, whose call does the work
+  (`raise Refused(port)`), which reads as an exception's construction.
 - **Fixture:** `.semgrep/tests/cv-oms-env-branch/`, with the annotated statement that proves the marker
   placement the four exceptions use.
 

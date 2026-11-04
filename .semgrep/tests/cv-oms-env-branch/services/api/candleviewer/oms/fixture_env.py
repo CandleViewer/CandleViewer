@@ -83,10 +83,24 @@ async def raising(environment, port, order, ready):
         raise Refused(reason=await ready)
     if (live := environment == "live") and ready:  # ruleid: cv-oms-env-branch
         raise Refused("live")
+    if environment == "live":  # ruleid: cv-oms-env-branch
+        raise _open_live_route(port)
+    if environment == "live":  # ruleid: cv-oms-env-branch
+        raise await _open_live_route(port)
+    if environment == "live":  # ruleid: cv-oms-env-branch
+        raise await ready
+    if environment == "live":  # ruleid: cv-oms-env-branch
+        raise Refused if _open_live_route(port) else Unready
+    if environment.name == "TESTNET":  # ruleid: cv-oms-env-branch
+        raise _open_live_route(port)
     if environment == "live":  # ok: cv-oms-env-branch
         raise Refused(f"serves demo and testnet only, not {environment!r}")
     if environment == "live":  # ok: cv-oms-env-branch
         raise Refused
+    if environment == "live":  # ok: cv-oms-env-branch
+        raise errors.Refused("live")
+    if environment == "live":  # ok: cv-oms-env-branch
+        raise _Refused(environment)
     return live
 
 
