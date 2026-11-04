@@ -38,3 +38,7 @@ export function utcTime(ms: number): string {
   const d = new Date(ms);
   return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`;
 }
+
+/** The table's time cell: "2026-10-21 09:14:02". */
+export const tableTime = (ms: number): string =>
+  new Date(ms).toISOString().slice(0, 19).replace("T", " ");
