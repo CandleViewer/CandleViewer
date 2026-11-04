@@ -13,28 +13,40 @@ Single asyncio loop: every method is synchronous with no `await`, so no lock is 
   unconfirmed until a record covers it (K01 §5.5).
 - **Reconciliation only tightens** a confirmed close; a record confirms an awaiting close in either
   direction only as the sole candidate with no awaiting sibling on the symbol. An unmatched or
-  ambiguous record is booked by its `updated_at`, a loss in full and a gain at 0 (K01 §5.4, §5.5).
+  ambiguous record is booked by its `updated_at` as a loss in full; one with no loss books
+  nothing, so it neither closes at break-even nor resets the loss run (K01 §5.4, §5.5).
 - **Unrealised:** `min(0, net)` over the open positions at a mark at most `max_age` old (public,
   then the push's); a missing, stale or future mark answers `None` (K01 §5.2, §5.8).
 - **Rollover** on the shared `DayCalendar`: the day's closes, peak and day-start equity reset;
   positions carry (K01 §5.3). A fill dated after the key's end waits (bounded) until a roll or an
   offset change brings it inside the key.
 - **A position push includes every fill dated at or before it** (K01 §5.5, §5.8): such a fill books
-  its close but never moves the size or entry. Fills out of exchange order bound the entry at its
-  worst and net no gain until the next push; a close ahead of its own open is clamped (over-count).
-- **Sticky fail closed** (cold start, malformed value, exhausted bound, unboundable close) until the
+  its close but never moves the size or entry; one at the push's own instant counts as in it (the
+  venue pushes per change). The first push is the baseline: fills already applied that are dated
+  after it are replayed on it (a pre-start size is never lost). Fills out of exchange order bound
+  the entry at its worst and net no gain until the next push; a close ahead of its own open is
+  clamped (over-count). **Adapter contract (slice 3):** a push is stamped with the venue's own
+  update time of the position or, for a REST snapshot, its fetch time, never earlier: a first push
+  dated before an exec it already includes would replay that exec on it (double size, phantom gain).
+- **Indexed:** a record looks up only the closes of its (symbol, side, qty) in its match window,
+  and the expiry and the sibling test read only the closes awaiting a record.
+- **Sticky fail closed** (cold start, malformed value or tz-naive time, exhausted bound,
+  unboundable close, a first push older than more fills than were logged) until the
   slice-3 rebuild or a restart; about 600k ids per account at the caps. `figures` is O(positions).
 - **Day-start equity** is the key's first `set_equity`; slice 3 seeds it on a mid-day cold start.
+- **A stream gap** (`mark_gap`) makes the account unavailable again until the backfill completes and
+  slice 3 calls `mark_ready` (K01 §5.5); unlike the sticky states it is reversible.
 """
 
 from __future__ import annotations
 
 from bisect import bisect_left, insort
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal
 from enum import StrEnum
-from typing import Final
+from itertools import count
+from typing import Final, cast
 
 from candleviewer.domain.primitives import Side
 from candleviewer.risk.clock import DayCalendar
@@ -97,7 +109,6 @@ class _Close:
     exit_value: Decimal = _ZERO
     bound: Decimal = _ZERO
     exact: Decimal = _ZERO
-    from_record: bool = False
     held: Decimal | None = None  # a HELD record's pnl: the timeout settles on it (K01 §5.4)
     slot: tuple[datetime, int, str] | None = None  # its place in the last-exec order
 
@@ -114,10 +125,14 @@ class _Position:
     open_fee: Decimal = _ZERO  # the still-open part's opening fees and value, for proration
     open_value: Decimal = _ZERO
     max_rate: Decimal = _ZERO
+    #: Fills applied before the first push, replayed on it when it is older (None after it).
+    log: list[tuple[datetime, int, bool, Decimal, Decimal]] | None = field(default_factory=list)
+    lost: bool = False  # the log overflowed: an older first push cannot be replayed
 
 
-def _dir(side: Side) -> int:
-    return 1 if side == "buy" else -1
+def _signed(value: Decimal, side: Side) -> Decimal:
+    """A long's PnL as is, a short's negated."""
+    return value if side == "buy" else -value
 
 
 def _positive(*values: Decimal | None) -> bool:
@@ -126,6 +141,19 @@ def _positive(*values: Decimal | None) -> bool:
 
 def _finite(*values: Decimal | None) -> bool:
     return all(v is None or v.is_finite() for v in values)
+
+
+def _aware(*times: datetime) -> bool:
+    return all(t.utcoffset() is not None for t in times)
+
+
+def _open(pos: _Position, qty: Decimal, price: Decimal) -> None:
+    value = price * qty
+    size = pos.size + qty
+    pos.entry = (pos.entry * pos.size + value) / size
+    pos.size, pos.open_value = size, pos.open_value + value
+    pos.hi = max(pos.hi, price)
+    pos.lo = min(pos.lo, price) if pos.lo else price
 
 
 def _entry(pos: _Position, side: Side) -> Decimal:
@@ -138,8 +166,8 @@ def _entry(pos: _Position, side: Side) -> Decimal:
     return min(pos.lo, pos.entry) if pos.lo else pos.entry
 
 
-def _at_tick(value: Decimal, tick: Decimal) -> Decimal:
-    return (value / tick).to_integral_value(ROUND_HALF_EVEN) * tick
+def _ticks(value: Decimal, tick: Decimal) -> Decimal:
+    return (value / tick).to_integral_value(ROUND_HALF_EVEN)
 
 
 class AccountCounters:
@@ -163,9 +191,12 @@ class AccountCounters:
         self._records: set[str] = set()
         self._closes: dict[str, _Close] = {}
         self._order: list[tuple[datetime, int, str]] = []  # closes by last exec time
-        self._seq = 0
+        self._seq = count()  # arrival order: the tie-break at one exchange instant
         self._run: int | None = 0  # the loss run; None: recount on the next read
-        self._realised = _ZERO
+        self._realised = _ZERO  # Σ bound, kept running: a recount may differ by a 28-digit ulp
+        self._by_key: dict[tuple[str, Side, Decimal], list[tuple[datetime, int, str]]] = {}
+        self._awaiting: dict[str, None] = {}  # the closes awaiting a record, and per symbol
+        self._awaiting_on: dict[str, int] = {}
         self._early: list[tuple[RiskFill, Decimal, Decimal, CloseState]] = []
         self._positions: dict[tuple[str, Side], _Position] = {}
         self._marks: dict[tuple[str, str], RiskMark] = {}
@@ -176,6 +207,10 @@ class AccountCounters:
     def mark_ready(self) -> None:
         self._ready = True
 
+    def mark_gap(self) -> None:
+        """A detected stream gap: unavailable until the backfill completes (K01 §5.5)."""
+        self._ready = False
+
     def set_equity(self, equity: Decimal, now: datetime) -> None:
         self._roll(now)
         self._equity = equity
@@ -183,7 +218,7 @@ class AccountCounters:
             self._day_equity = equity
 
     def apply_mark(self, mark: RiskMark) -> None:
-        if not _positive(mark.price):
+        if not (_positive(mark.price) and _aware(mark.at)):
             self._broken = True
             return
         held = self._marks.get((mark.symbol, mark.source))
@@ -191,25 +226,40 @@ class AccountCounters:
             self._marks[(mark.symbol, mark.source)] = mark
 
     def apply_position(self, push: RiskPosition) -> None:
-        valid = _finite(push.size, push.entry_price) and push.size >= _ZERO
+        valid = _finite(push.size, push.entry_price) and push.size >= _ZERO and _aware(push.at)
         if not (valid and (push.size == _ZERO or push.entry_price > _ZERO)):
             self._broken = True
             return
         pos = self._positions.setdefault((push.symbol, push.side), _Position())
-        if pos.at is not None and push.at < pos.at:
-            return  # older than a fill already applied
+        later: list[tuple[datetime, int, bool, Decimal, Decimal]] = []
+        last = pos.at
+        if last is not None and push.at < last:
+            if pos.log is None:
+                return  # older than a fill already applied
+            if pos.lost:
+                self._broken = True  # m9: the fills after this first push cannot be replayed
+                return
+            later = sorted(entry for entry in pos.log if entry[0] > push.at)
         pos.size, pos.at, pos.push_at, pos.disordered = push.size, push.at, push.at, False
         pos.hi = pos.lo = _ZERO
+        pos.log = None
         if push.size > _ZERO:  # a flat push keeps the last entry for its late closing fills
             pos.entry = pos.hi = pos.lo = push.entry_price
-            pos.open_value = max(pos.open_value, push.entry_price * push.size)
+        for _, _, opening, qty, price in later:  # the baseline: replay what came after it
+            if opening:
+                _open(pos, qty, price)
+            else:
+                pos.size = max(_ZERO, pos.size - qty)
+        if later:
+            pos.at = last
+        pos.open_value = max(pos.open_value, pos.entry * pos.size)
 
     def apply_fill(self, fill: RiskFill, now: datetime) -> FillOutcome:
         """Apply one fill once by exec id; a fill dated at or before the last push books only."""
         self._roll(now)
         if fill.exec_id in self._seen or fill.exec_id in self._seen_before:
             return FillOutcome.DUPLICATE
-        valid = _positive(fill.qty, fill.price, fill.entry_price)
+        valid = _positive(fill.qty, fill.price, fill.entry_price) and _aware(fill.exec_time)
         if not (valid and _finite(fill.fee, fill.fee_rate, fill.exec_pnl)):
             self._broken = True
             return FillOutcome.INVALID
@@ -218,7 +268,13 @@ class AccountCounters:
             return FillOutcome.OVERFLOW
         self._seen.add(fill.exec_id)
         pos = self._positions.setdefault((fill.symbol, fill.position_side), _Position())
-        stale = pos.push_at is not None and fill.exec_time <= pos.push_at
+        stale = pos.push_at is not None and fill.exec_time <= pos.push_at  # l10: same ms is in it
+        if pos.log is not None and not pos.lost:
+            if len(pos.log) >= MAX_EARLY:
+                pos.lost, pos.log = True, []
+            else:
+                logged = (fill.exec_time, next(self._seq), fill.opening, fill.qty, fill.price)
+                pos.log.append(logged)
         if pos.at is not None and fill.exec_time < pos.at and not stale:
             pos.disordered = True
         pos.at = fill.exec_time if pos.at is None else max(pos.at, fill.exec_time)
@@ -226,17 +282,13 @@ class AccountCounters:
             pos.open_fee += fill.fee
             pos.max_rate = max(pos.max_rate, fill.fee_rate)
             if not stale:
-                value = fill.price * fill.qty
-                size = pos.size + fill.qty
-                pos.entry = (pos.entry * pos.size + value) / size
-                pos.size, pos.open_value = size, pos.open_value + value
-                pos.hi = max(pos.hi, fill.price)
-                pos.lo = min(pos.lo, fill.price) if pos.lo else fill.price
+                _open(pos, fill.qty, fill.price)
             return FillOutcome.APPLIED
-        sign = _dir(fill.position_side)
         entry = fill.entry_price or _entry(pos, fill.position_side) or None
         exec_entry = (
-            _ZERO if fill.exec_pnl is None else fill.price - fill.exec_pnl * sign / fill.qty
+            _ZERO
+            if fill.exec_pnl is None
+            else fill.price - _signed(fill.exec_pnl, fill.position_side) / fill.qty
         )
         held = pos.size + fill.qty if stale else pos.size  # the size before this close
         share = min(Decimal(1), fill.qty / held) if held > _ZERO else Decimal(1)
@@ -255,7 +307,7 @@ class AccountCounters:
             self._broken = True  # a backfilled close with no entry cannot be bounded
             return FillOutcome.INVALID
         else:
-            pnl = (fill.price - entry) * fill.qty * sign
+            pnl = _signed((fill.price - entry) * fill.qty, fill.position_side)
             exact = pnl - fill.fee - open_fee
             bound, state = min(_ZERO, pnl - fill.fee - bound_fee), CloseState.UNCONFIRMED
         if fill.exec_time >= self._key.end:
@@ -269,18 +321,31 @@ class AccountCounters:
         self._book(fill, bound, exact, state, now)
         return FillOutcome.APPLIED
 
-    def _place(self, ref: str, close: _Close, last_exec: datetime) -> None:
+    def _place(self, ref: str, close: _Close, last_exec: datetime) -> tuple[datetime, int, str]:
         """Move `close` to `last_exec` in the order; the run is kept only for one appended last."""
         appended = close.slot is None and (not self._order or self._order[-1][0] <= last_exec)
         if close.slot is not None:
             del self._order[bisect_left(self._order, close.slot)]
-        self._seq += 1
-        close.last_exec, close.slot = last_exec, (last_exec, self._seq, ref)
-        insort(self._order, close.slot)
+        slot = (last_exec, next(self._seq), ref)
+        close.last_exec, close.slot = last_exec, slot
+        insort(self._order, slot)
         if appended and self._run is not None:
             self._run = self._run + 1 if close.bound < _ZERO else 0
         else:
             self._run = None
+        return slot
+
+    def _track(self, ref: str, close: _Close, was: bool) -> None:
+        """Keep the awaiting index after `close` moved from awaiting (`was`) or not."""
+        if (close.state in _AWAITING) == was:
+            return
+        count = self._awaiting_on.get(close.symbol, 0)
+        if was:
+            del self._awaiting[ref]
+            self._awaiting_on[close.symbol] = count - 1
+        else:
+            self._awaiting[ref] = None
+            self._awaiting_on[close.symbol] = count + 1
 
     def _rebound(self, close: _Close, bound: Decimal) -> None:
         self._realised += bound - close.bound
@@ -290,11 +355,16 @@ class AccountCounters:
     def _book(
         self, fill: RiskFill, bound: Decimal, exact: Decimal, state: CloseState, now: datetime
     ) -> None:
-        close = self._closes.get(fill.order_ref)
+        ref = fill.order_ref
+        close = self._closes.get(ref)
+        was = close is not None and close.state in _AWAITING
         if close is None:
-            close = self._closes[fill.order_ref] = _Close(
+            close = self._closes[ref] = _Close(
                 fill.symbol, fill.position_side, state, now, fill.exec_time
             )
+        else:  # booked before, so placed: it leaves its key's bucket before its qty moves
+            bucket = self._by_key[(close.symbol, close.side, close.qty)]
+            del bucket[bisect_left(bucket, cast("tuple[datetime, int, str]", close.slot))]
         close.qty += fill.qty
         close.exit_value += fill.price * fill.qty
         close.bound += bound
@@ -303,48 +373,48 @@ class AccountCounters:
         close.booked_at = now
         if close.state is not CloseState.UNCONFIRMED:
             close.state = state
-        self._place(fill.order_ref, close, max(close.last_exec, fill.exec_time))
+        self._track(ref, close, was)
+        slot = self._place(ref, close, max(close.last_exec, fill.exec_time))
+        insort(self._by_key.setdefault((close.symbol, close.side, close.qty), []), slot)
 
     def apply_venue_record(self, record: VenueClosedPnl, now: datetime) -> RecordOutcome:
         self._roll(now)
         if record.record_id in self._records:
             return RecordOutcome.DUPLICATE
         valid = _positive(record.qty, record.avg_exit_price, record.tick)
-        if not (valid and _finite(record.pnl)):
+        if not (valid and _finite(record.pnl) and _aware(record.updated_at)):
             self._broken = True
             return RecordOutcome.INVALID
         if len(self._records) >= MAX_IDS:
             self._broken = True
             return RecordOutcome.OVERFLOW
         self._records.add(record.record_id)
-        exit_at = _at_tick(record.avg_exit_price, record.tick)
+        exit_at = _ticks(record.avg_exit_price, record.tick)
         lo = record.updated_at - MATCH_WINDOW
-        candidates = [
-            close
-            for close in self._closes.values()
-            if not close.from_record
-            and (close.symbol, close.side, close.qty)
-            == (record.symbol, record.position_side, record.qty)
-            and _at_tick(close.exit_value / close.qty, record.tick) == exit_at
-            and lo <= close.last_exec <= record.updated_at
-        ]
+        bucket = self._by_key.get((record.symbol, record.position_side, record.qty), [])
+        candidates: list[tuple[str, _Close]] = []
+        n = bisect_left(bucket, lo, key=lambda slot: slot[0])
+        while n < len(bucket) and bucket[n][0] <= record.updated_at:
+            close = self._closes[bucket[n][2]]
+            if _ticks(close.exit_value / close.qty, record.tick) == exit_at:
+                candidates.append((bucket[n][2], close))
+            n += 1
         if len(candidates) != 1:
             if record.updated_at not in self._key:
                 return RecordOutcome.OUT_OF_DAY
-            ref = f"record:{record.record_id}"
+            if record.pnl >= _ZERO:  # attributes to no close and carries nothing: not a close
+                return RecordOutcome.UNMATCHED_BOOKED  # read, for the audit; books nothing (m11)
+            ref = f"record:{record.record_id}"  # an OMS order reference has no colon (C-2.10)
             booked = _Close(record.symbol, record.position_side, CloseState.CONFIRMED, now, now)
-            booked.qty, booked.exit_value = record.qty, record.avg_exit_price * record.qty
-            booked.bound = booked.exact = min(_ZERO, record.pnl)  # no gain until confirmed
-            self._closes[ref], booked.from_record = booked, True
+            booked.bound = booked.exact = record.pnl  # a loss in full, never matched
+            self._closes[ref] = booked
             self._realised += booked.bound
             self._place(ref, booked, record.updated_at)
             return RecordOutcome.UNMATCHED_BOOKED
-        close = candidates[0]
-        if close.state in _AWAITING:
-            siblings = any(
-                other is not close and other.symbol == close.symbol and other.state in _AWAITING
-                for other in self._closes.values()
-            )
+        ref, close = candidates[0]
+        was = close.state in _AWAITING
+        if was:
+            siblings = self._awaiting_on[close.symbol] > 1  # another close awaits on the symbol
             if record.pnl >= close.bound and siblings:
                 close.held = record.pnl  # the id stays unread: a re-poll may still confirm it
                 self._records.discard(record.record_id)
@@ -361,6 +431,7 @@ class AccountCounters:
         self._rebound(close, record.pnl)
         close.exact = record.pnl
         close.state = CloseState.CONFIRMED
+        self._track(ref, close, was)
         return outcome
 
     def expire_records(self, now: datetime) -> tuple[str, ...]:
@@ -368,13 +439,12 @@ class AccountCounters:
         counts for the flatten."""
         self._roll(now)
         expired = [
-            ref
-            for ref, close in self._closes.items()
-            if close.state in _AWAITING and now - close.booked_at >= RECORD_TIMEOUT
+            ref for ref in self._awaiting if now - self._closes[ref].booked_at >= RECORD_TIMEOUT
         ]
         for ref in expired:
             close = self._closes[ref]
             close.state = CloseState.TIMED_OUT
+            self._track(ref, close, True)
             if close.held is not None:
                 close.exact = close.held
         return tuple(expired)
@@ -398,7 +468,7 @@ class AccountCounters:
 
     @property
     def unconfirmed(self) -> bool:
-        return any(close.state in _AWAITING for close in self._closes.values())
+        return bool(self._awaiting)
 
     def _mark(self, symbol: str, now: datetime) -> Decimal | None:
         for source in ("public", "position"):
@@ -422,7 +492,7 @@ class AccountCounters:
                 return None
             rate = max(self._taker_rate, pos.max_rate)
             fees = max(pos.open_fee, rate * pos.open_value)
-            pnl = (mark - _entry(pos, side)) * pos.size * _dir(side) - fees
+            pnl = _signed((mark - _entry(pos, side)) * pos.size, side) - fees
             net += min(_ZERO, pnl) if pos.disordered else pnl  # no gain on an unsure position
             notional[symbol] = notional.get(symbol, _ZERO) + pos.size * mark
             held += 1
@@ -460,6 +530,9 @@ class AccountCounters:
         if key.start != self._key.start:
             self._closes.clear()
             self._order.clear()
+            self._by_key.clear()
+            self._awaiting.clear()
+            self._awaiting_on.clear()
             self._records.clear()
             self._seen_before, self._seen = self._seen, set()
             self._run, self._realised, self._peak = 0, _ZERO, _ZERO

@@ -3,6 +3,7 @@
 A key is the half-open span `[start, end)` between two midnights of `UTC + offset` minutes, the
 offset bounded -720..840 (`risk_policy.day_boundary_utc_offset_minutes`); no time-zone names and no
 daylight saving. Times are the exchange-synchronised clock's, passed in; nothing here reads a clock.
+A key is in UTC whatever offset the time passed in carries.
 
 An offset change never shortens the key in progress: it keeps its start and runs to the first
 boundary of the new offset at or after its old end, so one change gives a key of 24 h to under
@@ -14,7 +15,7 @@ is never forgotten early. Single asyncio loop, no `await`: no lock is needed.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Final
 
 MIN_OFFSET: Final = -720
@@ -34,7 +35,7 @@ class DayKey:
 def _check(offset_minutes: int, at: datetime) -> None:
     if not MIN_OFFSET <= offset_minutes <= MAX_OFFSET:
         raise ValueError(f"day boundary offset must be in {MIN_OFFSET}..{MAX_OFFSET} minutes")
-    if at.tzinfo is None or at.utcoffset() is None:
+    if at.utcoffset() is None:  # naive, or a tzinfo with no offset
         raise ValueError("risk times must be timezone-aware")
 
 
@@ -42,7 +43,7 @@ def grid_key(at: datetime, offset_minutes: int) -> DayKey:
     """The key of `at` on the plain grid of `offset_minutes`."""
     _check(offset_minutes, at)
     shift = timedelta(minutes=offset_minutes)
-    local = at + shift
+    local = at.astimezone(UTC) + shift
     start = local.replace(hour=0, minute=0, second=0, microsecond=0) - shift
     return DayKey(start, start + _DAY)
 

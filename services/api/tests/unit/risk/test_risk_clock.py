@@ -6,7 +6,7 @@ ends at the first new-offset boundary at or after its old end, 24 h to under 48 
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 
 import pytest
 from hypothesis import given
@@ -47,15 +47,19 @@ def test_grid_key_a_boundary_instant_opens_the_new_key() -> None:
     assert first_boundary_at_or_after(MIDNIGHT + H, 0) == MIDNIGHT + 24 * H
 
 
-@pytest.mark.parametrize("offset", [MIN_OFFSET - 1, MAX_OFFSET + 1])
+@pytest.mark.parametrize("offset", [-721, 841])  # literals: the bounds themselves are pinned
 def test_grid_key_out_of_range_offset_raises(offset: int) -> None:
     with pytest.raises(ValueError, match="offset"):
         grid_key(MIDNIGHT, offset)
+    with pytest.raises(ValueError, match="offset"):
+        DayCalendar(0, MIDNIGHT).change_offset(offset, MIDNIGHT)
 
 
 def test_grid_key_naive_time_raises() -> None:
     with pytest.raises(ValueError, match="timezone"):
         grid_key(datetime(2026, 11, 4), 0)
+    with pytest.raises(ValueError, match="timezone"):
+        DayCalendar(0, MIDNIGHT).advance(datetime(2026, 11, 4))
 
 
 def test_calendar_advance_rolls_only_at_the_end() -> None:
@@ -120,3 +124,38 @@ def test_change_offset_never_shortens_the_key(
     assert after.start == before.start and after.end >= before.end
     assert after.end - after.start < 48 * H
     assert grid_key(after.end, second).start == after.end
+
+
+@pytest.mark.parametrize(
+    ("offset", "start"), [(0, MIDNIGHT), (90, MIDNIGHT - 90 * timedelta(minutes=1))]
+)
+def test_grid_key_starts_at_midnight_from_any_instant(offset: int, start: datetime) -> None:
+    at = datetime(2026, 11, 4, 13, 47, 31, 123_456, tzinfo=UTC)
+    assert grid_key(at, offset).start == start  # BQ-10: minutes, seconds and micros all cleared
+
+
+class _NoOffset(tzinfo):
+    def utcoffset(self, dt: datetime | None) -> timedelta | None:
+        return None
+
+    def dst(self, dt: datetime | None) -> timedelta | None:
+        return None
+
+    def tzname(self, dt: datetime | None) -> str | None:
+        return None
+
+
+def test_grid_key_refuses_a_zone_with_no_offset() -> None:
+    with pytest.raises(ValueError, match=r"^risk times must be timezone-aware$"):
+        grid_key(datetime(2026, 11, 4, tzinfo=_NoOffset()), 0)
+
+
+@pytest.mark.parametrize("hours", [10, -9, 14])
+def test_grid_key_is_in_utc_whatever_offset_the_time_carries(hours: int) -> None:
+    at = MIDNIGHT + 23 * H  # 23:00Z: on a +10:00 wall clock it is 09:00 the next day
+    local = at.astimezone(timezone(timedelta(hours=hours)))
+    for offset in (0, 60, -720, 840):
+        assert grid_key(local, offset) == grid_key(at, offset)
+    assert grid_key(local, 0) == DayKey(MIDNIGHT, MIDNIGHT + 24 * H)
+    calendar = DayCalendar(0, MIDNIGHT)
+    assert not calendar.advance(local) and calendar.key == DayKey(MIDNIGHT, MIDNIGHT + 24 * H)
