@@ -22,6 +22,9 @@
 //     `ready_for_review` starts, like every merge-group run, requires it. The draft flag is read
 //     on pull_request only, and only the boolean `true` counts as a draft; off it, or with the
 //     event unknown, the lane is a lane like the rest.
+//   - a draft pull request never passes (CI-GATE-005, #5506): a draft runs the light job set only,
+//     so the resolver fails it with "the full matrix runs from ready_for_review", whatever the
+//     lanes say. merge_group, workflow_dispatch and a ready pull request are unchanged.
 
 import { appendFileSync } from "node:fs";
 
@@ -39,8 +42,20 @@ const DEFERRED_REASON = "runs on the merge group";
 // Lanes whose job in .github/workflows/pr.yml skips a pull request while it is a draft (its `if:`
 // ends in `!(github.event_name == 'pull_request' && github.event.pull_request.draft == true)`):
 // change that and this set together. `ready_for_review` re-runs the workflow, and a merge group
-// never carries the flag, so both run them.
-const DRAFT_DEFERRED = new Set(["e2e", "a11y", "engine-bench"]);
+// never carries the flag, so both run them. `integration` is gated the same way but is not listed:
+// a pull request's run skips it on every PR, draft or not, and MERGE_GROUP_ONLY already defers that.
+const DRAFT_DEFERRED = new Set([
+  "e2e",
+  "a11y",
+  "engine-bench",
+  "rule-roundtrip",
+  "contract",
+  "migrations",
+  "security",
+  "coverage-thresholds",
+]);
+const DRAFT_GATE_CODE = "CI-GATE-005";
+const DRAFT_GATE_REASON = "draft pull request: the full matrix runs from ready_for_review";
 const DRAFT_DEFERRED_REASON = "runs when the pull request leaves draft";
 // Lanes whose not-applicable state is named in the output (E03-T14, Gherkin S1): a diff outside
 // the engine and protocol filters skips engine-bench, and the reader sees that, not a silent pass.
@@ -105,6 +120,9 @@ export function resolveGate(lanes, event = "", draft = false) {
     if (!input.applicable && REPORT_NA.has(name))
       notApplicable.push({ lane: name, reason: NOT_APPLICABLE_REASON });
   }
+  if (event === "pull_request" && draft === true) {
+    failures.push({ ok: false, code: DRAFT_GATE_CODE, reason: DRAFT_GATE_REASON });
+  }
   return {
     conclusion: failures.length === 0 ? "success" : "failure",
     failures,
@@ -113,7 +131,14 @@ export function resolveGate(lanes, event = "", draft = false) {
   };
 }
 
-export { evaluateLane, MERGE_GROUP_ONLY, DRAFT_DEFERRED, REPORT_NA };
+export {
+  evaluateLane,
+  MERGE_GROUP_ONLY,
+  DRAFT_DEFERRED,
+  DRAFT_GATE_CODE,
+  DRAFT_GATE_REASON,
+  REPORT_NA,
+};
 
 // --- CLI entry point (used by actions/github-script step) -----------------
 // Reads lane definitions from argv[2] as a JSON string:

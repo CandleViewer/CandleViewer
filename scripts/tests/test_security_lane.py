@@ -113,7 +113,10 @@ FILTERS = " || ".join(f"needs.changed-paths.outputs.{f} == 'true'" for f in ("js
 CALLER = {
     "name": "security",
     "needs": "changed-paths",
-    "if": "${{ " + FILTERS + " || needs.changed-paths.outputs.semgrep == 'true' }}",
+    "if": "${{ ("
+    + FILTERS
+    + " || needs.changed-paths.outputs.semgrep == 'true') && !(github.event_name == 'pull_request'"
+    " && github.event.pull_request.draft == true) }}",
     "with": {"image_changed": "${{ needs.changed-paths.outputs.image == 'true' }}"},
     "permissions": SARIF,
     "uses": "./.github/workflows/_job-security.yml",

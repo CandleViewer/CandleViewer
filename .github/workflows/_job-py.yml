@@ -17,7 +17,8 @@ name: _job-py
 #   py (after both): coverage combine -> coverage.xml + term report -> the
 #     addopts --cov-fail-under floor on the combined data -> uv build -> upload
 #     the `py-coverage` artifact (E03-T04's threshold gate owns the per-package
-#     floors) -> fail unless py-checks and every lane succeeded.
+#     floors) -> fail unless py-checks and every lane succeeded. On a draft PR (`heavy` false,
+#     #5506) the test, perf and coverage steps are skipped and it passes on py-checks alone.
 #   `py-perf (N/3)` (parallel): pytest -m "perf and not flaky" --no-cov, the C-13.9
 #     wall-clock budgets, DB-backed ones included (testcontainers); `flaky`
 #     tests are quarantined per C-9.3. Three shards of the committed perf index
@@ -32,7 +33,13 @@ name: _job-py
 # already honours `CV_CI_ALLOWED_HOSTS` for when that lands.
 
 on:
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      # false on a draft pull request (pr.yml): py-checks runs, the test, perf and coverage jobs are
+      # skipped and `py` passes on py-checks alone (#5506). Always true on a ready PR and merge_group.
+      heavy:
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -166,6 +173,7 @@ jobs:
 
   py-tests:
     name: py-tests (${{ matrix.lane }})
+    if: ${{ inputs.heavy }}
     runs-on: ubuntu-latest
     # The py-only variable (#2185, #2426), so tuning the shared CV_CI_TIMEOUT_MINUTES for other
     # lanes cannot shrink it. A lane is about a nineteenth of the suite since #5505 (a sixteenth since #3881), against about
@@ -294,9 +302,11 @@ jobs:
           python-version: "3.12"
 
       - name: uv sync --frozen
+        if: ${{ inputs.heavy }}
         run: python3 ../../tools/ci/registry_retry.py --registry pypi --timeout 120 -- uv sync --frozen --all-groups
 
       - name: Download every lane's raw coverage data
+        if: ${{ inputs.heavy }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: py-lane-cov-*
@@ -304,22 +314,25 @@ jobs:
           merge-multiple: true
 
       - name: coverage combine (one data file per lane or none, CI-COV-003)
+        if: ${{ inputs.heavy }}
         run: |
           listing=$(python ../../tools/ci/py_test_lanes.py data-files lane-coverage)
           mapfile -t lane_data <<< "$listing"
           uv run coverage combine "${lane_data[@]}"
 
       - name: coverage.xml, term report and the addopts --cov-fail-under floor (combined data)
+        if: ${{ inputs.heavy }}
         run: |
           floor=$(python ../../tools/ci/py_test_lanes.py fail-under)
           uv run coverage xml -o coverage.xml
           uv run coverage report --fail-under="$floor"
 
       - name: uv build
+        if: ${{ inputs.heavy }}
         run: uv build
 
       - name: Upload coverage report (for E03-T04's threshold gate)
-        if: always()
+        if: ${{ always() && inputs.heavy }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: py-coverage
@@ -333,9 +346,13 @@ jobs:
         env:
           CHECKS_RESULT: ${{ needs.py-checks.result }}
           TESTS_RESULT: ${{ needs.py-tests.result }}
+          HEAVY: ${{ inputs.heavy }}
         run: |
-          echo "py-checks: $CHECKS_RESULT; py-tests (every lane): $TESTS_RESULT"
-          [ "$CHECKS_RESULT" = success ] && [ "$TESTS_RESULT" = success ]
+          echo "py-checks: $CHECKS_RESULT; py-tests (every lane): $TESTS_RESULT; heavy: $HEAVY"
+          [ "$CHECKS_RESULT" = success ] || exit 1
+          # A draft (heavy=false) skipped every lane on purpose, so a skip passes there and only there;
+          # a ready PR and merge_group (heavy=true) need every lane to succeed (#5506).
+          if [ "$HEAVY" = false ]; then [ "$TESTS_RESULT" = skipped ]; else [ "$TESTS_RESULT" = success ]; fi
 
   # C-13.9 wall-clock budgets run in their own parallel job (#2185 follow-up): measured inside the
   # covered run they failed on shared runners (test_create_app_under_200ms read 766 ms vs 200 ms on
@@ -355,6 +372,7 @@ jobs:
     # tools/ci/py_perf_index.py plan 3`). The job name carries the shard; `ci-required` still
     # judges the `py` workflow's conclusion, which aggregates every job here (C-9.1 unchanged).
     name: py-perf (${{ matrix.shard }}/${{ matrix.total }})
+    if: ${{ inputs.heavy }}
     runs-on: ubuntu-latest
     # Fixed, not CV_CI_TIMEOUT_MINUTES: a hang guard, not a budget (the per-test C-13.9 budgets gate
     # inside the tests). 16 is the larger of 1.5x a shard's expected 343 s (8.6 min) and that plus
@@ -410,6 +428,7 @@ jobs:
   # differs from it.
   py-perf-index:
     name: py-perf-index
+    if: ${{ inputs.heavy }}
     runs-on: ubuntu-latest
     # About 6 min (1 min of set-up and the 5-min collection); 1.5x is 9, rounded up to 10.
     timeout-minutes: 10

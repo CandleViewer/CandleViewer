@@ -133,7 +133,17 @@ def test_py_job_combines_every_lane_and_keeps_the_floor_and_the_gate_artifact() 
     assert "uv build" in runs
     (upload,) = [s for s in py["steps"] if s.get("with", {}).get("name") == "py-coverage"]
     assert upload["with"]["path"] == "services/api/coverage.xml"
-    assert '[ "$CHECKS_RESULT" = success ] && [ "$TESTS_RESULT" = success ]' in runs
+    # #5506: a ready PR (heavy) needs every lane; only a draft (heavy false) accepts skipped lanes.
+    assert '[ "$CHECKS_RESULT" = success ] || exit 1' in runs
+    assert (
+        'if [ "$HEAVY" = false ]; then [ "$TESTS_RESULT" = skipped ]; else [ "$TESTS_RESULT" = success ]; fi'
+        in runs
+    )
+    assert [name for name, job in jobs.items() if job.get("if") == "${{ inputs.heavy }}"] == [
+        "py-tests",
+        "py-perf",
+        "py-perf-index",
+    ]
     assert "uv run lint-imports" in _runs(jobs["py-checks"])
 
 

@@ -393,13 +393,22 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   `run-audit-spike` label) and went red is still CI-GATE-001, and the lane red on a group drops its
   PR from the queue. A PR can therefore be green and still fail in the queue on `integration`:
   read the group's `integration` log, not the PR's.
-- #5154: while a pull request is a **draft**, the `e2e`, `a11y` and `engine-bench` lanes skip by their
-  own `if:` and the resolver reads the skip as deferred ("runs when the pull request leaves draft",
-  `DRAFT_DEFERRED` in `scripts/ci_gate_resolver.mjs`, fed `PR_DRAFT`), never as CI-GATE-002; a deferred
-  lane that ran red on a draft is still CI-GATE-001. `ready_for_review` re-runs `pr.yml` with the
-  three lanes, and a merge group carries no draft flag, so a queue run executes every lane. The
-  recording-only `perf-engine-matrix.yml` chromium job skips a draft the same way and runs at
-  `ready_for_review`. Un-draft early enough for the full run to finish before READY.
+- #5506 (reverses #5154's success on a draft): a **draft** pull request runs the light set
+  (`changed-paths`, `gates`, `security-review-label`, `dependabot-alerts`, js lint and typecheck,
+  and `py-checks`); mark it ready for review to run the full matrix. The heavy jobs skip by their own
+  `if:` (`rule-roundtrip`, `contract`, `migrations`, `integration`, `security`, `coverage-thresholds`,
+  `e2e`, `a11y`, `engine-bench`), and `_job-js.yml` and `_job-py.yml` take a `heavy` input, false on
+  a draft, that skips `unit-frontend`, `unit-engine`, `build`, `py-tests`, `py-perf` and
+  `py-perf-index`. The `py` summary passes on `py-checks` alone when `heavy` is false and a skipped
+  test lane is accepted there only; a ready PR still needs every lane. The resolver reads the heavy
+  lanes' skip as deferred ("runs when the pull request leaves draft", `DRAFT_DEFERRED` in
+  `scripts/ci_gate_resolver.mjs`, fed `PR_DRAFT`), and a draft's `ci-required` fails with
+  **CI-GATE-005** ("draft pull request: the full matrix runs from ready_for_review"), so a draft
+  never reads as mergeable; the job still runs, since a skipped required check reads as a pass.
+  `ready_for_review` re-runs `pr.yml` with the flag false, and a merge group carries no draft flag,
+  so a queue run executes every lane. The recording-only `perf-engine-matrix.yml` chromium job
+  skips a draft the same way. Un-draft early enough for the full run to finish before READY; a red
+  `ci-required` on a draft is expected, not a broken CI.
 - #4605: the lane is three job definitions. `integration-shard (N/4)` runs one shard of
   `pytest tests/integration -m "integration and not perf and not flaky"`, split by measured per-file
   duration (`tools/ci/integration_shards.py`; about 5-7 minutes a shard on the five runs its table
@@ -484,6 +493,7 @@ here, or the check fails the `governance` lane.
   label was missing (an API error: re-run; over the API's 3000 files: split the PR). Never remove
   the label: the job does not re-check after a removal (pr.yml does not run on `unlabeled`), so the
   merge guard is the backstop.
+- **CI-GATE-005** (a draft pull request): expected; mark it ready for review to run the full matrix.
 
 ### CI-PIN-* — action-pin ledger (`tools/ci/check_action_pins.py`, `.github/actions-pins.md`)
 

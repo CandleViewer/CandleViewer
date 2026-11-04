@@ -14,6 +14,11 @@ name: _job-js
 
 on:
   workflow_call:
+    inputs:
+      # false on a draft pull request (pr.yml): the unit suites and the build are skipped (#5506).
+      heavy:
+        type: boolean
+        default: true
     secrets:
       TURBO_TOKEN:
         required: false
@@ -135,6 +140,7 @@ jobs:
   unit-frontend:
     name: unit-frontend
     needs: install
+    if: ${{ inputs.heavy }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 20) }}
     steps:
@@ -189,6 +195,7 @@ jobs:
   unit-engine:
     name: unit-engine
     needs: install
+    if: ${{ inputs.heavy }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 20) }}
     steps:
@@ -239,6 +246,7 @@ jobs:
   build:
     name: build
     needs: [lint, typecheck, unit-frontend, unit-engine]
+    if: ${{ inputs.heavy }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 20) }}
     steps:

@@ -436,6 +436,9 @@ with `git merge --no-ff`, pushed as `train/<yyyymmdd>-<n>` and deleted after use
 `ci-required` squash-merge its PRs in that order citing the run id, each on its own green `pr` run
 too; on a red one, or if anything else lands on `main` meanwhile, stop and rebuild (01-sdlc §7).
 
+A draft PR runs the light job set only and its `ci-required` fails with CI-GATE-005 (#5506): mark it
+ready for review to run the full `pr.yml` matrix (`docs/ci-runbook.md`).
+
 ---
 
 ## 5. Coding standards
