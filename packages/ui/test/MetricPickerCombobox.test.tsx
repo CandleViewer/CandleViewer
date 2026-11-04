@@ -319,6 +319,26 @@ describe("MetricPickerCombobox (CMP-157)", () => {
     await axeClean();
   });
 
+  it("a whitespace-only Start recording reason is no reason: no lock, not aria-disabled, a press calls once", async () => {
+    const started = vi.fn();
+    await mount(<Host onStartRecording={started} startRecordingReason="  " />);
+    await press("ArrowDown", { altKey: true });
+    const stop = option("Start recording");
+    expect([stop.getAttribute("aria-disabled"), stop.querySelector(".cv-select__optlock")]).toEqual(
+      [null, null],
+    );
+    await click(stop);
+    expect(started.mock.calls).toEqual([[SPREAD]]);
+  });
+
+  it("a T1 Start recording is described by its option's clause, which names the symbol", async () => {
+    await mount(<Host />);
+    await press("ArrowDown", { altKey: true });
+    expect(option("Start recording")).toHaveAccessibleDescription(
+      `(not available — ${UNRECORDED} · Start recording)`,
+    );
+  });
+
   it("says the count once per settled query, never per keystroke; no match says the host's sentence", async () => {
     vi.useFakeTimers();
     await mount(<Host options={FULL} />);

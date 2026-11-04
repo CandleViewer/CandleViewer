@@ -112,8 +112,10 @@ const BOARD_05: readonly MetricPickerOption[] = [
 /**
  * The host's copy: E36-D05's keys where the deck has them (`rules.editor.row.*`, `rules.editor.name.estimated`,
  * `rules.editor.announce.metrics`). The deck keys no category heading, placeholder or no-results sentence for the
- * picker: the words below stand in for them until it does.
+ * picker: the words below stand in for them until it does. The heading takes E37-D05's palette heading,
+ * `rules.graph.palette.category_count` ("{category} ({n})", PROPOSED), with the category's word in its slot.
  */
+const CATEGORY_COUNT = "{category} ({n})";
 const HEADINGS: Readonly<Record<MetricCategory, string>> = {
   price: "Price",
   orderflow: "Order flow",
@@ -125,7 +127,8 @@ const HEADINGS: Readonly<Record<MetricCategory, string>> = {
 };
 const NO_MATCH = "No metrics match — clear the search.";
 const COPY = {
-  groupLabel: (category: MetricCategory, n: number) => `${HEADINGS[category]} (${String(n)})`,
+  groupLabel: (category: MetricCategory, n: number) =>
+    CATEGORY_COUNT.replace("{category}", HEADINGS[category]).replace("{n}", String(n)),
   estimatedText: "(estimated)",
   estimatedName: (label: string) => `Estimated, ${label}`,
   unavailableText: (option: MetricPickerOption) =>

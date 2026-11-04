@@ -351,7 +351,8 @@ export function MetricPickerCombobox(props: MetricPickerComboboxProps): JSX.Elem
                   data-gated={gate === undefined ? undefined : ""}
                   aria-selected={at && part === 1 ? true : undefined}
                   aria-disabled={gate === undefined ? undefined : true}
-                  aria-describedby={gate === undefined ? undefined : `${id}-why`}
+                  // T1: the option's clause, which names the symbol; T2: the reason (E09-D09 §2.2).
+                  aria-describedby={gate === undefined ? `${id}-clause` : `${id}-why`}
                 >
                   {gate === undefined ? null : (
                     // Inside an option the glyph is presentational: `aria-disabled` and the reason carry T2.
