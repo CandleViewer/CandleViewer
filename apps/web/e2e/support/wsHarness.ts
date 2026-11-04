@@ -53,6 +53,8 @@ export interface WsHarness {
   revokeSession(): void;
   /** The next fixture ticker (BTCUSDT) or `fields`, as a `snap` then `d`s on `ticker.<symbol>` (6.1, 14.8). */
   sendTicker(symbol: string, fields?: Partial<TickerRow>): void;
+  /** E24-Q02: `p` as the next data frame on `ch`, a `snap` the first time and `d`s after (6.1); any subscribed topic. */
+  sendData(ch: string, p: Readonly<Record<string, unknown>>): void;
   /** Test-only: the age of every data frame sent from now on (`GatewayOptions.ageMs`). */
   setFrameAge(ms: number): void;
   /**
@@ -409,6 +411,13 @@ export async function startWsHarness(
       const [t, meta] =
         last === undefined ? (["snap", { reason: "initial" }] as const) : (["d"] as const);
       data(current, t, ch, { tickers: [row] }, (last ?? 0) + 1, meta);
+    },
+    sendData(ch, p) {
+      if (!current) throw new Error("sendData: no live connection");
+      const last = current.seq.get(ch);
+      const [t, meta] =
+        last === undefined ? (["snap", { reason: "initial" }] as const) : (["d"] as const);
+      data(current, t, ch, p, (last ?? 0) + 1, meta);
     },
   };
   return harness;
