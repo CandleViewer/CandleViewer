@@ -8,9 +8,9 @@ plan and design texts the pack cites, the token JSON and `contrast_check.py` (th
 runs, loaded by path), and, from the working tree, the pack and itself.
 
 Gates: G-CITE, G-AC, G-BQ, G-BOARDS, G-T2, G-RECIPE, G-CHECKLIST, G-ANALYTICS, G-EMPTY, G-LOADING,
-G-ANTI, G-DISCLOSE, G-CONTRAST, G-STORIES, G-ROWS, G-TOKENS, G-PENPOT, G-NOCLOSE, G-PUBLIC,
-G-UNTOUCHED and G-MUTLIST (section 17.2 equals this tool's list). The BQ list 6636147300 is not
-ruled yet: G-BQ checks the "defaults built; ruling pending" form.
+G-ANTI, G-DISCLOSE, G-CONTRAST, G-STORIES, G-RUBRIC, G-ROWS, G-TOKENS, G-PENPOT, G-NOCLOSE,
+G-PUBLIC, G-UNTOUCHED and G-MUTLIST (section 17.2 equals this tool's list). The BQ list
+6636147300 is not ruled yet: G-BQ checks the "defaults built; ruling pending" form.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e49_d02_state_audit.py --check | --self-test
@@ -41,6 +41,7 @@ BACKLOG_REL = "docs/plan/backlog/E49.json"
 CONTRAST_REL = "docs/design/_tools/contrast_check.py"
 
 PLAN = {
+    "05": "docs/plan/05-accessibility-standard.md",
     "14": "docs/plan/14-screens-catalogue.md",
     "15": "docs/plan/15-component-catalogue.md",
     "16": "docs/plan/16-design-system-brief.md",
@@ -106,6 +107,8 @@ TOKEN_RE = re.compile(
     r"`((?:color|space|size|type|font|opacity|border|motion|elevation|radius)"
     r"\.[A-Za-z0-9.*\-]+?)(\.\.\d+)?(\[\])?`"
 )
+RUBRIC_QS = 13  # Q1..Q13 (the a11y lens added Q11..Q13)
+CLAUSE_RE = re.compile(r"DQ-[A-Z]{2}-\d(?:, DQ-[A-Z]{2}-\d)*|none in E49-D01")
 MAP_RE = re.compile(r"^(?:frame `SCR-15\d/[a-z0-9-]+`|recipe R1[5]\d-\d|N/A — )")
 
 
@@ -415,6 +418,17 @@ def g_stories(t: L.Tree) -> list[str]:
     return bad
 
 
+def g_rubric(t: L.Tree) -> list[str]:
+    want = [f"Q{n}" for n in range(1, RUBRIC_QS + 1)]
+    got = rows(t, "## 2. The conformance rubric")
+    bad = [] if [r[0] for r in got] == want else [f"rubric rows {[r[0] for r in got]}"]
+    bad += [f"{r[0]}: no clause" for r in got if not CLAUSE_RE.fullmatch(r[-1])]
+    proof = [r[0] for r in rows(t, "### 2.2") if len(r) > 1 and r[1]]
+    bad += [] if proof == want else [f"evidence rows {proof}"]
+    focus = sorted(int(r[0][4:]) for r in rows(t, "### 3.2") if r[0].startswith("SCR-"))
+    return bad + ([] if focus == sorted(SCR_LINES) else [f"focus rows {focus}"])
+
+
 def g_rows(t: L.Tree) -> list[str]:
     defined = set()
     for h in ("### 12.1", "### 12.2", "### 12.3", "## 14. Open questions"):
@@ -457,8 +471,8 @@ def g_mutlist(t: L.Tree) -> list[str]:
 # fmt: off
 GATES = tuple(L.Gate("G-" + f.__name__[2:].upper().replace("_", "-"), f) for f in (
     g_cite, g_ac, g_bq, g_boards, g_t2, g_recipe, g_checklist, g_analytics, g_empty, g_loading,
-    g_anti, g_disclose, g_contrast, g_stories, g_rows, g_tokens, g_penpot, g_noclose, g_public,
-    g_untouched, g_mutlist,
+    g_anti, g_disclose, g_contrast, g_stories, g_rubric, g_rows, g_tokens, g_penpot, g_noclose,
+    g_public, g_untouched, g_mutlist,
 ))
 # fmt: on
 
@@ -518,6 +532,10 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-26", "G-UNTOUCHED", "an owner document edited", "@changed",
        "", "docs/plan/15-component-catalogue.md"),
     _M("M-27", "G-MUTLIST", "the list drifts", "spec", "| M-1  | G-CITE ", "| M-1  | G-AC   "),
+    _M("M-28", "G-RUBRIC", "a check loses its evidence", "spec",
+       r"\n\| Q12 \| a fake-clock[^\n]*", "", regex=True),
+    _M("M-29", "G-RUBRIC", "a pattern loses its focus row", "spec",
+       r"\n\| SCR-153 \| unchanged [^\n]*", "", regex=True),
 )
 # fmt: on
 
