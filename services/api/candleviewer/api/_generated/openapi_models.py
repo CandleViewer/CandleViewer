@@ -8134,7 +8134,7 @@ class Notifications(BaseModel):
     muted_symbols: Annotated[
         list[MutedSymbol] | None,
         Field(
-            description="Symbols whose alerts are recorded but silenced (E40-D02 CC-8, D-33; `silenced` `muted_symbol` on the delivery). Each symbol at most once: a duplicate is refused with `422` from the preferences slice of #1130 on.\n",
+            description="Symbols whose alerts are recorded but silenced (E40-D02 CC-8, D-33; `silenced` `muted_symbol` on the delivery). Each symbol at most once: a duplicate is refused with `422`, rule `duplicate_symbol`, from the preferences slice of #1130 on.\n",
             max_length=200,
         ),
     ] = None

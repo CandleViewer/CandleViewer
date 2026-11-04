@@ -12,7 +12,10 @@ import asyncio
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, time
+from importlib import resources
+from importlib.util import find_spec
 from typing import Any
+from zoneinfo import available_timezones
 
 import pytest
 from hypothesis import given
@@ -250,3 +253,39 @@ async def test_stored_prefs_bound_the_read() -> None:
 
 def test_zone_lists_known_names_only() -> None:
     assert zone("UTC") is not None and zone("Not/AZone") is None and zone("") is None
+
+
+#: The legacy aliases come from the `tzdata` package (a runtime dependency added on its own,
+#: E40-S02); a host whose zone data lacks the links cannot show them, so these skip without it.
+_NEEDS_TZDATA = pytest.mark.skipif(
+    find_spec("tzdata") is None,
+    reason="the tzdata package is not installed; the host zone data lacks the legacy links",
+)
+
+
+@_NEEDS_TZDATA
+@pytest.mark.parametrize("name", ["Asia/Calcutta", "US/Eastern", "Europe/Kiev", "Asia/Saigon"])
+def test_zone_resolves_a_legacy_alias_from_the_tzdata_package(name: str) -> None:
+    tz = zone(name)
+    assert tz is not None and tz.key == name
+
+
+@pytest.mark.parametrize("name", ["localtime", "Factory", "posixrules"])
+def test_zone_refuses_a_name_that_is_no_place(name: str) -> None:
+    assert zone(name) is None
+
+
+@_NEEDS_TZDATA
+def test_zone_list_is_the_tzdata_packages_whatever_the_host_keeps() -> None:
+    listed = set(resources.files("tzdata").joinpath("zones").read_text("utf-8").split())
+    assert p._zones() == frozenset(listed - {"localtime", "Factory", "posixrules"})
+
+
+def test_zone_list_falls_back_to_the_host_without_the_tzdata_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def absent(package: str) -> Any:
+        raise ModuleNotFoundError(package)
+
+    monkeypatch.setattr(p.resources, "files", absent)
+    assert p._zones() == frozenset(available_timezones() - {"localtime", "Factory", "posixrules"})

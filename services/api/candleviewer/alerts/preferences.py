@@ -27,7 +27,7 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, time
-from functools import lru_cache
+from importlib import resources
 from typing import Any, Final, Literal, Protocol
 from uuid import UUID
 from zoneinfo import ZoneInfo, available_timezones
@@ -45,15 +45,30 @@ _HHMM: Final = re.compile(r"([01][0-9]|2[0-3]):([0-5][0-9])")
 READ_TIMEOUT_S: Final = 2.0
 
 
-@lru_cache(maxsize=1)
+#: Names the tz data lists that are no place: the host's own zone and the data's placeholders.
+_NOT_A_PLACE: Final = frozenset({"localtime", "Factory", "posixrules"})
+
+
 def _zones() -> frozenset[str]:
-    return frozenset(available_timezones())
+    """The zone names quiet hours accept: the `tzdata` package's list (a runtime dependency, so
+    the legacy aliases a browser still reports resolve whatever the image's tz data keeps), the
+    host's only when the package is absent."""
+    try:
+        names = set(resources.files("tzdata").joinpath("zones").read_text("utf-8").split())
+    except (ModuleNotFoundError, OSError):
+        names = available_timezones()
+    return frozenset(names - _NOT_A_PLACE)
+
+
+#: Built at import, before the app serves: never a directory walk on the event loop (C-2.17).
+_ZONES: Final = _zones()
 
 
 def zone(name: str) -> ZoneInfo | None:
-    """The IANA zone `name`, or None when the server's tz database lacks it. Only a listed key
-    reaches `ZoneInfo`, so no path the pattern lets through is ever opened."""
-    return ZoneInfo(name) if name in _zones() else None
+    """The IANA zone `name`, or None when it is not listed (or names no place). Only a listed key
+    reaches `ZoneInfo`, which falls back to the `tzdata` package for a key the host lacks, so no
+    path the pattern lets through is ever opened."""
+    return ZoneInfo(name) if name in _ZONES else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +169,8 @@ def decide(
         return DELIVER if why is None else Decision("silence", why)
     if why is not None:
         return Decision("suppress", why)
+    # The #1869 ruling: the server settles `desktop_off` itself, where E40-D02 §6.6 leaves the
+    # master to the shell (CC-17); the shell's own skip still stands for a row it holds.
     return DELIVER if prefs.desktop_enabled else Decision("suppress", "desktop_off")
 
 

@@ -67,7 +67,9 @@ QUIET_HOURS: Final = "notifications.quiet_hours"
 RISK_CHANNEL_LOCKED: Final = "risk_channel_locked"
 #: A matrix cell's value when the patch leaves it absent (E40-D02 §6.2's defaults, D01 §4/§7): per
 #: category, (toast, desktop, sound); the Alerts row has no desktop cell (per alert, D-11), so its
-#: desktop reads off for the sound-only rule. A locked cell reads on whatever is sent.
+#: desktop reads off for the sound-only rule. A locked cell reads on whatever is sent. A hand copy
+#: of the §6.2 table, pinned to it cell by cell by the unit tests; C-16.5 follow-up: a `defaults`
+#: block in `packages/protocol/notification-overrides.json`, generated like the locked cells.
 MATRIX_DEFAULTS: Final[Mapping[str, tuple[bool, bool, bool]]] = MappingProxyType({
     "alerts": (True, False, True), "rule_actions": (True, False, False),
     "order_rejects": (True, False, True), "risk_events": (True, True, True),
