@@ -334,7 +334,12 @@ def test_contract_20_lists_the_tolerance_and_the_two_metrics() -> None:
     assert "| OMS | `oms_closed_pnl_divergence_total` | counter |" in metrics  # no account label
     assert "| OMS | `oms_closed_pnl_fetch_seconds{result}` | histogram |" in metrics
     assert not _missing(metrics, "no labels, `max_series` 1, and no account label (SR-125)")
-    assert not _missing(metrics, "`ok` or `failed`; no account label, `max_series` 2;")
+    assert not _missing(
+        metrics,
+        "`ok` or `failed`, or `other_account` for a crossing between accounts, which a seed's "
+        "positions read that meets one counts too; no account label, `max_series` 3; **ticket** "
+        "`OmsClosedPnlAccountCrossing` when `other_account` rose in the hour (§12.5)",
+    )
 
 
 def test_contract_21_declares_the_record_table_and_classifies_it() -> None:
@@ -927,4 +932,29 @@ def test_contract_24_and_20_state_the_syncs_composition_and_its_fourth_readiness
         "`resyncing` asks again; any other failure keeps the poll.",
         "the adapter reads a record with no `orderId` field as one with an empty one (§14.2 rule "
         "12).",
+    )
+
+
+def test_contract_24_and_20_count_a_crossing_between_accounts_apart_and_ticket_it() -> None:
+    """The orchestrator's review of slice 3b (2026-11-04, 22:38Z): a crossing between accounts is
+    timed under a `result` of its own, the seed's too, and raises a ticket (20 Sec.12.5)."""
+    assert not _missing(
+        _s813(),
+        "Each read is timed in `oms_closed_pnl_fetch_seconds{result}`, `ok` or `failed`, and a "
+        "crossing between accounts apart, under `other_account`: an account read, a record or a "
+        "seed's position reading (below) that names another account (C-2.11), which raises the "
+        "ticket `OmsClosedPnlAccountCrossing` (`20-architecture.md` §12.5).",
+    )
+    alerts = _between(_doc("20-architecture.md"), "### 12.5", "\n## 13. ")
+    assert not _missing(
+        alerts,
+        "Ticket — `OmsClosedPnlAccountCrossing`, when "
+        '`oms_closed_pnl_fetch_seconds{result="other_account"}` rose in the last hour.',
+    )
+    log = _between(_doc("24-internal-schemas.md"), "### 19.134 ", "\n### 19.")
+    assert not _missing(
+        log,
+        "raises the ticket `OmsClosedPnlAccountCrossing`, modelled on `BybitRowsRefusedAccount`; "
+        "the histogram's `max_series` is 3.",
+        "No REST operation, WS frame, table, column, migration, chart or `machine_hash` changes.",
     )

@@ -300,6 +300,26 @@ groups:
         annotations:
           summary: "A trading read returned a row of another exchange account"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-bybitrowsrefusedaccount"
+      - alert: OmsClosedPnlAccountCrossing
+        # E29-S06 (#981, the orchestrator's ruling of 2026-11-04): the closed-PnL sync met a
+        # crossing between accounts (C-2.11): its account resolve, a record of its read or a
+        # position reading of its seed named another account, which it counts apart from a failed
+        # read (`result="other_account"`, 24 Sec.8.13) and keeps nothing of. As
+        # BybitRowsRefusedAccount: a rise in the hour, or a first sample with none an hour before
+        # (the series is bound by its first crossing), held 9 h 30 m through the quiet hours,
+        # `secrets`, never inhibited by a Postgres outage (SR-125).
+        expr: >-
+          sum by (env) (increase(oms_closed_pnl_fetch_seconds_count{result="other_account"}[1h])) > 0
+          or (sum by (env) (oms_closed_pnl_fetch_seconds_count{result="other_account"}) > 0
+          unless sum by (env) (oms_closed_pnl_fetch_seconds_count{result="other_account"} offset 1h))
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: secrets
+        annotations:
+          summary: "The closed-PnL sync met a crossing between accounts"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omsclosedpnlaccountcrossing"
       - alert: OmsRateRejects
         expr: increase(oms_rate_reject_total[10m]) > 0
         for: 0m

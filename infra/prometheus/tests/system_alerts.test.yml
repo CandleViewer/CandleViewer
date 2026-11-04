@@ -1983,6 +1983,75 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: oms_closed_pnl_fetch_seconds_count{env="live",result="other_account"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: OmsClosedPnlAccountCrossing
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: secrets
+        env: live
+      exp_annotations:
+        summary: The closed-PnL sync met a crossing between accounts
+        runbook_url: docs/plan/07-release-and-prr.md#alert-omsclosedpnlaccountcrossing
+- interval: 1m
+  input_series:
+  - series: oms_closed_pnl_fetch_seconds_count{env="live",result="other_account"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 10h
+    alertname: OmsClosedPnlAccountCrossing
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: secrets
+        env: live
+      exp_annotations:
+        summary: The closed-PnL sync met a crossing between accounts
+        runbook_url: docs/plan/07-release-and-prr.md#alert-omsclosedpnlaccountcrossing
+- interval: 1m
+  input_series:
+  - series: oms_closed_pnl_fetch_seconds_count{env="live",result="other_account"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 11h
+    alertname: OmsClosedPnlAccountCrossing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: oms_closed_pnl_fetch_seconds_count{env="live",result="other_account"}
+    values: _x5 1+0x700
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: OmsClosedPnlAccountCrossing
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: secrets
+        env: live
+      exp_annotations:
+        summary: The closed-PnL sync met a crossing between accounts
+        runbook_url: docs/plan/07-release-and-prr.md#alert-omsclosedpnlaccountcrossing
+- interval: 1m
+  input_series:
+  - series: oms_closed_pnl_fetch_seconds_count{env="live",result="failed"}
+    values: 0+0x5 1+0x700
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: OmsClosedPnlAccountCrossing
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: oms_closed_pnl_fetch_seconds_count{env="live",result="other_account"}
+    values: 3+0x700
+  alert_rule_test:
+  - eval_time: 11h
+    alertname: OmsClosedPnlAccountCrossing
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: cv_key_rotation_notices_total{env="live",state="overdue"}
     values: 0+0x5 1+0x700
   alert_rule_test:
