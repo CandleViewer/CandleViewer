@@ -1573,6 +1573,9 @@ export interface paths {
      *     `enabled`, `errors[].rule` `limit_reached` and a message that names the cap (example
      *     `armedAlertCap`), and nothing is written. `{enabled: false}` is never refused by the cap,
      *     and neither is `{enabled: true}` on an alert that is already armed.
+     *
+     *     Body bounds, write rate and refusal records: "Alert write bounds and refusal records" in
+     *     `info.description`.
      */
     put: operations["setAlertEnabled"];
     post?: never;

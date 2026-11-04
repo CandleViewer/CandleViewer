@@ -18,7 +18,11 @@ from prometheus_client import REGISTRY
 
 import candleviewer.app as app_module
 from candleviewer.api.alert_body import REFUSAL_REASONS
-from candleviewer.api.alert_deliveries import DenialBudget, make_alert_deliveries_router
+from candleviewer.api.alert_deliveries import (
+    DENIALS_PER_WINDOW,
+    DenialBudget,
+    make_alert_deliveries_router,
+)
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.writer import AuditUnavailable
@@ -175,8 +179,8 @@ def test_crud_and_inbox_refusals_share_one_budget_per_caller() -> None:
 
 
 def test_create_app_hands_both_alert_routers_one_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The app wires one budget into both routers, and their counters: each bound refusal reason
-    bound at 0, a held record counted (SR-E40-16, SR-125)."""
+    """The app wires one budget into both routers, 22's 20 records an hour, and their counters: each
+    bound refusal reason bound at 0, a held record counted (SR-E40-16, SR-125)."""
     crud, inbox = MagicMock(wraps=make_alerts_router), MagicMock(wraps=make_alert_deliveries_router)
     monkeypatch.setattr(app_module, "make_alerts_router", crud)
     monkeypatch.setattr(app_module, "make_alert_deliveries_router", inbox)
@@ -184,6 +188,8 @@ def test_create_app_hands_both_alert_routers_one_budget(monkeypatch: pytest.Monk
     seen = {"crud": crud.call_args.kwargs, "inbox": inbox.call_args.kwargs}
     assert isinstance(seen["crud"]["denials"], DenialBudget)
     assert seen["crud"]["denials"] is seen["inbox"]["denials"]
+    admitted = [seen["crud"]["denials"].admit(USER_A) for _ in range(DENIALS_PER_WINDOW + 1)]
+    assert admitted == [0] * DENIALS_PER_WINDOW + [None]  # 22: the 21st record in the hour is held
     seen["crud"]["on_refused"]("rate_limited")
     seen["inbox"]["on_refused"]("body_too_large")
     seen["inbox"]["on_held"]()

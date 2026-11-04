@@ -14,6 +14,7 @@ import asyncio
 import codecs
 import json
 import time
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -279,14 +280,15 @@ def test_alert_bounds_answer_after_the_ownership_check(op: str) -> None:
     assert t.send(padded(t.body, CAP + 1)).status_code == 404 and t.env.refused == []
 
 
-def test_alert_bounds_answer_before_the_armed_alert_cap() -> None:
-    """22: the bounds are decided before the body is validated, the armed-alert cap (#1864) at the
-    write. At the cap, re-arming an alert with a body over the byte cap is the 413: the bound's
-    refusal is counted, never the cap's, and nothing changes (SR-E40-17)."""
-    t = target("enabled")
-    assert t.write().status_code == 200  # disarmed: enabling it again would arm it
-    t.env.repo.max_armed = 0  # and the caller is at the cap
+@pytest.mark.parametrize("op", ["create", "update", "enabled"])
+def test_alert_bounds_answer_before_the_armed_alert_cap(op: str) -> None:
+    """22: the bounds come before the body is validated, the armed-alert cap (#1864) at the write.
+    At the cap, a create, a replace and an enable that would arm one, sent over the byte cap, are
+    the 413: the bound's refusal is counted, never the cap's, and nothing changes (SR-E40-17)."""
+    t = target(op)
+    t.env.repo.rows = {k: replace(a, enabled=False) for k, a in t.env.repo.rows.items()}
+    t.env.repo.max_armed = 0  # none armed, and the caller is at the cap: the write would arm one
     before = t.snapshot()
-    r = t.send(padded({"enabled": True}, CAP + 1))
+    r = t.send(padded(t.body | {"enabled": True}, CAP + 1))
     assert (r.status_code, t.snapshot(), t.env.refused) == (413, before, ["body_too_large"])
     assert t.env.cap_refusals == []
