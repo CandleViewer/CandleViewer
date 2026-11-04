@@ -44,6 +44,24 @@ packages/fixtures/golden/indicators/** text eol=lf linguist-generated=true
 # tests/unit/oms/test_executions_web_golden.py` (json.dumps + LF) and byte-checked by it.
 packages/fixtures/golden/executions/*.json text eol=lf linguist-generated=true
 
+# E37-S01: the rule-graph goldens a tool writes. compile_models.json is written by
+# `CV_RULE_GRAPH_WRITE_GOLDEN=1` on packages/rule-graph/test/compileModel.test.ts and compiled back to each
+# hash vector by services/api/tests/contract/test_rule_graph_compile_model_contract.py; the four generated
+# editor graphs are written by packages/fixtures/scripts/rule-graph-editor.mjs and drift-checked by
+# packages/fixtures/test/rule-graph-editor.test.mjs. The hand-written editor files stay counted.
+packages/fixtures/golden/rule-graph/compile_models.json text eol=lf linguist-generated=true
+packages/fixtures/golden/rule-graph/editor/budget-200.json text eol=lf linguist-generated=true
+packages/fixtures/golden/rule-graph/editor/over-budget-121.json text eol=lf linguist-generated=true
+packages/fixtures/golden/rule-graph/editor/review-60.json text eol=lf linguist-generated=true
+packages/fixtures/golden/rule-graph/editor/tier-b-61.json text eol=lf linguist-generated=true
+
+# E37-S02: the rule vocabulary each persona is served, written by `CV_REGEN_GOLDEN=1 pytest
+# tests/contract/test_rule_vocabulary_fixtures.py` (one compact entry per line, LF) and byte-checked by it.
+packages/fixtures/golden/rule-graph/vocabulary/manager.json text eol=lf linguist-generated=true
+packages/fixtures/golden/rule-graph/vocabulary/no-orders-write.json text eol=lf linguist-generated=true
+packages/fixtures/golden/rule-graph/vocabulary/owner.json text eol=lf linguist-generated=true
+packages/fixtures/golden/rule-graph/vocabulary/unrecorded-solusdt.json text eol=lf linguist-generated=true
+
 # E05-T06: the icon modules, written by `pnpm --filter @candleviewer/ui build:icons` from
 # src/icons/source/ and byte-checked by `build` (`--check`) and test/icons/generator.test.ts.
 packages/ui/src/icons/generated/** linguist-generated=true
