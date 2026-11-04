@@ -13,7 +13,7 @@ repaired (the guard is not under test here). A repeat under a key is a replay, w
 `Idempotency-Replayed` header 22 declares on none of `amendOrder`, `cancelOrder`,
 `cancelAllOrders`, `closeAllPositions` and `setPositionLeverage`: the replay case is added once it
 does. A key reused under another body is `closeAllPositions`' `500` where 22 lists `409` (F1,
-#5855), pinned by the request sweep's `xfail`. No step-up is needed: `sl_loosen`, of
+#5855, fixed by #5873), pinned by the request sweep's `xfail`. No step-up is needed: `sl_loosen`, of
 `setPositionTpSl`, is the one the E29 operations have.
 
 Not driven: `setPositionTpSl` (`PUT /positions/{positionId}/tpsl`): no router serves it
@@ -24,8 +24,7 @@ nothing to supply; `test_e29_the_one_operation_not_driven_is_not_mounted` fails 
 `getPosition`, `closePosition`, `reversePosition` and `setPositionLeverage` (its `info` says every
 operation may answer one), so the copy of 22 here gives those the shared `Unauthorized`. It also
 takes `"symbol": null` on `closeAllPositions` (`oneOf [Symbol, null]`): the route reads `null` as
-no symbol, where 22 types a string alone (F2, #5855). The `22` PR (branch
-`docs/e29-q02-22-auth-replay`) declares it, which flips
+no symbol, where 22 types a string alone (F2). #5868 declares it, which flips
 `test_e29_22_declares_the_null_symbol_close_all_positions_takes`: delete `_null_symbol` and the
 marker then.
 
@@ -113,9 +112,9 @@ _PINS: Final[dict[str, dict[str, str]]] = {}
 
 
 def _null_symbol(close_all: dict[str, Any]) -> None:
-    """F2 (#5855): `closeAllPositions` reads `"symbol": null` as no symbol, where 22 types it a
-    string alone. The `22` PR (branch `docs/e29-q02-22-auth-replay`) declares `oneOf [Symbol,
-    null]`, which makes this a no-op and flips the xfail below: delete both then."""
+    """F2: `closeAllPositions` reads `"symbol": null` as no symbol, where 22 types it a string
+    alone. #5868 declares `oneOf [Symbol, null]`, which makes this a no-op and flips the xfail
+    below: delete both then."""
     members = close_all["requestBody"]["content"]["application/json"]["schema"]["properties"]
     if {"type": "null"} not in members["symbol"].get("oneOf", []):
         members["symbol"] = {"oneOf": [members["symbol"], {"type": "null"}]}
@@ -285,9 +284,8 @@ def test_e29_the_one_operation_not_driven_is_not_mounted() -> None:
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="F2 (#5855): 22 types closeAllPositions.symbol a string alone; the 22 PR (branch "
-    "docs/e29-q02-22-auth-replay) declares it nullable, which flips this: delete _null_symbol "
-    "and the marker",
+    reason="F2: 22 types closeAllPositions.symbol a string alone; #5868 declares it nullable, "
+    "which flips this: delete _null_symbol and the marker",
 )
 def test_e29_22_declares_the_null_symbol_close_all_positions_takes() -> None:
     """The route reads `"symbol": null` as no symbol, as `cancelAllOrders`' does and 22 declares

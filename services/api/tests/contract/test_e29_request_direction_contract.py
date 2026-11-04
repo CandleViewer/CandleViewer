@@ -11,14 +11,15 @@ refuse one, C-6.3), a value of another type, a value one past a bound 22 declare
 requires left out. The test first checks that 22 refuses the request (and, for a bound, takes the
 value at it), then asks the route on the fakes of its unit tests (`_e29_oms_world`): the sample is
 accepted (a `2xx` 22 lists), a broken one is refused with `400` or `422`, as 22 lists for the
-operation, a code of `x-error-codes` with the status the registry pairs with it, and the `Problem`
-body its response declares.
+operation, a code of `x-error-codes` with a status 22 gives that code, and the `Problem` body its
+response declares.
 
-F6, ruled: `validation_failed` is `400` everywhere (22's registry). Until #5855's fix (item 3)
-moves them, `closePosition`, `reversePosition`, `closeAllPositions` and `setPositionLeverage` refuse
-a body `422 validation_failed`, as 22's `setPositionLeverage` prose still says; the pairing is
-relaxed on those four routes (`_F6`) and on no other, and a strict `xfail` pins the `400`: its flip
-deletes `_F6` and the marker.
+`validation_failed` is `400` when the request is malformed (an unparseable body, a bad query
+parameter or cursor) and `422` when a well-formed body fails semantic validation, and an operation's
+declared responses name which (the orchestrator's ruling on F6; #5868 states it in 22's `Problem`,
+where the registry keeps `400`). So an answer needs a status its operation declares and one 22 gives
+the code: the registry's and, for this code, `422` too (`_ALSO`). An operation that declares `400`
+alone fails on a `422`, and no route is listed.
 
 Left out, each for its reason: `X-CSRF-Token` (required by 22, but SR-041's guard is the composed
 app's middleware, which these worlds do not run, and it answers `403`); `If-Match` (a plain
@@ -69,11 +70,9 @@ _ACCOUNTS: Final = {"exchange_account_ids": [str(ACCOUNT_A)]}
 _STRANGERS: Final[tuple[Any, ...]] = (12345, "x", True, [], {}, None)
 #: What 22 can bound a member by: the value one past each is a break.
 _BOUNDS: Final = ("maxItems", "uniqueItems", "minimum", "maximum", "maxLength")
-#: F6 (module docstring): the routes that refuse a body `422` until #5855 (item 3) moves them to
-#: the `400` the registry pairs with `validation_failed`.
-_F6: Final = frozenset(
-    {"closePosition", "reversePosition", "closeAllPositions", "setPositionLeverage"}
-)
+#: A second status 22 gives a code beside the registry's (module docstring); `refused` takes it
+#: only where the operation declares that status.
+_ALSO: Final = {"validation_failed": {422}}
 #: 22's lookup (#2303) names two members no route reads yet: a list ignores them. #5552 implements
 #: it and flips their cases (strict `xfail`): its change deletes this set and the marker.
 _UNREAD: Final = {
@@ -202,17 +201,16 @@ async def send(request: Request, served: Served, *, raise_faults: bool = True) -
 
 def refused(request: Request, answer: httpx.Response) -> None:
     """`answer` is a refusal as 22 declares it for the operation: a `400` or `422` it lists, a code
-    of the registry with the status the registry pairs with it (but `422 validation_failed` on the
-    `_F6` routes), and the `Problem` its response names."""
+    of the registry with a status 22 gives that code (`_ALSO`), and the `Problem` its response
+    names."""
     responses = operation(request.operation)[2]["responses"]
     assert answer.status_code in (400, 422), answer.text
     assert str(answer.status_code) in responses, f"22 lists no {answer.status_code}"
     body = answer.json()
     code = body["code"]
     assert code in _STATUS, body
-    f6 = code == "validation_failed" and request.operation in _F6  # the one pairing relaxed
-    paired = {_STATUS[code], *([422] if f6 else [])}
-    assert answer.status_code in paired, f"22 pairs {code} with {_STATUS[code]}: {answer.text}"
+    given = {_STATUS[code]} | _ALSO.get(code, set())
+    assert answer.status_code in given, f"22 gives {code} {sorted(given)}: {answer.text}"
     assert answer.headers["content-type"].startswith("application/problem+json")
     (media,) = inline(responses[str(answer.status_code)])["content"].values()
     Draft202012Validator(media["schema"], format_checker=_FORMATS).validate(body)
@@ -368,9 +366,9 @@ async def test_request_direction_a_missing_required_member_is_refused(
 async def test_request_direction_a_value_past_a_bound_22_declares_is_refused(
     operation_id: str, place: str, name: str, bound: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """E29-TC-655: more than 25 account ids, a `limit` outside its range, a note too long: a `400
-    validation_failed` (for now a `422` on the `_F6` routes), with nothing read. 22 takes the value
-    at the bound, so the bound is the only break."""
+    """E29-TC-655: more than 25 account ids, a `limit` outside its range, a note too long: refused
+    as `validation_failed`, with nothing read. 22 takes the value at the bound, so the bound is the
+    only break."""
     request, served = await _asked(operation_id, monkeypatch)
     within, past = _beside(_schema_of(operation_id, place, name), bound)
     assert request.with_member(place, name, within).conforms()
@@ -394,26 +392,8 @@ async def test_request_direction_an_absent_body_is_refused(
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="F6 (#5855 item 3): the four position writes refuse a body 422, where validation_failed "
-    "is 400 everywhere; its fix flips this: delete _F6 and the marker",
-)
-@pytest.mark.parametrize("operation_id", sorted(_F6))
-async def test_request_direction_the_position_writes_refuse_a_body_with_400(
-    operation_id: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`validation_failed` is `400` (22's registry, F6 ruled): the four position writes answer a
-    body they refuse as every other write does."""
-    request, served = await _asked(operation_id, monkeypatch)
-    answer = await send(request.with_member("body", "unexpected_member", 1), served)
-    assert answer.status_code == 400, answer.text
-    assert answer.json()["code"] == "validation_failed"
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="F1 (#5855): close-all lets IdempotencyKeyReuse escape, a 500 where 22 lists 409; "
-    "its fix deletes this marker",
+    reason="F1 (#5855, fixed by #5873): close-all lets IdempotencyKeyReuse escape, a 500 where 22 "
+    "lists 409; the fix's merge flips this: delete the marker",
 )
 async def test_request_direction_a_key_reused_for_another_body_of_close_all_is_409(
     monkeypatch: pytest.MonkeyPatch,
