@@ -383,6 +383,27 @@ async def test_closed_pnl_maps_a_usdt_row_of_the_transcribed_shape() -> None:
     [record] = await make_port(venue).closed_pnl(account(), NOW_US - DAY_US, NOW_US)
     assert (record.symbol, record.side, record.qty) == ("ETHUSDT", "sell", Decimal("3"))
     assert record.closed_pnl == Decimal("-47.4065323") and record.order_id is None
+    assert record.exchange_order_id == "5a373bfe-188d-4913-9c81-d57ab5be8068"
+
+
+@pytest.mark.parametrize("order_id", ["", None], ids=["empty", "absent"])
+async def test_closed_pnl_returns_a_row_with_no_order_id_as_none_and_counts_it(
+    order_id: str | None,
+) -> None:
+    """24 Sec.8.13's empty-orderId rule (Sec.14.2 rule 12): the transcribed row as a USDT one with
+    its `orderId` emptied (or dropped), each one value changed. It is returned with
+    `exchange_order_id` None, never "", counted `no_order_id`, and never refused."""
+    row = {**CLOSED["result"]["list"][0], "symbol": "ETHUSDT", "orderId": order_id}
+    if order_id is None:
+        del row["orderId"]
+    venue = Venue().on("/v5/position/closed-pnl", _last(with_result(CLOSED, list=[row])))
+    before = (_refused("no_order_id"), _refused("not_usdt"))
+    with capture_logs() as logs:
+        [record] = await make_port(venue).closed_pnl(account(), NOW_US - DAY_US, NOW_US)
+    assert record.exchange_order_id is None and record.closed_pnl == Decimal("-47.4065323")
+    assert (_refused("no_order_id"), _refused("not_usdt")) == (before[0] + 1, before[1])
+    [line] = [e for e in logs if e["event"] == "bybit_closed_pnl_without_order_id"]
+    assert (line["symbol"], line["log_level"]) == ("ETHUSDT", "warning")
 
 
 async def test_the_wallet_needs_one_unified_usdt_row() -> None:

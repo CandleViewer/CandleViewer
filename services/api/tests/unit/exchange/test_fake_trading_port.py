@@ -507,7 +507,7 @@ async def test_reads_answer_the_seeded_state_by_account_and_window() -> None:
     closed = ClosedPnl(
         account_id=ACCOUNT, symbol="BTCUSDT", side="sell", qty=Decimal("1"),
         avg_entry_price=Decimal("60000"), avg_exit_price=Decimal("61000"),
-        closed_pnl=Decimal("1000"), leverage=Decimal("5"), opened_at=T0, closed_at=T0,
+        closed_pnl=Decimal("1000"), leverage=Decimal("5"), created_at=T0, closed_at=T0,
     )  # fmt: skip
     port.seed_execution(fill)
     port.seed_closed_pnl(closed)
@@ -757,7 +757,7 @@ async def test_history_and_closed_pnl_answer_only_the_accounts_own() -> None:
     mine_pnl = ClosedPnl(
         account_id=ACCOUNT, symbol="BTCUSDT", side="sell", qty=Decimal("1"),
         avg_entry_price=Decimal("60000"), avg_exit_price=Decimal("61000"),
-        closed_pnl=Decimal("1000"), leverage=Decimal("5"), opened_at=T0, closed_at=T0,
+        closed_pnl=Decimal("1000"), leverage=Decimal("5"), created_at=T0, closed_at=T0,
     )  # fmt: skip
     port.seed_closed_pnl(mine_pnl)
     port.seed_closed_pnl(mine_pnl.model_copy(update={"account_id": OTHER}))
