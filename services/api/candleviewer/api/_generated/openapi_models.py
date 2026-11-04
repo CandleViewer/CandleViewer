@@ -6650,7 +6650,7 @@ class Signal1(BaseModel):
     unavailable_reason: str | None = None
     missing_dependency: dict[str, Any] | None = None
     recorder_action: dict[str, Any] | None = None
-    __null_refused = field_validator("display_name", "enum_values", "params_schema", "description", "warmup_bars", "deterministic", "confidence", "dependencies", "when_unavailable", "unavailable_reason", "missing_dependency", "recorder_action", mode="before")(_refuse_null)
+    __null_refused = field_validator("display_name", "enum_values", "params_schema", "description", "warmup_bars", "deterministic", "confidence", "dependencies", "scope", "when_unavailable", "unavailable_reason", "missing_dependency", "recorder_action", mode="before")(_refuse_null)
 
 
 class Operator(BaseModel):
@@ -6686,7 +6686,7 @@ class Action1(BaseModel):
             description="Always false: no rule may loosen a stop, and an action that could is refused for every role (`stop_loosening`, 24-internal-schemas.md section 8.8 rule 5). The field stays until the 24-internal-schemas.md section 19.26 follow-up retires it.\n"
         ),
     ] = False
-    __null_refused = field_validator("display_name", "params_schema", "idempotent", "guarded", "targets", "restriction", "notes", mode="before")(_refuse_null)
+    __null_refused = field_validator("display_name", "params_schema", "idempotent", "guarded", "targets", "places_orders", "restriction", "notes", mode="before")(_refuse_null)
 
 
 class Guard(BaseModel):
