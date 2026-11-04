@@ -2,8 +2,8 @@
 
 - Ticket: E11-Q06 (#518) · Format: session-based test management (`docs/plan/03-testing-strategy.md` §11.2) · Written:
   2026-11-04
-- Status: **written, not yet run.** Pack index: `docs/qa/e11-regression-pack.md` section 5 (BQ-8 †).
-- Time box: 90 minutes, one session. Executor (BQ-7 †): an agent through a headed browser; the owner reviews the sheet.
+- Status: **written, not yet run.** Pack index: `docs/qa/e11-regression-pack.md` section 5 (BQ-8).
+- Time box: 90 minutes, one session. Executor (BQ-7): an agent through a headed browser; the owner reviews the sheet.
 
 ## Charter
 
@@ -13,7 +13,7 @@ sits between (ticket scenario 5).
 
 ## Target
 
-A mounted route counts (BQ-6 †, G-04). The bench matrix page is a labelled dry run for S1, S4 and S5 only.
+A mounted route counts (BQ-6, G-04). The bench matrix page is a labelled dry run for S1, S4 and S5 only.
 
 ## Seams
 
@@ -35,7 +35,7 @@ A mounted route counts (BQ-6 †, G-04). The bench matrix page is a labelled dry
 
 ## Session sheet
 
-Header: build sha, browser and version, GPU and driver, OS, display scale, target.
+Header: build sha, browser and version, GPU and driver, OS, display scale, target, executor, machine (GPU, driver, OS; below the `26` section 1 reference class is below-reference evidence under the #220 rule).
 
 | #   | Probe | How                                     | Watch      | Executor      | Result       |
 | --- | ----- | --------------------------------------- | ---------- | ------------- | ------------ |

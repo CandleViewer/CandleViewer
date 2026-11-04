@@ -3,19 +3,19 @@
 - Ticket: E11-Q06 (#518) · Format: session-based test management (`docs/plan/03-testing-strategy.md` §11.2) · Written:
   2026-11-04
 - Status: **written, not yet run.** Pack index: `docs/qa/e11-regression-pack.md` section 5.
-- Time box: 4 hours, one continuous session (BQ-5 †). This exceeds `03` §11.2's 60 to 120 minutes on purpose: the
+- Time box: 4 hours, one continuous session (BQ-5). A ticket-specific exception to `03` §11.2's 60 to 120 minute box (`03` is not edited, C-16.5), on purpose: the
   ticket states the long session cannot be shortened, because slow memory growth and frame-time creep only show over
   hours. B10's 30-minute soak (`packages/chart-engine/bench/engine/engine-lib.mjs`:86) catches fast growth only.
-- Executor (BQ-7 †): an agent on the reference machine; the owner spot-checks the chart at the end.
+- Executor (BQ-7): an agent on the reference machine; the owner spot-checks the chart at the end.
 
 ## Charter
 
-Leave the chart running for four hours on a demo feed, using it lightly at fixed checkpoints, to discover **memory
+Leave the chart running for four hours on the Demo environment's public feed, using it lightly at fixed checkpoints, to discover **memory
 growth, frame-time drift, stale or desynced state and recovery failures** that no shorter run shows.
 
 ## Target
 
-A mounted route with the demo environment's public feed (BQ-6 †, G-04). No dry run substitutes: a bench-page run with
+A mounted route with the Demo environment (public market data is the live public stream, `docs/plan/20-architecture.md`:871) (BQ-6, G-04). No dry run substitutes: a bench-page run with
 the seeded generator is recorded as a rehearsal only.
 
 ## Measurement
@@ -38,7 +38,7 @@ Readings are taken at minute 0 (after the first full render), then every 30 minu
 
 ## What looks wrong (defined before probing)
 
-- W1 **Drift**: memory or frame time at minute 240 more than 5 % above minute 0 (ticket scenario 4).
+- W1 **Drift**: memory or frame time at minute 240 differs from minute 0 by more than 5 % (ticket scenario 4: within 5 percent of the starting values).
 - W2 **Stale**: SCR-045 or the drawn bars disagree with the feed; the forming bar frozen.
 - W3 **Desynced**: the axis range, the crosshair readout and the table disagree with each other.
 - W4 **Recovery**: after A2 or A3, a gap or duplicate bar, a frozen chart, or no stale indication while the feed is off.
@@ -46,7 +46,7 @@ Readings are taken at minute 0 (after the first full render), then every 30 minu
 
 ## Session sheet
 
-Header: build sha, browser and version, GPU and driver, OS, display scale, feed, the heap method.
+Header (ticket-specific exception: 4 hours, not `03` §11.2's 60 to 120 minutes): build sha, browser and version, GPU and driver, OS, display scale, feed, the heap method, executor, machine (GPU, driver, OS; below the `26` section 1 reference class is below-reference evidence under the #220 rule).
 
 | #   | Probe             | How                                     | Watch      | Executor      | Result       |
 | --- | ----------------- | --------------------------------------- | ---------- | ------------- | ------------ |

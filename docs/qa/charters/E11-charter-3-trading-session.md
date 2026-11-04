@@ -3,7 +3,7 @@
 - Ticket: E11-Q06 (#518) · Format: session-based test management (`docs/plan/03-testing-strategy.md` §11.2) · Written:
   2026-11-04
 - Status: **written, not yet run.** Pack index: `docs/qa/e11-regression-pack.md` section 5.
-- Time box: 60 minutes, one session. Executor (BQ-7 †): an agent on the reference machine through a headed browser; the
+- Time box: 60 minutes, one session. Executor (BQ-7): an agent on the reference machine through a headed browser; the
   owner reviews the session sheet.
 
 ## Charter
@@ -14,10 +14,10 @@ session goes on, rather than anything that is wrong on first use.
 
 ## Target
 
-A session counts for sign-off only on a route that mounts the chart with the demo environment's public feed (BQ-6 †;
+A session counts for sign-off only on a route that mounts the chart with the Demo environment (public market data is the live public stream, `docs/plan/20-architecture.md`:871) (BQ-6;
 gap G-04 in the pack). Until then a dry run may target the bench matrix page
 (`node packages/chart-engine/bench/matrix/run-matrix.mjs --runtime chromium --headed`) with the seeded generator; its
-header says "dry run, bench page" and it does not count. No account, no key, no live-environment data in any capture.
+header says "dry run, bench page" and it does not count. No account data, no key, no private-stream or live-account data in any capture.
 
 ## Areas
 
@@ -41,7 +41,7 @@ header says "dry run, bench page" and it does not count. No account, no key, no 
 
 ## Session sheet
 
-Header: build sha, browser and version, GPU and driver, OS, display scale, target (route or dry run), feed.
+Header: build sha, browser and version, GPU and driver, OS, display scale, target (route or dry run), feed, executor, machine (GPU, driver, OS; below the `26` section 1 reference class is below-reference evidence under the #220 rule).
 
 | #   | Probe               | How                                     | Watch      | Executor      | Result       |
 | --- | ------------------- | --------------------------------------- | ---------- | ------------- | ------------ |

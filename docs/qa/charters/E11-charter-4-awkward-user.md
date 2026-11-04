@@ -3,7 +3,7 @@
 - Ticket: E11-Q06 (#518) · Format: session-based test management (`docs/plan/03-testing-strategy.md` §11.2) · Written:
   2026-11-04
 - Status: **written, not yet run.** Pack index: `docs/qa/e11-regression-pack.md` section 5.
-- Time box: 90 minutes, one session. Executor (BQ-7 †): an agent through a headed browser; the owner reviews the sheet.
+- Time box: 90 minutes, one session. Executor (BQ-7): an agent through a headed browser; the owner reviews the sheet.
 
 ## Charter
 
@@ -13,7 +13,7 @@ draws disagrees with what it reports.
 
 ## Target
 
-A mounted route counts (BQ-6 †, G-04); before that, the bench matrix page as a labelled dry run, with mode switches
+A mounted route counts (BQ-6, G-04); before that, the bench matrix page as a labelled dry run, with mode switches
 through the engine API from the console, as E11-C2 does.
 
 ## Areas
@@ -37,7 +37,7 @@ through the engine API from the console, as E11-C2 does.
 
 ## Session sheet
 
-Header: build sha, browser and version, GPU and driver, OS, input devices, target.
+Header: build sha, browser and version, GPU and driver, OS, input devices, target, executor, machine (GPU, driver, OS; below the `26` section 1 reference class is below-reference evidence under the #220 rule).
 
 | #   | Probe                 | How                                    | Watch      | Executor      | Result       |
 | --- | --------------------- | -------------------------------------- | ---------- | ------------- | ------------ |

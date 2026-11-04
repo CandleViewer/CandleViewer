@@ -3,7 +3,7 @@
 - Ticket: E11-Q06 (#518) · Format: session-based test management (`docs/plan/03-testing-strategy.md` §11.2) · Written:
   2026-11-04
 - Status: **written, not yet run.** Pack index: `docs/qa/e11-regression-pack.md` section 5.
-- Time box: 90 minutes, one session, pointer unplugged. Executor (BQ-7 †): an agent driving keys only through a headed
+- Time box: 90 minutes, one session, pointer unplugged. Executor (BQ-7): an agent driving keys only through a headed
   browser; the owner reviews the sheet. Complements E11-Q05 (#517): conformance asks "does it meet the standard", this
   asks "is it workable for a whole session".
 
@@ -15,7 +15,7 @@ usable**: too many keystrokes, lost focus, silent results, or a task that cannot
 
 ## Target
 
-A mounted route with SCR-045 counts (BQ-6 †, G-04); the SCR-045 panel and the price-scale menu are not on the bench
+A mounted route with SCR-045 counts (BQ-6, G-04); the SCR-045 panel and the price-scale menu are not on the bench
 page, so no dry run covers M3 or M4.
 
 ## Areas

@@ -6,10 +6,12 @@ Usage:
 
 `--check` re-reads, at the base named in the pack's header, the E11 ticket JSON and every file the
 pack cites. It fails on: a Story or Task scenario missing from section 3, added to it or retitled;
-a status outside the vocabulary; a `named` row with no cite carrying the scenario's title; a
-section 3 cite that is not a `describe` / `it` / `test` line, or is a `todo` / `skip` line on a
-`named` row; any other cite past the end of its file; a section 3.1 count that differs; and a
-word the public-text scrub rejects in the pack or its charters. `--self-test` applies one
+a status outside the vocabulary (`traced`, `partial`, `gap`, `blocked: #N`, the senses of the E11-Q01
+plan's section 7.2); a `blocked` number that is not the row's owner; a section 3 cite that is not a
+`describe` / `it` / `test` line, or is a `todo` / `skip` line on a `traced` row; a doc cite or other
+cite past the end of its file; a section 3.1 count that differs (the `named` count is derived: a
+`traced` row whose cite carries the scenario's title); and a word the public-text scrub rejects in
+the pack or its charters. It does not pin the line of a doc cite. `--self-test` applies one
 mutation per failure family and expects each to fail.
 """
 
@@ -39,7 +41,8 @@ CHARTERS = tuple(
 )
 TICKETS = "docs/plan/backlog/E11.json"
 ALIASES = {"CE/": "packages/chart-engine/", "WEB/": "apps/web/", "UI/": "packages/ui/"}
-STATUSES = ("named", "traced", "partial", "gap-owned", "gap")
+STATUSES = ("traced", "partial", "blocked", "gap")
+BLOCKED = re.compile(r"blocked: (#\d+)")
 # The public-text scrub list and the title stand-ins, rot13 so this file does not carry the words.
 SCRUB_ROT13 = (
     "cer-nhgu yrnx rkcbfrq olcnff rkcybvg nggnpx benpyr erirny haobhaqrq sybbq fgnyy qbf "
@@ -61,7 +64,7 @@ ROW_CITE = re.compile(r"`((?:CE|WEB|UI)/[^`]+?):(\d+)`")
 DOC_CITE = re.compile(r"`([A-Za-z][^`\s]*\.[a-z]{2,4})`:(\d+)")
 TEST_CALL = re.compile(r"\b(describe|it|test)(\.\w+)*\(")
 COUNTS = re.compile(
-    r"(\d+) scenarios: (\d+) named, (\d+) traced, (\d+) partial, (\d+) gap-owned, (\d+) gap\."
+    r"(\d+) scenarios: (\d+) traced \((\d+) named\), (\d+) partial, (\d+) blocked, (\d+) gap\."
 )
 
 
@@ -71,6 +74,7 @@ class Row:
 
     rid: str
     title: str
+    owner: str
     status: str
     cites: tuple[tuple[str, int], ...]
     evidence: str
@@ -134,11 +138,11 @@ def parse_rows(text: str) -> list[Row]:
         if ROW.match(line):
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
             if len(cells) != 6:
-                rows.append(Row(cells[0], "", "malformed", (), ""))
+                rows.append(Row(cells[0], "", "", "malformed", (), ""))
                 continue
-            rid, title, _owner, status, evidence, _note = cells
+            rid, title, owner, status, evidence, _note = cells
             cites = tuple((expand(p), int(n)) for p, n in ROW_CITE.findall(evidence))
-            rows.append(Row(rid, title, status, cites, evidence))
+            rows.append(Row(rid, title, owner, status, cites, evidence))
     return rows
 
 
@@ -146,6 +150,7 @@ def check_rows(text: str, repo: Repo) -> list[str]:
     errors: list[str] = []
     expected = expected_scenarios(repo)
     rows = parse_rows(text)
+    named: set[str] = set()
     seen = Counter(r.rid for r in rows)
     errors += [f"{rid}: listed {n} times" for rid, n in seen.items() if n > 1]
     errors += [f"{rid}: scenario missing" for rid in expected if rid not in seen]
@@ -154,11 +159,15 @@ def check_rows(text: str, repo: Repo) -> list[str]:
         original = expected.get(row.rid)
         if original is not None and row.title != stand_in(original):
             errors.append(f"{row.rid}: title differs from the ticket")
-        if row.status not in STATUSES:
+        kind = row.status.split(":")[0]
+        pinned = BLOCKED.fullmatch(row.status)
+        if kind not in STATUSES or (kind == "blocked") != bool(pinned):
             errors.append(f"{row.rid}: status {row.status!r} not in the vocabulary")
-        if row.status.startswith("gap") and (row.cites or row.evidence != "none"):
+        elif pinned and pinned.group(1) != row.owner:
+            errors.append(f"{row.rid}: {row.status} is not the owner {row.owner}")
+        if kind in ("gap", "blocked") and (row.cites or row.evidence != "none"):
             errors.append(f"{row.rid}: a gap row carries evidence")
-        if not row.status.startswith("gap") and not row.cites:
+        if kind not in ("gap", "blocked") and not row.cites:
             errors.append(f"{row.rid}: {row.status} row without a cite")
         titled = False
         for path, num in row.cites:
@@ -169,21 +178,21 @@ def check_rows(text: str, repo: Repo) -> list[str]:
             line = lines[num - 1]
             if not TEST_CALL.search(line):
                 errors.append(f"{row.rid}: {path}:{num} is not a describe / it / test line")
-            if row.status == "named" and re.search(r"\.(todo|skip|fixme)\(", line):
+            if row.status == "traced" and re.search(r"\.(todo|skip|fixme)\(", line):
                 errors.append(f"{row.rid}: {path}:{num} is a todo / skip line")
             if original is not None and norm(original) in norm(line):
                 titled = True
-        if row.status == "named" and not titled:
-            errors.append(f"{row.rid}: no cite carries the scenario's title")
-    return errors + check_counts(text, rows)
+        if row.status == "traced" and titled:
+            named.add(row.rid)
+    return errors + check_counts(text, rows, len(named))
 
 
-def check_counts(text: str, rows: list[Row]) -> list[str]:
+def check_counts(text: str, rows: list[Row], named: int) -> list[str]:
     found = COUNTS.search(text)
     if not found:
         return ["section 3.1: count line missing"]
-    tally = Counter(r.status for r in rows)
-    actual = [len(rows)] + [tally[s] for s in STATUSES]
+    tally = Counter(r.status.split(":")[0] for r in rows)
+    actual = [len(rows), tally["traced"], named, tally["partial"], tally["blocked"], tally["gap"]]
     stated = [int(g) for g in found.groups()]
     return [] if stated == actual else [f"section 3.1: stated {stated}, derived {actual}"]
 
@@ -221,19 +230,24 @@ def load() -> tuple[dict[str, str], Repo]:
 
 def self_test(texts: dict[str, str], repo: Repo) -> list[str]:
     pack = texts[str(PACK)]
-    named = next(r for r in parse_rows(pack) if r.status == "named")
-    path, num = named.cites[0]
+    titled = next(r for r in parse_rows(pack) if r.status == "traced" and r.cites)
+    path, num = titled.cites[0]
     short = next(a + path[len(f) :] for a, f in ALIASES.items() if path.startswith(f))
     first_row = next(line for line in pack.splitlines() if ROW.match(line))
+    blocked = next(r for r in parse_rows(pack) if r.status.startswith("blocked"))
+    title_cell = next(r.title for r in parse_rows(pack) if r.title)
     mutations = {
         "a moved cite": pack.replace(f"`{short}:{num}`", f"`{short}:{num + 1}`", 1),
         "a dropped row": pack.replace(first_row + "\n", "", 1),
         "a changed count": COUNTS.sub(
-            "1 scenarios: 0 named, 0 traced, 0 partial, 0 gap-owned, 0 gap.", pack
+            "1 scenarios: 0 traced (0 named), 0 partial, 0 blocked, 0 gap.", pack
         ),
         "a rejected word": pack + "\n" + codecs.decode("haobhaqrq", "rot13") + "\n",
-        "an unknown status": pack.replace("| named ", "| passed", 1),
-        "a retitled row": pack.replace(first_row, first_row.replace("| ", "| X", 2), 1),
+        "an unknown status": pack.replace("| traced ", "| passed ", 1),
+        "a retitled row": pack.replace(f"| {title_cell} ", f"| {title_cell}z ", 1),
+        "a blocked row on the wrong owner": pack.replace(
+            f"| {blocked.status} ", "| blocked: #1 ", 1
+        ),
     }
     failures = []
     for label, mutated in mutations.items():
