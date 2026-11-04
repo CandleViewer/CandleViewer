@@ -12,6 +12,8 @@ import { formatRbacReason } from "./rbacReasons.js";
 
 const RECORD = { method: "POST", path: "/api/v1/recording/symbols", body: { symbol: "BTCUSDT" } };
 const UNRECORDED = "BTCUSDT is not on the recorded-symbol list";
+/** An option's name is its visible text: here the label, the unit and the clause's words before its stop. */
+const SPREAD_NAME = `Spread (bps) bps (not available — ${UNRECORDED} ·`;
 
 /** A served signal (the vocabulary's `display_name`, `unit` and `description`, verbatim). */
 const metric = (
@@ -110,10 +112,11 @@ const BOARD_05: readonly MetricPickerOption[] = [
 ];
 
 /**
- * The host's copy: E36-D05's keys where the deck has them (`rules.editor.row.*`, `rules.editor.name.estimated`,
- * `rules.editor.announce.metrics`). The deck keys no category heading, placeholder or no-results sentence for the
- * picker: the words below stand in for them until it does. The heading takes E37-D05's palette heading,
- * `rules.graph.palette.category_count` ("{category} ({n})", PROPOSED), with the category's word in its slot.
+ * The host's copy: E36-D05's keys where the deck has them (`rules.editor.row.*`, `rules.editor.announce.metrics`).
+ * An option's name is its visible text (WCAG 2.5.3), so the deck's `rules.editor.name.estimated` is not passed in.
+ * The deck keys no category heading, placeholder or no-results sentence for the picker: the words below stand in
+ * for them until it does. The heading takes E37-D05's palette heading, `rules.graph.palette.category_count`
+ * ("{category} ({n})", PROPOSED), with the category's word in its slot.
  */
 const CATEGORY_COUNT = "{category} ({n})";
 const HEADINGS: Readonly<Record<MetricCategory, string>> = {
@@ -130,7 +133,6 @@ const COPY = {
   groupLabel: (category: MetricCategory, n: number) =>
     CATEGORY_COUNT.replace("{category}", HEADINGS[category]).replace("{n}", String(n)),
   estimatedText: "(estimated)",
-  estimatedName: (label: string) => `Estimated, ${label}`,
   unavailableText: (option: MetricPickerOption) =>
     `(not available — ${option.unavailableReason ?? ""} · Start recording)`,
   startRecordingText: "Start recording",
@@ -214,12 +216,12 @@ export const SevenCategories: Story = {
   },
 };
 
-/** EstimatedMetricTagged: "(estimated)" is a word in the option, and its name says "Estimated" first. */
+/** EstimatedMetricTagged: "(estimated)" is a word in the option, and so in its name, which is its visible text. */
 export const EstimatedMetricTagged: Story = {
   render: (args) => <Host {...args} />,
   play: async ({ canvasElement }) => {
     await opened(canvasElement, "regime");
-    const option = page.getByRole("option", { name: "Estimated, Market regime" });
+    const option = page.getByRole("option", { name: "Market regime enum (estimated)" });
     await expect(option).toHaveTextContent("(estimated)");
   },
 };
@@ -231,7 +233,7 @@ export const UnavailableWithStartRecording: Story = {
     mocked(args.onStartRecording).mockClear();
     await opened(canvasElement, "spread");
     await userEvent.keyboard("{ArrowDown}");
-    const option = page.getByRole("option", { name: "Spread (bps)" });
+    const option = page.getByRole("option", { name: SPREAD_NAME });
     await expect(option).toHaveAttribute("aria-disabled", "true");
     await userEvent.keyboard("{ArrowRight}{Enter}");
     const stop = page.getByRole("option", { name: "Start recording" });

@@ -360,7 +360,6 @@ describe("E37-S02's rule-engine components carry their catalogue id", () => {
         onStartRecording={noop}
         groupLabel={(category) => category}
         estimatedText="(estimated)"
-        estimatedName={(label) => `Estimated, ${label}`}
         unavailableText={() => "(not available)"}
         startRecordingText="Start recording"
         countText={(n) => `${String(n)} metrics`}

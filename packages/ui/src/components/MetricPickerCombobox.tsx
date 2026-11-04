@@ -35,7 +35,7 @@ export interface MetricPickerOption {
   /** Line 2. */
   readonly description: string;
   readonly category: MetricCategory;
-  /** Line 1 carries `estimatedText`, and the option's name is `estimatedName(label)`. */
+  /** Line 1 carries `estimatedText`, a word in the option and so in its name. */
   readonly estimated: boolean;
   /** `false`: the option is reached and explained (`unavailableText`), never chosen. */
   readonly available: boolean;
@@ -64,8 +64,6 @@ export interface MetricPickerComboboxProps {
   readonly groupLabel: (category: MetricCategory, count: number) => string;
   /** The word after an estimated option's unit (E36-D05 `rules.editor.row.estimated`). */
   readonly estimatedText: string;
-  /** An estimated option's accessible name (E36-D05 `rules.editor.name.estimated`). */
-  readonly estimatedName: (label: string) => string;
   /**
    * An unavailable option's clause (E36-D05 `rules.editor.row.unavailable`). With a recorder action its last
    * `startRecordingText` words are the Start recording stop; without them the stop follows the clause.
@@ -128,7 +126,9 @@ function aroundStop(clause: string, action: string): readonly [string, string] {
  * CMP-157: CMP-048's combobox pattern over the metric vocabulary (E36-D02 §7). Focus stays in the input and
  * `aria-activedescendant` names the active stop. The options sit in the seven category groups (`role="group"`,
  * each named by its heading with its count), `replay` last. Line 1 reads "label · unit", then the estimated word
- * (a text node), then an unavailable option's clause; line 2 is the description. An unavailable option is
+ * (a text node), then an unavailable option's clause; line 2 is the description. An option's name is its visible
+ * text (WCAG 2.5.3, Label in Name): the label, the unit, the estimated word and the clause's words before its stop,
+ * with the `·` separator presentational; the clause whole and line 2 describe it. An unavailable option is
  * `aria-disabled`, arrow-reachable and never chosen; its Start recording is a second stop inside the row, reached
  * by `→` and left by `←`, and one press is one `onStartRecording` call (none while it is T2). Typing waits for the
  * settle; the count, or the no-results sentence, is said politely once per settled query.
@@ -306,20 +306,17 @@ export function MetricPickerCombobox(props: MetricPickerComboboxProps): JSX.Elem
             <span
               id={id}
               role="option"
-              aria-label={option.estimated ? props.estimatedName(option.label) : option.label}
               aria-selected={at && part === 0 ? true : undefined}
               aria-disabled={option.available ? undefined : true}
-              aria-describedby={cx(
-                option.unit && `${id}-unit`,
-                clause !== undefined && `${id}-clause`,
-                `${id}-desc`,
-              )}
+              // No `aria-label`: the name is the option's own text, so it holds every word line 1 shows. The unit's
+              // leading space keeps it apart from the label in the name; the clause whole and line 2 describe it.
+              aria-describedby={cx(clause !== undefined && `${id}-clause`, `${id}-desc`)}
             >
               <span className="cv-metricpicker__label">{marked(option.label, query)}</span>
               {option.unit ? (
                 <>
-                  <span aria-hidden="true">{" · "}</span>
-                  <span id={`${id}-unit`}>{option.unit}</span>
+                  <span aria-hidden="true">{" ·"}</span>
+                  <span>{` ${option.unit}`}</span>
                 </>
               ) : null}
               {option.estimated ? (

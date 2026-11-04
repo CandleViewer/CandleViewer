@@ -23,6 +23,12 @@ const OWNER_ONLY = formatRbacReason("rbac.owner_only", { verb: "start recording"
 const UNRECORDED = "SOLUSDT is not on the recorded-symbol list";
 const RECORD = { method: "POST", path: "/api/v1/recording/symbols", body: { symbol: "SOLUSDT" } };
 const noop = (): void => undefined;
+// An option's accessible name is its visible text (WCAG 2.5.3, Label in Name): the label, the unit, the estimated
+// word and, for an unavailable option, the clause's words before its stop; the `·` separator is presentational.
+const PRICE_NAME = "Price price";
+const REGIME_NAME = "Market regime enum (estimated)";
+const SPREAD_NAME = `Spread (bps) bps (not available — ${UNRECORDED} ·`;
+const HUNT_NAME = `In stop-hunt zone (not available — ${UNRECORDED})`;
 
 /** E36-D01 R2's count per category and the estimated among them (13 + 41 + 16 + 11 + 13 + 8 + 3 = 105). */
 const COUNTS: Readonly<Record<MetricCategory, readonly [number, number]>> = {
@@ -94,7 +100,6 @@ const SMALL = [PRICE, REGIME, SPREAD, HUNT];
 const COPY = {
   groupLabel: (category: MetricCategory, n: number) => `${category} (${String(n)})`,
   estimatedText: "(estimated)",
-  estimatedName: (label: string) => `Estimated, ${label}`,
   unavailableText: (option: MetricPickerOption) =>
     option.recorderAction === undefined
       ? `(not available — ${option.unavailableReason ?? ""})`
@@ -135,16 +140,51 @@ const aria = (...names: string[]): (string | null)[] =>
 const listbox = (): HTMLElement | null => document.querySelector("[role=listbox]");
 const status = (): HTMLElement => screen().getByRole("status");
 const option = (name: string): HTMLElement => screen().getByRole("option", { name });
-const names = (): string[] =>
-  screen()
-    .queryAllByRole("option")
-    .map((o: HTMLElement) => o.getAttribute("aria-label") ?? o.textContent ?? "");
+/**
+ * The accessible name of each option in `root`, as the role query computes it: it hands every name, with its
+ * element, to a `name` matcher. An option has no `aria-label` (its name is its visible text), so nothing reads one.
+ * jsdom reports every span's `display` as empty, so the query spaces each child element where a browser joins
+ * inline text as it stands: a highlight inside a word ("stop- hunt") reads spaced here, and the Label in Name
+ * test holds the text to read the same either way.
+ */
+const namesIn = (root: HTMLElement): Map<Element, string> => {
+  const seen = new Map<Element, string>();
+  within(root).queryAllByRole("option", {
+    name: (name: string, element: Element) => {
+      seen.set(element, name);
+      return true;
+    },
+  });
+  return seen;
+};
+const optionNames = (): Map<Element, string> => namesIn(document.body);
+const names = (): string[] => [...optionNames().values()];
 const activeId = (): string | null => input().getAttribute("aria-activedescendant");
-/** The accessible name of the active stop: an option's label, or Start recording's words. */
+/** The accessible name of the active stop: an option's visible text, or Start recording's words. */
 const activeName = (): string | null => {
   const node = document.getElementById(activeId() ?? "");
-  return node === null ? null : (node.getAttribute("aria-label") ?? node.textContent);
+  if (node === null) return null;
+  return namesIn(node.closest<HTMLElement>(".cv-select__row") ?? document.body).get(node) ?? null;
 };
+/** A node's text outside every `aria-hidden` element, as it stands: a browser joins inline elements' text as is. */
+const shownText = (node: Node): string => {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+  if (!(node instanceof Element) || node.getAttribute("aria-hidden") === "true") return "";
+  return [...node.childNodes].map(shownText).join("");
+};
+const flat = (text: string): string => text.trim().replace(/\s+/g, " ");
+/** The words a node shows: its text nodes outside every `aria-hidden` element (the `·` separator), each trimmed. */
+const shownWords = (node: Node): string[] => {
+  if (node.nodeType === Node.TEXT_NODE)
+    return [(node.textContent ?? "").trim()].filter((word) => word !== "");
+  if (!(node instanceof Element) || node.getAttribute("aria-hidden") === "true") return [];
+  return [...node.childNodes].flatMap(shownWords);
+};
+/** Each option's name as a browser reads it from the text alone: the 105-option list's check (the role query is slow). */
+const shownNames = (): string[] =>
+  screen()
+    .queryAllByRole("option")
+    .map((o: HTMLElement) => flat(shownText(o)));
 const headings = (): (string | null | undefined)[] =>
   screen()
     .queryAllByRole("group")
@@ -196,19 +236,21 @@ describe("MetricPickerCombobox (CMP-157)", () => {
         "replay (3)",
       ]);
       const named = (o: MetricPickerOption): string =>
-        o.estimated ? `Estimated, ${o.label}` : o.label;
+        [o.label, o.unit, o.estimated ? COPY.estimatedText : undefined]
+          .filter((word) => word !== undefined)
+          .join(" ");
       const inGroupOrder = METRIC_CATEGORIES.flatMap((c) => FULL.filter((o) => o.category === c));
-      expect(names()).toEqual(inGroupOrder.map(named)); // the arrows' order, though given in reverse
+      expect(shownNames()).toEqual(inGroupOrder.map(named)); // the arrows' order, though given in reverse
       await press("ArrowDown");
-      expect(activeName()).toBe("Estimated, price 01");
+      expect(activeName()).toBe("price 01 price (estimated)");
       await press("End");
-      expect(activeName()).toBe("replay 03");
+      expect(activeName()).toBe("replay 03 pct");
       const found: string[] = [];
       for (const category of METRIC_CATEGORIES) {
         await type(`${category} `); // every label of the category, and no description
         await wait(1);
         const members = inGroupOrder.filter((o) => o.category === category);
-        expect(names()).toEqual(members.map(named));
+        expect(shownNames()).toEqual(members.map(named));
         const shown = [...document.querySelectorAll('[role="option"]')];
         members.forEach((each, i) => {
           expect(shown[i]?.textContent, each.id).toContain(` · ${each.unit ?? ""}`);
@@ -218,20 +260,18 @@ describe("MetricPickerCombobox (CMP-157)", () => {
           if (each === undefined) continue;
           await type(each.label);
           await wait(1);
-          expect(names()).toEqual([named(each)]);
-          expect(option(named(each))).toHaveAccessibleDescription(
-            `${each.unit ?? ""} ${each.description}`,
-          );
+          expect(shownNames()).toEqual([named(each)]);
+          expect(option(named(each))).toHaveAccessibleDescription(each.description);
         }
       }
       expect(found.sort()).toEqual(FULL.map((o) => o.id).sort());
     },
   );
 
-  it("Gherkin 'Estimated metrics are badged as text': the word is a text node in the option, its name leads with Estimated", async () => {
+  it("Gherkin 'Estimated metrics are badged as text': the word is a text node in the option, so it is in the option's name", async () => {
     await mount(<Host />);
     await press("ArrowDown", { altKey: true });
-    const tagged = option("Estimated, Market regime");
+    const tagged = option(REGIME_NAME);
     const words = [...tagged.querySelectorAll("span")].map((span) =>
       [...span.childNodes]
         .filter((n) => n.nodeType === Node.TEXT_NODE)
@@ -239,7 +279,7 @@ describe("MetricPickerCombobox (CMP-157)", () => {
     );
     expect(words.flat()).toContain("(estimated)");
     expect(tagged.querySelector("svg")).toBeNull(); // a word, never a glyph alone
-    expect(option("Price").textContent).not.toContain("(estimated)");
+    expect(option(PRICE_NAME).textContent).not.toContain("(estimated)");
     await axeClean();
   });
 
@@ -249,10 +289,10 @@ describe("MetricPickerCombobox (CMP-157)", () => {
     await mount(<Host spy={spy} onStartRecording={started} />);
     await type("spread");
     await press("ArrowDown");
-    const spread = option("Spread (bps)");
+    const spread = option(SPREAD_NAME);
     expect([activeId(), spread.getAttribute("aria-disabled")]).toEqual([spread.id, "true"]);
     expect(spread).toHaveAccessibleDescription(
-      `bps (not available — ${UNRECORDED} · Start recording) Spread in basis points of mid`,
+      `(not available — ${UNRECORDED} · Start recording) Spread in basis points of mid`,
     );
     expect(await press("Enter")).toBe(false); // nothing staged; the clause is said again
     expect(status()).toHaveTextContent(`(not available — ${UNRECORDED} · Start recording)`);
@@ -274,9 +314,9 @@ describe("MetricPickerCombobox (CMP-157)", () => {
 
   it("an unavailable option without a recorder action is explained, with no second stop", async () => {
     await mount(<Host />);
-    await type("hunt");
+    await type("stop-hunt"); // whole words: see `namesIn` on a highlight inside a word
     await press("ArrowDown");
-    const hunt = option("In stop-hunt zone");
+    const hunt = option(HUNT_NAME);
     expect(hunt).toHaveAccessibleDescription(
       `(not available — ${UNRECORDED}) Price within k ticks of a detected stop cluster`,
     );
@@ -290,7 +330,7 @@ describe("MetricPickerCombobox (CMP-157)", () => {
   it("a clause without the action's words: Start recording follows it", async () => {
     await mount(<Host unavailableText={() => "(not recorded)"} />);
     await press("ArrowDown", { altKey: true });
-    const line = option("Spread (bps)").parentElement;
+    const line = option("Spread (bps) bps (not recorded)").parentElement;
     expect(line?.textContent).toBe("Spread (bps) · bps (not recorded) Start recording");
   });
 
@@ -367,12 +407,10 @@ describe("MetricPickerCombobox (CMP-157)", () => {
     vi.useFakeTimers();
     const spy = vi.fn();
     await mount(<Host spy={spy} />);
-    await type("reg");
+    await type("regime");
     expect(await press("Enter")).toBe(true); // nothing active: the host's
     await wait(500);
-    expect(
-      option("Estimated, Market regime").querySelector(".cv-combobox__match")?.textContent,
-    ).toBe("reg");
+    expect(option(REGIME_NAME).querySelector(".cv-combobox__match")?.textContent).toBe("regime");
     await press("ArrowDown");
     expect(await press("Enter")).toBe(false);
     expect(spy).toHaveBeenLastCalledWith("market_regime", REGIME);
@@ -388,9 +426,9 @@ describe("MetricPickerCombobox (CMP-157)", () => {
     expect(await press("Home")).toBe(true);
     await press("ArrowDown");
     expect(await press("End")).toBe(false);
-    expect(activeName()).toBe("Spread (bps)");
+    expect(activeName()).toBe(SPREAD_NAME);
     expect(await press("Home")).toBe(false);
-    expect(activeName()).toBe("Price");
+    expect(activeName()).toBe(PRICE_NAME);
     await press("ArrowUp"); // ↑ on the first returns to the text
     expect([activeId(), aria("expanded")[0]]).toEqual([null, "true"]);
     expect(await press("Escape")).toBe(false);
@@ -408,7 +446,7 @@ describe("MetricPickerCombobox (CMP-157)", () => {
     await mount(<Host category="book" initial="vanished_metric" />);
     expect(input().value).toBe("vanished_metric");
     await press("ArrowDown", { altKey: true });
-    expect([headings(), names()]).toEqual([["book (1)"], ["Spread (bps)", "Start recording"]]);
+    expect([headings(), names()]).toEqual([["book (1)"], [SPREAD_NAME, "Start recording"]]);
   });
 
   it("a hover makes a row active without scrolling; a key move scrolls; a press on the stop never chooses", async () => {
@@ -417,14 +455,14 @@ describe("MetricPickerCombobox (CMP-157)", () => {
     await mount(<Host spy={spy} />);
     await press("ArrowDown", { altKey: true });
     const row = (name: string): Element | null => option(name).closest(".cv-select__row");
-    await act(async () => void fireEvent.mouseMove(row("Price") ?? document.body));
-    expect([activeName(), scroll.mock.calls.length]).toEqual(["Price", 0]);
+    await act(async () => void fireEvent.mouseMove(row(PRICE_NAME) ?? document.body));
+    expect([activeName(), scroll.mock.calls.length]).toEqual([PRICE_NAME, 0]);
     await act(async () => void fireEvent.mouseMove(option("Start recording")));
     expect(activeName()).toBe("Start recording");
     await press("ArrowDown");
     expect(scroll).toHaveBeenCalled();
-    expect(fireEvent.mouseDown(option("Price"))).toBe(false); // prevented: focus stays
-    await click(row("Price") ?? document.body);
+    expect(fireEvent.mouseDown(option(PRICE_NAME))).toBe(false); // prevented: focus stays
+    await click(row(PRICE_NAME) ?? document.body);
     expect(spy).toHaveBeenLastCalledWith("price", PRICE);
   });
 
@@ -461,6 +499,38 @@ describe("MetricPickerCombobox (CMP-157)", () => {
     expect(input()).toBeDisabled();
     await press("ArrowDown");
     expect([aria("expanded")[0], listbox()]).toEqual(["false", null]);
+  });
+
+  // WCAG 2.5.3, Label in Name: what an option shows is in its name. axe's rule for it, `label-content-name-mismatch`,
+  // cannot fail in jsdom (its text check measures on a canvas, which jsdom lacks, so a mismatch there ends as
+  // "incomplete", never as a violation; the Storybook gate's Chromium run is the rule's), so this reads the names the
+  // role query computes against the words each option shows, `aria-hidden` ones left out. The name must also read
+  // the same where a browser joins inline text as it stands (see `namesIn`): each word carries its own space.
+  const shows: [string, number, () => JSX.Element][] = [
+    [
+      "the SevenCategories story's sixteen metrics, estimated and unavailable, and Spread's stop",
+      17,
+      () => {
+        const { SevenCategories } = composeStories(stories);
+        return <SevenCategories />;
+      },
+    ],
+    ["estimated, unavailable with a stop, unavailable with no unit and no stop", 5, () => <Host />],
+    ["a T2 Start recording stop", 5, () => <Host startRecordingReason={OWNER_ONLY} />],
+  ];
+  it.each(shows)("Label in Name: each option's name holds %s", async (_, count, render) => {
+    await mount(render());
+    await press("ArrowDown", { altKey: true });
+    const shown: HTMLElement[] = screen().getAllByRole("option");
+    expect(shown).toHaveLength(count);
+    // Not hollow: the options show their units and the estimated word, and each name is checked against them.
+    expect(shown.flatMap(shownWords)).toEqual(expect.arrayContaining(["bps", "(estimated)"]));
+    const named = optionNames();
+    for (const node of shown) {
+      const name = named.get(node);
+      expect(flat(shownText(node)), "the text as a browser joins it").toBe(name);
+      for (const word of shownWords(node)) expect(name, word).toContain(word);
+    }
   });
 });
 
