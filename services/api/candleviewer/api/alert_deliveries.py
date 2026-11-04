@@ -297,8 +297,8 @@ def make_alert_deliveries_router(
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     on_change: OnChange | None = None,
     denials: DenialBudget | None = None,
-    on_refused: OnRefused = lambda reason: None,
-    on_held: Callable[[], None] = lambda: None,
+    on_refused: OnRefused,
+    on_held: Callable[[], None],
 ) -> APIRouter:
     """Mount before the `/alerts` CRUD router: its `/alerts/{alertId}` would otherwise take
     `GET /alerts/deliveries` and refuse `deliveries` as a malformed alert id. *metric* is the

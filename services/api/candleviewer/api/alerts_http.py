@@ -131,16 +131,12 @@ def _log() -> Any:
     return structlog.get_logger("candleviewer.api.alerts_http")
 
 
-def _no_count() -> None:
-    return None
-
-
 class RefusalRecords:
     """The alert routes' refusal records within one budget per acting user (module docstring),
     the viewer while viewing (#3085): the record names them, and spends their budget."""
 
     def __init__(
-        self, audit: AuditEmitter, budget: RefusalBudget, on_held: Callable[[], None] = _no_count
+        self, audit: AuditEmitter, budget: RefusalBudget, on_held: Callable[[], None]
     ) -> None:
         self._audit, self._budget, self._on_held = audit, budget, on_held
 

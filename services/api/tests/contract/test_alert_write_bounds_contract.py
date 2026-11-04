@@ -16,8 +16,16 @@ import pytest
 from candleviewer.api.alert_body import MAX_ALERT_BODY_BYTES, MAX_ALERT_JSON_DEPTH, MAX_ALERT_VALUES
 from candleviewer.api.alert_deliveries import DENIAL_WINDOW_S, DENIALS_PER_WINDOW
 from candleviewer.api.alerts import ALERT_WRITE_BURST, ALERT_WRITES_PER_MINUTE
-from tests.alerts.test_alert_write_bounds import BODY_ROUTES, deep, padded, sized, target
-from tests.alerts.test_alert_write_rate import Clock, limited, spend
+from tests.alerts._alert_write_env import (
+    BODY_ROUTES,
+    Clock,
+    deep,
+    limited,
+    padded,
+    sized,
+    spend,
+    target,
+)
 from tests.contract.test_alert_inbox_contract import _SPEC, _check
 from tests.openapi_helpers import deref
 

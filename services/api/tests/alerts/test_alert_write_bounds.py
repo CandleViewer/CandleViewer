@@ -3,14 +3,14 @@
 Gherkin "an alert write is bounded before any work": over the byte cap is the declared 413, nested
 past the depth cap or past the value bound the declared 422, decided before the body is decoded
 (depth) or validated (values), with nothing stored or recorded. Inputs come from the constants of
-`api/alert_body.py`, on the rule routes' template (#4197); `target` serves the other #5696 tests.
+`api/alert_body.py`, on the rule routes' template (#4197); the helpers are `_alert_write_env.py`'s.
 """
 
 from __future__ import annotations
 
+import codecs
 import json
-from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -21,101 +21,12 @@ from candleviewer.alerts.compiler import MAX_DEPTH, AlertCompiler
 from candleviewer.alerts.errors import AlertIrInvalid
 from candleviewer.api import alert_body
 from candleviewer.api.alert_body import MAX_ALERT_BODY_BYTES, MAX_ALERT_JSON_DEPTH, MAX_ALERT_VALUES
-from candleviewer.rules.compiler.common import count_values
 from candleviewer.rules.vocabulary import default_registry
 from tests.alerts._alert_api_env import PRICE_CROSS, USER_B
-from tests.alerts._alert_api_env import Env as AlertsEnv
-from tests.alerts._deliveries_env import Env as DeliveriesEnv
+from tests.alerts._alert_write_env import BODY_ROUTES, asgi, deep, padded, sized, target
 
-OUTCOME = {"outcome": "shown", "permission": "granted"}
 #: 22's "256 KiB (262,144 bytes)" as a literal: a test sized from the constant would follow it.
 CAP = 256 * 1024
-BODY_ROUTES = ("create", "update", "enabled", "snooze", "desktop")
-_BY_ID = {"update": "", "delete": "", "enabled": "/enabled", "snooze": "/snooze"}
-_BODY: dict[str, Any] = {"update": PRICE_CROSS | {"name": "renamed"}, "delete": None,
-                         "enabled": {"enabled": False}, "snooze": {"until": None}}  # fmt: skip
-
-
-@dataclass
-class Target:
-    """One alert write on its own app (`env`), and the state a refusal leaves as it was."""
-
-    env: Any
-    method: str
-    path: str
-    body: Any
-    ok: int
-    state: Callable[[], Any]
-
-    def send(self, content: bytes) -> httpx.Response:
-        r: httpx.Response = self.env.c.request(self.method, self.path, content=content)
-        return r
-
-    def write(self) -> httpx.Response:
-        r: httpx.Response = self.env.c.request(self.method, self.path, json=self.body)
-        return r
-
-    def snapshot(self) -> tuple[Any, int, list[str | None]]:
-        """The rows, the records written and the compiles run."""
-        return self.state(), len(self.env.audit.calls), list(getattr(self.env, "compiles", []))
-
-
-def target(op: str, **env_kw: Any) -> Target:
-    """*op*'s write as the env's first user, on a row of theirs made first (by-id writes)."""
-    if op == "desktop":
-        d = DeliveriesEnv(**env_kw)
-        did = d.store.add(channel="desktop", status="queued").id
-        path = f"/alerts/deliveries/{did}/desktop-outcome"
-        return Target(d, "POST", path, OUTCOME, 204, lambda: dict(d.store.rows))
-    e = AlertsEnv(**env_kw)
-
-    def state() -> Any:
-        return dict(e.repo.rows), set(e.repo.deleted)
-
-    if op == "create":
-        return Target(e, "POST", "/alerts", PRICE_CROSS, 201, state)
-    path, ok = f"/alerts/{e.create()['id']}{_BY_ID[op]}", 204 if op == "delete" else 200
-    return Target(e, "DELETE" if op == "delete" else "PUT", path, _BODY[op], ok, state)
-
-
-async def asgi(t: Target, content: Any, headers: dict[str, str] | None = None) -> httpx.Response:
-    """*content* (an async stream) sent as is: the transport pulls a chunk only when it is read."""
-    transport = httpx.ASGITransport(app=t.env.c.app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        return await client.request(t.method, t.path, content=content, headers=headers)
-
-
-def padded(body: Any, size: int) -> bytes:
-    """*body* as JSON, padded with whitespace to exactly *size* bytes."""
-    text = json.dumps(body)
-    return (text[:-1] + " " * (size - len(text)) + text[-1]).encode()
-
-
-def deep(levels: int) -> bytes:
-    """A body whose deepest array sits *levels* deep, the body's own object included."""
-    return ('{"pad":' + "[" * (levels - 1) + "]" * (levels - 1) + "}").encode()
-
-
-def sized(body: Any, shape: str, n: int) -> Any:
-    """*body* holding exactly *n* values (`count_values`, the bound's count), the rest in a
-    metric's `params`, a comparison's `set_values` or a top-level `pad` list."""
-    doc = json.loads(json.dumps(body))
-    if shape == "padding":
-        fill: Any = doc.setdefault("pad", [])
-    elif shape == "params":
-        fill = doc["condition_ir"]["conditions"]["left"].setdefault("params", {})
-    else:
-        fill = []
-        doc["condition_ir"]["conditions"] = {
-            "node_id": "c1", "op": "in_set", "left": {"metric": "price"}, "set_values": fill
-        }  # fmt: skip
-    missing = n - count_values(doc)
-    if shape == "params":
-        fill.update({f"p{i}": 0 for i in range(missing)})
-    else:
-        fill.extend(["v"] * missing)
-    assert count_values(doc) == n
-    return doc
 
 
 def rules(r: httpx.Response) -> list[str]:
@@ -155,14 +66,20 @@ ROUTES = pytest.mark.parametrize("op", BODY_ROUTES)
 
 
 @ROUTES
-def test_alert_body_at_the_cap_is_read_and_one_byte_over_is_413(op: str) -> None:
-    """Gherkin "a body over the byte cap": the declared 413, nothing stored or recorded, counted;
-    a body at the cap is read (SR-E40-17)."""
-    at, over = target(op), target(op)
-    assert at.send(padded(at.body, CAP)).status_code == at.ok
-    before = over.snapshot()
-    too_large(over.send(padded(over.body, CAP + 1)))
-    assert (over.snapshot(), over.env.refused) == (before, ["body_too_large"])
+def test_alert_body_at_the_cap_is_read(op: str) -> None:
+    """A body of exactly the cap is read, and the write goes through (SR-E40-17)."""
+    t = target(op)
+    assert t.send(padded(t.body, CAP)).status_code == t.ok and t.env.refused == []
+
+
+@ROUTES
+def test_alert_body_one_byte_over_the_cap_is_413(op: str) -> None:
+    """Gherkin "a body over the byte cap": the declared 413, nothing stored or recorded, counted
+    (SR-E40-17)."""
+    t = target(op)
+    before = t.snapshot()
+    too_large(t.send(padded(t.body, CAP + 1)))
+    assert (t.snapshot(), t.env.refused) == (before, ["body_too_large"])
 
 
 @ROUTES
@@ -201,7 +118,7 @@ def test_alert_body_nested_past_the_bound_is_422_before_any_decode(
     op: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Gherkin "nested past the depth cap": the declared 422 "before parsing the body", nothing
-    stored or recorded, counted; the bound itself passes the scan (SR-E40-17)."""
+    stored or recorded, counted (SR-E40-17)."""
     t = target(op)
     before = t.snapshot()
     with monkeypatch.context() as patch:
@@ -209,7 +126,22 @@ def test_alert_body_nested_past_the_bound_is_422_before_any_decode(
         r = t.send(deep(MAX_ALERT_JSON_DEPTH + 1))
     assert (r.status_code, rules(r)) == (422, ["json_too_deep"]), r.text[:300]
     assert (t.snapshot(), t.env.refused) == (before, ["json_too_deep"])
-    assert "json_too_deep" not in t.send(deep(MAX_ALERT_JSON_DEPTH)).text
+
+
+@ROUTES
+def test_alert_body_nested_at_the_bound_passes_the_depth_scan(op: str) -> None:
+    """A body nested exactly at the bound reaches the route's own checks (SR-E40-17)."""
+    t = target(op)
+    r = t.send(deep(MAX_ALERT_JSON_DEPTH))
+    assert "json_too_deep" not in r.text and t.env.refused == []
+
+
+def test_alert_body_brackets_inside_a_string_are_not_nesting() -> None:
+    """The depth scan reads strings: a name of 100 `[`, one level down, is no nesting, and the
+    alert is stored (SR-E40-17)."""
+    t = target("create")
+    r = t.send(json.dumps(PRICE_CROSS | {"name": "[" * 100}).encode())
+    assert (r.status_code, t.env.refused) == (201, []), r.text[:300]
 
 
 @ROUTES
@@ -271,15 +203,42 @@ def test_alert_body_not_utf8_is_the_routes_not_json_422(op: str) -> None:
     assert (t.snapshot(), t.env.refused) == (before, [])
 
 
+def test_alert_name_in_latin_1_is_not_json_and_nothing_is_stored() -> None:
+    """Strict UTF-8: a name sent in Latin-1 is a body that is not JSON, never a name stored with
+    a replacement character; nothing changed, nothing counted (SR-E40-17)."""
+    t = target("create")
+    before = t.snapshot()
+    body = json.dumps(PRICE_CROSS | {"name": "café"}, ensure_ascii=False).encode("latin-1")
+    r = t.send(body)
+    assert (r.status_code, r.json()["detail"]) == (422, "Body is not JSON.")
+    assert (t.snapshot(), t.env.refused) == (before, [])
+
+
 @ROUTES
-def test_alert_bounds_answer_after_the_permission_and_ownership_checks(op: str) -> None:
-    """C-12.4 first: without `alerts:write` a 403, on another user's alert or delivery a 404,
-    before the body is read, so no bound is reached (SR-E40-17)."""
+def test_alert_body_with_a_byte_order_mark_is_the_routes_not_json_422(op: str) -> None:
+    """22: UTF-8 without a byte order mark; with one, the route's 422 for a body that is not JSON,
+    nothing changed, nothing counted (SR-E40-17)."""
     t = target(op)
-    over = padded(t.body, MAX_ALERT_BODY_BYTES + 1)
+    before = t.snapshot()
+    r = t.send(codecs.BOM_UTF8 + json.dumps(t.body).encode())
+    assert (r.status_code, r.json()["code"], t.snapshot(), t.env.refused) == (
+        422, "validation_failed", before, []
+    )  # fmt: skip
+
+
+@ROUTES
+def test_alert_bounds_answer_after_the_permission_check(op: str) -> None:
+    """C-12.4 first: without `alerts:write` a 403 before the body is read, so no bound is reached
+    (SR-E40-17)."""
+    t = target(op)
     t.env.perms = frozenset({"alerts:read"})
-    assert t.send(over).status_code == 403 and t.env.refused == []
-    if op != "create":
-        theirs = target(op)
-        theirs.env.user = USER_B
-        assert theirs.send(over).status_code == 404 and theirs.env.refused == []
+    assert t.send(padded(t.body, CAP + 1)).status_code == 403 and t.env.refused == []
+
+
+@pytest.mark.parametrize("op", [op for op in BODY_ROUTES if op != "create"])
+def test_alert_bounds_answer_after_the_ownership_check(op: str) -> None:
+    """Another user's alert or delivery is a 404 before the body is read, so no bound is reached
+    (SR-E40-17)."""
+    t = target(op)
+    t.env.user = USER_B
+    assert t.send(padded(t.body, CAP + 1)).status_code == 404 and t.env.refused == []

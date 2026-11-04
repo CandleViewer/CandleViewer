@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
-from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
 import candleviewer.app as app_module
@@ -21,13 +21,15 @@ from candleviewer.api.alert_deliveries import DenialBudget, make_alert_deliverie
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.writer import AuditUnavailable
+from candleviewer.observability.authz_denials import METRIC_NAME, AuthzDenialMiddleware
+from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Settings
 from tests.alerts._alert_api_env import PRICE_CROSS, USER_A, USER_B
 from tests.alerts._alert_api_env import Env as AlertsEnv
+from tests.alerts._alert_write_env import NO_ALERT, Clock
 from tests.alerts._deliveries_env import ALERT_B
 from tests.alerts._deliveries_env import Env as DeliveriesEnv
-from tests.alerts.test_alert_write_rate import Clock
 
 READ, WRITE = "alerts:read", "alerts:write"
 _OUTCOME = {"outcome": "shown", "permission": "granted"}
@@ -97,11 +99,27 @@ def test_role_refusal_reads_alike_for_an_existing_and_a_missing_alert() -> None:
     env = AlertsEnv()
     aid = env.create()["id"]
     env.perms, seen = frozenset({READ}), len(env.audit.calls)
-    answers = [env.c.put(f"/alerts/{x}/enabled", json={"enabled": False}) for x in (aid, uuid4())]
+    answers = [env.c.put(f"/alerts/{x}/enabled", json={"enabled": False}) for x in (aid, NO_ALERT)]
     assert [a.status_code for a in answers] == [403, 403]
     assert answers[0].json() == answers[1].json()
     first, second = env.audit.calls[seen:]
     assert first == second
+
+
+def test_a_role_refusal_is_counted_by_route_template_never_by_id() -> None:
+    """SR-125's by-route counter, mounted as the app mounts it: one role refusal is one series,
+    labelled with the route template, not the alert's id (SR-E40-21)."""
+    env = AlertsEnv()
+    aid = env.create()["id"]
+    env.perms = frozenset({READ})
+    metrics = Metrics("demo")
+    counter = metrics.counter(METRIC_NAME, "t", ("permission", "route", "role"), max_series=10)
+    client = TestClient(AuthzDenialMiddleware(env.c.app, counter=counter))
+    assert client.put(f"/alerts/{aid}/enabled", json={"enabled": False}).status_code == 403
+    series = [(s.labels["permission"], s.labels["route"])
+              for family in metrics.registry.collect() for s in family.samples
+              if s.name == METRIC_NAME and s.value]  # fmt: skip
+    assert series == [(WRITE, "/alerts/{alertId}/enabled")]
 
 
 def _refuse(env: AlertsEnv, kind: str, aid: str) -> str:
@@ -148,7 +166,7 @@ def test_crud_and_inbox_refusals_share_one_budget_per_caller() -> None:
     theirs = env.store.add(user=USER_B, alert=ALERT_B)
     assert env.c.post(f"/alerts/deliveries/{theirs.id}/ack").status_code == 404
     env.perms = frozenset({READ})
-    assert env.c.put(f"/alerts/{uuid4()}/enabled", json={"enabled": False}).status_code == 403
+    assert env.c.put(f"/alerts/{NO_ALERT}/enabled", json={"enabled": False}).status_code == 403
     assert env.c.post("/alerts/deliveries/ack-all").status_code == 403  # held
     assert env.audit.actions() == ["alert.denied", "rbac.denied"] and env.held == [None]
     clock.t += 60.0
@@ -192,11 +210,12 @@ def test_create_app_hands_both_alert_routers_one_budget(monkeypatch: pytest.Monk
 
 
 def test_a_refusal_record_that_fails_gives_its_slot_back_and_answers_503() -> None:
-    """A due record that cannot be written is the declared 503 with nothing changed; its slot
-    and its count go back, so the next refusal is written and carries it (SR-E40-16, C-2.9)."""
+    """A due record that cannot be written is the declared 503 with nothing changed, the refusal
+    counted first (SR-125); its slot and its count go back, so the next refusal is written and
+    carries it (SR-E40-16, C-2.9)."""
     env = AlertsEnv(denials=_budget(1, Clock()))
     aid = env.create()["id"]
-    before = dict(env.repo.rows)
+    before, counted = dict(env.repo.rows), _denials(WRITE)
     env.perms = frozenset({READ})
 
     async def refuse(action: str, **kw: Any) -> None:
@@ -205,8 +224,35 @@ def test_a_refusal_record_that_fails_gives_its_slot_back_and_answers_503() -> No
     real, env.audit.emit = env.audit.emit, refuse  # type: ignore[method-assign]  # fault injection
     r = env.c.put(f"/alerts/{aid}/enabled", json={"enabled": False})
     assert (r.status_code, r.json()["code"]) == (503, "audit_unavailable")
-    assert env.repo.rows == before
+    assert env.repo.rows == before and _denials(WRITE) == counted + 1
     env.audit.emit = real  # type: ignore[method-assign]  # fault injection
     assert env.c.put(f"/alerts/{aid}/enabled", json={"enabled": False}).status_code == 403
     (record,) = _records(env, "rbac.denied")
     assert record["after_state"]["suppressed_before"] == 1 and env.held == []
+
+
+def test_a_failed_refusal_record_gives_back_the_count_it_carried() -> None:
+    """With a budget of one: a record written, one held, then a due record carrying that one
+    fails (the 503); the next record written carries both, the held one and the failed one
+    (SR-E40-16, C-2.9)."""
+    clock = Clock()
+    env = AlertsEnv(denials=_budget(1, clock))
+    aid = env.create()["id"]
+    env.perms = frozenset({READ})
+    failed: list[dict[str, Any]] = []
+
+    def refused() -> int:
+        status: int = env.c.put(f"/alerts/{aid}/enabled", json={"enabled": False}).status_code
+        return status
+
+    async def refuse(action: str, **kw: Any) -> None:
+        failed.append(kw)
+        raise AuditUnavailable("WAL full")
+
+    assert [refused(), refused()] == [403, 403] and env.held == [None]
+    clock.t += 60.0
+    real, env.audit.emit = env.audit.emit, refuse  # type: ignore[method-assign]  # fault injection
+    assert refused() == 503 and failed[0]["after_state"]["suppressed_before"] == 1
+    env.audit.emit = real  # type: ignore[method-assign]  # fault injection
+    assert refused() == 403
+    assert _records(env, "rbac.denied")[-1]["after_state"]["suppressed_before"] == 2

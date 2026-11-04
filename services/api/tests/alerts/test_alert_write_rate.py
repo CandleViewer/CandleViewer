@@ -10,44 +10,20 @@ and before any read. The clock is a fake monotonic one: no test sleeps.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from uuid import uuid4
+from typing import Any
 
 import pytest
 
+from candleviewer.api import alerts as alerts_module
 from candleviewer.api.alert_body import MAX_ALERT_BODY_BYTES
 from candleviewer.api.alerts import ALERT_WRITE_BURST, ALERT_WRITES_PER_MINUTE
 from candleviewer.api.drawings_limiter import DrawingsWriteLimiter
 from tests.alerts._alert_api_env import USER_B
+from tests.alerts._alert_api_env import Env as AlertsEnv
+from tests.alerts._alert_write_env import NO_ALERT, Clock, asgi, bucket, limited, spend
 from tests.alerts._deliveries_env import Env as DeliveriesEnv
-from tests.alerts.test_alert_write_bounds import Target, asgi, target
 
 WRITES = pytest.mark.parametrize("op", ["create", "update", "delete", "enabled", "snooze"])
-
-
-class Clock:
-    def __init__(self) -> None:
-        self.t = 1000.0
-
-    def __call__(self) -> float:
-        return self.t
-
-
-def bucket(clock: Clock) -> DrawingsWriteLimiter:
-    return DrawingsWriteLimiter(
-        per_minute=ALERT_WRITES_PER_MINUTE, burst=ALERT_WRITE_BURST, clock=clock
-    )
-
-
-def limited(op: str, clock: Clock) -> Target:
-    """*op* on an app whose bucket runs on *clock*, full again once the setup's create is done."""
-    t = target(op, limiter=bucket(clock))
-    clock.t += 60.0
-    return t
-
-
-def spend(t: Target) -> None:
-    """The burst: each write takes a token, whatever it answers."""
-    assert all(t.write().status_code != 429 for _ in range(ALERT_WRITE_BURST))
 
 
 @WRITES
@@ -73,6 +49,31 @@ def test_alert_writes_after_the_burst_are_sixty_a_minute() -> None:
         clock.t += 60.0 / ALERT_WRITES_PER_MINUTE
         assert t.write().status_code == 200
     assert t.write().status_code == 429
+
+
+def test_the_bucket_the_router_builds_for_itself_takes_the_burst_then_one_a_second(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bucket the app runs: `create_app` hands the CRUD router no limiter, so it builds its own
+    (here on a stopped clock). Twenty writes across three routes are taken, and the 21st is the
+    429 with a token due in one second (a burst of 20, 60 a minute; SR-E40-16)."""
+    built: list[DrawingsWriteLimiter] = []
+
+    class Stopped(DrawingsWriteLimiter):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs, clock=lambda: 1000.0)
+            built.append(self)
+
+    monkeypatch.setattr(alerts_module, "DrawingsWriteLimiter", Stopped)
+    env = AlertsEnv()  # no `limiter`: the router's own bucket
+    aid = env.create()["id"]  # the first write
+    writes = [("PUT", f"/alerts/{aid}/enabled", {"enabled": False}),
+              ("PUT", f"/alerts/{aid}/snooze", {"until": None})]  # fmt: skip
+    for i in range(ALERT_WRITE_BURST - 1):
+        method, path, body = writes[i % 2]
+        assert env.c.request(method, path, json=body).status_code == 200
+    r = env.c.delete(f"/alerts/{aid}")
+    assert (r.status_code, r.headers["Retry-After"], len(built)) == (429, "1", 1)
 
 
 def test_alert_write_without_the_permission_takes_no_token() -> None:
@@ -110,7 +111,7 @@ def test_alert_reads_and_inbox_writes_take_no_token() -> None:
         inbox.c.post("/alerts/deliveries/ack-all")
         inbox.c.post(f"/alerts/deliveries/{shown.id}/desktop-outcome",
                      json={"outcome": "shown", "permission": "granted"})  # fmt: skip
-    probe = f"/alerts/{uuid4()}/enabled"  # the inbox app's CRUD router: no such alert, a 404
+    probe = f"/alerts/{NO_ALERT}/enabled"  # the inbox app's CRUD router: no such alert, a 404
     assert {inbox.c.put(probe, json=t.body).status_code for _ in range(ALERT_WRITE_BURST)} == {404}
     assert inbox.c.put(probe, json=t.body).status_code == 429
     spend(t)

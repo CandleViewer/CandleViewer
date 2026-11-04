@@ -107,10 +107,6 @@ def _no_count() -> None:
     return None
 
 
-def _uncounted(*_args: str) -> None:
-    return None
-
-
 class AlertInput(BaseModel):
     """`AlertInput`; `extra="forbid"` so unknown top-level keys (e.g. `actions`) are refused."""
 
@@ -263,8 +259,8 @@ def make_alerts_router(
     *,
     denials: DenialBudget | None = None,
     write_limiter: DrawingsWriteLimiter | None = None,
-    on_refused: OnRefused = _uncounted,
-    on_held: Callable[[], None] = _uncounted,
+    on_refused: OnRefused,
+    on_held: Callable[[], None],
 ) -> APIRouter:
     """*denials*: the refusal-record budget, the one the app hands the inbox router too (a fresh
     `DenialBudget` if None); *write_limiter*: the writes' bucket (`ALERT_WRITE_BURST`,
