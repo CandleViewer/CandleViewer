@@ -7,7 +7,8 @@ the adapter call and the settle transaction (nothing of the settle is committed)
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -31,7 +32,7 @@ class Row:
     attempt: int = 0
     error_message: str | None = None
     http_status: int | None = None
-    context: tuple[tuple[str, Any], ...] = ()
+    context: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -75,12 +76,20 @@ class MemStore:
         self.outbox: dict[int, Ob] = {}
         self.calls: list[str] = []
 
-    def fire(self, channels: list[str], *, max_attempts: int = 8, user: str = USER) -> list[int]:
+    def fire(
+        self,
+        channels: list[str],
+        *,
+        max_attempts: int = 8,
+        user: str = USER,
+        context: Mapping[str, Any] | None = None,
+    ) -> list[int]:
         """What `record_firing` commits: one delivery + one outbox row per channel."""
         ids = []
         for ch in channels:
             did = len(self.rows) + 1
-            self.rows[did] = Row(did, ALERT, user, ch, "queued", "BTC 64k", "", self.clock())
+            self.rows[did] = Row(did, ALERT, user, ch, "queued", "BTC 64k", "", self.clock(),
+                                 context=dict(context or {}))  # fmt: skip
             self.add_outbox(did, max_attempts)
             ids.append(did)
         return ids
@@ -131,17 +140,22 @@ class MemStore:
         self.calls.append("processed")
         self._ob(job, processed=True)
 
-    async def settle_sent(self, job: Job, *, attempt: int, http_status: int | None) -> bool:
+    async def settle_sent(
+        self, job: Job, *, attempt: int, http_status: int | None, silenced: str | None = None
+    ) -> bool:
         self.calls.append("sent")
+        r = self.rows[job.delivery_id]
+        ctx = {**r.context, "silenced": silenced} if silenced is not None else r.context
         won = self._cond(job.delivery_id, status="sent", attempt=attempt, error_message=None,
-                         http_status=http_status)  # fmt: skip
+                         http_status=http_status, context=ctx)  # fmt: skip
         self._ob(job, processed=True, attempts=job.attempts + 1)
         return won
 
     async def settle_suppressed(self, job: Job, *, reason: str) -> bool:
         self.calls.append("suppressed")
+        ctx = {**self.rows[job.delivery_id].context, "suppression_reason": reason}
         won = self._cond(job.delivery_id, status="suppressed", error_message=reason,
-                         context=(("suppression_reason", reason),))  # fmt: skip
+                         context=ctx)  # fmt: skip
         self._ob(job, processed=True)
         return won
 
@@ -162,5 +176,5 @@ class MemStore:
         if won:
             nid = len(self.rows) + 1
             self.rows[nid] = Row(nid, r.alert_id, r.user_id, "in_app", "sent", notice_title, "",
-                                 self.clock(), context=(("channel_failure", True),))  # fmt: skip
+                                 self.clock(), context={"channel_failure": True})  # fmt: skip
         return won

@@ -108,3 +108,15 @@ def test_outbox_job_row_satisfies_the_dispatcher_port() -> None:
 
     job: OutboxJob = JOB  # mypy proves the structural fit
     assert (job.id, job.delivery_id, job.attempts, job.max_attempts) == (3, 7, 2, 8)
+
+
+async def test_settle_sent_merges_silenced_into_context_in_the_same_update() -> None:
+    """CC-9 (#1130 slice 3): a held firing's `in_app` row is sent with `silenced` in one statement;
+    an unheld one binds null, which leaves `context` as it is."""
+    store, rel = _store(_Result([], rowcount=1), _Result([]))
+    assert await store.settle_sent(JOB, attempt=1, http_status=None, silenced="quiet_hours")
+    sql, params = rel.calls[0]
+    assert "jsonb_build_object('silenced'" in str(sql) and params["silenced"] == "quiet_hours"
+    store, rel = _store(_Result([], rowcount=1), _Result([]))
+    await store.settle_sent(JOB, attempt=1, http_status=None)
+    assert rel.calls[0][1]["silenced"] is None

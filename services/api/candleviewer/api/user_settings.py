@@ -24,8 +24,11 @@ record per request that changes a leaf, `object_kind` `setting` with the user as
 naming the actor, the role (`user:<role>`), the session and the address, its state only the leaves
 the request changed, each with its value before and after (`null`: no override; a credential-class
 leaf masked, below). A record that cannot be written is `503 audit_unavailable`, nothing changed;
-a patch that changes nothing writes no record. The answer is the effective settings after the
-merge, as `GET` would answer them.
+a patch that changes nothing writes no record. A patch refused for turning a locked matrix cell off
+(`risk_channel_locked`, E40-D02 CC-8) is first audited `notifications.risk_channel_muted` at high
+severity (`error`, outcome `denied`, the cells named), then answered `422`; its record unwritten is
+`503 audit_unavailable`, and nothing is stored either way. The answer is the effective settings
+after the merge, as `GET` would answer them.
 
 Q3 of #5181, as ruled: `notifications.webhook_url` is a credential-bearing URL (21 Sec.12), stored
 as a plain row and answered in full to its owner only. The record's before and after carry its
@@ -255,6 +258,22 @@ def make_user_settings_router(
 
         return hook
 
+    async def risk_channel_muted(p: AuditPrincipal, cells: list[str]) -> None:
+        """`notifications.risk_channel_muted` (E40-D02 CC-8, #1130 slice 3): a patch that tried to
+        turn a locked cell off, refused whole and nothing stored; high severity (`error`). The
+        state names the cells only, never another value of the patch."""
+        try:
+            await audit.emit(  # a literal, so the registered-action scan reads it (#2144)
+                "notifications.risk_channel_muted", actor_label=f"user:{_role(p)}",
+                actor_user_id=p.actor_id, actor_ip=p.ip, session_id=p.session_id,
+                request_id=p.request_id, object_kind="setting", object_id=str(p.user_id),
+                outcome=AuditOutcome.DENIED, severity=Severity.ERROR,
+                after_state={"cells": cells, "rule": "risk_channel_locked"},
+            )  # fmt: skip
+        except (AuditError, RuntimeError) as exc:  # RuntimeError: no writer started
+            raise SettingsAuditRefused from exc
+        _log().warning("user_settings_risk_channel_muted", user_id=str(p.user_id), cells=cells)
+
     @router.get("/settings")
     async def get_settings(request: Request) -> Response:
         principal = await caller(request, Permission.SETTINGS_READ, GET_SETTINGS_QUERY)
@@ -268,6 +287,8 @@ def make_user_settings_router(
         try:
             patch = judge_patch(await _read_body(request))
         except PatchRefused as refused:
+            if refused.locked:  # CC-8: the attempt on a locked cell is audited, then refused
+                await risk_channel_muted(principal, refused.locked)
             raise _Problem("validation_failed", "The request is invalid.",
                            errors=refused.errors) from None  # fmt: skip
         changed: list[str] = []

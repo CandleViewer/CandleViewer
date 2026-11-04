@@ -84,6 +84,7 @@ from candleviewer.alerts.lifecycle import AlertCharts
 from candleviewer.alerts.outbox import TOPIC_ALERT_DELIVER, alert_deliver_dedup_key
 from candleviewer.alerts.owners import OwnerGate
 from candleviewer.alerts.ports import FiringStore, WakingFiringStore
+from candleviewer.alerts.preferences import StoredPrefs
 from candleviewer.alerts.render import registry_titles
 from candleviewer.alerts.service import AlertsService
 from candleviewer.api import (
@@ -3825,6 +3826,8 @@ def _alert_dispatcher(
         owners=OwnerGate(SqlAlchemyIdentityProvider(pg)),
         metric=sink,
         on_change=on_change,
+        # #1130 slice 3 (CC-9): the delivery owner's `Settings.notifications`, read at dispatch.
+        prefs=StoredPrefs(SqlAlchemyUserSettings(pg)),
     )
 
 
