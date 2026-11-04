@@ -3192,7 +3192,9 @@ export interface paths {
      *     one closing order (a partial close is a record of its own), composed and compared on
      *     the server (24 §8.13; E29-S06, #981, contract first). An item is `provisional` while
      *     the venue's record of its close is unread: its figures are those the stored closing
-     *     fills compose, and `net_pnl` is their sum. Reading the record settles the item in
+     *     fills compose, and `net_pnl` is their sum, absent when they compose no `gross_pnl`: such
+     *     an item is still served and counted, provisional, so a close not yet read shows in the
+     *     items and the totals (24 §8.13). Reading the record settles the item in
      *     place, with the same `id`: `net_pnl` is then the venue's `closed_pnl`, authoritative,
      *     and `divergent` says the server's own `local_net_pnl` differs from it by more than
      *     `oms.closed_pnl_tolerance_rel` allows. Until the venue's record is final (24 §8.13), a
@@ -3221,8 +3223,9 @@ export interface paths {
      *     **Filters.** The FilterBar's chips: `exchange_account_ids`, `symbol` and
      *     `trade_group_id` each take several values, which are alternatives, and the kinds,
      *     `side` included, narrow together; the totals take the same filters. An item's trade
-     *     group is its position's, that of its opening orders' leg, else its closing fills', else
-     *     its closing order's (24 §8.13); an item none of them names matches no `trade_group_id`.
+     *     group is its position's, the one group its opening fills' orders name (24 §8.13); an
+     *     item whose opening fills name several groups or none matches no `trade_group_id`, so
+     *     no group's totals count it.
      *
      *     **As served until E29-S06's route slice (E29-T07, #915).** The stored fills that carry a
      *     closed PnL, one item per fill, newest first by fill time: `id` is the fill's,
@@ -8481,7 +8484,7 @@ export interface components {
       leverage?: components["schemas"]["Decimal"];
       /** @description `gross_pnl` + `fee_pnl` + `funding_pnl`, present when all three are: the server's own figure. */
       local_net_pnl?: components["schemas"]["Decimal"];
-      /** @description The figure shown and totalled: `closed_pnl` once settled, else the sum of the local figures present. */
+      /** @description The figure shown and totalled: `closed_pnl` once settled, else the sum of the local figures present, absent with no `gross_pnl`. */
       net_pnl?: components["schemas"]["Decimal"];
       /**
        * Format: date-time

@@ -4093,7 +4093,7 @@ class ClosedPnl(BaseModel):
     net_pnl: Annotated[
         str | None,
         Field(
-            description="The figure shown and totalled: `closed_pnl` once settled, else the sum of the local figures present.",
+            description="The figure shown and totalled: `closed_pnl` once settled, else the sum of the local figures present, absent with no `gross_pnl`.",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
