@@ -106,7 +106,7 @@ the SR-ids row is proposed by #4288, which wrote this refresh, and so is F-8's e
 | F-5 | E09-X02 | SR-013 (R-1) | Spoofing | Medium | E09 epic owner | #2101 | 2026-10-16 | Same as R-1 |
 | F-6 | E09-X02 | No scheduled audit-chain verifier | Repudiation | Medium | Security | #2111 | 2026-10-16 | Same as R-5 |
 | F-7 | E09-X02 | Invites could carry `manager` | Elevation of privilege | Low | Architect + Owner | #2109 | 2026-10-16 | Same as R-3 |
-| F-8 | E09-X02 | Build metadata (the git sha) served before authentication (U26) | Information disclosure | Low | Architect + Owner | #4236, #4222, #4206 | 2026-10-16 / review 2027-01-22 | WS half **fixed** by #4236; the probes **fixed** by #4222 (after #4221); the remainder is #4206. The sha after authentication is **accepted**, review 2027-01-22; confirmed by row A8 (§7) |
+| F-8 | E09-X02 | Build metadata (the git sha) served before authentication (U26) | Information disclosure | Low | Security engineer | #4236, #4222, #4206 | 2026-10-16 / review 2027-01-22 | WS half **fixed** by #4236; the probes **fixed** by #4222 (after #4221); the remainder is #4206. The sha after authentication is **accepted**, review 2027-01-22; confirmed by row A8 (§7) |
 | O-1..O-4 | E09-X02 | Defended attacks whose defence was partly invisible | Repudiation | Low | — | #2319 | 2026-10-16 | **Closed** by #2319; O-2's alert rules are #2746 (open) |
 | A-1 | #2083 | `audit:read` grants misaligned with 04 §7.2 / SR-067 | Information disclosure | High (P0) | Security | #2083 → PR #2095 | 2026-10-08 | Fixed (merged) |
 | X3-1 | E09-X03 | ZAP authenticated scan needs CI fixture secrets | — (gate coverage) | Medium | Owner | #1778 item D | 2026-10-04 / 2026-11-26 | Open. The weekly authenticated ZAP runs 38239151651 (2026-10-12) and 39226251666 (2026-10-19) failed at "Check fixture credentials present", and PR runs skip |
@@ -134,7 +134,7 @@ the SR-ids row is proposed by #4288, which wrote this refresh, and so is F-8's e
 | L4 | this review | U29: details held in the private repository advisory (maintainers) | Denial of service | Low | Security | #1232 (E43-T03) | 2026-10-23 / 2027-02-04 | Open |
 | D12-1 | E09-D12 hand-off pack lens (#4959), 2026-10-29 | SR-014: details held in the private repository advisory (maintainers) | Information disclosure | Medium | Backend (virtarix-worker-3) | #4961 | 2026-10-29 / 2026-11-05 | Open |
 | ENV-1 | E09-X02, E09-Q05 | The environment-dependent verification (Docker, Postgres, k6, staging) has not run in the integration lane | — (gate coverage) | Low | Backend (virtarix-worker-3) | #2105 | 2026-10-09 / 2026-11-26 | Open |
-| SR-ids | this review | The threat model's provisional SR-024, -052, -053, -054 and -057 collide with registered SRs in 04 §6.3 and §6.4; RSK-020's text, RSK-021's `(SR-024, U12)`, AC-AUTHZ-03 and the abuse-case U23 row (SR-054) cite the colliding ids | — | Info | Security | #2832 | 2026-10-23 / 2026-11-26 | Open |
+| SR-ids | this review | The threat model's provisional SR-024, -052, -053, -054 and -057 collide with registered SRs in 04 §6.3 and §6.4; RSK-020's text, RSK-021's `(SR-024, U12)`, AC-AUTHZ-03 and the abuse-case U23 row (SR-054) cite the colliding ids | — | Info | Security | #2832 | 2026-10-23 / 2026-11-26 | **Resolved** by #4234: epic-scoped `SR-E09-01` to `SR-E09-05` |
 
 Rows R-1 to R-7 and D-1/D-2 come from this review on 2026-10-09; M1 to M4, L1 to L4 and the SR-ids
 row from its re-examination on 2026-10-23, which also closed the rows marked fixed. D12-1 and ENV-1

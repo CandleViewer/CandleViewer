@@ -130,7 +130,7 @@ mitigation; a row with no verification is itself a finding (flagged `[FINDING]`)
 | U23 | Recovery codes persisted in the DOM or browser history after display | L | H | Medium | Recovery codes render once, in a non-persisted view (no route param, no browser-storage write, `autocomplete="off"`), with an explicit "save these now" modal that cannot be reopened | `test_recovery_codes_not_in_url_or_localstorage` (Playwright), a11y note routed to `E09-Q04` for the modal's screen-reader behaviour | Low |
 | U24 | `users.email`, `sessions.ip`, `audit_log.actor_ip` (PII) exposed in an export or admin download without redaction/consent controls | M | M | Medium | Exports go through a role-scoped projection (SR-067 pattern from Area 7 D3, applied here to auth/audit PII); raw IP/email fields owner-only, redacted for Manager/Viewer exports | `test_export_projection_redacts_pii_for_non_owner_roles` | Low |
 | U25 | A 403 response body/shape reveals the existence of a resource the caller has no grant to know about | L | L | Low | `authorize()` returns a uniform 403 body regardless of whether the resource exists or the caller merely lacks scope — no distinguishing "not found" vs "forbidden" leak | `test_403_body_identical_for_missing_vs_unauthorized_resource` | Low |
-| U26 | Viewer-visible `build`/`git_sha` metadata aids a targeted exploit against a known-vulnerable build | L | L | Low | The build label (the version) only before authentication, as the WS `welcome` and the health probes `/healthz` and `/readyz` do now (#4222; `/metrics`: #4206, pending); the sha only after it, to authenticated principals, in `auth_ok` (`23-ws-protocol.md` §4.3) and an Owner's `GET /admin/health`, as `getBuildInfo` already does by contract (`22-api-openapi.yaml`, `x-rbac: permissions: []`; E17 WS-I04, accepted under #1778). **Relaxed from Owner-only (F-8):** a Viewer or Manager gets the sha once authenticated | AC-INFO-01 (`services/api/tests/security/auth/test_build_info_abuse.py`) | Low. **Accepted risk for the sha reaching every authenticated role, dated 2026-10-22** (F-8 in `docs/security/abuse-cases/e09-auth.md`, under the #2701 delegation, comment 6284192190; the relaxation confirmed LANE-30, 2026-10-23 01:24Z). Owner Architect + Owner; review date 2027-01-22 (C-12.1). `post-ga` hardening, not part of #4222 (a row on #4222's closing comment, owner E09-X02): build info `ADMIN_READ`-only across `getBuildInfo` and `auth_ok`, a contract change in 22 and 23 (22's `BuildInfo` names the field `commit`, while 22's `HealthReport` and 23's `auth_ok` say `git_sha`, each as its own contract does: see F-8 in `docs/security/abuse-cases/e09-auth.md`) |
+| U26 | Viewer-visible `build`/`git_sha` metadata aids a targeted exploit against a known-vulnerable build | L | L | Low | The build label (the version) only before authentication, as the WS `welcome` and the health probes `/healthz` and `/readyz` do now (#4222; `/metrics`: #4206, pending); the sha only after it, to authenticated principals, in `auth_ok` (`23-ws-protocol.md` §4.3) and an Owner's `GET /admin/health`, as `getBuildInfo` already does by contract (`22-api-openapi.yaml`, `x-rbac: permissions: []`; E17 WS-I04, accepted under #1778). **Relaxed from Owner-only (F-8):** a Viewer or Manager gets the sha once authenticated | AC-INFO-01 (`services/api/tests/security/auth/test_build_info_abuse.py`) | Low. **Accepted risk for the sha reaching every authenticated role, dated 2026-10-22** (F-8 in `docs/security/abuse-cases/e09-auth.md`, under the #2701 delegation, comment 6284192190; the relaxation confirmed LANE-30, 2026-10-23 01:24Z). Owner Security engineer; review date 2027-01-22 (C-12.1). `post-ga` hardening, not part of #4222 (a row on #4222's closing comment, owner E09-X02): build info `ADMIN_READ`-only across `getBuildInfo` and `auth_ok`, a contract change in 22 and 23 (22's `BuildInfo` names the field `commit`, while 22's `HealthReport` and 23's `auth_ok` say `git_sha`, each as its own contract does: see F-8 in `docs/security/abuse-cases/e09-auth.md`) |
 
 ### 3.5 Denial of service
 
@@ -332,12 +332,12 @@ and the socket-only window (U45) are the accepted-residual-risk items, and they 
 | U2, U11 | SR-020, SR-021 (extended per U11) | **SR-021 amendment**: last-accepted-counter tracking (§3.1 U11) |
 | U5, U22 | SR-012, SR-112, SR-122 | no |
 | U6, U32 | SR-013 | **SR-013 clarification**: "on every authentication state transition" includes role change, and authorization reads are never session-cached beyond an explicitly invalidated short-lived cache (ADR-0010 Consequences) |
-| U12 | (pattern of SR-022 applied to invites) | **new: SR-024** invite-token issuance/redemption (128-bit CSPRNG, single-use, hashed, short TTL) |
+| U12 | (pattern of SR-022 applied to invites) | **new: SR-E09-01** invite-token issuance/redemption (128-bit CSPRNG, single-use, hashed, short TTL) |
 | U13 | SR-012, SR-013, CSRF/Origin validation (ADR-0010 §3) | no — **Accepted risk for a replay while the session is live, dated 2026-10-22** (F-4 in `docs/security/abuse-cases/e09-auth.md`, under the #2701 delegation, comment 6284192190); review date 2027-01-22 (§3.1) |
 | U14, U19, U20, U21 | C-2.9 (audit write-ahead), schema `REVOKE UPDATE, DELETE` | no |
 | U15, U31 | SR-050, SR-051 | no — U31 clarifies SR-050 is a **distinct second layer**, not a duplicate of the capability check |
-| U16 | (none existing) | **new: SR-052** single-source RBAC vocabulary (enum → OpenAPI `x-rbac` → DB seed) with a CI drift check |
-| U17 | (none existing) | **new: SR-053** schema-grants invariant test, independent of migration history |
+| U16 | (none existing) | **new: SR-E09-02** single-source RBAC vocabulary (enum → OpenAPI `x-rbac` → DB seed) with a CI drift check |
+| U17 | (none existing) | **new: SR-E09-03** schema-grants invariant test, independent of migration history |
 | U18 | SR-025 | no |
 | U3, D1-shared | SR-017, SR-018 | no |
 | U4 | SR-055 | no |
@@ -345,10 +345,10 @@ and the socket-only window (U45) are the accepted-residual-risk items, and they 
 | U8 | SR-014 | no |
 | U9 | SR-022 | no |
 | U10, U29 | SR-023 | no |
-| U23 | (pattern of SR-022) | **new: SR-054** recovery-code/step-up display surfaces never persist to DOM/browser storage |
+| U23 | (pattern of SR-022) | **new: SR-E09-04** recovery-code/step-up display surfaces never persist to DOM/browser storage |
 | U24 | SR-067 (Area 7 pattern, applied to auth/audit exports) | no |
-| U25, U26 | (none existing) | no registered requirement yet (the provisional SR-056 is taken: it is the native-stop-loss invariant). U25: uniform error responses (403 vs 404 indistinguishable). U26: the sha only to authenticated principals — **Accepted risk, dated 2026-10-22** (F-8 in `docs/security/abuse-cases/e09-auth.md`); review date 2027-01-22 (§3.4) |
-| U30 | (none existing) | **new: SR-057** `authorize()`/`ScopeResolver` API has no permissive default; enforced by type system + lint + test |
+| U25, U26 | (none existing) | no registered requirement yet. U25: uniform error responses (403 vs 404 indistinguishable), tracked by #5694. U26: the sha only to authenticated principals — **Accepted risk, dated 2026-10-22** (F-8 in `docs/security/abuse-cases/e09-auth.md`); review date 2027-01-22 (§3.4) |
+| U30 | (none existing) | **new: SR-E09-05** `authorize()`/`ScopeResolver` API has no permissive default; enforced by type system + lint + test |
 | U33 | E16-FR-11 (E16 R-E3), E49 T-E1/T-E2, C-2.11 | no — the test-clock gate and its boot audit record (#2086, #2728) |
 | U35 | SR-025 (which actions need a step-up); the binding itself comes from the PR #2290 ruling (rule 4) and #189's security notes and is recorded in the REST contract (#2304) | no |
 | U36–U44 | SR-063 (the chain pattern, keyed here), SR-066, SR-069, C-2.9, C-2.18, C-12.6; `04-security-program.md` §8.3 rules 1 and 2 | no — ADR-0037 records the design; RR-01 and RR-16 carry its residuals (§3.6.2) |
@@ -358,10 +358,14 @@ and the socket-only window (U45) are the accepted-residual-risk items, and they 
 | U49, U50 | SR-023 | no — the bootstrap CLI's host mint and its journal records (#4479 C2); residual Medium, as ruled on #4479 |
 | U51 | ADR-0020 §4 (the idle lock), C-2.9, C-2.21 | no — the lock by request is a fact on the session row that every check reads (#4743) |
 
-`04-security-program.md` §6 should be amended in a follow-up PR to add SR-021 (amend), SR-013 (clarify),
-SR-024, SR-052, SR-053, SR-054, SR-056, SR-057 to its numbered lists (§6.1–6.4 as applicable) — this
-ticket's scope is the threat model itself; the SR-number reservations above are provisional pending that
-programme-doc PR, flagged so `E09-T*` implementers know which new requirement each control obligation is.
+The new requirements above carry epic-scoped ids, `SR-E09-01` to `SR-E09-05` (U12, U16, U17, U23 and
+U30), following the `SR-E29-nn` and `SR-E42-nn` precedent. They are not yet registered in
+`04-security-program.md` §6, tracked epic-scoped; #4234 leaves `04` untouched. Registering them, with
+a one-line pointer in §5 as E29 has in §5.2, rides a later registration ticket. `E09-T*`
+implementers cite the epic-scoped ids. The SR-021 amendment (U11) and the SR-013 clarification (U32)
+above amend registered `04` §6 rows and ride the same later registration ticket.
+(#4234 renumbered the provisional SR-024, SR-052, SR-053, SR-054 and SR-057, which collided with
+registered requirements, and dropped the provisional SR-056, which U25 and U26 never needed.)
 
 ## 5. Verification mapping
 
@@ -391,14 +395,14 @@ epic's own verification tickets:
 
 - **RSK-020** — description extended by U16 (RBAC vocabulary drift), U30 (`authorize()` permissive
   default), U31 (second-layer scope-check gap). Mitigation bullet gains: "single-source RBAC vocabulary
-  with CI drift check (SR-052); `ScopeResolver` has no permissive default (SR-057); second-layer domain
+  with CI drift check (SR-E09-02); `ScopeResolver` has no permissive default (SR-E09-05); second-layer domain
   check is verified as a distinct control from the capability check." No score change — new findings
   are refinements of the same root cause (a large route surface with a single point of RBAC truth), not
   a new risk class.
 - **RSK-021** — description extended by U11 (TOTP same-counter replay inside skew window), U12 (invite
   token replay), U13 (WS auth-frame replay), U18/U32 (step-up/permission staleness). Mitigation bullet
   gains: "TOTP counter tracked per method to reject replay inside the skew window; invite tokens follow
-  the recovery-code entropy/single-use pattern (SR-024); WS auth frames are bound to a live, un-revoked
+  the recovery-code entropy/single-use pattern (SR-E09-01); WS auth frames are bound to a live, un-revoked
   session and the frame's `Origin`; step-up freshness and role-change propagation are server-authoritative
   with no session-side caching beyond an explicitly invalidated short-lived cache." No score change.
 - **New entry proposed:** none — the break-glass residual (§3.6.1) is recorded as an **accepted risk**
@@ -415,6 +419,10 @@ epic's own verification tickets:
   new RSK id would count that window twice; the live row it leaves (§3.6, U45) is its own, confirmed
   by the main-orchestrator 2026-10-18 ([ruling on #3120](https://github.com/CandleViewer/CandleViewer/issues/3120#issuecomment-6243898535)) with the follow-ups #3331 (landed: a refused refresh revokes and counts) and #3332 (landed: a cancelled request drops none of the backstop's steps).
   The same §7 review confirms it; if it disagrees, the RSK-0xx is drafted in a follow-up PR, as above.
+- **Also none: U26** (the build metadata after authentication, F-8) is a third inline **accepted
+  risk**, dated 2026-10-22. Before authentication only the build label (the version) is exposed; the
+  sha is visible to every authenticated role. Owner: Security engineer; review date 2027-01-22
+  (C-12.1); the finding is F-8 in `docs/security/abuse-cases/e09-auth.md`. It adds no RSK id.
 
 ## 7. Review session record
 
@@ -438,6 +446,8 @@ meeting with the Architect and the epic owner. Its record is
   - the SR-number collision: §4's provisional SR-024, SR-052, SR-053, SR-054 and SR-057 collide
     with registered SRs in `04-security-program.md` §6.3 and §6.4, and RSK-020's text, RSK-021's
     `(SR-024, U12)`, AC-AUTHZ-03 and the abuse-case U23 row (SR-054) cite the colliding ids (#2832).
+    Resolved by #4234: the five new requirements are `SR-E09-01` to `SR-E09-05` and every citation
+    is updated.
 - Risk-register changes confirmed: the RSK-020 and RSK-021 notes, re-examined 2026-10-23, with no
   score change. The break-glass accepted risk (§3.6.1) and U45 stay inline accepted risks, signed
   by #2701 ledger addendum A row A12 (comment 6499102601); their review dates, 2027-02-25
@@ -450,7 +460,7 @@ meeting with the Architect and the epic owner. Its record is
 | Finding | Routes to |
 |---|---|
 | U3/D1-shared fail-closed route registration must be a startup failure, not a review-dependent control | `E09-T04` (PDP) implementation + its own regression test |
-| SR-024/052/053/054/056/057 need formal numbers in `04-security-program.md` §6 | follow-up docs PR before `E09-T*` tickets cite them by final number |
+| `SR-E09-01` to `SR-E09-05`: not yet registered in `04-security-program.md` §6, tracked epic-scoped; the SR-021 amendment (U11) and the SR-013 clarification (U32) to registered `04` §6 rows | a later registration ticket (with the one-line pointer in `04` §5, as E29 has); `E09-T*` tickets cite the epic-scoped ids meanwhile |
 | Break-glass abuse detection (beyond audit-on-next-boot) | `E09-X03` (detection rules) routed it; delivered by #2496 as two pages: `AuthBreakGlassUsed` while a reset's `break_glass_used` system event is unresolved, and `AuthBreakGlassAttempted` when a CLI run is recorded, a refused or cut-short one included (a rise of the count of `auth.break_glass_attempt` rows in `audit_log`). Not the folded-in trail: the CLI flushes its records to `audit_log`, so the boot fold-in carries only what Postgres refused. A reader that cannot read leaves both pages silent, which `AuthBreakGlassStateReadFailing` (a ticket) reports. Residual: a run that reached neither the host journal nor `audit_log` leaves only the CLI's own log (a pre-audit refusal), and `AuthBreakGlassAttempted` sees no rise with no sample in the 7 days before the last 15 minutes (a Prometheus with no history of the series, or a refused run after cv-api was stopped for more than a week) |
 | Abuse-case exercises for U11–U13, U18, U30–U32 | `E09-X02` |
 | Accessibility note on recovery-code/step-up modal screen-reader behaviour (U23) | `E09-Q04` |

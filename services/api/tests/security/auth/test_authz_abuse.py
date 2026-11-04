@@ -72,7 +72,7 @@ def test_ac_authz_02_account_id_tampering_denied_without_grant() -> None:  # O1 
     assert isinstance(d, Deny) and d.reason is DenyReason.ACCOUNT_NOT_GRANTED
 
 
-def test_ac_authz_03_missing_account_id_is_denied_not_permissive() -> None:  # U30 / SR-057
+def test_ac_authz_03_missing_account_id_is_denied_not_permissive() -> None:  # U30 / SR-E09-05
     d = decide(_p("manager"), _scoped_perm(), scope=Scope.GRANTED_ACCOUNTS)
     assert isinstance(d, Deny) and d.reason is DenyReason.OBJECT_REQUIRED
 
