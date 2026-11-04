@@ -226,6 +226,8 @@ _REFUSED: dict[str, tuple[Callable[[Harness, Row], Awaitable[object]], type[Exce
                port.OrderConstraintError, "ex_qty"),
     "no_price": (lambda h, r: h.executions.commit_fill(fill(r, "E1", "0.1", exec_price=Decimal(0))),
                  port.OrderConstraintError, "ex_px"),
+    "closed_past_fill": (lambda h, r: h.executions.commit_fill(  # E29-S06: `ex_closed`
+        fill(r, "E1", "0.1", closed_size=Decimal("0.2"))), port.OrderConstraintError, "ex_closed"),
     # Postgres meets the `symbol_code` domain as the row is built, then the CHECKs by name
     "no_qty_no_price": (lambda h, r: h.executions.commit_fill(fill(
         r, "E1", "0.1", exec_qty=Decimal(0), exec_price=Decimal(0))), port.OrderConstraintError,
@@ -558,6 +560,25 @@ class WriteAheadContract:
         stored = await h.executions.get(row.exchange_account_id, "E1")
         assert stored is not None and (stored.order_id, stored.exec_qty) == (row.id, q)
         assert await h.stored(row) == (new, [0, 1])
+
+    @pytest.mark.parametrize("write", sorted(_REDELIVER))
+    async def test_a_fill_takes_its_order_rows_position_idx_and_keeps_its_closed_size(
+        self, h: Harness, write: str
+    ) -> None:
+        """E29-S06 (21 Sec.3.3.6, 24 Sec.8.13): the venue's fill names no position, so the store
+        binds the order row's `position_idx`, whatever the execution says; a fill with no order row
+        keeps 0. `closed_size` is stored as stated, a stated 0 and none included."""
+        row = await h.order("accepted", position_idx=2)
+        await _REDELIVER[write](
+            h, fill(row, "E1", "0.1", closed_size=Decimal("0.1"), position_idx=1)
+        )
+        strays = [replace(fill(row, e, "0.1").execution, order_id=None) for e in ("E2", "E3")]
+        assert await h.executions.insert(replace(strays[0], closed_size=Decimal(0)))
+        assert await h.executions.insert(strays[1])
+        got = [await h.executions.get(row.exchange_account_id, e) for e in ("E1", "E2", "E3")]
+        assert [(g and g.position_idx, g and g.closed_size) for g in got] == [
+            (2, Decimal("0.1")), (0, Decimal(0)), (0, None),
+        ]  # fmt: skip
 
     async def test_an_adopted_rows_fills_keep_it_untracked_until_one_fills_it(
         self, h: Harness

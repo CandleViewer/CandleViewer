@@ -207,6 +207,8 @@ def test_the_execution_row_maps_a_fill_with_an_empty_id() -> None:
         Decimal("0.0006"),
     )
     assert (fill.ts_exec, fill.ts_ingest) == (1672282722429000, 7)
+    # 24 Sec.8.13 step 3: the list's "" closedSize states none, and the venue's fill no position
+    assert (fill.closed_size, fill.closed_pnl, fill.position_idx) == (None, None, None)
 
 
 @pytest.mark.usefixtures("no_unknown_fields")
@@ -219,7 +221,10 @@ def test_the_closed_pnl_row_maps_its_closed_size() -> None:
         Decimal("1180.59833333"),
     )
     assert (record.closed_pnl, record.leverage) == (Decimal("-47.4065323"), Decimal("3"))
-    assert (record.opened_at, record.closed_at) == (1672214887231000, 1672214887236000)
+    assert (record.created_at, record.closed_at) == (1672214887231000, 1672214887236000)
+    # 24 Sec.14.4: the venue's orderId; the record states no openFee or closeFee
+    assert record.exchange_order_id == "5a373bfe-188d-4913-9c81-d57ab5be8068"
+    assert (record.open_fee, record.close_fee) == (None, None)
 
 
 @pytest.mark.usefixtures("no_unknown_fields")

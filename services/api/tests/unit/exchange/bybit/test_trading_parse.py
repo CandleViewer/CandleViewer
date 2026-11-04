@@ -638,6 +638,8 @@ def test_an_execution_carries_the_venues_pnl_of_the_size_it_closed(
     }
     fill = tp.to_execution(tp.parse(tp.ExecutionRow, EXEC_ROW | given, "executions"), account(), 42)
     assert fill.closed_pnl == closed_pnl
+    # 24 Sec.8.13 step 3: the size closed as stated, a stated 0 included; "" or none is None
+    assert fill.closed_size == (None if closed_size in ("", None) else Decimal(closed_size))
 
 
 @pytest.mark.parametrize("closed_size", ["-0.01", "abc", 0.01, None])
@@ -679,9 +681,41 @@ def test_a_closed_pnl_row_maps_every_field_to_its_own() -> None:
         avg_exit_price=Decimal("61000"),
         closed_pnl=Decimal("500"),
         leverage=Decimal("5"),
-        opened_at=1_700_000_000_001_000,
+        created_at=1_700_000_000_001_000,
         closed_at=1_700_000_000_002_000,
     )
+
+
+@pytest.mark.parametrize(
+    ("fees", "read"),
+    [
+        (
+            {"openFee": "2.1509553", "closeFee": "2.125077"},
+            (Decimal("2.1509553"), Decimal("2.125077")),
+        ),
+        ({"openFee": "", "closeFee": "-0.5"}, (None, Decimal("-0.5"))),
+        ({}, (None, None)),
+    ],
+    ids=["stated", "one_empty", "absent"],
+)
+def test_a_closed_pnl_row_reads_the_fees_it_states(
+    fees: dict[str, str], read: tuple[Decimal | None, Decimal | None]
+) -> None:
+    """24 Sec.14.4: `openFee` and `closeFee` where the reply states them, else None. The stated
+    figures are 24 Sec.8.13's worked example's opening and closing shares (a unit input)."""
+    record = tp.to_closed_pnl(tp.parse(tp.ClosedPnlRow, CLOSED_ROW | fees, "pnl"), account())
+    assert (record.open_fee, record.close_fee) == read
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("orderId", "x" * 65), ("orderId", 7), ("openFee", "abc"), ("closeFee", 0.5)],
+)
+def test_a_closed_pnl_row_whose_order_id_or_fee_is_malformed_fails_the_read(
+    field: str, value: object
+) -> None:
+    with pytest.raises(UnknownStateError):
+        tp.parse(tp.ClosedPnlRow, CLOSED_ROW | {field: value}, "closed-pnl")
 
 
 @pytest.mark.parametrize(

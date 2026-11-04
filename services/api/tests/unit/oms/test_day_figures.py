@@ -107,7 +107,7 @@ def _pnl(amount: str) -> ClosedPnl:
     return ClosedPnl(
         account_id=ACCOUNT, symbol="BTCUSDT", side="sell", qty=Decimal(1),
         avg_entry_price=Decimal(100), avg_exit_price=Decimal(100), closed_pnl=Decimal(amount),
-        leverage=Decimal(5), opened_at=MIDNIGHT_US, closed_at=MIDNIGHT_US + 1,
+        leverage=Decimal(5), created_at=MIDNIGHT_US, closed_at=MIDNIGHT_US + 1,
     )  # fmt: skip
 
 

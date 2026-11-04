@@ -85,6 +85,8 @@ def test_the_documented_closing_fill_carries_the_venues_closed_pnl() -> None:
     assert isinstance(event.payload, Execution)
     assert Decimal(row["closedSize"]) > 0  # the documented fill closes a size
     assert event.payload.closed_pnl == Decimal(row["execPnl"])
+    # 24 Sec.8.13 step 3: the stream's fill states the size it closed; it names no position
+    assert (event.payload.closed_size, event.payload.position_idx) == (Decimal("0.5"), None)
 
 
 @pytest.mark.usefixtures("no_unknown_fields")
