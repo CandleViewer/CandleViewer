@@ -79,7 +79,7 @@ E33-T01 owns each row unless the row names another owner. The finding's §9.3 ca
 - **The outbox relay:** not pursued by the pre-agreed rule. A relay would also have to hand each slice attempt to the same pipeline once and never re-send on its own backoff (ADR-0006 rule 2; `21-database-schema.md` §3.10.4's generic backoff would be a blind resubmission), and an `order.submit` relay would be a third outbox idiom, needing an ADR and the dispatcher's lease idiom (BQ-7).
 - **Restoring the snapshot:** static, so it leaves a run in `submitting_slice` with nothing driving it, and a SIGKILL leaves no snapshot at all.
 - **V1, polling:** its lateness spreads over the poll period by construction, and V1-250 and V1-1000 miss 100 ms even alone (192.0 and 805.1 ms).
-- **V2, one task per run:** no way to move a sleeping run's due time earlier, a task per run, and awaited sends that cut dispatch to 1274 per second against V3's 15744; B19's skipped tick contradicts INV-B6-b.
+- **V2, one task per run:** no way to move a sleeping run's due time earlier, a task per run, and awaited sends that cut dispatch to 1274 per second against V3's 15744 (both mode A); B19's skipped tick contradicts INV-B6-b.
 - **Mode A, a fixed monotonic anchor:** after a 15 s suspend it fired 0 slices and re-planned 70 times, where mode B fired 203–207 with one re-plan per run.
 - **Binding by the id alone:** the id is not an ownership proof (24 §8.3 rule 2), and with no rows there are no terms to match.
 
