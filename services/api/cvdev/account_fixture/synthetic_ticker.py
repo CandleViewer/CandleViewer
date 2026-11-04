@@ -6,7 +6,7 @@ account fixture on, `candleviewer.account_fixture_wiring.attach_fixture_tickers`
 `wiring.attach_tickers`, which checks the handle is this package's door and calls `attach` here:
 the ingestion module gets a `SyntheticTickerStream`, which reads the synthetic feed's queue (the
 generator's `Ticker` records) and keeps, per symbol, the last price, the bid and ask and their mid
-as the mark and index price, restamped on receipt.
+as the mark and index price, restamped on receipt, each event's `source` being `synthetic`.
 
 It answers nothing until the fixture's handle is armed, which only the boot guard does
 (`FixtureDoor.arm`). It takes no venue frame, opens no socket, holds its own bus, so no consumer
@@ -30,13 +30,13 @@ from candleviewer.bus.bus import Bus
 from candleviewer.exchange.base import Ticker, Trade
 from candleviewer.exchange.base.models import TickerEvent
 from candleviewer.exchange.base.ticker_delta import TickerDelta
-from candleviewer.ingestion.service import IngestionService
+from candleviewer.ingestion.service import PUMP_YIELD_EVERY, IngestionService
 from candleviewer.ingestion.ticker_stream import TickerStream, ticker_event
 from candleviewer.observability.context import spawn
 from candleviewer.settings import FeedMode, Settings
 
 #: The marker on every log line and topic name of this stream.
-SOURCE: Final = "synthetic"
+SOURCE: Final = "synthetic"  # also every event's `MarketEvent.source` (24 §1.4)
 TOPIC_PREFIX: Final = "synthetic.tickers."
 #: A symbol with no synthetic tick for this long is stale, so it prices no order.
 STALE_AFTER_S: Final = 5.0
@@ -120,7 +120,9 @@ class SyntheticTickerStream(TickerStream):
             "mark_price": mid,
             "index_price": mid,
         }
-        event = ticker_event(record.symbol, state, ts_event_us=stamp, ts_ingest_us=stamp)
+        event = ticker_event(
+            record.symbol, state, ts_event_us=stamp, ts_ingest_us=stamp, source=SOURCE
+        )
         if record.symbol not in self._seen:
             _log().info("ingestion.synthetic_ticker_symbol", symbol=record.symbol)
         self._seen[record.symbol] = (event, self._monotonic())
@@ -159,8 +161,15 @@ class SyntheticTickerStream(TickerStream):
         await super().stop()
 
     async def _run(self, queue: FeedQueue) -> None:
+        """Every `PUMP_YIELD_EVERY` records it gives the loop a turn, as the WS pump does (#1893):
+        `queue.get()` on a full queue never suspends, so a backlog would otherwise hold it."""
+        since_yield = 0
         while True:
+            if since_yield >= PUMP_YIELD_EVERY:
+                since_yield = 0
+                await asyncio.sleep(0)
             record = await queue.get()
+            since_yield += 1
             try:
                 self.offer(record)
             except Exception:  # one bad record never ends the drain; CancelledError is not caught
