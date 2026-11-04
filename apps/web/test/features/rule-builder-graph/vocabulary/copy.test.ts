@@ -41,6 +41,15 @@ const D05 = new Map(
 const INSTANCES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   "rules.editor.announce.metrics": { n: "41" },
   "rules.editor.stop.kept": { price: "63,900.0" },
+  "rules.editor.action.phrase.tighten": { level: "2.0 × ATR(14) from the close" },
+  "rules.editor.action.phrase.breakeven": { n: "2" },
+  "rules.editor.action.phrase.scale_out": { amount: "33 %", "order type": "market" },
+  "rules.editor.action.phrase.halt": { scope: "account" },
+  "rules.editor.action.phrase.notify": { channel: "push", severity: "high" },
+  "rules.editor.limit.cooldown": { d: "60 s" },
+  "rules.editor.limit.per_hour": { n: "10" },
+  "rules.editor.limit.per_day": { n: "500" },
+  "rules.editor.limit.kill_switch": { n: "5" },
 };
 
 describe("the node library's copy, verbatim from the decks (E37-S02)", () => {
