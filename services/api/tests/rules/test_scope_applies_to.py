@@ -4,7 +4,7 @@
 The tick's gate runs before the rule has an action, for one scope instance of the rule: a rule
 scoped to open positions or pending orders passes it as a rule on any other value does, and is
 neither refused nor counted while its scope holds. The gate judges the entity its instance stands
-for (`instance_entity`); a check that knows the entity an action touches judges that one, and a
+for (`instance_entity`); a check that names the entity an action touches judges that one, and a
 genuine mismatch is refused `applies_to` and counted.
 """
 
@@ -15,7 +15,7 @@ from typing import Final
 from uuid import UUID
 
 import pytest
-from hypothesis import given, seed
+from hypothesis import example, given, seed
 from hypothesis import strategies as st
 
 from candleviewer.rules.evaluator.engine import scope_instance
@@ -34,7 +34,8 @@ from tests.rules.test_scope import OWNER, A, B, C, FakeState, _noop, scope
 APPLIES_TO = ("any", "account", "open_positions", "pending_orders")
 ENTITIES: Final[tuple[EntityKind, ...]] = ("open_position", "pending_order", "account")
 #: The entities an action of a rule on each `applies_to` may touch (E35-S04's design note: an
-#: `open_positions` rule must not cancel a pending order); any other is a genuine mismatch.
+#: `open_positions` rule must not cancel a pending order); any other is a genuine mismatch. The
+#: property's reading; the known-entity table below states each case.
 MAY_TOUCH: Final[dict[str, frozenset[str]]] = {
     "any": frozenset(ENTITIES),
     "account": frozenset(ENTITIES),
@@ -78,22 +79,36 @@ def test_instance_entity_is_the_entity_its_applies_to_names(applies_to: str, ent
     assert instance_entity(scope(applies_to=applies_to)) == entity
 
 
-@pytest.mark.parametrize("entity", ENTITIES)
-@pytest.mark.parametrize("applies_to", APPLIES_TO)
+@pytest.mark.parametrize(
+    ("applies_to", "entity", "expected"),
+    [
+        ("any", "open_position", None),
+        ("any", "pending_order", None),
+        ("any", "account", None),
+        ("account", "open_position", None),
+        ("account", "pending_order", None),
+        ("account", "account", None),
+        ("open_positions", "open_position", None),
+        ("open_positions", "pending_order", "applies_to"),
+        ("open_positions", "account", "applies_to"),
+        ("pending_orders", "open_position", "applies_to"),
+        ("pending_orders", "pending_order", None),
+        ("pending_orders", "account", "applies_to"),
+    ],
+)
 def test_check_action_known_entity_is_refused_only_outside_applies_to(
-    applies_to: str, entity: EntityKind
+    applies_to: str, entity: EntityKind, expected: str | None
 ) -> None:
     """A genuine mismatch: the entity an action touches lies outside the rule's `applies_to`."""
     resolver = ScopeResolver(FakeState(), _noop)
     sc = scope(account_ids=[str(A)], applies_to=applies_to)
-    mismatch = entity not in MAY_TOUCH[applies_to]
-    answer = resolver.check_action(sc, OWNER, "demo", IN_SCOPE, entity)
-    assert answer == ("applies_to" if mismatch else None)
-    assert resolver.suppressions_total == Counter({"applies_to": 1} if mismatch else {})
+    assert resolver.check_action(sc, OWNER, "demo", IN_SCOPE, entity) == expected
+    # A refusal is counted once, under its reason; a pass counts nothing (a zero count is none).
+    assert resolver.suppressions_total == Counter({"applies_to": int(expected is not None)})
 
 
 async def test_fire_scoped_refuses_a_known_entity_outside_applies_to_and_sends_nothing() -> None:
-    """The dispatch re-check that knows the action's entity keeps the refusal: an
+    """A check that names the entity keeps the refusal (`fire_scoped(..., entity=...)`): an
     `open_positions` rule's action on a pending order is skipped `scope` and never dispatched."""
     resolver = ScopeResolver(FakeState(), _noop)
     sc = scope(account_ids=[str(A)], applies_to="open_positions")
@@ -147,14 +162,24 @@ def _cases(draw: st.DrawFn) -> tuple[RuleScope, FakeState, str, str]:
     return sc, state, scope_instance(symbol, account), draw(st.sampled_from(("demo", "live")))
 
 
+def _passing(applies_to: str) -> tuple[RuleScope, FakeState, str, str]:
+    """A case the gate passes: the rule's own account and symbol, with every check met."""
+    return scope(account_ids=[str(A)], applies_to=applies_to), FakeState(), IN_SCOPE.key, "demo"
+
+
 @seed(5817)
 @given(case=_cases())
+@example(case=_passing("any"))
+@example(case=_passing("account"))
+@example(case=_passing("open_positions"))
+@example(case=_passing("pending_orders"))
 def test_gate_answers_as_check_action_for_the_entity_its_instance_stands_for(
     case: tuple[RuleScope, FakeState, str, str],
 ) -> None:
     """Property: the tick's gate answers, and counts, as `check_action` does for the entity the
     instance stands for, so it never refuses an instance for its own `applies_to`; a known
-    entity changes that answer only by an `applies_to` refusal, where it lies outside."""
+    entity changes that answer only by an `applies_to` refusal, where it lies outside. A drawn
+    case is mostly refused by an earlier check, so one passing case per `applies_to` is pinned."""
     sc, state, key, environment = case
     gated, checked = ScopeResolver(state, _noop), ScopeResolver(state, _noop)
     answer = make_scope_gate(gated, sc, OWNER, environment)(key)
