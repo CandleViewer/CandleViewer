@@ -53,6 +53,7 @@ function Shell({ banner }: { readonly banner: ReactNode }): JSX.Element {
       user={null}
       connection={connection}
       searchHint="Ctrl+K"
+      onSearch={() => undefined}
       onSignOut={() => undefined}
       signingOut={false}
       signOutFailed={false}
