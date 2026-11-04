@@ -110,10 +110,12 @@ def _in_range(value: Decimal) -> bool:
     return value.is_finite() and abs(value.adjusted()) <= _MAX_EXPONENT
 
 
-def _well_formed(order: RiskOrder, figures: RiskFigures, caps: ResolvedCaps) -> bool:
+def _well_formed(
+    order: RiskOrder, figures: RiskFigures, caps: ResolvedCaps, extra_loss_usd: Decimal
+) -> bool:
     """Every figure in range, every amount and counter non-negative, `as_of` tz-aware."""
     signed = (figures.daily_figure, figures.day_peak_figure)
-    unsigned = [order.qty, order.reference_price, order.notional]
+    unsigned = [order.qty, order.reference_price, order.notional, extra_loss_usd]
     unsigned += figures.symbol_notional.values()
     unsigned += [cap.limit for cap in caps.caps.values()]
     unsigned += [cap.limit for cap in caps.warn_limits.values()]
@@ -150,11 +152,17 @@ def evaluate(
     *,
     now: datetime,
     max_age: timedelta = DEFAULT_MAX_AGE,
+    extra_loss_usd: Decimal = _ZERO,
 ) -> RiskEvaluation:
     """Judge `order` against `caps` on `figures`; `now` is the injected clock's reading.
 
-    Never raises on malformed figures (it refuses, module docstring); a tz-naive `now` is a
-    programmer error and raises `ValueError`.
+    `extra_loss_usd` is an override's loss allowance (E39-X01 D-4, BQ-3), server-validated by
+    E39-S02 within `risk_policy.override_extra_loss_max_usd`: it raises the daily-loss USD
+    blocking cap of this account only, so a released lockout is not refused again by the cap the
+    override lifted, and moves no other cap; the cap's warn threshold stays where it is, so the
+    notice still fires during the override. A negative or non-finite one refuses
+    closed. Never raises on malformed figures (it refuses, module docstring); a tz-naive `now` is
+    a programmer error and raises `ValueError`.
     """
     if not _aware(now):
         raise ValueError("now must be timezone-aware (the injected clock's UTC reading)")
@@ -162,7 +170,7 @@ def evaluate(
         return RiskEvaluation(RiskDecision(allowed=True, evaluated_at=now))
     with localcontext() as ctx:
         ctx.prec = _PRECISION
-        return _judge(order, figures, caps, now, max_age)
+        return _judge(order, figures, caps, now, max_age, extra_loss_usd)
 
 
 def _judge(
@@ -171,6 +179,7 @@ def _judge(
     caps: ResolvedCaps,
     now: datetime,
     max_age: timedelta,
+    extra_loss_usd: Decimal,
 ) -> RiskEvaluation:
     warnings: list[RiskWarning] = []
 
@@ -180,14 +189,19 @@ def _judge(
         )
 
     def check(
-        name: str, over: Callable[[Decimal], bool], actual: Decimal, after: Decimal | None
+        name: str,
+        over: Callable[[Decimal], bool],
+        actual: Decimal,
+        after: Decimal | None,
+        warn_over: Callable[[Decimal], bool] | None = None,
     ) -> None:
-        """Refuse on the blocking limit, then record the warn threshold, each on its own."""
+        """Refuse on the blocking limit, then record the warn threshold (by `warn_over` when
+        given, else `over`), each on its own."""
         cap = caps.get(name)
         if cap is not None and over(cap.limit):
             raise breach(cap, actual, after)
         warn = caps.warn_limit(name)
-        if warn is not None and over(warn.limit):
+        if warn is not None and (warn_over or over)(warn.limit):
             warnings.append(RiskWarning(name, warn.limit, actual))
 
     def breach(cap: ResolvedCap, actual: Decimal, after: Decimal | None) -> _Refused:
@@ -209,7 +223,7 @@ def _judge(
         )
 
     try:
-        if not _well_formed(order, figures, caps):
+        if not _well_formed(order, figures, caps, extra_loss_usd):
             raise refuse(
                 RiskRefusal.RISK_STATE_UNAVAILABLE, "risk_state", "risk inputs are malformed"
             )
@@ -266,7 +280,13 @@ def _judge(
             _ratio(gross_after, equity),
         )
         loss = max(_ZERO, -figures.daily_figure)
-        check("max_daily_loss_usd", lambda limit: loss >= limit, loss, None)
+        check(
+            "max_daily_loss_usd",
+            lambda limit: loss >= limit + extra_loss_usd,  # the override lifts the cap only
+            loss,
+            None,
+            lambda limit: loss >= limit,  # its warn stays at its own threshold (SR-E39-11)
+        )
         check(
             "max_daily_loss_pct",
             lambda limit: loss * _HUNDRED >= limit * day_equity,
