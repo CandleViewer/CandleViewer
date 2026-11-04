@@ -260,7 +260,7 @@ names the T-task scenario (verbatim) each row's cases carry, with their ids.
 | OL-12 | `held` · `held` | all | T3 · a duplicate id held by an order that does not match (OM-S05) | listed by REST, not by the WS snapshot; the Owner's cancel, or that of the Manager who placed the order, is `409 conflict`, nothing sent, and another Manager's is `403 forbidden` (E29-TC-460); only the operator's resolution ends it (`rejected`) | S1, S9 | T06 «A live unknown older than 24 hours is held, never abandoned» (E29-TC-606, which keeps the order `unknown`, QC-14); X02 AC-11 (E29-TC-800) | X02, Q02 | `services/api/tests/unit/oms/test_exit_chart_refusal.py`; `services/api/tests/unit/oms/test_order_link_resolution.py` | ready [D]; X02's replay: blocked: #982 |
 | OL-13 | `filled` · `filled` | all | T3 · `ws_partial_fill` to the last fill | terminal; a repeated `exec_id` changes nothing | S4, S6 | T03 «Duplicate fill never double-counts» (E29-TC-453); T05 «A duplicate push changes nothing» (E29-TC-553) | Q02, Q04 | `services/api/tests/unit/oms/test_e29_t05_acceptance.py:149`; `services/api/tests/chaos/oms/test_s2_duplicate_pushes.py` | ready [D] |
 | OL-14 | `cancelled` · `cancelled` | all | T3 · a cancel ack | terminal; WS `change: cancel`, the id in `removed` | S6 | T03 «The whole transition matrix is covered» (E29-TC-450) | Q02 | `services/api/tests/unit/oms/test_exits.py` | ready |
-| OL-15 | `rejected` · `rejected` | all | T3 · a business reject `[T]`, a filter, two empty reconciliation passes | `502 exchange_error` with `exchange.ret_code`; `rejected_reason` is CandleViewer's reason, never the exchange's text | S1 | T04 «Filters are enforced before any exchange call» (E29-TC-501); T06 «Unresolvable order is abandoned deterministically» (E29-TC-601) | Q02 | `services/api/tests/contract/test_order_contract_t04.py`; `services/api/tests/unit/oms/test_order_steps.py` | ready [D] |
+| OL-15 | `rejected` · `rejected` | all | T3 · a business reject `[T]`, a filter, two empty reconciliation passes | `502 exchange_error` with `exchange.ret_code`; `rejected_reason` (on the stream only: REST does not serve it, §1.2) is CandleViewer's reason, never the exchange's text | S1 | T04 «Filters are enforced before any exchange call» (E29-TC-501); T06 «Unresolvable order is abandoned deterministically» (E29-TC-601) | Q02 | `services/api/tests/contract/test_order_contract_t04.py`; `services/api/tests/unit/oms/test_order_steps.py` | ready [D] |
 | OL-16 | `expired` · `expired` | all | T3 · an IOC or FOK order unfilled, or an expiry push | terminal; WS `change: expire` | S6 | T03 «The whole transition matrix is covered» (E29-TC-450) | Q02 | `services/api/tests/unit/oms/test_order_steps.py`; `services/api/tests/xstate_contract/test_b01_order.py` | ready |
 | OL-17 | `killed` · `killed` | all | T3 · the kill switch's `KILL` | terminal; a recorded stop's row is never killed; `cancel_pending`, `untracked` and `held` are not killed | S6, S9 | T03 «The whole transition matrix is covered» (E29-TC-450) | Q02 | `services/api/tests/unit/oms/test_order_machine.py` | ready |
 
@@ -865,7 +865,7 @@ folders and of `store_unavailable` are this plan's, drawn from the ticket's list
 | `rest_execution_list` | S4, S5 | E29-TC-202, E29-TC-206, E29-TC-560 | docs-transcribed | E29-Q02, E29-Q04 |
 | `rest_order_history` | S1 | E29-TC-601, E29-TC-606, E29-TC-610 | docs-transcribed | E29-Q02, E29-Q04 |
 | `ws_partial_fill` | S4, S5 | E29-TC-201, E29-TC-250, E29-TC-550, E29-TC-551, E29-TC-750, E29-TC-810 | derived | E29-Q02, E29-Q04 |
-| `ws_amend_reject` | S2, S10 | E29-TC-102, E29-TC-112, E29-TC-452, E29-TC-458, E29-TC-505 | derived | E29-Q02 |
+| `ws_amend_reject` | S2, S10 | E29-TC-102, E29-TC-112, E29-TC-452, E29-TC-458, E29-TC-505 | derived | E29-Q02, E29-Q04 |
 | `ws_cancel_race` | S3 | E29-TC-104, E29-TC-451 | derived | E29-Q02, E29-Q04 |
 | `ws_out_of_order_fills` | S5 | E29-TC-206, E29-TC-255, E29-TC-459, E29-TC-559 | derived | E29-Q02, E29-Q04 |
 | `ws_duplicate_exec` | S4 | E29-TC-202, E29-TC-255, E29-TC-453, E29-TC-553 | derived | E29-Q02, E29-Q04 |
@@ -876,8 +876,8 @@ folders and of `store_unavailable` are this plan's, drawn from the ticket's list
 | `error_10018_ip_rate_limit` | none | E29-TC-805 | derived | E29-Q02, E29-Q04 |
 | `error_110001_order_not_found` | S1, S3 | E29-TC-104, E29-TC-809 | docs-transcribed | E29-Q02, E29-Q04 |
 | `error_110017_reduce_only_truncated` | none | E29-TC-053, E29-TC-153, E29-TC-809 | docs-transcribed | E29-Q02, E29-Q04 |
-| `error_110020_open_orders_cap` | none | E29-TC-809 | docs-transcribed | E29-Q02 |
-| `error_110025_position_mode_unchanged` | none | E29-TC-809 | docs-transcribed | E29-Q02 |
+| `error_110020_open_orders_cap` | none | E29-TC-809 | docs-transcribed | E29-Q02, E29-Q04 |
+| `error_110025_position_mode_unchanged` | none | E29-TC-809 | docs-transcribed | E29-Q02, E29-Q04 |
 | `error_110072_duplicate_link_id` | S1, S9 | E29-TC-507, E29-TC-800, E29-TC-809 | docs-transcribed | E29-Q02, E29-Q04, E29-X02 |
 | `http_5xx_on_create` | S1 | E29-TC-503, E29-TC-807 | derived | E29-Q02, E29-Q04 |
 | `post_send_timeout` | S1, S8 | E29-TC-112, E29-TC-455, E29-TC-503, E29-TC-600, E29-TC-700 | docs-transcribed | E29-Q02, E29-Q04 |
