@@ -60,7 +60,8 @@ class FakeMarketDataRepository:
         for row in rows:  # type: ignore[attr-defined]
             self._tickers[(row.symbol, row.ts_us)] = row
 
-    async def write_bars(self, rows: object) -> None:
+    def seed_bars(self, rows: object) -> None:
+        """Test-only seeding for `read_bars`: the protocol has no bars writer (BR-05)."""
         for row in rows:  # type: ignore[attr-defined]
             self._bars[(row.symbol, row.family, row.param, row.ts_us)] = row
 

@@ -31,6 +31,7 @@ from candleviewer.bars.metrics import bars_tape_read_degraded_total
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.rows import (
     BUILD_VERSIONS,
+    PROVENANCE_CUTOVER_US,
     BarPersistError,
     bar_param_for,
     check_generation,
@@ -696,12 +697,21 @@ def degrade_reason(exc: Exception) -> str:
 
 
 def _integrity_failure(row: dict[str, object]) -> str | None:
-    """None if trustworthy. NULL checksum is untrusted unless the row is pre-0003 legacy
-    (both `source` and `row_checksum` NULL: 0003 is their first writer)."""
+    """None if trustworthy. A NULL checksum is untrusted unless the row is legacy: both `source`
+    and `row_checksum` NULL (0003 is their first writer) AND it opens before
+    `PROVENANCE_CUTOVER_US` (BR-05). A later row without provenance is "missing"."""
     checksum = row.get("row_checksum")
     if checksum is None:
-        return None if row.get("source") is None else "missing"
+        return None if _legacy(row) else "missing"
     return None if checksum == row_checksum(row) else "mismatch"
+
+
+def _legacy(row: dict[str, object]) -> bool:
+    """A row that predates provenance: no `source`, and a `ts` before the cutover."""
+    ts = row.get("ts")
+    if row.get("source") is not None or ts is None:
+        return False
+    return ts_us_from_row(ts) < PROVENANCE_CUTOVER_US
 
 
 def _untrusted(row: dict[str, object], spec: BarSpec) -> bool:

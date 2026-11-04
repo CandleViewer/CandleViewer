@@ -7,6 +7,10 @@ values are validated against an allowlist derived from `instruments` before
 reaching SQL (`docs/plan/04-security-program.md` Sec.5.8) — this ticket's
 fixture-only scope uses a permissive default allowlist hook the real
 `instruments` cache (E08+) overrides.
+
+Bars are read here, never written: `bars.writer.BarWriter` is the one writer of `bars_*` rows,
+so every row carries its provenance (BR-05; pinned by `tests/unit/bars/
+test_bars_single_writer_guard.py`).
 """
 
 from __future__ import annotations
@@ -34,7 +38,6 @@ from candleviewer.storage.questdb.reader import (
     build_read_trades,
     build_trade_totals,
 )
-from candleviewer.storage.questdb.schemas import BAR_SCHEMAS_BY_FAMILY
 from candleviewer.storage.repositories.rows import (
     BarRow,
     BookDeltaRow,
@@ -157,28 +160,6 @@ class QuestDbMarketDataRepository:
                     item[col] = float(val)
             payload.append(item)
         await self._writer.write_rows("tickers", payload, "ts")
-
-    async def write_bars(self, rows: Sequence[BarRow]) -> None:
-        by_family: dict[str, list[dict[str, object]]] = {}
-        for row in rows:
-            by_family.setdefault(row.family, []).append(
-                {
-                    "ts": row.ts_us,
-                    "symbol": row.symbol,
-                    "bar_param": row.param,
-                    "open": float(row.open),
-                    "high": float(row.high),
-                    "low": float(row.low),
-                    "close": float(row.close),
-                    "volume": float(row.volume),
-                    "is_closed": True,
-                }
-            )
-        for family, table_rows in by_family.items():
-            if family not in BAR_SCHEMAS_BY_FAMILY:
-                raise ValueError(f"unknown bar family {family!r}")
-            table = f"bars_{family}"
-            await self._writer.write_rows(table, table_rows, "ts")
 
     async def write_klines(self, rows: Sequence[KlineRow]) -> None:
         payload = [
