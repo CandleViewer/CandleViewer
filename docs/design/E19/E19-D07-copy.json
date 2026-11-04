@@ -1,0 +1,772 @@
+{
+  "pack": "E19-D07",
+  "version": "v1.2",
+  "base": "b81479ab0",
+  "approval": "PROPOSED until the owner approves (#2701)",
+  "note": "The copy deck of the E19-D07 hand-off pack: every row of the parents' copy tables (E19-D02 section 12, E19-D03 section 13, E19-D04 section 9, E19-D05 section 8.3's own rows) under `<parent>:<W-id>`, the String cell verbatim, its source line, the parent's status and the owner, the parent ticket; `channel` says where the string is shown or spoken (visible, live, name, description; E19-D06's rows by id, the rest visible). Every entry is PROPOSED until the owner approves it (#2701). Written by hand (it counts toward C-4.8, hand-off-pack rule 1 of the ruling of record, #502 comment 6608092299) and checked by docs/design/_tools/e19_d07_handoff_check.py (G-DECK). A status that cites a plan line is lifted by content at the base (C-07).",
+  "coverage": {
+    "poc_tiebreak_tooltip": ["d03:W-1"],
+    "va_percent_validation": ["d02:W-22"],
+    "range_end_after_start": ["d02:W-23", "d04:W-41"],
+    "row_size_clamp": ["d02:W-25"],
+    "history_warning": ["d02:W-24"],
+    "partial_history_chip": ["d02:W-6"],
+    "no_history_owner": ["d02:W-10", "d02:W-11", "d02:W-12", "d02:W-13"],
+    "no_history_non_owner": ["d02:W-11", "d02:W-12", "d02:W-14", "d02:W-15"],
+    "estimated": ["d02:W-8", "d03:W-14"],
+    "load_failed_stale_degraded": ["d02:W-17", "d02:W-18", "d02:W-16"],
+    "developing_final": ["d03:W-10", "d03:W-11"],
+    "units": ["d02:W-19", "d02:W-37", "d03:W-20"]
+  },
+  "entries": {
+    "d02:W-1": {
+      "text": "\"Profile: BTCUSDT\"",
+      "source": "D02:350",
+      "status": "verbatim (the sketch's title)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible, name (the region, D06 AD-09)"
+    },
+    "d02:W-2": {
+      "text": "\"Aligned to {symbol} · {interval}\"",
+      "source": "D02:351",
+      "status": "PROPOSED (BQ-6)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible, live (D06 LR-09)"
+    },
+    "d02:W-3": {
+      "text": "\"Own price scale — not aligned\"",
+      "source": "D02:352",
+      "status": "PROPOSED (BQ-6)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible, live (D06 LR-09)"
+    },
+    "d02:W-4": {
+      "text": "\"Developing · as of {HH:MM} UTC\"",
+      "source": "D02:353",
+      "status": "PD-1 (pattern)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-5": {
+      "text": "\"Final\"",
+      "source": "D02:354",
+      "status": "PD-1",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible; never spoken alone, live as \"Value area final\" (D06 LR-02)"
+    },
+    "d02:W-6": {
+      "text": "\"Partial: {n} of {m} requested days recorded\"",
+      "source": "D02:355",
+      "status": "verbatim (`chip.partial`; \"only\" dropped)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible, live (D06 LR-08)"
+    },
+    "d02:W-7": {
+      "text": "\"Gaps excluded: {k} ranges, {duration}\"",
+      "source": "D02:356",
+      "status": "verbatim (`profile.gaps_excluded`)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-8": {
+      "text": "\"(estimated)\", methodology \"approximated from bars\"",
+      "source": "D02:357",
+      "status": "PD-4",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible, live (D06 LR-08)"
+    },
+    "d02:W-9": {
+      "text": "\"Delta not available before {HH:MM} UTC\"",
+      "source": "D02:358",
+      "status": "PROPOSED there",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-10": {
+      "text": "\"History starts {ts} — recording began then.\"",
+      "source": "D02:359",
+      "status": "verbatim (`14`:83's stem)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-11": {
+      "text": "\"History starts when you record {symbol} — recording has not begun yet.\"",
+      "source": "D02:360",
+      "status": "verbatim",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-12": {
+      "text": "\"Nothing is missing or broken: CandleViewer keeps only what it records.\"",
+      "source": "D02:361",
+      "status": "verbatim",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-13": {
+      "text": "\"Record this symbol\"",
+      "source": "D02:362",
+      "status": "verbatim",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-14": {
+      "text": "\"Only the owner can change recording.\"",
+      "source": "D02:363",
+      "status": "`rbac.owner_only` with the `recording:write` verb",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-15": {
+      "text": "\"Read-only while viewing as {user}.\"",
+      "source": "D02:364",
+      "status": "`rbac.view_as` verbatim",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-16": {
+      "text": "\"1 s refresh\"",
+      "source": "D02:365",
+      "status": "verbatim (E17's corner tag)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible; live as \"Profile: 1 s refresh\" (D06 LR-07, PROPOSED)"
+    },
+    "d02:W-17": {
+      "text": "\"Could not load the profile.\" with the button \"Retry\"",
+      "source": "D02:366",
+      "status": "PROPOSED",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible, live (D06 LR-08)"
+    },
+    "d02:W-18": {
+      "text": "\"Stale · last update {HH:MM:SS} UTC\"",
+      "source": "D02:367",
+      "status": "PROPOSED (`14`:84: last-good time shown)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible, live (D06 LR-08)"
+    },
+    "d02:W-19": {
+      "text": "\"Row size: {n} ticks ({price})\"",
+      "source": "D02:368",
+      "status": "PROPOSED (`11`:1704)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-20": {
+      "text": "\"Rows merged: {k} levels per row\"",
+      "source": "D02:369",
+      "status": "PROPOSED (PD-8)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-21": {
+      "text": "\"Covered: {from} – {to} · {n} of {m} sessions\"",
+      "source": "D02:370",
+      "status": "PROPOSED (MEMO G-4)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-22": {
+      "text": "\"Value area must be between 50 and 95 %.\"",
+      "source": "D02:371",
+      "status": "PROPOSED (`22`:4891)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-23": {
+      "text": "\"End must be after start.\"",
+      "source": "D02:372",
+      "status": "PROPOSED",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-24": {
+      "text": "\"Recorded history covers {n} of {m} sessions; the profile is built from what exists.\"",
+      "source": "D02:373",
+      "status": "PROPOSED (`11`:1747)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-25": {
+      "text": "\"Row size clamped to 1 tick ({tick}) from {entered} — the instrument's minimum.\"",
+      "source": "D02:374",
+      "status": "PROPOSED (BQ-11)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-26": {
+      "text": "\"VAH {price} ↑ above view\" / \"VAL {price} ↓ below view\"",
+      "source": "D02:375",
+      "status": "PROPOSED",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-27": {
+      "text": "\"No trades at this price\" / \"Net delta zero\"",
+      "source": "D02:376",
+      "status": "PROPOSED (mirror and table words)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible, name (D06 AD-04)"
+    },
+    "d02:W-28": {
+      "text": "\"Single step: grows the value area one row at a time toward the heavier side.\" / \"Two-row TPO: compares two rows on each side at a time, the textbook TPO method.\"",
+      "source": "D02:377",
+      "status": "PROPOSED help",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-29": {
+      "text": "\"Histogram\" / \"Table\"",
+      "source": "D02:378",
+      "status": "PROPOSED switch labels",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-30": {
+      "text": "\"Shift-drag on the chart to choose a range\"",
+      "source": "D02:379",
+      "status": "PROPOSED (D02-OQ2)",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-31": {
+      "text": "\"Click a bar to anchor the profile\"",
+      "source": "D02:380",
+      "status": "PROPOSED",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-32": {
+      "text": "\"Modified\"",
+      "source": "D02:381",
+      "status": "a slot; E19-D04 words it",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-33": {
+      "text": "\"POC {price}, VAH {price}, VAL {price}\"",
+      "source": "D02:382",
+      "status": "PROPOSED (`14`:1014)",
+      "owner": "E19-D02 (#416)",
+      "channel": "live (D06 LR-01)"
+    },
+    "d02:W-34": {
+      "text": "\"{level word} {price}: volume {v}, delta {d}, in value area\" / \"… outside value area\"",
+      "source": "D02:383",
+      "status": "PROPOSED (mirror detail)",
+      "owner": "E19-D02 (#416)",
+      "channel": "description, on Enter (D06 AD-04)"
+    },
+    "d02:W-35": {
+      "text": "\"Showing table\" / \"Showing histogram\"",
+      "source": "D02:384",
+      "status": "PROPOSED",
+      "owner": "E19-D02 (#416)",
+      "channel": "live (D06 LR-06)"
+    },
+    "d02:W-36": {
+      "text": "\"Input: {input}\"",
+      "source": "D02:385",
+      "status": "PROPOSED",
+      "owner": "E19-D02 (#416)",
+      "channel": "live (D06 LR-04)"
+    },
+    "d02:W-37": {
+      "text": "\"Value area: {n} %\"",
+      "source": "D02:386",
+      "status": "PROPOSED",
+      "owner": "E19-D02 (#416)",
+      "channel": "live (D06 LR-04)"
+    },
+    "d02:W-38": {
+      "text": "\"Profile settings applied.\"",
+      "source": "D02:387",
+      "status": "PROPOSED",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d02:W-39": {
+      "text": "\"{n} problems to fix: {first error}\"",
+      "source": "D02:388",
+      "status": "PROPOSED",
+      "owner": "E19-D02 (#416)",
+      "channel": "visible"
+    },
+    "d03:W-1": {
+      "text": "\"POC tie-break: closest to the period VWAP, then to the last price, then the lower price.\"",
+      "source": "D03:382",
+      "status": "PROPOSED (the chain in words; D03-C5)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-2": {
+      "text": "\"{k} hidden\"",
+      "source": "D03:383",
+      "status": "PROPOSED (the legend button's label)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-3": {
+      "text": "\"Show {k} hidden naked POCs\"",
+      "source": "D03:384",
+      "status": "PROPOSED (its accessible name)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-4": {
+      "text": "\"nPOC {date}\"",
+      "source": "D03:385",
+      "status": "PROPOSED (date as \"31 Oct\")",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible, name (D06 AD-04)"
+    },
+    "d03:W-5": {
+      "text": "\"tested\"",
+      "source": "D03:386",
+      "status": "verbatim (the word)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible, name (D06 AD-04)"
+    },
+    "d03:W-6": {
+      "text": "\"Show tested\"",
+      "source": "D03:387",
+      "status": "PROPOSED (the history toggle)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-7": {
+      "text": "\"TPO as blocks — letters on hover, focus and in the table\"",
+      "source": "D03:388",
+      "status": "PROPOSED (the legend note, §6.2)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-8": {
+      "text": "\"IB {low} – {high}\"",
+      "source": "D03:389",
+      "status": "PROPOSED",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-9": {
+      "text": "\"No trades at this price\" / \"Net delta zero\"",
+      "source": "D03:390",
+      "status": "verbatim (D02 W-27; PROPOSED there)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-10": {
+      "text": "\"Developing · as of {HH:MM} UTC\"",
+      "source": "D03:391",
+      "status": "verbatim (D02 W-4)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-11": {
+      "text": "\"Final\"",
+      "source": "D03:392",
+      "status": "verbatim (D02 W-5)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-12": {
+      "text": "\"Rows merged: {k} levels per row\"",
+      "source": "D03:393",
+      "status": "verbatim (D02 W-20; PROPOSED there)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-13": {
+      "text": "\"In VA\" / \"Outside VA\"",
+      "source": "D03:394",
+      "status": "verbatim",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-14": {
+      "text": "\"(estimated)\"",
+      "source": "D03:395",
+      "status": "verbatim (CMP-227's word)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-15": {
+      "text": "\"single print\" / \"initial balance\"",
+      "source": "D03:396",
+      "status": "PROPOSED (mirror words)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible, name (D06 AD-04)"
+    },
+    "d03:W-16": {
+      "text": "\"Session {date}\"",
+      "source": "D03:397",
+      "status": "PROPOSED (the per-period label)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-17": {
+      "text": "\"high-volume node\" / \"low-volume node\"",
+      "source": "D03:398",
+      "status": "verbatim (mirror words)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible, name (D06 AD-04)"
+    },
+    "d03:W-18": {
+      "text": "\"point of control\"",
+      "source": "D03:399",
+      "status": "verbatim (the mirror word; canvas \"POC\")",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible, name (D06 AD-04)"
+    },
+    "d03:W-19": {
+      "text": "\"Levels\"",
+      "source": "D03:400",
+      "status": "PROPOSED (the table and mirror group, §12.1)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-20": {
+      "text": "\"{n} ticks above the last price\" / \"{n} ticks below the last price\"",
+      "source": "D03:401",
+      "status": "PROPOSED (a level's distance)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-21": {
+      "text": "\"Hide {k}\"",
+      "source": "D03:402",
+      "status": "PROPOSED (W-2 pressed)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-22": {
+      "text": "\"Hide {k} older naked POCs\"",
+      "source": "D03:403",
+      "status": "PROPOSED (its accessible name)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d03:W-23": {
+      "text": "\"includes zero-delta rows\"",
+      "source": "D03:404",
+      "status": "PROPOSED (a merged row's mirror reading, §7.4)",
+      "owner": "E19-D03 (#438)",
+      "channel": "visible"
+    },
+    "d04:W-1": {
+      "text": "\"Presets\"",
+      "source": "D04:321",
+      "status": "verbatim (the menu button)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-2": {
+      "text": "\"Session value\"",
+      "source": "D04:322",
+      "status": "verbatim (the built-in; `11`:1852)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-3": {
+      "text": "\"Save as new…\"",
+      "source": "D04:323",
+      "status": "PROPOSED (BQ-4; D04-A8)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-4": {
+      "text": "\"Save changes to {name}\"",
+      "source": "D04:324",
+      "status": "PROPOSED (BQ-4: the overwrite)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-5": {
+      "text": "\"Rename…\"",
+      "source": "D04:325",
+      "status": "PROPOSED",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-6": {
+      "text": "\"Delete…\"",
+      "source": "D04:326",
+      "status": "PROPOSED",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-7": {
+      "text": "\"Reset to {name}\"",
+      "source": "D04:327",
+      "status": "PROPOSED (BQ-4)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-8": {
+      "text": "\"Modified\"",
+      "source": "D04:328",
+      "status": "verbatim (D02's slot, worded here)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-9": {
+      "text": "\"{name} · Modified\"",
+      "source": "D04:329",
+      "status": "PROPOSED (the button and dialog header)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-10": {
+      "text": "\"No saved presets yet\"",
+      "source": "D04:330",
+      "status": "PROPOSED (BQ-4)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-11": {
+      "text": "\"Saves period, row size, value area, VWAP and node marking — never a time, symbol or account.\"",
+      "source": "D04:331",
+      "status": "PROPOSED (BQ-3; the export annotation)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-12": {
+      "text": "\"Preset name\"",
+      "source": "D04:332",
+      "status": "PROPOSED",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-13": {
+      "text": "\"A preset named {name} already exists.\" with \"Overwrite\" · \"Rename\"",
+      "source": "D04:333",
+      "status": "PROPOSED (BQ-4)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-14": {
+      "text": "\"Session value is built in. Choose another name.\" with \"Rename\"",
+      "source": "D04:334",
+      "status": "PROPOSED",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-15": {
+      "text": "\"Name must be 1 to 80 characters.\"",
+      "source": "D04:335",
+      "status": "PROPOSED (the 1–80 rule)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-16": {
+      "text": "\"Delete preset {name}?\" / \"Profiles using it keep their current settings.\" with \"Cancel\" · \"Delete\"",
+      "source": "D04:336",
+      "status": "PROPOSED",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-17": {
+      "text": "\"Applied {preset}\" with the action \"Undo\"; range-mode form \"Applied {preset}. Profile range mode: choose a range.\"",
+      "source": "D04:337",
+      "status": "PROPOSED (BQ-5; the range-mode form R-3, §2.1)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-18": {
+      "text": "\"Restore previous settings\"",
+      "source": "D04:338",
+      "status": "PROPOSED (BQ-5)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-19": {
+      "text": "\"Previous settings restored.\"",
+      "source": "D04:339",
+      "status": "PROPOSED",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-20": {
+      "text": "\"Read-only while viewing as {user}.\"",
+      "source": "D04:340",
+      "status": "verbatim (`rbac.view_as`, D09E09:95)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-21": {
+      "text": "\"Saved preset {name}.\" / \"Renamed to {name}.\" / \"Preset {name} deleted.\"",
+      "source": "D04:341",
+      "status": "PROPOSED",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-22": {
+      "text": "\"Profile range\"",
+      "source": "D04:342",
+      "status": "PROPOSED (in E14's tool-chip slot; D04-A11)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-23": {
+      "text": "\"Drag on the chart to choose a range · Esc to stop\"",
+      "source": "D04:343",
+      "status": "PROPOSED (replaces D02 W-30; D04-C1)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-24": {
+      "text": "\"Click a bar to anchor the profile\"",
+      "source": "D04:344",
+      "status": "verbatim (D02 W-31)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-25": {
+      "text": "\"Range start\" / \"Range end\"",
+      "source": "D04:345",
+      "status": "PROPOSED (the thumbs)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-26": {
+      "text": "\"Profile range {start} to {end} UTC.\"",
+      "source": "D04:346",
+      "status": "PROPOSED",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-27": {
+      "text": "\"Keep open-ended\"",
+      "source": "D04:347",
+      "status": "PROPOSED (BQ-6)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-28": {
+      "text": "\"Anchored at {time} UTC; extends with new bars.\"",
+      "source": "D04:348",
+      "status": "PROPOSED (`11`:1727)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-29": {
+      "text": "\"Remove anchor\"",
+      "source": "D04:349",
+      "status": "PROPOSED (BQ-6)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-30": {
+      "text": "\"Anchor removed. Period: {mode}.\"",
+      "source": "D04:350",
+      "status": "PROPOSED (D02's \"Period: {mode}\")",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-31": {
+      "text": "\"Not available here: {command} needs chart trading armed.\"",
+      "source": "D04:351",
+      "status": "PROPOSED (K-10; §5 rows 8, 9)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-32": {
+      "text": "\"Attach profile\" / \"Detach profile\"",
+      "source": "D04:352",
+      "status": "PROPOSED (BQ-8)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-33": {
+      "text": "\"Attached to {drawing name}\"",
+      "source": "D04:353",
+      "status": "PROPOSED (BQ-8 as ruled; the name E14's)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-34": {
+      "text": "\"Attached to {drawing name} · drawing hidden\"",
+      "source": "D04:354",
+      "status": "PROPOSED (BQ-8)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-35": {
+      "text": "\"Profile kept as a fixed range.\"",
+      "source": "D04:355",
+      "status": "PROPOSED (BQ-9 as ruled: a line in E14-D07's toast, D04-A4)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-36": {
+      "text": "\"Profile kept, anchored at {time} UTC.\"",
+      "source": "D04:356",
+      "status": "PROPOSED (the `vertical_line` case)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-37": {
+      "text": "\"{k} anchored profiles keep their range or anchor.\"",
+      "source": "D04:357",
+      "status": "PROPOSED (BQ-9 split as §4.4; D04-A3)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-38": {
+      "text": "\"Profile follows {drawing name}: {start} to {end} UTC.\"",
+      "source": "D04:358",
+      "status": "PROPOSED",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-39": {
+      "text": "\"Stale 7s\"",
+      "source": "D04:359",
+      "status": "verbatim (E17's chip; the figure illustrative)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-40": {
+      "text": "\"UTC day\" / \"Session\" / \"Custom bar\"",
+      "source": "D04:360",
+      "status": "PROPOSED (`15`:1690's three values)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-41": {
+      "text": "\"Range start cannot pass range end.\" / \"Range end cannot pass range start.\"",
+      "source": "D04:361",
+      "status": "PROPOSED (§3.2, §6)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d04:W-42": {
+      "text": "\"Your role can't save workspaces.\"",
+      "source": "D04:362",
+      "status": "PROPOSED (`rbac.permission` with the verb \"save workspaces\", D09E09:114; §1.4)",
+      "owner": "E19-D04 (#439)",
+      "channel": "visible"
+    },
+    "d05:W-1": {
+      "text": "\"POC {price} ▲ {n} rows\" / \"POC {price} ▼ {n} rows\"",
+      "source": "D05:418",
+      "status": "PROPOSED (the legend's move words; E19-D02 #416)",
+      "owner": "E19-D05 (#500)",
+      "channel": "visible, read on focus, never announced (D06 LR-18)"
+    },
+    "d05:W-1b": {
+      "text": "\"POC moved up {n} rows\" / \"POC moved down {n} rows\"",
+      "source": "D05:419",
+      "status": "PROPOSED (appended to D02 W-33)",
+      "owner": "E19-D05 (#500)",
+      "channel": "live, appended to d02:W-33 (D06 LR-01)"
+    },
+    "d05:W-2": {
+      "text": "\"Recalculating\"",
+      "source": "D05:420",
+      "status": "PROPOSED (the progress bar's name, never announced)",
+      "owner": "E19-D05 (#500)",
+      "channel": "visible, never announced (D06 LR-15)"
+    }
+  }
+}
