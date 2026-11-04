@@ -3777,9 +3777,16 @@ export interface paths {
      *     `funding_interval_minutes`. At most 64 gaps are listed, oldest first; past the cap the
      *     oldest are joined into one span, which never leaves a missing settlement out.
      *
-     *     The two bounds and `meta.coverage` are contract first (C-6.1): optional until the
-     *     handler serves them, and a client reads an absent member as unknown, never as `0` or as
-     *     "covered".
+     *     **`annualised_pct`** (E24-S04, #779 ruling 6618709412) is on every item, the predicted
+     *     one included: the item's `funding_rate` annualised by the server, as a percentage, the
+     *     rate × the settlements per year from `funding_interval_minutes` (525 600 /
+     *     `funding_interval_minutes`) × 100, in `Decimal` (24 §2.7). It is the server's
+     *     computation: a client displays it and never computes it, and the predicted item's value
+     *     is an estimate as that item is.
+     *
+     *     The two bounds, `annualised_pct` and `meta.coverage` are contract first (C-6.1): optional
+     *     until the handler serves them, and a client reads an absent member as unknown, never as
+     *     `0` or as "covered".
      */
     get: operations["getFundingHistory"];
     put?: never;
@@ -12037,7 +12044,7 @@ export interface components {
         max_history_bars?: number;
         stale_badge_after_ms?: number;
       };
-      /** @description The derivatives sub-panes' display preferences (E24-D02 §10, gap G1; E24-S03, #778; the basis key per the orchestrator's ruling on #783, 6612480577), presentation only: no key changes what the server computes or what a rule sees. Annualising is a display transform of a rate only; a money amount (`FundingEstimate.amount`) is never annualised on the client. A leaf's dotted key is `deriv.<leaf>` (`deriv.funding_style` is E24-D02's `deriv.funding.style`), one level as every group's leaves are. As for every group, `updateSettings` judges each patch leaf against `Settings`' leaf table and refuses an undeclared key or a value outside a leaf's enum or type with `422 validation_failed`, writing nothing. With no deployment default set, an unset leaf takes the client's built-in default, named on each leaf. */
+      /** @description The derivatives sub-panes' display preferences (E24-D02 §10, gap G1; E24-S03, #778; the basis key per the orchestrator's ruling on #783, 6612480577; the liquidation keys per its ruling 6612964585 Q1; the OI keys per the ruling on #777, 6618708569), presentation only: no key changes what the server computes or what a rule sees. Annualising is a display transform of a rate only: `funding_annualised` shows the server's `annualised_pct` (`getFundingHistory`), which a client never computes, and a money amount (`FundingEstimate.amount`) is never annualised on the client. A leaf's dotted key is `deriv.<leaf>` (`deriv.funding_style` is E24-D02's `deriv.funding.style`), one level as every group's leaves are. As for every group, `updateSettings` judges each patch leaf against `Settings`' leaf table and refuses an undeclared key or a value outside a leaf's enum, type or range with `422 validation_failed`, writing nothing. With no deployment default set, an unset leaf takes the client's built-in default, named on each leaf. */
       deriv?: {
         /**
          * @description The basis readout's price, `last − index` or `mark − index`; client default `last` (the ruling on #783, 6612480577).
@@ -12051,6 +12058,22 @@ export interface components {
          * @enum {string}
          */
         funding_style?: "line" | "bars";
+        /** @description The liquidation filter's minimum print notional in USDT, the shape of the `min_notional_usd` option of `getLiquidations` and 23 `liquidations.{symbol}`: a non-negative `Decimal` string of at most 1,000,000,000 with at most 2 fractional digits; client default `"0"` (6612964585 Q1). */
+        liq_min_notional_usd?: components["schemas"]["Decimal"];
+        /**
+         * @description The liquidation sub-pane's rendering; client default `bars` (6612964585 Q1).
+         * @enum {string}
+         */
+        liq_mode?: "bars" | "heatmap";
+        /**
+         * @description The OI sub-pane's mode; client default `absolute` (the ruling on #777, 6618708569).
+         * @enum {string}
+         */
+        oi_mode?: "absolute" | "delta";
+        /** @description The OI bars' price/OI quadrant classification; client default `true` (6618708569). */
+        oi_quadrant_colouring?: boolean;
+        /** @description The estimated liquidation zones (E24-S07, with its acknowledgement); client default `false` (6612964585 Q1). */
+        zones_enabled?: boolean;
       };
       notifications?: {
         desktop_enabled?: boolean;
@@ -19083,6 +19106,8 @@ export interface operations {
             /** @description The symbol's settlement interval in minutes, from instrument info (`fundingInterval`); 480 is 8 h, 240 is 4 h. */
             funding_interval_minutes?: number;
             items?: {
+              /** @description The item's rate annualised by the server, a percentage: the rate × (525 600 / `funding_interval_minutes`) × 100 (#779 ruling 6618709412). Never computed by a client. */
+              annualised_pct?: components["schemas"]["Decimal"];
               /** @default false */
               estimated: boolean;
               funding_rate?: components["schemas"]["Decimal"];

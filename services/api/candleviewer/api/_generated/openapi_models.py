@@ -3628,7 +3628,7 @@ class FundingEstimate(BaseModel):
         Field(
             description="The charge's magnitude in the settle coin (USDT), never negative; its sign is `direction`. Quantised to 8 dp, `ROUND_HALF_UP`, as funding payments are (24 §1.5).",
             examples=["63120.50", "-0.0004", "0"],
-            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+            pattern="^[0-9]+(\\.[0-9]+)?$",
         ),
     ]
     direction: Annotated[
@@ -5314,6 +5314,18 @@ class Deriv(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    oi_mode: Annotated[
+        Literal["absolute", "delta"] | None,
+        Field(
+            description="The OI sub-pane's mode; client default `absolute` (the ruling on #777, 6618708569)."
+        ),
+    ] = None
+    oi_quadrant_colouring: Annotated[
+        StrictBool | None,
+        Field(
+            description="The OI bars' price/OI quadrant classification; client default `true` (6618708569)."
+        ),
+    ] = None
     funding_style: Annotated[
         Literal["line", "bars"] | None,
         Field(
@@ -5330,7 +5342,27 @@ class Deriv(BaseModel):
             description="The basis readout's price, `last − index` or `mark − index`; client default `last` (the ruling on #783, 6612480577)."
         ),
     ] = None
-    __null_refused = field_validator("oi_mode", "oi_quadrant_colouring", "funding_style", "funding_annualised", "basis_source", "basis_annualised", mode="before")(_refuse_null)
+    liq_mode: Annotated[
+        Literal["bars", "heatmap"] | None,
+        Field(
+            description="The liquidation sub-pane's rendering; client default `bars` (6612964585 Q1)."
+        ),
+    ] = None
+    liq_min_notional_usd: Annotated[
+        str | None,
+        Field(
+            description='The liquidation filter\'s minimum print notional in USDT, the shape of the `min_notional_usd` option of `getLiquidations` and 23 `liquidations.{symbol}`: a non-negative `Decimal` string of at most 1,000,000,000 with at most 2 fractional digits; client default `"0"` (6612964585 Q1).',
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^((0|[1-9][0-9]{0,8})(\\.[0-9]{1,2})?|1000000000(\\.0{1,2})?)$",
+        ),
+    ] = None
+    zones_enabled: Annotated[
+        StrictBool | None,
+        Field(
+            description="The estimated liquidation zones (E24-S07, with its acknowledgement); client default `false` (6612964585 Q1)."
+        ),
+    ] = None
+    __null_refused = field_validator("oi_mode", "oi_quadrant_colouring", "funding_style", "funding_annualised", "basis_source", "liq_mode", "liq_min_notional_usd", "zones_enabled", mode="before")(_refuse_null)
 
 
 class FieldMeta(BaseModel):
@@ -5353,7 +5385,7 @@ class Settings(BaseModel):
     deriv: Annotated[
         Deriv | None,
         Field(
-            description="The derivatives sub-panes' display preferences (E24-D02 §10, gap G1; E24-S03, #778; the basis key per the orchestrator's ruling on #783, 6612480577), presentation only: no key changes what the server computes or what a rule sees. Annualising is a display transform of a rate only; a money amount (`FundingEstimate.amount`) is never annualised on the client. A leaf's dotted key is `deriv.<leaf>` (`deriv.funding_style` is E24-D02's `deriv.funding.style`), one level as every group's leaves are. As for every group, `updateSettings` judges each patch leaf against `Settings`' leaf table and refuses an undeclared key or a value outside a leaf's enum or type with `422 validation_failed`, writing nothing. With no deployment default set, an unset leaf takes the client's built-in default, named on each leaf."
+            description="The derivatives sub-panes' display preferences (E24-D02 §10, gap G1; E24-S03, #778; the basis key per the orchestrator's ruling on #783, 6612480577; the liquidation keys per its ruling 6612964585 Q1; the OI keys per the ruling on #777, 6618708569), presentation only: no key changes what the server computes or what a rule sees. Annualising is a display transform of a rate only: `funding_annualised` shows the server's `annualised_pct` (`getFundingHistory`), which a client never computes, and a money amount (`FundingEstimate.amount`) is never annualised on the client. A leaf's dotted key is `deriv.<leaf>` (`deriv.funding_style` is E24-D02's `deriv.funding.style`), one level as every group's leaves are. As for every group, `updateSettings` judges each patch leaf against `Settings`' leaf table and refuses an undeclared key or a value outside a leaf's enum, type or range with `422 validation_failed`, writing nothing. With no deployment default set, an unset leaf takes the client's built-in default, named on each leaf."
         ),
     ] = None
     field_meta: Annotated[FieldMeta | None, Field(alias="_meta")] = None
