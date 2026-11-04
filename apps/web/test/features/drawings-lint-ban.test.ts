@@ -14,9 +14,10 @@ const WEB = resolve(import.meta.dirname, "../..");
 const LISTED = JSON.parse(
   readFileSync(resolve(WEB, "../../tools/ci/no-inline-suppression-paths.json"), "utf8"),
 ) as { paths: string[] };
-/** `apps/web/src/objecttree/**` -> `src/objecttree/__probe.tsx`, a file the ban must cover. */
+/** `apps/web/src/objecttree/**` -> `src/objecttree/__probe.tsx`, a file the ban must cover. The
+ * rule-graph slice is listed for the suppression check alone (E37-X01), not as a drawing path. */
 const BANNED = LISTED.paths
-  .filter((path) => path.startsWith("apps/web/src/"))
+  .filter((path) => path.startsWith("apps/web/src/") && !path.includes("/rule-builder-graph/"))
   .map((path) => path.replace(/^apps\/web\//, "").replace(/\/\*\*$/, "/__probe.tsx"));
 const FREE = "src/features/indicators/__probe.tsx";
 /** Every root as ECMAScript modules of either kind: TypeScript's `.mts` and `.cts`. */

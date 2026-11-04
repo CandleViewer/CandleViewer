@@ -159,7 +159,7 @@ E15-T01's spec decision on #402, SR-E14-09).
   `document.write(ln)` reached through strict TypeScript's `!` or `?.`
   (`frame.contentDocument!.write(s)`), and `href`, `src`, `style`, `aria-label`,
   `aria-description` or `title` built by `+` or a template with a substitution (JSX, `setAttribute`
-  with the name in any case or a backtick string, a DOM property, `createElement` props). Scope: the paths of
+  with the name in any case or a backtick string, a DOM property, `createElement` props). Scope: the drawing paths of
   `tools/ci/no-inline-suppression-paths.json`. The message points to a React text child,
   `textContent` or `setAttribute(name, raw)`, never to stripping characters (it breaks RTL text and
   emoji).
