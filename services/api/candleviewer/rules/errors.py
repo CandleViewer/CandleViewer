@@ -22,3 +22,19 @@ class ScopeForbiddenError(RulesError):
     """403: absent and not-granted accounts are indistinguishable (no existence leak)."""
 
     message = "Forbidden"
+
+
+class ConstantTypeError(RulesError, ValueError):
+    """A rule constant the evaluator cannot read as its place needs (#5807): one that is not a
+    number where a comparison orders its operands or an arithmetic node computes, or text that
+    reads as a number but is not decimal text (``5%``, ``NaN``). ``loc`` is its path in the rule
+    (``("conditions", "right", "const")``); ``args`` is ``(loc, reason)``, so the error pickles and
+    copies."""
+
+    def __init__(self, loc: tuple[str | int, ...], reason: str) -> None:
+        super().__init__(loc, reason)
+        self.loc = loc
+        self.reason = reason
+
+    def __str__(self) -> str:
+        return f"{self.reason} at /{'/'.join(map(str, self.loc))}"
