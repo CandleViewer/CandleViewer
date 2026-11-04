@@ -59,12 +59,15 @@ class _Algos:
 class _Recorder:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.hang_resume = False
 
     async def pause(self, reason: str) -> None:
         self.calls.append(f"pause:{reason}")
 
     async def resume(self, reason: str) -> None:
         self.calls.append(f"resume:{reason}")
+        if self.hang_resume:
+            await asyncio.Event().wait()
 
 
 class _Sessions:
@@ -256,12 +259,13 @@ async def test_the_order_kill_switch_also_engages_the_gate() -> None:
 @pytest.mark.parametrize("outage", [True, False])
 async def test_a_fail_closed_reading_engages_the_gate_without_side_effects(outage: bool) -> None:
     rig = await _Rig().start()
+    recorder_calls = list(rig.recorder.calls)  # the start's `False` reading resumed (#5629)
     rig.store.down = outage
     rig.db(MAINTENANCE_MODE, True if outage else "on")  # an outage, or one unreadable row
     with capture_logs() as logs:
         await rig.controller.refresh()
     assert rig.controller.gate.engaged
-    assert rig.algos.calls == [] and rig.recorder.calls == []
+    assert rig.algos.calls == [] and rig.recorder.calls == recorder_calls
     assert "maintenance_state_unknown" in [e["event"] for e in logs]
 
 
@@ -313,15 +317,45 @@ async def test_a_hung_algo_engine_is_cut_by_its_own_budget_and_retried_by_the_ne
     assert rig.algos.calls == ["maintenance.enabled"] * 2
 
 
+def _pauses(recorder: _Recorder) -> list[str]:
+    return [c for c in recorder.calls if c.startswith("pause:")]
+
+
 async def test_the_recorder_pauses_only_when_keep_recorder_is_false() -> None:
+    """Every `False` reading resumes (idempotent, #5629); only a `keep_recorder = false` entry
+    pauses."""
     rig = await _Rig().start()
     await rig.toggle(MAINTENANCE_MODE, True)
     await rig.toggle(MAINTENANCE_MODE, False)
-    assert rig.recorder.calls == []
+    assert _pauses(rig.recorder) == []
     await rig.toggle(MAINTENANCE_KEEP_RECORDER, False)
     await rig.toggle(MAINTENANCE_MODE, True)
+    assert rig.recorder.calls[-1] == "pause:maintenance.enabled"
     await rig.toggle(MAINTENANCE_MODE, False)
-    assert rig.recorder.calls == ["pause:maintenance.enabled", "resume:maintenance.disabled"]
+    assert _pauses(rig.recorder) == ["pause:maintenance.enabled"]
+    assert rig.recorder.calls[-1] == "resume:maintenance.disabled"
+
+
+async def test_every_false_reading_resumes_so_a_poll_retries_a_cut_resume() -> None:
+    rig = await _Rig().start()
+    before = rig.recorder.calls.count("resume:maintenance.disabled")
+    await rig.controller.refresh()
+    assert rig.recorder.calls.count("resume:maintenance.disabled") == before + 1
+
+
+async def test_a_resume_cut_by_its_budget_does_not_stop_the_next_entry_pausing() -> None:
+    """#5629 regression: a resume cut by the effect budget left the controller's own flag set,
+    so the next entry skipped the pause while the recorder ran (the port had resumed it)."""
+    rig = await _Rig(effect_timeout_s=0.001).start()
+    await rig.toggle(MAINTENANCE_KEEP_RECORDER, False)
+    await rig.toggle(MAINTENANCE_MODE, True)
+    rig.recorder.hang_resume = True
+    with capture_logs() as logs:
+        await rig.toggle(MAINTENANCE_MODE, False)  # the resume is cut by its own budget
+    assert "feature_flag_hook_failed" in [e["event"] for e in logs]
+    rig.recorder.hang_resume = False
+    await rig.toggle(MAINTENANCE_MODE, True)
+    assert _pauses(rig.recorder) == ["pause:maintenance.enabled"] * 2
 
 
 async def test_without_an_algo_port_the_gap_is_logged_once() -> None:
@@ -336,6 +370,25 @@ async def test_without_an_algo_port_the_gap_is_logged_once() -> None:
         await controller.refresh()
         await controller.refresh()
     assert [e["event"] for e in logs] == ["maintenance_algo_cancel_unavailable"]
+
+
+async def test_without_a_recorder_port_a_pause_that_was_asked_for_is_logged_once() -> None:
+    """#5629: as the algo gap, a `keep_recorder = false` entry with no recorder bound says so."""
+    store = FakeFlagStore()
+    service = FlagService(default_registry(), store, clock=Clock())
+    await store.ensure(service.registry.values())
+    store.rows[MAINTENANCE_KEEP_RECORDER] = replace(
+        store.rows[MAINTENANCE_KEEP_RECORDER], value=False
+    )
+    store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], value=True)
+    controller = MaintenanceController(
+        service, MaintenanceGate(), notify=lambda on: None, audit=FakeAudit(), algos=_Algos()
+    )
+    with capture_logs() as logs:
+        await controller.refresh()
+        await controller.refresh()
+    (logged,) = [e for e in logs if e["event"] == "maintenance_recorder_pause_unavailable"]
+    assert logged["log_level"] == "warning"
 
 
 async def test_the_gate_gauge_is_exported_and_follows_the_gate() -> None:
