@@ -637,3 +637,31 @@ def test_an_unknown_class_reaches_nobody_and_is_marked_for_the_count() -> None:
     assert owner is not None and is_unkeyed(owner)
     assert _edges()[0].admit(body, owner) is None
     assert not is_unkeyed(_HALTED)
+
+
+@pytest.mark.parametrize(
+    "since",
+    [None, "x", -1, True],
+    ids=["missing", "text", "neg", "bool"],
+)
+def test_a_raised_item_whose_kept_body_is_faulty_is_unknown_and_never_ended(since: Any) -> None:
+    """The snap's cut and the kept body agree: an item the fault check refuses as a body shows
+    `unknown`, is not kept, and a rescope under the same scope sends nothing for it."""
+    item: dict[str, Any] = {
+        "safety_class": "risk_lockout",
+        "environment": "live",
+        "state": "raised",
+        "affected_count": 1,
+        "_by_account": {str(ACC_A): {"affected_count": 1, "since_ms": _T1}},
+    }
+    if since is not None:
+        item["since_ms"] = since
+    raw = {"kind": "health", "safety_classes": [item]}
+    snap = system_view(raw, MANAGER)
+    assert snap is not None
+    assert snap["safety_classes"] == [
+        {"safety_class": "risk_lockout", "environment": "live", "state": "unknown"}
+    ]
+    edges, _ = _edges()
+    edges.seed(raw, snap, MANAGER)
+    assert edges.rescope(_view_of(MANAGER), _NOW, principal=MANAGER) == []

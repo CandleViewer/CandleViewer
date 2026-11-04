@@ -392,3 +392,37 @@ async def test_a_reauth_that_fails_after_its_swap_still_settles_the_safety_state
             ("raised", 1)
         ]
         await rig.close()
+
+
+async def test_a_failed_reauth_whose_settle_raises_closes_the_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The settle after a failed re-`auth` raises: the socket closes `internal_error` rather
+    than stay open under a principal no later change reaches."""
+    calls = 0
+
+    async def view_as(_session_id: str) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 4:
+            raise RuntimeError("view-as store down")
+
+    async def settle(_authz: Any, _close: Any) -> None:
+        raise RuntimeError("settle failed")
+
+    monkeypatch.setattr(
+        test_system_topic_roles,
+        "make_ws_router",
+        functools.partial(gateway.make_ws_router, view_as=view_as),
+    )
+    rig, user = _Rig(), uuid.uuid4()
+    async with asyncio.timeout(_DEADLINE_S):
+        sock = await rig.connect(_as(user, "manager", accounts=(ACC_A,)))
+        monkeypatch.setattr(rig.registry, "settle", settle)
+        rig.principals[user] = _as(user, "manager", accounts=(ACC_A,))
+        sock.feed({"t": "auth", "id": "re", "p": {"access_token": str(user)}})
+        failed = await sock.sent.get()
+        assert (failed["t"], failed["p"]["code"]) == ("err", "auth_failed")
+        bye = await sock.sent.get()
+        assert (bye["t"], bye["p"]["reason"]) == ("bye", "internal_error")
+        await rig.close()

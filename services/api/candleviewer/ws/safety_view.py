@@ -189,14 +189,15 @@ class SafetyEdges:
     def seed(
         self, body: Mapping[str, Any], view: Mapping[str, Any], principal: PrincipalSnapshot
     ) -> None:
-        """The `system` snap, cut under `principal`: keep each raised item of `body` as a body,
-        and nothing kept before it, and remember the items `view` (what this connection was
-        sent) shows raised."""
+        """The `system` snap, cut under `principal`: keep each raised item of `body` as a body
+        the fault check accepts, and nothing kept before it, and remember the items `view` (what
+        this connection was sent) shows raised."""
         self.principal = principal
         self._bodies.clear()
         for item in _items(body.get(SAFETY_CLASSES)):
             if (key := _key(item)) is not None and item.get("state") == "raised":
-                self._bodies[key] = _as_body(item)
+                if not is_faulty(kept := _as_body(item)):
+                    self._bodies[key] = kept
         for item in _items(view.get(SAFETY_CLASSES)):
             if (key := _key(item)) is not None and item.get("state") == "raised":
                 self._sent[key] = (item.get("affected_count"), item.get("since_ms"))
@@ -305,6 +306,8 @@ def _scoped_item(item: Mapping[str, Any], principal: PrincipalSnapshot) -> dict[
         return None
     head: dict[str, Any] = {"safety_class": key[0], "environment": key[1]}
     state = item.get("state")
+    if state == "raised" and is_faulty(_as_body(item)):
+        return head | {"state": "unknown"}  # a fault: never read as an all-clear (nor kept)
     if key[0] in PROCESS_GLOBAL:
         count, since = item.get("affected_count"), item.get("since_ms")
         if state == "raised" and _is_ms(count) and count >= 1 and _is_ms(since):

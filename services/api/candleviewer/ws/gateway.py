@@ -1772,14 +1772,15 @@ def make_ws_router(
     async def settle_failed_reauth(conn: _Connection, authz: ConnectionAuthz) -> None:
         """A re-`auth` that failed after its swap (`registry.apply`) keeps the socket open, so the
         change is settled as a successful one is (§9.5: the re-pended subscriptions; #2302: the
-        safety state under the principal now). A settle that raises never masks the failure:
-        the safety state is still reconciled."""
+        safety state under the principal now). A settle that raises never masks the failure: the
+        socket, which may no longer be registered for later changes, closes `internal_error`, as
+        a late `auth` call's does."""
         try:
             await registry.settle(authz, conn.evict)
         except Exception:
-            with contextlib.suppress(Exception):  # a failing logger must not skip the fallback
+            with contextlib.suppress(Exception):  # a failing logger must not skip the close
                 _log().error("ws reauth settle failed", connection_id=conn.connection_id)
-            conn.reconcile_safety()
+            conn.close_with("internal_error")
 
     def view_as_refusal(read: ViewAsBinding | None, socket_context: str | None) -> str | None:
         """§9.6: why an `auth` that read `read` is refused, or `None`. A held context refuses
