@@ -75,6 +75,31 @@ describe("metric options over the server-written vocabulary (E37-S02)", () => {
     expect(by.get("replay_speed")).toBe("replay");
   });
 
+  it("derives every category from the served scope and inputs alone, for signals whose ids no table knows", () => {
+    const bare = (shape: Partial<VocabularySignal>): VocabularySignal => ({
+      id: "zz_no_table_knows",
+      type: "number",
+      estimated: false,
+      available: true,
+      requires_recording: false,
+      ...shape,
+    });
+    const cases: readonly (readonly [Partial<VocabularySignal>, MetricCategory])[] = [
+      [{ scope: "account" }, "account"],
+      [{ scope: "global" }, "replay"],
+      [{ dependencies: ["trades"] }, "orderflow"],
+      [{ dependencies: ["book"] }, "book"],
+      [{ dependencies: ["oi"] }, "derivatives"],
+      [{ dependencies: ["funding"] }, "derivatives"],
+      [{ dependencies: ["liquidations"] }, "derivatives"],
+      [{ dependencies: ["bars"] }, "price"],
+      [{ scope: "position", dependencies: ["book"] }, "position"], // queue_position_estimate's shape
+    ];
+    expect(cases.map(([shape]) => categoryOf(bare(shape)))).toEqual(
+      cases.map(([, category]) => category),
+    );
+  });
+
   it("reads a bare signal: no scope is a symbol's (by its inputs), no display name its id (P1)", () => {
     const bare = (dependencies?: string[]): VocabularySignal => ({
       id: "x",

@@ -50,6 +50,13 @@ PERSONAS: dict[str, tuple[tuple[str, ...], str | None]] = {
     "no-orders-write": (granted("viewer"), None),
     "unrecorded-solusdt": (granted("manager"), "SOLUSDT"),
 }
+#: Every file a new metric moves, named where a fixture's byte check fails: the four fixtures, the
+#: registry's name golden and the counts the web model's tests pin.
+NEW_METRIC_MOVES = (
+    "packages/fixtures/golden/rule-graph/vocabulary/{" + ",".join(sorted(PERSONAS)) + "}.json",
+    "services/api/candleviewer/rules/vocabulary/metric_names.golden.txt",
+    "the counts in apps/web/test/features/rule-builder-graph/vocabulary/metrics.test.ts",
+)
 
 
 def built(persona: str) -> dict[str, Any]:
@@ -108,7 +115,10 @@ def test_each_vocabulary_fixture_is_what_the_server_builds(persona: str) -> None
     if REGEN:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8", newline="\n")
-    assert path.read_bytes() == text.encode(), f"{persona}: regenerate with `{REGEN_CMD}`"
+    assert path.read_bytes() == text.encode(), (
+        f"{persona}: regenerate with `{REGEN_CMD}`; a new metric moves, together: "
+        + "; ".join(NEW_METRIC_MOVES)
+    )
 
 
 @pytest.mark.parametrize("persona", sorted(PERSONAS))
