@@ -14,6 +14,8 @@ const config: StorybookConfig = {
         "../src/**/*.stories.@(ts|tsx)",
         // CMP-086 lives in apps/web (router-coupled); its one story file is listed here, not globbed.
         "../../../apps/web/src/features/settings/SettingsNav.stories.tsx",
+        // CMP-186's FundingOnly sub-pane and its E24-S04 states (E24-S03, #778): the feature's one story folder.
+        "../../../apps/web/src/features/funding/ui/*.stories.tsx",
       ],
   // The E05-T03 addon set: docs pages, the a11y panel and its gate, and the Vitest addon that runs
   // every story's play function and axe check. Controls, toolbars and interactions are core.
