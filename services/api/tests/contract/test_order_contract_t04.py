@@ -336,7 +336,7 @@ def test_the_anchor_table_is_principal_scoped_permanent_and_written_with_its_ord
     assert "| `idempotency_anchors` (PG) " in _between(_SCHEMA_DOC, "\n## 7. ", "\n## 8. ")
     assert "| `idempotency_anchors` | `client_ref`" in _words(_SCHEMA_DOC.split("\n## 12. ")[1])
     revisions = _between(_SCHEMA_DOC, "### 9.4 ", "### 9.5 ")
-    revision = revisions.split("| `0043_order_submission` ")[1]
+    revision = "| " + revisions.split("| `0043_order_submission` ")[1].split("|", 2)[2].lstrip()
     assert revision.startswith(
         "| `idempotency_anchors` (§3.3.10), `recorded_stops` (§3.3.11) and `orders.provenance` "
         "(§3.3.4), their guard and TRUNCATE triggers; no `DELETE` or `TRUNCATE` for `cv_app`"
