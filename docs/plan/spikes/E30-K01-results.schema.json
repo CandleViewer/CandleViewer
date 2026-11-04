@@ -22,7 +22,7 @@
     "ticket": { "const": "E30-K01" },
     "issue": { "const": 852 },
     "status": { "enum": ["template", "measured"] },
-    "target": { "enum": ["electron", "browser"] },
+    "target": { "enum": ["electron", "browser", "node"] },
     "generatedAt": { "type": "string", "format": "date-time" },
     "host": {
       "type": "object",
@@ -112,7 +112,7 @@
         "required": ["placement", "runMode"],
         "properties": {
           "placement": { "enum": ["sync", "store", "worker"] },
-          "runMode": { "enum": ["worker", "inline"] },
+          "runMode": { "enum": ["worker", "inline", "none"] },
           "page": {
             "type": "object",
             "properties": {
@@ -174,9 +174,9 @@
         "verdict"
       ],
       "properties": {
-        "target": { "enum": ["electron", "browser"] },
+        "target": { "enum": ["electron", "browser", "node"] },
         "placement": { "enum": ["sync", "store", "worker"] },
-        "runMode": { "enum": ["worker", "inline"] },
+        "runMode": { "enum": ["worker", "inline", "none"] },
         "measure": {
           "enum": [
             "recompute_end_a",

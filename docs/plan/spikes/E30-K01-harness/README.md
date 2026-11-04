@@ -60,6 +60,17 @@ Environment: `CV_K01_TARGETS` (`electron` default, or `electron,browser`), `CV_K
 step 5), `CV_PERF_HOST_CLASS=reference` (only on the `06` section 3.1 machine; anything else is
 `below-class`, so a miss reads INCONCLUSIVE and a pass reads PASS), `CV_PERF_REPORT_DIR`.
 
+The in-process leg (no display; the reducer placements and the keymap dispatch to a stubbed `fetch()`):
+
+```bash
+cd apps/web && CV_K01_INPROCESS=1 CV_PERF_REPORT_DIR=/tmp/k01 \
+  pnpm exec vitest run --project unit test/spike-e30-k01/inprocess.perf.test.ts
+```
+
+The Electron leg needs Electron's system libraries (the Playwright dependency set) and `xvfb-run` or a display.
+The default report directory is `apps/desktop/e30-k01-results/`, not `test-results/`, which Playwright empties
+when a run starts.
+
 Output: `<report dir>/e30-k01-results-<target>.json` (shape: `../E30-K01-results.schema.json`) and a
 markdown table on stdout.
 

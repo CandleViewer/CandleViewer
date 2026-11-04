@@ -29,7 +29,8 @@ export CV_SPIKE_E30_K01=1
 pnpm --filter @candleviewer/web exec vite build
 pnpm --filter @candleviewer/desktop build
 
-export CV_PERF_REPORT_DIR="${CV_PERF_REPORT_DIR:-$root/apps/desktop/test-results/perf}"
+# Not under test-results/: Playwright empties that directory when a run starts.
+export CV_PERF_REPORT_DIR="${CV_PERF_REPORT_DIR:-$root/apps/desktop/e30-k01-results}"
 runner=()
 if [ -z "${DISPLAY:-}" ]; then
   command -v xvfb-run >/dev/null 2>&1 || { echo "no DISPLAY and no xvfb-run" >&2; exit 5; }
