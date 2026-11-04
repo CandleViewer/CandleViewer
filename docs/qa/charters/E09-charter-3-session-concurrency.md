@@ -37,3 +37,27 @@ None observed in-process.
 
 ## Follow-ups
 1. #2100: add a deterministic interleaving test: manager mid step-up, owner revokes role, action refused, audit order preserved, no partial effect.
+
+## Since run 1 (status 2026-11-04)
+- #1640 (idle-lock and expiry screens) and #2086 (server clock): closed (#5170).
+- #2100 (role revoked mid step-up): closed. #2593 closed by #5256: the effect now refuses a revoked or disabled owner (`tests/security/auth/test_role_revoked_mid_step_up.py::test_role_revoked_after_the_action_was_authorised_is_refused_at_the_effect`).
+- SR-013 session rotation on role change (#2101): open (#5433 in review).
+
+## Run 2 plan (staging, #2491) · Status: not yet run · planned 2026-11-04
+- Format: session-based, 90 min (60-120 time box), human tester on staging with a browser; test accounts only; no live or demo exchange key present. Cites 03 §11.2 and §12.
+- Mission: Hold the same user in three real browser contexts and race sign-out everywhere, role change, disable and Lock now, to find a context that keeps authority or is falsely evicted.
+- Areas:
+  - sign-out everywhere and revoke-one from the SCR-112 session list, with the other contexts reloaded
+  - disable and role change with a live socket; a role revoked between the step-up and the effect (#5256)
+  - Lock now (U51) and idle lock, unlocked with the password only
+  - SR-013 session rotation on role change is open (#2101, #5433 in review): record what is observed, do not call it a pass
+  - US-ONB-004, -009; threat rows U6, U7, U13, U19, U32, U45, U51
+- Oracles (the run-1 oracles O1-O4 stay in force):
+  - O3.5 a context that keeps authority or a socket after disable or role change
+  - O3.6 the audit order is not revoke then refusal
+  - O3.7 a locked session that acts again without the password
+  - O3.8 a sibling session evicted when only one was targeted
+- Keyboard-only segment (03 §12): the SCR-112 session list: revoke one, then sign out everywhere, by keyboard only.
+- Automated neighbours: `tests/security/auth/test_role_revoked_mid_step_up.py`; `tests/security/auth/test_disable_user_e2e.py`; `tests/security/auth/test_revocation_closes_sockets.py`; `tests/security/auth/test_idle_lock_http.py`; `apps/web/e2e/auth/sign-out-everywhere.real.ts`.
+- Private routing: anomalies matching a security oracle (bypass, escalation, audit gap) go the same day through SECURITY.md's private channel (GitHub Private Vulnerability Reporting, or a direct message to the owner `@basiltt`), never a public issue; the debrief records only the private report id and a pattern-level label. Other anomalies: issue links.
+- Debrief slots: tester, date, build sha, minutes spent; anomalies (the private report id for a security-oracle anomaly, an issue link otherwise); not probed; follow-ups. Filled at the #2491 run.
