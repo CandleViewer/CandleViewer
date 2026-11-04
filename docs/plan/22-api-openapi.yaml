@@ -385,12 +385,12 @@ info:
     validated or the condition compiled, and hold the refusals they record to one budget per user.
 
     * **Body.** `createAlert`, `updateAlert`, `setAlertEnabled`, `setAlertSnooze` and
-      `reportAlertDesktopOutcome` read at most 256 KiB (262,144 bytes) of body: a declared
+      `reportAlertDesktopOutcome` read at most 64 KiB (65,536 bytes) of body: a declared
       `Content-Length` over it is refused before any byte is read, and a body sent without one at
       the first chunk past it, `413 payload_too_large`. The body is JSON in UTF-8 without a byte
       order mark (in any other encoding, or with the mark, it is the operation's `422` for a body
       that is not JSON), nested at most 67 levels deep (the deepest `AlertConditionIr` the
-      compiler takes, at 32 node levels) and holding at most 4,096 values, counting each object,
+      compiler takes, at 32 node levels) and holding at most 2,048 values, counting each object,
       array and scalar but not the keys: past either it is `422 validation_failed` with
       `errors[].rule` `json_too_deep` or `too_many_values`, decided before the body is decoded
       (depth) or validated (values). The depth bound is 67, where the rule routes' is 66, because
