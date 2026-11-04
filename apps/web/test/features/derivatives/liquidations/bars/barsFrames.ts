@@ -10,6 +10,12 @@ export const CONTRACT = {
   zeroSentence: 'a bar with no liquidation prints reads `"0"`',
   /** `22` `getMetrics` description: params go in `params`; `side` is `both`, `long` or `short`. */
   paramsSentence: "`side` is `both` (the default), `long` or `short`",
+  /**
+   * ROUTER-ONLY: not in `22` or `24` at the pinned head; the sentence is `market_metrics.py`'s `detail` for a code
+   * the server does not compute ("not computed by this server yet: <codes>"). The pane keys on its prefix, so a
+   * re-pin to the merge commit re-reads `market_metrics.py` for it (and for the 422 an unlisted symbol gets).
+   */
+  notComputedDetail: "not computed by this server yet",
   /** #5341's route test: the registry unit and the resolved params echo. */
   unit: "notional",
   alias: "liquidation_intensity",

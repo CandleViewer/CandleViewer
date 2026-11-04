@@ -253,6 +253,9 @@ export function LiquidationBarsPane({
               <>
                 {readTime} · <Side side="long" /> {notional2(at.long)} USDT · <Side side="short" />{" "}
                 {notional2(at.short)} USDT
+                {at.partialFromMs === null
+                  ? null
+                  : ` · ${copy.recordedPartial(coverageTime(at.partialFromMs, ref))}`}
               </>
             )}
           </p>

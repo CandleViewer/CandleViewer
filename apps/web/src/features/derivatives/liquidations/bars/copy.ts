@@ -45,7 +45,12 @@ export const NOT_RECORDED = "not recorded";
 /** PROPOSED: the crosshair readout's words; the side words and glyphs are the pane's JSX (the glyph is `aria-hidden`). */
 export const readoutUnknown = (when: string): string => `${when} · ${NOT_RECORDED}`;
 
-/** The controls (D02 §10): the mode segments and the threshold field. */
+/**
+ * The controls (D02 §10): the mode segments and the threshold field. PROPOSED, to the E24-D05 deck owner: the merged
+ * deck carries neither string. They are interim names, not E24-D04 A-16's `switch` "Liquidations, heatmap" nor A-25's
+ * "Hide liquidation prints below (USDT)": the owner documents disagree (D03:517 says "segments"), and the ruling on
+ * #5768 (6634706232) sends one A-row to E24-D04 / E24-D06; this file follows that ruling.
+ */
 export const MODE_NAME = "Liquidation display";
 export const MODE_BARS = "Bars";
 export const MODE_HEATMAP = "Heatmap";
@@ -55,7 +60,12 @@ export const THRESHOLD_INVALID = "Enter a number, 0 or more.";
 export const HEATMAP_PENDING =
   "The realised-liquidation heatmap is not available yet. Switch to Bars to see recorded liquidations per bar.";
 
-/** PROPOSED: states (after D02 §9 / #780's copy). */
+/**
+ * PROPOSED: states (after D02 §9 / #780's copy). The deck's `derivatives.liq.retry` ("Couldn't load liquidation
+ * history · Retry") and `derivatives.liq.coverage_retry` ("Recording metadata is not available yet; retry
+ * shortly.") are the nearest merged strings; these say "bars", and `COVERAGE_FAILED` also says why no bar is drawn,
+ * which the deck's sentence does not: both go to the E24-D05 deck owner to merge or replace.
+ */
 export const LOADING = "Loading liquidation bars…";
 export const NO_BARS = "The server returned no bars for this range.";
 export const RETRY_TITLE = "Couldn't load liquidation bars";

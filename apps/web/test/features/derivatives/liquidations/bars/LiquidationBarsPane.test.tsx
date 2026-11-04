@@ -10,6 +10,7 @@ import * as stories from "../../../../../src/features/derivatives/liquidations/b
 import {
   COVERAGE,
   DAY_COVERAGE,
+  FIRST,
   HOUR,
   NOW,
   SERVED_LONG,
@@ -171,8 +172,16 @@ describe("LiquidationBarsPane (CMP-186, the bars)", () => {
         nowMs={NOW}
       />,
     );
-    expect(rows()).toHaveLength(TABLE_ROWS);
     expect(region().textContent).toContain("Table shows the newest 200 of 250 bars.");
+    // the cut keeps the NEWEST 200, newest first: bar 249 at the top, bar 50 (the 51st) at the bottom
+    // (DOM reads: 200 role queries would outlive the test timeout)
+    const times = [...region().querySelectorAll("tbody tr")].map(
+      (r) => r.querySelector("td, th")?.textContent.trim() ?? "",
+    );
+    expect(times).toHaveLength(TABLE_ROWS);
+    expect(times[0]).toBe("09:00");
+    expect(times.at(-1)).toBe("3 Oct 02:00");
+    expect(times).not.toContain("3 Oct 01:00");
   });
 });
 
@@ -233,6 +242,31 @@ describe("states", () => {
     expect(region().textContent).toContain(
       "Liquidation bars are not available on this server yet.",
     );
+  });
+
+  it("a 422 with any other detail is the generic failure: its Retry stays", () => {
+    const retry = vi.fn();
+    render(
+      <LiquidationBarsPane
+        symbol="BTCUSDT"
+        view={stories.viewOf([], {
+          phase: "failed",
+          error: { status: 422, code: "validation_failed", detail: "BTCUSDT is not listed" },
+          retry,
+        })}
+        coverage={{ kind: "ok", coverage: COVERAGE }}
+        settings={DEFAULT_LIQ_BAR_SETTINGS}
+        feedMinNotionalUsd={null}
+        onSettingsChange={() => undefined}
+        nowMs={NOW}
+      />,
+    );
+    expect(region().textContent).toContain("Couldn't load liquidation bars");
+    expect(region().textContent).not.toContain("not available on this server yet");
+    fireEvent.click(
+      within(region()).getByRole("button", { name: "Retry loading Liquidation bars" }),
+    );
+    expect(retry).toHaveBeenCalledOnce();
   });
 
   it("stale: the last good bars stay, marked with their time", () => {
@@ -493,6 +527,30 @@ describe("review folds", () => {
       expect(el.querySelectorAll('span[aria-hidden="true"]').length).toBeGreaterThan(0);
     }
     expect(spoken(legend)).toBe("Short liquidated  above · Long liquidated  below");
+  });
+
+  it("qualifies the readout of a bar that straddles the recorder's start, as its table row does", () => {
+    const bars = buildBars(
+      new Map([...SERVED_LONG, [HOUR * Math.floor(FIRST / HOUR), "1500.25"]]),
+      SERVED_SHORT,
+      COVERAGE,
+      HOUR,
+    );
+    const open = HOUR * Math.floor(FIRST / HOUR);
+    render(
+      <LiquidationBarsPane {...props({ view: stories.viewOf(bars), crosshairMs: open + 1 })} />,
+    );
+    const readout = region().querySelector<HTMLElement>('p[aria-live="off"]') as HTMLElement;
+    expect(spoken(readout)).toMatch(/^09:00 · Long liquidated {2}1,500\.25 USDT · /);
+    expect(spoken(readout)).toMatch(/ · recorded from 09:14 UTC$/);
+    // the same bar's table row says the same words
+    expect(rows().map((r) => cells(r)[3])).toContain("recorded from 09:14 UTC");
+  });
+
+  it("leaves a fully recorded bar's readout without that qualifier", () => {
+    render(<LiquidationBarsPane {...props({ crosshairMs: NOW - 30 * 60_000 })} />);
+    const readout = region().querySelector<HTMLElement>('p[aria-live="off"]') as HTMLElement;
+    expect(readout.textContent).not.toContain("recorded from");
   });
 
   it("resyncs the threshold field when the setting changes from outside", () => {
