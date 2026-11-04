@@ -8,7 +8,7 @@
   its sheet says so; nothing here counts as a run against the shipped UI.
 - Format note: this is the pre-run variant of the E09 charter format; the post-run debrief fields (areas covered, not probed,
   anomalies) are filled in the session sheet below.
-- Setup: staging on demo with the replay feed and the fake clock (plan section 0); recorded, redacted fixtures only, no live
+- Setup: staging on demo with the replay feed and the fake clock (plan section 0; until FI-6's stack switch lands, the 60 s edge, quiet hours / DST and snooze / expiry run in-process only); recorded, redacted fixtures only, no live
   exchange (C-13.5); test accounts with no account id, key or balance in any note or capture. Seed a realistic state, not an
   empty install: a populated alert set across the three families and a busy history (E40-Q02 Part C, Technical notes).
 - Mission: find any state in which the badge, SCR-014 and the server disagree on what is unread.
