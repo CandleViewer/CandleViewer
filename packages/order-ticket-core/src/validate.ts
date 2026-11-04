@@ -33,13 +33,14 @@ import {
   type Decimal,
 } from "./decimal.js";
 import { isOnLot, isOnTick, parseInstrument, type InstrumentGrid } from "./instrument.js";
-import type {
-  Offset,
-  OffsetUnit,
-  OrderDraft,
-  OrderIntent,
-  OrderSide,
-  TicketContext,
+import {
+  targetAccountIds,
+  type Offset,
+  type OffsetUnit,
+  type OrderDraft,
+  type OrderIntent,
+  type OrderSide,
+  type TicketContext,
 } from "./model.js";
 
 /**
@@ -48,6 +49,7 @@ import type {
  */
 export type FieldPath =
   | "symbol"
+  | "exchange_account_id"
   | "side"
   | "trigger.price"
   | "price"
@@ -61,11 +63,12 @@ export type FieldPath =
 
 /**
  * The fields in the ticket's Tab order (`D02`:345: order type and trigger, price, size, stop,
- * take-profit, TIF and post-only, reduce-only). The symbol is the panel header, so it leads; the
- * intent has no control of its own on SCR-060, so it closes the list.
+ * take-profit, TIF and post-only, reduce-only). The symbol and account are the panel header, so
+ * they lead; the intent has no control of its own on SCR-060, so it closes the list.
  */
 export const FIELD_ORDER: readonly FieldPath[] = [
   "symbol",
+  "exchange_account_id",
   "side",
   "trigger.price",
   "price",
@@ -86,6 +89,11 @@ export const FIELD_ORDER: readonly FieldPath[] = [
 const RULE_CODES = {
   /** Client: the instrument is not `Trading`, delisted, malformed or another symbol's. */
   symbol_not_trading: null,
+  /**
+   * Client: the draft's account is not one the ticket's target names (S1 review note). The server
+   * answers an ungranted account with its own 403 / 404, not a validation code.
+   */
+  account_not_targeted: null,
   /** Client: a side other than `buy` / `sell` (the worker boundary drops type guarantees). */
   side_invalid: "validation_failed",
   /** A limit price or trigger price that is absent or not a positive decimal. */
@@ -275,6 +283,11 @@ export function validate(draft: OrderDraft, ctx: TicketContext): ValidationResul
     }
   }
   if (grid === null || !grid.tradable) fail("symbol", "symbol_not_trading");
+  // exchange_account_id: the draft's account must be one the target names (a stale draft kept
+  // across a retarget is refused, never validated against another account's context).
+  if (!targetAccountIds(ctx.target).includes(draft.exchangeAccountId)) {
+    fail("exchange_account_id", "account_not_targeted");
+  }
   if (reason === "side_invalid") fail("side", "side_invalid");
   const tick = grid === null ? null : { tick: toPlain(grid.tickSize) };
 
@@ -445,22 +458,31 @@ function validateSizing(
   const capOk = sizing.max_notional_usd === undefined || positive(sizing.max_notional_usd) !== null;
   if (!valueOk || !capOk) fail("sizing", "sizing_value");
 
+  // The notional floor: the higher of the exchange's and the profile's. An absent exchange
+  // minimum is not known (S1: `null`, listed in `unmirrored`), so only the profile's is held,
+  // and the check is skipped when neither is known.
   const minLeg = positive(ctx.profile?.profile.sizing?.min_leg_notional_usd);
-  const notionalFloor = (g: InstrumentGrid): Decimal =>
-    minLeg !== null ? max(minLeg, g.minNotional) : g.minNotional;
+  const notionalFloor = (g: InstrumentGrid): Decimal | null =>
+    g.minNotional === null ? minLeg : minLeg !== null ? max(minLeg, g.minNotional) : g.minNotional;
 
   if (sizing.mode === "fixed_notional") {
     const notional = positive(sizing.notional_usd);
+    const floor = grid === null ? null : notionalFloor(grid);
     if (notional === null) fail("sizing", "sizing_value");
-    else if (grid !== null && lt(notional, notionalFloor(grid))) {
-      fail("sizing", "min_notional", { min: toPlain(notionalFloor(grid)) });
+    else if (floor !== null && lt(notional, floor)) {
+      fail("sizing", "min_notional", { min: toPlain(floor) });
     }
     return;
   }
   if (sizing.mode !== "fixed_qty") return;
 
   const qty = positive(sizing.qty);
-  const lot = grid === null ? {} : { min: toPlain(grid.minOrderQty), step: toPlain(grid.qtyStep) };
+  // An absent minimum quantity is not known (S1: `null`, listed in `unmirrored`): no `min` param.
+  const minQty = grid?.minOrderQty ?? null;
+  const lot = {
+    ...(minQty === null ? {} : { min: toPlain(minQty) }),
+    ...(grid === null ? {} : { step: toPlain(grid.qtyStep) }),
+  };
   if (qty === null) {
     fail("qty", "min_order_qty", lot);
     return;
@@ -468,7 +490,7 @@ function validateSizing(
   if (grid === null) return;
   if (!isOnLot(grid, qty)) fail("qty", "qty_step", { ...lot, qty: toPlain(qty) });
   const closesWhole = !classification.entry && eq(qty, classification.positionSize);
-  if (lt(qty, grid.minOrderQty) && !closesWhole) fail("qty", "min_order_qty", lot);
+  if (minQty !== null && lt(qty, minQty) && !closesWhole) fail("qty", "min_order_qty", lot);
   // A market order's ceiling is `max_mkt_order_qty`, which `Instrument` lacks (G-b): the check
   // is skipped and listed, never run against `max_order_qty`, so it cannot over-block (m4).
   if (draft.orderType === "market") unmirrored.add("instrument.max_mkt_order_qty");
@@ -481,7 +503,7 @@ function validateSizing(
     return;
   }
   const floor = notionalFloor(grid);
-  if (lt(mul(qty, ref), floor)) {
+  if (floor !== null && lt(mul(qty, ref), floor)) {
     fail("sizing", "min_notional", { min: toPlain(floor) });
   }
 }

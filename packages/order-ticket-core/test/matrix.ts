@@ -11,7 +11,7 @@ import {
   type TicketContext,
 } from "../src/index.js";
 import { CLOSED_LUNA } from "./fixtures.js";
-import { BTC, MARKET, ctx, draft, exitDraft, held, off, qty } from "./drafts.js";
+import { ACCOUNT, BTC, MARKET, ctx, draft, exitDraft, held, off, qty } from "./drafts.js";
 
 type Ctx = Partial<TicketContext>;
 type Params = Readonly<Record<string, string>>;
@@ -41,6 +41,15 @@ const mode = (sizing: Omit<OrderDraft["sizing"], "round_to_lot">): Partial<Order
   sizing: { ...sizing, round_to_lot: true },
 });
 const inst = (over: Partial<Instrument>): Ctx => ({ instrument: { ...BTC, ...over } });
+/** The BTC row without the named optional filters (absent, not `null`: S1 keeps them unknown). */
+const without = (...names: readonly ("min_order_qty" | "min_notional_value")[]): Ctx => ({
+  instrument: Object.fromEntries(
+    Object.entries(BTC).filter(([key]) => !(names as readonly string[]).includes(key)),
+  ) as Instrument,
+});
+const GROUP = (...accountIds: [string, ...string[]]): Ctx => ({
+  target: { kind: "group", accountIds },
+});
 const LONG: Ctx = { position: held("long", "1.000") };
 const UNREAD: Ctx = { position: { status: "unknown" } };
 const SHORT: Partial<OrderDraft> = { side: "sell", stopLoss: off("ticks", "9") };
@@ -57,6 +66,11 @@ export const MATRIX: readonly Row[] = [
   no("symbol_not_trading", "delisted", D(), "symbol", null, inst({ delisted: true })),
   no("symbol_not_trading", "a malformed row", D(), "symbol", null, inst({ tick_size: "0" })),
   no("symbol_not_trading", "another symbol's row", D({ symbol: "ETHUSDT" }), "symbol"),
+
+  ok("account_not_targeted", "the target's account", D()),
+  ok("account_not_targeted", "one of the group's accounts", D(), GROUP("other", ACCOUNT)),
+  no("account_not_targeted", "another account than the target's", D({ exchangeAccountId: "other" }), "exchange_account_id"),
+  no("account_not_targeted", "an account the group does not name", D(), "exchange_account_id", null, GROUP("other")),
 
   ok("side_invalid", "buy", D()),
   no("side_invalid", "a side of hold (L2)", { ...D(), side: "hold" } as unknown as OrderDraft, "side"),
@@ -95,6 +109,8 @@ export const MATRIX: readonly Row[] = [
     ...inst({ min_order_qty: "0.01" }),
     position: held("long", "0.005"),
   }),
+  ok("min_order_qty", "under one lot, no minimum filter: not known, never guessed", D(qty("0.0005")), without("min_order_qty")),
+  no("min_order_qty", "0, no minimum filter", D(qty("0")), "qty", { step: "0.001" }, without("min_order_qty")),
   no("min_order_qty", "none, and no grid", D(mode({ mode: "fixed_qty" })), "qty", null, inst({ qty_step: "x" })),
 
   ok("qty_step", "on the lot", D(qty("0.012"))),
@@ -109,6 +125,8 @@ export const MATRIX: readonly Row[] = [
   ok("min_notional", "an exit (E29-S03)", X("0.001"), { ...inst({ min_notional_value: "100" }), ...LONG }),
   no("min_notional", "a market buy at the ask", D({ ...MARKET, ...qty("0.001") }), "sizing", { min: "100" }, inst({ min_notional_value: "100" })),
   no("min_notional", "the profile's min leg", D(qty("0.001")), "sizing", { min: "75" }, MIN_LEG("75")),
+  ok("min_notional", "fixed_notional 1, no exchange minimum: not known", D(mode({ mode: "fixed_notional", notional_usd: "1" })), without("min_notional_value")),
+  no("min_notional", "no exchange minimum: the profile's min leg holds", D(qty("0.001")), "sizing", { min: "75" }, { ...without("min_notional_value"), ...MIN_LEG("75") }),
   no("min_notional", "fixed_notional 4", D(mode({ mode: "fixed_notional", notional_usd: "4" })), "sizing", { min: "5" }),
 
   ok("native_stop_required", "an entry with a stop", D()),

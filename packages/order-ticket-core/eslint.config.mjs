@@ -1,7 +1,7 @@
 // E30-T01: packages/order-ticket-core is pure TypeScript (the C-2.16 shape). Nothing under src/
 // may import React, the chart engine, another UI package, an app or a Node built-in, or touch a
-// network, DOM, storage, clock or process global: the property tests run it in plain Node, and a
-// worker can host it (E30-K01). Violations fail lint with the message below.
+// network, DOM, storage, clock, channel, locale or process global: the property tests run it in
+// plain Node, and a worker can host it (E30-K01). Violations fail lint with the message below.
 import { builtinModules } from "node:module";
 import tseslint from "typescript-eslint";
 import globals from "globals";
@@ -97,6 +97,8 @@ export default tseslint.config(
           "importScripts",
           "require",
           "Date", // time comes through an injected clock port (S4)
+          "MessageChannel", // a channel (and a timer by another name): the host owns messaging
+          "Intl", // a locale read, and a clock read through `new Intl.DateTimeFormat().format()`
         ].map((name) => ({ name, message: PURE })),
       ],
       // Randomness comes through an injected ids port (BQ 6), never Math.random.

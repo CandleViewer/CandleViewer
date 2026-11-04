@@ -65,6 +65,16 @@ describe("validate: the result", () => {
     expect(result.failures.map((f) => f.rule)).not.toContain("max_order_qty");
   });
 
+  it("validate_anAbsentMinimum_isListed_andNeverGuessed (S1 grids: null, not a default)", () => {
+    // Half a lot: the old default minimum (one lot) would have refused it; an unknown one cannot.
+    const rest = { ...BTC };
+    delete rest.min_order_qty;
+    delete rest.min_notional_value;
+    const result = validate(draft(qty("0.0005")), ctx({ instrument: rest }));
+    expect(gaps(result)).toEqual(["instrument.min_notional_value", "instrument.min_order_qty"]);
+    expect(result.failures.map((f) => f.rule)).toEqual(["qty_step"]);
+  });
+
   it("validate_aMarketOrder_cannotMirrorTheMarketCeiling", () => {
     const result = validate(draft(MARKET), ctx());
     expect(result.status).toBe("clear_partial");
