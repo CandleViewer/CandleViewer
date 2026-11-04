@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
+from typing import Any, Final
 
 from candleviewer.rules.errors import ConstantTypeError
 from candleviewer.rules.evaluator.nodes import check_constants
@@ -25,10 +25,15 @@ from candleviewer.rules.ir import (
     Rule,
     TemporalNode,
 )
+from candleviewer.rules.ir.models import MAX_NUMBER_TEXT
 from candleviewer.rules.issues import Issue
 from candleviewer.rules.limits import above_cap, cap_message
 from candleviewer.rules.vocabulary.catalogue import ACTIONS, OPERATORS, RETIRED_ACTIONS
 from candleviewer.rules.vocabulary.registry import MetricRegistry
+
+#: What a save, validate and compile say to a text constant past the bound (`22-api-openapi.yaml`
+#: `RuleOperand`): a validation limit, for every role, found with the unit checks.
+TEXT_TOO_LONG: Final = f"A text constant holds at most {MAX_NUMBER_TEXT} characters."
 
 #: The issue a rule that could loosen a stop is refused with (`22-api-openapi.yaml`
 #: `RuleValidationIssue.code`), and the reason it gives.
@@ -130,6 +135,9 @@ class _Validator:
                 return _UNKNOWN
             return d.unit
         if isinstance(op, Literal_):
+            if isinstance(op.const, str) and len(op.const) > MAX_NUMBER_TEXT:
+                self.err(path, "schema_error", TEXT_TOO_LONG, "syntax")  # a validation limit
+                return _UNKNOWN  # refused for its length alone: the text is not read past the bound
             return _const_unit(op)
         units = [self.unit_of(o, f"{path}.operands[{i}]") for i, o in enumerate(op.operands)]
         known = [u for u in units if u != _UNKNOWN]

@@ -4030,11 +4030,17 @@ class ClosedPnl(BaseModel):
     __null_refused = field_validator("id", "exchange_account_id", "symbol", "side", "qty", "avg_entry_price", "avg_exit_price", "closed_pnl", "cum_entry_value", "cum_exit_value", "leverage", "opened_at", "closed_at", mode="before")(_refuse_null)
 
 
+class Const(RootModel[str]):
+    root: Annotated[
+        str, Field(description="A text constant holds at most 128 characters.", max_length=128)
+    ]
+
+
 class RuleOperand1(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    const: str | StrictFloat | StrictBool
+    const: Const | StrictFloat | StrictBool
 
 
 class RuleMetricRef(BaseModel):

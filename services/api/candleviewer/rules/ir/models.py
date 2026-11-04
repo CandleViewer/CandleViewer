@@ -170,11 +170,21 @@ class MetricRef(BaseModel):
     timeframe: str | None = None
 
 
+def _text_bound(schema: dict[str, Any]) -> None:
+    """Publish a text constant's bound (``MAX_NUMBER_TEXT``, ``22`` ``RuleOperand``) on both text
+    members of the constant's schema, the decimal text and the plain text. Only the published
+    schema carries it: the model reads text of any length, so a stored version holding text past
+    the bound keeps loading, and a save, validate and compile refuse it (the semantic validator)."""
+    for member in schema["anyOf"]:
+        if member.get("type") == "string":
+            member["maxLength"] = MAX_NUMBER_TEXT
+
+
 class Literal_(BaseModel):
     """Constant operand; ``{"const": ...}`` in JSON."""
 
     model_config = _CFG
-    const: bool | int | Decimal | str
+    const: Annotated[bool | int | Decimal | str, Field(json_schema_extra=_text_bound)]
 
     @cached_property
     def value(self) -> bool | Decimal | str:
