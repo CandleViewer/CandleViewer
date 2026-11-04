@@ -352,12 +352,19 @@ the KEK (`kek-custody.md`); a `storage_*` tier, step 4.
 The sidecar keeps its own run record at `<backup volume>/.cvb/ledger.jsonl` (24 §15.8 item 11).
 A torn or tampered record fails closed: the sidecar logs `cvbackup.ledger_unreadable` at start,
 and `verify`, `remove` and new runs answer `ledger_unreadable` (the backups screen shows the store
-unavailable) until you repair it. Nothing truncates it for you. Check it from the pinned checkout,
-as the volume's owner, read only:
+unavailable) until you repair it. Nothing truncates it for you. Check it with the sidecar's own
+image built from the pinned checkout (`infra/images/Dockerfile.backup`, #3319 B1c), as the
+sidecar's user, with the volume mounted read only and no network:
 
 ```bash
-cd services/api && CVB_BACKUP_ROOT=<backup volume mount> python3 -m cvbackup check-ledger
+docker build -f infra/images/Dockerfile.backup -t candleviewer-backup:check .
+docker run --rm --network none --read-only -e CVB_BACKUP_ROOT=/backups \
+  -v <backup volume>:/backups:ro candleviewer-backup:check check-ledger
 ```
+
+The image's entry point is `python -I -m cvbackup`. `-I` ignores `PYTHON*` variables and keeps
+the working directory off `sys.path`, so `cvbackup` is imported only from the image's
+`site-packages`, where the Dockerfile copies it, root-owned and read only, never from a checkout.
 
 `the run record replays, N entries` (exit 0) means the record is whole: look elsewhere (the
 sidecar's log). `does not replay from line N` (exit 1) names the first line that breaks it: a last

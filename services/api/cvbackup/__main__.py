@@ -3,8 +3,10 @@
 At start it reads its configuration (`config.load`; a refusal names the variable and exits 2),
 hardens the process (no core dumps, not dumpable, umask 077), lays out the backup root, replays
 its run record, serves the socket and sweeps the quarantine every `SWEEP_S` until SIGTERM or
-SIGINT. `python -I -m cvbackup check-ledger` only checks that the run record replays, for the
-Owner on the host (runbook `demo-host.md` §9), and serves nothing.
+SIGINT, which cancels every connection's job, lets an uninterrupted step (a removal, an append)
+land within `server.CLOSE_S`, and only then closes the record. `python -I -m cvbackup
+check-ledger` only checks that the run record replays, for the Owner on the host (runbook
+`demo-host.md` §9), and serves nothing.
 """
 
 from __future__ import annotations
@@ -28,10 +30,11 @@ from cvbackup.floor import Floor
 from cvbackup.ledger import Ledger
 from cvbackup.ops import KINDS, Ops
 from cvbackup.paths import LEDGER_DIR, QUARANTINE_DIR, Root
-from cvbackup.server import Server
-from cvbackup.tasks import spawn
+from cvbackup.server import CLOSE_S, Server, Structural
+from cvbackup.tasks import running, spawn
 
 SWEEP_S: Final = 300.0
+STRUCTURAL: Final = Structural()
 _PR_SET_DUMPABLE: Final = 4
 
 
@@ -62,16 +65,18 @@ async def serve(
     floor = Floor(root, ledger, run_cap=config.run_cap, run_window=config.run_window,
                   grace=config.grace)  # fmt: skip
     ops = Ops(config, root, ledger, floor, clock=clock)
-    server = await Server(ops, api_uid=config.api_uid).start(config.socket)
+    server = Server(ops, api_uid=config.api_uid)
+    await server.start(config.socket)
     sweeping = spawn(_sweep(ops, stop), name="cvbackup.sweep")
     try:
-        async with server:
-            if ready is not None:
-                ready.set()
-            await stop.wait()
+        if ready is not None:
+            ready.set()
+        await stop.wait()
     finally:
         sweeping.cancel()
-        await asyncio.wait([sweeping])
+        await server.stop()  # never `async with`: its close waits on every live connection
+        if pending := running() - {asyncio.current_task()}:
+            await asyncio.wait(pending, timeout=CLOSE_S)
         ledger.close()
 
 
@@ -115,6 +120,7 @@ def check_ledger(root: str) -> int:
 
 def main(env: dict[str, str] | None = None, argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(message)s")
+    logging.getLogger("cvbackup").addFilter(STRUCTURAL)
     args = argv or []
     if args not in ([], ["check-ledger"]):
         print("usage: python -I -m cvbackup [check-ledger]", file=sys.stderr)

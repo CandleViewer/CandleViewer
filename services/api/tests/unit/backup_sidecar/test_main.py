@@ -5,18 +5,21 @@ the quarantine sweeper until stopped."""
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import subprocess
 import sys
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 import cvbackup
 from cvbackup import __main__ as entry
 from cvbackup.ledger import FILE
+from cvbackup.ops import Ops
 from cvbackup.paths import LEDGER_DIR
 from tests.unit.backup_sidecar._sidecar import (
     Clock,
@@ -46,8 +49,12 @@ def test_process_is_not_dumpable_and_core_limit_zero() -> None:
     assert probe.stdout.split() == ["(0,", "0)", "0", "0o77"]
 
 
-def test_main_refuses_a_bad_configuration_by_name(capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_refuses_a_bad_configuration_by_name(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(logging.getLogger("cvbackup"), "filters", [])
     assert entry.main({"CVB_SOCKET": "relative", "CVB_BACKUP_ROOT": "/srv/cvb"}) == 2
+    assert logging.getLogger("cvbackup").filters == [entry.STRUCTURAL]  # before anything logs
     assert capsys.readouterr().err.strip() == (
         "cvbackup: CVB_SOCKET must be an absolute path in canonical form, not /"
     )
@@ -71,6 +78,35 @@ async def test_serve_answers_on_its_socket_and_sweeps_until_stopped(
         "config_bundle",
         "pg_dump",
     }
+
+
+async def test_serve_stops_on_sigterm_while_an_op_hangs_on_an_open_connection(
+    tmp_path: Path, sock: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def hangs(self: Ops, request: Any, progress: Any) -> dict[str, object]:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return {}
+
+    monkeypatch.setattr(Ops, "handle", hangs)
+    stop, ready = asyncio.Event(), asyncio.Event()
+    serving = asyncio.ensure_future(entry.serve(config(tmp_path, sock), stop, ready=ready))
+    async with asyncio.timeout(5):
+        await ready.wait()
+        reader, writer = await asyncio.open_unix_connection(sock)
+        writer.write(request_frame("plan", {"kind": "pg_dump"}))
+        await started.wait()
+        stop.set()  # the connection still open, its op still running
+        await serving
+        assert await reader.read() == b""  # closed unanswered
+    writer.close()
+    assert cancelled.is_set()
 
 
 async def _record_of_two_runs(tmp_path: Path, sock: str) -> Path:

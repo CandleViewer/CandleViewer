@@ -169,6 +169,6 @@ async def test_server_cancels_the_job_when_the_peer_watch_hits_the_bound(
         await writer.drain()
         assert await asyncio.wait_for(reader.read(), 5) == b""  # closed unanswered
         writer.close()
-    assert len(jobs) == 1
+    assert [job.get_name() for job in jobs] == ["cvbackup.connection", "cvbackup.plan"]
     await asyncio.wait(jobs)
-    assert jobs[0].cancelled()
+    assert jobs[1].cancelled()

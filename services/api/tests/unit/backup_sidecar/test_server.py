@@ -11,6 +11,8 @@ import logging
 import os
 import socket
 import stat
+import struct
+import sys
 import uuid
 from pathlib import Path
 from typing import Any
@@ -89,6 +91,12 @@ async def test_server_the_real_peer_check_reads_the_kernels_uid(tmp_path: Path, 
     left, right = socket.socketpair(socket.AF_UNIX)
     with left, right:
         assert server.peer_uid(left) == os.getuid()
+
+    class _Creds:  # struct ucred: pid_t (signed), uid_t and gid_t (unsigned)
+        def getsockopt(self, *_: int) -> bytes:
+            return struct.pack("iII", -1, 2**32 - 2, 2**32 - 2)
+
+    assert server.peer_uid(_Creds()) == 2**32 - 2  # type: ignore[arg-type]  # a fake socket
     async with serving(config(tmp_path, sock, api_uid=os.getuid() + 1)):
         assert await exchange(sock, request_frame("plan", {"kind": "pg_dump"})) == []
 
@@ -97,7 +105,19 @@ async def test_server_answers_one_request_then_closes(tmp_path: Path, sock: str)
     async with serving(config(tmp_path, sock)):
         two = request_frame("plan", {"kind": "pg_dump"}) * 2
         frames = await exchange(sock, two)
+    # `plan` never suspends, so it ends in the same turn the peer watch reads the byte behind it:
+    # the job's answer wins, a byte past the request cancels only a job still running (below)
     assert [f["t"] for f in frames] == ["ok"]  # the second request is never read
+
+
+async def test_server_a_pipelined_second_frame_trips_the_peer_watch_and_cancels(sock: str) -> None:
+    ops = _Hanging()
+    args = {"backup_id": str(uuid.uuid4()), "location": _location()}
+    async with await _serve_ops(sock, ops):
+        async with asyncio.timeout(5):
+            frames = await exchange(sock, request_frame("verify", args) * 2)
+            await ops.cancelled.wait()
+    assert frames == [] and ops.started.is_set()
 
 
 @pytest.mark.parametrize(
@@ -230,3 +250,42 @@ async def test_server_refuses_a_non_socket_at_its_path(tmp_path: Path, sock: str
     stale.bind(sock)
     stale.close()  # a socket file left by an earlier process: replaced
     server.listen(sock).close()
+
+
+def test_server_never_re_modes_a_directory_another_user_owns(
+    sock: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = os.path.dirname(sock)
+    os.chmod(directory, 0o700)
+    uid = os.getuid()
+    monkeypatch.setattr(os, "geteuid", lambda: uid + 1)
+    with pytest.raises(ValueError, match="owned by the sidecar's user"):
+        server.listen(sock)
+    assert mode(directory) == 0o700 and not os.path.lexists(sock)
+
+
+def _filtered(msg: object, *args: object, exc: bool = False) -> logging.LogRecord:
+    info = None
+    if exc:
+        try:
+            raise KeyError("/srv/cv/secret-looking-path")
+        except KeyError:
+            info = sys.exc_info()
+    record = logging.LogRecord("cvbackup", logging.ERROR, __file__, 1, msg, args, info)
+    assert server.Structural().filter(record)  # admitted, as it is or as its event name alone
+    return record
+
+
+def test_server_log_filter_passes_only_codes_ids_and_ints() -> None:
+    rid = str(uuid.uuid4())
+    kept = _filtered("cvbackup.request id=%s op=%s outcome=%s ms=%d", rid, "verify",
+                     "digest_mismatch", 12)  # fmt: skip
+    assert kept.getMessage() == f"cvbackup.request id={rid} op=verify outcome=digest_mismatch ms=12"
+    for arg in ("/srv/cv/pg_dump/x.age", "two words", "x" * 65, b"bytes", 1.5, None):
+        assert _filtered("cvbackup.op_failed error=%s", arg).getMessage() == (
+            "cvbackup.op_failed redacted=args"
+        )
+    assert _filtered("/srv/cv/a path %d", 1).getMessage() == "cvbackup.log_redacted"
+    assert _filtered(KeyError("/srv/cv")).getMessage() == "cvbackup.log_redacted"
+    traced = _filtered("cvbackup.connection_failed error=%s", "KeyError", exc=True)
+    assert traced.exc_info is None and traced.exc_text is None

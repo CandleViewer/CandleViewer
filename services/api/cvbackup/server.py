@@ -3,14 +3,17 @@
 A Unix stream socket only: no TCP or UDP listener exists in this package. The socket is created
 mode 0660 in a 0750 directory; before reading a byte of a connection the server reads the peer's
 credentials (`SO_PEERCRED`) and closes a peer whose uid is not the API's. At most
-`MAX_CONNECTIONS` connections are served at once; a further one is closed unread.
+`MAX_CONNECTIONS` connections are served at once; a further one is closed unread. An admitted
+connection is served in its own task, started by `tasks.spawn` (so counted against `MAX_TASKS`),
+which `stop` cancels: a SIGTERM never waits on a job.
 
 One request per connection: the whole request frame within `REQUEST_READ_S`, then zero or more
 `progress` frames (non-decreasing, at most one a second), one terminal frame, and the close. The
 job runs under `min(deadline_s, OP_MAX_S[op])` (`deadline`). The peer closing its side before the
 terminal frame, or writing past its one request, cancels the job: its work stops and, for a run,
 its process group ends and its temporary file goes (B1c). Each request is logged with its id, op,
-backup id, outcome code and duration only: never a location, other arguments or a child's output.
+backup id, outcome code and duration only: never a location, other arguments or a child's output,
+and `Structural` holds the `cvbackup` logger to that by shape (C-12.6).
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 import socket
 import stat
 import struct
@@ -35,7 +39,26 @@ REQUEST_READ_S: Final = 2.0
 WRITE_S: Final = 2.0
 MAX_CONNECTIONS: Final = 4
 PROGRESS_EVERY_S: Final = 1.0
-_PEERCRED: Final = struct.Struct("3i")  # pid, uid, gid
+CLOSE_S: Final = 5.0
+_PEERCRED: Final = struct.Struct("iII")  # struct ucred: pid_t pid, uid_t uid, gid_t gid
+_TOKEN: Final = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+
+
+class Structural(logging.Filter):
+    """Structural redaction on the `cvbackup` logger (C-12.6): a record passes as it is only when
+    its message is a constant whose first word is an event name and every argument is an int or a
+    token (a code, an op, a UUID, a class or task name). Otherwise only its event name passes, and
+    a traceback never does, so no path, argument text or child output can reach the log."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args.values() if isinstance(record.args, Mapping) else record.args or ()
+        event = record.msg.split(" ", 1)[0] if isinstance(record.msg, str) else ""
+        if not _TOKEN.fullmatch(event):
+            record.msg, record.args = "cvbackup.log_redacted", ()
+        elif not all(type(a) is int or (isinstance(a, str) and _TOKEN.fullmatch(a)) for a in args):
+            record.msg, record.args = f"{event} redacted=args", ()
+        record.exc_info, record.exc_text, record.stack_info = None, None, None
+        return True
 
 
 def _log() -> logging.Logger:
@@ -57,6 +80,8 @@ def listen(path: str) -> socket.socket:
     info = os.lstat(directory)
     if not stat.S_ISDIR(info.st_mode):
         raise ValueError("the socket's directory must be a directory, not a link")
+    if info.st_uid != os.geteuid():  # never re-mode a directory another user owns
+        raise ValueError("the socket's directory must be owned by the sidecar's user")
     os.chmod(directory, 0o750)  # noqa: S103 - §15.8: the API's group may enter, never write
     with contextlib.suppress(FileNotFoundError):
         if not stat.S_ISSOCK(os.lstat(path).st_mode):
@@ -99,6 +124,8 @@ class _Progress:
         self._pct, self._sent_at = 0.0, float("-inf")
 
     def __call__(self, pct: float) -> None:
+        # No drain: at most one frame a second, and none once at 100, so a peer that never reads
+        # holds a few frames in the buffer at most; the terminal frame's write drains under a bound.
         pct = round(min(100.0, max(self._pct, float(pct))), 2)
         now = self._clock()
         if pct > self._pct and now - self._sent_at >= PROGRESS_EVERY_S:
@@ -112,7 +139,7 @@ class Server:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:  # fmt: skip
         self._ops, self._api_uid, self._peer, self._clock = ops, api_uid, peer, clock
-        self._active = 0
+        self._handlers: set[asyncio.Task[None]] = set()
         self._server: asyncio.Server | None = None
 
     async def start(self, path: str) -> asyncio.Server:
@@ -121,24 +148,49 @@ class Server:
         )
         return self._server
 
-    async def _connected(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        admitted = False
+    async def stop(self) -> None:
+        """Stop listening, cancel every connection's handler (and so its job) and wait for them,
+        then for the listener to close, each at most `CLOSE_S`."""
+        if self._server is not None:
+            self._server.close()
+        for handler in (handlers := set(self._handlers)):
+            handler.cancel()
+        if handlers:
+            await asyncio.wait(handlers, timeout=CLOSE_S)
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(CLOSE_S):
+                if self._server is not None:
+                    await self._server.wait_closed()
+
+    def _connected(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        """Admit or close a connection before a byte is read; serve an admitted one in a task."""
         try:
             uid = self._peer(writer.get_extra_info("socket"))
-            if uid != self._api_uid:
-                _log().warning("cvbackup.peer_refused uid=%d", uid)
+        except OSError:
+            uid = -1  # the peer is gone already
+        if uid != self._api_uid:
+            _log().warning("cvbackup.peer_refused uid=%d", uid)
+        elif len(self._handlers) >= MAX_CONNECTIONS:
+            _log().warning("cvbackup.connection_refused active=%d", len(self._handlers))
+        else:
+            try:
+                handler = spawn(self._handle(reader, writer), name="cvbackup.connection")
+            except TaskLimit:
+                _log().warning("cvbackup.connection_refused active=%d", len(self._handlers))
+            else:
+                self._handlers.add(handler)
+                handler.add_done_callback(self._handlers.discard)
                 return
-            if self._active >= MAX_CONNECTIONS:
-                _log().warning("cvbackup.connection_refused active=%d", self._active)
-                return
-            self._active, admitted = self._active + 1, True
+        writer.close()
+
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
             await self._serve(reader, writer)
         except (OSError, asyncio.IncompleteReadError):
             pass  # the peer is gone: nothing to answer
         except Exception as exc:  # a bug here never takes the server down; its class only
             _log().error("cvbackup.connection_failed error=%s", type(exc).__name__)
         finally:
-            self._active -= 1 if admitted else 0
             writer.close()
             with contextlib.suppress(Exception):
                 await writer.wait_closed()
