@@ -24,3 +24,18 @@ tests/contract/test_order_exits_contract.py::test_amend_order_that_re_pairs_a_tp
 tests/contract/test_order_exits_contract.py::test_cancel_all_orders_failing_two_of_five_accounts_is_200_with_a_result_each | cancelAllOrders: POST /orders/cancel-all | E29-TC-105
 tests/contract/test_order_exits_contract.py::test_cancel_all_orders_by_a_manager_answers_the_status_its_scope_gives_it | cancelAllOrders as a Manager | E29-TC-110
 tests/contract/test_order_exits_contract.py::test_cancel_all_orders_counts_in_affected_only_the_orders_its_selection_takes | cancelAllOrders: POST /orders/cancel-all | E29-TC-114
+
+# C3: the OMS's private WS payloads against 23 Sec.15, and a grant withdrawn mid-subscription
+# (tests/contract/ws/test_ws_oms_frames_contract.py; the AC-06 module follows)
+tests/contract/ws/test_ws_oms_frames_contract.py::test_orders_deltas_of_every_change_kind_conform_in_every_stored_state | WS orders deltas: change x state | E29-TC-450, E29-TC-751
+tests/contract/ws/test_ws_oms_frames_contract.py::test_orders_an_open_only_subscriber_gets_a_closing_step_as_a_removal_alone | WS orders deltas: open_only removal | E29-TC-751
+tests/contract/ws/test_ws_oms_frames_contract.py::test_an_account_with_no_rows_gets_an_empty_snapshot_that_conforms | WS orders, executions and positions: empty snapshot | E29-TC-751
+tests/contract/ws/test_ws_oms_frames_contract.py::test_executions_each_variant_of_a_fill_conforms_as_a_delta | WS executions deltas: fill variants | E29-TC-751
+tests/contract/ws/test_ws_oms_frames_contract.py::test_positions_each_variant_of_a_row_conforms_as_a_delta | WS positions deltas: row variants | E29-TC-751, E29-TC-753
+tests/contract/ws/test_ws_oms_frames_contract.py::test_positions_the_updates_of_one_window_leave_as_one_merged_frame | WS positions deltas: merged window | E29-TC-751
+tests/contract/ws/test_ws_oms_frames_contract.py::test_positions_a_removal_and_a_re_open_of_one_window_leave_as_two_frames | WS positions deltas: removal and re-open | E29-TC-751
+tests/contract/ws/test_ws_oms_frames_contract.py::test_wallet_health_reports_the_state_and_reason_the_monitor_derives | WS wallet: account health (AV-05, AV-06) | E29-TC-351
+tests/contract/ws/test_ws_oms_frames_contract.py::test_wallet_a_balance_turns_stale_and_says_since_when | WS wallet: stale balance (AV-07) | E29-TC-012
+tests/contract/ws/test_ws_oms_frames_contract.py::test_a_members_values_are_the_schemas_and_the_producers_both_ways | WS orders, executions, positions and wallet: vocabularies | E29-TC-450, E29-TC-751, E29-TC-351
+tests/contract/ws/test_ws_oms_frames_contract.py::test_a_payload_with_a_renamed_or_dropped_member_fails_the_check_naming_it | WS private payloads: contract drift (AC2) | E29-TC-751, E29-TC-012
+tests/contract/ws/test_ws_oms_frames_contract.py::test_a_producer_that_renames_a_member_fails_on_the_first_frame_that_carries_it | WS orders: contract drift on the wire (AC2) | E29-TC-751
