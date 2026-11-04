@@ -24,8 +24,14 @@ Gates (each FAIL led by its name; spec §12):
     outside §5. G-COUNT no client safety count (G-12); every unserved figure or action stamped.
   G-MERGED E34-D01 / E34-D02, and any CMP id `15` lacks, only on a request row, never by line.
   G-CITE cites in range and pinned. G-HYGIENE no closing keyword, local path, URL, agent name,
-    double brace, tag line or deny word. G-SCOPE only the spec, this tool and the pins.
+    double brace, tag line or deny word. G-SCOPE only the spec, this tool, the pins, the seven
+    board PNGs and their seven greyscale exports.
   G-ID the shared cell's CMP id (BQ-06) is never written, in any case, anywhere in the spec.
+  G-BOARDS the boards as built: every §0 frame row reads "drawn"; §0.1 records the page by name and
+    id and one row per board (its PNG, size, sha256 and board id), each PNG in the tree with that
+    size and sha256; one greyscale row per board (its PNG in the tree, the board's size, its
+    sha256); §0.2 embeds each PNG once, at one 40-hex commit, by its raw form (the one URL
+    G-HYGIENE allows), and that commit holds each PNG (git cat-file -e) as a blob equal to the tree's.
 
 Usage (from the repo root): python3 -I docs/design/_tools/e34_d03_manager_audit.py
   --check | --self-test | --fill (§8's figures) | --repin-ruled (the pins' only writer)
@@ -51,7 +57,12 @@ GIT = shutil.which("git") or "git"
 SPEC_REL = "docs/design/E34/E34-D03.md"
 TOOL_REL = "docs/design/_tools/e34_d03_manager_audit.py"
 PINS_REL = "docs/design/_tools/e34_d03_ruled_pins.txt"
-OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
+IMG_DIR = "docs/design/E34/img"
+BOARD_SLUGS = {"01": "scr-062-list", "02": "scr-062-failure", "03": "scr-062-truth", "04": "scr-062-confirms",
+               "05": "scr-062-empty-gated", "06": "ds-contributions", "07": "scr-062-light-twin"}  # fmt: skip
+IMG_PATHS = tuple(f"{IMG_DIR}/E34-D03-{n}-{s}.png" for n, s in BOARD_SLUGS.items())
+GREY_PATHS = tuple(f"{IMG_DIR}/E34-D03-{n}-{s}-greyscale.png" for n, s in BOARD_SLUGS.items())
+OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL, *IMG_PATHS, *GREY_PATHS)
 BASE = "a7d659a5bee5d06a28950f324800f84dc3853e6f"  # origin/main when written; re-pinned by content
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 CVD_PATH = ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py"
@@ -73,6 +84,13 @@ CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+", re.I
 LOCAL_PATH = re.compile("/" + "home/|/" + "tmp/|/Us" + "ers/|[A-Za-z]:\\\\|\\bnotes" + "/|\\bwt-" + "notes\\b")  # fmt: skip
 AGENT_NAME = re.compile(r"\b[a-z]{2,4}-worker-\d\b")
 URL_OR_HOST = re.compile(r"https?://|penpot\.[a-z]|team-id=|file-id=", re.IGNORECASE)
+# §0.2's embeds: the one URL form the spec may carry (a board PNG at a pinned commit)
+EMBED = re.compile(
+    r"^!\[E34-D03 / (\d\d) ([a-z0-9-]+)\]\(https://raw\.githubusercontent\.com/CandleViewer/"
+    r"CandleViewer/([0-9a-f]{40})/(docs/design/E34/img/E34-D03-(\d\d)-[a-z0-9-]+\.png)\)$"
+)
+UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+PAGE_LINE = re.compile(r"page `E34-D03 Trade-group manager hi-fi` \(page id `" + UUID.pattern + "`")
 # explicit joins, so this tool's own text carries none of the words
 DENY = ("le" + "ak", "expo" + "sed", "by" + "pass", "ex" + "ploit", "att" + "ack", "ora" + "cle",
         "rev" + "eal", "unbou" + "nded", "flo" + "od", "st" + "all", "d" + "os", "advi" + "sory",
@@ -656,7 +674,7 @@ def g_hygiene(t: Texts) -> list[str]:
               (AGENT_NAME, "an agent name"), (URL_OR_HOST, "a URL or a host"))  # fmt: skip
     for i, ln in enumerate(t.spec.split("\n"), 1):
         for rx, what in checks:
-            if rx.search(ln):
+            if rx.search(ln) and not (rx is URL_OR_HOST and EMBED.match(ln)):
                 bad.append(f"spec:{i} carries {what}")
         if "{{" in ln:
             bad.append(f"spec:{i} carries a double-brace slot")
@@ -679,6 +697,70 @@ def g_scope(t: Texts) -> list[str]:
     return [f"{p} is touched; this ticket owns {', '.join(OWN_PATHS)}" for p in t.changed if p not in OWN_PATHS]  # fmt: skip
 
 
+def png_size(data: bytes) -> tuple[int, int] | None:
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def g_boards(t: Texts) -> list[str]:
+    bad: list[str] = []
+    zero = section(t.spec, "## 0.")
+    for fr in table_rows(zero, "B"):
+        if len(fr) > 3 and re.fullmatch(r"B\d\d", fr[0]) and fr[3] != "drawn":
+            bad.append(f"{fr[0]} reads {fr[3]!r}, not drawn")
+    built = section(t.spec, "### 0.1 ")
+    if not PAGE_LINE.search(built):
+        bad.append("§0.1 does not record the page by name and id")
+    rows = {r[0]: r for r in table_rows(built, "0") if len(r) > 4}
+    for n, slug in BOARD_SLUGS.items():
+        r = rows.get(n)
+        name = f"E34-D03-{n}-{slug}.png"
+        if r is None or r[1].strip("`") != name or not re.fullmatch(r"\d+ × \d+", r[2]):
+            bad.append(f"§0.1 has no row for board {n} ({name})")
+            continue
+        sha, bid = r[3].strip("`"), r[4].strip("`")
+        if not re.fullmatch(r"[0-9a-f]{64}", sha) or not UUID.fullmatch(bid):
+            bad.append(f"§0.1 board {n}: sha256 or board id malformed")
+        f = ROOT / IMG_DIR / name
+        if not f.exists():
+            bad.append(f"{IMG_DIR}/{name} is not in the tree")
+            continue
+        data = f.read_bytes()
+        size = png_size(data)
+        if hashlib.sha256(data).hexdigest() != sha:
+            bad.append(f"§0.1 board {n}: sha256 is not {name}'s")
+        if size is None or f"{size[0]} × {size[1]}" != r[2]:
+            bad.append(f"§0.1 board {n}: size {r[2]} is not {name}'s {size}")
+    grey = {r[0]: r for r in table_rows(built, "G") if len(r) > 3 and re.fullmatch(r"G\d\d", r[0])}
+    for n, slug in BOARD_SLUGS.items():
+        g, name = grey.get("G" + n), f"E34-D03-{n}-{slug}-greyscale.png"
+        if g is None or g[1].strip("`") != name or g[2] != (rows.get(n) or ["", "", "?"])[2]:
+            bad.append(f"§0.1 has no greyscale row for board {n} ({name}) at the board's size")
+            continue
+        f = ROOT / IMG_DIR / name
+        data = f.read_bytes() if f.exists() else b""
+        size = png_size(data)
+        if hashlib.sha256(data).hexdigest() != g[3].strip("`") or size is None:
+            bad.append(f"§0.1 greyscale {n}: {IMG_DIR}/{name} is missing or not its sha256")
+        elif f"{size[0]} × {size[1]}" != g[2]:
+            bad.append(f"§0.1 greyscale {n}: size {g[2]} is not {name}'s {size}")
+    embeds = [m for m in (EMBED.match(ln) for ln in t.spec.split("\n")) if m]
+    shas = {m.group(3) for m in embeds}
+    got = sorted((m.group(1), m.group(2), m.group(4)) for m in embeds)
+    want = [(n, s, f"{IMG_DIR}/E34-D03-{n}-{s}.png") for n, s in BOARD_SLUGS.items()]
+    if got != want or len(shas) != 1:
+        bad.append("§0.2 does not embed each board PNG once at one commit")
+    for m in embeds:  # the commit holds the PNG, as the same blob as the tree's
+        at_sha = git("rev-parse", "--verify", "--quiet", f"{m.group(3)}:{m.group(4)}")
+        here = git("hash-object", "--", m.group(4))
+        if at_sha is None or git("cat-file", "-e", f"{m.group(3)}:{m.group(4)}") is None:
+            bad.append(f"§0.2 board {m.group(1)}: {m.group(3)[:9]} does not hold {m.group(4)}")
+        elif here is None or at_sha.strip() != here.strip():
+            bad.append(f"§0.2 board {m.group(1)}: the PNG at {m.group(3)[:9]} is not the tree's")
+    return bad
+
+
 def g_id(t: Texts) -> list[str]:
     lines = enumerate(t.spec.split("\n"), 1)
     return [f"spec:{i} hard-codes the shared cell's CMP id (BQ-06)" for i, ln in lines if ID_258.search(ln)]  # fmt: skip
@@ -688,7 +770,7 @@ GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-STATE": g_state, "G-TOKEN": g_token, "G-CONTRAST": g_contrast, "G-CVD": g_cvd, "G-SAFETY": g_safety, "G-T2": g_t2,
     "G-MOTION": g_motion, "G-COPY": g_copy, "G-VOCAB": g_vocab, "G-RECOVERY": g_recovery, "G-PROTECT": g_protect,
     "G-CELL": g_cell, "G-COUNT": g_count, "G-MERGED": g_merged, "G-CITE": g_cite, "G-HYGIENE": g_hygiene,
-    "G-SCOPE": g_scope, "G-ID": g_id,
+    "G-SCOPE": g_scope, "G-ID": g_id, "G-BOARDS": g_boards,
 }  # fmt: skip
 
 
@@ -813,6 +895,17 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-HYGIENE", "close the file with a tag line", lambda t: replace(t, spec=t.spec + "</content>\n")),
     ("G-HYGIENE", "put a deny word into the tool's own text", lambda t: replace(t, tool=t.tool + "\n# " + DENY[6] + "\n")),
     ("G-SCOPE", "touch `14` in the diff", lambda t: replace(t, changed=[*OWN_PATHS, PATHS["14"]])),
+    ("G-BOARDS", "put B05 back to draw", set_cell("B05", 3, "to draw (PR 2)")),
+    ("G-BOARDS", "drop the page id from §0.1", sub("(page id `", "(page `")),
+    ("G-BOARDS", "type board 02's sha256 off", set_cell("02", 3, "`" + "0" * 64 + "`")),
+    ("G-BOARDS", "type board 03's size off", set_cell("03", 2, "3584 × 1184")),
+    ("G-BOARDS", "record board 04 under another PNG name", set_cell("04", 1, "`E34-D03-04-scr-062-confirm.png`")),
+    ("G-BOARDS", "malform board 01's id", set_cell("01", 4, "`307e836f`")),
+    ("G-BOARDS", "embed board 01 at another commit", lambda t: replace(t, spec=re.sub(r"(CandleViewer/CandleViewer/)[0-9a-f]{40}/", r"\g<1>" + "0" * 40 + "/", t.spec, count=1))),
+    ("G-BOARDS", "drop board 03's embed", drop_row("![E34-D03 / 03 ")),
+    ("G-BOARDS", "drop board 02's greyscale row", drop_row("| G02 ")),
+    ("G-BOARDS", "type greyscale 04's sha256 off", set_cell("G04", 3, "`" + "0" * 64 + "`")),
+    ("G-BOARDS", "move all seven embeds to the base, which holds no PNG", lambda t: replace(t, spec=re.sub(r"(CandleViewer/CandleViewer/)[0-9a-f]{40}/", r"\g<1>" + BASE + "/", t.spec))),
 )  # fmt: skip
 
 
