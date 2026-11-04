@@ -5,7 +5,8 @@
  * clause is dropped (fail closed).
  */
 import { useSyncExternalStore } from "react";
-import { useShellAccountSignals } from "../../shell/accountState";
+import { shellAccountSignals, useShellAccountSignals } from "../../shell/accountState";
+import { getShellState } from "../../shell/bootstrap/store.js";
 import { useShellSelector } from "../../shell/useShellSelector.js";
 import { getReassurance, stopsClauseHolds, subscribeReassurance } from "./reassurance";
 
@@ -15,4 +16,13 @@ export function useStopsConfirmed(): boolean {
   const reassurance = useSyncExternalStore(subscribeReassurance, getReassurance, getReassurance);
   const scope = accounts?.map((a) => a.exchange_account_id);
   return stopsClauseHolds(scope, signals, reassurance);
+}
+
+/**
+ * The same judgement, read from the stores now rather than from a render: an announcement built in an
+ * effect re-reads it, so a verdict a drain dropped after the render never reaches a spoken claim.
+ */
+export function stopsConfirmedNow(): boolean {
+  const scope = getShellState().me?.accounts.map((a) => a.exchange_account_id);
+  return stopsClauseHolds(scope, shellAccountSignals.getSnapshot(), getReassurance());
 }
