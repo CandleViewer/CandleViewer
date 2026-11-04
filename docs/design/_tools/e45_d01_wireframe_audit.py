@@ -13,7 +13,8 @@ Gates (each FAIL led by its name):
               every §0 frame is named by a state row, an AC row or an inset.
   G-CONFIRM   AC-2: the Cancel at exchange copy names the order id, the account and the symbol,
               says it can't be undone, and §4.2 places the step-up inside the dialog; Cancel,
-              Accept and Force resolve take the `accounts` class; Attach takes none (C-2.6).
+              Accept and Force resolve take the `accounts` class; Attach takes none (C-2.6);
+              every `accounts` confirm shows the no-grace K-17 line, never a grace line.
   G-PROTECT   C-2.6: the stale state leaves Cancel at exchange and Attach protective stop now
               enabled; no line gates either on the stale standing.
   G-REASSURE  BQ-08: SCR-152's reassurance is quoted only on K-15, §1 item 9 and C-3, and §1
@@ -53,10 +54,11 @@ SPEC_REL = "docs/design/E45/E45-D01.md"
 TOOL_REL = "docs/design/_tools/e45_d01_wireframe_audit.py"
 PINS_REL = "docs/design/_tools/e45_d01_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, TOOL_REL, PINS_REL)
-BASE = "8d4149f9a39846fb919c2b0c413a5ee833dea479"  # origin/main when written; re-pinned by content
+BASE = "df125c269be0b014e9e0655b571468e1fb641d6c"  # origin/main when written; re-pinned by content
 PATHS: dict[str, str] = {
     "12": "docs/plan/12-sitemap.md",
     "14": "docs/plan/14-screens-catalogue.md",
+    "15": "docs/plan/15-component-catalogue.md",
     "22": "docs/plan/22-api-openapi.yaml",
     "24": "docs/plan/24-internal-schemas.md",
     "E29D03": "docs/design/E29/E29-D03.md",
@@ -257,6 +259,10 @@ def g_confirm(t: Texts) -> list[str]:
         bad.append("CF-03 asks a step-up before attaching a missing stop (C-2.6)")
     if "Cancel first in focus" not in section(t.spec, "### 4.1"):
         bad.append("§4.1 does not start every confirm on Cancel")
+    if "This always needs a fresh code." not in one_row(t.spec, "K-17")[1] or "K-17" not in s42:
+        bad.append("§4.2 does not show the no-grace step-up line K-17")
+    if "Still trusted" in section(t.spec, "## 4."):
+        bad.append("§4 shows a grace line on a no-grace `accounts` confirm")
     return bad
 
 
@@ -470,6 +476,7 @@ MUTATIONS: tuple[tuple[str, str, Callable[[Texts], Texts]], ...] = (
     ("G-CONFIRM", "ask a code before attaching a stop", set_cell("CF-03", 3, "yes, class `accounts`")),
     ("G-CONFIRM", "let Accept skip the step-up", set_cell("CF-02", 3, "none")),
     ("G-CONFIRM", "start a confirm on its confirm button", sub("Cancel first in focus", "the confirm button first in focus")),
+    ("G-CONFIRM", "show a grace line on Cancel", sub("the step-up line K-17 with the code field", "the step-up line \"Still trusted for accounts · 02:14\" with the code field")),
     ("G-PROTECT", "lock Cancel on a stale account", sub("Cancel and Attach enabled", "Cancel and Attach locked")),
     ("G-PROTECT", "gate Attach on the stale standing", add_line("Attach protective stop now is T2 while the account is stale.")),
     ("G-PROTECT", "drop §1 item 3's rule", sub("never consult the stale standing (`24`:2174)", "follow the standing (`24`:2174)")),
