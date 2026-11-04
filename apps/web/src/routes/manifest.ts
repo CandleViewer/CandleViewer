@@ -109,7 +109,7 @@ export const ROUTE_MANIFEST: readonly ManifestEntry[] = [
   { id: "R-330", path: "/admin/profiles", access: ADMIN, owner: "E18" },
   { id: "R-331", path: "/admin/profiles/:profileId", access: ADMIN, owner: "E18" },
   { id: "R-340", path: "/admin/recorder", access: ADMIN, owner: "E18" },
-  { id: "R-350", path: "/admin/health", access: ADMIN, owner: "E18" },
+  { id: "R-350", path: "/admin/health", access: ADMIN, owner: null },
   { id: "R-351", path: "/admin/flags", access: ADMIN, owner: "E18" },
   { id: "R-352", path: "/admin/trade-groups", access: ADMIN, owner: "E18" },
   { id: "R-353", path: "/admin/risk-policy", access: ADMIN, owner: "E18" },

@@ -7,6 +7,7 @@
  * notes when the transport dropped (HL-14). The last release aborts every read and drops everything
  * [BQ-20]; a `403` on any read stops everything and calls the area's `deny` once (BQ-10).
  */
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import type { ErrorCode } from "@candleviewer/protocol";
 import {
   getShellState,
@@ -308,3 +309,29 @@ export const healthStore: HealthStore = createHealthStore({
   shell: { get: getShellState, subscribe: subscribeShellState },
   deny: denyArea,
 });
+
+/** Holds the page's reads and frames while the calling page is mounted. */
+export function useHealthHold(store: HealthStore = healthStore): void {
+  useEffect(() => store.hold(), [store]);
+}
+
+/**
+ * A selection from the store, kept while its JSON is unchanged: a view re-renders only when what it
+ * shows changed, so a frame that changes one component renders one tile.
+ */
+export function useHealthSelector<T>(
+  selector: (state: HealthState) => T,
+  store: HealthStore = healthStore,
+): T {
+  const memo = useRef<{ state: HealthState; selector: typeof selector; value: T } | null>(null);
+  const getSnapshot = (): T => {
+    const current = store.getState();
+    const last = memo.current;
+    if (last !== null && last.state === current && last.selector === selector) return last.value;
+    const next = selector(current);
+    const value = last !== null && sameJson(last.value, next) ? last.value : next;
+    memo.current = { state: current, selector, value };
+    return value;
+  };
+  return useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot);
+}

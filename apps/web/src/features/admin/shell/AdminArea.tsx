@@ -4,6 +4,7 @@ import { AdminInviteScreen } from "../../invites/AdminInviteScreen";
 import { StubRoute } from "../../../routes/StubRoute";
 import { ROUTE_TITLES } from "../../../routes/titles";
 import { useShellSelector } from "../../../shell/useShellSelector";
+import { HealthPage } from "../health/HealthPage";
 import { OverviewPage } from "../overview/OverviewPage";
 import { useAdminHold, useAdminSelector } from "../overview/readStore";
 import { areaEntered, denial, STRIP_READS, stripItems } from "../overview/strip";
@@ -33,6 +34,7 @@ export function adminRouteLabel(routeId: string): string {
 function pageFor(routeId: string, owner: string | null): ReactNode {
   if (routeId === "R-300") return <OverviewPage />; // SCR-120 (E42-S01)
   if (routeId === "R-303") return <AdminInviteScreen />; // SCR-123 (E09-S05)
+  if (routeId === "R-350") return <HealthPage />; // SCR-143 (E42-S06)
   if (routeId === "R-354") return <SecurityCentrePlaceholder />; // until E43's SCR-137
   return <StubRoute routeId={routeId} owner={owner ?? "E42"} />;
 }
