@@ -7,22 +7,28 @@ world). Each frame goes through `_harness.check_schema`, so a failure names its 
 schema and its section of 23, and its envelope is checked too; the payload must be what the
 producer built, whole.
 
-- `orders`: every `change` kind a committed step can carry, and a step with none, in every state a
-  row is stored in (the 17 `ORDER_STATE_OF` pairs, and a row whose chart state is not recorded yet:
-  `lifecycle_state: null`). A step that leaves the open set carries its id in `removed`, and an
-  `open_only` subscriber gets that removal alone (Sec.6.2.3).
+- `orders`: a committed step of every event kind (so every `change` a step can carry, and none), in
+  every state a row is stored in (the 17 `ORDER_STATE_OF` pairs, and a row whose chart state is not
+  recorded yet: `lifecycle_state: null`), framed by the production `StepPublisher` over the real
+  topic. A step that leaves the open set carries its id in `removed`, checked against the nine
+  states 23 Sec.6.2.3 lists as open (read from its text, never the store's `OPEN_STATES`), and an
+  `open_only` subscriber gets that removal alone. Each member a row can vary (type, intent, time
+  in force, hedge-mode index, trigger, Partial-mode take-profit, parent) is a variant.
 - `executions` and `positions`: each variant a row can take (type, side, hedge-mode index, a
-  Partial-mode stop, absent amounts, the numeric(38,18) bounds), an empty snapshot, a flat position
-  as a removal, and the merged and split `positions` windows (Sec.8.2).
+  Partial-mode stop, a trailing stop, a bust price, absent amounts, the numeric(38,18) bounds), an
+  empty snapshot, a flat position as a removal, and the merged and split `positions` windows
+  (Sec.8.2).
 - `wallet`: each (state, reason) the health monitor derives (AV-05, AV-06) and a balance that turns
   stale (AV-07).
-- the vocabularies: what a producer can say is what the schema declares, both ways.
+- the vocabularies: what a producer can say is what the schema declares, both ways; and each member
+  a schema declares is sent by some variant, but for the omissions 23 documents.
 - AC2, "contract drift fails the build": a renamed or dropped member fails the check naming it,
   on a payload and on the wire.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, Final, get_args
@@ -31,19 +37,28 @@ from uuid import UUID
 import pytest
 
 from candleviewer.accounts.health import HealthReason, HealthState
+from candleviewer.domain.primitives import Environment
 from candleviewer.oms import ws_topics as wt
+from candleviewer.oms.order_steps import CommittedOrderStep
 from candleviewer.settings import ACCOUNT_DOWN_MAX_S, WALLET_STALE_S
-from candleviewer.storage.repositories.orders import OPEN_STATES, ORDER_STATE_OF, OrderEventKind
+from candleviewer.storage.repositories.orders import (
+    ORDER_STATE_OF,
+    OrderEventKind,
+    OrderIntent,
+    TimeInForce,
+    TpslMode,
+    TriggerBy,
+)
 from tests.contract.ws import _harness as h
 from tests.contract.ws.test_ws_oms_topics_contract import subscribed, wired
 from tests.unit.accounts._fakes import ACC
 from tests.unit.accounts._wallet_ws import WalletWorld, owner
-from tests.unit.oms.test_ws_topics import new_fill, order, position, step, stored
+from tests.unit.oms.test_ws_topics import T0, T0_MS, Fills, new_fill, order, position, step, stored
 from tests.unit.ws._seq_support import ACC_A, ACC_B
 
-ENVELOPE, ORDERS, EXECUTIONS, POSITIONS, WALLET = (
+ENVELOPE, COMMON, ORDERS, EXECUTIONS, POSITIONS, WALLET = (
     f"cv://ws/v1/{name}.schema.json"
-    for name in ("envelope", "orders", "executions", "positions", "wallet")
+    for name in ("envelope", "common", "orders", "executions", "positions", "wallet")
 )
 #: Past a `positions` window (100 ms), so that the next change leaves at once.
 WINDOW_S: Final = 0.2
@@ -68,9 +83,11 @@ def sent(world: h.World, topics: wt.OmsTopics[Any], *changes: wt.Change) -> None
 
 
 def member_enum(schema: str, collection: str, name: str) -> set[Any]:
-    """The `enum` of `name` in the items of `collection` (23 Sec.15)."""
-    items = h.SCHEMAS[schema]["properties"][collection]["items"]
-    return set(items["properties"][name]["enum"])
+    """The `enum` of `name` in the items of `collection` (23 Sec.15), through a `$ref` to common."""
+    member = h.SCHEMAS[schema]["properties"][collection]["items"]["properties"][name]
+    if "$ref" in member:
+        member = h.SCHEMAS[COMMON]["$defs"][member["$ref"].rpartition("/")[2]]
+    return set(member["enum"])
 
 
 # -- orders ---------------------------------------------------------------------------------------
@@ -78,61 +95,122 @@ def member_enum(schema: str, collection: str, name: str) -> set[Any]:
 #: What a stored order carries: 24 Sec.8.2's `state` of each B1 chart state, and a row whose chart
 #: state is not recorded (23 Sec.15.1: `lifecycle_state` null).
 PAIRS: Final = [*((state, chart) for chart, state in ORDER_STATE_OF.items()), ("accepted", None)]
+#: The steps a row comes from: each event kind out of `accepted`, and an `exchange_push` that makes
+#: a first row (`change_of` tells that kind apart by the states it leaves and enters).
+SHAPES: Final[list[tuple[str, str | None]]] = [
+    *((kind, "accepted") for kind in get_args(OrderEventKind)),
+    ("exchange_push", None),
+]
+
+
+def open_states() -> frozenset[str]:
+    """The states 23 Sec.6.2.3 lists for the `orders` snapshot ("those in `a`, `b` ... or `z`"),
+    read from its text as `_harness.wire_error_codes` reads Sec.10.2: what stays in the live view,
+    independent of the store's `OPEN_STATES`, which the producer's rule reads."""
+    text = h.PROTOCOL_DOC.read_text(encoding="utf-8")
+    listed = re.search(r"open orders, those in (.+?) \(never", text[text.index("#### 6.2.3 ") :])
+    assert listed is not None, "23 Sec.6.2.3 no longer lists the open order states as read here"
+    return frozenset(re.findall(r"`(\w+)`", listed[1]))
+
+
+OPEN: Final = open_states()
+
+
+def committed_step(
+    n: int, state: str, chart: str | None, kind: str, left: str | None
+) -> CommittedOrderStep:
+    """A's order `n`, stored in `state`, as the step of `kind` out of `left` that wrote it."""
+    code = "PRICE_OUT_OF_BOUNDS" if state == "rejected" else None  # a reject names its code
+    row = order(n, account=ACC_A, state=state, lifecycle_state=chart, reject_code=code)
+    return step(row, kind, left)
 
 
 def emitted_changes() -> set[str | None]:
-    """The `change` `change_of` gives each event kind a step can have, as a first row and as a step
-    out of `accepted` into `accepted`, `cancelled` and `triggered` (it tells the pushes apart)."""
-    shapes = ((None, "accepted"), ("accepted", "accepted"), ("accepted", "cancelled"),
-              ("accepted", "triggered"))  # fmt: skip
-    kinds = get_args(OrderEventKind)
-    return {wt.change_of(step(order(state=s), k, left)) for k in kinds for left, s in shapes}
+    """The `change` `change_of` gives each step a row stored in any state can come from."""
+    return {wt.change_of(committed_step(1, *pair, *shape)) for shape in SHAPES for pair in PAIRS}
 
 
-def order_change(n: int, state: str, chart: str | None, change: str | None) -> wt.Change:
-    """A's order `n` as the step publisher frames it: closed when its `state` is not open."""
-    code = "PRICE_OUT_OF_BOUNDS" if state == "rejected" else None  # a reject names its code
-    row = order(n, account=ACC_A, state=state, lifecycle_state=chart, reject_code=code)
-    item = wt.order_item(row, environment="demo", stamp=100 + n, change=change)
-    return wt.Change("orders", item, str(row.id), row.symbol, 100 + n, state not in OPEN_STATES)
+def step_publisher(world: h.World, topics: wt.OmsTopics[Any]) -> wt.StepPublisher:
+    """The production step publisher over `topics`: its notify the serving loop's (`world.call`),
+    its clock fixed at `T0`; no fill to read, as no step here carries one."""
+    return wt.StepPublisher(
+        topics, world.call, Fills(), environment="demo",
+        clock=wt.LaneClock(lambda: T0), overtaken=lambda: None,
+    )  # fmt: skip
 
 
-@pytest.mark.parametrize("change", sorted(emitted_changes(), key=str), ids=str)
-def test_orders_deltas_of_every_change_kind_conform_in_every_stored_state(
-    change: str | None,
+@pytest.mark.parametrize(("kind", "left"), SHAPES, ids=str)
+def test_orders_a_committed_step_of_every_kind_conforms_in_every_stored_state(
+    kind: str, left: str | None
 ) -> None:
-    """E29-TC-450, E29-TC-751: each `change` kind (and a step with none) x each state a row is
-    stored in, as a delta of the real topic on the socket: valid against `orders.schema.json`, the
-    payload what the producer built (its `removed` carrying the id when the state is not open),
+    """E29-TC-450, E29-TC-751: a step of each event kind (so each `change` it gives, and none),
+    committed with its order in each state a row is stored in, as the production step publisher
+    frames it on the real topic: valid against `orders.schema.json`, the payload what `order_item`
+    builds, `removed` carrying the id exactly when 23 Sec.6.2.3 does not list the state as open,
     `s` one after the last (Sec.6.2.3, Sec.15.1)."""
     world, topics = wired()
+    publisher = step_publisher(world, topics)
     with h.connect(world) as c:
         subscribed(c, "orders")
         last = c.next_of("snap")["s"]
         for n, (state, chart) in enumerate(PAIRS, start=2):
-            moved = order_change(n, state, chart, change)
-            sent(world, topics, moved)
+            committed = committed_step(n, state, chart, kind, left)
+            publisher.committed(committed)
             frame = c.next_of_raw("d")
-            what = f"d orders change={change} state={state} lifecycle_state={chart}"
-            removed = {"removed": [moved.key]} if moved.closed else {}
-            assert conforms(ORDERS, frame, what) == {"orders": [moved.item], **removed}, what
+            what = f"d orders {kind} state={state} lifecycle_state={chart}"
+            change = wt.change_of(committed)
+            item = wt.order_item(committed.order, environment="demo", stamp=T0_MS, change=change)
+            removed = {} if state in OPEN else {"removed": [item["id"]]}
+            assert conforms(ORDERS, frame, what) == {"orders": [item], **removed}, what
             assert frame["s"] == last + 1, what
             last = frame["s"]
 
 
 def test_orders_an_open_only_subscriber_gets_a_closing_step_as_a_removal_alone() -> None:
-    """E29-TC-751: a step out of the open set (into `held` and `untracked` too, which are not
-    open) is `{"orders": [], "removed": [id]}` for an `open_only: true` subscription (Sec.6.2.3)."""
+    """E29-TC-751: a step out of the open set (into `held` and `untracked` too, which 23 Sec.6.2.3
+    does not list as open) is `{"orders": [], "removed": [id]}` for an `open_only: true`
+    subscription."""
     world, topics = wired()
-    closing = [pair for pair in PAIRS if pair[0] not in OPEN_STATES]
+    publisher = step_publisher(world, topics)
+    closing = [pair for pair in PAIRS if pair[0] not in OPEN]
     with h.connect(world) as c:
         c.sub({"ch": "orders", "opts": {"exchange_account_ids": [str(ACC_A)], "open_only": True}})
         c.next_of("snap")
         for n, (state, chart) in enumerate(closing, start=2):
-            sent(world, topics, order_change(n, state, chart, "cancel"))
+            publisher.committed(committed_step(n, state, chart, "cancel_ack", "accepted"))
             what = f"d orders open_only state={state}"
             body = conforms(ORDERS, c.next_of_raw("d"), what)
             assert body == {"orders": [], "removed": [str(UUID(int=n))]}, what
+
+
+ORDERS_BY_VARIANT: Final[dict[str, dict[str, Any]]] = {
+    "market": {"order_type": "Market", "price": None},
+    **{f"intent-{intent}": {"intent": intent} for intent in get_args(OrderIntent)},
+    **{f"time-in-force-{tif}": {"time_in_force": tif} for tif in get_args(TimeInForce)},
+    "hedge-long": {"position_idx": 1},
+    "hedge-short": {"position_idx": 2, "side": "Sell"},
+    **{f"trigger-{by}-{way}": {"trigger_price": Decimal(64000), "trigger_by": by,
+                               "trigger_direction": way}
+       for by, way in zip(get_args(TriggerBy), (1, 2, 1), strict=True)},
+    "partial-mode-take-profit": {"tpsl_mode": "Partial", "take_profit": Decimal(65000)},
+    "child-order": {"parent_order_id": UUID(int=0xAA)},
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("variant", ORDERS_BY_VARIANT)
+def test_orders_each_variant_of_a_row_conforms_as_a_delta(variant: str) -> None:
+    """E29-TC-751: a Market order, each intent and time in force, each hedge-mode index, each
+    trigger source and direction, a Partial-mode take-profit and a child order: valid against
+    `orders.schema.json` and arriving unchanged (Sec.15.1)."""
+    world, topics = wired()
+    moved = step(order(2, account=ACC_A, **ORDERS_BY_VARIANT[variant]))
+    with h.connect(world) as c:
+        subscribed(c, "orders")
+        c.next_of("snap")
+        step_publisher(world, topics).committed(moved)
+        frame = c.next_of_raw("d")
+    item = wt.order_item(moved.order, environment="demo", stamp=T0_MS, change="ack")
+    assert conforms(ORDERS, frame, f"d orders {variant}") == {"orders": [item]}
 
 
 @pytest.mark.parametrize("family", wt.FAMILIES)
@@ -166,6 +244,8 @@ POSITIONS_BY_VARIANT: Final[dict[str, dict[str, Any]]] = {
     "hedge-long": {"position_idx": 1},
     "hedge-short": {"position_idx": 2, "side": "Sell"},
     "partial-mode-stop": {"tpsl_mode": "Partial", "take_profit": Decimal(65000)},
+    "trailing-stop": {"trailing_stop": Decimal(150)},
+    "bust-price": {"bust_price": Decimal(58000)},
     "row-without-amounts": dict.fromkeys(AMOUNTS),
     "amount-bounds": {"size": LOW, "unrealised_pnl": NEG_HIGH, "liq_price": HIGH},
     "flat": {"size": "0", "side": "None"},
@@ -198,11 +278,13 @@ def position_change(stamp: int, **over: Any) -> wt.Change:
 
 @pytest.mark.parametrize("variant", POSITIONS_BY_VARIANT)
 def test_positions_each_variant_of_a_row_conforms_as_a_delta(variant: str) -> None:
-    """E29-TC-751, E29-TC-753: a long, a short, each hedge-mode index, a Partial-mode stop, a row
-    lacking its amounts and one at the numeric bounds validate against `positions.schema.json` and
-    arrive unchanged; a flat position is `{"positions": [], "removed": [id]}` (Sec.15.2)."""
+    """E29-TC-751, E29-TC-753: a long, a short, each hedge-mode index, a Partial-mode stop, a
+    trailing stop, a bust price, a row lacking its amounts and one at the numeric bounds validate
+    against `positions.schema.json` and arrive unchanged; a flat position, and it alone, is
+    `{"positions": [], "removed": [id]}` (Sec.15.2)."""
     world, topics = wired()
     moved = position_change(10, **POSITIONS_BY_VARIANT[variant])
+    assert moved.closed is (variant == "flat")
     with h.connect(world) as c:
         subscribed(c, "positions")
         c.next_of("snap")
@@ -292,6 +374,14 @@ def test_wallet_health_reports_the_state_and_reason_the_monitor_derives(case: st
     assert [e["heartbeat_age_ms"] is None for e in entries] == [account == _NEVER] * 2
 
 
+def test_wallet_health_cases_give_each_state_and_reason_the_monitor_can_say() -> None:
+    """E29-TC-351 (AV-05, AV-06): `HEALTH` has a case for every `HealthState` and every
+    `HealthReason`, so a value added to the monitor (and the schema) is swept, not just declared."""
+    pairs = [pair for *_, pair in HEALTH.values()]
+    assert {state for state, _ in pairs} == {state.value for state in HealthState}
+    assert {reason for _, reason in pairs} == set(get_args(HealthReason))
+
+
 def test_wallet_a_balance_turns_stale_and_says_since_when() -> None:
     """E29-TC-012 (AV-07): a balance sent fresh (`stale: false`, `stale_since_ms: null`) goes out
     once more past the stale window (`stale: true`, `stale_since_ms` the refresh plus the window)
@@ -327,6 +417,11 @@ VOCABULARIES: Final[dict[str, tuple[set[Any], set[Any]]]] = {
     "orders.lifecycle_state": (member_enum(ORDERS, "orders", "lifecycle_state"),
                                {*ORDER_STATE_OF, None}),
     "orders.change": (member_enum(ORDERS, "orders", "change"), emitted_changes() - {None}),
+    **{f"orders.{name}": (member_enum(ORDERS, "orders", name), set(get_args(literal)))
+       for name, literal in (("intent", OrderIntent), ("time_in_force", TimeInForce),
+                             ("tpsl_mode", TpslMode), ("environment", Environment))},
+    "orders.trigger_by": (member_enum(ORDERS, "orders", "trigger_by"),
+                          {*get_args(TriggerBy), None}),
     "executions.exec_type": (member_enum(EXECUTIONS, "executions", "exec_type"),
                              set(wt.WS_EXEC_TYPES)),
     "positions.side": (member_enum(POSITIONS, "positions", "side"), sides()),
@@ -346,11 +441,44 @@ UNSENT: Final[dict[str, set[Any]]] = {}
 def test_a_members_values_are_the_schemas_and_the_producers_both_ways(member: str) -> None:
     """E29-TC-450, E29-TC-751, E29-TC-351: what a producer can say of a member is what the schema
     declares for it: no value the schema refuses, and none it declares that no producer sends but
-    those `UNSENT` names. The orders and executions sweeps above take their values from the
-    producers, so a value added there is swept as well."""
+    those `UNSENT` names. The sweeps above take their values from the producers' own types, so a
+    value added there is swept as well."""
     declared, emitted = VOCABULARIES[member]
     assert sorted(emitted - declared, key=str) == [], f"{member}: sent, never declared"
     assert declared - emitted == UNSENT.get(member, set()), f"{member}: declared, never sent"
+
+
+#: Members a schema declares that no item builder sends, by family, with why (23 Sec.6.2.3).
+OMITTED: Final = {
+    "orders": ({"trade_group_id", "algo_kind"}, "the order row holds neither"),
+    "executions": ({"trade_group_id"},
+                   "the fill row has no group (23 states the omission for the others only)"),
+    "positions": ({"margin_mode", "realised_pnl_session", "r_multiple", "native_stop_present",
+                   "trade_group_id"}, "the position row cannot tell them"),
+}  # fmt: skip
+
+
+def swept_items() -> dict[str, list[Any]]:
+    """The items the builders give each variant swept above, by family."""
+    fills = [wt.execution_item(stored(new_fill(), **o), environment="demo") for o in FILLS.values()]
+    return {
+        "orders": [wt.order_item(order(**o), environment="demo", stamp=1, change="ack")
+                   for o in ORDERS_BY_VARIANT.values()],
+        "executions": [item for item in fills if item is not None],
+        "positions": [position_change(1, **o).item for o in POSITIONS_BY_VARIANT.values()],
+    }  # fmt: skip
+
+
+@pytest.mark.parametrize("family", OMITTED)
+def test_every_declared_member_is_sent_by_some_variant_but_the_documented_omissions(
+    family: str,
+) -> None:
+    """E29-TC-751, after E12-Q04's dead-member check: the members a schema declares that no variant
+    swept here sends are exactly `OMITTED`'s. A member added and never sent fails, and so does an
+    omission that is served since (a member sent as `null` counts as sent)."""
+    items = h.SCHEMAS[f"cv://ws/v1/{family}.schema.json"]["properties"][family]["items"]
+    sent = {name for item in swept_items()[family] for name in item}
+    assert sorted(set(items["properties"]) - sent) == sorted(OMITTED[family][0])
 
 
 # -- AC2: contract drift fails the build ----------------------------------------------------------
@@ -423,7 +551,9 @@ def test_a_producer_that_renames_a_member_fails_on_the_first_frame_that_carries_
         subscribed(c, "orders")
         c.next_of("snap")
         monkeypatch.setattr(wt, "order_item", renamed)
-        sent(world, topics, order_change(2, "accepted", "submitted", "ack"))
+        step_publisher(world, topics).committed(
+            committed_step(2, "accepted", "submitted", "ack", "accepted")
+        )
         with pytest.raises(AssertionError) as failed:
             c.next_of("d")
     named = ("$.orders[0]: 'state' is a required property", "'status' was unexpected", "d orders",
