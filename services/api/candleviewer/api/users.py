@@ -57,6 +57,14 @@ writes the one `auth.session_revoked` (R5), both ahead of the change, then revok
 closes its sockets 4401 after the commit; a session that ended in between is 404. No runtime flag
 gates the lock, the step-up or the audit (C-4.14).
 
+#5478, `GET /users` (22 `listUsers`): the Owner's keyset page of every user `getUser` answers, each
+as `getUser` represents it. RBAC runs first, `users:read` (an audited 403 whatever the query,
+naming the caller's session; 503 `audit_unavailable` when that record cannot be written), then the
+query string (`api.user_list_params`: 400 `validation_failed` or `invalid_cursor`), then the store
+(501 unwired; 503 `store_unavailable` on an outage, logged by its class). The page is read one row
+past its size, so `meta.has_more` needs no count, and its cursor names the last row shown. A
+served read writes no audit record.
+
 #2593: every owner-only write here re-checks its actor at the effect. Each store re-reads the
 actor as an active owner in the change's own transaction, after the owner lock and before any
 write or answer (`require_active_owner`), so of a revoke and an in-flight write exactly one is
@@ -73,7 +81,7 @@ import json
 import re
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated, Any, Final, Literal, Protocol
 
@@ -98,7 +106,7 @@ from candleviewer.admin.user_disable import DisableResult
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.csrf import source_ip
 from candleviewer.api.query_allowlist import undeclared_query_refusal
-from candleviewer.api.refusal_session import refusal_session
+from candleviewer.api.refusal_session import NamesSession, refusal_session
 from candleviewer.api.sessions import _view_json
 from candleviewer.api.step_up import (
     _AuthLike,
@@ -116,6 +124,14 @@ from candleviewer.api.step_up_challenge import (
     update_user_text,
 )
 from candleviewer.api.storage_outage import is_storage_outage
+from candleviewer.api.user_list_params import (
+    CursorInvalid,
+    ParamsInvalid,
+    next_cursor,
+    position_of,
+    read_after,
+    user_list_query,
+)
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import AuthError
@@ -138,6 +154,7 @@ from candleviewer.storage.repositories.user_lifecycle import (
     UserUpdate,
     UserUpdateAudit,
 )
+from candleviewer.storage.repositories.user_list import UserListFilter, like_pattern
 from candleviewer.storage.repositories.user_purge import (
     PurgeAuditUnavailableError,
     PurgeSchedule,
@@ -983,6 +1000,11 @@ class UserAdminStore(Protocol):
 
     async def get_user(self, user_id: uuid.UUID) -> dict[str, Any] | None: ...
 
+    async def list_users(self, query: UserListFilter) -> list[dict[str, Any]]:
+        """#5478: up to `query.limit` undeleted users after `query.after`, in `created_at` then
+        `id` order, each as `get_user` reads one; raises the driver's error on an outage."""
+        ...
+
     async def update_user(
         self,
         user_id: uuid.UUID,
@@ -1186,6 +1208,25 @@ async def audit_user_update(emitter: _Emitter, change: UserUpdate, base: Mapping
             )
 
 
+#: #5478: the detail of `listUsers`' `400 invalid_cursor`, which names no cursor (C-12.6).
+_BAD_CURSOR: Final = "the cursor is malformed, expired or for another query"
+
+
+def _list_refused(exc: ParamsInvalid | CursorInvalid) -> JSONResponse:
+    """`listUsers`' `400`: `invalid_cursor`, or `validation_failed` with each field and rule that
+    failed (`errors`), never a value (C-12.6)."""
+    if isinstance(exc, CursorInvalid):
+        return _registered(ErrorCode.INVALID_CURSOR, 400, _BAD_CURSOR)
+    code = ErrorCode.VALIDATION_FAILED
+    errors = [{"field": e.field, "rule": e.rule, "message": e.message} for e in exc.errors]
+    body = {
+        "type": f"https://candleviewer.local/errors/{code.value}", "title": ERROR_META[code].title,
+        "status": 400, "code": code.value, "detail": "the query string failed validation",
+        "errors": errors,
+    }  # fmt: skip
+    return JSONResponse(body, 400, media_type="application/problem+json")
+
+
 def make_user_admin_router(
     store: UserAdminStore | None,
     emitter: _Emitter,
@@ -1194,10 +1235,12 @@ def make_user_admin_router(
     *,
     auth: _AuthLike | None = None,
     user_disable: UserDisable | None = None,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> APIRouter:
-    """`getUser`, `updateUser`, `listUserSessions` and `revokeUserSession` (E42-T09). RBAC runs
-    first, so a refused caller gets one audited 403 whatever the target (U25); an unwired
-    store answers 501 after it. `emitter` and `notifier` are mandatory, as for the role route."""
+    """`listUsers` (#5478), `getUser`, `updateUser`, `listUserSessions` and `revokeUserSession`
+    (E42-T09). RBAC runs first, so a refused caller gets one audited 403 whatever the target or
+    the query (U25); an unwired store answers 501 after it. `emitter` and `notifier` are
+    mandatory, as for the role route; `clock` dates and checks the list's cursors."""
     if emitter is None or notifier is None:
         raise TypeError("make_user_admin_router: audit emitter and notifier are required")
     router = APIRouter()
@@ -1235,6 +1278,49 @@ def make_user_admin_router(
             return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no user store wired")
         shown = await _read(store, user_id)
         return shown if isinstance(shown, JSONResponse) else _answer(shown)
+
+    @router.get("/users")
+    async def list_users(request: Request) -> JSONResponse:
+        """`listUsers` (#5478; module docstring): RBAC, then the query, then the store."""
+        if principal_resolver is None:
+            return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no principal resolver wired")
+        got = principal_resolver.resolve(request)
+        if (principal := await got if inspect.isawaitable(got) else got) is None:
+            return _unauthenticated()
+        try:  # before the query string is read: one audited 403 whatever it holds (C-12.4)
+            denials = NamesSession(emitter, auth, request)
+            await enforce(
+                principal, Permission.USERS_READ, scope=Scope.NONE, emitter=denials, **_who(request)
+            )
+        except ForbiddenError as exc:
+            return _forbidden(exc.deny.reason.value)
+        except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started
+            _log().warning("users.list refusal not audited", error=type(exc).__name__)
+            detail = "the refusal could not be audited"
+            return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, detail)
+        now = int(clock().timestamp())
+        try:
+            query = user_list_query(request.query_params)
+            after = read_after(query, principal.user_id, now)
+        except (ParamsInvalid, CursorInvalid) as exc:
+            return _list_refused(exc)
+        if store is None:
+            return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no user store wired")
+        pattern = None if query.q is None else like_pattern(query.q)
+        try:  # one row past the page says whether another follows
+            found = await store.list_users(
+                UserListFilter(query.status, query.role, pattern, after, query.limit + 1)
+            )
+        except Exception as exc:  # a store outage is a 503; anything else is a defect (a 500)
+            if not is_storage_outage(exc):
+                raise
+            _log().error("users.list read failed", error=type(exc).__name__)
+            return _registered(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is unavailable")
+        shown, more = found[: query.limit], len(found) > query.limit
+        last = position_of(shown[-1]) if more else None
+        nxt = None if last is None else next_cursor(query, principal.user_id, last, now)
+        meta = {"next_cursor": nxt, "has_more": more, "count": len(shown)}
+        return JSONResponse({"items": [representation(user) for user in shown], "meta": meta})
 
     async def disable(
         user_id: uuid.UUID,

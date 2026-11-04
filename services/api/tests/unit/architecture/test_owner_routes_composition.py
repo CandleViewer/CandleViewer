@@ -44,6 +44,7 @@ from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIden
 from candleviewer.storage.repositories.onboarding_sqlalchemy import SqlAlchemyOnboardingStore
 from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
 from candleviewer.storage.repositories.user_lifecycle_sqlalchemy import SqlAlchemyUserLifecycleStore
+from candleviewer.storage.repositories.user_list import UserListFilter
 from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserAdminStore
 from tests.contract._profile_writes_world import WritableRows
@@ -122,6 +123,12 @@ class _UserAdmin:
     async def get_user(self, user_id: uuid.UUID) -> dict[str, Any] | None:
         return self.users.get(user_id)
 
+    async def list_users(self, query: UserListFilter) -> list[dict[str, Any]]:
+        """#5478: `users` in the store's order, after `query.after`, `query.limit` of them."""
+        found = sorted(self.users.values(), key=_position)
+        kept = [u for u in found if query.after is None or _position(u) > query.after]
+        return kept[: query.limit]
+
     async def update_user(self, user_id: uuid.UUID, *_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("no matrix cell reaches the update: its body or target stops first")
 
@@ -153,6 +160,11 @@ def _loopback_only() -> list[str]:
     return ["127.0.0.1:8000"]
 
 
+def _position(user: dict[str, Any]) -> tuple[datetime, uuid.UUID]:
+    """A `User` row's place in the user list's order (#5478): `created_at`, then the id."""
+    return datetime.fromisoformat(user["created_at"]), uuid.UUID(user["id"])
+
+
 def _delegate(target: Any, name: str) -> Callable[..., Any]:
     return lambda _self, *args, **kwargs: getattr(target, name)(*args, **kwargs)
 
@@ -178,7 +190,7 @@ def deployed() -> Iterator[SimpleNamespace]:
         lifecycle = rbac.LifecycleStore()  # finds no user: the owner's DELETE cell is a 404
         mp.setattr(SqlAlchemyUserLifecycleStore, "disable", _delegate(lifecycle, "disable"))
         admin = _UserAdmin()
-        for name in ("get_user", "update_user"):
+        for name in ("get_user", "update_user", "list_users"):
             mp.setattr(SqlAlchemyUserAdminStore, name, _delegate(admin, name))
         for name in _ONBOARDING_EDGES:
             mp.setattr(SqlAlchemyOnboardingStore, name, _delegate(onboarding, name))
@@ -305,6 +317,9 @@ def test_deployed_app_refuses_unauditable_owner_actions_without_changing_anythin
         )
         assert put.status_code == 503  # C-2.9 write-ahead: the change rolled back
         assert deployed.client.post("/users", json={}, headers=headers).status_code == 503
+        manager = _headers(deployed.client, "manager_with_grant")  # #5478: the refusal unrecorded
+        listed = deployed.client.get("/users", headers=manager)
+        assert (listed.status_code, listed.json()["code"]) == (503, "audit_unavailable")
     finally:
         audit._writer = writer
     assert deployed.users.roles == deployed.users.initial_roles
@@ -738,6 +753,7 @@ def test_the_user_admin_store_exists_only_on_the_real_backend() -> None:
     client = TestClient(appmod.create_app(Settings()), client=("127.0.0.1", 50000))
     resp = client.get(f"/users/{uuid.uuid4()}", headers={"Authorization": "Bearer tok-owner"})
     assert resp.status_code == 501
+    assert client.get("/users", headers={"Authorization": "Bearer tok-owner"}).status_code == 501
 
 
 def test_deployed_app_reads_a_user_through_the_real_user_admin_store(
@@ -765,6 +781,33 @@ def test_deployed_app_reads_a_user_through_the_real_user_admin_store(
         assert resp.status_code == 200 and resp.json()["roles"] == ["viewer"]
         assert resp.headers["etag"].startswith('"') and "password_hash" not in resp.json()
         assert deployed.client.get("/users/invites", headers=headers).status_code == 200
+    finally:
+        deployed.admin.users.clear()
+
+
+def test_deployed_app_lists_users_through_the_real_user_admin_store(
+    deployed: SimpleNamespace,
+) -> None:
+    """#5478: the Owner's `listUsers` reaches the store the composition root built, a page at a
+    time; `GET /users/invites` and `POST /users` are still the invites router's."""
+    ids = sorted(rbac.user_id_of(actor) for actor in ("viewer", "manager_with_grant"))
+    for uid in ids:
+        name = f"u{uid.hex[:8]}"
+        deployed.admin.users[uid] = {
+            "id": str(uid), "username": name, "email": f"{name}@example.com",
+            "display_name": None, "roles": ["viewer"], "status": "active", "mfa_enabled": True,
+            "mfa_required": True, "last_login_at": None,
+            "created_at": "2026-10-19T00:00:00+00:00", "updated_at": "2026-10-19T00:00:00+00:00",
+        }  # fmt: skip
+    headers, client = _headers(deployed.client, "owner"), deployed.client
+    try:
+        first = client.get("/users", params={"limit": 1}, headers=headers).json()
+        params = {"limit": 1, "cursor": first["meta"]["next_cursor"]}
+        rest = client.get("/users", params=params, headers=headers).json()
+        assert [u["id"] for u in first["items"] + rest["items"]] == [str(u) for u in ids]
+        assert rest["meta"] == {"next_cursor": None, "has_more": False, "count": 1}
+        assert client.get("/users/invites", headers=headers).status_code == 200
+        assert client.post("/users", json={}, headers=headers).status_code == 422
     finally:
         deployed.admin.users.clear()
 
