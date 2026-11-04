@@ -1,6 +1,7 @@
 // E24-Q02 (#772) PR 1: the SCR-054 open-interest sub-pane, end to end (E24-D02 §4, §9, §11, §13; E24-D04 §9, §10).
 // Written against the E24-S01 / S02 stack before it merges: #5769 (c711730a5), #5770 (829bd0d80), #5771 (61eb73abf)
-// and #5773 (f30f87076). Every name below is that stack's `copy.ts`; a re-pin that renames one fails here loudly.
+// and #5773 (f30f87076). Every name below is that stack's `copy.ts`, except the mode switch, which is E24-D04 A-08's
+// designed name (BQ 3); a re-pin that renames one fails here loudly.
 // Selectors are roles and accessible names (BQ 2); text is only ever asserted as content. The feed publishes only from
 // its animation-frame loop (#5770), so every history or stream assertion waits through `settle` / `shown`.
 import { expect, test } from "@playwright/test";
@@ -12,6 +13,7 @@ import {
   goldenCase,
   noSampleCase,
   oiHistory,
+  oiModeSwitch,
   oiPane,
   openDerivatives,
   paneScope,
@@ -127,18 +129,13 @@ test("keyboard: the mode control and the table toggle are reachable and operable
   covers("D04 A-08", "D04 §9.1", "05 §3");
   await openDerivatives(page);
   const pane = oiPane(page);
-  // #5773 at f30f87076 ships a `group` of two pressed buttons where D04 A-08 draws a `switch` (BQ 3)
-  const modes = pane.getByRole("group", { name: "Open interest display" });
-  const absolute = modes.getByRole("button", { name: "Absolute" });
-  const delta = modes.getByRole("button", { name: "Delta" });
-  await shown(page, absolute);
-  await expect(absolute).toHaveAttribute("aria-pressed", "true");
-  await absolute.focus();
-  await page.keyboard.press("Tab");
-  await expect(delta).toBeFocused();
+  // D04 A-08's designed `switch`, off by default and operated with `Space` (BQ 3 as amended)
+  const mode = oiModeSwitch(page);
+  await shown(page, mode);
+  await expect(mode).not.toBeChecked();
+  await mode.focus();
   await page.keyboard.press("Space");
-  await expect(delta).toHaveAttribute("aria-pressed", "true");
-  await expect(absolute).toHaveAttribute("aria-pressed", "false");
+  await expect(mode).toBeChecked();
   await page.keyboard.press("Tab");
   await expect(pane.getByRole("button", { name: "Show table" })).toBeFocused();
   // a deliberate addition beyond the ticket's keyboard scope, feeding E24-Q04's audit

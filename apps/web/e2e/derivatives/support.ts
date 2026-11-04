@@ -394,8 +394,9 @@ export function fixtureBackend(t: Timeline = timeline()): Backend {
 }
 
 /**
- * Signs in as `role`, starts the fake gateway, stubs the reads and opens the panel. BQ 1 (#772): no stack mounts
- * SCR-054 yet; the route and the pane lookup live here alone, so the host's landing changes this function only.
+ * Signs in as `role`, starts the fake gateway, stubs the reads and opens the panel. BQ 1 (#772, as amended): no route
+ * mounts SCR-054 yet, and this PR waits for the one that does; the route lives here alone, so its landing changes
+ * this function only.
  */
 export async function openDerivatives(
   page: Page,
@@ -475,6 +476,13 @@ export const feedPane = (page: Page): Locator =>
 /** #5768 at a6a69561e `copy.regionName`: the liquidation bars' region. */
 export const barsPane = (page: Page): Locator =>
   page.getByRole("region", { name: `Liquidation bars, ${SYMBOL}`, exact: true });
+
+/**
+ * E24-D04 A-08: the OI mode toggle is a `switch` named "Open interest, delta per bar", off by default. BQ 3 (#772, as
+ * amended): the designed contract, not the shipped shape; the drift is a finding on #5773 / #777 for E24-D06.
+ */
+export const oiModeSwitch = (page: Page): Locator =>
+  oiPane(page).getByRole("switch", { name: "Open interest, delta per bar", exact: true });
 
 /** The selector `seriousAxe`'s `include` scopes one pane's scan to: the region's accessible name. */
 export const paneScope = (regionName: string): string => `[aria-label="${regionName}"]`;
