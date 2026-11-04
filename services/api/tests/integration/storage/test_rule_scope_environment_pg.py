@@ -67,4 +67,5 @@ async def test_the_scope_source_reads_each_granted_accounts_environment(db: str)
         a: resolver.check_action(scope, _USER, "demo", ScopeInstanceRef(f"*@{a}", None, a))
         for a in (DEMO, TESTNET, GONE)
     }
-    assert verdicts == {DEMO: None, TESTNET: "environment", GONE: "environment"}
+    # A soft-deleted account's grants go with it (#5539), so its check answers `grant_revoked`.
+    assert verdicts == {DEMO: None, TESTNET: "environment", GONE: "grant_revoked"}
