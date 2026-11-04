@@ -139,6 +139,9 @@ docs/design/_tools/sheets/e47-d03/v4/
 # docs/design/_tools/sheets/e47-d04/v4: the packed (compact) E47-D04 sheets, the rendered set with the live check
 # folded in, as the kit writes them (compactOf.file the bare raw-sheet name; e47-d04/BUILD.md rebuilds them)
 docs/design/_tools/sheets/e47-d04/v4/
+# docs/design/_tools/sheets/e47-d05/v4: the packed (compact) E47-D05 sheets, the rendered set with the live check
+# folded in, as the kit writes them (compactOf.file the bare raw-sheet name; e47-d05/BUILD.md rebuilds them)
+docs/design/_tools/sheets/e47-d05/v4/
 # docs/design/_tools/sheets/e47-d06/v4: the packed (compact) E47-D06 sheets, the rendered set with the live check
 # folded in, as the kit writes them (compactOf.file the bare raw-sheet name; e47-d06/BUILD.md rebuilds them)
 docs/design/_tools/sheets/e47-d06/v4/

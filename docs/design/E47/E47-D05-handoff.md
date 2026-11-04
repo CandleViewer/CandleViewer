@@ -6,19 +6,19 @@ Components: **CMP-086 SettingsNav / SettingsLayout** (the own entry, one `h1`), 
 
 Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
-| Item                                                                | Evidence                                                                       |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Box 1 — every option drawn with a plain-language effect description | [ ] text done (§4); boards 01, 02 pending                                      |
-| Box 2 — OS detection shown as the default with an explicit override | [ ] text done (§5); board 04 pending                                           |
-| Box 3 — streaming-announcement throttle control drawn               | [ ] text done (§7.1; D05-Q1); board 07 pending                                 |
-| Box 4 — a link to the statement and to the keyboard cheatsheet      | [ ] text done (§9); board 01 pending; the statement route is D05-G5            |
-| Box 5 — the page passes its own standard at 200 % zoom              | [ ] text done (§11, §12); board 03 pending; a browser run is E47-S08's (#1322) |
-| Variants × states                                                   | [x] §10                                                                        |
-| Keyboard table                                                      | [x] §12                                                                        |
-| Live data                                                           | [x] §5.3 (one status), §7 (the tile is never a live region)                    |
-| Motion pair                                                         | [x] §6.1 (loop / still frames, Pause)                                          |
-| Data contract                                                       | [ ] NO: D05-G1, D05-G2, D05-G4, D05-G7                                         |
-| Sign-off                                                            | [ ] owner approval pending (#2701)                                             |
+| Item                                                                | Evidence                                                                                                                       |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Box 1 — every option drawn with a plain-language effect description | [ ] the owner checks it at the sign-off (spec §19.1); text done (§4); boards 01, 02 drawn                                      |
+| Box 2 — OS detection shown as the default with an explicit override | [ ] the owner checks it at the sign-off (spec §19.1); text done (§5); board 04 drawn                                           |
+| Box 3 — streaming-announcement throttle control drawn               | [ ] the owner checks it at the sign-off (spec §19.1); text done (§7.1; D05-Q1); board 07 drawn                                 |
+| Box 4 — a link to the statement and to the keyboard cheatsheet      | [ ] the owner checks it at the sign-off (spec §19.1); text done (§9); board 01 drawn; the statement route is D05-G5            |
+| Box 5 — the page passes its own standard at 200 % zoom              | [ ] the owner checks it at the sign-off (spec §19.1); text done (§11, §12); board 03 drawn; a browser run is E47-S08's (#1322) |
+| Variants × states                                                   | [x] §10                                                                                                                        |
+| Keyboard table                                                      | [x] §12                                                                                                                        |
+| Live data                                                           | [x] §5.3 (one status), §7 (the tile is never a live region)                                                                    |
+| Motion pair                                                         | [x] §6.1 (loop / still frames, Pause)                                                                                          |
+| Data contract                                                       | [ ] NO: D05-G1, D05-G2, D05-G4, D05-G7                                                                                         |
+| Sign-off                                                            | [ ] owner approval pending (#2701)                                                                                             |
 
 ## §B Who applies what
 
@@ -94,7 +94,7 @@ The key list is spec §3, the single source; this section publishes it for accep
 | QA-7 | set full motion; focus the motion group; press Pause; move to another group and back                       | the tile is a `role="group"` whose Pause button now reads "Play"; the tile stays paused; no control sits inside its `role="img"`                              |
 | QA-8 | at 320 CSS px and with the WCAG text-spacing overrides, flip the emulated OS reduce three times within 1 s | no horizontal scroll and nothing clipped; the status region holds one W-15 text, the latest                                                                   |
 
-## §H The board plan (pending; drawn in a later push of this PR)
+## §H The board plan (drawn; spec §0 and §20)
 
 The boards of spec §0, on page `E47-D05 SCR-117` of the Penpot file `E47-D05 boards`; frames named `SCR-117/<state> · <theme>`. Data: a seeded synthetic stream (seed 1304), declared synthetic on every board's face.
 
@@ -113,10 +113,10 @@ The boards of spec §0, on page `E47-D05 SCR-117` of the Penpot file `E47-D05 bo
 
 ## §I Summary for #1304
 
-1. Text-first hi-fi of the shipped SCR-117 plus PROPOSED deltas, each a G-row to its code owner; 10<!--=COUNT:boards--> boards pending; default-deny audit tool.
+1. Text-first hi-fi of the shipped SCR-117 plus PROPOSED deltas, each a G-row to its code owner; 10<!--=COUNT:boards--> boards drawn (spec §20); default-deny audit tool.
 2. A key list of 11<!--=COUNT:keys--> keys: the eight shipped verbatim, three PROPOSED; each runtime-switchable with its consumer.
 3. Every option has its label and a plain-language effect description; tri-states show the effective value and its source in words.
 4. An OS change updates in place with one polite status and never discards an explicit choice; forced colours make the contrast row T2.
 5. Four PROPOSED preview kinds that obey the effective motion; the announcement sample is a list, never a live region.
 6. The six significant classes are quoted from `05`; the cadence default is 2 s until E47-D01 reports.
-7. BQ-0 … BQ-10 RULED (comment 6566806435), BQ-11 … BQ-13 built as posted; D03 / D04 pinned at their PR heads and re-pinned at each merge; `Refs #1304` + `Partial:` until both merge, then the closing line for the ticket.
+7. BQ-0 … BQ-10 RULED (comment 6566806435), BQ-11 … BQ-13 built as posted; D03 / D04 read at their PR heads and re-pinned to their merge commits (`73fefc62b`, `48c711e64`); the boards PR carries the closing line for the ticket.
