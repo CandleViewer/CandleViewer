@@ -18,8 +18,8 @@ Gates (each FAIL led by its name):
               RULED or PROPOSED row's text inside its parent's cited section at the pin; RULED
               only on the six recovery triggers, and all six RULED.
   G-COVER     by text, never by row position: every string of D02 §11, D03 §7, D03 §3.5's
-              trigger and confirm labels and D03 §5.3's words is a deck text, except a string a
-              ruling supersedes (`SUPERSEDED`), which the full stage needs named in its C-row.
+              trigger and confirm labels and D03 §5.3's words is a deck text; no allowance is
+              left, and a deck text equal to an old template (`STALE`) fails.
   G-SAFE      no deck text carries a word of the header's `never` list or offers to remove,
               loosen, skip or turn off a stop; the native-stop notice is in the deck.
   G-COPY      (full) every deck id the pack or the hand-off names is in the deck; §9's counts
@@ -92,12 +92,12 @@ DECK_PATHS = (DECK_REL, TOOL_REL)
 OWN_PATHS = (PACK_REL, HAND_REL, PINS_REL, *DECK_PATHS)
 BASE = "df125c269be0b014e9e0655b571468e1fb641d6c"  # origin/main when written
 PINS = {
-    "D02": "b80537a63b6d6e098cf7bccd59d4e27cae72cf55",  # #5621, if it merges as is
+    "D02": "cb5ca0bae40e685508482c162d1f6eabe901d604",  # #5621, if it merges as is
     "D03": "1108cc3d8c0a39a7f4e4857c153aed368843ba1d",  # #5622, if it merges as is
     "D04": "830d750b26e3d4996159013d1f979abac0ca3c9c",  # #5651, if it merges as is
 }
 BOARDS = {
-    "D02": "b9bf0a142b8ac655d38875a56e53ef5fe71242d7",  # #5728, if it merges as is
+    "D02": "54ea8c9522e61335454373a0715e9b685d8e755d",  # #5728, if it merges as is
     "D03": "ce852b1ceb0daba0a25102a006555ea6f6714aa5",  # #5729, if it merges as is
 }
 PARENT = {
@@ -151,7 +151,7 @@ HANDOFF_BLOCKS = ("CMP-044 ConfirmDialog", "CMP-123 FlattenAllButton",
 A11Y_LINES = ("Keyboard table", "Accessible name / role table", "Motion pair",
               "Essential-exceptions log")  # fmt: skip
 GUARDS = ("arm state", "SL presence", "override limits", "account scope")
-SUPERSEDED = {"Send group {id} to {n} accounts: {intent}": "C-2"}  # D02 §11 vs D04 SR-04
+STALE = ("Send group {id} to {n} accounts: {intent}",)  # D02 §11's old send.name
 T2_IDS = re.compile(r"`e34\.t2\.(?:lockout|frozen|view_as|account_read_only)`")
 T2_NEEDS = ("T2 `", "D02 §5", "G-T2.4", "G-T2.6", "never T2 under lockout")
 TICKET_ONLY = ("skipped_reason", "unwind_incomplete", "deferral_deadline", "divergence")
@@ -332,11 +332,8 @@ def g_cover(t: Texts) -> list[str]:
         if not strings:
             out.append(f"{where}: no strings read at its pin")
         out += [f"{where}: {s!r} is not a deck text" for s in strings
-                if s not in texts and s not in SUPERSEDED]  # fmt: skip
-    for s, row in SUPERSEDED.items():
-        c_row = [r for r in rows(t.pack or "", row) if s in "|".join(r)]
-        if t.stage == FULL and not c_row:
-            out.append(f"{s!r} is superseded but {row} does not name it")
+                if s not in texts]  # fmt: skip
+    out += [f"{s!r} is a stale template and may not be a deck text" for s in STALE if s in texts]
     return out
 
 
@@ -819,8 +816,8 @@ MUTATIONS: list[tuple[str, str, str, Callable[[Texts], Texts]]] = [
     ("both", "G-DECK", "cite a section the string is not in",
      deck_edit("e34.s062.list.empty", "source", "D03 §2.1")),
     ("both", "G-COVER", "drop a parent's string", deck_drop("e34.s062.close.dust")),
-    (FULL, "G-COVER", "drop the superseded string from its C-row",
-     sub("pack", "\"Send group {id} to {n} accounts: {intent}\"", "the old key")),
+    ("both", "G-COVER", "bring back the old send.name template",
+     deck_edit("e34.s061.send.label", "text", "Send group {id} to {n} accounts: {intent}")),
     ("both", "G-SAFE", "use a never word",
      deck_edit("e34.shared.rc4.trigger", "text", "Flatten group")),
     ("both", "G-SAFE", "offer to take a stop away",
@@ -866,8 +863,8 @@ MUTATIONS: list[tuple[str, str, str, Callable[[Texts], Texts]]] = [
      sub("hand", "- [x] **Motion pair** — unchanged in `15`; a cut",
          "- [ ] **Motion pair** — N/A — none")),
     (FULL, "G-REQUEST", "cite a parent by line", sub("pack", "(D02 §4.2; D03 §3.5)", "(`D02`:240)")),
-    (FULL, "G-REQUEST", "move a pin", sub("pack", "`b80537a63b6d6e098cf7bccd59d4e27cae72cf55`",
-                                          "`b80537a63b6d6e098cf7bccd59d4e27cae72cf56`")),
+    (FULL, "G-REQUEST", "move a pin", sub("pack", "`cb5ca0bae40e685508482c162d1f6eabe901d604`",
+                                          "`cb5ca0bae40e685508482c162d1f6eabe901d605`")),
     (FULL, "G-REQUEST", "a board id off its parent",
      sub("pack", "`307e836f-d138-801c-8008-e448c2314fb9`", "`307e836f-d138-801c-8008-e448c2314fb0`")),
     (FULL, "G-CITE", "cite a blank or moved line", sub("pack", "(`14`:1523)", "(`14`:1522)")),
