@@ -1,9 +1,11 @@
 // E29-Q03 (#977): the numbers the submit-ack script gates on. Pure, so
 // scripts/tests/test_e29_oms_load_tools.py pins each to its source in 06. The backend-added gate
 // is report-only until `order_submit_seconds` leaves "planned" (BQ-10; CV_E29_BACKEND_GATE=1 on).
-// Calibration (BQ-09): the pack waits one draw before it answers a create and one more before its
-// ack frame, so on a delay of at least CALIBRATION_MIN_DELAY_MS the p95 must reach that delay.
-export const SUBMIT_ACK_P95_MS = 300; // 06 line 28, budget #4 (demo)
+// Calibration (BQ-09): ONE pack draw is timed. The ack is emitted when the create's REST answer
+// completes `place` (B01.order.machine.json:137-143, order_steps.py:504); the pack's push frame
+// never maps to `ack` (ws_topics.py:151-160). At delay 100 / jitter 10 the p95 is about 110-140 ms,
+// so the floor stays one draw: on a delay of at least CALIBRATION_MIN_DELAY_MS it must reach it.
+export const SUBMIT_ACK_P95_MS = 300; // 06 budget #4 row (demo); governs over SCR-060's looser 500 ms live figure
 export const BACKEND_ADDED_P95_MS = 50; // 06 section 5.2, line 124
 export const CALIBRATION_MIN_DELAY_MS = 100; // BQ-09
 export const MAX_PACK_DELAY_MS = 10000; // cvdev order_lane MAX_DELAY_MS
@@ -49,11 +51,4 @@ export function thresholdsFor(profile, delayMs, backendGate) {
     t.oms_backend_added_missing = ["count==0"]; // no measurement is a failure, never a pass
   }
   return t;
-}
-
-// The backend-added p95 in ms from the histogram's p95 in seconds, less the one pack draw the
-// server waits on (its jitter is not taken off, so the figure errs high, never low).
-export function backendAddedMs(p95Seconds, delayMs) {
-  if (p95Seconds === null || p95Seconds === undefined) return null;
-  return Math.max(0, p95Seconds * 1000 - delayMs);
 }

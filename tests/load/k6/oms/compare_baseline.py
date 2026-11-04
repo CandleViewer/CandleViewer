@@ -1,6 +1,6 @@
 """E29-Q03 (#977): the +5 % p95 regression gate (06 section 7.4, C-13.9) for the OMS submit-ack
 k6 runs: the median over the runs of each gated metric against `baseline.json`, as a JSON report
-and a markdown summary. Stdlib only; the shape of E40-Q02's (copied, not imported, BQ-07).
+and a markdown summary. Stdlib only; the alert kit's pattern (copied, not imported, BQ-07).
 
     python3 tests/load/k6/oms/compare_baseline.py --baseline tests/load/k6/oms/baseline.json \
         --out-dir oms-load run-1/k6-summary-oms-submit-ack.json run-2/... run-3/...
