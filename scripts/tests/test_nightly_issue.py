@@ -46,10 +46,15 @@ NIGHTLIES = (
     "chaos-recorder-nightly.yml",
     "gpu-runner-health.yml",
     "chaos-bars-nightly.yml",
+    "perf-alerts-nightly.yml",
 )
 BOT = "github-actions[bot]"
 #: Jobs that read more than `contents` and write nothing: #2825's guard lists runs and jobs.
-READERS = {("perf-ingestion-nightly.yml", "bench-free"): {"actions": "read"}}
+READERS = {
+    ("perf-ingestion-nightly.yml", "bench-free"): {"actions": "read"},
+    # E40-Q02: the soak24h guard lists the bench runner's other jobs.
+    ("perf-alerts-nightly.yml", "alerts-load"): {"actions": "read", "contents": "read"},
+}
 RUN_URL = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 #: (workflow, caller job) -> (measuring job, `if:`, signal, title prefix, labels). The prefixes are
 #: those of the open issues filed before #1849, byte for byte, so the next red night finds them.
@@ -137,6 +142,14 @@ SIGNALS = {
         "perf-recorder",
         "perf: recorder nightly budget failed",
         "perf,area/recorder-replay",
+    ),
+    # E40-Q02 (#1203): the alert k6 profiles and soak; any failed step of its one job is the verdict.
+    ("perf-alerts-nightly.yml", "alerts-load-issue"): (
+        "alerts-load",
+        "${{ always() && needs.alerts-load.result == 'failure' && github.ref == 'refs/heads/main' }}",
+        "perf-alerts",
+        "perf: alerts nightly failed",
+        "perf,area/rule-engine",
     ),
     # E03-T14: the hourly GPU bench runner health check; an unfit, set runner is the verdict.
     ("gpu-runner-health.yml", "alert"): (
