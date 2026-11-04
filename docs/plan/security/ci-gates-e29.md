@@ -117,16 +117,15 @@ would retire its exception.
   `where` or `select_from` (`select(literal(1)).where(_O.id == rs.order_id)`): the rule reads what
   a select returns, not whether it is correlated, so the startup sweep's correlated `EXISTS`
   subqueries pass, and so would an uncorrelated one over every account's rows; an alias passed in
-  or built by a helper, a tuple of five
-  or more, a table or column list imported under another name (`orders as order_table`,
-  `ORDER_COLUMNS as _ORDER_COLUMNS`), a column tuple built at module level, an alias made by
-  `sa.alias(orders, ...)` and bound to a name (`orders.alias(...)` is seen), a column added by
-  `.add_columns(...)`, an UPDATE or a DELETE (the rule reads selects only), text SQL (these stores
-  build Core only; `cv-storage-sql-construction` owns text), and the stores outside the scope:
-  `order_path_symbols_sqlalchemy.py` (the instrument refresh's seed, symbol
-  names across every account, answered to no request), `reconcile_sqlalchemy.py` (the reconciliation
-  pass, one account per call), and the trade-group, notification and admin stores of their own epics.
-  Each store's `UNSCOPED` set, which its unit test pins, names its unscoped builders beside the rule.
+  or built by a helper, a tuple of five or more, a table or column list imported under another name
+  (`orders as order_table`, `ORDER_COLUMNS as _ORDER_COLUMNS`), a column tuple built at module
+  level, an alias made by `sa.alias(orders, ...)` and bound to a name (`orders.alias(...)` is seen),
+  a column added by `.add_columns(...)`, an UPDATE or a DELETE (the rule reads selects only), text
+  SQL (these stores build Core only; `cv-storage-sql-construction` owns text), and the stores
+  outside the scope: `order_path_symbols_sqlalchemy.py` (the instrument refresh's seed, symbol names
+  across every account, answered to no request), `reconcile_sqlalchemy.py` (the reconciliation pass,
+  one account per call), and the trade-group, notification and admin stores of their own epics. Each
+  store's `UNSCOPED` set, which its unit test pins, names its unscoped builders beside the rule.
 - **Fixture:** `.semgrep/tests/cv-oms-unscoped-select/`, with the annotated statement that proves the
   marker placement the three exceptions use.
 
@@ -206,8 +205,9 @@ would retire its exception.
   or an assignment alike. Fix: read a field of `ExchangeCapabilities` or of another record the
   composition root builds.
 - **Exemption:** a test whose `if` body is a single `raise` of a class, bare or called with a message
-  (a string, an f-string or a name), and that has no `else` or `elif`, a fail-closed self-check. Seven
-  pass on `main` without an annotation:
+  (a string, an f-string or a name), and that has no `else` or `elif`, a fail-closed self-check; a
+  `from` clause, or a method called on the new exception (`.with_traceback(...)`), is reported.
+  Seven pass on `main` without an annotation:
   `ports.refuse_live_without_reconciliation`, `stream_consumer.refuse_live_without_position_rows`,
   `oms_stream_wiring.refuse_live_without_freeze`, the reconcile wiring's and the reconcile job's
   always-remediate checks, `DayRiskFigures`' constructor and the runtime's machine-event sink check.
@@ -225,12 +225,12 @@ would retire its exception.
 - **Not seen:** `match`/`case`, a table keyed by the environment (`ENV_LETTER[environment]`, data as
   `ExchangeCapabilities` is), a boolean computed elsewhere (`is_live`), an environment under a name
   the pattern lacks, an environment enum imported under a name without `Env` (`PE.LIVE`), a value
-  tested for membership in the environment (`"live" in env`), `operator.contains`. In a raise-only
-  `if`: a call or an `await` in its condition after the environment test
-  (`env == "live" and await open_live(port)`), where four of the seven checks call a predicate; an
-  exception used as control flow (`raise _UseTradeSocket`, which an `except` one frame up answers
-  with the live work); and a class, or a function named like one, whose call does the work
-  (`raise Refused(port)`), which reads as an exception's construction.
+  tested for membership in the environment (`"live" in env`), `operator.contains`, or an operator
+  passed as a value (`partial(operator.eq, "live")`). In a raise-only `if`: a call or an `await` in
+  its condition after the environment test (`env == "live" and await open_live(port)`), where four
+  of the seven checks call a predicate; an exception used as control flow (`raise _UseTradeSocket`,
+  which an `except` one frame up answers with the live work); and a class, or a function named like
+  one, whose call does the work (`raise Refused(port)`), which reads as an exception's construction.
 - **Fixture:** `.semgrep/tests/cv-oms-env-branch/`, with the annotated statement that proves the marker
   placement the four exceptions use.
 
