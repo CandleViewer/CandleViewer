@@ -314,6 +314,82 @@ describe("CMP-077 region: the stops clause needs the stream (E29-S07, BQ-7, C-2.
   });
 });
 
+describe("CMP-077 region: a spoken claim is judged when it is spoken (E29-S07 review)", () => {
+  const A = "a1000000-0000-4000-8000-00000000000a";
+  const ME = { accounts: [{ exchange_account_id: A, label: "Sub-1" }] } as unknown as Me;
+  const delta = {
+    kind: "d",
+    seq: 2,
+    ts: 1,
+    body: { e: "j", p: { positions: [{ exchange_account_id: A }] } },
+  };
+
+  async function dropWith(
+    buffered: boolean,
+    next: WsState = DROPPED,
+    viewAs?: HeldViewAs,
+  ): Promise<string> {
+    vi.spyOn(positionsApi, "listPositions").mockResolvedValue({
+      kind: "ok",
+      items: [],
+      aggregates: [],
+    });
+    act(() => setShellState(viewAs === undefined ? { me: ME } : { me: ME, viewAs }));
+    const queue: unknown[] = [];
+    const handle = { read: () => queue.splice(0), release: () => undefined };
+    act(() => setActiveClient({ ...client, consume: () => handle } as unknown as WsClientHandle));
+    render(
+      <>
+        <ShellBannerSlot />
+        <ShellAnnouncer />
+      </>,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(getReassurance().get(A)?.kind).toBe("true");
+    if (buffered) queue.push(delta); // arrived since the last 250 ms drain
+    go(next);
+    return assertive().textContent ?? "";
+  }
+
+  it("with no frame pending the drop says the stops sentence", async () => {
+    expect(await dropWith(false)).toContain("Exchange-side stops still protect open positions");
+  });
+
+  it("a frame buffered at the drop is applied first, and the announcement carries no stops claim", async () => {
+    const said = await dropWith(true);
+    expect(said).toContain("Disconnected.");
+    expect(said).not.toContain("stops still protect");
+    expect(getReassurance().get(A)).toBeUndefined();
+  });
+
+  // E42-S03 (SCR-124 V-8) meets the re-read: the region recomputed for speech takes the shown
+  // region's view-as mute, so a dropped claim never revives a muted `session` stop.
+  const VIEWING: HeldViewAs = {
+    kind: "held",
+    targetId: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002",
+    targetName: "alex",
+    startedAtMs: T0 - 1_800_000,
+    expiresAtMs: T0,
+    state: "expired",
+    offsetMs: 0,
+  };
+
+  it("a 4403 while viewing, with a frame buffered at the drop: nothing shown, nothing said", async () => {
+    const said = await dropWith(true, fatal(4403), VIEWING);
+    expect(said).toBe("");
+    expect(screen.queryByRole("region", { name: "Connection" })).toBeNull();
+    expect(getReassurance().get(A)).toBeUndefined();
+  });
+
+  it("any other drop while viewing still speaks, with the dropped claim left out", async () => {
+    const said = await dropWith(true, DROPPED, { ...VIEWING, state: "active" });
+    expect(said).toContain("Disconnected.");
+    expect(said).not.toContain("stops still protect");
+  });
+});
+
 describe("CMP-077 region: announcements through the shell announcer (§11)", () => {
   function mountBoth(): Node[] {
     const said = watchAssertive();
