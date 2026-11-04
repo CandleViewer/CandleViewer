@@ -4,11 +4,11 @@
 Offline and default-deny. The shared gates (git, cites, G-T2 markers, closing keywords, hygiene,
 public text, R7, G-UNTOUCHED, the runner and the mutation harness) live in `spec_audit_lib.py`
 beside this file; this file keeps only E49-D02's rows. It reads, AS TEXT at the pinned base, the
-plan and design texts the pack cites, the token JSON and `contrast_check.py` (the only repo code it
-runs, loaded by path), and, from the working tree, the pack and itself.
+plan and design texts the pack cites, the token JSON, `pairs.mjs` and `contrast_check.py` (the only
+repo code it runs, loaded by path), and, from the working tree, the pack and itself.
 
 Gates: GATES below, listed in section 17.1; G-MUTLIST keeps section 17.2 equal to MUTATIONS. The BQ
-list 6636147300 is not ruled yet: G-BQ checks the "defaults built; ruling pending" form.
+list 6636147300 is ruled by comment 6640202848: G-BQ checks the RULED form (AMEND on BQ-3 and BQ-6).
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e49_d02_state_audit.py --check | --self-test
@@ -28,15 +28,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "c71daa3d3"  # the base the BQ list was posted on; every cite is read here
+BASE = "185be5deb"  # main at the ruling fold; every cite is read here
 BQ_LIST = "6636147300"  # the BQ list on #1331
-HEAD = "## The questions BQ-0 … BQ-9 — defaults built; ruling pending"
+RULING = "6640202848"  # the ruling of record; BQ-3 and BQ-6 are AMEND
+HEAD = "## The questions BQ-0 … BQ-9 — RULED"
 
 SPEC_REL = "docs/design/E49/E49-D02.md"
 TOOL_REL = "docs/design/_tools/e49_d02_state_audit.py"
 OWN = (SPEC_REL, TOOL_REL)
 BACKLOG_REL = "docs/plan/backlog/E49.json"
 CONTRAST_REL = "docs/design/_tools/contrast_check.py"
+PAIRS_REL = "tools/contrast/pairs.mjs"
+PAIR_RE = re.compile(r'fg: "([^"]+)",\s*bg: "([^"]+)",\s*threshold: THRESHOLD\.(\w+)')
 
 PLAN = {
     "04": "docs/plan/04-security-program.md",
@@ -76,7 +79,7 @@ SCR_LINES = {
 GATED = frozenset({151, 152, 153, 157, 158, 159})  # BQ-0: the recipes that show a T2 control
 EMPTY_ENUM_LINES = (333, 336)  # D10E08: the closed `reason` enumeration
 TREATMENTS = ("T-1", "T-2", "T-3", "T-4")
-NOTHING_YET = ("chart pane, nothing shown yet", "panel, row, card or table, nothing shown yet")
+NOTHING_YET = ("chart pane", "panel, row, card or table")  # rows with no content shown yet
 ANTI = (
     "a bare spinner with no staged description",
     'a bare "No data" string',
@@ -107,7 +110,12 @@ TOKEN_RE = re.compile(
     r"\.[A-Za-z0-9.*\-]+?)(\.\.\d+)?(\[\])?`"
 )
 RUBRIC_QS = 13  # Q1..Q13 (the a11y lens added Q11..Q13)
-CLAUSE_RE = re.compile(r"DQ-[A-Z]{2}-\d(?:, DQ-[A-Z]{2}-\d)*|none in E49-D01")
+CLAUSE_RE = re.compile(r"(DQ-[A-Z]{2}-\d) \((P\d)\)")
+# E49-D01 §4's floors, #5860 at 6138f6f81 (BQ-0 e; re-pinned when it merges)
+FLOORS = {"DQ-BS-2": "P2", "DQ-BS-3": "P2", "DQ-CO-1": "P3", "DQ-CO-2": "P3", "DQ-AX-1": "P2"}
+FLOORS |= {"DQ-AX-2": "P2", "DQ-AX-4": "P2", "DQ-AX-5": "P2", "DQ-TS-3": "P1"}
+ARCH_RE = re.compile(r"D04E47 :(\d+) \((workspace|full-page form|dialog)\)")
+ANALYTICS_RULED = {152: ({"ws.banner_suppressed"}, set()), 154: ({"rbac.denied"}, {"authz.denied"})}
 MAP_RE = re.compile(r"^(?:frame `SCR-15\d/[a-z0-9-]+`|recipe R1[5]\d-\d|N/A — )")
 
 
@@ -162,6 +170,14 @@ def rgb(hexv: str) -> tuple[int, int, int]:
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
+@functools.cache
+def registry() -> dict[tuple[str, str], tuple[int, float]]:
+    src = repo().show(BASE, PAIRS_REL) or ""
+    th = {"TEXT": 4.5, "NON_TEXT": 3.0, "HIGH_CONTRAST": 7.0}
+    found = PAIR_RE.finditer(src)
+    return {(m[1], m[2]): (src.count("\n", 0, m.start(1)) + 1, th[m[3]]) for m in found}
+
+
 def ratio(fg: str, bg: str, name: str) -> float:
     t = theme(name)
     return float(contrast().contrast_ratio(rgb(t.get(fg, "")), rgb(t.get(bg, ""))))
@@ -200,31 +216,18 @@ def pattern_sections(t: L.Tree) -> dict[int, str]:
     return out
 
 
-def recipe(block: str) -> list[list[str]]:
+def recipe(block: str, k: int = 0) -> list[list[str]]:
+    """The block's k-th table: 0 the recipe, 1 the checklist."""
     tables = L.all_tables(block)
-    return tables[0] if tables else []
-
-
-def checklist(block: str) -> list[list[str]]:
-    tables = L.all_tables(block)
-    return tables[1] if len(tables) > 1 else []
-
-
-def board_rows(t: L.Tree) -> list[list[str]]:
-    return rows(t, "## 0. Status")
+    return tables[k] if len(tables) > k else []
 
 
 def known_frames(t: L.Tree) -> set[str]:
-    drawn = {f for r in board_rows(t) if len(r) > 2 for f in FRAME_RE.findall(r[2])}
+    drawn = {f for r in rows(t, "## 0. Status") if len(r) > 2 for f in FRAME_RE.findall(r[2])}
     text = spec(t)
     start = text.find("**Not drawn")
     para = text[start : text.find("\n\n", start)] if start >= 0 else ""
     return drawn | set(FRAME_RE.findall(para))
-
-
-def items_14(n: int) -> list[str]:
-    body = line_of("14", n).split(":** ", 1)[-1]
-    return [x.strip() for x in body.split("[ ]") if x.strip()]
 
 
 # ---------- this pack's gates ---------------------------------------------------------------------
@@ -245,16 +248,16 @@ def g_ac(t: L.Tree) -> list[str]:
 def g_bq(t: L.Tree) -> list[str]:
     return L.check_ruling(
         spec(t),
-        heading_line=f"{HEAD} (comment {BQ_LIST})",
-        list_ref=f"comment {BQ_LIST} on #1331",
+        heading_line=f"{HEAD} (comment {RULING})",
+        list_ref=f"comment {BQ_LIST} on #1331; comment {RULING} is the ruling of record",
         count=10,
-        verdict=lambda n: "Built as:",
-        forbid=("RULED",),
+        verdict=lambda n: "RULED, AMEND:" if n in (3, 6) else "RULED, AGREE + rider:",
+        forbid=("Built as:", "ruling pending"),
     )
 
 
 def g_boards(t: L.Tree) -> list[str]:
-    return L.board_cap(board_rows(t), "E49-D02", spec(t))
+    return L.board_cap(rows(t, "## 0. Status"), "E49-D02", spec(t))
 
 
 def g_t2(t: L.Tree) -> list[str]:
@@ -292,8 +295,9 @@ def g_checklist(t: L.Tree) -> list[str]:
     bad: list[str] = []
     frames = known_frames(t)
     for scr, block in pattern_sections(t).items():
-        got, steps = checklist(block), {r[0] for r in recipe(block)}
-        want = items_14(SCR_LINES[scr][2])
+        got, steps = recipe(block, 1), {r[0] for r in recipe(block)}
+        body = line_of("14", SCR_LINES[scr][2]).split(":** ", 1)[-1]
+        want = [x.strip() for x in body.split("[ ]") if x.strip()]
         if [r[1] for r in got if len(r) > 2] != want:
             bad.append(f"SCR-{scr}: checkboxes differ from `14`")
         for r in got:
@@ -319,7 +323,8 @@ def g_analytics(t: L.Tree) -> list[str]:
         if not m or int(m.group(1)) != SCR_LINES[scr][1]:
             bad.append(f"SCR-{scr}: the analytics line or its cite")
             continue
-        want = sorted(set(EVENT_RE.findall(line_of("14", SCR_LINES[scr][1]))))
+        add, drop = ANALYTICS_RULED.get(scr, (set(), set()))
+        want = sorted(set(EVENT_RE.findall(line_of("14", SCR_LINES[scr][1]))) - drop | add)
         if sorted(set(EVENT_RE.findall(m.group(2)))) != want:
             bad.append(f"SCR-{scr}: events differ from `14` {want}")
     return bad
@@ -344,17 +349,19 @@ def g_empty(t: L.Tree) -> list[str]:
 
 def g_loading(t: L.Tree) -> list[str]:
     got = rows(t, "## 4. The loading decision table")
-    keys = [tuple(r[1:4]) for r in got if len(r) > 4]
+    keys = [tuple(r[1:5]) for r in got if len(r) > 5]
     bad = [] if len(set(keys)) == len(keys) == len(got) else ["a duplicate key or a short row"]
     for r in got:
-        if len(r) < 5 or r[4] not in TREATMENTS:
+        if len(r) < 6 or r[5] not in TREATMENTS:
             bad.append(f"{r[0]}: not exactly one treatment")
-        elif (r[4] == "T-1") != r[1].startswith("app boot"):
+        elif (r[5] == "T-1") != r[1].startswith("app boot"):
             bad.append(f"{r[0]}: T-1 is SCR-150's only")
-        elif r[1] in NOTHING_YET and r[2:4] == ["no", "yes"] and r[4] != "T-2":
+        elif r[2] == "yes" and r[5] == "T-2":
+            bad.append(f"{r[0]}: a refresh holds its frame; a skeleton is a first load's")
+        elif r[1] in NOTHING_YET and r[2:5] == ["no", "no", "yes"] and r[5] != "T-2":
             bad.append(f"{r[0]}: unknown total, known layout is the skeleton")
     for s in NOTHING_YET:
-        combos = {tuple(k[1:]) for k in keys if k[0] == s}
+        combos = {tuple(k[2:]) for k in keys if k[:2] == (s, "no")}
         if combos != {(a, b) for a in ("yes", "no") for b in ("yes", "no")}:
             bad.append(f"{s}: not every combination")
     if any("CMP-014" in c for r in got for c in r):
@@ -395,15 +402,17 @@ def g_contrast(t: L.Tree) -> list[str]:
     bad = [] if len(got) >= 12 else [f"{len(got)} pairs"]
     for r in got:
         m = re.fullmatch(r"`([a-z0-9.\-]+)` on `([a-z0-9.\-]+)`", r[0])
-        if not m or len(r) < 5:
+        if not m or len(r) < 4:
             bad.append(f"row {r[0]!r}")
             continue
         fg, bg, floor = m.group(1), m.group(2), float(r[1])
-        want = [f"{ratio(fg, bg, n):.2f}" for n in L.THEME_PARTS]
-        if r[2:5] != want:
-            bad.append(f"{fg} on {bg}: measured {want}")
-        elif min(float(v) for v in want) < floor:
+        if min(ratio(fg, bg, n) for n in L.THEME_PARTS) < floor:
             bad.append(f"{fg} on {bg} below {floor:g}")
+        reg = registry().get((fg, bg))
+        low = f" at {reg[1]:.1f} (A-8)" if reg and reg[1] < floor else ""
+        want = f"`pairs.mjs` :{reg[0]}{low}" if reg else "proposed (A-8)"
+        if r[2] != want:
+            bad.append(f"{fg} on {bg}: registry {want!r}")
     return bad
 
 
@@ -429,10 +438,19 @@ def g_rubric(t: L.Tree) -> list[str]:
     want = [f"Q{n}" for n in range(1, RUBRIC_QS + 1)]
     got = rows(t, "## 2. The conformance rubric")
     bad = [] if [r[0] for r in got] == want else [f"rubric rows {[r[0] for r in got]}"]
-    bad += [f"{r[0]}: no clause" for r in got if not CLAUSE_RE.fullmatch(r[-1])]
+    for r in got:
+        pairs = CLAUSE_RE.findall(r[-1])
+        joined = ", ".join(f"{c} ({p})" for c, p in pairs) or "none in E49-D01"
+        if joined != r[-1] or any(FLOORS.get(c) != p for c, p in pairs):
+            bad.append(f"{r[0]}: clause or floor")
     proof = [r[0] for r in rows(t, "### 2.2") if len(r) > 1 and r[1]]
     bad += [] if proof == want else [f"evidence rows {proof}"]
     focus = sorted(int(r[0][4:]) for r in rows(t, "### 3.2") if r[0].startswith("SCR-"))
+    for r in (x for x in rows(t, "### 3.2") if x[0].startswith("SCR-")):
+        m = ARCH_RE.search(r[-1])
+        ln = line_of("D04E47", int(m[1])) if m else ""
+        if not (m and r[0] in ln and m[2] in ln):
+            bad.append(f"{r[0]}: its E47-D04 §5 archetype")
     return bad + ([] if focus == sorted(SCR_LINES) else [f"focus rows {focus}"])
 
 
@@ -489,14 +507,15 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-1", "G-CITE", "a cite past the end of `14`", "spec", "(`14` :3088);", "(`14` :99999);"),
     _M("M-2", "G-AC", "a scenario name reworded", "spec",
        'AC "Loading choice is deterministic"', 'AC "Loading choice is fixed"'),
-    _M("M-3", "G-BQ", "the heading claims a ruling", "spec",
-       "BQ-9 — defaults built; ruling pending (comment", "BQ-9 — RULED (comment"),
-    _M("M-4", "G-BQ", "a bullet loses its built form", "spec",
-       "**BQ-5 — empty: three classes.** Built as:", "**BQ-5 — empty: three classes.** As built:"),
+    _M("M-3", "G-BQ", "the heading still pending", "spec",
+       "BQ-9 — RULED (comment", "BQ-9 — defaults built; ruling pending (comment"),
+    _M("M-4", "G-BQ", "an AMEND read as AGREE", "spec",
+       "**BQ-6 — one answer per loading cell.** RULED, AMEND:",
+       "**BQ-6 — one answer per loading cell.** RULED, AGREE + rider:"),
     _M("M-5", "G-BOARDS", "a board claimed drawn", "spec",
        r"(\| dark\s+\| )PENDING", r"\1drawn  ", regex=True),
     _M("M-6", "G-T2", "the opacity ban dropped", "spec",
-       "never `opacity.disabled` (G-T2.2)", "or `opacity.disabled` (G-T2.2)"),
+       "never `opacity.disabled`", "or `opacity.disabled`"),
     _M("M-7", "G-T2", "a gated recipe loses its lock glyph", "spec",
        r"(\| R152-7 \| CMP-019 \| )`lock`", r"\1`info`", regex=True),
     _M("M-8", "G-RECIPE", "an unknown CMP id replaces a `14` id", "spec",
@@ -520,8 +539,7 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "similar to an unknown route's for the same session"),
     _M("M-17", "G-DISCLOSE", "a request path offered", "spec",
        "- **D-6 Nothing elsewhere", '- **D-7** Offer "Request access".\n- **D-6 Nothing elsewhere'),
-    _M("M-18", "G-CONTRAST", "a ratio retyped", "spec",
-       r"15\.20(\s*\|\s*)16\.78(\s*\|\s*)17\.21", r"15.20\g<1>16.78\g<2>17.12", regex=True),
+    _M("M-18", "G-CONTRAST", "a registry line retyped", "spec", "s.mjs` :29 ", "s.mjs` :9 "),
     _M("M-19", "G-STORIES", "a story the catalogue lacks", "spec",
        "PanelLevel, RouteLevel, AppLevel", "PanelLevel, RouteCrash, AppLevel"),
     _M("M-20", "G-ROWS", "a decision owned by no ticket", "spec",
@@ -549,6 +567,15 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "Replay carries the original intent id", "Replay mints a new intent id"),
     _M("M-32", "G-REPLAY", "the replay decision unowned", "spec",
        "the held intent's id (R158-5)", "the held intent's id (R158-x)"),
+    _M("M-33", "G-ANALYTICS", "SCR-154 keeps the stale audit name", "spec",
+       "**Analytics (`14` :3166):** `rbac.denied`", "**Analytics (`14` :3166):** `authz.denied`"),
+    _M("M-34", "G-LOADING", "a refresh gets a skeleton", "spec",
+       r"(\| L-10 [^\n]*\| )T-3(\s+\|)", r"\1T-2\2", regex=True),
+    _M("M-35", "G-RUBRIC", "a focus row names the wrong archetype", "spec",
+       "D04E47 :202 (dialog)", "D04E47 :202 (workspace)"),
+    _M("M-36", "G-RUBRIC", "a clause floor lowered", "spec", "DQ-TS-3 (P1)", "DQ-TS-3 (P3)"),
+    _M("M-37", "G-CONTRAST", "an unregistered pair claimed registered", "spec",
+       "| proposed (A-8) ", "| `pairs.mjs` :1 "),
 )
 # fmt: on
 
