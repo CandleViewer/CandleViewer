@@ -377,6 +377,37 @@ describe("the recovered region", () => {
     view.unmount();
   });
 
+  it("a lock on an account past the watched 25 is not read (it stays unread)", async () => {
+    const id = (i: number) => `a1000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    const many = {
+      accounts: Array.from({ length: 26 }, (_, i) => ({
+        exchange_account_id: id(i),
+        label: `Sub-${i}`,
+        environment: "live",
+        mode: "trade",
+      })),
+    } as unknown as Me;
+    act(() => setShellState({ me: many }));
+    positions.listPositions.mockClear();
+    const view = render(<Harness ws={UP} reads={fakeReads()} />);
+    await flush();
+    positions.listPositions.mockClear(); // the connect read of the first 25
+    act(() =>
+      applySystemUpdate({
+        kind: "account_notice",
+        severity: "critical",
+        reason: "oms.account_stale",
+        message: "m",
+        exchange_account_ids: [id(25)],
+        changed_at_ms: 9,
+      } as SystemUpdate),
+    );
+    await flush();
+    expect(positions.listPositions).not.toHaveBeenCalled();
+    expect(getReassurance().has(id(25))).toBe(false);
+    view.unmount();
+  });
+
   it("SR-03 waits until the region shows (a11y m2)", async () => {
     const reads = fakeReads();
     const view = render(<Harness ws={DROPPED} reads={reads} visible={false} />);
