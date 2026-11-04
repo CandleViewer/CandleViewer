@@ -1,0 +1,8 @@
+{
+  "extends": "@candleviewer/config/tsconfig/node.json",
+  "compilerOptions": {
+    "outDir": "dist"
+  },
+  "include": ["src", "test", "tsup.config.ts"],
+  "exclude": ["dist", "node_modules", "coverage"]
+}
