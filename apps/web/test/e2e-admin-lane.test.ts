@@ -16,6 +16,7 @@ import {
   type ElevateClass,
   type GraceClass,
 } from "../e2e/support/real/adminWorld";
+import { REFRESH_BUDGET } from "../e2e/support/real/failureArtefacts";
 import { claimFrom, parseUsers, roleClaims, type RealStack } from "../e2e/support/real/stack";
 import { judgeTiming, serverDeltaMs, timingRecord, untilWithin } from "../e2e/support/real/timing";
 import { serverClock } from "../e2e/support/serverClock";
@@ -567,6 +568,34 @@ describe("the codes an API actor sends", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the refreshes the admin specs declare", () => {
+  const CALL = /\blane\.refreshes\((\d+)\)/gu;
+  /** Each test's declared count (0 without one), as e2e-real-lane.test.ts parses the auth lane. */
+  function declarations(text: string): number[] {
+    const starts = [...text.matchAll(/^test\("([^"]+)"/gmu)];
+    expect(starts).toHaveLength(text.match(/(?<![.\w])test\(/gu)?.length ?? 0);
+    expect(text.match(/\brefreshes\(/gu)?.length ?? 0).toBe(text.match(CALL)?.length ?? 0);
+    return starts.map((start, i) => {
+      const calls = [...text.slice(start.index, starts[i + 1]?.index).matchAll(CALL)];
+      expect(calls.length, start[1]).toBeLessThanOrEqual(1);
+      return Number(calls[0]?.[1] ?? 0);
+    });
+  }
+
+  it("total what each spec states, and pace one worker well inside the 10 minutes", () => {
+    let total = 0;
+    for (const spec of stackSpecs()) {
+      const text = readFileSync(spec, "utf8");
+      const sum = declarations(text).reduce((a, n) => a + n, 0);
+      const stated = /These tests present `cv_refresh` (\d+) times in all\./u.exec(text)?.[1];
+      expect(stated, spec).toBe(`${sum}`);
+      total += sum;
+    }
+    expect(total).toBeGreaterThan(0);
+    expect(total).toBeLessThanOrEqual(REFRESH_BUDGET * 10); // the pace alone: 10 minutes at most
   });
 });
 
