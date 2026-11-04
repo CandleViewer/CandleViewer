@@ -24,6 +24,7 @@ import argparse
 import csv
 import dataclasses
 import functools
+import hashlib
 import importlib.util
 import io
 import json
@@ -58,17 +59,6 @@ FINDINGS_REL = "docs/plan/backlog/artifacts/e49-design-qa-ledger.csv"
 TICKETS_REL = "docs/plan/backlog/all-tickets.json"
 PUBLISHED_REL = "docs/plan/backlog/_tools/published.json"
 FX_DIR = "tests/fixtures/design_qa"
-FX_FILES = (
-    "README.md",
-    "catalogue.md",
-    "register.json",
-    "findings.csv",
-    "complete.csv",
-    "missing-row.csv",
-    "bad-verdict.csv",
-    "exception-without-owner.csv",
-    "findings-without-bug-key.csv",
-)
 FIXTURES: dict[str, frozenset[str]] = {
     "complete.csv": frozenset(),
     "missing-row.csv": frozenset({"E_MISSING"}),
@@ -76,16 +66,11 @@ FIXTURES: dict[str, frozenset[str]] = {
     "exception-without-owner.csv": frozenset({"E_EXCEPTION"}),
     "findings-without-bug-key.csv": frozenset({"E_BUGKEY"}),
 }
+FX_FILES = ("README.md", "catalogue.md", "register.json", "findings.csv", *FIXTURES)
 FIXTURE_KEYS = frozenset({"E49-D05", "E49-S04"})
 CROSS_LINK = "docs/plan/16-design-system-brief.md"
-OWN = (
-    SPEC_REL,
-    TOOL_REL,
-    TEST_REL,
-    SCREENS_REL,
-    FINDINGS_REL,
-    *(f"{FX_DIR}/{n}" for n in FX_FILES),
-)
+_FX = tuple(f"{FX_DIR}/{n}" for n in FX_FILES)
+OWN = (SPEC_REL, TOOL_REL, TEST_REL, SCREENS_REL, FINDINGS_REL, *_FX)
 BUDGETS = {CROSS_LINK: (2, 0)}  # the one cross-link line and its blank line
 
 PLAN = {
@@ -95,6 +80,8 @@ PLAN = {
     "14": "docs/plan/14-screens-catalogue.md",
     "16": "docs/plan/16-design-system-brief.md",
     "18": "docs/plan/18-traceability-matrix.md",
+    "11": "docs/plan/11-user-stories.md",
+    "26": "docs/plan/26-chart-engine-design.md",
 }
 KEYED = {
     "E09-D11": L.DocRef("docs/design/E09/E09-D11.md", BASE),
@@ -108,16 +95,17 @@ KEYED = {
     "governance.yml": L.DocRef(".github/workflows/governance.yml", BASE),
     "pr.yml": L.DocRef(".github/workflows/pr.yml", BASE),
     "docs/design/README.md": L.DocRef("docs/design/README.md", BASE),
+    "32-design-specs.md": L.DocRef(".claude/rules/32-design-specs.md", BASE),
 }
 KEY_CITES = (
     L.KeyCite("16", 686, "## 12. Design QA checklist"),
     L.KeyCite("16", 693, "Verified in all three themes"),
     L.KeyCite("03", 320, "### 11.3 Bug taxonomy"),
     L.KeyCite("14", 27, "SCR-030..049"),
-    L.KeyCite("14", 1122, "### SCR-046"),
+    L.KeyCite("26", 197, "`degraded-2d`"),
     L.KeyCite("14", 1234, "### SCR-051"),
     L.KeyCite("14", 1687, "### SCR-070"),
-    L.KeyCite("14", 2513, "### SCR-118"),
+    L.KeyCite("11", 5201, "balanced"),
     L.KeyCite("18", 44, "## 2. Story"),
     L.KeyCite("E09-D11", 513, "**A-1**"),
     L.KeyCite("E09-D11", 515, "## 16. The design-QA procedure"),
@@ -144,22 +132,13 @@ GROUPS = {
     "Trading-specific safety": ("TS", ("P1", "P2", "P1")),
     "Consistency": ("CO", ("P3", "P3", "P3")),
 }
-SEVERITY_MAP = (
-    ("a secret shown, or a safety-clause breach that can send an order in the wrong env or "
-     "unconfirmed", "P0"),
-    ("PS-7 Blocking", "P1"),
-    ("token drift that changes a trading signal's meaning", "P1"),
-    ("E47 T01 row", "its `priority`"),
-    ("E47 review row: a task not completable by keyboard and screen reader", "P0"),
-    ("E47 review row: Level A", "P0 or P1"),
-    ("E47 review row: AA", "P2 or P1"),
-    ("PS-7 Major", "P2"),
-    ("missing designed empty/error state", "P2"),
-    ("a11y AA violation", "P2"),
-    ("PS-7 Minor", "P3"),
-    ("wrong-but-readable spacing", "P3"),
-    ("PS-7 Info, E47 info", "notes"),
-)  # fmt: skip
+# sha256[:12] of a section, whitespace and table rules folded: re-pin on purpose (G-SEVERITY etc.)
+PINS = {
+    "## 7.": "194284fd5298",
+    "### 8.1": "462a234c6a24",
+    "### 8.2": "0221712f687a",
+    "16": "c0e8cf933e3e",
+}
 RESOLUTIONS = (  # PS-6 class -> verdict -> finding status -> E49-S04 resolution (BQ-1 rider)
     ("implementation defect", "findings", "fixed", "fixed"),
     ("specification gap", "findings", "fixed", "spec-corrected"),
@@ -184,7 +163,6 @@ OWNER_RE = re.compile(r"(?:^|;\s*)owner:\s*\S")
 REASON_RE = re.compile(r"(?:^|;\s*)reason:\s*\S")
 CONTROL_RE = re.compile(r"(?:^|;\s*)control:\s*\S")
 A11Y_CLAUSE_RE = re.compile(r"\bDQ-(?:AX-\d|BS-2|TS-1)\b")
-T2_CHECKS = ("G-T2.1a", "G-T2.1b", "G-T2.1c", "G-T2.1d", "G-T2.2", "G-T2.3", "G-T2.4")
 TICKET_RE = re.compile(r"(E\d\d-[A-Z]\d\d) #(\d+)")
 AC_ROWS = tuple(f"AC {n}" for n in range(1, 6)) + tuple(f"DoD {n}" for n in range(1, 10))
 AC_STATES = frozenset({"done", "PR 2", "owner", "open"})
@@ -239,12 +217,12 @@ def catalogue(text: str) -> list[tuple[str, str]]:
 
 
 def must_weights(matrix: str) -> Counter[str]:
-    """Must stories per screen in `18` section 2 (a story counts once per screen it names)."""
+    """`Must` stories per screen in `18` section 2 (a story counts once per screen it names)."""
     weights: Counter[str] = Counter()
     for line in matrix.split("\n## 3.")[0].split("\n"):
         if line.startswith("| **US-"):
             row = L.cells(line)
-            if row[1].startswith("Must"):
+            if row[1] == "Must":  # strict: `Must/Should` rows do not count (ruled 6642779673)
                 weights.update(set(re.findall(r"SCR-\d{3}", row[2])))
     return weights
 
@@ -456,17 +434,23 @@ def g_clauses(t: L.Tree) -> list[str]:
     return bad + ([f"{len(got)} rows, not {len(want)}"] if len(got) != len(want) else [])
 
 
+def _pin(text: str, key: str) -> list[str]:
+    got = hashlib.sha256(re.sub(r"\s+|-{3,}", " ", text).encode()).hexdigest()[:12]
+    return [] if got == PINS[key] else [f"{key} is {got}, pinned {PINS[key]}"]
+
+
 def g_evidence(t: L.Tree) -> list[str]:
     clauses = [r[0] for r in L.table_rows(L.section(spec(t), "## 4."))]
     rows = [r[0] for r in L.table_rows(L.section(spec(t), "### 8.1"))]
-    t2 = [r[0] for r in L.table_rows(L.section(spec(t), "### 8.2"))]
+    t2 = re.findall(r"\*\*(G-T2\.[1-5][a-d]?)\*\*", "\n".join(docs(t).lines("32-design-specs.md")))
+    s82 = L.section(spec(t), "### 8.2")
     bad = [] if rows == clauses else [f"8.1 rows {rows} are not the clauses in order"]
-    return bad + ([] if tuple(t2) == T2_CHECKS else [f"8.2 rows {t2} are not the T2 checks"])
+    bad += [f"8.2 lacks {c}" for c in t2 if f"{c} " not in s82 and f"{c}," not in s82]
+    return bad + _pin(L.section(spec(t), "### 8.1"), "### 8.1") + _pin(s82, "### 8.2")
 
 
 def g_severity(t: L.Tree) -> list[str]:
-    got = [(r[0], r[1]) for r in L.table_rows(L.section(spec(t), "## 7."))]
-    return [] if got == list(SEVERITY_MAP) else ["the severity map differs from the tool's"]
+    return _pin(L.section(spec(t), "## 7."), "## 7.")
 
 
 def g_order(t: L.Tree) -> list[str]:
@@ -479,9 +463,8 @@ def g_reserved(t: L.Tree) -> list[str]:
     cat, _, register = base_inputs()
     heads = {i for i, _ in cat}
     gaps = tuple(f"SCR-{n:03d}" for n in range(1, 160) if f"SCR-{n:03d}" not in heads)
-    na = tuple(
-        s["id"] for s in register["screens"] if s["verdict"] == "n/a (reserved)"  # type: ignore[attr-defined]
-    )
+    reg = cast(list[dict[str, str]], register["screens"])
+    na = tuple(s["id"] for s in reg if s["verdict"] == "n/a (reserved)")
     m = re.search(r"Reserved ids \(never rows\): ([^.]+)\.", spec(t))
     named = tuple(re.findall(r"SCR-\d{3}", m.group(1))) if m else ()
     bad = [] if gaps == RESERVED == na else [f"catalogue gaps {gaps} or register {na} drifted"]
@@ -561,7 +544,7 @@ def g_walk(t: L.Tree) -> list[str]:
 
 
 def _own(t: L.Tree) -> list[tuple[str, str]]:
-    return [(k, v) for k, v in t.files.items() if k not in ("lib", "drift")]
+    return [(k, v) for k, v in t.files.items() if k not in ("lib", "drift", "16")]
 
 
 def g_noclose(t: L.Tree) -> list[str]:
@@ -569,7 +552,7 @@ def g_noclose(t: L.Tree) -> list[str]:
 
 
 def g_public(t: L.Tree) -> list[str]:
-    return list(L.scan_public(_own(t))) + list(L.comment_findings(_own(t)))
+    return [*L.scan_public(_own(t)), *L.comment_findings(_own(t)), *L.r7_findings(_own(t))]
 
 
 def g_hygiene(t: L.Tree) -> list[str]:
@@ -581,8 +564,9 @@ def g_helper(t: L.Tree) -> list[str]:
     return [] if got.startswith(HELPER_BLOB) else [f"{LIB_REL} is blob {got[:12]}"]
 
 
-def g_untouched(t: L.Tree) -> list[str]:
-    return list(L.untouched(t.changed, OWN, budgets=BUDGETS, numstat=t.numstat))
+def g_untouched(t: L.Tree) -> list[str]:  # the counts, and the one added line's text
+    added = "\n".join(sorted(set(t.text("16").split("\n")) - set(at_base(CROSS_LINK).split("\n"))))
+    return list(L.untouched(t.changed, OWN, budgets=BUDGETS, numstat=t.numstat)) + _pin(added, "16")
 
 
 def g_mutlist(t: L.Tree) -> list[str]:
@@ -658,11 +642,15 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        regex=True),
     _M("M-26", "G-EVIDENCE", "a clause without its evidence row", _S,
        r"\n\| DQ-AX-2 \| the tree's[^\n]*", "", regex=True),
-    _M("M-27", "G-EVIDENCE", "a T2 check dropped", _S, r"\n\| G-T2\.1b \|[^\n]*", "",
-       regex=True),
+    _M("M-27", "G-EVIDENCE", "a T2 check dropped", _S, "G-T2.5 ", "the panel notice "),
     _M("M-28", "G-BQ", "the AMEND ruled as AGREE", _S, "RULED: AMEND.", "RULED: AGREE."),
     _M("M-29", "G-RESOLUTIONS", "wontfix as a resolution", _S,
        r"(\| specification gap +\| `findings` +\| )`fixed`", r"\1`wontfix`", regex=True),
+    _M("M-30", "G-SEVERITY", "the Level A rule inverted", _S, "P0 if it blocks", "P1 if it blocks"),
+    _M("M-31", "G-EVIDENCE", "an evidence line inverted", _S, "≥ 24 px", "≤ 24 px"),
+    _M("M-32", "G-UNTOUCHED", "the A-1 supersession dropped", "16", "; this line", "; and"),
+    _M("M-33", "G-PUBLIC", "a Penpot file reference (R7)", _S, "(page name + id only)",
+       "(page name + " + "fi" + "le-id=x)"),
 )
 # fmt: on
 
@@ -678,7 +666,12 @@ def read_tree(changed: tuple[str, ...] | None = None) -> L.Tree:
         "spec": _disk(SPEC_REL),
         "tool": _disk(TOOL_REL),
         "test": _disk(TEST_REL),
-        "lib": _disk(LIB_REL),
+        # pytest reads the helper at its pinned blob, so a later helper edit cannot redden the
+        # governance-tests shard; --check reads the disk, and G-HELPER guards it there (CLI only).
+        "lib": (
+            _disk(LIB_REL) if changed is None else str(repo().git("cat-file", "-p", HELPER_BLOB))
+        ),
+        "16": _disk(CROSS_LINK),
         "screens": _disk(SCREENS_REL),
         "findings": _disk(FINDINGS_REL),
         **{f"fx:{n}": _disk(f"{FX_DIR}/{n}") for n in FX_FILES},

@@ -20,22 +20,22 @@ never edited into a spec, a catalogue or a build (ticket Out of scope "Fixing an
 
 ## 1. Acceptance and Definition-of-Done trace
 
-| Row   | Asks                                                                | State | Where                                                                       |
-| ----- | ------------------------------------------------------------------- | ----- | --------------------------------------------------------------------------- |
-| AC 1  | one ledger row per catalogue SCR id; a missing id fails             | PR 2  | the rule is done (§11 `E_MISSING`, fixture `missing-row.csv`); ledger: PR 2 |
-| AC 2  | a finding is actionable without a conversation                      | done  | §10's record: the clause, token or state, expected, observed, cell, pair    |
-| AC 3  | ≥ 80 % of pilot findings actionable; ambiguous steps revised        | PR 2  | §13; the pilot runs after E47-X01 lands                                     |
-| AC 4  | an accepted exception names owner, reason and follow-up key         | done  | §12; `E_EXCEPTION` (fixture `exception-without-owner.csv`)                  |
-| AC 5  | 3 themes × 2 densities per audited screen, or a written N/A         | done  | §8's cell matrix and its N/A rule                                           |
-| DoD 1 | protocol merged; reviewed by the design-system lead and an engineer | owner | the owner's `approved` comment (agent-delivery adaptation)                  |
-| DoD 2 | ledger committed; self-check green in CI                            | PR 2  | the ledger in PR 2; CI wiring is Deviation V-3                              |
-| DoD 3 | 10-screen pilot run, findings filed, actionable rate recorded       | PR 2  | §13                                                                         |
-| DoD 4 | calibrated effort figures size E49-S04                              | PR 2  | §13; a comment on #1384                                                     |
-| DoD 5 | severity mapping agreed with QA and recorded                        | owner | §7 (RULED as amended); walkthrough item 1                                   |
-| DoD 6 | `16` §12 cross-links the protocol                                   | done  | one line after the checklist (BQ-1)                                         |
-| DoD 7 | design sign-off recorded on the ticket                              | owner | §18                                                                         |
-| DoD 8 | pilot findings walked through at Sprint Review                      | PR 2  | §18's session protocol                                                      |
-| DoD 9 | merged via merge queue with required approvals                      | open  | the orchestrator merges after two approving reviews (C-10.1)                |
+| Row   | Asks                                                                | State | Where                                                                          |
+| ----- | ------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------ |
+| AC 1  | one ledger row per catalogue SCR id; a missing id fails             | PR 2  | the rule is done (§11 `E_MISSING`, fixture `missing-row.csv`); ledger: PR 2    |
+| AC 2  | a finding is actionable without a conversation                      | done  | §10's record: the clause, token or state, expected, observed, cell, pair       |
+| AC 3  | ≥ 80 % of pilot findings actionable; ambiguous steps revised        | PR 2  | §13; the pilot runs after E47-X01 lands                                        |
+| AC 4  | an accepted exception names owner, reason and follow-up key         | done  | §12; `E_EXCEPTION` (fixture `exception-without-owner.csv`)                     |
+| AC 5  | 3 themes × 2 densities per audited screen, or a written N/A         | done  | §8's cell matrix and its N/A rule                                              |
+| DoD 1 | protocol merged; reviewed by the design-system lead and an engineer | owner | the owner's `approved` comment (agent-delivery adaptation)                     |
+| DoD 2 | ledger committed; self-check green in CI                            | PR 2  | the ledger in PR 2; CI wiring is Deviation V-3                                 |
+| DoD 3 | 10-screen pilot run, findings filed, actionable rate recorded       | PR 2  | §13                                                                            |
+| DoD 4 | calibrated effort figures size E49-S04                              | PR 2  | §13; a comment on #1384                                                        |
+| DoD 5 | severity mapping agreed with QA and recorded                        | owner | §7 (RULED as amended); walkthrough item 1                                      |
+| DoD 6 | `16` §12 cross-links the protocol                                   | done  | one line after the checklist (BQ-1)                                            |
+| DoD 7 | design sign-off recorded on the ticket                              | owner | §18                                                                            |
+| DoD 8 | pilot findings walked through at Sprint Review                      | PR 2  | §18's session protocol                                                         |
+| DoD 9 | merged via merge queue with required approvals                      | open  | the owner's `approved` first (design PR, C-10.1), then the orchestrator merges |
 
 ## 2. The questions BQ-0 … BQ-9 — RULED (comment 6637510034)
 
@@ -86,7 +86,7 @@ The list is comment 6634720626 on #1330; its ruling of record, comment 663751003
 - **BQ-9 — the self-check.** RULED: AGREE +rider. Built as: `scripts/design_qa_ledger_check.py` with fixtures
   under `tests/fixtures/design_qa/`; it imports the shared helper by path; `--check` / `--self-test` in the
   E09-D12 shape; pytest under `scripts/tests/`; CI wiring is Deviation V-3 (§20). Rider: the SCR ids come from
-  `catalogue.py`'s `parse_screens`, loaded by path; V-3 names the `governance` job as the home.
+  `catalogue.py`'s `parse_screens`, loaded by path; V-3 names a `governance-checks` step as the home.
 
 ## 3. Method
 
@@ -165,15 +165,16 @@ does not, the finding goes to the screen spec's owner as an F-row, never a silen
 
 Trading-critical screens go first, by name; the ticket's ids are re-read at the base (F-2): SCR-051 is the
 heatmap settings dialog and SCR-070 the algo monitor, so both fall to their weight. Every other screen is
-ordered by its count of Must stories in `18` §2 (a story counts once per screen its Screens cell names),
-ties by id. The tool computes the order (`--order`); nobody hand-orders it.
+ordered by its count of stories whose `18` §2 Pri cell is exactly `Must` (ruled: a `Must/Should` or
+`Must/Should/Could` row does not count; a story counts once per screen its Screens cell names), ties by id.
+The tool computes the order (`--order`); nobody hand-orders it.
 
 | Tier  | SCR     | Name                                              | Must stories |
 | ----- | ------- | ------------------------------------------------- | ------------ |
-| first | SCR-030 | Chart panel (price + footprint)                   | 13           |
+| first | SCR-030 | Chart panel (price + footprint)                   | 12           |
 | first | SCR-050 | Heatmap + DOM ladder panel (the DeepDOM analogue) | 6            |
 | first | SCR-060 | Order ticket panel (single account)               | 6            |
-| first | SCR-063 | Positions & orders grid panel                     | 8            |
+| first | SCR-063 | Positions & orders grid panel                     | 7            |
 | first | SCR-074 | Environment switcher (Demo ↔ Live)                | 4            |
 
 ### 6.2 The pilot ten (PROPOSED; computed at the base)
@@ -185,16 +186,16 @@ pilot says so and takes the next built screens, never an unbuilt row.
 
 | #   | SCR     | Name                                            | Rank | Must stories | E47 coverage                    |
 | --- | ------- | ----------------------------------------------- | ---- | ------------ | ------------------------------- |
-| 1   | SCR-030 | Chart panel (price + footprint)                 | 1    | 13           | unreachable: built, not mounted |
-| 2   | SCR-010 | App shell (global chrome)                       | 14   | 4            | partial                         |
-| 3   | SCR-041 | Symbol/interval quick-switcher (in-chart)       | 30   | 3            | unreachable: built, not mounted |
-| 4   | SCR-103 | Symbol info / instrument detail                 | 38   | 3            | unreachable: built, not mounted |
-| 5   | SCR-152 | Disconnected / reconnecting state               | 44   | 3            | partial                         |
-| 6   | SCR-001 | Login                                           | 45   | 2            | covered                         |
-| 7   | SCR-004 | Forced password change                          | 46   | 2            | covered                         |
-| 8   | SCR-011 | Navigation rail (expanded) & workspace switcher | 47   | 2            | covered                         |
-| 9   | SCR-014 | Notification centre (right-rail drawer)         | 49   | 2            | partial                         |
-| 10  | SCR-015 | Global toast host                               | 50   | 2            | covered                         |
+| 1   | SCR-030 | Chart panel (price + footprint)                 | 1    | 12           | unreachable: built, not mounted |
+| 2   | SCR-010 | App shell (global chrome)                       | 9    | 4            | partial                         |
+| 3   | SCR-041 | Symbol/interval quick-switcher (in-chart)       | 28   | 3            | unreachable: built, not mounted |
+| 4   | SCR-103 | Symbol info / instrument detail                 | 36   | 3            | unreachable: built, not mounted |
+| 5   | SCR-152 | Disconnected / reconnecting state               | 42   | 3            | partial                         |
+| 6   | SCR-001 | Login                                           | 43   | 2            | covered                         |
+| 7   | SCR-004 | Forced password change                          | 44   | 2            | covered                         |
+| 8   | SCR-011 | Navigation rail (expanded) & workspace switcher | 45   | 2            | covered                         |
+| 9   | SCR-014 | Notification centre (right-rail drawer)         | 47   | 2            | partial                         |
+| 10  | SCR-019 | Setup checklist card                            | 48   | 2            | covered                         |
 
 ## 7. The severity map (RULED as amended; QA agreement pending)
 
@@ -231,9 +232,9 @@ reason in the record (AC 5's "Or" arm), for example "no high-contrast board draw
 never a live account, never a real API key fragment, never a real balance. A capture that breaks the rule is
 deleted and the run continues (PS-10); the row records only that a capture was withdrawn.
 
-**Owner-run leg.** The reference machine, the `balanced` performance profile of SCR-118 (`14` :2513) and
-SCR-046's diagnostics confirming the engine is not in `degraded-2d` (`14` :1122) need a running desktop
-build; the agent run names this leg and its hardware class and never claims it.
+**Owner-run leg.** The reference machine, the `balanced` performance profile of SCR-118 (`11` :5201) and
+SCR-046's diagnostics confirming the engine is not in `degraded-2d` (`26` :197; `20` F15) need a running
+desktop build; the agent run names this leg and its hardware class and never claims it.
 
 **Motion and forced colours.** A screen with an animated property adds a reduced-motion capture beside
 its default one (DQ-AX-4); a screen whose state is carried by colour adds a forced-colours capture. Each
@@ -272,20 +273,14 @@ the same artefact as its §10 field 6.
 
 ### 8.2 The T2 checks for DQ-BS-2
 
-The E09-D09 T2 standing gate (`.claude/rules/32-design-specs.md`) is read, not restated: each line below
-names its check, and a miss is a DQ-BS-2 finding at P2. DQ-BS-2 copies `16` :700 and applies through
-`14` §0.5 rule 5 (`14` :85): a hidden admin affordance (step 1) or a server refusal (step 2) is never
-recorded as a missing disabled-with-reason.
-
-| Check   | What the auditor confirms on the build                                       | Evidence                   |
-| ------- | ---------------------------------------------------------------------------- | -------------------------- |
-| G-T2.1a | the control keeps its native role and full label                             | tree dump                  |
-| G-T2.1b | `aria-disabled="true"`, not the `disabled` attribute; still in the Tab order | tree dump and transcript   |
-| G-T2.1c | the reason node is in the DOM at mount and linked by `aria-describedby`      | tree dump                  |
-| G-T2.1d | CMP-079 wraps the control                                                    | the story's component list |
-| G-T2.2  | the label and reason tokens are the gate's, never a disabled-opacity token   | the story's token list     |
-| G-T2.3  | `Enter`, `Space` or a hotkey changes nothing and re-shows the reason once    | transcript                 |
-| G-T2.4  | the reason is one of the gate's registered keys                              | tree dump                  |
+The E09-D09 T2 standing gate is applied to the build as its rule file states it, never restated here:
+G-T2.1a, G-T2.1b, G-T2.1c, G-T2.1d, G-T2.2, G-T2.3, G-T2.4 and G-T2.5 of `.claude/rules/32-design-specs.md`
+(32-design-specs.md :27–58), each in full (the CMP-019 `lock` glyph, the CMP-026 sentence form and every
+forbidden token included); a miss is a DQ-BS-2 finding at P2. Evidence: the accessibility-tree dump
+(G-T2.1a, G-T2.1c, G-T2.4, G-T2.5), the keyboard transcript (G-T2.1b, G-T2.3) and the story's component
+and token lists (G-T2.1d, G-T2.2); G-T2.6 is spec-side, read under DQ-BS-1. DQ-BS-2 copies `16` :700 and
+applies through `14` §0.5 rule 5 (`14` :85): a hidden admin affordance (step 1) or a server refusal (step 2)
+is never recorded as a missing disabled-with-reason.
 
 ## 9. The sampling rule for chart surfaces
 
@@ -321,14 +316,17 @@ P0..P3, `status` open|in-progress|fixed|accepted (no `wontfix`, §11.1), `compon
 `opened` an ISO date. This schema is owned here (ledger.py :1); the exporter is unchanged, and the path is
 the one run.py :21 reads and the export watches (design-qa-ledger-export.yml :10–11).
 
-**Screen ledger** `docs/plan/backlog/artifacts/e49-design-qa-screens.csv`, a path the export does not
-watch — one row per `### SCR-` heading, 149, the number `14` and `18` both carry:
+**Screen ledger** `docs/plan/backlog/artifacts/e49-design-qa-screens.csv`, a path the export does not watch —
+one row per `### SCR-` heading, 149, the number `14` and `18` both carry:
 `screen_id,screen_name,owning_epic,auditor,audit_date,verdict,p0,p1,p2,p3,bug_keys,notes,e47_verdict,e47_ref`.
 The verdict is `pass`, `findings`, `accepted-exception` or `not-applicable`, or empty while the screen is
-unaudited. `owning_epic` comes from the screen's `Stories:` lines in `14`, ties listed (`Enn;Enn`), never
-guessed; `e47_verdict` and `e47_ref` are read from the register's `screens[]` at its pinned blob, as
-`catalogue.py` pins its inputs. Reserved ids (never rows): SCR-007, SCR-008, SCR-009, SCR-105, SCR-106,
-SCR-107, SCR-108, SCR-109, SCR-138, SCR-139.
+unaudited. `owning_epic` is derived, never guessed: each id on the screen's `Stories:` lines in `14` maps to
+the `parent` of every Story ticket in `all-tickets.json` whose `## Context` first line names it; the epic with
+the most of the screen's stories owns the row, a tie lists every tied epic in id order (`Enn;Enn`), and a
+screen none of whose stories maps is a question to the orchestrator. `E_EPIC` checks the form here; the
+equality check against this recipe lands with the ledgers in PR 2; `e47_verdict` and `e47_ref` are read from
+the register's `screens[]` at its pinned blob, as `catalogue.py` pins its inputs.
+Reserved ids (never rows): SCR-007, SCR-008, SCR-009, SCR-105, SCR-106, SCR-107, SCR-108, SCR-109, SCR-138, SCR-139.
 
 **Who reads which file.** The exporter reads the finding ledger; per-screen verdicts (E49-D05, E49-S04)
 read the screen ledger, not the exporter's path both tickets name (C-1, C-2). PR 2's body states that
@@ -349,7 +347,7 @@ merging the finding file starts one failing push run (run.py :24, exit 2) until 
 | `E_BUGKEY`    | a `findings` row has no bug key, or a key is not `#N`, a backlog key or a finding ledger id                                                                                       |
 | `E_EXCEPTION` | an `accepted-exception` row lacks `owner:` or `reason:` in its notes, or a follow-up key (AC 4); or its notes name DQ-AX-n, DQ-BS-2 or DQ-TS-1 without `control:`                 |
 | `E_NA`        | a `not-applicable` row lacks `reason:` in its notes                                                                                                                               |
-| `E_EPIC`      | the owning epic is not `Enn`, or `Enn;Enn` for a tie                                                                                                                              |
+| `E_EPIC`      | the owning epic is not `Enn`, or `Enn;Enn` for a tie (the form; PR 2 adds equality)                                                                                               |
 | `E_E47`       | `e47_verdict` differs from the register's verdict, or `e47_ref` from its audited sha (9 hex)                                                                                      |
 | `E_FINDINGS`  | the finding ledger fails the exporter's parser, has a malformed row or a `wontfix` status, or a `finding_id` that is not a resolvable reference (a P0 or P1 row minted as `DQA-`) |
 | `E_CROSS`     | a row's four counts differ from its screen's finding rows, or a `DQA-` key names no finding row                                                                                   |
@@ -364,6 +362,10 @@ pass-or-accepted), and the self-check refuses it.
 | implementation defect | `findings`           | `fixed`        | `fixed`              |
 | specification gap     | `findings`           | `fixed`        | `spec-corrected`     |
 | accepted divergence   | `accepted-exception` | `accepted`     | `accepted-exception` |
+
+A `pass` or `not-applicable` screen has no finding row; `open` and `in-progress` are a finding's statuses
+before it resolves; PS-3, PS-4 and PS-8 apply unchanged (§5). A screen whose findings are all `fixed` keeps
+`findings` with its counts as history: it never returns to `pass` (E_CROSS).
 
 ## 12. Accepted exceptions and near-duplicates
 
@@ -462,19 +464,19 @@ rate and any step to revise. Nothing is claimed for the session until the owner 
 
 ## 19. Delta rows and deviations
 
-| Row  | Kind      | Text                                                                                                                                                                                                                                 |
-| ---- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| DR-1 | delta     | E47-X01 (#1326) is open; its outcome is cited here when it lands; PR 2 waits for it                                                                                                                                                  |
-| DR-2 | delta     | E47-D01 (#1300) is cited "if it merges as is": its findings map 1:1 onto E47-D02's severities, so §7 holds                                                                                                                           |
-| V-1  | deviation | the PR title is a conventional commit (`docs(design-system): …`); the ticket's "E49-D01: …" form is not (C-4.10)                                                                                                                     |
-| V-2  | deviation | the brief's `apps/web` paths and pnpm commands do not apply: no `apps/web` change                                                                                                                                                    |
-| V-3  | deviation | DoD 2's "green in CI": the home is a step in the `governance` job (GOV-008, governance.yml :107–108), named in the comment to E49-T01; a workflow edit is a C-10.2 path, so it is not made here; the local `--check` is the evidence |
-| V-4  | deviation | the protocol uses Penpot for the ticket's Figma (agent-delivery adaptation)                                                                                                                                                          |
-| V-5  | deviation | the ticket says four checklist groups; `16` §12 has five (`16` :690–718)                                                                                                                                                             |
-| V-6  | deviation | the ticket's "SCR-001 … SCR-159" is 149 rows: ten ids are reserved                                                                                                                                                                   |
-| V-7  | deviation | the ticket's first-tier ids SCR-051 and SCR-070 are corrected to SCR-063 by name (§6.1)                                                                                                                                              |
-| C-1  | contract  | to E49-D05 #1394 (comment): per-screen verdicts are read from the screen ledger, not the finding path                                                                                                                                |
-| C-2  | contract  | to E49-S04 #1384 (comment): the same, and its resolutions map by §11.1                                                                                                                                                               |
+| Row  | Kind      | Text                                                                                                                                                                                                                                        |
+| ---- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DR-1 | delta     | E47-X01 (#1326) is open; its outcome is cited here when it lands; PR 2 waits for it                                                                                                                                                         |
+| DR-2 | delta     | E47-D01 (#1300) is cited "if it merges as is": its findings map 1:1 onto E47-D02's severities, so §7 holds                                                                                                                                  |
+| V-1  | deviation | the PR title is a conventional commit (`docs(design-system): …`); the ticket's "E49-D01: …" form is not (C-4.10)                                                                                                                            |
+| V-2  | deviation | the brief's `apps/web` paths and pnpm commands do not apply: no `apps/web` change                                                                                                                                                           |
+| V-3  | deviation | DoD 2's "green in CI": the home is a step of the `governance-checks` job (GOV-008, governance.yml :107–108), named in the comment to E49-T01; a workflow edit is a C-10.2 path, so it is not made here; the local `--check` is the evidence |
+| V-4  | deviation | the protocol uses Penpot for the ticket's Figma (agent-delivery adaptation)                                                                                                                                                                 |
+| V-5  | deviation | the ticket says four checklist groups; `16` §12 has five (`16` :690–718)                                                                                                                                                                    |
+| V-6  | deviation | the ticket's "SCR-001 … SCR-159" is 149 rows: ten ids are reserved                                                                                                                                                                          |
+| V-7  | deviation | the ticket's first-tier ids SCR-051 and SCR-070 are corrected to SCR-063 by name (§6.1)                                                                                                                                                     |
+| C-1  | contract  | to E49-D05 #1394 (comment): per-screen verdicts are read from the screen ledger, not the finding path                                                                                                                                       |
+| C-2  | contract  | to E49-S04 #1384 (comment): the same, and its resolutions map by §11.1                                                                                                                                                                      |
 
 ## 20. The self-check of this pack
 
@@ -530,3 +532,7 @@ G-RESOLUTIONS, G-DECISIONS, G-OQ, G-WALK, G-NOCLOSE, G-PUBLIC, G-HYGIENE, G-HELP
 | M-27 | G-EVIDENCE    | a T2 check dropped                   |
 | M-28 | G-BQ          | the AMEND ruled as AGREE             |
 | M-29 | G-RESOLUTIONS | wontfix as a resolution              |
+| M-30 | G-SEVERITY    | the Level A rule inverted            |
+| M-31 | G-EVIDENCE    | an evidence line inverted            |
+| M-32 | G-UNTOUCHED   | the A-1 supersession dropped         |
+| M-33 | G-PUBLIC      | a Penpot file reference (R7)         |

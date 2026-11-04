@@ -113,7 +113,7 @@ def test_order_puts_the_first_tier_then_weight_then_id() -> None:
     matrix = (
         "| **US-A-001** a | Must | SCR-002, SCR-003 |\n"
         "| **US-A-002** b | Must | SCR-003 |\n"
-        "| **US-A-003** c | Should | SCR-001 |\n"
+        "| **US-A-003** c | Must/Should | SCR-001 |\n"
         "## 3. Screens\n| **US-A-004** d | Must | SCR-001 |\n"
     )
     weights = dq.must_weights(matrix)
