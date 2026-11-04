@@ -44,8 +44,8 @@ minimum is covered by charters 1, 3, 4, 5 and 7; 2, 6 and 8 are the ticket's add
 
 ## Run record header (every run record)
 
-Beside the ticket and run date, each record carries two fields: **Build sha under test** (the full
-`main` sha the stack was built from) and **Stack tier** (A browser on stubs, B seeded backend; harness
+Beside the ticket and run date, each record carries two fields: **Build sha under test** (the `main` sha the stack was built from, at least
+9 characters) and **Stack tier** (A browser on stubs, B seeded backend; harness
 doc §2). A record also says who ran each session and in what role; it is an agent baseline unless a human
 QA signs a session sheet.
 
