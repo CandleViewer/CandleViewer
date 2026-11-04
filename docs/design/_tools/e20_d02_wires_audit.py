@@ -9,7 +9,7 @@ spec cites at the pinned base, the E20-D01 memo at its pinned PR head, and the s
 working tree. It runs no other repo code but the helper.
 
 Gates: G-CITE, G-QUOTE, G-AC, G-ROWS, G-MEMO, G-KEYS, G-GREY, G-SRC, G-BOARDS, G-BQ, G-AMEND,
-G-PIN, G-NOCLOSE, G-PUBLIC and G-MUTLIST (section 18.2 equals this tool's list).
+G-PIN, G-NOCLOSE, G-PUBLIC, G-MUTLIST (section 18.2 equals this tool's list) and G-T2.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e20_d02_wires_audit.py --check | --self-test
@@ -30,12 +30,17 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_LIB = Path(__file__).resolve().parent / "spec_audit_lib.py"
+LIB_SHA256 = "62b56d6446b218cd300a9e2591e47b84f20962a6c33a58ebe9b8c2fbc83f48fd"
+# The content pin is checked before the import, never after it.
+if hashlib.sha256(_LIB.read_bytes()).hexdigest() != LIB_SHA256:
+    sys.exit(f"{_LIB.name} is not the pinned helper; refusing to import it")
+sys.path.insert(0, str(_LIB.parent))
 import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "b81479ab01109ee1efc6cdedb411bd5f75ecdd66"  # origin/main when the BQ list was written
-MEMO_HEAD = "57e01caf284be44b5e0f527e8f042432a0fe9aa7"  # PR 5640 head; re-pin at its merge
+BASE = "c56a10bc3cebde9620f6a5b47aebfa6f6e8eec21"  # origin/main at the design-read fold
+MEMO_HEAD = "e931f14f826e9844dbcbd02bea8694e1605f1a89"  # PR 5640 head; re-pin at its merge
 BQ_LIST = "6609419059"  # the BQ list on #574
 RULING = "6609847458"  # the ruling of record on #574
 TICKET = "E20-D02"
@@ -44,7 +49,6 @@ SPEC_REL = "docs/design/E20/E20-D02.md"
 TOOL_REL = "docs/design/_tools/e20_d02_wires_audit.py"
 OWN = (SPEC_REL, TOOL_REL)
 LIB_REL = "docs/design/_tools/spec_audit_lib.py"
-LIB_SHA256 = "62b56d6446b218cd300a9e2591e47b84f20962a6c33a58ebe9b8c2fbc83f48fd"
 BACKLOG_REL = "docs/plan/backlog/E20.json"
 MEMO_REL = "docs/design/research/e20-deep-stats.md"
 KEYED = {
@@ -67,12 +71,12 @@ SOURCE_PINS = (
     ("15", 2938, "12 rows update budget"),
     ("15", 2598, "overflow after 12 rows"),
     ("20", 871, "demo has no separate public feed"),
-    ("22", 13303, "/admin/jobs/{jobId}"),
+    ("22", 13424, "/admin/jobs/{jobId}"),
     ("E47-D09", 140, "Move up / Move down"),
     ("E47-D09", 173, "Deep Stats rows"),
-    ("MEMO", 232, "refuted as written"),
-    ("MEMO", 250, "| AD-1 "),
-    ("MEMO", 257, "| AD-8 "),
+    ("MEMO", 233, "refuted as written"),
+    ("MEMO", 251, "| AD-1 "),
+    ("MEMO", 258, "| AD-8 "),
 )
 
 BQ_HEADING = L.BQ_HEADING
@@ -84,6 +88,8 @@ KEYS_NEEDED = ("`Alt+↑`", "`Alt+↓`", "Move up", "Move down", "E47-D04", "kee
 SIGN_GLYPHS = ("▲", "▼")
 SRC_OK = ("footprint + trades", "`/market/footprint`", "`/market/metrics`", "D02-G")
 METRICS_RE = re.compile(r"`/market/metrics` `([a-z_]+)` \(`22`:(\d+)\)")
+T2_RENDERINGS = ("2a", "2b", "sentence form", "named, not drawn")
+FRAME_RE = re.compile(r"`(SCR-\d{3}/[A-Za-z0-9() -]+)`")
 CURLY_RE = re.compile(r"“([^”]+)”")
 QUOTE_MIN = 12
 HEX40 = re.compile(r"\b[0-9a-f]{40}\b")
@@ -393,12 +399,35 @@ def g_mutlist(t: Tree) -> list[str]:
     return [] if t.rows("### 18.2 Mutations") == want else ["§18.2 differs from the tool"]
 
 
+def g_t2(t: Tree) -> list[str]:
+    """R32's T2 grammar as section 1.4 applies it: a named rendering per control, never 2b on a
+    menu item (E09-D09:49 gives menu items 2a), and every T2 frame on a board and a T2 row."""
+    rows = t.rows("### 1.4")
+    bad = [] if rows else ["section 1.4 has no table"]
+    boards = t.rows("## 0. Status and the boards")
+    drawn = {f for r in boards if len(r) > 2 for f in FRAME_RE.findall(r[2])}
+    register = t.rows("## 2. State register")
+    states = {f: r[0] for r in register if len(r) > 1 for f in FRAME_RE.findall(r[1])}
+    for r in rows:
+        if len(r) < 4 or not r[2].startswith(T2_RENDERINGS):
+            bad.append(f"{r[0][:40]!r}: no rendering named")
+            continue
+        if "menu" in r[0] and r[2].startswith("2b"):
+            bad.append(f"{r[0][:40]!r}: a menu item in 2b")
+        for frame in FRAME_RE.findall(r[0]):
+            if frame not in drawn:
+                bad.append(f"{frame} on no board")
+            if "T2" not in states.get(frame, ""):
+                bad.append(f"{frame}: its state row does not name T2")
+    return bad
+
+
 Gate = tuple[str, Callable[[Tree], list[str]]]
 GATES: tuple[Gate, ...] = tuple(
     ("G-" + f.__name__[2:].upper(), f)
     for f in (
         g_cite, g_quote, g_ac, g_rows, g_memo, g_keys, g_grey, g_src, g_boards, g_bq, g_amend,
-        g_pin, g_noclose, g_public, g_mutlist,
+        g_pin, g_noclose, g_public, g_mutlist, g_t2,
     )
 )  # fmt: skip
 
@@ -459,13 +488,15 @@ MUTATIONS: tuple[Mutation, ...] = (
        "the file name.** RULED: AGREE."),
     _M("M-11", "G-AMEND", "an owner document edited", "", "docs/plan/14-screens-catalogue.md",
        changed=True),
-    _M("M-12", "G-PIN", "the base pin loses its short sha", "Base `origin/main` `b81479ab0110`",
-       "Base `origin/main` `b81479a`"),
+    _M("M-12", "G-PIN", "the base pin loses its short sha", "Base `origin/main` `c56a10bc3ceb`",
+       "Base `origin/main` `c56a10b`"),
     _M("M-13", "G-NOCLOSE", "a closing keyword", "### 17.1 DoD\n",
        "### 17.1 DoD\n\nClo" + "ses #574.\n"),
     _M("M-14", "G-PUBLIC", "a local path", "### 17.2 Hand-offs (by name)",
        "### 17.2 Hand-offs (by name, " + "/" + "home/x)"),
     _M("M-15", "G-MUTLIST", "the list drifts", r"(\| M-1 +\| )G-CITE", r"\1G-AC", True),
+    _M("M-16", "G-T2", "the row menu's range ends drawn as 2b",
+       r"(\(`SCR-033/row-menu`\) +\| range end [^|]*\| )2a inline", r"\g<1>2b", True),
 )  # fmt: skip
 
 
