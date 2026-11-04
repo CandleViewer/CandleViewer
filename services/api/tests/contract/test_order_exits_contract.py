@@ -231,10 +231,12 @@ _CANCEL_ALL: dict[str, Case] = {
     "503": ("store_unavailable", partial(_cancel_all, change=_scope_down)),
 }
 _TABLES = {"amendOrder": _AMEND, "cancelOrder": _CANCEL, "cancelAllOrders": _CANCEL_ALL}
-#: The cases whose answer 22 gives a `Retry-After` (its prose on each operation, and
-#: `ServiceUnavailable` for a cancel-all's scope outage): an amend's `idempotency_in_flight` 409,
-#: each 429 and each 503 `store_unavailable`. The other 26 carry none; a cancel's `conflict` and a
-#: cancel-all's `idempotency_key_reuse` 409s are no wait.
+#: The cases whose answer 22 gives a `Retry-After`: an amend's `idempotency_in_flight` 409, each 429
+#: and each 503 `store_unavailable`. Five rest on a sentence of their operation, an amend's 409 on
+#: the `OrderExitConflict` response of the three exits, and a cancel-all's 503 (its scope outage) on
+#: the shared `ServiceUnavailable` response of 22 (`components.responses`), which declares the
+#: header: that operation's own text gives it no wait. The other 26 carry none; a cancel's
+#: `conflict` and a cancel-all's `idempotency_key_reuse` 409s are no wait.
 _RETRY = frozenset({
     ("amendOrder", "409"), ("amendOrder", "429"), ("amendOrder", "503"),
     ("cancelOrder", "429"), ("cancelOrder", "503"),
@@ -424,6 +426,11 @@ def _managing(*accounts: UUID) -> Callable[[ca.World], None]:
     return grant
 
 
+def _but_instance(problem: dict[str, Any]) -> dict[str, Any]:
+    """A problem body but for its `instance`, the id of the request it answers."""
+    return {name: value for name, value in problem.items() if name != "instance"}
+
+
 #: E29-TC-110's accounts: the Manager is granted A, and B when it is granted both; a second account
 #: that it is not granted (the plan's C) is refused. (who, grants, the ids named) -> (status, code,
 #: results).
@@ -445,8 +452,9 @@ async def test_cancel_all_orders_by_a_manager_answers_the_status_its_scope_gives
     who: str, grants: tuple[UUID, ...], ids: tuple[UUID, ...], status: int, code: str | None,
     results: int | None,
 ) -> None:  # fmt: skip
-    """E29-TC-110: a listed account outside the grants refuses the whole request; none listed is
-    the granted accounts alone; no answer names an account the Manager may not trade."""
+    """E29-TC-110: a listed account outside the grants refuses the whole request, a missing one in
+    the same 403 (no existence oracle); none listed is the granted accounts alone; no answer names
+    an account the Manager may not trade."""
     world = ca.World()
     _managing(*grants)(world)
     answer = await ca.post(world, who, {"exchange_account_ids": [str(i) for i in ids]})
@@ -454,6 +462,10 @@ async def test_cancel_all_orders_by_a_manager_answers_the_status_its_scope_gives
     assert (answer.status_code, body.get("code")) == (status, code)
     assert results is None or len(body["results"]) == results
     assert _B in grants or str(_B) not in answer.text  # only a granted account is named
+    if ca.MISSING in ids:  # step 4: the 403 of step 1, an account outside the grants, body and all
+        named = {"exchange_account_ids": [str(_A), str(_B)]}
+        step_1 = await ca.post(world, who, named, ca.OTHER_KEY)
+        assert _but_instance(body) == _but_instance(conforms("cancelAllOrders", step_1))
 
 
 async def test_cancel_all_orders_counts_in_affected_only_the_orders_its_selection_takes() -> None:
