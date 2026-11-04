@@ -30,6 +30,7 @@ from hypothesis import strategies as st
 from candleviewer.alerts.compiler import AlertCompiler
 from candleviewer.alerts.errors import AlertIrInvalid
 from candleviewer.alerts.models import AlertCondition
+from candleviewer.rules.compiler import to_form_model
 from candleviewer.rules.errors import ConstantTypeError
 from candleviewer.rules.evaluator import EvaluationResult, Evaluator, MetricValue, SnapshotBuilder
 from candleviewer.rules.evaluator.engine import scope_instance
@@ -50,10 +51,18 @@ from candleviewer.rules.manager import (
     RulesManager,
     quarantine_path,
 )
+from candleviewer.rules.validator import TEXT_TOO_LONG, validate_rule
 from candleviewer.rules.vocabulary import default_registry
 from tests.alerts._evaluator_env import Row, make, row
 from tests.alerts._evaluator_env import ir as alert_ir
-from tests.rules.test_validator_endpoints import _PERF_SAMPLES, _assert_median_within, _sample_ms
+from tests.rules.test_validator_endpoints import (
+    _PERF_SAMPLES,
+    RULE_ID,
+    _assert_median_within,
+    _client,
+    _jsonable,
+    _sample_ms,
+)
 
 FIX = Path(__file__).parents[1] / "fixtures/rule_ir"
 OWNER = Actor("u1", "s1", frozenset({"rules:arm_live"}), is_owner=True, step_up_fresh=True)
@@ -76,7 +85,7 @@ def _doc(const: str, op: str = "gt") -> dict[str, Any]:
 class _Reading:
     """A metric source with one fresh reading for every metric."""
 
-    def __init__(self, value: Decimal) -> None:
+    def __init__(self, value: Decimal | str) -> None:
         self.value = value
 
     def read(self, ref: MetricRef) -> MetricValue:
@@ -474,8 +483,131 @@ async def test_an_alert_whose_constant_its_place_cannot_read_is_parked_at_load()
     assert [s.members for s in ev.subscriptions.values()] == [{"sound"}]
 
 
-#: An enum constant as long as a rule body holds (the body bound, 2,000,000 bytes, is the only bound
-#: on its length), digits and then a letter, so a read that scans it scans it to its end.
+#: A text constant is an enum value, so it sits beside a metric of enum unit, where `eq` takes text.
+_SIDE = {"metric": "imbalance_zone_side"}
+#: How a text constant past the bound is refused: the validator's issue at the constant, as
+#: `(path, code, message)`; the validator files it under class `syntax`.
+_TEXT_ISSUE = ("conditions.right", "schema_error", TEXT_TOO_LONG)
+
+
+def _text_doc(length: int, char: str = "x") -> dict[str, Any]:
+    """`form_simple_0` with the condition `imbalance_zone_side eq <text of `length` characters>`."""
+    return _doc("0") | {"conditions": _cmp("eq", char * length, _SIDE)}
+
+
+@pytest.mark.parametrize("char", ["x", "é"], ids=["one-byte", "two-byte"])
+async def test_a_save_takes_a_text_constant_of_the_bound_and_refuses_one_more(char: str) -> None:
+    """A text constant holds at most `MAX_NUMBER_TEXT` characters, counted as characters (a
+    validation limit, 22 `RuleOperand`): create and update take exactly that many and refuse one
+    more with the validator's issue at the constant, with no record and no count."""
+    records: list[str] = []
+
+    async def _audit(action: str, payload: dict[str, Any]) -> None:
+        records.append(action)
+
+    mgr = RulesManager(
+        InMemoryRuleStore(), default_registry(), audit=_audit,
+        on_metric=lambda name, labels: records.append(name),
+    )  # fmt: skip
+    try:
+        await mgr.create(_text_doc(MAX_NUMBER_TEXT, char) | {"name": "at-the-bound"}, OWNER)
+        rid = (await mgr.create(_text_doc(3, char), OWNER))["id"]
+        await mgr.update(rid, _text_doc(MAX_NUMBER_TEXT, char), 1, OWNER)
+        taken = list(records)
+        with pytest.raises(RuleError) as created:
+            await mgr.create(_text_doc(MAX_NUMBER_TEXT + 1, char) | {"name": "past"}, OWNER)
+        with pytest.raises(RuleError) as updated:
+            await mgr.update(rid, _text_doc(MAX_NUMBER_TEXT + 1, char), 2, OWNER)
+    finally:
+        await mgr.stop()
+    issue = dict(zip(("field", "rule", "message"), _TEXT_ISSUE, strict=True))
+    for refused in (created.value, updated.value):
+        assert (refused.code, refused.extra["errors"]) == ("rule_ir_invalid", [issue])
+    assert records == taken
+
+
+def test_validate_and_compile_hold_a_text_constant_to_the_bound() -> None:
+    """`/rules/validate` and `/rules/{id}/compile` answer 200: no issue at exactly the bound, and
+    past it the one issue (`valid: false` and `blocks_arming: true`)."""
+    client = _client()
+    for length, want in ((MAX_NUMBER_TEXT, []), (MAX_NUMBER_TEXT + 1, [(*_TEXT_ISSUE, "syntax")])):
+        doc = _text_doc(length)
+        model = _jsonable(to_form_model(Rule.model_validate(doc)))
+        validated = client.post("/rules/validate", json={"ir": doc}).json()
+        body = {"editor": "form", "model": model}
+        compiled = client.post(f"/rules/{RULE_ID}/compile", json=body).json()
+        for answer, key in ((validated, "errors"), (compiled, "issues")):
+            got = [(i["path"], i["code"], i["message"], i["class"]) for i in answer[key]]
+            assert [g for g in got if g[1] == "schema_error"] == want
+        assert (validated["valid"], compiled["blocks_arming"]) == (not want, bool(want))
+
+
+def test_the_alert_compiler_holds_a_text_constant_to_the_bound() -> None:
+    """The alert compiler runs the same validator: exactly the bound compiles, one more is refused
+    with the same issue."""
+
+    def alert(length: int) -> dict[str, Any]:
+        conditions = _cmp("eq", "x" * length, _SIDE)
+        return {"ir_version": 1, "trigger": {"type": "on_price_update"}, "conditions": conditions}
+
+    compiler = AlertCompiler(default_registry())
+    compiler.compile(alert(MAX_NUMBER_TEXT))
+    with pytest.raises(AlertIrInvalid) as refused:
+        compiler.compile(alert(MAX_NUMBER_TEXT + 1))
+    assert refused.value.reason == "schema"
+    assert [(i.field, i.rule, i.message) for i in refused.value.issues] == [_TEXT_ISSUE]
+
+
+def test_a_text_constant_past_the_bound_is_refused_for_its_length_alone() -> None:
+    """The text is never read for its unit: `gt` against a long text is the one issue, not also a
+    mismatch of units."""
+    doc = _doc("0") | {"conditions": _cmp("gt", "x" * (MAX_NUMBER_TEXT + 1))}
+    res = validate_rule(Rule.model_validate(doc), default_registry())
+    assert [(i.path, i.code, i.message) for i in res.errors] == [_TEXT_ISSUE]
+
+
+async def test_a_stored_text_constant_past_the_bound_is_still_read_as_an_enum_value() -> None:
+    """The bound is a validation limit, not a load rule: an armed rule stored with text past it
+    keeps loading, is not quarantined, and reads its constant as the enum value it spells."""
+    mgr = RulesManager(InMemoryRuleStore(), default_registry())
+    try:
+        rid = await _armed(mgr, _text_doc(3))
+        row = await mgr._s.get(rid)
+        assert row is not None
+        stored = row.versions[0].ir
+        stored["conditions"]["right"]["const"] = text = "x" * (MAX_NUMBER_TEXT + 1)
+        (item,) = await mgr.evaluable_rules()
+        view = await mgr.get(rid, OWNER)
+    finally:
+        await mgr.stop()
+    assert quarantine_path(stored) is None
+    assert (view["read_only"], view["mode"]) == (False, "armed")
+    ev = Evaluator(item.rule, SnapshotBuilder(_Reading(text)), lambda: NOW, lambda: 0)
+    assert ev.on_trigger(INSTANCE, "on_price_update").fired
+
+
+async def test_arming_a_stored_text_constant_past_the_bound_needs_it_shortened() -> None:
+    """Arming runs the validator, as it does for any current validation error: a simulating rule
+    stored with text past the bound is refused until a save shortens it."""
+    mgr = RulesManager(InMemoryRuleStore(), default_registry())
+    try:
+        made = await mgr.create(_text_doc(3), OWNER)
+        rid = str(made["id"])
+        await mgr.set_mode(rid, "simulate", OWNER, "k-sim")
+        await mgr.record_simulation(rid, made["version"]["ir_hash"], 5, 0.0)
+        row = await mgr._s.get(rid)
+        assert row is not None
+        row.versions[0].ir["conditions"]["right"]["const"] = "x" * (MAX_NUMBER_TEXT + 1)
+        with pytest.raises(RuleError) as arming:
+            await mgr.set_mode(rid, "armed", OWNER, "k-arm")
+    finally:
+        await mgr.stop()
+    assert (arming.value.status, arming.value.code) == (422, "rule_invalid")
+
+
+#: An enum constant as long as a rule body holds, digits and then a letter, so a read that scans it
+#: scans it to its end. A save refuses it (a text constant holds at most `MAX_NUMBER_TEXT`); a
+#: version stored before that is held to the body bound alone, 2,000,000 bytes, and is read.
 _LONG = "1" * 1_990_000 + "x"
 
 

@@ -23074,7 +23074,13 @@ components:
           additionalProperties: false
           required: [const]
           properties:
-            const: { oneOf: [{ type: string }, { type: number }, { type: boolean }] }
+            const:
+              oneOf:
+                - type: string
+                  maxLength: 128
+                  description: "A text constant holds at most 128 characters."
+                - { type: number }
+                - { type: boolean }
         - $ref: "#/components/schemas/RuleArithmeticNode"
     RuleMetricRef:
       type: object
