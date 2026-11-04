@@ -55,7 +55,7 @@ describe("model", () => {
       feeRate: { symbol: "BTCUSDT", taker_fee_rate: "0.00055" },
       armed: false,
     };
-    expect(structuredClone({ draft, ctx })).toEqual({ draft, ctx });
+    expect(structuredClone({ draft, ctx })).toStrictEqual({ draft, ctx });
     const top: BookTop = ctx.ticker ?? {};
     expect([top.bid1_price, top.ask1_price]).toEqual(["63999.9", "64000.0"]);
   });

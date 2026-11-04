@@ -59,9 +59,9 @@ describe("parseInstrument", () => {
       ["LUNAUSDT", "0.0001", "0.001"],
     ]);
     for (const g of GRIDS) {
-      expect(toPlain(g.minOrderQty)).toBe("0.001");
+      expect(g.minOrderQty && toPlain(g.minOrderQty)).toBe("0.001");
       expect(toPlain(g.maxOrderQty ?? dec("0"))).toBe("100.000");
-      expect(toPlain(g.minNotional)).toBe("5");
+      expect(g.minNotional && toPlain(g.minNotional)).toBe("5");
       expect(toPlain(g.maxLeverage ?? dec("0"))).toBe("100.00");
       expect(g.tradable).toBe(true);
       expect(g.missing).toEqual([]);
@@ -76,11 +76,11 @@ describe("parseInstrument", () => {
     expect(grid({ ...BTC_ROW(), delisted: true }).tradable).toBe(false);
   });
 
-  it("parseInstrument_absentOptionalFilters_takeDefaultsAndAreListed", () => {
+  it("parseInstrument_absentOptionalFilters_areNullAndListed", () => {
     const g = grid({ category: "linear", symbol: "XUSDT", tick_size: "0.5", qty_step: "0.01" });
-    expect(toPlain(g.minOrderQty)).toBe("0.01");
+    expect(g.minOrderQty).toBeNull();
     expect(g.maxOrderQty).toBeNull();
-    expect(toPlain(g.minNotional)).toBe("0");
+    expect(g.minNotional).toBeNull();
     expect(g.maxLeverage).toBeNull();
     expect(g.tradable).toBe(false); // no status: fails closed
     expect(g.missing).toEqual([
@@ -100,6 +100,14 @@ describe("parseInstrument", () => {
     // JSON null is not "absent": the row is refused (fail closed), never defaulted
     const row = { ...BTC_ROW(), [field]: null } as unknown as Instrument;
     expect(parseInstrument(row)).toBeNull();
+  });
+
+  it.each([
+    ["lot above the maximum", { qty_step: "1", min_order_qty: "1", max_order_qty: "0.5" }],
+    ["minimum above the maximum", { min_order_qty: "200", max_order_qty: "100.000" }],
+    ["minimum off the lot", { qty_step: "0.001", min_order_qty: "0.0015" }],
+  ] as const)("parseInstrument_selfContradicting_%s_isNull", (_name, patch) => {
+    expect(parseInstrument({ ...BTC_ROW(), ...patch })).toBeNull();
   });
 
   it.each([["PreLaunch"], ["Delivering"]] as const)(
@@ -177,15 +185,26 @@ describe("missedMinimum", () => {
     });
   });
 
+  it("missedMinimum_belowBothMinimums_namesTheQuantityFirst", () => {
+    // 0.0005 × 4000 = 2 USDT is below the notional floor too; the quantity minimum is checked first
+    expect(missedMinimum(BTC, dec("0.0005"), dec("4000"))?.kind).toBe("min_order_qty");
+  });
+
+  it("missedMinimum_legFloorEqualToExchange_isTheExchangeFloor", () => {
+    // a tie keeps the exchange's floor: the leg floor wins only when it is strictly higher
+    expect(missedMinimum(BTC, dec("0.001"), dec("4000"), dec("5"))?.kind).toBe("min_notional");
+  });
+
   it("missedMinimum_belowExchangeNotional", () => {
     // 0.001 × 4000.00 = 4 < 5 USDT
     expect(missedMinimum(BTC, dec("0.001"), dec("4000.00"))?.kind).toBe("min_notional");
   });
 
   it("missedMinimum_profileLegFloorAboveExchange_isTheLegFloor", () => {
-    const missed = missedMinimum(BTC, dec("0.001"), dec("64000"), dec("100"));
-    expect(missed?.kind).toBe("min_leg_notional");
-    expect(toPlain(missed?.floor ?? dec("0"))).toBe("100");
+    expect(missedMinimum(BTC, dec("0.001"), dec("64000"), dec("100"))).toEqual({
+      kind: "min_leg_notional",
+      floor: dec("100"),
+    });
   });
 
   it("missedMinimum_profileLegFloorBelowExchange_isTheExchangeFloor", () => {
@@ -194,6 +213,28 @@ describe("missedMinimum", () => {
 
   it("missedMinimum_atTheFloors_isNull", () => {
     expect(missedMinimum(BTC, dec("0.001"), dec("5000"))).toBeNull();
+  });
+
+  it("missedMinimum_absentMinOrderQty_isUnknown", () => {
+    const row = { ...BTC_ROW() }; // a copy: the fixture row is shared
+    delete row.min_order_qty;
+    const g = grid(row);
+    expect(missedMinimum(g, dec("1"), dec("64000"))).toEqual({
+      kind: "unknown",
+      filter: "min_order_qty",
+    });
+  });
+
+  it("missedMinimum_absentMinNotional_isUnknownOnceTheQuantityIsMet", () => {
+    const row = { ...BTC_ROW() }; // a copy: the fixture row is shared
+    delete row.min_notional_value;
+    const g = grid(row);
+    // a known quantity miss is still named; past it, the notional floor is not known
+    expect(missedMinimum(g, dec("0.0005"), dec("64000"))?.kind).toBe("min_order_qty");
+    expect(missedMinimum(g, dec("1"), dec("64000"), dec("100"))).toEqual({
+      kind: "unknown",
+      filter: "min_notional_value",
+    });
   });
 });
 
@@ -255,9 +296,9 @@ describe("grid properties (four recorded instruments and random grids)", () => {
       fc.property(arbGrid, arbPositive, arbPositive, (g, qty, price) => {
         const missed = missedMinimum(g, qty, price);
         if (missed === null) {
-          expect(gte(qty, g.minOrderQty)).toBe(true);
-          expect(gte(mul(qty, price), g.minNotional)).toBe(true);
-        } else {
+          expect(g.minOrderQty !== null && gte(qty, g.minOrderQty)).toBe(true);
+          expect(g.minNotional !== null && gte(mul(qty, price), g.minNotional)).toBe(true);
+        } else if (missed.kind !== "unknown") {
           expect(gt(missed.floor, dec("0"))).toBe(true);
         }
       }),

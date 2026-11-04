@@ -2,6 +2,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
   MAX_DIGITS,
+  MAX_SCALE,
   ONE,
   ZERO,
   abs,
@@ -53,12 +54,19 @@ describe("parseDecimal", () => {
     expect(parseDecimal(text)).toEqual({ units, scale });
   });
 
-  it.each([["1e3"], ["+1"], [".5"], ["1."], [" 1"], ["NaN"], [""], ["1".repeat(MAX_DIGITS + 3)]])(
-    "parseDecimal_notAWireDecimal_%s_isNull",
-    (text) => {
-      expect(parseDecimal(text)).toBeNull();
-    },
-  );
+  it.each([
+    ["1e3"],
+    ["1e9"],
+    ["+1"],
+    [".5"],
+    ["1."],
+    [" 1"],
+    ["NaN"],
+    [""],
+    ["1".repeat(MAX_DIGITS + 3)],
+  ])("parseDecimal_notAWireDecimal_%s_isNull", (text) => {
+    expect(parseDecimal(text)).toBeNull();
+  });
 
   it("parseDecimal_nonString_isNull", () => {
     expect(parseDecimal(1.5)).toBeNull();
@@ -182,13 +190,19 @@ describe("rounding", () => {
     expect(toPlain(roundTo(dec(text), scale, mode))).toBe(expected);
   });
 
-  it.each([[-1], [1.5], [Number.NaN], [Number.POSITIVE_INFINITY]])(
+  it.each([[-1], [1.5], [Number.NaN], [Number.POSITIVE_INFINITY], [1e9], [MAX_SCALE + 1]])(
     "roundTo_and_div_scale_%s_throws",
     (scale) => {
-      expect(() => roundTo(ONE, scale, "floor")).toThrow(RangeError);
-      expect(() => div(ONE, ONE, scale, "floor")).toThrow(RangeError);
+      const message = `a decimal scale must be an integer from 0 to ${MAX_SCALE}`;
+      expect(() => roundTo(ONE, scale, "floor")).toThrow(new RangeError(message));
+      expect(() => div(ONE, ONE, scale, "floor")).toThrow(new RangeError(message));
     },
   );
+
+  it("roundTo_and_div_atMaxScale_work", () => {
+    expect(roundTo(ONE, MAX_SCALE, "floor").scale).toBe(MAX_SCALE);
+    expect(div(ONE, dec("3"), MAX_SCALE, "floor")?.scale).toBe(MAX_SCALE);
+  });
 
   it("div_byZero_isNull", () => {
     expect(div(ONE, ZERO, 4, "floor")).toBeNull();

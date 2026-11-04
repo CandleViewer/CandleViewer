@@ -26,6 +26,11 @@ const DECIMAL = /^-?[0-9]+(\.[0-9]+)?$/;
  * `BigInt` reads it: a bound on the work, above `numeric(38,18)`'s 38 digits (`21` §3.3.7).
  */
 export const MAX_DIGITS = 64;
+/**
+ * The largest scale a decimal may be taken to (`roundTo`, `div`): twice `MAX_DIGITS`, which covers
+ * the scale of a product of two parsed values. A larger target scale is refused.
+ */
+export const MAX_SCALE = 2 * MAX_DIGITS;
 
 const TEN = 10n;
 const pow10 = (n: number): bigint => TEN ** BigInt(n);
@@ -108,18 +113,18 @@ export function divInt(n: bigint, d: bigint, mode: RoundingMode): bigint {
 }
 
 /**
- * A target scale is a non-negative safe integer (a count of decimal places). Anything else is a
- * programming error, refused with a `RangeError` rather than a `BigInt` failure or a wrong value.
+ * A target scale is an integer from 0 to `MAX_SCALE` (a count of decimal places). Anything else
+ * is a programming error, refused with a `RangeError` before any work is done.
  */
 function checkScale(scale: number): void {
-  if (!Number.isSafeInteger(scale) || scale < 0) {
-    throw new RangeError(`a decimal scale must be a non-negative integer, not ${String(scale)}`);
+  if (!Number.isSafeInteger(scale) || scale < 0 || scale > MAX_SCALE) {
+    throw new RangeError(`a decimal scale must be an integer from 0 to ${MAX_SCALE}`);
   }
 }
 
 /**
- * `a` at `scale` places under `mode` (exact when `scale >= a.scale`). Precondition: `scale` is a
- * non-negative integer (`RangeError` otherwise).
+ * `a` at `scale` places under `mode` (exact when `scale >= a.scale`). Precondition: `scale` is an
+ * integer from 0 to `MAX_SCALE` (`RangeError` otherwise).
  */
 export function roundTo(a: Decimal, scale: number, mode: RoundingMode): Decimal {
   checkScale(scale);
@@ -128,8 +133,8 @@ export function roundTo(a: Decimal, scale: number, mode: RoundingMode): Decimal 
 }
 
 /**
- * `a / b` at `scale` places under `mode`; `null` when `b` is zero. Precondition: `scale` is a
- * non-negative integer (`RangeError` otherwise).
+ * `a / b` at `scale` places under `mode`; `null` when `b` is zero. Precondition: `scale` is an
+ * integer from 0 to `MAX_SCALE` (`RangeError` otherwise).
  */
 export function div(a: Decimal, b: Decimal, scale: number, mode: RoundingMode): Decimal | null {
   checkScale(scale);
