@@ -376,15 +376,23 @@ class BarReader:
             spec.kind, symbol, bar_param_for(spec), from_us, to_us, after_us, limit, at_key=at_key
         )
         raw = await self._conn.fetch(sql, *params)
+        more = len(raw) == limit
+        cursor = ts_us_from_row(raw[-1]["ts"]) if more and raw else None
+        if spec.kind == "time" and cursor is not None and _lone_kline_open_time(raw, cursor):
+            # the page is that one open time's kline row; its tape row may be cut by the limit
+            sql, params = build_range_query(
+                spec.kind, symbol, bar_param_for(spec), cursor, cursor + 1, None, MAX_LIMIT
+            )
+            raw = await self._conn.fetch(sql, *params)
         rows = [r for r in raw if not _untrusted(r, spec)]
         dropped = len(raw) - len(rows)
+        if spec.kind == "time":
+            rows, cursor = _tape_over_kline(raw, rows, cursor)
         current = BUILD_VERSIONS[spec.kind]
         stale = any(int(str(r.get("build_version") or 0)) < current for r in rows)
         if stale:
             bars_stale_build_version_total.inc()
             await self._rebuilds.request(symbol, spec.spec_hash, from_us, to_us)
-        more = len(raw) == limit
-        cursor = ts_us_from_row(raw[-1]["ts"]) if more and raw else None
         key = row_key(raw[-1]) if more and raw and spec.kind != "time" else None
         return BarPage(
             rows, cursor, stale, integrity_degraded=dropped > 0, dropped=dropped, next_key=key
@@ -694,6 +702,30 @@ def degrade_reason(exc: Exception) -> str:
     if isinstance(exc, (OSError, ConnectionError)):
         return "connection"
     return "query_error"
+
+
+def _is_kline(row: dict[str, object]) -> bool:
+    return row.get("source") == "kline"  # NULL source = pre-0003 legacy row, tape-built
+
+
+def _lone_kline_open_time(raw: list[dict[str, object]], cursor: int) -> bool:
+    return _is_kline(raw[-1]) and ts_us_from_row(raw[0]["ts"]) >= cursor
+
+
+def _tape_over_kline(
+    raw: list[dict[str, object]], rows: list[dict[str, object]], cursor: int | None
+) -> tuple[list[dict[str, object]], int | None]:
+    """BR-07 / SR-E12-10 read side for `bars_time`, whose DEDUP key (with `generation` and
+    `index`) lets a kline row share an open time with a tape row: the kline row is never served
+    where a tape-built row is stored (judged on `raw`, so a tape row withheld by its integrity
+    check is not replaced by a kline row). A full page whose last row is a kline row may have
+    the tape row of that open time on the next page: the open time is left whole to the next
+    page (cursor one µs before it), unless it is the page's only open time (progress)."""
+    tape_ts = {ts_us_from_row(r["ts"]) for r in raw if not _is_kline(r)}
+    kept = [r for r in rows if not (_is_kline(r) and ts_us_from_row(r["ts"]) in tape_ts)]
+    if cursor is None or not _is_kline(raw[-1]) or ts_us_from_row(raw[0]["ts"]) >= cursor:
+        return kept, cursor
+    return [r for r in kept if ts_us_from_row(r["ts"]) < cursor], cursor - 1
 
 
 def _integrity_failure(row: dict[str, object]) -> str | None:
