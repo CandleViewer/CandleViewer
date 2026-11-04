@@ -1,0 +1,51 @@
+# E34-D04 pins: KEY|line|words that stand on that line at the base (gate A).
+# `--repin` keeps every pin still cited and adds the opening words of a new cite.
+05|31|2. A **single global hotkey layer** governs the whole app (c
+05|33|4. Destructive/irreversible actions (submit market order, fl
+05|87|3. **Reserved, non-remappable keys**: `Esc` (universal cance
+05|100|3. **Focus is never silently stolen**: a live price update,
+05|101|4. **Modal dialogs** (order confirm, flatten-all confirm, De
+05|103|6. **Visible focus indicator**: WCAG 2.2 SC 2.4.11 (Focus No
+05|104|7. **Target size**: WCAG 2.2 SC 2.5.8 (Target Size, Minimum,
+05|130|- K-5 `Esc`, or moving focus away, before a commit restores
+05|133|- K-8 The command palette lists every registered command wit
+05|135|- K-10 A binding pressed where it is not valid says once, no
+05|141|**Rule (non-negotiable, applies everywhere)**: colour is alw
+05|159|1. **Text contrast (WCAG 1.4.3, AA)**: body text and labels
+05|160|2. **Non-text/UI component contrast (WCAG 1.4.11, AA)**: but
+05|165|7. **Text resize (WCAG 1.4.4, AA)**: UI must remain usable w
+05|185|- `aria-live="polite"` region for ambient updates (best bid/
+05|186|- `aria-live="assertive"` (or `role="alert"`) reserved for d
+05|188|- **Region hygiene**: live regions are pre-rendered empty co
+05|248|1. The app respects OS-level `prefers-reduced-motion: reduce
+05|282|5. **Defect severity bar**: any task in the script that cann
+14|1507|- **A11y:** the preview is a table with row status in text;
+14|1522|- **A11y:** The group list is a table with a row per group (
+14|1533|- **Type:** Panel with tabs: **Positions · Working orders ·
+14|1550|- **Interactions/hotkeys:** `Enter` opens the row's SL/TP ed
+15|521|- **A11y**: `variant="hold"` always ships a keyboard-operabl
+15|584|- **A11y**: semantic `<table>` with `scope` on headers even
+DS|15|orchestrator's round. A **G-T2 miss is a Major** in the pre-
+DS|28|- **G-T2.1b** (§9.1): `aria-disabled="true"`, never the `dis
+DS|40|- **G-T2.2** (§2.2, §11): hi-fi label `color.text.tertiary`,
+DS|47|- **G-T2.3** (§9.3): `Enter`, `Space` or a bound hotkey on a
+DS|79|- **R6 Contracts in flight** (this file; `.claude/rules/70-m
+E47-D04|119|- **R-4 Never the body.** Every operation that disables, rem
+E47-D04|120|- **R-5 Never stolen.** A data event (a price, a fill, a WS
+E47-D04|121|- **R-6 Safe initial focus.** No dialog, overlay or region o
+E47-D04|122|- **R-7 Restore to the invoker.** Every close path of a dial
+E47-D04|126|- **R-11 Not obscured.** On focus the element is scrolled in
+E47-D04|219|A dense grid is CMP-049 with `role="grid"`: one Tab stop, a
+E47-D04|227|`Esc` closes the innermost transient first — an open menu, t
+E47-D04|285|| A position closes or an order leaves its grid | the next r
+E47-D04|299|| destructive confirm (`alertdialog`: flatten all, cancel al
+E47-D04|304|| drawer (`aria-modal`)
+E47-D04|305|| menu, popover (a T2 item: §10's T2 paragraph)
+E47-D09|114|- **K-5 Cancel restores** (`05` §3.5): `Esc` says so (W-2; W
+E47-D09|119|- **K-10 An inert key explains itself** (`05` §3.5): politel
+KM|483|"id": "ticket.submit",
+KM|501|"id": "ticket.clear",
+KM|561|"id": "ticket.arm",
+KM|581|"id": "positions.open_sltp",
+KM|601|"id": "positions.close",
+KM|615|"id": "positions.close_all",
