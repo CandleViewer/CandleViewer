@@ -41,7 +41,7 @@ def test_unconfirmed_backfilled_loss_blocks_where_the_stored_rows_do_not() -> No
 
 def test_causes_sum_to_each_divergence() -> None:
     for row in d.report()["hours"]:
-        for src in ("local", "wallet", "hybrid"):
+        for src in ("local", "wallet", "txlog", "hybrid"):
             total = sum((Decimal(v) for v in row[f"causes_{src}"].values()), Decimal(0))
             assert total == Decimal(row[f"div_{src}"]), (src, row)
 
@@ -62,3 +62,25 @@ def test_offset_change_never_shortens_the_key_in_progress() -> None:
         assert (cur[2] - cur[1]) // d.H == d.transitional_hours(off) == expected[off]
         later = keys[keys.index(cur) + 1 : -1]
         assert later and all(k[2] - k[1] == d.DAY for k in later), (off, later)
+
+
+def test_criterion_1_over_the_window_fails_the_stored_rows_and_passes_the_hybrid() -> None:
+    """BQ-1 ruling: |div| <= 0.5 % of closed-PnL over the window is the pass/fail rule. The stored
+    rows (a) fail it on both accounts (backfilled loss, no funding); the hybrid (d) passes."""
+    whole = d.report()["criterion_1"]["whole_window"]
+    assert [r["acct"] for r in whole] == ["A", "B"]
+    assert not any(r["local"]["pass"] for r in whole)
+    assert all(r["hybrid"]["pass"] for r in whole)
+
+
+def test_bounds_never_lock_later_or_shorter_than_the_settled_figure() -> None:
+    """BQ-3 (a) and BQ-5: the pessimistic figure locks no later than day-mark-to-market and than
+    the same figure on settled records (SR-E39-11's direction: the bounds only err to blocking)."""
+    lk = d.report()["lockouts"]
+    hours = lk["locked_hours"]
+    assert hours["pessimistic_a"] >= hours["day_mtm_b"]
+    assert hours["pessimistic_a"] >= hours["settled"]
+    first = {(o["acct"], o["day"]): o["from_hour"] for o in lk["lock_onsets"]["pessimistic_a"]}
+    for name in ("day_mtm_b", "settled"):
+        for o in lk["lock_onsets"][name]:
+            assert first[(o["acct"], o["day"])] <= o["from_hour"], (name, o)

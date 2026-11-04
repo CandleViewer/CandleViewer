@@ -1,4 +1,4 @@
-"""E39-K01 THROWAWAY harness: three daily-PnL sources and the hybrid, on a seeded synthetic trail.
+"""E39-K01 THROWAWAY harness: four daily-PnL sources and the hybrid, on a seeded synthetic trail.
 
 Not production code: never imported by services/, no coverage target (DoR 5.1). Every number it
 prints is SYNTHETIC. It emits domain-level numbers (fills, funding, transfers, closed-PnL
@@ -26,7 +26,8 @@ SEED = 880
 H, DAY = 3600, 86400
 END = 3 * DAY
 CAP = Decimal(250)  # risk_policy seed max_daily_loss_usd (21-database-schema.md:4312)
-TOL = CAP * Decimal("0.005")  # 0.5 % of the cap = 1.25
+TOL = CAP * Decimal("0.005")  # 0.5 % of the cap = 1.25 (reported beside criterion 1)
+CRIT1 = Decimal("0.005")  # criterion 1 (BQ-1 ruling): |div| <= 0.5 % of closed-PnL over the window
 MAKER, TAKER = Decimal("0.0002"), Decimal("0.00055")  # ASSUMED base-tier rates
 FUNDING_EVERY = {"BTCUSDT": 8 * H, "ETHUSDT": 4 * H}  # the funding-history fixtures' cadences
 START_PX = {"BTCUSDT": Decimal(60000), "ETHUSDT": Decimal(3000)}
@@ -206,7 +207,8 @@ def build(seed: int = SEED) -> Trail:
                 local = exact
             tr.records.append({"acct": f.acct, "sym": f.sym, "close_ts": f.ts, "kind": f.kind,
                                "updated": f.ts + f.lag, "exact": exact, "pnl": q(exact, Q4),
-                               "local": local, "unconfirmed": row["backfilled"]})  # fmt: skip
+                               "local": local, "unconfirmed": row["backfilled"],
+                               "fees": ofee + close_fee, "fund": fund})  # fmt: skip
             row["gross"] = gross
             p.qty += f.delta if abs(f.delta) <= abs(p.qty) else -p.qty
             rest = abs(f.delta) - closing
@@ -266,6 +268,10 @@ def hour(tr: Trail, acct: str, w: tuple[str, int, int], t: int) -> dict[str, Any
     fees = sum((r["fee"] for r in fills), Decimal(0))
     local = gross - lost - fees  # from the stored rows: no funding, NULL closed_pnl on backfill
     cash = gross - fees + fund  # L2: the stream, complete
+    # transaction-log (TRADE + SETTLEMENT rows, transfers excluded by type): the settled cash
+    # ledger, `change` = cashFlow (= execPnl, 2.1) - fee + funding, dated by transactionTime = exec
+    # time; REST rows carry cashFlow, so a backfilled fill is complete. A8: no posting lag modelled.
+    txlog = cash
     by_close = [r for r in recs if inw(r["close_ts"])]
     l3 = sum((r["exact"] for r in by_close), Decimal(0))  # attributed at the close
     l4 = sum((r["pnl"] for r in by_close), Decimal(0))  # venue rounding
@@ -290,6 +296,7 @@ def hour(tr: Trail, acct: str, w: tuple[str, int, int], t: int) -> dict[str, Any
     un = upnl(tr, acct, t, net=True)  # open positions, pending fees and funding included
     blocking = hybrid + min(Decimal(0), un)
     day_mtm = hybrid + min(Decimal(0), un - carried_upnl(tr, acct, ws, t))
+    blocking_settled = l4 + min(Decimal(0), un)  # BQ-5: the same figure on settled records
 
     def neg(d: dict[str, Decimal]) -> dict[str, str]:
         return {k: str(v) for k, v in d.items() if v}
@@ -297,6 +304,9 @@ def hour(tr: Trail, acct: str, w: tuple[str, int, int], t: int) -> dict[str, Any
     return {
         "t": t // H, "acct": acct, "day": w[0], "closed_pnl": str(closed), "local": str(local),
         "wallet": str(wallet) if wallet else "0", "hybrid": str(hybrid), "settled": str(l4),
+        "txlog": str(txlog), "div_txlog": str(txlog - closed),
+        "causes_txlog": neg({k: -v for k, v in steps.items() if k not in
+                             ("backfill_null_execpnl", "funding_missing")}),
         "div_local": str(local - closed), "div_wallet": str(wallet - closed),
         "div_hybrid": str(hybrid - closed), "div_hybrid_settled": str(hybrid - l4),
         "causes_hybrid": neg({"rounding": hybrid - l4 - prov - unbf,
@@ -311,6 +321,11 @@ def hour(tr: Trail, acct: str, w: tuple[str, int, int], t: int) -> dict[str, Any
         "provisional_bound": str(-prov) if prov else "0",
         "unconfirmed_bound": str(-unbf) if unbf else "0", "blocking": str(blocking),
         "pess_only_breach": blocking <= -CAP < day_mtm,
+        "blocking_day_mtm": str(day_mtm), "blocking_settled": str(blocking_settled),
+        "bound_only_breach": blocking <= -CAP < blocking_settled,
+        "fees_paid": str(fees), "funding_paid": str(fund),
+        "fees_attributed": str(sum((r["fees"] for r in by_close), Decimal(0))),
+        "funding_attributed": str(sum((r["fund"] for r in by_close), Decimal(0))),
     }  # fmt: skip
 
 
@@ -347,27 +362,37 @@ def report(seed: int = SEED) -> dict[str, Any]:
             w = next(x for x in ws if x[1] < t <= x[2])
             rows.append(hour(tr, acct, w, t))
     summary = {}
-    for key, src in (("div_local", "local"), ("div_wallet", "wallet"), ("div_hybrid", "hybrid"),
-                     ("div_hybrid_settled", "hybrid")):  # fmt: skip
+    for key, src in (("div_local", "local"), ("div_wallet", "wallet"), ("div_txlog", "txlog"),
+                     ("div_hybrid", "hybrid"), ("div_hybrid_settled", "hybrid")):  # fmt: skip
         vals = [Decimal(str(r[key])) for r in rows]
         worst = max(vals, key=abs)
         # "source above reference" mixes dating with under-counting; "above settled" compares
         # with the venue's eventual figure dated by exec time, so it is a true loss under-count.
         above = [Decimal(r[src]) - Decimal(r["settled"]) for r in rows]
+        ref = [Decimal(r["settled" if key.endswith("settled") else "closed_pnl"]) for r in rows]
+        # Criterion 1's denominator (BQ-1) read per hour: |div| against that hour's reference.
+        over = [abs(v) > CRIT1 * abs(d) for v, d in zip(vals, ref, strict=True)]
+        pcts = [abs(v) / abs(d) * 100 for v, d in zip(vals, ref, strict=True) if d]
         summary[key] = {"max_abs_usd": str(abs(worst)), "pct_of_cap": str(q(abs(worst) / CAP * 100, Q4)),
                         "hours_over_tol": sum(abs(v) > TOL for v in vals),
+                        "hours_over_crit1": sum(over),
+                        "max_pct_of_reference": str(q(max(pcts), Q4)),
                         "hours_source_above_reference": sum(v > TOL for v in vals),
                         "hours_source_above_settled": sum(v > TOL for v in above)}  # fmt: skip
     ends = [r for r in rows if any(r["t"] * H == w[2] for w in ws)]
     return {
         "label": "SYNTHETIC - seeded simulator, not exchange data",
+        "synthetic": True,
+        "criterion_1": criterion_1(tr, ends),
+        "fees_funding_window": fees_funding(tr),
+        "lockouts": lockouts(tr, rows, ws),
         "seed": seed, "cap_usd": str(CAP), "tolerance_usd": str(TOL), "windows": ws,
         "counts": {"fills": len(tr.fills), "closed_pnl_records": len(tr.records),
                    "funding_rows": len(tr.funding),
                    "backfilled_fills": sum(bool(r["backfilled"]) for r in tr.fills)},
         "summary": summary,
         "day_end": [{k: r[k] for k in ("acct", "day", "closed_pnl", "settled", "local", "wallet",
-                                       "hybrid")} for r in ends],
+                                       "txlog", "hybrid")} for r in ends],
         "max_provisional_bound_usd": str(max(Decimal(str(r["provisional_bound"])) for r in rows)),
         "max_unconfirmed_bound_usd": str(max(Decimal(str(r["unconfirmed_bound"])) for r in rows)),
         "backfilled_closes": [{k: str(r[k]) for k in ("close_ts", "updated", "exact", "local")}
@@ -378,10 +403,89 @@ def report(seed: int = SEED) -> dict[str, Any]:
         "pess_only_breach_hours": sum(bool(r["pess_only_breach"]) for r in rows),
         "episodes": {"local": episodes(rows, "div_local", "causes_local"),
                      "wallet": episodes(rows, "div_wallet", "causes_wallet"),
+                     "txlog": episodes(rows, "div_txlog", "causes_txlog"),
                      "hybrid": episodes(rows, "div_hybrid", "causes_hybrid")},
         "breach_hours": sum(Decimal(str(r["blocking"])) <= -CAP for r in rows),
         "hours": rows,
     }  # fmt: skip
+
+
+SOURCES = ("local", "wallet", "txlog", "hybrid")
+
+
+def pct(num: Decimal, den: Decimal) -> str:
+    return str(q(abs(num) / abs(den) * 100, Q4)) if den else "n/a"
+
+
+def criterion_1(tr: Trail, ends: list[dict[str, Any]]) -> dict[str, Any]:
+    """BQ-1 ruling: the pass/fail rule is |source - closed-PnL| <= 0.5 % of closed-PnL over the
+    window (the whole 3-day window, per account); USD and % of the cap are reported beside it. The
+    per-day-key reading of "the window" is reported too, because its verdict differs."""
+    whole = []
+    for acct in ("A", "B"):
+        r = hour(tr, acct, ("W", 0, END), END)
+        closed = Decimal(r["closed_pnl"])
+        out: dict[str, Any] = {"acct": acct, "closed_pnl": r["closed_pnl"]}
+        for s in SOURCES:
+            div = Decimal(r[s]) - closed
+            out[s] = {"div_usd": str(div), "pct_of_closed_pnl": pct(div, closed),
+                      "pct_of_cap": pct(div, CAP), "pass": abs(div) <= CRIT1 * abs(closed)}  # fmt: skip
+        whole.append(out)
+    per_key = []
+    for r in ends:
+        closed = Decimal(r["closed_pnl"])
+        row: dict[str, Any] = {"acct": r["acct"], "day": r["day"], "closed_pnl": r["closed_pnl"]}
+        for s in SOURCES:
+            div = Decimal(r[s]) - closed
+            row[s] = {"div_usd": str(div), "pct_of_closed_pnl": pct(div, closed),
+                      "pass": abs(div) <= CRIT1 * abs(closed)}  # fmt: skip
+        per_key.append(row)
+    return {"whole_window": whole, "per_day_key": per_key}
+
+
+def fees_funding(tr: Trail) -> list[dict[str, str]]:
+    """BQ-1: transaction-log (fees and funding as paid) against the closed-PnL records (fees and
+    funding as attributed at the close), over the whole window, per account."""
+    out = []
+    for acct in ("A", "B"):
+        r = hour(tr, acct, ("W", 0, END), END)
+        out.append({"acct": acct, "txlog_fees": r["fees_paid"], "txlog_funding": r["funding_paid"],
+                    "closed_pnl_fees": r["fees_attributed"],
+                    "closed_pnl_funding": r["funding_attributed"]})  # fmt: skip
+    return out
+
+
+def lockouts(
+    tr: Trail, rows: list[dict[str, Any]], ws: list[tuple[str, int, int]]
+) -> dict[str, Any]:
+    """Sticky lockout hours (a lock holds to its day key's end) on three figures: the decision
+    (pessimistic carried positions, BQ-3 (a), on the hybrid), day-mark-to-market (BQ-3 (b)), and the
+    decision's figure on settled records (BQ-5: what the provisional and unconfirmed bounds cost).
+    """
+    figs = {"pessimistic_a": "blocking", "day_mtm_b": "blocking_day_mtm",
+            "settled": "blocking_settled"}  # fmt: skip
+    hours = dict.fromkeys(figs, 0)
+    onset: dict[str, list[dict[str, Any]]] = {k: [] for k in figs}
+    for acct in ("A", "B"):
+        for w in ws:
+            kr = [r for r in rows if r["acct"] == acct and r["day"] == w[0]]
+            for name, col in figs.items():
+                first = next((r["t"] for r in kr if Decimal(r[col]) <= -CAP), None)
+                if first is not None:
+                    hours[name] += sum(r["t"] >= first for r in kr)
+                    onset[name].append({"acct": acct, "day": w[0], "from_hour": first})
+    relock, carried = [], []
+    for acct in ("A", "B"):
+        for w in ws[1:]:
+            c = carried_upnl(tr, acct, w[1], w[1])
+            carried.append({"acct": acct, "day": w[0], "carried_net_upnl": str(c),
+                            "pct_of_cap": pct(min(Decimal(0), c), CAP)})  # fmt: skip
+            r = next(x for x in rows if x["acct"] == acct and x["day"] == w[0])
+            if Decimal(r["blocking"]) <= -CAP < Decimal(r["hybrid"]):
+                relock.append({"acct": acct, "day": w[0], "hour": r["t"]})
+    return {"locked_hours": hours, "lock_onsets": onset,
+            "bound_only_breach_hours": sum(bool(r["bound_only_breach"]) for r in rows),
+            "carried_at_boundary": carried, "carried_loser_relocks": relock}  # fmt: skip
 
 
 def dump(rep: dict[str, Any]) -> bytes:
