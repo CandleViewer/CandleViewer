@@ -49,9 +49,13 @@ class OpError(Exception):
         self.code = code
 
 
-def _sha256(fd: int, size: int, stop: threading.Event, report: Callable[[float], None]) -> str:
-    """In a worker thread: the SHA-256 of `fd`'s bytes, read `CHUNK` at a time from offset 0;
-    `stop` ends it within one chunk."""
+def _sha256(
+    fd: int, size: int, stop: threading.Event, report: Callable[[float], None]
+) -> str | None:
+    """In a worker thread: None if the age header is malformed, else the SHA-256 of `fd`'s bytes,
+    read `CHUNK` at a time from offset 0; `stop` ends it within one chunk."""
+    if not age_format.header_ok(os.pread(fd, age_format.MAX_HEADER, 0), size):
+        return None
     digest, offset = hashlib.sha256(), 0
     while chunk := os.pread(fd, CHUNK, offset):
         if stop.is_set():
@@ -146,18 +150,18 @@ class Ops:
                     return await self._checked(artefact, "artefact_missing", None)
                 raise
             try:
-                prefix = await asyncio.to_thread(os.pread, fd, age_format.MAX_HEADER, 0)
-                if not age_format.header_ok(prefix, size):
-                    return await self._checked(artefact, "header_malformed", None)
                 digest = await self._hash(fd, size, progress)
             finally:
-                os.close(fd)
+                os.close(fd)  # only once no thread reads it (`_hash`)
+            if digest is None:
+                return await self._checked(artefact, "header_malformed", None)
             same = hmac.compare_digest(digest, artefact.digest)
             return await self._checked(artefact, "ok" if same else "digest_mismatch", digest)
 
-    async def _hash(self, fd: int, size: int, progress: Progress) -> str:
-        """The digest, off the loop; a cancel stops the thread and waits for it, so the caller
-        closes the descriptor only once nothing reads it."""
+    async def _hash(self, fd: int, size: int, progress: Progress) -> str | None:
+        """The header check and the digest, in one thread off the loop. A cancel stops the thread
+        and waits for it to end, through any further cancel, before it is re-raised: the caller
+        closes the descriptor only once nothing reads it (a reused number is never read)."""
         loop, stop = asyncio.get_running_loop(), threading.Event()
 
         def report(pct: float) -> None:
@@ -168,7 +172,11 @@ class Ops:
             return await asyncio.shield(hashing)
         except asyncio.CancelledError:
             stop.set()
-            await asyncio.wait([hashing])
+            while not hashing.done():
+                try:
+                    await asyncio.wait([hashing])
+                except asyncio.CancelledError:
+                    continue  # a second cancel: still not safe to close; the first is re-raised
             raise
         except OSError:
             raise OpError("volume_unavailable") from None
