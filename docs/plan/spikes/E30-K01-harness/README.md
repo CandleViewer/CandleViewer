@@ -71,6 +71,11 @@ The Electron leg needs Electron's system libraries (the Playwright dependency se
 The default report directory is `apps/desktop/e30-k01-results/`, not `test-results/`, which Playwright empties
 when a run starts.
 
+Stop and resume: the driver writes one file per finished cell under `<report dir>/cells/` and skips cells whose
+file exists. Stop between cells by creating `<report dir>/STOP` or setting `CV_K01_MAX_CELLS=n`; re-run the same
+command to resume; `CV_K01_MERGE_ONLY=1` only assembles the results JSON from the cell files. `CV_K01_NO_SANDBOX=1`
+is for hosts without the SUID sandbox.
+
 Output: `<report dir>/e30-k01-results-<target>.json` (shape: `../E30-K01-results.schema.json`) and a
 markdown table on stdout.
 
