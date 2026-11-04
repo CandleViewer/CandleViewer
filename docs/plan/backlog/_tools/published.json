@@ -8370,6 +8370,14 @@
     "number": 783,
     "subissue_done": true
   },
+  "E24-S09": {
+    "blockedby_done": [],
+    "fields_done": true,
+    "item_id": "PVTI_lADOFI4N5c4BnyHXzhF-tms",
+    "node_id": "I_kwDOUZDkl88AAAABcb9t3Q",
+    "number": 5836,
+    "subissue_done": false
+  },
   "E24-T01": {
     "blockedby_done": [
       "E08-T04",
