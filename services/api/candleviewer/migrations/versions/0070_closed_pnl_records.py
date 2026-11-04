@@ -27,8 +27,8 @@ the two columns yet.
 * The downgrade (C-5.2) refuses while a record, a `closed_size` or an `exchange_updated_ts` is
   stored, as a stored fill is never written again (`trg_exec_append`); otherwise it drops it all.
 
-Its number is 0070, on `0064_orders_origin`: provisional, it re-parents onto the head at the PR's
-open (C-5.3), with its lockfile entry.
+Its number is 0070, the slot assigned to it, on `0064_orders_origin`: it re-parents onto the head
+below it at a rebase when a lower revision lands first (C-5.3), with its lockfile entry.
 """
 
 from __future__ import annotations

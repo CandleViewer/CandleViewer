@@ -314,7 +314,7 @@
     },
     "0070_closed_pnl_records": {
       "path": "services/api/candleviewer/migrations/versions/0070_closed_pnl_records.py",
-      "sha256": "9b979890efa0e1d0e71492f8c28378b369eee6808b69ac202486b14ea6ca5461",
+      "sha256": "a1d8a47c9de76745aef56ba14fda512984645a41637d77efa910ce3e40407682",
       "down_revision": "0064_orders_origin"
     }
   }
