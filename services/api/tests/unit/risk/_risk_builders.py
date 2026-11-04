@@ -11,8 +11,10 @@ from uuid import UUID
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, UserId
 from candleviewer.risk.caps import ManagerCaps, PolicyCaps, ProfileCaps, ResolvedCaps, resolve_caps
+from candleviewer.risk.clock import DayCalendar
+from candleviewer.risk.counters import AccountCounters
 from candleviewer.risk.evaluator import RiskEvaluation, evaluate
-from candleviewer.risk.inputs import RiskFigures, RiskOrder
+from candleviewer.risk.inputs import RiskFigures, RiskFill, RiskMark, RiskOrder
 
 NOW = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 D = Decimal
@@ -123,3 +125,35 @@ def run(
     o: RiskOrder | None = None, f: RiskFigures | None = None, c: ResolvedCaps | None = None
 ) -> RiskEvaluation:
     return evaluate(o or order(), f or figures(), c or caps(), now=NOW)
+
+
+# Slice 2: counters, marks and fills on the default UTC day key of `NOW`.
+TAKER = D("0.00055")
+
+
+def counters(now: datetime = NOW, *, taker: Decimal = TAKER, offset: int = 0) -> AccountCounters:
+    c = AccountCounters(DayCalendar(offset, now), taker_rate=taker)
+    c.set_equity(D(100_000), now)
+    c.mark_ready()
+    return c
+
+
+def fill(exec_id: str, **fields: Any) -> RiskFill:
+    base = RiskFill(
+        exec_id=exec_id,
+        order_ref="o1",
+        symbol="BTCUSDT",
+        position_side="buy",
+        opening=False,
+        qty=D(1),
+        price=D(100),
+        fee=D(0),
+        fee_rate=D(0),
+        exec_time=NOW,
+        exec_pnl=D(0),
+    )
+    return replace(base, **fields)
+
+
+def mark(price: Decimal | int, at: datetime = NOW, **fields: Any) -> RiskMark:
+    return replace(RiskMark("BTCUSDT", D(price), at, "public"), **fields)

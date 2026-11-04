@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Environment, Side, UserId
@@ -79,3 +80,65 @@ class RiskFigures:
     @property
     def gross_notional(self) -> Decimal:
         return sum(self.symbol_notional.values(), Decimal(0))
+
+
+# The stream events the counters read (E39-K01 §5). The adapter builds them from the private
+# stream, a REST backfill or the reconcile cycle; `risk/` never sees an exchange type.
+
+
+@dataclass(frozen=True, slots=True)
+class RiskFill:
+    """One execution: it opens or closes `position_side`'s position (buy = long).
+
+    A fill that flips a one-way position arrives as two fills. `fee` is the paid `execFee`,
+    `fee_rate` the pushed `feeRate`. `exec_pnl` is the closing push's price PnL, None for a REST
+    backfill, then booked from `entry_price` (the projection's average entry) and unconfirmed.
+    """
+
+    exec_id: str
+    order_ref: str  # the order the fill belongs to: one close is all of an order's closing fills
+    symbol: str
+    position_side: Side
+    opening: bool
+    qty: Decimal
+    price: Decimal
+    fee: Decimal
+    fee_rate: Decimal
+    exec_time: datetime  # exchange `execTime`: the fill's date, never its receive time
+    exec_pnl: Decimal | None = None
+    entry_price: Decimal | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RiskPosition:
+    """A position push: authoritative over the fills when it is at least as new as them."""
+
+    symbol: str
+    side: Side
+    size: Decimal
+    entry_price: Decimal
+    at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class RiskMark:
+    """A mark price: the cached public mark, or the `markPrice` of a private position push."""
+
+    symbol: str
+    price: Decimal
+    at: datetime
+    source: Literal["public", "position"]
+
+
+@dataclass(frozen=True, slots=True)
+class VenueClosedPnl:
+    """One venue closed-PnL record, matched to a local close by the interim key (K01 §5.4)."""
+
+    record_id: str
+    symbol: str
+    position_side: Side
+    qty: Decimal
+    avg_exit_price: Decimal
+    tick: Decimal  # the instrument tick the average exit price is compared at
+    pnl: Decimal
+    updated_at: datetime
