@@ -159,3 +159,7 @@ docs/plan/backlog/_tools/published.json
 # E15-K01 (#371): the spike's results, written by docs/plan/spikes/E15-K01-harness/run.mjs (Prettier-formatted
 # when first committed) and never hand-edited; ignored so no later commit reflows the generated file
 docs/plan/spikes/E15-K01-results.json
+
+# E39-K01 (#880): written by docs/plan/spikes/E39-K01-harness/daily_pnl.py (compact JSON, LF) and
+# byte-checked by its test_daily_pnl.py; prettier must not reflow it
+docs/plan/spikes/E39-K01-results.json

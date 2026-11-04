@@ -603,12 +603,13 @@ the 30-minute canary meanwhile.
 
 ### RSK-050 · Journal and exchange PnL disagree, undermining trust in the analytics
 
-`Risk: R8` · Category **Technical** · L 3 · I 3 · **Score 9 — Medium** · Owner **Backend lead** · Epics E41, E29, E45 · Status **Watching**
+`Risk: R8` · Category **Technical** · L 3 · I 3 · **Score 9 — Medium** · Owner **Backend lead** · Epics E41, E29, E45, E39 · Status **Watching**
 
 - **Description** — Fees, funding payments, partial fills, and UTA cash-flow semantics make locally-computed PnL easy to get subtly wrong. A journal that disagrees with the exchange is a journal nobody uses.
 - **Mitigation** — Reconcile against `GET /v5/position/closed-pnl` and `GET /v5/account/transaction-log` rather than computing PnL independently; read actual fee rates from `GET /v5/account/fee-rate` rather than hard-coding a schedule; funding payments captured as first-class journal events; a reconciliation report surfacing any discrepancy above a tolerance instead of hiding it.
 - **Trigger** — Any per-trade discrepancy above tolerance, or an unexplained equity-curve divergence.
 - **Contingency** — Display the exchange figure as authoritative with the local figure shown alongside and the delta explained; fix the computation as a P1.
+- **Update 2026-11-04 (E39-K01, #880)** — The same risk reaches the daily-loss cap, not only the journal: the stored rows cannot produce the cap's figure today (no `Funding` rows are stored, and a fill backfilled after a reconnect gap stores `closed_pnl` NULL, so a backfilled loss is invisible to them; `docs/plan/spikes/E39-K01.md` §4.1). The finding's decision does not read the stored rows for the cap: a stream-fed counter with a tighten-only closed-PnL reconciliation, a pessimistic booking of backfilled closes and a fail-closed rebuild on start (§5). E39 added to the epics. Trigger added: the E39-K01 demo leg (pending #843) showing a settled divergence above 1.25 USDT. Score unchanged.
 
 ### RSK-051 · Repository/CI governance surface compromised, defeating downstream controls without touching a runtime asset
 
