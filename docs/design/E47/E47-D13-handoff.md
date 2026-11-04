@@ -6,21 +6,21 @@ Components: **CMP-086 SettingsLayout** (the `SCR-119/statement` sub-view), **CMP
 
 Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
-| Item                     | The statement page (`SCR-119/statement`)                             | The report (`47-conformance-report.md`) | The register (`47-limitations.json`) |
-| ------------------------ | -------------------------------------------------------------------- | --------------------------------------- | ------------------------------------ |
-| Final Penpot link        | [ ] page `E47-D13 — Conformance statement`: boards pending (spec §0) | [x] n/a (generated text)                | [x] n/a (data)                       |
-| Variants × states        | [x] spec §7.3                                                        | [x] spec §2.2 (frozen format)           | [x] spec §6.2                        |
-| Keyboard table           | [x] spec §7.4                                                        | [x] n/a                                 | [x] n/a                              |
-| Accessible name and role | [x] spec §7.2 (one `h1`, `h2` per section, real tables)              | [x] real tables with headers            | [x] n/a                              |
-| Live data                | [x] none; the notices are read in order (spec §7.3)                  | [x] none                                | [x] none                             |
-| Motion pair              | [x] none                                                             | [x] n/a                                 | [x] n/a                              |
-| Density notes            | [x] one column at every density                                      | [x] n/a                                 | [x] n/a                              |
-| Essential exceptions     | [x] none                                                             | [x] none                                | [x] spec §6.4 (sign-off blocked)     |
-| Tokens used              | [x] spec §7.6, §7.7                                                  | [x] n/a                                 | [x] n/a                              |
-| Data contract            | [ ] NO: D13-G1, D13-G2, D13-G3                                       | [ ] NO: D13-G4, D13-G5                  | [x] spec §6.2                        |
-| Contrast                 | [x] spec §7.6 (computed)                                             | [x] n/a                                 | [x] n/a                              |
-| Storybook                | [x] §D                                                               | [x] n/a                                 | [x] n/a                              |
-| Sign-off                 | [ ] owner approval pending                                           | [ ] owner approval pending              | [ ] owner approval pending           |
+| Item                     | The statement page (`SCR-119/statement`)                                                                                                                                                    | The report (`47-conformance-report.md`) | The register (`47-limitations.json`) |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ------------------------------------ |
+| Final Penpot link        | [x] page `E47-D13 — Conformance statement` (`516c334d-ac02-80a1-8008-e3192595e5dd`): boards drawn (spec §0, §16); board 01 redrawn, its first redlines annotation shows the whole §7.7 line | [x] n/a (generated text)                | [x] n/a (data)                       |
+| Variants × states        | [x] spec §7.3                                                                                                                                                                               | [x] spec §2.2 (frozen format)           | [x] spec §6.2                        |
+| Keyboard table           | [x] spec §7.4                                                                                                                                                                               | [x] n/a                                 | [x] n/a                              |
+| Accessible name and role | [x] spec §7.2 (one `h1`, `h2` per section, real tables)                                                                                                                                     | [x] real tables with headers            | [x] n/a                              |
+| Live data                | [x] none; the notices are read in order (spec §7.3)                                                                                                                                         | [x] none                                | [x] none                             |
+| Motion pair              | [x] none                                                                                                                                                                                    | [x] n/a                                 | [x] n/a                              |
+| Density notes            | [x] one column at every density                                                                                                                                                             | [x] n/a                                 | [x] n/a                              |
+| Essential exceptions     | [x] none                                                                                                                                                                                    | [x] none                                | [x] spec §6.4 (sign-off blocked)     |
+| Tokens used              | [x] spec §7.6, §7.7                                                                                                                                                                         | [x] n/a                                 | [x] n/a                              |
+| Data contract            | [ ] NO: D13-G1, D13-G2, D13-G3                                                                                                                                                              | [ ] NO: D13-G4, D13-G5                  | [x] spec §6.2                        |
+| Contrast                 | [x] spec §7.6 (computed)                                                                                                                                                                    | [x] n/a                                 | [x] n/a                              |
+| Storybook                | [x] §D                                                                                                                                                                                      | [x] n/a                                 | [x] n/a                              |
+| Sign-off                 | [ ] owner approval pending                                                                                                                                                                  | [ ] owner approval pending              | [ ] owner approval pending           |
 
 ## §B Who applies what
 
@@ -96,7 +96,7 @@ Old is a verbatim fragment of the cited line at `4c662fd5b` (the tool checks it)
 | QA-4 | activate "Copy problem report"                                                 | the clipboard holds W-14 with the running version; one polite "Copied"; no field asks for a name                        | no case; new     |
 | QA-5 | run the tool's `--check` on a commit that adds a Supports row without evidence | exit 1, G-CLAIM                                                                                                         | TC-607 (D13-C6)  |
 
-## §H The board plan (pending; spec §0)
+## §H The board plan (drawn; spec §0, As built §16)
 
 The boards of spec §0, on page `E47-D13 — Conformance statement`; frames named `<section>/<state> · <theme>`. Data: the dry run, declared on every board's face.
 
@@ -115,7 +115,7 @@ The boards of spec §0, on page `E47-D13 — Conformance statement`; frames name
 
 ## §I Summary for #1311
 
-1. Text-first statement, report and register + hand-off + default-deny audit tool; the 10<!--=COUNT:boards--> boards of spec §0 are pending (pre-stage; BQ-0 … BQ-12 RULED as proposed, comment 6566807313; BQ-13 … BQ-16 RULED as built, default taken, comment 6567605210; `Refs #1311` + `Partial:` until #1301 closes, then the closing keyword for this ticket).
+1. Text-first statement, report and register + hand-off + default-deny audit tool; the 10<!--=COUNT:boards--> boards of spec §0 are drawn (spec §16; board 01 redrawn with the full §7.7 annotation) (pre-stage; BQ-0 … BQ-12 RULED as proposed, comment 6566807313; BQ-13 … BQ-16 RULED as built, default taken, comment 6567605210; `Refs #1311` + `Partial:` until #1301 closes, then the closing keyword for this ticket).
 2. The report: 55<!--=COUNT:report.rows--> rows, four words, generated from the registers by blob; the dry run committed with its banner.
 3. Supports only with every required artefact on every screen; missing evidence is said; reviewers lower, never raise.
 4. The evidence contract: ten classes, their artefact kinds and producers, carried as rows to the stories.

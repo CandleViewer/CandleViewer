@@ -22,7 +22,9 @@ edits (§8.3), the limitations register `docs/plan/a11y/47-limitations.json`, th
 4. **Gates.** One FAIL line per gate: G-PENDING (BQ-0 ... BQ-16 once each; BQ-0 ... BQ-12 "RULED
    as proposed (comment 6566807313)", BQ-13 ... BQ-16 "RULED as built, default taken (comment
    6567605210)", none "ruling pending"; the heading names both rulings and the list; the ruling
-   quoted verbatim), G-BOARDS, G-ROWS (55 rows, A 31 + AA 24 as the
+   quoted verbatim), G-BOARDS (at most ten boards, twins at most a third, each pending or drawn
+   with its board id, PNG, size, frames, nodes and its theme's gate, the not-drawn paragraph),
+   G-ROWS (55 rows, A 31 + AA 24 as the
    D02 catalogue tool lists them, 4.1.1 noted not rowed, levels as the four words), G-CONTRACT
    (spec §4 equals this tool's class map; every criterion in one class), G-CLAIM (no Supports
    without every required artefact on every screen and no open finding; no override raises),
@@ -33,7 +35,8 @@ edits (§8.3), the limitations register `docs/plan/a11y/47-limitations.json`, th
    plain words, no criterion number, no jargon), G-DISCLOSE (statement text carries no host, id,
    key-like string or image; internal rows map to a category sentence), G-NORM (`05` §8.3 carries
    the cadence bullet), G-T2, G-RECUR, G-HEUR, G-WALK, G-OWNER, G-INFLIGHT (the in-flight pins and
-   their re-pin note), G-UNMERGED, G-URL, G-UNTOUCHED, G-BUDGET, G-MUTLIST.
+   their re-pin note), G-UNMERGED, G-URL, G-UNTOUCHED (only this ticket's files, the boards and
+   their kit differ from the merge base with origin/main), G-BUDGET, G-MUTLIST.
 5. **Pins (G-RULED-PIN).** A whole-document default-deny pin set over every unit of the spec and
    the hand-off in `e47_d13_ruled_pins.txt`; `--repin-ruled` is its only writer.
 6. **--self-test** applies every mutation (M-n) in memory with the values frozen at the filled
@@ -73,7 +76,11 @@ NORM_REL = "docs/plan/05-accessibility-standard.md"  # §8.3 is edited by this P
 REPORT_REL = "docs/plan/a11y/47-conformance-report.md"
 LIMITS_REL = "docs/plan/a11y/47-limitations.json"
 OWN = (SPEC_REL, HAND_REL, TOOL_REL, PIN_REL, NORM_REL, REPORT_REL, LIMITS_REL)
-OWN_BOARDS = re.compile(r"docs/design/E47/img/E47-D13-\d\d-[a-z0-9-]+\.png")
+# the boards PR: the PNGs, the sheet kit, its MANIFEST lines and its .prettierignore entry
+OWN_BOARDS = re.compile(
+    r"docs/design/E47/img/E47-D13-\d\d-[a-z0-9-]+\.png|\.prettierignore"
+    r"|docs/design/_tools/sheets/(?:e47-d13/[A-Za-z0-9._/-]+|MANIFEST\.sha256)"
+)
 SPEC_BUDGET = 560
 HAND_BUDGET = 160
 
@@ -156,6 +163,14 @@ THEMES: dict[str, tuple[str, ...]] = {
 TEXT_BAR = 4.5  # SC 1.4.3, text
 NONTEXT_BAR = 3.0  # SC 1.4.11, non-text (focus ring, borders)
 BOARD_PENDING = "pending: drawn in a later push of this PR"
+DRAWN_CELL = re.compile(
+    r"drawn: board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
+    r"`docs/design/E47/img/E47-D13-(?P<nn>\d\d)-(?P<slug>[a-z0-9-]+)\.png` \(\d+ × \d+\), "
+    r"\d+ frames?, [\d,]+ nodes; (?P<gate>dark|light|high-contrast) gate PASS "
+    r"\(own [\d,]+ px, other [\d,]+ px\)"
+)
+# a drawn cell's gate is its row's theme
+GATE_OF = {"dark": "dark", "light": "light", "hc": "high-contrast"}
 
 # ---------------------------------------------------------------------------- the criteria
 
@@ -1092,8 +1107,15 @@ def g_boards(t: Texts) -> list[Finding]:
     if twins * 3 > len(rows):
         bad.append(f"{twins} twins of {len(rows)}")
     for r in rows:
-        if len(r) < 5 or r[4] != BOARD_PENDING or r[3] not in ("dark", "light", "hc"):
-            bad.append(f"board {r[0] if r else '?'} is not pending with a theme")
+        drawn = DRAWN_CELL.fullmatch(r[4]) if len(r) > 4 else None
+        if len(r) < 5 or r[3] not in ("dark", "light", "hc"):
+            bad.append(f"board {r[0] if r else '?'} has no theme")
+        elif r[4] != BOARD_PENDING and not (
+            drawn and (drawn["nn"], f"`E47-D13 / {r[0]} {drawn['slug']}`") == (r[0], r[1])
+        ):
+            bad.append(f"board {r[0]} is neither pending nor drawn")
+        elif drawn and drawn["gate"] != GATE_OF[r[3]]:
+            bad.append(f"board {r[0]}'s drawn cell names another theme's gate")
         if not re.fullmatch(
             rf"`E47-D13 / {re.escape(r[0])} [a-z0-9-]+`", r[1] if len(r) > 1 else ""
         ):
@@ -1614,7 +1636,15 @@ def _m(mid: str, what: str, gate: str, doc: str, where: str, old: str, new: str)
 
 PEND = "pending: drawn in a later push of this PR"
 MUTATIONS = (
-    _m("M-1", "blank board 01's status in §0", "G-BOARDS", "spec", "## 0.", PEND, "drawn"),
+    _m(
+        "M-1",
+        "give board 04 another theme's gate in §0",
+        "G-BOARDS",
+        "spec",
+        "## 0.",
+        "nodes; high-contrast gate PASS",
+        "nodes; dark gate PASS",
+    ),
     _m(
         "M-2",
         "draw an eleventh board in §0",
