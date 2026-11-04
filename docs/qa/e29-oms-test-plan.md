@@ -1014,35 +1014,36 @@ Every test file that a case of §6 or §8 cites in its Evidence cell, with the t
 source keys of the cases it serves, and those cases. The case rows are the source (their cells give the line of each test);
 this index is their inverse and is generated from them, so a path or a case missing here is a defect in one of the two.
 Reading by rule: the Rules column. Reading by story or task: the Source keys column. Every path was read at the base of this
-plan (`origin/main` `e2c6bfff71`). 143 of the 163 cases cite at least one test file; the other 20 are `blocked`, `lever`,
+plan (`origin/main` `e2c6bfff71`). 142 of the 163 cases cite at least one test file; the other 21 are `blocked`, `lever`,
 `gap` or `register` rows whose Evidence is `none` or a fixture (a golden body, a story), which is not a test. Chaos rows s5
 to s17 of E29-Q04, E29-X02's matrix and E29-T08's tests are on in-flight branches and are not cited as evidence.
 
 <!-- prettier-ignore -->
 | Test file | Tier | Rules | Source keys | Cases |
 | --- | --- | --- | --- | --- |
-| `services/api/tests/unit/api/test_oms_reads_route.py` | unit (T0, T3) | S4 | E29-Q01, E29-S01, E29-S04, E29-S06, E29-S08, E29-T07 | E29-TC-001, E29-TC-004, E29-TC-200, E29-TC-205, E29-TC-300, E29-TC-303, E29-TC-304, E29-TC-404, E29-TC-651, E29-TC-653, E29-TC-654, E29-TC-655, E29-TC-656, E29-TC-801 |
+| `services/api/tests/unit/api/test_oms_reads_route.py` | unit (T0, T3) | S1, S4 | E29-Q01, E29-S01, E29-S04, E29-S06, E29-S08, E29-T07 | E29-TC-001, E29-TC-004, E29-TC-017, E29-TC-200, E29-TC-205, E29-TC-300, E29-TC-303, E29-TC-304, E29-TC-404, E29-TC-651, E29-TC-653, E29-TC-654, E29-TC-655, E29-TC-656, E29-TC-801 |
 | `services/api/tests/unit/api/test_order_amend_route.py` | unit (T0, T3) | S1, S2, S5, S10 | E29-S02, E29-T04, E29-T07 | E29-TC-101, E29-TC-109, E29-TC-111, E29-TC-112, E29-TC-113, E29-TC-509, E29-TC-655 |
 | `services/api/tests/unit/api/test_order_cancel_all_route.py` | unit (T0, T3) | S1 | E29-S02 | E29-TC-105, E29-TC-110 |
-| `services/api/tests/unit/api/test_order_exits_route.py` | unit (T0, T3) | S3 | E29-S02 | E29-TC-107, E29-TC-109, E29-TC-113 |
+| `services/api/tests/unit/api/test_order_exits_route.py` | unit (T0, T3) | S3, S9 | E29-S02, E29-T03 | E29-TC-107, E29-TC-109, E29-TC-113, E29-TC-460 |
 | `services/api/tests/unit/api/test_position_close_route.py` | unit (T0, T3) | S1, S9 | E29-S01, E29-S01b, E29-S03 | E29-TC-008, E29-TC-013, E29-TC-050, E29-TC-051, E29-TC-052, E29-TC-053, E29-TC-055, E29-TC-056, E29-TC-156 |
 | `services/api/tests/unit/api/test_position_close_size.py` | unit (T0, T3) | none | E29-S03 | E29-TC-150, E29-TC-152, E29-TC-153, E29-TC-154, E29-TC-155 |
 | `services/api/tests/unit/exchange/bybit/test_mapping.py` | unit (T0, T3) | S1 | E29-Q01 | E29-TC-809 |
 | `services/api/tests/unit/exchange/bybit/test_private_no_secrets.py` | unit (T0, T3) | none | E29-Q01 | E29-TC-801 |
+| `services/api/tests/unit/exchange/bybit/test_rest_create_no_resend.py` | unit (T0, T3) | S1 | E29-Q01, E29-T04 | E29-TC-503, E29-TC-807 |
 | `services/api/tests/unit/exchange/bybit/test_rest_rate_limit_reset.py` | unit (T0, T3) | none | E29-Q01 | E29-TC-805 |
 | `services/api/tests/unit/observability/test_metrics_catalogue.py` | unit (T0, T3) | none | E29-T08 | E29-TC-704 |
 | `services/api/tests/unit/oms/test_cancel_all.py` | unit (T0, T3) | S1, S9 | E29-S02 | E29-TC-105, E29-TC-114 |
 | `services/api/tests/unit/oms/test_classify.py` | unit (T0, T3) | none | E29-T04 | E29-TC-502 |
 | `services/api/tests/unit/oms/test_clock_halt.py` | unit (T0, T3) | none | E29-Q01 | E29-TC-804 |
 | `services/api/tests/unit/oms/test_command_settled_state.py` | unit (T0, T3) | S10 | E29-T03 | E29-TC-458 |
+| `services/api/tests/unit/oms/test_commands.py` | unit (T0, T3) | none | E29-Q01 | E29-TC-804 |
 | `services/api/tests/unit/oms/test_commands_amend.py` | unit (T0, T3) | S2 | E29-T04 | E29-TC-509 |
-| `services/api/tests/unit/oms/test_day_figures.py` | unit (T0, T3) | none | E29-S06 | E29-TC-301 |
 | `services/api/tests/unit/oms/test_e29_s03_acceptance.py` | unit (T0, T3) | none | E29-S03 | E29-TC-150, E29-TC-151, E29-TC-152, E29-TC-153, E29-TC-154, E29-TC-157 |
 | `services/api/tests/unit/oms/test_e29_t05_acceptance.py` | unit (T0, T3) | S1, S4, S5, S6, S9 | E29-S04, E29-S07, E29-T05 | E29-TC-202, E29-TC-206, E29-TC-350, E29-TC-550, E29-TC-551, E29-TC-552, E29-TC-553, E29-TC-554, E29-TC-555, E29-TC-556, E29-TC-558, E29-TC-559 |
 | `services/api/tests/unit/oms/test_e29_t13_acceptance.py` | unit (T0, T3) | S4, S5 | E29-S04, E29-T13 | E29-TC-206, E29-TC-750, E29-TC-752, E29-TC-753, E29-TC-754 |
 | `services/api/tests/unit/oms/test_execution.py` | unit (T0, T3) | S4, S5 | E29-Q01 | E29-TC-810 |
 | `services/api/tests/unit/oms/test_exit_settled_state.py` | unit (T0, T3) | S10 | E29-T03 | E29-TC-458 |
-| `services/api/tests/unit/oms/test_exits.py` | unit (T0, T3) | S1, S6, S9 | E29-Q01, E29-T03, E29-T07 | E29-TC-450, E29-TC-652, E29-TC-806, E29-TC-809 |
+| `services/api/tests/unit/oms/test_exits.py` | unit (T0, T3) | S1, S3, S6, S9 | E29-Q01, E29-S02, E29-T03, E29-T07 | E29-TC-107, E29-TC-450, E29-TC-652, E29-TC-806, E29-TC-809 |
 | `services/api/tests/unit/oms/test_idempotency.py` | unit (T0, T3) | S1 | E29-T04, E29-T08 | E29-TC-504, E29-TC-701 |
 | `services/api/tests/unit/oms/test_order_link_allocator.py` | unit (T0, T3) | none | E29-T04 | E29-TC-508 |
 | `services/api/tests/unit/oms/test_order_link_resolution.py` | unit (T0, T3) | S1, S5, S8, S9 | E29-Q01, E29-T04 | E29-TC-507, E29-TC-800 |
@@ -1054,7 +1055,7 @@ to s17 of E29-Q04, E29-X02's matrix and E29-T08's tests are on in-flight branche
 | `services/api/tests/unit/oms/test_ports.py` | unit (T0, T3) | none | E29-T06 | E29-TC-607 |
 | `services/api/tests/unit/oms/test_reconcile_driver_scenarios.py` | unit (T0, T3) | S1, S9 | E29-T06 | E29-TC-600, E29-TC-601, E29-TC-602, E29-TC-603, E29-TC-604, E29-TC-605, E29-TC-606 |
 | `services/api/tests/unit/oms/test_reconcile_job.py` | unit (T0, T3) | none | E29-T06 | E29-TC-608 |
-| `services/api/tests/unit/oms/test_reconcile_report.py` | unit (T0, T3) | S4, S5 | E29-S08, E29-T06 | E29-TC-402, E29-TC-602, E29-TC-609, E29-TC-612 |
+| `services/api/tests/unit/oms/test_reconcile_report.py` | unit (T0, T3) | S1, S4, S5 | E29-S01, E29-S07, E29-S08, E29-T06 | E29-TC-017, E29-TC-353, E29-TC-402, E29-TC-602, E29-TC-609, E29-TC-612 |
 | `services/api/tests/unit/oms/test_reconcile_scenarios.py` | unit (T0, T3) | S1, S9 | E29-T06 | E29-TC-600, E29-TC-601, E29-TC-602, E29-TC-603, E29-TC-604, E29-TC-605, E29-TC-606 |
 | `services/api/tests/unit/oms/test_reconcile_standing.py` | unit (T0, T3) | S1 | E29-S07, E29-T06, E29-T08 | E29-TC-352, E29-TC-357, E29-TC-605, E29-TC-706 |
 | `services/api/tests/unit/oms/test_reconcile_stops.py` | unit (T0, T3) | none | E29-S07, E29-T06 | E29-TC-353, E29-TC-604 |
@@ -1068,6 +1069,7 @@ to s17 of E29-Q04, E29-X02's matrix and E29-T08's tests are on in-flight branche
 | `services/api/tests/unit/oms/test_ws_topics_scope.py` | unit (T0, T3) | none | E29-S04, E29-S05, E29-T13 | E29-TC-205, E29-TC-254, E29-TC-752 |
 | `services/api/tests/unit/oms/test_ws_topics_serving.py` | unit (T0, T3) | S5 | E29-T13 | E29-TC-750, E29-TC-751, E29-TC-752, E29-TC-756 |
 | `services/api/tests/unit/test_oms_reconcile_wiring.py` | unit (T0, T3) | none | E29-T06 | E29-TC-609 |
+| `services/api/tests/unit/ws/test_pipeline_invalidation.py` | unit (T0, T3) | none | E29-S01 | E29-TC-011 |
 | `services/api/tests/contract/bybit/test_contract_errors.py` | contract | S1 | E29-Q01 | E29-TC-804, E29-TC-805, E29-TC-807 |
 | `services/api/tests/contract/bybit/test_contract_trading.py` | contract | S1 | E29-Q01 | E29-TC-809 |
 | `services/api/tests/contract/rbac/matrix.yaml` | contract | none | E29-S01 | E29-TC-004 |
@@ -1080,6 +1082,7 @@ to s17 of E29-Q04, E29-X02's matrix and E29-T08's tests are on in-flight branche
 | `services/api/tests/contract/test_position_writes_contract.py` | contract | none | E29-T07 | E29-TC-650 |
 | `services/api/tests/contract/test_reconciliation_routes_contract.py` | contract | S1 | E29-S07, E29-T06 | E29-TC-352, E29-TC-357, E29-TC-608, E29-TC-609 |
 | `services/api/tests/contract/ws/test_ws_oms_topics_contract.py` | contract | S5 | E29-T13 | E29-TC-750, E29-TC-751, E29-TC-752, E29-TC-754, E29-TC-755, E29-TC-756 |
+| `services/api/tests/contract/ws/test_ws_s2_s9.py` | contract | none | E29-S01 | E29-TC-011 |
 | `services/api/tests/integration/oms/test_order_exits_pg.py` | integration (T4) | S2, S3 | E29-T03, E29-T04 | E29-TC-451, E29-TC-505, E29-TC-509 |
 | `services/api/tests/integration/oms/test_partial_close_pg.py` | integration (T4) | none | E29-S03 | E29-TC-150 |
 | `services/api/tests/integration/oms/test_place_order_route_pg.py` | integration (T4) | S1, S7, S8 | E29-Q01, E29-T03, E29-T04 | E29-TC-456, E29-TC-500, E29-TC-501, E29-TC-502, E29-TC-503, E29-TC-504, E29-TC-506, E29-TC-806, E29-TC-807 |
@@ -1088,7 +1091,6 @@ to s17 of E29-Q04, E29-X02's matrix and E29-T08's tests are on in-flight branche
 | `services/api/tests/integration/oms/test_submission_pipeline_pg.py` | integration (T4) | S1, S7, S8 | E29-T04 | E29-TC-500, E29-TC-501, E29-TC-502, E29-TC-503, E29-TC-504, E29-TC-506, E29-TC-507, E29-TC-508 |
 | `services/api/tests/integration/storage/test_oms_reads_pg.py` | integration (T4) | none | E29-T07 | E29-TC-651, E29-TC-654, E29-TC-656 |
 | `services/api/tests/integration/storage/test_orders_store_pg.py` | integration (T4) | S4, S8 | E29-T03 | E29-TC-453, E29-TC-455 |
-| `services/api/tests/integration/storage/test_risk_state_migration.py` | integration (T4) | none | E29-S06 | E29-TC-301 |
 | `services/api/tests/chaos/oms/test_s1_private_stream_kill.py` | chaos (T3, PR lane) | S1, S4, S5 | E29-Q01, E29-S07, E29-T05 | E29-TC-350, E29-TC-355, E29-TC-552, E29-TC-808 |
 | `services/api/tests/chaos/oms/test_s2_duplicate_pushes.py` | chaos (T3, PR lane) | S1, S4, S5 | E29-S04, E29-S07, E29-T03, E29-T05 | E29-TC-202, E29-TC-355, E29-TC-453, E29-TC-553 |
 | `services/api/tests/chaos/oms/test_s3_out_of_order_pushes.py` | chaos (T3, PR lane) | S4, S5 | E29-S04, E29-T03, E29-T05 | E29-TC-206, E29-TC-459, E29-TC-559 |
