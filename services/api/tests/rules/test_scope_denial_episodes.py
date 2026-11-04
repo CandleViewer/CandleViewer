@@ -4,8 +4,8 @@
 recorded: a refusal opens one; the same refusal, at the same rule version, holds it; another reason
 or another version opens a new one; an evaluation the gate passes ends it; a skip decided before
 the gate (`disabled`, `paused`) neither opens nor ends one. An episode also ends when its record
-job is shed or its write fails (`forget`, `ending_on_failure`) and when its rule leaves the work
-list (`retain`).
+job is shed, its write fails or its re-check passes and writes nothing (`forget`,
+`ending_on_failure`) and when its rule leaves the work list (`retain`).
 """
 
 from __future__ import annotations
@@ -109,6 +109,10 @@ async def _written(_req: ActionRequest) -> bool:
     return False  # the emitter's answer for an action it refused and recorded
 
 
+async def _passes(_req: ActionRequest) -> bool:
+    return True  # the emitter's answer for an action whose re-check passed: nothing recorded
+
+
 @pytest.mark.parametrize(
     ("emit", "error"), [(_raises, RuntimeError), (_never_answers, TimeoutError)]
 )
@@ -130,3 +134,12 @@ async def test_episodes_a_record_job_that_writes_keeps_its_episode() -> None:
     assert episodes.first(result)
     assert await episodes.ending_on_failure(result, _written)(REQ) is False  # its answer, as is
     assert not episodes.first(result)  # the episode holds
+
+
+async def test_episodes_a_record_job_whose_recheck_passes_ends_its_episode() -> None:
+    """An action that passes its re-check writes no record, so its episode ends; its answer goes
+    on as it is."""
+    episodes, result = DenialEpisodes(), _refused("grant_revoked")
+    assert episodes.first(result)
+    assert await episodes.ending_on_failure(result, _passes)(REQ) is True  # its answer, as is
+    assert episodes.first(result)  # ended: the next evaluation opens it and records it

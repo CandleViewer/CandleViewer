@@ -384,9 +384,9 @@ class RulesService:
             queue: audited per action, never dispatched, whatever the emitter's re-check finds,
             and never in a fire's slot or lane. The gate refused them, so each counts under
             `scope` on every evaluation (BQ-5); the evaluation that opens a (rule, instance,
-            reason) episode offers their records (`DenialEpisodes`), and a shed job or a failed
-            write ends the episode, so the next evaluation that holds the refusal offers them
-            again. A binding refusal is an evaluation skip, not a gate refusal
+            reason) episode offers their records (`DenialEpisodes`); a shed job, a failed write or
+            a passing re-check ends the episode, and the next one that holds the refusal offers
+            them again. A binding refusal is an evaluation skip, not a gate refusal
             (`EvaluationResult.binding_refused`): no action is refused or counted, and only its
             episode's first offers one record-only job, which names the cause and the instance
             (`ScopedActionEmitter.binding_skipped`)."""
@@ -413,7 +413,7 @@ class RulesService:
                     self._metrics.refused(action.type, "scope")
                 if result.scope_refusal is not None and not first_denial:
                     return  # held: counted, and recorded by its episode's first evaluation
-            if first_denial:  # its write raising, or cut short, ends the episode
+            if first_denial:  # its write raising or cut short, or its re-check passing, ends it
                 emit = denials.ending_on_failure(result, emit)
             ref = instance_ref(result.scope_instance)
             run_id = uuid4()  # the fire's id: its actions share it (24 §11.9)

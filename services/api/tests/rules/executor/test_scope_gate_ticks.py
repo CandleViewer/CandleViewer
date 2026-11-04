@@ -7,9 +7,9 @@ as a rule on `any` or `account` does: no scope refusal is recorded or counted fo
 
 A genuine mismatch the gate refuses is counted under `scope` on every tick, and recorded once per
 (rule, instance, reason) episode: by the tick that opens it, again when the reason changes or the
-refusal clears and returns, and never by a tick that holds it. An episode whose record job is shed
-or whose write fails ends, and so does every episode of a rule that leaves the work list: the next
-tick that holds the refusal records it.
+refusal clears and returns, and never by a tick that holds it. An episode whose record job is shed,
+whose write fails or whose re-check passes ends, and so does every episode of a rule that leaves
+the work list: the next tick that holds the refusal records it.
 """
 
 from __future__ import annotations
@@ -280,6 +280,30 @@ async def test_a_failed_record_write_ends_its_episode_so_a_later_tick_records_it
     await _ticks(rig, 3)  # the refusal holds: the next tick opens the episode again
     assert _denials(rig) == [("send_notification", "grant_revoked")]
     assert rig.counted.blocked() == {"scope": 4}
+
+
+async def test_a_refusal_that_clears_before_its_record_job_runs_is_recorded_when_it_returns(
+    rig: DispatchRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The record job re-checks its actions as it runs: a re-check that passes writes nothing and
+    ends the episode, so the refusal back on the next tick opens one and is recorded."""
+    offers = _offers(rig, monkeypatch)
+    x = await rig.add("armed", accounts=(A,))
+    y = await rig.add("armed", accounts=(B,))
+    rig.sink.gate(AUDIT)  # a record's write waits for a release
+    rig.source.grants = []  # tick 1: both grants withdrawn
+    await rig.fire()
+    await rig.sink.until(lambda: len(rig.audits) == 1)  # X's record is in its write, Y's job waits
+    rig.source.grants = [(B, True, False)]  # the grant on B restored, before Y's job runs
+    await rig.svc.refresh_scope(OWNER)
+    rig.sink.release(AUDIT, 20)
+    await rig.settle()
+    assert [d["account"] for _, d in rig.audits] == [str(A)]  # Y's re-check passed: no record
+    rig.source.grants = []  # withdrawn again
+    await _ticks(rig, 2)  # ticks 2 and 3: the same refusal
+    assert [d["account"] for _, d in rig.audits] == [str(A), str(B)]  # Y's, once
+    assert offers == [(x, True), (y, True), (y, True)]
+    assert rig.counted.blocked() == {"scope": 6}
 
 
 async def test_a_rule_back_on_the_work_list_records_its_refusal_again(rig: DispatchRig) -> None:

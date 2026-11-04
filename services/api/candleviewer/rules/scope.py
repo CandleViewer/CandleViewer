@@ -360,8 +360,8 @@ class DenialEpisodes:
     instance's later evaluations holds it: counted as every refusal is, and not recorded again. A
     refusal for another reason, or under another version of the rule, opens a new episode. An
     episode ends when the gate passes the instance, when its rule leaves the work list (`retain`),
-    or when its record job is shed or its write fails (`forget`): the next evaluation that holds
-    the refusal then opens one and records it. A skip decided before the gate
+    or when its record job is shed, its write fails or its re-check passes (`forget`): the next
+    evaluation that holds the refusal then opens one and records it. A skip decided before the gate
     (`BEFORE_SCOPE_GATE`) neither opens nor ends one. One map per running evaluator
     (`RulesService._start_evaluator`), holding the open episodes of the rules on its work list."""
 
@@ -398,14 +398,18 @@ class DenialEpisodes:
 
     def ending_on_failure(self, result: EvaluationResult, emit: _Emit) -> _Emit:
         """`emit` for the record job of the episode `result` opened: a write that raises, or that
-        a timeout or a stop cuts short, ends the episode (`forget`)."""
+        a timeout or a stop cuts short, ends the episode (`forget`), and so does an emit that
+        answers passed, which writes no record."""
 
         async def emitting(req: ActionRequest) -> bool:
             try:
-                return await emit(req)
+                passed = await emit(req)
             except BaseException:  # re-raised: the record is not written, so its episode ends
                 self.forget(result)
                 raise
+            if passed:  # its re-check passed: no record is written, so its episode ends
+                self.forget(result)
+            return passed
 
         return emitting
 
