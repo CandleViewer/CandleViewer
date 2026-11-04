@@ -104,6 +104,12 @@ def test_config_paths_through_a_symlink_are_refused(tmp_path: Path) -> None:
         load(_env(tmp_path, CVB_BACKUP_ROOT=str(tmp_path / "link" / "backups")))
 
 
+def test_config_root_with_a_hidden_component_is_refused(tmp_path: Path) -> None:
+    (tmp_path / ".hidden").mkdir()
+    with pytest.raises(ConfigError, match="CVB_BACKUP_ROOT must have no component that starts"):
+        load(_env(tmp_path, CVB_BACKUP_ROOT=str(tmp_path / ".hidden")))
+
+
 def test_config_repr_holds_paths_and_public_values_only(tmp_path: Path) -> None:
     config = load(_env(tmp_path))
     shown = repr(config)

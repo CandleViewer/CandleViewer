@@ -152,13 +152,15 @@ def is_kind(value: object) -> bool:
 
 def is_location(value: object) -> bool:
     """`<root>/<kind>/<uuid4>.age` in shape: absolute, canonical, at most `MAX_LOCATION` bytes,
-    no `..`, `//`, `://` or `@`. The sidecar compares the root and the kind itself."""
+    no `..`, `//`, `://` or `@`, and no component that starts with `.`, so never one in the
+    quarantine or the run record. The sidecar compares the root depth and the kind itself
+    (`paths.Root.artefact`)."""
     if not (isinstance(value, str) and 0 < len(value) <= MAX_LOCATION):
         return False
     if _PATH_CHARS.fullmatch(value) is None or not value.startswith("/") or ".." in value:
         return False
     parts = value.split("/")[1:]
-    if len(parts) < 3 or any(p in ("", ".", "..") for p in parts):
+    if len(parts) < 3 or any(p == "" or p.startswith(".") for p in parts):
         return False
     return is_kind(parts[-2]) and _NAME.fullmatch(parts[-1]) is not None
 

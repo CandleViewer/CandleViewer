@@ -79,6 +79,8 @@ def load(env: Mapping[str, str]) -> SidecarConfig:
     socket, root = _path(env, "CVB_SOCKET"), _path(env, "CVB_BACKUP_ROOT")
     if socket == root or socket.startswith(root + "/") or root.startswith(socket + "/"):
         raise ConfigError("CVB_SOCKET must not be, contain or lie inside CVB_BACKUP_ROOT")
+    if any(part.startswith(".") for part in root.split("/")):  # a location never has one (§15.8)
+        raise ConfigError("CVB_BACKUP_ROOT must have no component that starts with a dot")
     api_uid = _int(env, "CVB_API_UID", None, 1, 2**31 - 1)
     if api_uid == os.getuid():
         raise ConfigError("CVB_API_UID must not be the sidecar's own uid")

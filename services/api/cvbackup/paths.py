@@ -19,6 +19,8 @@ import stat
 from collections.abc import Iterable, Iterator
 from typing import Final
 
+from cvbackup import protocol
+
 LEDGER_DIR: Final = ".cvb"
 QUARANTINE_DIR: Final = ".quarantine"
 _DIRECTORY: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -50,6 +52,11 @@ def components(path: str) -> tuple[str, ...] | None:
     return parts
 
 
+def is_artefact_name(name: str) -> bool:
+    """`<uuid>.age`, so one component: never `.`, `..`, a `/` or a hidden name."""
+    return name.endswith(".age") and protocol.is_uuid(name[:-4])
+
+
 class Root:
     """The backup root, walked component by component for every access."""
 
@@ -67,6 +74,16 @@ class Root:
         if parts is None or len(parts) <= depth or parts[:depth] != self._parts:
             return None
         return parts[depth:]
+
+    def artefact(self, location: str) -> tuple[str, str]:
+        """`location`'s kind and file name: exactly `<root>/<kind>/<uuid>.age` (24 §15.8), never
+        deeper (the quarantine, the run record), else `artefact_missing` before any I/O."""
+        below = self.relative(location)
+        if below is None or len(below) != 2 or not protocol.is_kind(below[0]):
+            raise PathFault("artefact_missing")
+        if not is_artefact_name(below[1]):
+            raise PathFault("artefact_missing")
+        return below[0], below[1]
 
     @contextlib.contextmanager
     def directory(self, below: Iterable[str] = ()) -> Iterator[int]:
@@ -110,13 +127,11 @@ class Root:
     def open_artefact(self, location: str) -> tuple[int, int]:
         """A read descriptor and the size of the regular file `location` names, with one link,
         on the root's device, else `PathFault`."""
-        below = self.relative(location)
-        if below is None:
-            raise PathFault("artefact_missing")
-        with self.directory(below[:-1]) as parent:
+        kind, name = self.artefact(location)
+        with self.directory((kind,)) as parent:
             device = os.fstat(parent).st_dev
             try:
-                fd = os.open(below[-1], _FILE, dir_fd=parent)
+                fd = os.open(name, _FILE, dir_fd=parent)
             except OSError as error:
                 raise _fault(error) from None
         info = os.fstat(fd)
@@ -127,13 +142,14 @@ class Root:
 
     def quarantine(self, location: str, name: str) -> bool:
         """Rename `location` into the quarantine as `name`, at once, with its bytes kept; both
-        directories are synced. False when nothing is at `location`."""
-        below = self.relative(location)
-        if below is None:
+        directories are synced. False when nothing is at `location`. `name` is one artefact
+        name (`is_artefact_name`), else `artefact_missing` before any I/O."""
+        kind, below = self.artefact(location)
+        if not is_artefact_name(name):
             raise PathFault("artefact_missing")
-        with self.directory(below[:-1]) as parent, self.directory((QUARANTINE_DIR,)) as kept:
+        with self.directory((kind,)) as parent, self.directory((QUARANTINE_DIR,)) as kept:
             try:
-                info = os.lstat(below[-1], dir_fd=parent)
+                info = os.lstat(below, dir_fd=parent)
             except FileNotFoundError:
                 return False
             except OSError as error:
@@ -147,7 +163,7 @@ class Root:
             else:
                 raise PathFault("volume_unavailable")  # a name already taken: never replaced
             try:
-                os.rename(below[-1], name, src_dir_fd=parent, dst_dir_fd=kept)
+                os.rename(below, name, src_dir_fd=parent, dst_dir_fd=kept)
                 os.fsync(parent)
                 os.fsync(kept)
             except OSError as error:
@@ -155,7 +171,10 @@ class Root:
         return True
 
     def purge(self, name: str) -> None:
-        """Delete `name` from the quarantine; one already gone counts as purged."""
+        """Delete `name` from the quarantine; one already gone counts as purged. `name` is one
+        artefact name (`is_artefact_name`), else `artefact_missing` before any I/O."""
+        if not is_artefact_name(name):
+            raise PathFault("artefact_missing")
         with self.directory((QUARANTINE_DIR,)) as kept:
             try:
                 os.unlink(name, dir_fd=kept)
@@ -166,12 +185,10 @@ class Root:
                 raise _fault(error) from None
 
     def exists(self, location: str) -> bool:
-        below = self.relative(location)
-        if below is None:
-            raise PathFault("artefact_missing")
-        with self.directory(below[:-1]) as parent:
+        kind, name = self.artefact(location)
+        with self.directory((kind,)) as parent:
             try:
-                os.lstat(below[-1], dir_fd=parent)
+                os.lstat(name, dir_fd=parent)
             except FileNotFoundError:
                 return False
             except OSError as error:

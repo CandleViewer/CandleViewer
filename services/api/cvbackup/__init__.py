@@ -13,9 +13,10 @@ only. The wheel packages only `candleviewer`, the sdist excludes this package
 (`services/api/pyproject.toml`), and `infra/images/Dockerfile.api` copies only `candleviewer`, so
 the API image never carries it.
 
-Modules (#3319 B1b): `config`, `protocol` (the §15.8 codec), `server` (the socket), `paths`
-(confinement on the backup volume), `ledger` (its own run record), `floor` (the rules no request
-lifts), `ops` (plan, verify, remove; run and restore answer until B1c and B2) and `age_format`
-(the recipient fingerprint and the header check, no decryption). The run path (child processes,
-the age tool, the dump kinds) is B1c.
+Modules (#3319 B1b, each with the slice that adds it): `config`, `protocol` (the §15.8 codec),
+`paths` (confinement on the backup volume) and `age_format` (the recipient fingerprint and the
+header check, no decryption) in B1b-1; `ledger` (its own run record), `floor` (the rules no
+request lifts) and `ops` (plan, verify, remove; run and restore answer until B1c and B2) in B1b-2;
+`server` (the socket) in B1b-3. The run path (child processes, the age tool, the dump kinds) is
+B1c.
 """

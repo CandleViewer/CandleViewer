@@ -132,6 +132,8 @@ def test_protocol_a_refusal_echoes_the_request_id_when_it_reads() -> None:
         "/srv/cv/pg_dump/4b7c1e2a-9f3d-4c5e-8a6b-7d8e9f0a1b2c.tar",
         "/pg_dump/4b7c1e2a-9f3d-4c5e-8a6b-7d8e9f0a1b2c.age",
         "/srv/cv/PG/4b7c1e2a-9f3d-4c5e-8a6b-7d8e9f0a1b2c.age",
+        "/srv/cv/.quarantine/pg_dump/4b7c1e2a-9f3d-4c5e-8a6b-7d8e9f0a1b2c.age",
+        "/srv/cv/.cvb/pg_dump/4b7c1e2a-9f3d-4c5e-8a6b-7d8e9f0a1b2c.age",
         "/" + "a/" * 260 + "pg_dump/4b7c1e2a-9f3d-4c5e-8a6b-7d8e9f0a1b2c.age",
     ],
 )
