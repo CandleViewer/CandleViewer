@@ -10662,7 +10662,7 @@ export interface components {
     };
     /** @enum {string} */
     PositionMode: "one_way" | "hedge";
-    /** @description RFC 9457 problem detail. `code` mirrors the `x-error-codes` catalogue. */
+    /** @description RFC 9457 problem detail. `code` mirrors the `x-error-codes` catalogue. `validation_failed` is 400 when the request is malformed (unparseable body, a bad query parameter or cursor) and 422 when a well-formed body fails semantic validation; an operation's declared responses name which. */
     Problem: {
       /** @description `step_up_required` only: the step-up class the refused request needs, one of the `action_class` values of `POST /auth/step-up`. */
       action_class?: string;
