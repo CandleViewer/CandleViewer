@@ -4136,6 +4136,56 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E35",
         max_series=2,
     ),
+    # E35-T15 (#5745, BQ-T15-01): the metric producer bridge (`rules/producers.py`). `metric` is a
+    # registry name (105 today, cap 128), `producer` one of five fixed names (cap 8), `reason`
+    # the closed refusal set of five; no label names a symbol, a rule, an account or a value.
+    _s(
+        "rule_metric_pushes_total",
+        "counter",
+        "pushes",
+        ("metric",),
+        "Metric values the producer bridge wrote to the rules metric source, by registry metric.",
+        "dashboard only",
+        _L,
+        "E35",
+        max_series=128,
+    ),
+    _s(
+        "rule_metric_producer_errors_total",
+        "counter",
+        "errors",
+        ("producer",),
+        "Exceptions a metric producer's callback raised, caught by the bridge, by producer.",
+        "dashboard only",
+        _L,
+        "E35",
+        max_series=8,
+    ),
+    _s(
+        "rule_metric_refused_total",
+        "counter",
+        "pushes",
+        ("reason",),
+        "Metric pushes the producer bridge refused, by reason: unregistered (a name outside the "
+        "registry or the producer's set), undemanded (no evaluable rule reads it), demand_cap "
+        "(past 4096 bound refs), lease (a bar-series lease the caps refused) or params (a "
+        "parameter set the producer cannot read).",
+        "dashboard only",
+        _L,
+        "E35",
+        max_series=5,
+    ),
+    _s(
+        "rule_metrics_in_warmup",
+        "gauge",
+        "refs",
+        (),
+        "Demanded metric refs with no value for more than 30 s (WARMUP_ALERT_S).",
+        "dashboard only",
+        _L,
+        "E35",
+        max_series=1,
+    ),
     _s(
         "rule_signal_chain_truncated_total",
         "counter",

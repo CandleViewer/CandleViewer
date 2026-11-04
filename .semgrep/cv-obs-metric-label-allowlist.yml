@@ -179,9 +179,16 @@ rules:
       # reason, also (E35-T09, #5000, rule_actions_blocked_total): what stopped a rule action, the
       #   closed 16 of `rules/executor/results.BlockedBy` (24 Sec.11.9), never an identifier;
       #   max_series=16.
+      # metric (E35-T15, #5745, rule_metric_pushes_total): a rules metric registry name, the closed
+      #   set of `rules/vocabulary/metric_names.golden.txt` (105 today); a push is counted only for
+      #   a name the attached producers bind (`ProducerBridge.bound`, 13 today), never a symbol, a
+      #   rule, an account or a value; max_series=128.
+      # producer (E35-T15, #5745, rule_metric_producer_errors_total): a producer's fixed name,
+      #   {bar_fields, quote, ticker, book_depth, feed_health} (`rules_producers_wiring.py`);
+      #   max_series=8.
       - metavariable-regex:
           metavariable: $LABEL
-          regex: "^(?!(action|blocked_type|bucket|builtin|cap|cause|class|code|depth|directive|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|generation|history|indicator|kind|method|operation|outcome|permission|port|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger|trigger_mode|type|version|where|wire)$).*$"
+          regex: "^(?!(action|blocked_type|bucket|builtin|cap|cause|class|code|depth|directive|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|generation|history|indicator|kind|method|metric|operation|outcome|permission|port|producer|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger|trigger_mode|type|version|where|wire)$).*$"
     paths:
       include:
         - "services/api/candleviewer/**"
