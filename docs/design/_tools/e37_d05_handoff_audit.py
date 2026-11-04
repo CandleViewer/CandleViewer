@@ -4,8 +4,8 @@
 Standalone, offline, stdlib only; it runs no repo code and is run with `python3 -I`. It reads the
 pack (spec, hand-off, the copy deck's JSON Lines twin) and the pins file from the working tree, and every
 cited file AS TEXT with `git show`: the plan docs, E37-D02, `ports.ts`, the keyboard core's
-`copy.ts` and the E36-D05 deck at the pinned base (`BASE`); E37-D03 at #5448's head (`D03_REF`)
-and E37-D04 at #5495's head (`D04_REF`) until they merge.
+`copy.ts` and the E36-D05 deck at the pinned base (`BASE`); E37-D03 at #5448's merge commit
+(`D03_REF`) and E37-D04 at #5495's merge commit (`D04_REF`), both as merged.
 Default-deny: a gate that cannot read its input FAILs.
 
 Two stages, named by an explicit `--stage deck|full` (default `full`; never chosen by which files
@@ -28,7 +28,10 @@ Gates (each FAIL led by its name):
             frame is a D02 frame on its cited line; every D02 frame is indexed once.
   G-SHEET   every component of the set has a sheet with Props, States, Tokens, Name and Owner
             story, a hand-off contract row and a Storybook row; every token a sheet names is in
-            the token map; every hand-off A-row's Old text or anchor stands once in its file.
+            the token map; every hand-off A-row's Old text or anchor stands once in its file at
+            the base, and (the applied mode) its new text once in the working tree's `14` / `15`;
+            A-10, A-13 and A-16 carry the T2 clause, and so does the applied `15` entry of the
+            component each amends (G-T2.6 on the amendments, D02's one rule).
   G-DECK    the JSON Lines twin (one row per line) equals the deck tables and its slot samples
             section 8.4; every row has the nine fields and the `frozen` flag and no other; keys,
             kinds and statuses are from their sets (merged, RULED, PROPOSED); the head's caps are
@@ -49,13 +52,13 @@ Gates (each FAIL led by its name):
             pins file's hash; the SHA anchors are the pinned refs.
   G-HYGIENE no closing keyword, local path, URL, agent name, double-brace slot or deny word in
             the pack, this tool or the pins file; no unknown anchor.
-  G-SCOPE   the diff against `git merge-base HEAD origin/main` touches only the five files (the
-            deck and this tool at the deck stage).
+  G-SCOPE   the diff against `git merge-base HEAD origin/main` touches only the seven files, the
+            five and `14` / `15` (the deck and this tool at the deck stage).
   G-STATUS  a deck row whose source line marks its string PROPOSED stays PROPOSED; a merged row's
             first cite is a merged file; a RULED row cites D03, D04 or its ruling; section 3.1
             keeps the `application` role PROPOSED until E37-Q05's run, never merged or RULED.
-  G-CHECKLIST section 13 holds DA-1 ... DA-17 in order: DA-1 ... DA-7 cite `14`'s seven boxes,
-            DA-8 ... DA-17 cite D04's SC-1 ... SC-10, each on the line that starts with its SC id.
+  G-CHECKLIST section 13 holds DA-1 ... DA-18 in order: DA-1 ... DA-7 cite `14`'s seven boxes,
+            DA-8 ... DA-18 cite D04's SC-1 ... SC-11, each on the line that starts with its SC id.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e37_d05_handoff_audit.py --stage deck --check   (exit 1 on any
@@ -88,13 +91,14 @@ TOOL_REL = "docs/design/_tools/e37_d05_handoff_audit.py"
 PINS_REL = "docs/design/_tools/e37_d05_ruled_pins.txt"
 OWN_PATHS = (SPEC_REL, HAND_REL, DECK_REL, TOOL_REL, PINS_REL)
 DECK_PATHS = (DECK_REL, TOOL_REL)
+CAT_PATHS = ("docs/plan/14-screens-catalogue.md", "docs/plan/15-component-catalogue.md")
 STAGES = ("deck", "full")
 BASE = "860056b7706c1c1152a7382a53a9cfe2396de893"  # origin/main as ruled (BQ-02)
-D03_REF = "fa8121d1b9601727a77d9c5013f4c5bbcfb87951"  # #5448's head (E37-D03 PR 2)
-D04_REF = "19e002c0799086a77f7b007a1facbbd58928d3d4"  # #5495's head (E37-D04, its lens fold)
+D03_REF = "8457a5262fb6eaed6867d8b32e6e576be96ba80d"  # #5448's merge commit (E37-D03 PR 2)
+D04_REF = "075f6111c3cdfe69d03e9f96afa2fdc057f91544"  # #5495's merge commit (E37-D04)
 PATHS: dict[str, str] = {
-    "14": "docs/plan/14-screens-catalogue.md",
-    "15": "docs/plan/15-component-catalogue.md",
+    "14": CAT_PATHS[0],
+    "15": CAT_PATHS[1],
     "D02": "docs/design/E37/E37-D02.md",
     "D03": "docs/design/E37/E37-D03.md",
     "D04": "docs/design/E37/E37-D04.md",
@@ -130,9 +134,23 @@ PX = re.compile(r"\b\d+(?:\.\d+)? ?px\b")
 SOFT = re.compile(r"\b(?:undo|just|simply|anytime)\b", re.IGNORECASE)
 COMPONENTS = (
     "CMP-146", "CMP-147", "CMP-148", "CMP-149", "CMP-150", "CMP-151", "CMP-152", "CMP-153",
-    "CMP-158", "CMP-234", "CMP-235", "CMP-236", "CMP-237", "CMP-238", "CMP-254",
+    "CMP-157", "CMP-158", "CMP-234", "CMP-235", "CMP-236", "CMP-237", "CMP-238", "CMP-257",
 )  # fmt: skip
 SHEET_FIELDS = ("Props", "States", "Tokens", "Name", "Owner story")
+# G-T2.6 (rule 32): FZ-5 is a T2 key, so every component list names both T2 parts
+T2_PARTS = (("CMP-079 RbacGate", r"CMP-079\b"), ("the CMP-019 `lock`", r"CMP-019\b[^\n]*`lock`"))
+# G-T2.6 on the amendments: the A-rows that amend a component whose controls D02 gates carry the
+# one T2 clause (D02's one rule), and the applied `15` entry of that component holds it too
+T2_ROWS = {"A-10": "CMP-153", "A-13": "CMP-236", "A-16": "CMP-257"}
+T2_CLAUSE = (
+    "T2 per E09-D09 " + SECT + "2.2 while viewing as, for a Viewer, while armed or while the"
+    " vocabulary is unavailable, as E37-D02 " + SECT + "3 gates it: it keeps its native role and"
+    ' its full label and carries `aria-disabled="true"`, never the `disabled` attribute, so it'
+    " stays in the Tab order and a menu item stays arrow-reachable; the CMP-019 `lock` glyph"
+    ' (`decorative=false`, accessible name "Not available") leads the full label; CMP-079'
+    " RbacGate wraps the role legs; `aria-describedby` points at the one notice"
+)
+DA_ROWS = 18  # section 13: `14`'s seven boxes, then D04's SC-1 ... SC-11
 FIELDS = (
     "key",
     "text",
@@ -221,6 +239,7 @@ class Texts:
     memo: dict[str, str | None]
     full: bool = True
     missing: tuple[str, ...] = ()
+    cats: tuple[str, str] = ("", "")  # the working tree's `14` and `15`, as the A-rows applied them
 
 
 def git(*args: str) -> str | None:
@@ -675,6 +694,96 @@ def a_rows(hand: str) -> list[tuple[str, str, list[str]]]:
     return out
 
 
+EDIT = re.compile(
+    r'Old: "(?P<old>.+?)"\.? New: "(?P<new>.+?)"\.?(?=$| Old: | After | Applied after )'
+    r'|(?P<side>[Aa]fter|[Bb]efore) "(?P<at>.+?)"(?: \([^)]*\))? add'
+    r'(?:(?P<line> the line)?: "(?P<add>.+?)"\.?(?=$| Old: | After )| the block below)'
+)
+
+
+Edit = tuple[str, str, list[str], list[str], list[tuple[str, str]]]
+
+
+def a_edits(hand: str) -> list[Edit]:
+    """Per A-row: its file, the texts the applied row holds once, the Old texts it removes, and
+    the (anchor, text) pairs whose text stands later than its anchor."""
+    out = []
+    body = section(hand, f"## {SECT}C")
+    for ln in body.split("\n"):
+        m = re.match(rf"- \*\*(A-\d+) {ARROW} `(1[45])`", ln)
+        if not m:
+            continue
+        want: list[str] = []
+        gone: list[str] = []
+        order: list[tuple[str, str]] = []
+        for e in EDIT.finditer(ln[m.end() :]):
+            if e["old"] is not None:
+                old, new = e["old"], e["new"]
+                if "Applied after" in ln and new.startswith(old):
+                    want += [old, new[len(old) :]]  # appended at the line's end, after a sibling
+                    order.append((old, new[len(old) :]))
+                else:
+                    want.append(new)
+                    gone += [] if old in new else [old]
+            elif e["add"] is not None and e["line"]:
+                want += [e["at"], f"\n{e['add']}\n"]  # a line of its own, later than the anchor
+                order.append((e["at"], f"\n{e['add']}\n"))
+            elif e["add"] is not None:
+                want.append(e["at"] + e["add"])
+            else:
+                block = re.search(r"\n  ```text\n(.*?)\n  ```", body[body.find(ln) :], re.DOTALL)
+                text = "\n".join(x[2:] for x in block[1].split("\n")) if block else ""
+                before = e["side"][0] in "Bb"
+                want.append(f"{text}\n\n{e['at']}" if before else f"{e['at']}\n{text}")
+        out.append((m[1], m[2], want, gone, order))
+    return out
+
+
+def applied(t: Texts) -> list[str]:
+    """The applied mode: each A-row's new text stands once in the working tree's `14` / `15`."""
+    bad = []
+    cat = {"14": t.cats[0], "15": t.cats[1]}
+    edits = a_edits(t.hand)
+    for aid, key, want, gone, order in edits:
+        if not want:
+            bad.append(f"{aid}: carries no text to apply")
+        for w in want:
+            # once, plus once inside each other row's text that quotes it (A-3 holds A-15's)
+            n = cat[key].count(w)
+            k = sum(x.count(w) for b, kb, ws, _, _ in edits if kb == key for x in ws if b != aid)
+            if n != 1 + k:
+                bad.append(f"{aid}: its applied text {w[:40]!r} stands {n} times in `{key}`")
+        for first, then in order:
+            if cat[key].find(then) < cat[key].find(first):
+                bad.append(f"{aid}: its applied text stands before its anchor in `{key}`")
+        for g in gone:
+            if g in cat[key]:
+                bad.append(f"{aid}: its Old text {g[:40]!r} still stands in `{key}`")
+    return bad
+
+
+def cat_entry(cat: str, cmp: str) -> str:
+    """A component's entry in the working tree's `15`: its heading up to the next heading."""
+    i = cat.find(f"\n### {cmp} ")
+    if i < 0:
+        return ""
+    j = cat.find("\n### ", i + 1)
+    return cat[i : j if j > 0 else len(cat)]
+
+
+def t2_clause(t: Texts) -> list[str]:
+    """G-T2.6 on the amendments: each T2 A-row's text carries the clause, and so does the applied
+    `15` entry of the component it amends."""
+    bad = []
+    wants = {aid: want for aid, _, want, _, _ in a_edits(t.hand)}
+    for aid, cmp in T2_ROWS.items():
+        if not any(T2_CLAUSE in w for w in wants.get(aid, [])):
+            bad.append(f"{aid}: its text for {cmp} carries no T2 clause (G-T2.6)")
+        if T2_CLAUSE not in cat_entry(t.cats[1], cmp):
+            bad.append(f"{cmp}: its applied `15` entry carries no T2 clause ({aid}, G-T2.6)")
+    return bad
+
+
 def g_sheet(t: Texts, vals: dict[str, str]) -> list[str]:
     bad = []
     three = section(t.spec, "## 3.")
@@ -711,7 +820,13 @@ def g_sheet(t: Texts, vals: dict[str, str]) -> list[str]:
             n = at(t, key).count(a)
             if n != 1:
                 bad.append(f"{aid}: {a[:40]!r} stands {n} times in `{key}` at the base")
-    return bad + anchor_problems(t, vals, "SHEET:")
+    lists = (("section 3", re.split(r"\n### 3\.\d+ ", three)[0]),
+             ("the hand-off's component line", t.hand.split("\n## ", 1)[0]),
+             (f"hand-off {SECT}B", section(t.hand, f"## {SECT}B")),
+             (f"hand-off {SECT}D", section(t.hand, f"## {SECT}D")))  # fmt: skip
+    bad += [f"{where} does not name {name} (G-T2.6)"
+            for where, text in lists for name, rx in T2_PARTS if not re.search(rx, text)]  # fmt: skip
+    return bad + t2_clause(t) + applied(t) + anchor_problems(t, vals, "SHEET:")
 
 
 def g_deck(t: Texts, vals: dict[str, str]) -> list[str]:
@@ -994,7 +1109,7 @@ def g_hygiene(t: Texts, vals: dict[str, str]) -> list[str]:
 def g_scope(t: Texts, vals: dict[str, str]) -> list[str]:
     if t.changed is None:
         return ["cannot list the changed paths (git failed)"]
-    own = OWN_PATHS if t.full else DECK_PATHS
+    own = (*OWN_PATHS, *CAT_PATHS) if t.full else DECK_PATHS
     return [f"{p} is touched; this ticket owns {', '.join(own)}" for p in t.changed if p not in own]
 
 
@@ -1035,9 +1150,9 @@ def g_status(t: Texts, vals: dict[str, str]) -> list[str]:
 def g_checklist(t: Texts, vals: dict[str, str]) -> list[str]:
     da = rows(section(t.spec, "## 13."), "DA")
     ids = [r[0] for r in da]
-    want = [f"DA-{n}" for n in range(1, 18)]
+    want = [f"DA-{n}" for n in range(1, DA_ROWS + 1)]
     if ids != want:
-        return [f"§13 holds {ids}, not DA-1 ... DA-17 in order"]
+        return [f"§13 holds {ids}, not DA-1 ... DA-{DA_ROWS} in order"]
     bad = []
     for n, r in enumerate(da, 1):
         if n <= 7:
@@ -1136,7 +1251,7 @@ def load(stage_name: str) -> Texts:
     if full:
         return Texts(
             read(SPEC_REL), read(HAND_REL), read(DECK_REL), read(PINS_REL), read(TOOL_REL),
-            changed_paths(), {}, True, missing,
+            changed_paths(), {}, True, missing, (read(CAT_PATHS[0]), read(CAT_PATHS[1])),
         )  # fmt: skip
     # the deck stage reads the deck alone, present pack files or not
     return Texts("", "", read(DECK_REL), "", read(TOOL_REL), changed_paths(), {}, False, missing)
@@ -1270,6 +1385,49 @@ def drop_hand(lead: str, has: str) -> Mutation:
     return f
 
 
+def sub_cat(key: str, old: str, new: str) -> Mutation:
+    """Edits the working tree's `14` or `15` only (the A-rows' applied mode)."""
+
+    def f(t: Texts) -> Texts:
+        i = ("14", "15").index(key)
+        once(t.cats[i], old, f"`{key}`")
+        cats = list(t.cats)
+        cats[i] = cats[i].replace(old, new)
+        return replace(t, cats=(cats[0], cats[1]))
+
+    return f
+
+
+def lift(aid: str) -> Mutation:
+    """Moves an A-row's added line of `14` to just above its anchor's line."""
+
+    def f(t: Texts) -> Texts:
+        anchor, line = next(e[4][0] for e in a_edits(t.hand) if e[0] == aid)
+        text = t.cats[0].replace(line, "\n", 1)
+        i = text.rfind("\n", 0, text.find(anchor))
+        return replace(t, cats=(text[:i] + line[:-1] + text[i:], t.cats[1]))
+
+    return f
+
+
+def drop_t2(aid: str) -> Mutation:
+    """Drops the T2 clause from one A-row and from its applied `15` text alike, so the applied
+    mode still matches and only the T2 check can see it."""
+
+    def f(t: Texts) -> Texts:
+        i = t.hand.find(f"- **{aid} {ARROW} ")
+        end = t.hand.find("\n- **A-", i + 1)
+        j = t.hand.find(T2_CLAUSE, i)
+        k = t.cats[1].find(T2_CLAUSE, t.cats[1].find(f"\n### {T2_ROWS[aid]} "))
+        if i < 0 or j < 0 or k < 0 or (0 <= end < j):
+            raise SystemExit(f"self-test: {aid} or its `15` entry carries no T2 clause")
+        hand = t.hand[:j] + t.hand[j + len(T2_CLAUSE) :]
+        cat = t.cats[1][:k] + t.cats[1][k + len(T2_CLAUSE) :]
+        return replace(t, hand=hand, cats=(t.cats[0], cat))
+
+    return f
+
+
 def drop_row(lead: str) -> Mutation:
     def f(t: Texts) -> Texts:
         ls = t.spec.split("\n")
@@ -1287,7 +1445,7 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-SHEET", "A-15's Old text off by one word",
      sub_hand('Old: "the node list in CMP-153 NodeInspectorDrawer"',
               'Old: "the node list in CMP-153 Node InspectorDrawer"')),
-    ("G-SHEET", "CMP-254's Storybook row dropped", drop_hand("CMP-254", "Tab1280")),
+    ("G-SHEET", "CMP-257's Storybook row dropped", drop_hand("CMP-257", "Tab1280")),
     ("G-DECK", "the JSON twin drifts on one text", deck_set("rules.graph.canvas.fit", "text", "Fit")),
     ("G-DECK", "a label cap typed below its kind's",
      row_set("rules.graph.canvas.fit", 4, "8", "max_length", 8)),
@@ -1302,7 +1460,8 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-RAW", "a raw hex beside a token name",
      sub("No raw value is written here;", "No raw value (#11151A) is written here;")),
     ("G-RAW", "a raw px value with no cite",
-     sub_hand("one roving stop, type-ahead;", "one roving stop, 40 px rows;")),
+     sub_hand("`n3`'s `when` cleared (PROPOSED id)",
+              "`n3`'s `when` cleared, 40 px rows (PROPOSED id)")),
     ("G-MOTION", "M-13's reduce cell retyped", set_cell("M-13", 2, "identical")),
     ("G-MOTION", "the motion row count typed by hand", sub("19<!--=MOT:rows-->", "18<!--=MOT:rows-->")),
     ("G-FROZEN", "FZ-9's source loses its owner cite",
@@ -1313,7 +1472,7 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
      set_cell("`rule.graph_autolayout_used`", 0, "`rule.graph_layout_used`")),
     ("G-EVENT", "an account id among the properties",
      sub("`{operation, surface}`, surface", "`{operation, surface, accountId}`, surface")),
-    ("G-CITE", "a `D04` cite one line off its pinned content", sub("(`D04`:308)", "(`D04`:309)")),
+    ("G-CITE", "a `D04` cite one line off its pinned content", sub("(`D04`:311)", "(`D04`:312)")),
     ("G-HYGIENE", "a closing keyword against #950",
      sub("This pack designs nothing new:", "Closes #950. This pack designs nothing new:")),
     ("G-HYGIENE", "a deny word in the tool's own text",
@@ -1323,7 +1482,7 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-STATUS", "the hint, PROPOSED at its source, made merged",
      row_set("rules.graph.aria.hint", 6, "merged", "status", "merged")),
     ("G-STATUS", "the `application` role made merged in §3.1",
-     sub("PROPOSED until E37-Q05's run (`D04`:308)", "merged (`D04`:308)")),
+     sub("PROPOSED until E37-Q05's run (`D04`:311)", "merged (`D04`:311)")),
     ("G-STAGE", "the hand-off missing at the full stage", missing(HAND_REL)),
     ("G-SHEET", "CMP-157's cited-owner contract row dropped", drop_hand("CMP-157", "cited owner")),
     ("G-DECK", "an 8.1 status outside the three words",
@@ -1334,7 +1493,16 @@ MUTATIONS: tuple[tuple[str, str, Mutation], ...] = (
     ("G-COVER", "a merged D04 string cut short in the spec and the deck",
      row_set("rules.graph.bar.save", 1, '"Sav"', "text", "Sav")),
     ("G-CHECKLIST", "DA-17 dropped", drop_row("DA-17")),
-    ("G-CHECKLIST", "DA-17 cites SC-9's line", set_cell("DA-17", 3, "`D04`:320")),
+    ("G-CHECKLIST", "DA-17 cites SC-9's line", set_cell("DA-17", 3, "`D04`:323")),
+    ("G-SHEET", "CMP-079 dropped from the hand-off's Storybook list",
+     drop_hand("CMP-079", "twelve stories")),
+    ("G-SHEET", "A-7 left unapplied in `15`",
+     sub_cat("15", '`gateType: "all_of" | "any_of" | "none_of" | "n_of"`',
+             '`gateType: "AND"|"OR"|"NOT"`')),
+    ("G-SHEET", "A-18's pointer line above its anchor in `14`",
+     lift("A-18")),
+    ("G-SHEET", "A-13's T2 clause dropped, in its row and its applied `15` text", drop_t2("A-13")),
+    ("G-CHECKLIST", "DA-18 dropped", drop_row("DA-18")),
 )
 
 # deck-only mode: the twin alone, so every mutation edits the JSON Lines rows or head
@@ -1413,7 +1581,7 @@ def header(t: Texts) -> list[str]:
 
 def selftest(stage_name: str) -> tuple[bool, list[str]]:
     first = load(stage_name)
-    base = replace(first, changed=list(OWN_PATHS if first.full else DECK_PATHS))
+    base = replace(first, changed=list((*OWN_PATHS, *CAT_PATHS) if first.full else DECK_PATHS))
     muts = MUTATIONS if base.full else DECK_MUTATIONS
     before = (base.spec, base.hand, base.deck)
     found = audit(base)
