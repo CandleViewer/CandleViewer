@@ -7,10 +7,8 @@ beside this file; this file keeps only E49-D02's rows. It reads, AS TEXT at the 
 plan and design texts the pack cites, the token JSON and `contrast_check.py` (the only repo code it
 runs, loaded by path), and, from the working tree, the pack and itself.
 
-Gates: G-CITE, G-AC, G-BQ, G-BOARDS, G-T2, G-RECIPE, G-CHECKLIST, G-ANALYTICS, G-EMPTY, G-LOADING,
-G-ANTI, G-DISCLOSE, G-CONTRAST, G-STORIES, G-RUBRIC, G-ROWS, G-TOKENS, G-PENPOT, G-NOCLOSE,
-G-PUBLIC, G-UNTOUCHED and G-MUTLIST (section 17.2 equals this tool's list). The BQ list
-6636147300 is not ruled yet: G-BQ checks the "defaults built; ruling pending" form.
+Gates: GATES below, listed in section 17.1; G-MUTLIST keeps section 17.2 equal to MUTATIONS. The BQ
+list 6636147300 is not ruled yet: G-BQ checks the "defaults built; ruling pending" form.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e49_d02_state_audit.py --check | --self-test
@@ -41,10 +39,12 @@ BACKLOG_REL = "docs/plan/backlog/E49.json"
 CONTRAST_REL = "docs/design/_tools/contrast_check.py"
 
 PLAN = {
+    "04": "docs/plan/04-security-program.md",
     "05": "docs/plan/05-accessibility-standard.md",
     "14": "docs/plan/14-screens-catalogue.md",
     "15": "docs/plan/15-component-catalogue.md",
     "16": "docs/plan/16-design-system-brief.md",
+    "22": "docs/plan/22-api-openapi.yaml",
 }
 KEYED = {
     "D09": L.DocRef("docs/design/E09/E09-D09.md", BASE),
@@ -65,18 +65,14 @@ CITE_RE = L.cite_regex(KEYED, ranges=True, spaced=True)
 MIN_CITES = 150  # a broken grammar parses far fewer
 
 # `14` line numbers per pattern: (Components, Analytics, checklist)
+# fmt: off
 SCR_LINES = {
-    150: (3094, 3097, 3100),
-    151: (3105, 3109, 3112),
-    152: (3134, 3137, 3138),
-    153: (3149, 3153, 3156),
-    154: (3162, 3166, 3168),
-    155: (3173, 3177, 3179),
-    156: (3184, 3188, 3190),
-    157: (3195, 3199, 3201),
-    158: (3207, 3211, 3212),
+    150: (3094, 3097, 3100), 151: (3105, 3109, 3112), 152: (3134, 3137, 3138),
+    153: (3149, 3153, 3156), 154: (3162, 3166, 3168), 155: (3173, 3177, 3179),
+    156: (3184, 3188, 3190), 157: (3195, 3199, 3201), 158: (3207, 3211, 3212),
     159: (3218, 3222, 3224),
 }
+# fmt: on
 GATED = frozenset({151, 152, 153, 157, 158, 159})  # BQ-0: the recipes that show a T2 control
 EMPTY_ENUM_LINES = (333, 336)  # D10E08: the closed `reason` enumeration
 TREATMENTS = ("T-1", "T-2", "T-3", "T-4")
@@ -95,7 +91,10 @@ DISCLOSE = (
     "only when a 403 body arrived",
     "no account or user id",
     "`security-reviewer`",
+    "the pathname only, never the query or the hash",
+    "the matched route pattern",
 )
+REPLAY = ("original intent id / `Idempotency-Key`", "a new id only after Discard")  # R158-5, C-2.10
 ACCESS_OK = ("withdrew", "| A-1 ", "no endpoint")  # a line naming "Request access" says why not
 CMP_RE = re.compile(r"CMP-\d{3}")
 FRAME_RE = re.compile(r"`(SCR-15\d/[a-z0-9-]+)`")
@@ -376,11 +375,19 @@ def g_anti(t: L.Tree) -> list[str]:
 def g_disclose(t: L.Tree) -> list[str]:
     s7 = sec(t, "## 7. The 403 / 404 disclosure clauses")
     bad = [f"lacks {p!r}" for p in DISCLOSE if p not in s7]
-    bad += [f"lacks D-{n}" for n in range(1, 7) if f"- **D-{n} " not in s7]
+    bad += [f"lacks D-{n}" for n in range(1, 8) if f"- **D-{n} " not in s7]
     for i, ln in enumerate(spec(t).split("\n"), 1):
         if "Request access" in ln and not any(ok in ln for ok in ACCESS_OK):
             bad.append(f"line {i} offers Request access")
     return bad
+
+
+def g_replay(t: L.Tree) -> list[str]:
+    r5 = [r for r in recipe(pattern_sections(t)[158]) if r[0] == "R158-5"]
+    ad = [r for r in rows(t, "## 11. Adopted") if "R158-5" in r[1]]
+    bad = [] if r5 else ["R158-5 missing"]
+    bad += [f"R158-5 lacks {p!r}" for p in REPLAY if r5 and p not in r5[0][2]]
+    return bad + ([] if ad else ["no AD row reuses the held intent's id"])
 
 
 def g_contrast(t: L.Tree) -> list[str]:
@@ -471,8 +478,8 @@ def g_mutlist(t: L.Tree) -> list[str]:
 # fmt: off
 GATES = tuple(L.Gate("G-" + f.__name__[2:].upper().replace("_", "-"), f) for f in (
     g_cite, g_ac, g_bq, g_boards, g_t2, g_recipe, g_checklist, g_analytics, g_empty, g_loading,
-    g_anti, g_disclose, g_contrast, g_stories, g_rubric, g_rows, g_tokens, g_penpot, g_noclose,
-    g_public, g_untouched, g_mutlist,
+    g_anti, g_disclose, g_replay, g_contrast, g_stories, g_rubric, g_rows, g_tokens, g_penpot,
+    g_noclose, g_public, g_untouched, g_mutlist,
 ))
 # fmt: on
 
@@ -536,6 +543,12 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        r"\n\| Q12 \| a fake-clock[^\n]*", "", regex=True),
     _M("M-29", "G-RUBRIC", "a pattern loses its focus row", "spec",
        r"\n\| SCR-153 \| unchanged [^\n]*", "", regex=True),
+    _M("M-30", "G-DISCLOSE", "the echo keeps the query", "spec",
+       "the pathname only, never the query or the hash", "the path with its query"),
+    _M("M-31", "G-REPLAY", "a replay mints a new id", "spec",
+       "Replay carries the original intent id", "Replay mints a new intent id"),
+    _M("M-32", "G-REPLAY", "the replay decision unowned", "spec",
+       "the held intent's id (R158-5)", "the held intent's id (R158-x)"),
 )
 # fmt: on
 
