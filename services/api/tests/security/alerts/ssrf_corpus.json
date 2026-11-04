@@ -1,15 +1,67 @@
 {
-  "$comment": "E40-X01 (#1204) Part A: the webhook SSRF corpus, as data (the ruling on #1204, BQ-9). Threat model: docs/security/threat-models/e40-alerts.md section 5 (AL-E05, SR-E40-13); seed AC-AL-18. E40-S03's egress policy runs every entry as a required check, and Part B adds its shape test. Nothing here is ever sent: each entry is a target the policy decides on before any socket opens. Host names under `.example` (RFC 2606) are fixture names; 203.0.113.0/24 and 198.51.100.0/24 (RFC 5737) stand in for public addresses, 100.101.102.0/24 for tailnet peers. The allow-list holds two refused targets on purpose: a refused class wins over the allow-list. `classes` gives the first and last entry of each class, the entries being in class order. `via` names the resolver script an entry runs with (one list of answers per lookup); `expect` is the refusal reason, or `permitted`, or `pinned` (one lookup, and the socket goes to `connect_to`).",
-  "version": 1,
+  "$comment": "E40-X01 (#1204) Part A: the webhook SSRF corpus, as data (the ruling on #1204, BQ-9). Threat model: docs/security/threat-models/e40-alerts.md section 5 (AL-E05, AL-S06, SR-E40-13); seed AC-AL-18; its shape test is test_ssrf_corpus_shape.py beside it, and E40-S03's egress policy runs every entry as a required check. Nothing here is ever sent: each entry is a target the policy decides on before any socket opens. An entry names its `class` (one of `classes`), its `url`, the resolver script it runs with (`via`: one list of answers per lookup, an empty list being a lookup that fails or answers nothing), the `attempt` it is judged on where it names one (each attempt resolves afresh), and its `expect`: a refusal reason, `permitted`, or `pinned` (one lookup, and the socket goes to `connect_to`). `order` gives the policy's steps; its address step lists the address classes in precedence, and an IPv6 address that embeds an IPv4 address (mapped, compatible, NAT64, 6to4, Teredo) is judged by every address it embeds. A host is compared after `name_normalisation`. Host names under `.example` (RFC 2606) are fixture names. The `public_stand_ins` (RFC 5737 documentation ranges) stand in for public addresses: the harness marks them global through an injected classifier, never through the policy, which refuses every non-global address outside the tailnet. 100.101.102.0/24 stands in for tailnet peers. The allow-list holds refused targets on purpose: a refused class wins over the allow-list.",
+  "version": 2,
+  "name_normalisation": "UTS 46 (IDNA) mapping to ASCII, then lower case, then one trailing dot removed; refused_names, the allow-list and the resolver scripts are keyed by the normalised name, and a host the mapping refuses is malformed_url",
   "order": [
-    "the URL: its scheme, userinfo and a malformed authority",
-    "every address the target resolves to, against the refused classes",
-    "the scheme against the address: http only inside the tailnet",
-    "the owner's allow-list",
-    "no redirect is followed; the socket goes to the address that was checked"
+    {
+      "step": "url",
+      "rule": "the scheme is https or http and the authority parses as one host, with no userinfo and no percent-encoding",
+      "refuses": ["malformed_url", "userinfo", "scheme"]
+    },
+    {
+      "step": "name",
+      "rule": "the normalised host against refused_names, exact before suffix",
+      "refuses": ["loopback", "metadata", "tailnet_service"]
+    },
+    {
+      "step": "resolution",
+      "rule": "an IP literal stands for itself; a name takes every answer of its lookup",
+      "refuses": ["unresolvable"]
+    },
+    {
+      "step": "address",
+      "rule": "every address, by class in this precedence",
+      "refuses": [
+        "metadata",
+        "loopback",
+        "unspecified_address",
+        "link_local",
+        "private_address",
+        "reserved_address",
+        "tailnet_service",
+        "host_service"
+      ]
+    },
+    {
+      "step": "scheme_for_address",
+      "rule": "http only when every address is inside a tailnet CIDR",
+      "refuses": ["scheme"]
+    },
+    {
+      "step": "allow_list",
+      "rule": "the scheme, host and port on the owner's allow-list",
+      "refuses": ["not_on_allow_list"]
+    },
+    {
+      "step": "connect",
+      "rule": "no redirect is followed; the socket goes to the address that was checked",
+      "refuses": ["redirect"]
+    }
   ],
-  "tailnet_cidr": "100.64.0.0/10",
-  "host_addresses": ["100.101.102.104"],
+  "refused_names": {
+    "exact": {
+      "localhost": "loopback",
+      "metadata.google.internal": "metadata",
+      "controlplane.tailscale.com": "tailnet_service",
+      "login.tailscale.com": "tailnet_service"
+    },
+    "suffix": { ".localhost": "loopback" }
+  },
+  "tailnet_cidrs": ["100.64.0.0/10", "fd7a:115c:a1e0::/48"],
+  "tailnet_services": ["100.100.100.100", "fd7a:115c:a1e0::53"],
+  "metadata_addresses": ["169.254.169.254", "fd00:ec2::254", "100.100.100.200"],
+  "host_addresses": ["100.101.102.104", "203.0.113.50"],
+  "public_stand_ins": ["203.0.113.0/24", "198.51.100.0/24"],
   "allow_list": [
     "https://a.example",
     "https://r.example",
@@ -18,12 +70,21 @@
     "https://controlplane.tailscale.com"
   ],
   "resolvers": {
-    "public": { "a.example": [["203.0.113.10"]], "o.example": [["198.51.100.7"]] },
+    "public": {
+      "a.example": [["203.0.113.10"]],
+      "o.example": [["198.51.100.7"]],
+      "xa.example": [["203.0.113.11"]],
+      "a.example.o.example": [["203.0.113.12"]],
+      "b.a.example": [["203.0.113.13"]],
+      "xn--80a.example": [["203.0.113.14"]]
+    },
     "mixed": { "a.example": [["203.0.113.10", "127.0.0.1"]] },
     "rebind": { "r.example": [["203.0.113.20"], ["127.0.0.1"]] },
+    "dual": { "d.example": [["203.0.113.30", "::1"]] },
     "private": { "a.example": [["10.1.2.3"]] },
     "metadata": { "a.example": [["169.254.169.254"]] },
-    "localhost": { "localhost": [["127.0.0.1"]], "foo.localhost": [["127.0.0.1"]] }
+    "host": { "cv.example": [["100.101.102.104"]] },
+    "failing": { "e.example": [[]] }
   },
   "reasons": [
     "loopback",
@@ -38,82 +99,261 @@
     "malformed_url",
     "scheme",
     "redirect",
-    "not_on_allow_list"
+    "not_on_allow_list",
+    "unresolvable"
   ],
   "classes": {
-    "control": ["SSRF-01", "SSRF-02"],
-    "loopback": ["SSRF-03", "SSRF-18"],
-    "unspecified": ["SSRF-19", "SSRF-20"],
-    "link_local_and_metadata": ["SSRF-21", "SSRF-28"],
-    "private_range": ["SSRF-29", "SSRF-33"],
-    "reserved": ["SSRF-34", "SSRF-36"],
-    "tailnet_service": ["SSRF-37", "SSRF-39"],
-    "host_service": ["SSRF-40", "SSRF-41"],
-    "userinfo": ["SSRF-42", "SSRF-43"],
-    "malformed": ["SSRF-44", "SSRF-46"],
-    "scheme": ["SSRF-47", "SSRF-50"],
-    "redirect": ["SSRF-51", "SSRF-52"],
-    "dns_rebinding": ["SSRF-53", "SSRF-54"],
-    "allow_list": ["SSRF-55", "SSRF-56"]
+    "control": "targets the policy permits",
+    "loopback": "loopback in every encoding, embedding and name",
+    "unspecified": "the unspecified address",
+    "metadata": "cloud metadata addresses and names",
+    "link_local": "link-local addresses",
+    "private": "private ranges outside the tailnet",
+    "reserved": "multicast, broadcast and other non-global ranges",
+    "tailnet": "the tailnet's own service, control and IPv6 addresses",
+    "host": "the host's own services",
+    "userinfo": "userinfo in the authority",
+    "malformed": "authorities that do not parse as one host",
+    "scheme": "schemes other than https, and http outside the tailnet",
+    "redirect": "redirects, which are never followed",
+    "rebinding": "answers that change or mix",
+    "allow_list": "the allow-list's matching edges",
+    "unresolvable": "names that do not resolve"
   },
   "entries": [
-    { "id": "SSRF-01", "url": "https://a.example/h", "via": "public", "expect": "permitted" },
-    { "id": "SSRF-02", "url": "http://100.101.102.103:8080/h", "expect": "permitted" },
-    { "id": "SSRF-03", "url": "https://127.0.0.1/h", "expect": "loopback" },
-    { "id": "SSRF-04", "url": "https://127.0.0.2/h", "expect": "loopback" },
-    { "id": "SSRF-05", "url": "https://127.1/h", "expect": "loopback" },
-    { "id": "SSRF-06", "url": "https://2130706433/h", "expect": "loopback" },
-    { "id": "SSRF-07", "url": "https://0177.0.0.1/h", "expect": "loopback" },
-    { "id": "SSRF-08", "url": "https://0x7f.0.0.1/h", "expect": "loopback" },
-    { "id": "SSRF-09", "url": "https://0x7f000001/h", "expect": "loopback" },
-    { "id": "SSRF-10", "url": "https://[::1]/h", "expect": "loopback" },
-    { "id": "SSRF-11", "url": "https://[::ffff:127.0.0.1]/h", "expect": "loopback" },
-    { "id": "SSRF-12", "url": "https://[::ffff:7f00:1]/h", "expect": "loopback" },
-    { "id": "SSRF-13", "url": "https://[64:ff9b::7f00:1]/h", "expect": "loopback" },
-    { "id": "SSRF-14", "url": "https://localhost/h", "via": "localhost", "expect": "loopback" },
-    { "id": "SSRF-15", "url": "https://localhost./h", "via": "localhost", "expect": "loopback" },
-    { "id": "SSRF-16", "url": "https://LOCALHOST/h", "via": "localhost", "expect": "loopback" },
-    { "id": "SSRF-17", "url": "https://foo.localhost/h", "via": "localhost", "expect": "loopback" },
-    { "id": "SSRF-18", "url": "https://127.0.0.1#@a.example/h", "expect": "loopback" },
-    { "id": "SSRF-19", "url": "https://0.0.0.0/h", "expect": "unspecified_address" },
-    { "id": "SSRF-20", "url": "https://[::]/h", "expect": "unspecified_address" },
-    { "id": "SSRF-21", "url": "https://169.254.169.254/latest/meta-data/", "expect": "metadata" },
-    { "id": "SSRF-22", "url": "https://2852039166/latest/meta-data/", "expect": "metadata" },
-    { "id": "SSRF-23", "url": "https://[::ffff:169.254.169.254]/", "expect": "metadata" },
-    { "id": "SSRF-24", "url": "https://[fd00:ec2::254]/latest/meta-data/", "expect": "metadata" },
-    { "id": "SSRF-25", "url": "https://metadata.google.internal/", "expect": "metadata" },
-    { "id": "SSRF-26", "url": "https://a.example/h", "via": "metadata", "expect": "metadata" },
-    { "id": "SSRF-27", "url": "https://169.254.0.1/h", "expect": "link_local" },
-    { "id": "SSRF-28", "url": "https://[fe80::1]/h", "expect": "link_local" },
-    { "id": "SSRF-29", "url": "https://10.0.0.1/h", "expect": "private_address" },
-    { "id": "SSRF-30", "url": "https://172.16.0.1/h", "expect": "private_address" },
-    { "id": "SSRF-31", "url": "https://192.168.1.1/h", "expect": "private_address" },
-    { "id": "SSRF-32", "url": "https://[fd12:3456:789a::1]/h", "expect": "private_address" },
+    {
+      "id": "SSRF-01",
+      "class": "control",
+      "url": "https://a.example/h",
+      "via": "public",
+      "expect": "permitted"
+    },
+    {
+      "id": "SSRF-02",
+      "class": "control",
+      "url": "http://100.101.102.103:8080/h",
+      "expect": "permitted"
+    },
+    { "id": "SSRF-03", "class": "loopback", "url": "https://127.0.0.1/h", "expect": "loopback" },
+    { "id": "SSRF-04", "class": "loopback", "url": "https://127.0.0.2/h", "expect": "loopback" },
+    { "id": "SSRF-05", "class": "loopback", "url": "https://127.1/h", "expect": "loopback" },
+    { "id": "SSRF-06", "class": "loopback", "url": "https://2130706433/h", "expect": "loopback" },
+    { "id": "SSRF-07", "class": "loopback", "url": "https://0177.0.0.1/h", "expect": "loopback" },
+    { "id": "SSRF-08", "class": "loopback", "url": "https://0x7f.0.0.1/h", "expect": "loopback" },
+    { "id": "SSRF-09", "class": "loopback", "url": "https://0x7f000001/h", "expect": "loopback" },
+    { "id": "SSRF-10", "class": "loopback", "url": "https://[::1]/h", "expect": "loopback" },
+    {
+      "id": "SSRF-11",
+      "class": "loopback",
+      "url": "https://[::ffff:127.0.0.1]/h",
+      "expect": "loopback"
+    },
+    {
+      "id": "SSRF-12",
+      "class": "loopback",
+      "url": "https://[::ffff:7f00:1]/h",
+      "expect": "loopback"
+    },
+    {
+      "id": "SSRF-13",
+      "class": "loopback",
+      "url": "https://[64:ff9b::7f00:1]/h",
+      "expect": "loopback"
+    },
+    { "id": "SSRF-14", "class": "loopback", "url": "https://localhost/h", "expect": "loopback" },
+    { "id": "SSRF-15", "class": "loopback", "url": "https://localhost./h", "expect": "loopback" },
+    { "id": "SSRF-16", "class": "loopback", "url": "https://LOCALHOST/h", "expect": "loopback" },
+    {
+      "id": "SSRF-17",
+      "class": "loopback",
+      "url": "https://foo.localhost/h",
+      "expect": "loopback"
+    },
+    {
+      "id": "SSRF-18",
+      "class": "loopback",
+      "url": "https://127.0.0.1#@a.example/h",
+      "expect": "loopback"
+    },
+    {
+      "id": "SSRF-19",
+      "class": "unspecified",
+      "url": "https://0.0.0.0/h",
+      "expect": "unspecified_address"
+    },
+    {
+      "id": "SSRF-20",
+      "class": "unspecified",
+      "url": "https://[::]/h",
+      "expect": "unspecified_address"
+    },
+    {
+      "id": "SSRF-21",
+      "class": "metadata",
+      "url": "https://169.254.169.254/latest/meta-data/",
+      "expect": "metadata"
+    },
+    {
+      "id": "SSRF-22",
+      "class": "metadata",
+      "url": "https://2852039166/latest/meta-data/",
+      "expect": "metadata"
+    },
+    {
+      "id": "SSRF-23",
+      "class": "metadata",
+      "url": "https://[::ffff:169.254.169.254]/",
+      "expect": "metadata"
+    },
+    {
+      "id": "SSRF-24",
+      "class": "metadata",
+      "url": "https://[fd00:ec2::254]/latest/meta-data/",
+      "expect": "metadata"
+    },
+    {
+      "id": "SSRF-25",
+      "class": "metadata",
+      "url": "https://metadata.google.internal/",
+      "expect": "metadata"
+    },
+    {
+      "id": "SSRF-26",
+      "class": "metadata",
+      "url": "https://a.example/h",
+      "via": "metadata",
+      "expect": "metadata"
+    },
+    {
+      "id": "SSRF-27",
+      "class": "link_local",
+      "url": "https://169.254.0.1/h",
+      "expect": "link_local"
+    },
+    {
+      "id": "SSRF-28",
+      "class": "link_local",
+      "url": "https://[fe80::1]/h",
+      "expect": "link_local"
+    },
+    {
+      "id": "SSRF-29",
+      "class": "private",
+      "url": "https://10.0.0.1/h",
+      "expect": "private_address"
+    },
+    {
+      "id": "SSRF-30",
+      "class": "private",
+      "url": "https://172.16.0.1/h",
+      "expect": "private_address"
+    },
+    {
+      "id": "SSRF-31",
+      "class": "private",
+      "url": "https://192.168.1.1/h",
+      "expect": "private_address"
+    },
+    {
+      "id": "SSRF-32",
+      "class": "private",
+      "url": "https://[fd12:3456:789a::1]/h",
+      "expect": "private_address"
+    },
     {
       "id": "SSRF-33",
+      "class": "private",
       "url": "https://a.example/h",
       "via": "private",
       "expect": "private_address"
     },
-    { "id": "SSRF-34", "url": "https://224.0.0.1/h", "expect": "reserved_address" },
-    { "id": "SSRF-35", "url": "https://255.255.255.255/h", "expect": "reserved_address" },
-    { "id": "SSRF-36", "url": "https://[ff02::1]/h", "expect": "reserved_address" },
-    { "id": "SSRF-37", "url": "https://100.100.100.100/h", "expect": "tailnet_service" },
-    { "id": "SSRF-38", "url": "https://controlplane.tailscale.com/", "expect": "tailnet_service" },
-    { "id": "SSRF-39", "url": "https://login.tailscale.com/", "expect": "tailnet_service" },
-    { "id": "SSRF-40", "url": "https://100.101.102.104/h", "expect": "host_service" },
-    { "id": "SSRF-41", "url": "https://127.0.0.1:5432/", "expect": "loopback" },
-    { "id": "SSRF-42", "url": "https://a.example@127.0.0.1/h", "expect": "userinfo" },
-    { "id": "SSRF-43", "url": "https://user@a.example/h", "via": "public", "expect": "userinfo" },
-    { "id": "SSRF-44", "url": "https://a.example\\@127.0.0.1/h", "expect": "malformed_url" },
-    { "id": "SSRF-45", "url": "https://%31%32%37.0.0.1/h", "expect": "malformed_url" },
-    { "id": "SSRF-46", "url": "https://a.example\r\nX-Extra: 1/h", "expect": "malformed_url" },
-    { "id": "SSRF-47", "url": "http://a.example/h", "via": "public", "expect": "scheme" },
-    { "id": "SSRF-48", "url": "file:///etc/hosts", "expect": "scheme" },
-    { "id": "SSRF-49", "url": "gopher://a.example/_h", "expect": "scheme" },
-    { "id": "SSRF-50", "url": "ftp://a.example/h", "expect": "scheme" },
+    {
+      "id": "SSRF-34",
+      "class": "reserved",
+      "url": "https://224.0.0.1/h",
+      "expect": "reserved_address"
+    },
+    {
+      "id": "SSRF-35",
+      "class": "reserved",
+      "url": "https://255.255.255.255/h",
+      "expect": "reserved_address"
+    },
+    {
+      "id": "SSRF-36",
+      "class": "reserved",
+      "url": "https://[ff02::1]/h",
+      "expect": "reserved_address"
+    },
+    {
+      "id": "SSRF-37",
+      "class": "tailnet",
+      "url": "https://100.100.100.100/h",
+      "expect": "tailnet_service"
+    },
+    {
+      "id": "SSRF-38",
+      "class": "tailnet",
+      "url": "https://controlplane.tailscale.com/",
+      "expect": "tailnet_service"
+    },
+    {
+      "id": "SSRF-39",
+      "class": "tailnet",
+      "url": "https://login.tailscale.com/",
+      "expect": "tailnet_service"
+    },
+    {
+      "id": "SSRF-40",
+      "class": "host",
+      "url": "https://100.101.102.104/h",
+      "expect": "host_service"
+    },
+    { "id": "SSRF-41", "class": "host", "url": "https://127.0.0.1:5432/", "expect": "loopback" },
+    {
+      "id": "SSRF-42",
+      "class": "userinfo",
+      "url": "https://a.example@127.0.0.1/h",
+      "expect": "userinfo"
+    },
+    {
+      "id": "SSRF-43",
+      "class": "userinfo",
+      "url": "https://user@a.example/h",
+      "via": "public",
+      "expect": "userinfo"
+    },
+    {
+      "id": "SSRF-44",
+      "class": "malformed",
+      "url": "https://a.example\\@127.0.0.1/h",
+      "expect": "malformed_url"
+    },
+    {
+      "id": "SSRF-45",
+      "class": "malformed",
+      "url": "https://%31%32%37.0.0.1/h",
+      "expect": "malformed_url"
+    },
+    {
+      "id": "SSRF-46",
+      "class": "malformed",
+      "url": "https://a.example\r\nX-Extra: 1/h",
+      "expect": "malformed_url"
+    },
+    {
+      "id": "SSRF-47",
+      "class": "scheme",
+      "url": "http://a.example/h",
+      "via": "public",
+      "expect": "scheme"
+    },
+    { "id": "SSRF-48", "class": "scheme", "url": "file:///h", "expect": "scheme" },
+    { "id": "SSRF-49", "class": "scheme", "url": "gopher://a.example/_h", "expect": "scheme" },
+    { "id": "SSRF-50", "class": "scheme", "url": "ftp://a.example/h", "expect": "scheme" },
     {
       "id": "SSRF-51",
+      "class": "redirect",
       "url": "https://a.example/r",
       "via": "public",
       "redirect_to": "https://127.0.0.1/h",
@@ -121,30 +361,217 @@
     },
     {
       "id": "SSRF-52",
+      "class": "redirect",
       "url": "https://a.example/r",
       "via": "public",
       "redirect_to": "https://a.example/h",
       "expect": "redirect"
     },
-    { "id": "SSRF-53", "url": "https://a.example/h", "via": "mixed", "expect": "loopback" },
+    {
+      "id": "SSRF-53",
+      "class": "rebinding",
+      "url": "https://a.example/h",
+      "via": "mixed",
+      "expect": "loopback"
+    },
     {
       "id": "SSRF-54",
+      "class": "rebinding",
       "url": "https://r.example/h",
       "via": "rebind",
-      "expect": "pinned",
-      "connect_to": "203.0.113.20"
+      "connect_to": "203.0.113.20",
+      "expect": "pinned"
     },
     {
       "id": "SSRF-55",
+      "class": "allow_list",
       "url": "https://o.example/h",
       "via": "public",
       "expect": "not_on_allow_list"
     },
     {
       "id": "SSRF-56",
+      "class": "allow_list",
       "url": "https://a.example:8443/h",
       "via": "public",
       "expect": "not_on_allow_list"
+    },
+    {
+      "id": "SSRF-57",
+      "class": "loopback",
+      "url": "https://[::127.0.0.1]/h",
+      "expect": "loopback"
+    },
+    {
+      "id": "SSRF-58",
+      "class": "loopback",
+      "url": "https://[2002:7f00:1::1]/h",
+      "expect": "loopback"
+    },
+    {
+      "id": "SSRF-59",
+      "class": "loopback",
+      "url": "https://[2001:0:c000:201:8000:ffff:80ff:fffe]/h",
+      "expect": "loopback"
+    },
+    { "id": "SSRF-60", "class": "loopback", "url": "https://017700000001/h", "expect": "loopback" },
+    {
+      "id": "SSRF-61",
+      "class": "loopback",
+      "url": "https://0177.0000.0000.0001/h",
+      "expect": "loopback"
+    },
+    {
+      "id": "SSRF-62",
+      "class": "loopback",
+      "url": "https://１２７.０.０.１/h",
+      "expect": "loopback"
+    },
+    { "id": "SSRF-63", "class": "loopback", "url": "https://127。0。0。1/h", "expect": "loopback" },
+    {
+      "id": "SSRF-64",
+      "class": "unspecified",
+      "url": "https://0/h",
+      "expect": "unspecified_address"
+    },
+    {
+      "id": "SSRF-65",
+      "class": "metadata",
+      "url": "https://[64:ff9b::a9fe:a9fe]/h",
+      "expect": "metadata"
+    },
+    {
+      "id": "SSRF-66",
+      "class": "metadata",
+      "url": "https://100.100.100.200/h",
+      "expect": "metadata"
+    },
+    {
+      "id": "SSRF-67",
+      "class": "private",
+      "url": "https://[64:ff9b::a01:203]/h",
+      "expect": "private_address"
+    },
+    {
+      "id": "SSRF-68",
+      "class": "private",
+      "url": "https://[fec0::1]/h",
+      "expect": "private_address"
+    },
+    {
+      "id": "SSRF-69",
+      "class": "reserved",
+      "url": "https://198.18.0.1/h",
+      "expect": "reserved_address"
+    },
+    {
+      "id": "SSRF-70",
+      "class": "reserved",
+      "url": "https://240.0.0.1/h",
+      "expect": "reserved_address"
+    },
+    {
+      "id": "SSRF-71",
+      "class": "reserved",
+      "url": "https://0.1.2.3/h",
+      "expect": "reserved_address"
+    },
+    {
+      "id": "SSRF-72",
+      "class": "reserved",
+      "url": "https://192.0.0.1/h",
+      "expect": "reserved_address"
+    },
+    {
+      "id": "SSRF-73",
+      "class": "tailnet",
+      "url": "https://[fd7a:115c:a1e0::53]/h",
+      "expect": "tailnet_service"
+    },
+    {
+      "id": "SSRF-74",
+      "class": "tailnet",
+      "url": "https://[fd7a:115c:a1e0::5]/h",
+      "expect": "not_on_allow_list"
+    },
+    {
+      "id": "SSRF-75",
+      "class": "host",
+      "url": "https://cv.example/h",
+      "via": "host",
+      "expect": "host_service"
+    },
+    { "id": "SSRF-76", "class": "host", "url": "https://203.0.113.50/h", "expect": "host_service" },
+    {
+      "id": "SSRF-77",
+      "class": "rebinding",
+      "url": "https://r.example/h",
+      "via": "rebind",
+      "attempt": 2,
+      "expect": "loopback"
+    },
+    {
+      "id": "SSRF-78",
+      "class": "rebinding",
+      "url": "https://d.example/h",
+      "via": "dual",
+      "expect": "loopback"
+    },
+    {
+      "id": "SSRF-79",
+      "class": "allow_list",
+      "url": "https://xa.example/h",
+      "via": "public",
+      "expect": "not_on_allow_list"
+    },
+    {
+      "id": "SSRF-80",
+      "class": "allow_list",
+      "url": "https://a.example.o.example/h",
+      "via": "public",
+      "expect": "not_on_allow_list"
+    },
+    {
+      "id": "SSRF-81",
+      "class": "allow_list",
+      "url": "https://b.a.example/h",
+      "via": "public",
+      "expect": "not_on_allow_list"
+    },
+    {
+      "id": "SSRF-82",
+      "class": "allow_list",
+      "url": "https://a.example./h",
+      "via": "public",
+      "expect": "permitted"
+    },
+    {
+      "id": "SSRF-83",
+      "class": "allow_list",
+      "url": "https://A.Example/h",
+      "via": "public",
+      "expect": "permitted"
+    },
+    {
+      "id": "SSRF-84",
+      "class": "allow_list",
+      "url": "https://а.example/h",
+      "via": "public",
+      "expect": "not_on_allow_list"
+    },
+    {
+      "id": "SSRF-85",
+      "class": "unresolvable",
+      "url": "https://n.example/h",
+      "via": "public",
+      "expect": "unresolvable"
+    },
+    {
+      "id": "SSRF-86",
+      "class": "unresolvable",
+      "url": "https://e.example/h",
+      "via": "failing",
+      "expect": "unresolvable"
     }
   ]
 }
