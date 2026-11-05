@@ -250,6 +250,8 @@ class DayRiskFigures(Interim):
                 for s in unique
             ]
         day_loss = lost.result()
+        if day_loss is not None and not self._today(day_loss):  # its day ended during the reads
+            day_loss = None  # unknown, never the ended day's (24 Sec.8.13)
         return self._reading(
             wallet.result(), None if day_loss is None else day_loss.loss, book.result(),
             fallback_sl_offset_pct, dict(zip(unique, (fee.result() for fee in fees), strict=True)),
