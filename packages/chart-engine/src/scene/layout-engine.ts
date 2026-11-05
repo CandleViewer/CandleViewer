@@ -42,6 +42,21 @@ export const STUB_PX = { comfortable: 32, compact: 24 } as const;
 /** The comfortable axis label box (`type.num.base` 13 px in a 16 px box, D02 §6). */
 export const LABEL_BOX_PX = 16;
 
+/**
+ * E11-S09 PR 1b: the row above a splitter's new share when the boundary moves by `by` (share
+ * units) between shares `a` and `b`. `fold`: under `min` a side folds (0, or `a + b`); else both
+ * clamp at `min`, and a pair too small for two minimums stays put. Pure; the pair's sum is kept.
+ */
+export function splitPair(a: number, b: number, by: number, min: number, fold: boolean): number {
+  const total = a + b;
+  const next = a + by;
+  if (fold) return next < min ? 0 : total - next < min ? total : next;
+  return total < 2 * min ? a : Math.min(total - min, Math.max(min, next));
+}
+
+/** E11-D02 §8: a splitter's hit band, 12 px each side of the boundary (gutter included). */
+export const SPLITTER_BAND_PX = 24;
+
 /** The price-axis gutter right of each pane and the time-axis gutter below them, CSS px. */
 export const PRICE_GUTTER_PX = 64;
 export const TIME_GUTTER_PX = 24;
@@ -194,6 +209,55 @@ export class LayoutEngine {
     const min = plotH > 0 ? this.minPx / plotH : 0;
     this.setShares([[id, Math.min(1, Math.max(p.lastShare, min))]]);
     return true;
+  }
+
+  /**
+   * E11-S09 PR 1b (D02 §8; ruling 6623589909, BQ-11 rider): the splitter under row `i` moves by
+   * `by` (share units; + grows the row above). Only rows `i` and `i + 1` change (D02:361). Below
+   * the minimum, a drag (`fold`) collapses the shrunk row and gives its share to the other; a key
+   * clamps there. Beside a stub, a move toward it reopens it at max(last share, minimum), taken
+   * from its open neighbour only; a move away does nothing. False when nothing changed.
+   */
+  moveBoundary(i: number, by: number, fold: boolean): boolean {
+    const a = this.panes[i];
+    const b = this.panes[i + 1];
+    if (a === undefined || b === undefined || !Number.isFinite(by) || by === 0) return false;
+    let changed: boolean;
+    if (a.collapsed || b.collapsed) {
+      const [shut, open] = a.collapsed ? [a, b] : [b, a];
+      changed = !open.collapsed && (a.collapsed ? by > 0 : by < 0) && this.reopen(shut, open);
+    } else {
+      const avail = this.plotHeight() - this.stubHeight(this.plotHeight()) * this.collapsedCount();
+      if (!(avail > 0)) return false;
+      const total = a.share + b.share;
+      const next = splitPair(a.share, b.share, by, this.minPx / avail, fold);
+      changed = next !== a.share;
+      if (!changed) return false; // at a limit: the pair is left bit for bit
+      if (next <= 0) this.foldInto(a, b, total);
+      else if (next >= total) this.foldInto(b, a, total);
+      else [a.share, b.share] = [next, total - next];
+    }
+    if (!changed) return false;
+    this.normalise();
+    this.graph.markResize();
+    return true;
+  }
+
+  /** Reopens `p` at max(last share, minimum), taken from `q`, if `q` keeps the minimum. */
+  private reopen(p: PaneLayout, q: PaneLayout): boolean {
+    const avail = this.plotHeight() - this.stubPx * (this.collapsedCount() - 1);
+    const min = avail > 0 ? this.minPx / avail : 1;
+    const r = Math.max(p.lastShare, min);
+    if (q.share - r < min) return false;
+    this.show(p, true);
+    [p.share, q.share] = [r, q.share - r];
+    return true;
+  }
+
+  private foldInto(p: PaneLayout, q: PaneLayout, total: number): void {
+    p.lastShare = p.share;
+    this.show(p, false);
+    q.share = total;
   }
 
   /** The layout stage, every frame: `true` when it recomputed. Allocates nothing. */

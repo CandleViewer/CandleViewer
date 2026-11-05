@@ -58,6 +58,10 @@ const valid: ToWorker[] = [
   { t: "command", id: 1, cmd: { k: "removePane", pane: 1 } },
   { t: "command", id: 1, cmd: { k: "setPaneShares", shares: [[0, 0.6]] } },
   { t: "command", id: 1, cmd: { k: "setPaneCollapsed", pane: 2, collapsed: true } },
+  { t: "command", id: 1, cmd: { k: "moveSplitter", pane: 0, by: -0.02 } }, // E11-S09 PR 1b
+  { t: "command", id: 1, cmd: { k: "moveSplitter", pane: 0, by: -0.02, seq: 3 } }, // a key's seq
+  { t: "command", id: 1, cmd: { k: "setPaneShares", shares: [[0, 1]], seq: 4 } },
+  { t: "command", id: 1, cmd: { k: "removePane", pane: 1, seq: 5 } }, // R58: acked on the layout
   { t: "command", id: 1, cmd: { k: "release" } },
 ];
 
@@ -167,6 +171,14 @@ describe("Scenario: A malformed message cannot kill the worker (validation)", ()
           { k: "setPaneShares", shares: Array(65).fill([0, 1]) },
         ],
         ["setPaneCollapsed without a boolean", { k: "setPaneCollapsed", pane: 0, collapsed: 1 }],
+        ["moveSplitter beyond one share", { k: "moveSplitter", pane: 0, by: 1.5 }],
+        ["moveSplitter with a NaN step", { k: "moveSplitter", pane: 0, by: Number.NaN }],
+        ["moveSplitter with a negative seq", { k: "moveSplitter", pane: 0, by: 0.02, seq: -1 }],
+        ["setPaneShares with a fractional seq", { k: "setPaneShares", shares: [], seq: 0.5 }],
+        ["removePane with a string seq", { k: "removePane", pane: 1, seq: "5" }],
+        ["removePane with a negative seq", { k: "removePane", pane: 1, seq: -2 }],
+        ["moveSplitter with a fractional seq", { k: "moveSplitter", pane: 0, by: 0.02, seq: 2.5 }],
+        ["setPaneShares with a negative seq", { k: "setPaneShares", shares: [[0, 1]], seq: -1 }],
       ] as const
     ).map(([name, c]): [string, object, string] => [
       `an ${name}`,

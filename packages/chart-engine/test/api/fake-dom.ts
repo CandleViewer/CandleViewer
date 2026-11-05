@@ -82,6 +82,13 @@ export class FakeElement extends FakeTarget {
     this.captured.push(id);
   }
 
+  /** The page y of this element's top edge, what `getBoundingClientRect` reports (E11-S09). */
+  rectTop = 0;
+
+  getBoundingClientRect(): { left: number; top: number; width: number; height: number } {
+    return { left: 0, top: this.rectTop, width: this.clientWidth, height: this.clientHeight };
+  }
+
   /** Moves the document's `activeElement` here (E11-S05's badge hand-off). */
   focus(): void {
     this.ownerDocument.activeElement = this;

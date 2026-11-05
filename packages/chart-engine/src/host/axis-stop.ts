@@ -54,7 +54,11 @@ export interface Announcer {
   cancel(): void;
 }
 
-export function createAnnouncer(target: HTMLElement, clock: AnnounceClock): Announcer {
+export function createAnnouncer(
+  target: HTMLElement,
+  clock: AnnounceClock,
+  key: string = ANNOUNCE_KEY, // E11-S09 PR 1b: the pane chrome writes under its own key
+): Announcer {
   let cancelled = false;
   let last = Number.NEGATIVE_INFINITY;
   let lastAsk = 0;
@@ -65,7 +69,7 @@ export function createAnnouncer(target: HTMLElement, clock: AnnounceClock): Anno
     last = clock.now();
     const Custom = target.ownerDocument.defaultView?.CustomEvent;
     if (typeof Custom !== "function") return;
-    const detail = { politeness: "polite", text, key: ANNOUNCE_KEY };
+    const detail = { politeness: "polite", text, key };
     target.dispatchEvent(new Custom(ANNOUNCE_EVENT, { bubbles: true, detail }));
   };
   const flush = (): void => {

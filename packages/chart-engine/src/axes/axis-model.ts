@@ -48,7 +48,7 @@ export const SAY = {
 
 export const UPDATE = { grid: 1, labels: 2, gutter: 4 } as const;
 const MODES = ["linear", "log", "percent", "indexed"];
-const SIG = 21;
+const SIG = 22;
 type Theme = Readonly<Record<string, string>>;
 
 export class AxisModel {
@@ -198,6 +198,12 @@ export class AxisModel {
     }
     g.vLine(r[2], 0, l.height, TIER.rule);
     g.hLine(l.timeAxis[1], 0, r[2], TIER.rule);
+    // E11-S09 PR 1b (D02 §8, BQ-23): a splitter hairline between every two panes, full width
+    // (gutter included), `color.border.default`, in this one ring: no draw call per splitter.
+    for (let i = 0; i < l.panes.length - 1; i += 1) {
+      const b = l.panes[i]?.rect;
+      if (b !== undefined) g.hLine(b[1] + b[3], 0, l.width, TIER.rule);
+    }
   }
 
   /** Copies `set`'s kept labels into `out`; true when they differ from what it held. */
@@ -277,6 +283,13 @@ export class AxisModel {
     c[18] = r[1];
     c[19] = r[3];
     c[20] = this.lastPriceTick;
+    // The splitters' y (E11-S09 PR 1b), folded: a moved boundary rewrites the hairlines.
+    let h = l.panes.length;
+    for (let i = 0; i < l.panes.length; i += 1) {
+      const q = l.panes[i]?.rect;
+      h = h * 1.618033988749895 + (q === undefined ? 0 : q[1] + q[3]);
+    }
+    c[21] = h;
     let same = theme === this.theme;
     for (let i = 0; same && i < SIG; i += 1) {
       const a = c[i] as number;

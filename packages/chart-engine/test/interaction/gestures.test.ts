@@ -286,3 +286,44 @@ describe("keys in the worker (BQ-108, BQ-109)", () => {
     expect([g.panModifier, vp.barSpacing, changes()]).toEqual([false, DEFAULT_BAR_SPACING, 0]);
   });
 });
+
+describe("E11-S09 PR 1b: the splitter band (D02 §8)", () => {
+  function stacked() {
+    const vp = new ChartViewport(minuteMap(5000));
+    vp.setSize(plotWidthOf(SIZE.width), 600, 1);
+    vp.setPanePlot(0, 0, 600);
+    const at = vp.leftIndex;
+    const split: number[][] = [];
+    const panes = [{ rect: [0, 0, 1000, 300] }, { rect: [0, 300, 1000, 300] }];
+    const g = new Gestures(
+      vp,
+      { ...SIZE, panes },
+      {
+        moved: () => undefined,
+        hover: () => undefined,
+        animate: () => undefined,
+        split: (row, dy) => void split.push([row, dy]),
+      },
+    );
+    return { vp, g, at, split, mouse: (...r: number[][]): void => g.apply(false, rows(...r)) };
+  }
+
+  it("a pointer-down within 12 px of a boundary, gutter included, drags it and pans nothing", () => {
+    const { vp, at, split, mouse } = stacked();
+    mouse([down, 1040, 311, 1, 0, 0], [move, 1030, 331, 1, 0, 8], [up, 1030, 331, 0, 0, 8]);
+    mouse([down, 200, 289, 1, 0, 0], [move, 260, 279, 1, 0, 8], [up, 260, 279, 0, 0, 8]);
+    expect(split).toEqual([
+      [0, 20],
+      [0, -10],
+    ]);
+    expect(vp.leftIndex).toBe(at); // a plot drag that starts in the band is a resize
+  });
+
+  it("hover passes through the band, and a drag 13 px away pans time instead", () => {
+    const { vp, at, split, mouse } = stacked();
+    mouse([move, 500, 300, 0, 0, 8], [move, 500, 305, 0, 0, 8]);
+    mouse([down, 500, 313, 1, 0, 0], [move, 400, 330, 1, 0, 8], [up, 400, 330, 0, 0, 8]);
+    expect(split).toEqual([]);
+    expect(vp.leftIndex).not.toBe(at);
+  });
+});
