@@ -1,0 +1,17 @@
+{
+  "rule_id": "00000000-0000-4000-8000-0000000e3712",
+  "version": 1,
+  "name": "Wrong type at limits.cooldown_ms",
+  "enabled": true,
+  "mode": "simulate",
+  "scope": { "level": "position", "symbols": ["BTCUSDT"] },
+  "trigger": { "type": "on_position_update", "debounce_ms": 500 },
+  "conditions": {
+    "node_id": "c1",
+    "op": "is_true",
+    "left": { "metric": "position_open" }
+  },
+  "actions": [{ "node_id": "a1", "type": "log_journal_tag", "params": { "tag": "e37" } }],
+  "editor": "form",
+  "limits": { "cooldown_ms": "soon" }
+}

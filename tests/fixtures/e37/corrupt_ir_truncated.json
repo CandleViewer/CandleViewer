@@ -1,0 +1,12 @@
+{
+  "rule_id": "00000000-0000-4000-8000-0000000e3711",
+  "version": 1,
+  "name": "Truncated stored document",
+  "enabled": true,
+  "mode": "simulate",
+  "scope": { "level": "position", "symbols": ["BTCUSDT"] },
+  "trigger": { "type": "on_position_update", "debounce_ms": 500 },
+  "conditions": {
+    "node_id": "c1",
+    "op": "is_true",
+    "left": { "metric": "position_o

@@ -1,0 +1,40 @@
+{
+  "rule_id": "00000000-0000-4000-8000-0000000e3701",
+  "version": 1,
+  "name": "Armed demo rule (ATR trailing stop)",
+  "description": "RC-09 scoped to the demo environment; the seed step arms it on demo.",
+  "enabled": true,
+  "mode": "simulate",
+  "scope": {
+    "level": "position",
+    "symbols": ["BTCUSDT"],
+    "environments": ["demo"]
+  },
+  "trigger": { "type": "on_bar_close", "timeframe": "5m" },
+  "conditions": {
+    "node_id": "c1",
+    "op": "gt",
+    "left": { "metric": "price" },
+    "right": {
+      "node_id": "x1",
+      "op": "add",
+      "operands": [
+        { "metric": "avg_entry_price" },
+        {
+          "node_id": "x2",
+          "op": "mul",
+          "operands": [{ "metric": "atr", "params": { "n": 14 } }, { "const": 2 }]
+        }
+      ]
+    }
+  },
+  "actions": [
+    {
+      "node_id": "a1",
+      "type": "tighten_stop",
+      "params": { "mode": "atr_multiple", "value": 2, "only_tighten": true }
+    }
+  ],
+  "limits": { "cooldown_ms": 5000 },
+  "editor": "graph"
+}
