@@ -97,6 +97,8 @@ interface Client {
 interface Link {
   readonly runMode: RunMode;
   readonly counters: HostCounters;
+  /** E11-S09 PR 2b (BQ-7): the runtime's id in a sync `origin`; a respawned worker gets a new one. */
+  readonly workerId: string;
   add(client: Client): ChartId;
   remove(id: ChartId): void;
   post(msg: ToWorker, transfer: Transferable[]): void;
@@ -104,6 +106,10 @@ interface Link {
 
 /** Moves `buffer` into a new ArrayBuffer and detaches the original (no copy, like a transfer). */
 const move = (buffer: ArrayBuffer): ArrayBuffer => structuredClone(buffer, { transfer: [buffer] });
+
+let workerSeq = 0;
+/** E11-S09 PR 2b: a page-unique runtime id ("w1", "i2"), never reused, so a stale `seq` is local. */
+const mintWorkerId = (prefix: "w" | "i"): string => `${prefix}${(workerSeq += 1)}`;
 
 function inlineLink(env: HostEnv, unlink: () => void): Link {
   const clients = new Map<ChartId, Client>();
@@ -122,9 +128,11 @@ function inlineLink(env: HostEnv, unlink: () => void): Link {
     text: createTextPlatform(globalThis as unknown as TextScope),
     timeline: performance, // read by bench-mode charts only (E11-T06)
   });
+  const workerId = mintWorkerId("i");
   return {
     runMode: "inline",
     counters,
+    workerId,
     add(client): ChartId {
       seq += 1;
       clients.set(seq, client);
@@ -147,6 +155,7 @@ function workerLink(env: HostEnv, unlink: () => void): Link {
   const counters: HostCounters = { messagesDropped: 0, conflated: 0, restarts: 0 };
   let seq = 0;
   let worker: WorkerLike | null = null;
+  let workerId = "";
   let failures = 0;
   let restarting = false;
   let dead = false;
@@ -165,6 +174,7 @@ function workerLink(env: HostEnv, unlink: () => void): Link {
     w.onerror = onLost;
     w.onmessageerror = onLost;
     worker = w;
+    workerId = mintWorkerId("w"); // a fresh runtime restarts every chart's `seq` at 1
   }
 
   function onLost(): void {
@@ -208,6 +218,9 @@ function workerLink(env: HostEnv, unlink: () => void): Link {
   return {
     runMode: "worker",
     counters,
+    get workerId(): string {
+      return workerId;
+    },
     add(client): ChartId {
       seq += 1;
       clients.set(seq, client);
@@ -328,8 +341,14 @@ export interface ChartHost {
   ): void;
   /** Debounced to one `resize` per frame. */
   resize(width: number, height: number, dpr: number): void;
-  /** Coalesced to one `sync` per frame (last wins). */
-  sync(groupId: string, timeRange: readonly [number, number], crosshair: number | null): void;
+  /** The runtime's id now (`init.config.workerId`); it changes when the worker is respawned. */
+  readonly workerId: string;
+  /**
+   * A relayed publication (E11-S09 PR 2b): one `sync` per group per frame. A worker publishes only
+   * the fields that moved, so a later message's fields win and an earlier field it lacks is kept
+   * (under the later `origin`, whose `seq` is the newer one; any origin may carry it).
+   */
+  sync(msg: Extract<ToWorker, { t: "sync" }>): void;
   /** Hands `buffer` over (it is detached on return) under the two-in-flight rule. */
   data(
     store: StoreId,
@@ -375,6 +394,8 @@ function retainKey(cmd: Command): string | null {
     case "addPane":
     case "removePane":
       return `pane:${cmd.pane}`; // a removal replaces its add, replayed in order (E11-S09 BQ-2)
+    case "setSync":
+      return "sync"; // E11-S09 PR 2b: a restarted worker rejoins the group with its modes
     default:
       return null;
   }
@@ -402,7 +423,8 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   let pendingResize: ResizeMsg | null = null;
   /** The last size sent: replayed after a restart so the restored chart keeps it. */
   let size: ResizeMsg | null = null;
-  let pendingSync: ToWorker | null = null;
+  /** Relayed syncs held for the next frame, per group (bounded by the registry's group cap). */
+  const pendingSync = new Map<string, Extract<ToWorker, { t: "sync" }>>();
   const rows = new Map<InputKind, { buf: Float32Array; n: number }>();
   // The open wheel row per fold key in the pending batch (-1: none) and its float64 sums.
   const folded = new Int32Array(FOLD_KEYS).fill(-1);
@@ -428,7 +450,12 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   const init = (): void => {
     const canvas = o.canvas();
     const dpr = size?.dpr ?? o.dpr;
-    const config = { bench: o.bench, syncGroup: o.syncGroup, timeZone: o.timeZone ?? "UTC" };
+    const config = {
+      bench: o.bench,
+      syncGroup: o.syncGroup,
+      timeZone: o.timeZone ?? "UTC",
+      ...(link.workerId !== "" && { workerId: link.workerId }),
+    };
     const extra = {
       ...(forced && { profile: "degraded-2d" as const }),
       ...(reduce && { reducedMotion: true }),
@@ -568,9 +595,9 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
     flushQueued = false;
     if (disposed) return;
     if (pendingResize !== null) applyResize(pendingResize);
-    if (pendingSync !== null) link.post(pendingSync, []);
+    for (const msg of pendingSync.values()) link.post(msg, []);
     pendingResize = null;
-    pendingSync = null;
+    pendingSync.clear();
     for (const kind of KINDS) {
       const r = rows.get(kind);
       if (r !== undefined && r.n > 0) postRows(kind, r);
@@ -586,6 +613,9 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   return {
     runMode: link.runMode,
     counters: link.counters,
+    get workerId(): string {
+      return link.workerId;
+    },
     input(kind, row, fold): void {
       if (disposed) return;
       let r = rows.get(kind);
@@ -631,9 +661,21 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
       pendingResize = { t: "resize", id, width, height, dpr };
       schedule();
     },
-    sync(groupId, timeRange, crosshair): void {
+    sync(msg): void {
       if (disposed) return;
-      pendingSync = { t: "sync", groupId, timeRange, crosshair };
+      const prev = pendingSync.get(msg.groupId);
+      const merged =
+        prev === undefined
+          ? msg
+          : {
+              ...msg,
+              ...(msg.timeRange === undefined &&
+                prev.timeRange !== undefined && { timeRange: prev.timeRange }),
+              ...(msg.crosshair === undefined &&
+                prev.crosshair !== undefined && { crosshair: prev.crosshair }),
+            };
+      pendingSync.delete(msg.groupId); // re-inserted in arrival order
+      pendingSync.set(msg.groupId, merged);
       schedule();
     },
     data(store, op, layout, buffer, series): void {

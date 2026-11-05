@@ -395,7 +395,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   const inbound = new SyncPublication();
 
   /** Moves `inst` into `id` (null: none); a cap is a recoverable `ENGINE_SYNC_REFUSED`. */
-  function joinGroup(inst: Instance, id: string | null): boolean {
+  function joinGroup(inst: Instance, id: string | null, req?: number): boolean {
     try {
       inst.group = groups.join(inst, id);
       return true;
@@ -407,6 +407,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         code: ENGINE_SYNC_REFUSED,
         message: e.message,
         recoverable: true,
+        ...(req !== undefined && { reqId: req }),
       });
       return false;
     }
@@ -1150,7 +1151,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         return;
       }
       case "setSync":
-        if (!joinGroup(inst, cmd.groupId)) return;
+        if (!joinGroup(inst, cmd.groupId, cmd.req)) return;
         inst.modes = { ...cmd.modes, scale: false };
         inst.relay = cmd.relay;
         return;

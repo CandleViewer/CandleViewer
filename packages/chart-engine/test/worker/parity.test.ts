@@ -117,7 +117,7 @@ function transport(runMode: RunMode): unknown[] {
     vi.advanceTimersByTime(16);
   }
   host.input("key", [INPUT.key, KEY.zoomOut, 0, 0, 0, 0]);
-  host.sync("g", [5e9, 6e9], 5.5e9);
+  host.sync({ t: "sync", groupId: "g", timeRange: [5e9, 6e9], crosshair: 5.5e9 });
   host.command({ k: "pickAt", x: 1, y: 1 });
   vi.advanceTimersByTime(50);
   detach();
