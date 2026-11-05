@@ -11,7 +11,8 @@
         "$TURBO_ROOT$/packages/config/tsconfig.node.json",
         "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
         "$TURBO_ROOT$/packages/fixtures/bybit/2026-10-05/rest/instruments_before.json",
-        "$TURBO_ROOT$/packages/fixtures/bybit/2026-10-05/rest/instruments_after.json"
+        "$TURBO_ROOT$/packages/fixtures/bybit/2026-10-05/rest/instruments_after.json",
+        "$TURBO_ROOT$/docs/design/E30/E30-D06-copy.json"
       ]
     },
     "test:cov": {
@@ -23,7 +24,8 @@
         "$TURBO_ROOT$/packages/config/tsconfig.node.json",
         "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
         "$TURBO_ROOT$/packages/fixtures/bybit/2026-10-05/rest/instruments_before.json",
-        "$TURBO_ROOT$/packages/fixtures/bybit/2026-10-05/rest/instruments_after.json"
+        "$TURBO_ROOT$/packages/fixtures/bybit/2026-10-05/rest/instruments_after.json",
+        "$TURBO_ROOT$/docs/design/E30/E30-D06-copy.json"
       ]
     }
   }
