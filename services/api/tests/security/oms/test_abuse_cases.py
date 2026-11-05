@@ -277,7 +277,7 @@ def test_ac27_an_owners_write_without_its_csrf_proof_is_refused_before_the_handl
 
 #: One past the position writes' per-user rate, the shipped rate the order routes are pinned to.
 _BURST: Final = position_close.RATE_PER_MINUTE + 1
-_PER_USER: Final = "X02-R{} (#2701): {} meets a per-user limit (OM-D01); its owner named under BQ-5"
+_PER_USER: Final = "X02-R{} (#1152): {} meets a per-user limit (OM-D01)"
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason=_PER_USER.format(
