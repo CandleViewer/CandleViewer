@@ -103,16 +103,27 @@ SHAPES: Final[list[tuple[str, str | None]]] = [
 ]
 
 
-def open_states() -> frozenset[str]:
+#: The sentence of 23 Sec.6.2.3 that lists the open order states; the list is its first group.
+_OPEN_LIST: Final = re.compile(r"open orders, those in (.+?) \(never")
+
+
+def open_states(text: str | None = None) -> frozenset[str]:
     """The states 23 Sec.6.2.3 lists for the `orders` snapshot ("those in `a`, `b` ... or `z`"),
     read from its text as `_harness.wire_error_codes` reads Sec.10.2: what stays in the live view,
-    independent of the store's `OPEN_STATES`, which the producer's rule reads."""
-    text = h.PROTOCOL_DOC.read_text(encoding="utf-8")
+    independent of the store's `OPEN_STATES`, which the producer's rule reads. The read is guarded:
+    a list that names no state, a word that is not an order state, or every state (so that nothing
+    is ever removed) fails here instead of leaving the removal checks vacuous."""
+    text = h.PROTOCOL_DOC.read_text(encoding="utf-8") if text is None else text
     start = text.index("#### 6.2.3 ")
     section = text[start : text.index("### 6.3", start)]
-    listed = re.search(r"open orders, those in (.+?) \(never", section)
+    listed = _OPEN_LIST.search(section)
     assert listed is not None, "23 Sec.6.2.3 no longer lists the open order states as read here"
-    return frozenset(re.findall(r"`(\w+)`", listed[1]))
+    found = frozenset(re.findall(r"`(\w+)`", listed[1]))
+    known = member_enum(ORDERS, "orders", "state")
+    assert found and found < known, (
+        f"23 Sec.6.2.3's open set {sorted(found)} is not a proper subset"
+    )
+    return found
 
 
 OPEN: Final = open_states()
@@ -197,6 +208,19 @@ ORDERS_BY_VARIANT: Final[dict[str, dict[str, Any]]] = {
     "partial-mode-take-profit": {"tpsl_mode": "Partial", "take_profit": Decimal(65000)},
     "child-order": {"parent_order_id": UUID(int=0xAA)},
 }  # fmt: skip
+
+
+@pytest.mark.parametrize("doctored", ["no_state", "a_stray_word", "every_state"])
+def test_the_open_set_read_refuses_a_list_it_cannot_trust(doctored: str) -> None:
+    """The guard on the Sec.6.2.3 read: a list naming no state, a word that is not an order state,
+    or every state (which would leave no removal to check) fails the read."""
+    text = h.PROTOCOL_DOC.read_text(encoding="utf-8")
+    listed = _OPEN_LIST.search(text, text.index("#### 6.2.3 "))
+    assert listed is not None
+    every = ", ".join(f"`{state}`" for state in sorted(member_enum(ORDERS, "orders", "state")))
+    swap = {"no_state": "none", "a_stray_word": f"{listed[1]}, `filled_ish`"}.get(doctored, every)
+    with pytest.raises(AssertionError):
+        open_states(text[: listed.start(1)] + swap + text[listed.end(1) :])
 
 
 @pytest.mark.parametrize("variant", ORDERS_BY_VARIANT)
