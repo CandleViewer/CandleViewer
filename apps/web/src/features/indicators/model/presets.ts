@@ -43,16 +43,17 @@ export const starredInput = (
 /**
  * The caller's live, user-owned preset with this code and name (case-insensitive, `22` `name_taken`),
  * which the star updates instead of creating a second one (D02 D7). Built-ins are never matched:
- * starring one saves a copy.
+ * starring one saves a copy. The fold is `toLowerCase()`, locale-independent like the server's
+ * (`lower(name)`, `ux_ip_name`): a host locale (Turkish dotted / dotless I) never changes a match.
  */
 export function findOwnPreset(
   presets: readonly IndicatorPreset[],
   code: string,
   name: string,
 ): IndicatorPreset | undefined {
-  const folded = name.toLocaleLowerCase();
+  const folded = name.toLowerCase();
   return presets.find(
-    (p) => !p.is_builtin && p.indicator_code === code && p.name.toLocaleLowerCase() === folded,
+    (p) => !p.is_builtin && p.indicator_code === code && p.name.toLowerCase() === folded,
   );
 }
 

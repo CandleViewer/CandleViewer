@@ -2,7 +2,7 @@
  * E13-S01 (#423) S1: the library's list and search model (SCR-034; D02 §4.1–§4.4) and the preset
  * shapes (D02 D7, D14; `22` IndicatorPresetInput).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { normaliseCatalogue } from "../../../src/features/indicators/model/catalogue";
 import { createInstance } from "../../../src/features/indicators/model/instances";
 import { inTab, libraryView, type Matcher } from "../../../src/features/indicators/model/library";
@@ -170,6 +170,22 @@ describe("presets", () => {
     expect(findOwnPreset([BUILTIN, MINE], "ema", "ema 34")).toBe(MINE);
     expect(findOwnPreset([BUILTIN, MINE], "ema", "ema(21)")).toBeUndefined();
     expect(favouritesOf([BUILTIN, MINE, ORPHAN], ENTRIES)).toEqual([MINE]);
+  });
+
+  it("folds a name locale-independently, so a Turkish host locale never misses or mismatches", () => {
+    // A Turkish host folds "I" to the dotless "ı" and "İ" to "i": the server's fold does neither.
+    const turkish = vi.spyOn(String.prototype, "toLocaleLowerCase").mockImplementation(function (
+      this: string,
+    ) {
+      return this.replace(/I/g, "\u0131").toLowerCase();
+    });
+    try {
+      const index = preset({ ...MINE, indicator_code: "ema", name: "INDEX 34" });
+      expect(findOwnPreset([index], "ema", "index 34")).toBe(index);
+      expect(findOwnPreset([index], "ema", "\u0131ndex 34")).toBeUndefined();
+    } finally {
+      turkish.mockRestore();
+    }
   });
 
   it("re-validates a preset's params against the live schema (BQ-11)", () => {
