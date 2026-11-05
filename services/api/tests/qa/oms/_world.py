@@ -285,7 +285,16 @@ class OmsWorld:
         return self.oms.venue.ports[-1]
 
     def call(self, fn: Any, *args: Any) -> Any:
-        return self.portal.call(fn, *args)
+        """`fn(*args)` on the runtime's loop, cancelled and failed once `WAIT_S` has gone by, so a
+        stalled call never hangs the run."""
+        done = self.portal.start_task_soon(fn, *args)
+        try:
+            return done.result(WAIT_S)
+        except TimeoutError:
+            if done.done():  # the call's own failure, not the wait's
+                raise
+            done.cancel()
+            pytest.fail(f"{getattr(fn, '__qualname__', fn)} stalled on the loop for {WAIT_S}s")
 
     def settle(self) -> None:
         """Every turn the runtime's loop and its order lane have in hand, taken."""
@@ -318,7 +327,15 @@ class OmsWorld:
         self, method: str, path: str, body: Any = None, headers: dict[str, str] | None = None
     ) -> httpx.Response:
         sent = {**bearer("owner"), **(headers or {})}
-        return cast(httpx.Response, self.pack.client.request(method, path, json=body, headers=sent))
+        with self.threaded(
+            lambda: self.pack.client.request(method, path, json=body, headers=sent)
+        ) as reply:
+            try:
+                return cast(httpx.Response, reply.result(WAIT_S))
+            except TimeoutError:
+                if reply.done():  # the request's own failure, not the wait's
+                    raise
+                pytest.fail(f"{method} {path} did not answer within {WAIT_S}s")
 
     def key(self) -> dict[str, str]:
         self.keys += 1
@@ -388,23 +405,40 @@ class OmsWorld:
         async def held(*args: Any, **kwargs: Any) -> Any:
             door.requests.append(args[0])
             door.arrived.set()
-            await door.gate.wait()
+            try:
+                await asyncio.wait_for(door.gate.wait(), WAIT_S)
+            except TimeoutError:
+                raise AssertionError(f"the door of {method} stayed shut for {WAIT_S}s") from None
             return await real(*args, **kwargs)
 
         setattr(self.port, method, held)
         return door
 
     @contextmanager
+    def threaded(self, call: Callable[..., Any], *args: Any) -> Iterator[Future[Any]]:
+        """`call(*args)`, a REST request, on a thread of its own: its answer is read with
+        `.result(WAIT_S)`, and leaving the block never waits for it (a stall fails at that read)."""
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            yield pool.submit(call, *args)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+
+    @contextmanager
     def pending(self, door: Door, call: Callable[..., Any], *args: Any) -> Iterator[Future[Any]]:
-        """`call(*args)`, a REST request, on a thread of its own and parked at `door` until the
-        block ends: the venue's answer is held while the test puts an event inside it."""
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(call, *args)
+        """`call(*args)` on a thread of its own and parked at `door` until the block ends: the
+        venue's answer is held while the test puts an event inside it."""
+        with self.threaded(call, *args) as future:
             try:
                 assert door.arrived.wait(WAIT_S), "no call reached the door"
                 yield future
             finally:
                 door.open()
+
+    def next_venue_id(self) -> str:
+        """The exchange order id the venue gives the next order, in `FakeTradingPort`'s format (its
+        counter is private); a test that pushes under it asserts the bound row came to hold it."""
+        return f"fake-{self.port._next_id + 1:012d}"
 
     def venue_position(self, order: OrderRow, qty: str) -> None:
         """The venue's position of the order's symbol, `qty` of it, holding the stop the create
@@ -543,9 +577,9 @@ def oms_world(bars_state_root: Path) -> Iterator[OmsWorld]:
         [run], [again] = built, make
         world = OmsWorld(pack, oms, run, portal, again)
         try:
-            portal.call(_until_ready, run, oms)
+            world.call(_until_ready, run, oms)
             yield world
         finally:
-            portal.call(world.runtime.stop)
+            world.call(world.runtime.stop)
             b01._ATTEMPTS = saved
             pack.client.portal = None
