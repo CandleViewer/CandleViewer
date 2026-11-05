@@ -68,6 +68,12 @@ _REDACT_KEYS: Final[frozenset[str]] = frozenset(
         # an audit export signing key's sealed seed and wrapped DEK, by their columns (#889, C-12.6)
         "sealed_seed",
         "dek_ref",
+        # the alert webhook's URL and signing secret, plain and sealed, by their names (#1400 S3)
+        "webhook_url",
+        "webhook_url_enc",
+        "webhook_secret",
+        "webhook_secret_enc",
+        "sealed_secret",
     }
 )
 #: `_REDACT_KEYS` with `-` read as `_`, as `_is_redact_key` reads a name: the hyphenated and the

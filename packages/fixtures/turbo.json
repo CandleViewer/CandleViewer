@@ -10,6 +10,7 @@
         "bybit/**",
         "accounts/**",
         "oms/**",
+        "webhook/**",
         "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md"
       ]
     },
@@ -23,6 +24,7 @@
         "bybit/**",
         "accounts/**",
         "oms/**",
+        "webhook/**",
         "vitest.config.mjs",
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
@@ -41,6 +43,7 @@
         "bybit/**",
         "accounts/**",
         "oms/**",
+        "webhook/**",
         "vitest.config.mjs",
         "tsconfig.json",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",

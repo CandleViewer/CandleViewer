@@ -34,7 +34,7 @@ import contextlib
 import math
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol, final
 from uuid import UUID
@@ -50,6 +50,7 @@ from candleviewer.secrets import (
     _source,
     export_rotator,
     export_signer,
+    webhook,
 )
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets._auth_keyring import LoadedAuthKeyring, RecoveryDigests, recovery_digests
@@ -77,6 +78,7 @@ from candleviewer.secrets.store import (
     CredentialStore,
     KcvStore,
 )
+from candleviewer.secrets.webhook import WebhookSealer, WebhookSigner, WebhookTargetOpener
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
@@ -1226,6 +1228,41 @@ def mint_auth_keyring(service: SecretsService) -> AuthKeyring:
         return resolve().recovery_code_digests(code, user_id)
 
     return AuthKeyring(available, seal, open_seal, digests)
+
+
+def _webhook_keks(service: SecretsService) -> webhook.Keks:
+    """The KEKs held, resolved per call, so a webhook capability holds none: it refuses with
+    `kek_unavailable` before `start()`, after `stop()` and while the KEK is down. The broker's
+    `_guard` is held across the `with` body, as `CredentialBroker.store` holds it across its wrap
+    (#913 L3b): no `drop_kek` or rotation fence on any loop zeroes a KEK mid-wrap or mid-unwrap.
+    The body is synchronous, so the lock is never held across an await."""
+
+    @contextlib.contextmanager
+    def held() -> Iterator[tuple[_kek.LoadedKek, ...]]:
+        broker = service._require()
+        with broker._guard:
+            yield broker._held_keks()
+
+    return held
+
+
+def mint_webhook_sealer(service: SecretsService) -> WebhookSealer:
+    """Wiring-time sealer of the alert webhook's URL and secret (#1400 S3, ADR-0009 Amendment 9).
+    Called once, in `admin.wiring.secrets_bundle`."""
+    return webhook.sealer(_webhook_keks(service))
+
+
+def mint_webhook_opener(service: SecretsService) -> WebhookTargetOpener:
+    """Wiring-time opener of the webhook URL alone, for the egress client (Amendment 9). Called
+    once, in `admin.wiring.secrets_bundle`."""
+    return webhook.opener(_webhook_keks(service))
+
+
+def mint_webhook_signer(service: SecretsService) -> WebhookSigner:
+    """Wiring-time bounded signer of one webhook delivery (Amendment 9): only
+    `cv.alert.webhook.v1:{ts}:{delivery_id}:{hex digest}`. Called once, in
+    `admin.wiring.secrets_bundle`."""
+    return webhook.signer(_webhook_keks(service))
 
 
 async def prove_kek_possession(

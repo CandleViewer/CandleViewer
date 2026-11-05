@@ -22,6 +22,10 @@ there for the account delete and the key revoke, destroys one stored key of one 
 `AuthKeyring` (#2152 S4), minted there too by `mint_auth_keyring` and adapted to `auth`'s
 `MfaKeyring`, gives MFA the environment's auth keyring as seals, seeds and digests, never a key;
 `AuthKeyringUnavailable` and `AuthSealInvalid` are its refusals. `_auth_custody` is internal.
+`WebhookSealer`, `WebhookTargetOpener` and `WebhookSigner` (#1400 S3, ADR-0009 Amendment 9), minted
+there by `mint_webhook_sealer`, `mint_webhook_opener` and `mint_webhook_signer`, seal an alert's
+webhook URL and secret, open the URL alone, and sign only `cv.alert.webhook.v1:` and a delivery's
+fixed fields; `WebhookCapabilityRefused` is their refusal. The secret never leaves M2.
 """
 
 from __future__ import annotations
@@ -38,6 +42,7 @@ from candleviewer.secrets.errors import (
     KekSourceNotPermitted,
     KekUnavailable,
     SecretsError,
+    WebhookCapabilityRefused,
     WithdrawPermissionRejected,
 )
 from candleviewer.secrets.export_rotator import RotationRunning, SigningKeyRotator
@@ -66,6 +71,9 @@ from candleviewer.secrets.service import (
     mint_rotation_running,
     mint_signing_key_rotator,
     mint_signing_keys,
+    mint_webhook_opener,
+    mint_webhook_sealer,
+    mint_webhook_signer,
     open_recovery_digests,
     prove_kek_possession,
 )
@@ -78,6 +86,7 @@ from candleviewer.secrets.store import (
     ExportKeyStore,
     KcvStore,
 )
+from candleviewer.secrets.webhook import WebhookSealer, WebhookSigner, WebhookTargetOpener
 
 __all__ = [
     "KEY_ID_SLOT",
@@ -119,6 +128,10 @@ __all__ = [
     "SigningKeyRotator",
     "SigningKeys",
     "StoredCredential",
+    "WebhookCapabilityRefused",
+    "WebhookSealer",
+    "WebhookSigner",
+    "WebhookTargetOpener",
     "WithdrawPermissionRejected",
     "export_secrets_metrics",
     "mint_auth_keyring",
@@ -130,6 +143,9 @@ __all__ = [
     "mint_rotation_running",
     "mint_signing_key_rotator",
     "mint_signing_keys",
+    "mint_webhook_opener",
+    "mint_webhook_sealer",
+    "mint_webhook_signer",
     "open_recovery_digests",
     "prove_kek_possession",
 ]

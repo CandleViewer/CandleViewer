@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Sequence
 from datetime import datetime
 from typing import Any, Literal, Protocol
+from uuid import UUID
 
 import structlog
 
@@ -143,6 +144,42 @@ class OwnerDirectory(Protocol):
 
 class AuditSink(Protocol):
     async def emit(self, action: str, **kwargs: Any) -> None: ...
+
+
+class WebhookSealerPort(Protocol):
+    """M2's `WebhookSealer` (#1400 S3, ADR-0009 Amendment 9), which the composition root binds:
+    seals a webhook's URL or secret for one alert into the `webhook_url_enc` or
+    `webhook_secret_enc` blob. M22 never imports `secrets` (C-3.2); a refusal raises, its text a
+    reason code only, and the caller maps any failure but a cancellation to its own code (the
+    `destroy_key` precedent)."""
+
+    async def seal_target(self, url: str, alert_id: UUID) -> bytes: ...
+
+    async def seal_secret(self, secret: bytes | bytearray, alert_id: UUID) -> bytes: ...
+
+
+class WebhookTargetOpenerPort(Protocol):
+    """M2's `WebhookTargetOpener` (Amendment 9): the webhook URL of one alert's blob, for the
+    egress client, held in memory for one delivery and never logged or stored. No port opens the
+    secret. Refusals as `WebhookSealerPort`'s."""
+
+    async def open_target(self, sealed: bytes, alert_id: UUID) -> str: ...
+
+
+class WebhookSignerPort(Protocol):
+    """M2's bounded `WebhookSigner` (Amendment 9): the hex HMAC-SHA256, under the alert's sealed
+    secret, of `cv.alert.webhook.v1:{timestamp}:{delivery_id}:{hex body_digest}`, where
+    `body_digest` is the 32-byte SHA-256 of the raw body sent; nothing else is signable. Refusals
+    as `WebhookSealerPort`'s."""
+
+    async def sign_delivery(
+        self,
+        sealed_secret: bytes,
+        alert_id: UUID,
+        delivery_id: int,
+        timestamp: int,
+        body_digest: bytes,
+    ) -> str: ...
 
 
 class MetricChildLike(Protocol):
