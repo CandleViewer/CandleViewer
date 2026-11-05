@@ -12,10 +12,14 @@
  * authority on everything (C-2.12): a draft this passes may still be refused, never the reverse
  * for a rule mirrored exactly.
  *
- * Server rules the client cannot mirror yet (the price band, the instrument's price limits, the
- * leverage cap, margin) are always listed in `unmirrored`, so no result claims `exact` while any
- * is unmirrored. A failure carries its data as plain `params`; `messages.ts` (S2b) maps it to the
- * deck's copy. Pure: no clock, randomness or I/O; plain data in, plain data out.
+ * Server rules the client cannot mirror yet (the price band, the instrument's price limits,
+ * margin) are always listed in `unmirrored`, so no result claims `exact` while any is unmirrored.
+ * A failure carries its data as plain `params`; `messages.ts` (S2b) maps it to the deck's copy.
+ * Pure: no clock, randomness or I/O; plain data in, plain data out.
+ *
+ * The input is trusted to its TypeScript types, except that the side, the reduce-only flag, an
+ * offset's unit and every decimal string are re-checked at run time (refused, never read by
+ * truthiness), so a draft that crossed a worker boundary unchecked must be shape-checked there.
  */
 import type { ErrorCode } from "@candleviewer/protocol";
 import { classify, type EntryClass } from "./classify.js";
@@ -29,10 +33,17 @@ import {
   mul,
   parseDecimal,
   sign,
+  sub,
   toPlain,
   type Decimal,
 } from "./decimal.js";
-import { isOnLot, isOnTick, parseInstrument, type InstrumentGrid } from "./instrument.js";
+import {
+  isOnLot,
+  isOnTick,
+  parseInstrument,
+  priceToTick,
+  type InstrumentGrid,
+} from "./instrument.js";
 import {
   targetAccountIds,
   type Offset,
@@ -50,6 +61,7 @@ import {
 export type FieldPath =
   | "symbol"
   | "exchange_account_id"
+  | "leverage"
   | "side"
   | "trigger.price"
   | "price"
@@ -63,12 +75,14 @@ export type FieldPath =
 
 /**
  * The fields in the ticket's Tab order (`D02`:345: order type and trigger, price, size, stop,
- * take-profit, TIF and post-only, reduce-only). The symbol and account are the panel header, so
- * they lead; the intent has no control of its own on SCR-060, so it closes the list.
+ * take-profit, TIF and post-only, reduce-only). The symbol, account and leverage are the panel
+ * header (the leverage is the profile's, read-only, `D02`:157), so they lead; the intent has no
+ * control of its own on SCR-060, so it closes the list.
  */
 export const FIELD_ORDER: readonly FieldPath[] = [
   "symbol",
   "exchange_account_id",
+  "leverage",
   "side",
   "trigger.price",
   "price",
@@ -94,6 +108,12 @@ const RULE_CODES = {
    * answers an ungranted account with its own 403 / 404, not a validation code.
    */
   account_not_targeted: null,
+  /**
+   * `validation_failed` / `max_leverage` (the sizer's `leverage_unavailable`, `24` §9.3.4): the
+   * profile's leverage is above the instrument's `max_leverage`. Judged on an order that is not
+   * reduce-only, as only those are sized.
+   */
+  max_leverage: "validation_failed",
   /** Client: a side other than `buy` / `sell` (the worker boundary drops type guarantees). */
   side_invalid: "validation_failed",
   /** A limit price or trigger price that is absent or not a positive decimal. */
@@ -120,6 +140,8 @@ const RULE_CODES = {
   invalid_stop_distance: "validation_failed",
   /** `validation_failed` / `take_profit_side`. */
   take_profit_side: "validation_failed",
+  /** Client: a `reduce_only` that is not a boolean (the worker boundary drops type guarantees). */
+  reduce_only_invalid: "validation_failed",
   /** `validation_failed` / `reduce_only_tpsl`: a reduce-only order names a stop or take-profit. */
   reduce_only_tpsl: "validation_failed",
   /** Client (the exchange's post-only rule): a post-only limit at or through the book top. */
@@ -157,20 +179,24 @@ export type Unmirrored =
   | "instrument.min_notional_value"
   | "instrument.max_order_qty"
   | "instrument.max_mkt_order_qty"
+  | "instrument.max_leverage"
+  /** The leverage check's profile is not held (an order that is not reduce-only). */
+  | "max_leverage"
   | "position"
   | "reference_price"
   | "ticker.book_top"
   /** Server rules not mirrored yet, listed on every result (code lens M1, BQ 1). */
   | "price_band"
   | "instrument.price_limits"
-  | "max_leverage"
   | "margin";
 
-/** `22`'s price band, `min_price` / `max_price`, the leverage cap and margin: not served yet. */
+/**
+ * `22`'s price band, `min_price` / `max_price` and margin: not served yet. The leverage check is
+ * not here: `Instrument.max_leverage` is served and the check mirrored (#5886 fold 3).
+ */
 export const ALWAYS_UNMIRRORED: readonly Unmirrored[] = [
   "price_band",
   "instrument.price_limits",
-  "max_leverage",
   "margin",
 ];
 
@@ -272,6 +298,8 @@ export function validate(draft: OrderDraft, ctx: TicketContext): ValidationResul
     unmirrored.add("position");
   const side = sideKey(draft.side);
   const isLimit = draft.orderType === "limit";
+  // Only the boolean `true` is reduce-only; anything else is an entry (classify, fold 1).
+  const reduceOnly = draft.reduceOnly === true;
 
   // symbol: a market the ticket can price against and the exchange will take.
   const grid: InstrumentGrid | null =
@@ -279,6 +307,7 @@ export function validate(draft: OrderDraft, ctx: TicketContext): ValidationResul
   if (grid === null) unmirrored.add("instrument");
   else {
     for (const name of grid.missing) {
+      // The leverage filter is listed by its check, which a reduce-only order never runs.
       if (name !== "max_leverage") unmirrored.add(`instrument.${name}`);
     }
   }
@@ -288,6 +317,9 @@ export function validate(draft: OrderDraft, ctx: TicketContext): ValidationResul
   if (!targetAccountIds(ctx.target).includes(draft.exchangeAccountId)) {
     fail("exchange_account_id", "account_not_targeted");
   }
+  // leverage: the profile's, at most the instrument's maximum (`leverage_unavailable`), judged
+  // where the server sizes the order: one that is not reduce-only.
+  if (!reduceOnly) checkLeverage(ctx, grid, fail, unmirrored);
   if (reason === "side_invalid") fail("side", "side_invalid");
   const tick = grid === null ? null : { tick: toPlain(grid.tickSize) };
 
@@ -317,10 +349,10 @@ export function validate(draft: OrderDraft, ctx: TicketContext): ValidationResul
   // A reduce-only order that is not shown to reduce is told about its reduce-only flag alone,
   // never to drop a stop it may need once it opens (the flag is the fix).
   const reduceOnlyBlocked =
-    draft.reduceOnly &&
+    reduceOnly &&
     (reason === "position_unknown" || reason === "no_position" || reason === "exceeds_position");
   const stop = draft.stopLoss;
-  if (draft.reduceOnly && stop !== null) {
+  if (reduceOnly && stop !== null) {
     if (!reduceOnlyBlocked) fail("stop_loss", "reduce_only_tpsl");
   } else if (stop === null) {
     if (classification.entry) {
@@ -329,24 +361,33 @@ export function validate(draft: OrderDraft, ctx: TicketContext): ValidationResul
   } else if (unitKind(stop.unit) === "r" || unitKind(stop.unit) === "unknown") {
     fail("stop_loss", "stop_unit_unsupported");
   } else {
-    checkStop(stop, draft.side, ref, fail, unmirrored);
+    checkStop(stop, draft.side, ref, grid, fail, unmirrored);
   }
 
   // take_profit: never on reduce-only; only `price`, `ticks` or `percent`; on the profit side.
   const tp = draft.takeProfit;
   if (tp !== null) {
-    if (draft.reduceOnly) {
+    if (reduceOnly) {
       if (!reduceOnlyBlocked) fail("take_profit", "reduce_only_tpsl");
     } else if (unitKind(tp.unit) !== "distance" && unitKind(tp.unit) !== "level") {
       fail("take_profit", "stop_unit_unsupported");
     } else {
       const level = positive(tp.value);
-      const wrongSide =
-        level === null ||
-        (tp.unit === "price" && ref !== null && !levelBeyond(level, ref, draft.side === "sell"));
-      if (tp.unit === "price" && level !== null && ref === null) unmirrored.add("reference_price");
-      if (wrongSide) {
-        fail("take_profit", "take_profit_side", { side });
+      if (level === null) fail("take_profit", "take_profit_side", { side });
+      else if (tp.unit === "price") {
+        if (ref === null) unmirrored.add("reference_price");
+        else if (!levelBeyond(level, ref, draft.side === "sell")) {
+          fail("take_profit", "take_profit_side", { side });
+        }
+      } else if (draft.side === "sell" && (tp.unit === "ticks" || tp.unit === "percent")) {
+        // A short's target in ticks or percent lies below its reference: at or past zero it is
+        // no price (`22`: "no finite price above zero on the profit side"). Its rounding toward
+        // the entry (ceil) keeps the sign, so the unrounded level is judged.
+        const resolved = levelBelow(level, tp.unit, ref, grid);
+        if (resolved === "unknown") unmirrored.add(ref === null ? "reference_price" : "instrument");
+        else if (sign(resolved) <= 0) {
+          fail("take_profit", "take_profit_side", { side, kind: "non_positive" });
+        }
       }
     }
   }
@@ -360,8 +401,9 @@ export function validate(draft: OrderDraft, ctx: TicketContext): ValidationResul
     }
   }
 
-  // reduce_only: it needs a known position on the side it closes, no larger than it.
-  if (draft.reduceOnly) {
+  // reduce_only: a boolean, and it needs a known position on the side it closes, no larger.
+  if (typeof draft.reduceOnly !== "boolean") fail("reduce_only", "reduce_only_invalid");
+  if (reduceOnly) {
     if (reason === "position_unknown" || reason === "no_position") {
       const read = reason === "no_position" ? "none" : "unread";
       fail("reduce_only", "reduce_only_no_position", { read });
@@ -374,10 +416,11 @@ export function validate(draft: OrderDraft, ctx: TicketContext): ValidationResul
   // A reducing intent on an order that is not reduce-only is always refused (`22`:6580-6584);
   // otherwise not judged while the effect is unknown (an untrusted read, a bad side).
   const intent = draft.intent;
-  const judged = reason !== "position_unknown" && reason !== "side_invalid";
+  const judged =
+    reason !== "position_unknown" && reason !== "side_invalid" && reason !== "reduce_only_invalid";
   const mismatch =
     SERVER_INTENTS.has(intent) ||
-    (!draft.reduceOnly && REDUCING_INTENTS.has(intent)) ||
+    (draft.reduceOnly === false && REDUCING_INTENTS.has(intent)) ||
     (judged && (classification.entry ? REDUCING_INTENTS.has(intent) : OPENING_INTENTS.has(intent)));
   if (mismatch) fail("intent", "intent_mismatch");
 
@@ -401,19 +444,30 @@ export function validate(draft: OrderDraft, ctx: TicketContext): ValidationResul
 
 /**
  * A stop in `ticks`, `percent`, `atr` or `price`: a positive distance (or level), and a `price`
- * level below a buy's reference or above a sell's (`invalid_stop_distance`). An `atr` stop is
- * resolved by the sizing mirror (S3) through the profile's fallback; only its value is checked.
+ * level below a buy's reference or above a sell's (`invalid_stop_distance`). A buy's stop in
+ * `ticks` or `percent` must land above zero once floored to the tick, as the server resolves it
+ * (`24` §9.3 step 3: "a stop at or below 0"; `kind` `non_positive`). An `atr` stop is resolved
+ * by the sizing mirror (S3) through the profile's fallback; only its value is checked.
  */
 function checkStop(
   stop: Offset,
   side: OrderSide,
   ref: Decimal | null,
+  grid: InstrumentGrid | null,
   fail: Fail,
   unmirrored: Set<Unmirrored>,
 ): void {
   const level = positive(stop.value);
   if (level === null) {
     fail("stop_loss", "invalid_stop_distance", { kind: "distance", side: sideKey(side) });
+    return;
+  }
+  if (side === "buy" && (stop.unit === "ticks" || stop.unit === "percent")) {
+    const resolved = levelBelow(level, stop.unit, ref, grid);
+    if (resolved === "unknown") unmirrored.add(ref === null ? "reference_price" : "instrument");
+    else if (sign(grid === null ? resolved : priceToTick(grid, resolved, "floor")) <= 0) {
+      fail("stop_loss", "invalid_stop_distance", { kind: "non_positive", side: sideKey(side) });
+    }
     return;
   }
   if (stop.unit !== "price") return;
@@ -423,6 +477,49 @@ function checkStop(
   }
   if (!levelBeyond(level, ref, side === "buy")) {
     fail("stop_loss", "invalid_stop_distance", { kind: "level", side: sideKey(side) });
+  }
+}
+
+/**
+ * The level `value` `ticks` or `percent` below `ref` (a buy's stop, a sell's target), as `22`'s
+ * stop resolver measures it (a percent of `ref`, exactly), or `unknown` when `ref` or, for ticks,
+ * the instrument's tick is not held.
+ */
+function levelBelow(
+  value: Decimal,
+  unit: "ticks" | "percent",
+  ref: Decimal | null,
+  grid: InstrumentGrid | null,
+): Decimal | "unknown" {
+  if (ref === null) return "unknown";
+  if (unit === "ticks") return grid === null ? "unknown" : sub(ref, mul(value, grid.tickSize));
+  // `ref × value / 100`, exactly: dividing by 100 is two more places of scale.
+  const product = mul(ref, value);
+  return sub(ref, { units: product.units, scale: product.scale + 2 });
+}
+
+/**
+ * The profile's leverage against the instrument's maximum (`24` §9.3.4 `leverage_unavailable`,
+ * `22` `max_leverage`). A profile or a maximum the client does not hold is listed, never assumed.
+ */
+function checkLeverage(
+  ctx: TicketContext,
+  grid: InstrumentGrid | null,
+  fail: Fail,
+  unmirrored: Set<Unmirrored>,
+): void {
+  const leverage = positive(ctx.profile?.profile.leverage);
+  if (leverage === null) {
+    unmirrored.add("max_leverage");
+    return;
+  }
+  if (grid === null) return; // "instrument" is listed already
+  if (grid.maxLeverage === null) unmirrored.add("instrument.max_leverage");
+  else if (gt(leverage, grid.maxLeverage)) {
+    fail("leverage", "max_leverage", {
+      leverage: toPlain(leverage),
+      max: toPlain(grid.maxLeverage),
+    });
   }
 }
 
@@ -444,7 +541,10 @@ function validateSizing(
   unmirrored: Set<Unmirrored>,
 ): void {
   const { sizing } = draft;
-  if (sizing.mode === "pct_position" || (draft.reduceOnly && sizing.mode !== "fixed_qty")) {
+  if (
+    sizing.mode === "pct_position" ||
+    (draft.reduceOnly === true && sizing.mode !== "fixed_qty")
+  ) {
     fail("sizing", "sizing_mode_unsupported");
     return;
   }

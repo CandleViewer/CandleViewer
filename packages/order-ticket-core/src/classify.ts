@@ -5,10 +5,10 @@
  * whatever its `intent`, and every entry carries a native stop (C-2.6).
  *
  * The client knows less than the server, so this mirror fails closed (BQ 5 ruling, #984): an
- * explicit `reduce_only` order is classed "not an entry" only when the client holds a known,
- * opposite-side position at least as large as the order's quantity. An unknown position, no
- * position, a same-side position, a quantity the client cannot know before sizing, or one above
- * the position, is an entry. The server stays the authority (C-2.12); this only decides what the
+ * explicit `reduce_only` order (the boolean `true`, nothing else) is classed "not an entry" only
+ * when the client holds a known, opposite-side position at least as large as the order's
+ * quantity. A flag that is not a boolean, an unknown position, no position, a same-side position,
+ * a quantity the client cannot know before sizing, or one above the position, is an entry. The server stays the authority (C-2.12); this only decides what the
  * ticket blocks and shows.
  */
 import { ZERO, div, gt, lte, mul, parseDecimal, sign, type Decimal } from "./decimal.js";
@@ -18,6 +18,11 @@ import type { OrderDraft, OrderSide, PositionRead, TicketTarget } from "./model.
 export type EntryReason =
   /** `reduce_only` is not set: every such order may open or add (SR-E29-01). */
   | "not_reduce_only"
+  /**
+   * `reduce_only` is not a boolean (data that crossed a worker boundary unchecked): its meaning is
+   * unknown, never read by truthiness, so the order may open and is an entry (#5886 fold 1).
+   */
+  | "reduce_only_invalid"
   /** The side is neither `buy` nor `sell` (data that crossed a worker boundary unchecked). */
   | "side_invalid"
   /**
@@ -96,7 +101,10 @@ export function knownQty(draft: OrderDraft, positionSize: Decimal): Decimal | nu
 /** Classify a draft as an entry or not, as `22` `placeOrder` would, failing closed. */
 export function classify(draft: OrderDraft, read: PositionRead, target: TicketTarget): EntryClass {
   if (draft.side !== "buy" && draft.side !== "sell") return { entry: true, reason: "side_invalid" };
-  if (!draft.reduceOnly) return { entry: true, reason: "not_reduce_only" };
+  // Only the boolean `true` reduces: a string "false" or a number 1 is unknown, so an entry.
+  const flag: unknown = draft.reduceOnly;
+  if (flag === false) return { entry: true, reason: "not_reduce_only" };
+  if (flag !== true) return { entry: true, reason: "reduce_only_invalid" };
   const size = reducibleSize(draft, read, target);
   if (size === "unknown") return { entry: true, reason: "position_unknown" };
   if (size === null) return { entry: true, reason: "no_position" };

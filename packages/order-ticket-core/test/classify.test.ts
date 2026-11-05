@@ -26,6 +26,9 @@ const moved = (over: object): PositionRead =>
     ? { status: "known", position: { ...LONG.position, ...over } }
     : LONG;
 const GROUP: TicketTarget = { kind: "group", accountIds: [TARGET.accountId] };
+/** An exit inside LONG whose `reduceOnly` crossed a worker boundary unchecked (#5886 fold 1). */
+const flag = (value: unknown): OrderDraft =>
+  ({ ...exitDraft("0.4"), reduceOnly: value }) as unknown as OrderDraft;
 
 /** Draft, read (and target) → the entry reason, or `null` for "not an entry". */
 // prettier-ignore
@@ -51,6 +54,14 @@ const CASES: readonly (readonly [string, OrderDraft, PositionRead, EntryReason |
   ["(M1) a draft for another account", exitDraft("0.5", { exchangeAccountId: "other" }), LONG, "position_unknown"],
   ["(M1) a group target", exitDraft("0.5"), LONG, "position_unknown", GROUP],
   ["(L2) a side of hold", { ...exitDraft("0.5"), side: "hold" } as unknown as OrderDraft, LONG, "side_invalid"],
+  ["(fold 1) reduceOnly the string \"false\"", flag("false"), LONG, "reduce_only_invalid"],
+  ["(fold 1) reduceOnly the string \"true\"", flag("true"), LONG, "reduce_only_invalid"],
+  ["(fold 1) reduceOnly the number 1", flag(1), LONG, "reduce_only_invalid"],
+  ["(fold 1) reduceOnly the number 0", flag(0), LONG, "reduce_only_invalid"],
+  ["(fold 1) reduceOnly null", flag(null), LONG, "reduce_only_invalid"],
+  ["(fold 1) reduceOnly undefined", flag(undefined), LONG, "reduce_only_invalid"],
+  ["(fold 1) reduceOnly an object", flag({ value: true }), LONG, "reduce_only_invalid"],
+  ["(fold 1) reduceOnly false", flag(false), LONG, "not_reduce_only"],
 ];
 
 describe("classify (22:6576-6579, SR-E29-01)", () => {

@@ -46,12 +46,15 @@ export function draft(over: Partial<OrderDraft> = {}): OrderDraft {
   };
 }
 
+/** A profile at 10x, inside BTCUSDT's 100x (only the fields the rules read; #5886 fold 3). */
+export const PROFILE = { profile: { leverage: "10" } } as TicketContext["profile"];
+
 export function ctx(over: Partial<TicketContext> = {}): TicketContext {
   return {
     env: "demo",
     target: TARGET,
     instrument: BTC,
-    profile: null,
+    profile: PROFILE,
     wallet: null,
     ticker: TICKER,
     risk: null,

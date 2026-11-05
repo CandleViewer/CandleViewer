@@ -55,14 +55,79 @@ describe("validate: the result", () => {
   });
 
   it("validate_aMissingFilter_isPartial_neverAssumedToPass", () => {
-    // No leverage rule reads `max_leverage`, so its absence leaves validation exact.
     const rest = { ...BTC };
     delete rest.max_order_qty;
     delete rest.min_notional_value;
     delete rest.max_leverage;
     const result = validate(draft(qty("1000")), ctx({ instrument: rest }));
-    expect(gaps(result)).toEqual(["instrument.max_order_qty", "instrument.min_notional_value"]);
+    expect(gaps(result)).toEqual([
+      "instrument.max_leverage",
+      "instrument.max_order_qty",
+      "instrument.min_notional_value",
+    ]);
     expect(result.failures.map((f) => f.rule)).not.toContain("max_order_qty");
+  });
+
+  it("validate_theLeverageCheck_isListedWhenItsInputsAreNotHeld (#5886 fold 3)", () => {
+    // `Instrument.max_leverage` is served: the check is mirrored, never always unmirrored.
+    expect(ALWAYS_UNMIRRORED).not.toContain("max_leverage");
+    const clear = validate(draft(), ctx());
+    expect(clear).toMatchObject({ failures: [], unmirrored: [...ALWAYS_UNMIRRORED].sort() });
+    expect(gaps(validate(draft(), ctx({ profile: null })))).toEqual(["max_leverage"]);
+    const junk = { profile: { leverage: "0" } } as TicketContext["profile"];
+    expect(gaps(validate(draft(), ctx({ profile: junk })))).toEqual(["max_leverage"]);
+    const noGrid = validate(draft(), ctx({ instrument: { ...BTC, tick_size: "0" } }));
+    expect(noGrid.unmirrored).not.toContain("instrument.max_leverage");
+    // A reduce-only order is not sized, so its leverage is neither judged nor listed.
+    const rest = { ...BTC };
+    delete rest.max_leverage;
+    const exit = validate(exitDraft("0.5"), ctx({ instrument: rest, position: held("long", "1") }));
+    expect(gaps(exit)).toEqual([]);
+    expect(
+      gaps(validate(exitDraft("0.5"), ctx({ profile: null, position: held("long", "1") }))),
+    ).toEqual([]);
+  });
+
+  it("validate_aNonBooleanReduceOnly_isAnEntry_soItsStopIsAsked (#5886 fold 1)", () => {
+    for (const value of ["false", "true", 1, 0, null, undefined, { value: true }]) {
+      const d = { ...exitDraft("0.5"), reduceOnly: value } as unknown as OrderDraft;
+      const result = validate(d, ctx({ position: held("long", "1") }));
+      expect(result.classification, String(value)).toEqual({
+        entry: true,
+        reason: "reduce_only_invalid",
+      });
+      // An entry with no stop is refused; the intent is not judged on an unknown effect, and
+      // nothing reduce-only (tpsl, sizing mode, position) is asked of it.
+      expect(result.failures.map((f) => f.rule)).toEqual([
+        "native_stop_required",
+        "reduce_only_invalid",
+      ]);
+      const withStop = validate({ ...d, stopLoss: off("ticks", "9") } as OrderDraft, ctx());
+      expect(withStop.failures.map((f) => f.rule)).toEqual(["reduce_only_invalid"]);
+    }
+  });
+
+  it("validate_aStopOrTargetPastZero_withNoReference_isListed (#5886 fold 2)", () => {
+    const none = ctx({ ticker: null });
+    const stop = validate(draft({ ...MARKET, stopLoss: off("percent", "150") }), none);
+    expect(stop).toMatchObject({ failures: [], exactness: "partial" });
+    expect(stop.unmirrored).toContain("reference_price");
+    const sell = { ...MARKET, side: "sell", stopLoss: off("ticks", "9") } as const;
+    const target = validate(draft({ ...sell, takeProfit: off("ticks", "700000") }), none);
+    expect(target.unmirrored).toContain("reference_price");
+    expect(target.failures.map((f) => f.rule)).not.toContain("take_profit_side");
+    // With no instrument grid a tick is unknown: a ticks stop is listed, a percent one judged raw.
+    const noGrid = ctx({ instrument: { ...BTC, tick_size: "0" } });
+    const ticks = validate(draft({ stopLoss: off("ticks", "600000") }), noGrid);
+    expect(ticks.failures.map((f) => f.rule)).not.toContain("invalid_stop_distance");
+    expect(ticks.unmirrored).toContain("instrument");
+    const tp = validate(draft({ side: "sell", takeProfit: off("ticks", "700000") }), noGrid);
+    expect(tp.failures.map((f) => f.rule)).not.toContain("take_profit_side");
+    const pct = validate(draft({ stopLoss: off("percent", "100") }), noGrid);
+    expect(pct.failures.find((f) => f.rule === "invalid_stop_distance")?.params).toEqual({
+      kind: "non_positive",
+      side: "long",
+    });
   });
 
   it("validate_anAbsentMinimum_isListed_andNeverGuessed (S1 grids: null, not a default)", () => {

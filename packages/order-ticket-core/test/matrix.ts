@@ -54,8 +54,24 @@ const LONG: Ctx = { position: held("long", "1.000") };
 const UNREAD: Ctx = { position: { status: "unknown" } };
 const SHORT: Partial<OrderDraft> = { side: "sell", stopLoss: off("ticks", "9") };
 const MIN_LEG = (min: string): Ctx => ({
-  profile: { profile: { sizing: { min_leg_notional_usd: min } } } as TicketContext["profile"],
+  profile: {
+    profile: { leverage: "10", sizing: { min_leg_notional_usd: min } },
+  } as TicketContext["profile"],
 });
+
+/** The profile at `leverage`, BTCUSDT's maximum being 100 (`24` §9.3.4). */
+const LEVERAGE = (leverage: string): Ctx => ({
+  profile: { profile: { leverage } } as TicketContext["profile"],
+});
+/** A buy's stop, or a sell's take-profit, `pct` percent or `n` ticks below the reference. */
+const STOP = (unit: OffsetUnit, v: string): Partial<OrderDraft> => ({ stopLoss: off(unit, v) });
+const SHORT_TP = (unit: OffsetUnit, v: string): Partial<OrderDraft> => ({
+  ...SHORT,
+  takeProfit: off(unit, v),
+});
+/** An exit inside the long, its `reduceOnly` as data that crossed a worker boundary unchecked. */
+const flag = (value: unknown): OrderDraft =>
+  ({ ...X("0.5"), reduceOnly: value }) as unknown as OrderDraft;
 
 // prettier-ignore
 export const MATRIX: readonly Row[] = [
@@ -71,6 +87,12 @@ export const MATRIX: readonly Row[] = [
   ok("account_not_targeted", "one of the group's accounts", D(), GROUP("other", ACCOUNT)),
   no("account_not_targeted", "another account than the target's", D({ exchangeAccountId: "other" }), "exchange_account_id"),
   no("account_not_targeted", "an account the group does not name", D(), "exchange_account_id", null, GROUP("other")),
+
+  ok("max_leverage", "10x under 100x", D()),
+  ok("max_leverage", "at 100x", D(), LEVERAGE("100")),
+  ok("max_leverage", "a reduce-only order is not sized, so not judged", X("0.5"), { ...LONG, ...LEVERAGE("125") }),
+  no("max_leverage", "125x over 100x", D(), "leverage", { leverage: "125", max: "100.00" }, LEVERAGE("125")),
+  no("max_leverage", "100.01x", D(), "leverage", { leverage: "100.01" }, LEVERAGE("100.01")),
 
   ok("side_invalid", "buy", D()),
   no("side_invalid", "a side of hold (L2)", { ...D(), side: "hold" } as unknown as OrderDraft, "side"),
@@ -150,11 +172,25 @@ export const MATRIX: readonly Row[] = [
   no("invalid_stop_distance", "0 ticks", D({ stopLoss: off("ticks", "0") }), "stop_loss", { kind: "distance", side: "long" }),
   no("invalid_stop_distance", "a long's at entry", D({ stopLoss: off("price", "60000.0") }), "stop_loss", { kind: "level", side: "long" }),
   no("invalid_stop_distance", "a short's below", D({ side: "sell", stopLoss: off("price", "59000") }), "stop_loss", { kind: "level", side: "short" }),
+  ok("invalid_stop_distance", "a long's 99 % stop: 600.0 (fold 2)", D(STOP("percent", "99"))),
+  ok("invalid_stop_distance", "a long's 599999 ticks: one tick above zero", D(STOP("ticks", "599999"))),
+  ok("invalid_stop_distance", "a short's 150 % stop: above, never past zero", D({ ...SHORT, stopLoss: off("percent", "150") })),
+  no("invalid_stop_distance", "a long's 100 % stop: at zero (fold 2)", D(STOP("percent", "100")), "stop_loss", { kind: "non_positive", side: "long" }),
+  no("invalid_stop_distance", "a long's 150 % stop: past zero", D(STOP("percent", "150")), "stop_loss", { kind: "non_positive", side: "long" }),
+  no("invalid_stop_distance", "a long's 99.99999 %: under one tick, floored to zero", D(STOP("percent", "99.99999")), "stop_loss", { kind: "non_positive", side: "long" }),
+  no("invalid_stop_distance", "a long's 600000 ticks: at zero", D(STOP("ticks", "600000")), "stop_loss", { kind: "non_positive", side: "long" }),
+  no("invalid_stop_distance", "a market long's 100 % from the ask", D({ ...MARKET, ...STOP("percent", "100") }), "stop_loss", { kind: "non_positive" }),
 
   ok("take_profit_side", "a long's above", D({ takeProfit: off("price", "61000") })),
   no("take_profit_side", "a long's below", D({ takeProfit: off("price", "59000") }), "take_profit", { side: "long" }),
   no("take_profit_side", "a short's above", D({ ...SHORT, takeProfit: off("price", "61000") }), "take_profit", { side: "short" }),
   no("take_profit_side", "-5 ticks", D({ takeProfit: off("ticks", "-5") }), "take_profit", { side: "long" }),
+  ok("take_profit_side", "a short's 99 % target: 600.0 (fold 2)", D(SHORT_TP("percent", "99"))),
+  ok("take_profit_side", "a short's 599999 ticks: one tick above zero", D(SHORT_TP("ticks", "599999"))),
+  ok("take_profit_side", "a long's 150 % target: above, never past zero", D({ takeProfit: off("percent", "150") })),
+  no("take_profit_side", "a short's 100 % target: at zero (fold 2)", D(SHORT_TP("percent", "100")), "take_profit", { side: "short", kind: "non_positive" }),
+  no("take_profit_side", "a short's 150 % target: past zero", D(SHORT_TP("percent", "150")), "take_profit", { side: "short", kind: "non_positive" }),
+  no("take_profit_side", "a short's 700000 ticks: past zero", D(SHORT_TP("ticks", "700000")), "take_profit", { side: "short", kind: "non_positive" }),
 
   ok("reduce_only_tpsl", "an exit with neither", X("0.5"), LONG),
   ok("reduce_only_tpsl", "above the position, a stop: the flag alone is shown (L3)", X("1.5", { stopLoss: off("ticks", "9"), takeProfit: off("ticks", "9") }), LONG),
@@ -169,6 +205,16 @@ export const MATRIX: readonly Row[] = [
   ok("reduce_only_no_position", "an exit inside a long", X("0.5"), LONG),
   no("reduce_only_no_position", "no position", X("0.5"), "reduce_only", { read: "none" }),
   no("reduce_only_no_position", "an unread one", X("0.5"), "reduce_only", { read: "unread" }, UNREAD),
+
+  ok("reduce_only_invalid", "true", X("0.5"), LONG),
+  ok("reduce_only_invalid", "false", D()),
+  no("reduce_only_invalid", "the string \"false\" (fold 1)", flag("false"), "reduce_only", null, LONG),
+  no("reduce_only_invalid", "the string \"true\"", flag("true"), "reduce_only", null, LONG),
+  no("reduce_only_invalid", "the number 1", flag(1), "reduce_only", null, LONG),
+  no("reduce_only_invalid", "the number 0", flag(0), "reduce_only", null, LONG),
+  no("reduce_only_invalid", "null", flag(null), "reduce_only", null, LONG),
+  no("reduce_only_invalid", "undefined", flag(undefined), "reduce_only", null, LONG),
+  no("reduce_only_invalid", "an object", flag({ value: true }), "reduce_only", null, LONG),
 
   ok("reduce_only_exceeds_position", "the whole position", X("1"), LONG),
   no("reduce_only_exceeds_position", "more than it", X("1.001"), "reduce_only", null, LONG),
