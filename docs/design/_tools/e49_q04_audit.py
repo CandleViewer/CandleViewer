@@ -30,7 +30,7 @@ import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE = "1708e0ad3"  # origin/main as read; the plan cites every plan and repo text here
-D02_HEAD = "bc0c643e9"  # PR #5877 (E49-D02, #1331) head as ruled
+D02_HEAD = "0cba71f9b"  # PR #5877 (E49-D02, #1331) head as ruled
 PACK_HEAD = "eda159017"  # PR #5850 (E49-Q01's pack, #1335) head as ruled
 RULING = "6643527392"  # the ruling of record on #1362 (the BQ list is 6642015197)
 _AG, _AM = "AGREE +rider", "AMEND"
@@ -92,7 +92,7 @@ PINS: tuple[tuple[str, L.KeyCite], ...] = (
     ("WSH :233", L.KeyCite("WSH", 233, '"welcome"')),
     ("TREE :48", L.KeyCite("TREE", 48, "LoginScreen")),
     ("MAN :29", L.KeyCite("MAN", 29, '"R-001"')),
-    ("D02 :671", L.KeyCite("D02", 671, "States/<frame>")),
+    ("D02 :669", L.KeyCite("D02", 669, "States/<frame>")),
     ("X01 :97, :123", L.KeyCite("X01", 123, "AC-16")),
     ("D30 :265, :268", L.KeyCite("D30", 268, "never held")),
     ("D17 :9, :429", L.KeyCite("D17", 429, "C7")),

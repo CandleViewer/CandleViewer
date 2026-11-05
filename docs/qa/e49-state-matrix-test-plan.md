@@ -7,7 +7,7 @@ BQ-9 RULED (comment 6643527392 on the list 6642015197).** Branch `chore/e49-stat
 
 **Base.** Every plan and repo cite is to `main` at `1708e0ad3`; the plan documents cited are byte-identical at the
 ruling's pre-check base `d5f2e0bc1`. The contracts in flight are pinned at their heads, each **if it merges as is**
-and re-pinned at its merge (BQ-0 a): E49-D02 as `D02` from PR #5877 at `bc0c643e9`; the E49-Q01 pack (#1335) from
+and re-pinned at its merge (BQ-0 a): E49-D02 as `D02` from PR #5877 at `0cba71f9b`; the E49-Q01 pack (#1335) from
 #5850 at `eda159017` (`GAP`, `GAT`), #5851 at `9d6613be7` and #5853 at `960dd7bd7`; E49-D01's protocol from #5860 at
 `6138f6f81` (since moved; re-pinned at its merge); the Draft #5829 at `3eebfe684`, whose chart probe this plan
 leaves untouched (C-4.15).
@@ -82,7 +82,7 @@ ESCALATE 0). Each AMEND replaced its default here; each rider is applied where t
 ## 0. Conventions
 
 - **Expectations come from the specification, never the build** (the E40 plan's rule, E40Q :9). Sources:
-  - `T` is the ticket text of #1362; `D02` is `docs/design/E49/E49-D02.md` at `bc0c643e9` (PR #5877);
+  - `T` is the ticket text of #1362; `D02` is `docs/design/E49/E49-D02.md` at `0cba71f9b` (PR #5877);
   - `X01` is `docs/security/threat-models/e49-defect-fix-path.md`; `R32` is `.claude/rules/32-design-specs.md`;
   - `14`, `15`, `03`, `05`, `22`, `24` are the plan documents, cited `file :line`;
   - `WSW` is the shared socket entry `wsWorker.ts` (`apps/web/src/lib/ws/…`), `FCFG` the fault lane's config
@@ -153,7 +153,7 @@ them cell rows (§3.3); the order ticket, the positions grid, the DOM ladder and
 
 `14` closes the set at ten patterns (`14` :3088; D02 C-1): the columns are D02's ten, SCR-151 expanded into its
 three classes and CMP-026's `error` variant, so thirteen column codes; the ticket's eleven states and its harness's
-version mismatch map onto them (C-1). Loading is one column whose cell names its D02 §4 row (D02 :315–325).
+version mismatch map onto them (C-1). Loading is one column whose cell names its D02 §4 row (D02 :314–324).
 Rate-limited sits under SCR-158 only (D02 C-5, A-6): no rate-limited cell is drawn under SCR-153.
 
 | Col | Ticket state                      | Pattern and component                                            | Injection (§7)                        | Assertions |
@@ -164,13 +164,13 @@ Rate-limited sits under SCR-158 only (D02 C-5, A-6): no rate-limited cell is dra
 | E3  | empty: data not recorded yet      | CMP-026 `recording-not-started`, reason `not_recorded`           | a stub with no recorded coverage      | §4.3       |
 | ER  | error (a failed request)          | CMP-026 `error` → CMP-027 panel form (`15` :313); never SCR-156  | a network-layer `500` or abort        | §4.4       |
 | DC  | stale / disconnected              | SCR-152 (D02 :394); stale under it by D02 §1.5's PROPOSED ladder | the fixture gateway (WSH :45–51)      | §4.5       |
-| DG  | degraded                          | SCR-153 (D02 :424)                                               | the health stub or `sendSystem` (G-3) | §4.6       |
-| 403 | permission denied                 | SCR-154 (D02 :450)                                               | a network-layer `403` Problem         | §4.7       |
-| 404 | not found                         | SCR-155 (D02 :471)                                               | a route, or a network-layer `404`     | §4.8       |
-| CR  | crashed                           | SCR-156 (D02 :489)                                               | the module throws in the named panel  | §4.9       |
-| VM  | version mismatch (harness list)   | SCR-157 (D02 :513)                                               | the gateway's `welcome` (WSH :233)    | §4.10      |
-| RL  | rate-limited                      | SCR-158 (D02 :537)                                               | a network-layer `429` (`22` :807–814) | §4.11      |
-| OF  | offline (shell)                   | SCR-159 (D02 :563)                                               | the network layer refuses every route | §4.12      |
+| DG  | degraded                          | SCR-153 (D02 :422)                                               | the health stub or `sendSystem` (G-3) | §4.6       |
+| 403 | permission denied                 | SCR-154 (D02 :448)                                               | a network-layer `403` Problem         | §4.7       |
+| 404 | not found                         | SCR-155 (D02 :469)                                               | a route, or a network-layer `404`     | §4.8       |
+| CR  | crashed                           | SCR-156 (D02 :487)                                               | the module throws in the named panel  | §4.9       |
+| VM  | version mismatch (harness list)   | SCR-157 (D02 :511)                                               | the gateway's `welcome` (WSH :233)    | §4.10      |
+| RL  | rate-limited                      | SCR-158 (D02 :535)                                               | a network-layer `429` (`22` :807–814) | §4.11      |
+| OF  | offline (shell)                   | SCR-159 (D02 :561)                                               | the network layer refuses every route | §4.12      |
 
 `backfill-in-progress` is a loading treatment, never an empty class (D02 §2.1). A cell whose answer rests on
 E17-D01 Q-G (Stale vs Resyncing, D02 F-12) is **blocked on** E17-D01, never decided here.
@@ -206,7 +206,7 @@ names; no NR rule names a listed column. Both are mechanical (the audit's G-CELL
 | NR-10 | no trading control: read-only under an incompatible protocol (`14` :3198)                 | VM                |
 | NR-11 | issues no rate-limitable action                                                           | RL                |
 | NR-12 | an app-level shell state, asserted on SCR-010 (and SCR-001 before sign-in)                | OF                |
-| NR-13 | no wait of its own: its only busy state is a control's (D02 §4's one exclusion, D02 :299) | LD                |
+| NR-13 | no wait of its own: its only busy state is a control's (D02 §4's one exclusion, D02 :298) | LD                |
 | NR-14 | the admin area: a session without `admin:read` gets SCR-155 by D-1, never SCR-154         | 403               |
 | NR-15 | nothing to create: a fixed catalogue or a search result                                   | E1                |
 | NR-16 | issues no request of its own                                                              | LD ER             |
@@ -385,8 +385,8 @@ not executed until its owner answers. D02's adopted decisions handed to this tic
 | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- | -------- |
 | SA-X-1  | axe-core with `AXE_GATE_TAGS` (`apps/web/e2e/a11y/tags.ts`; WCAG 2.0, 2.1 and 2.2, A and AA) returns an empty violations list at serious and critical impact, per cell, closed and open (every disclosure, Details and dialog opened), in each shipped theme including the high-contrast set | `05` :298, :164; D02 §9     | ruled    |
 | SA-X-2  | the surface renders exactly one pattern's root, the highest rank of the ladder whose condition holds                                                                                                                                                                                         | D02 :150, :156–167 (AD-1)   | PROPOSED |
-| SA-X-3  | the environment band and badge stay where the chrome stays; nothing shown before the environment is known                                                                                                                                                                                    | D02 :123–126 (R-1 precedes) | ruled    |
-| SA-X-4  | a keyboard-only play (Tab, Shift+Tab, arrows) reaches every action in a logical order (2.4.3), with no trap (2.1.2) and a visible focus ring of at least 2 px; the tab order is recorded in the cell trace; focus lands on D02 §3.2's target for the pattern                                 | D02 :265; `05` :103         | PROPOSED |
+| SA-X-3  | the environment band and badge stay where the chrome stays; nothing shown before the environment is known                                                                                                                                                                                    | D02 :124–126 (R-1 precedes) | ruled    |
+| SA-X-4  | a keyboard-only play (Tab, Shift+Tab, arrows) reaches every action in a logical order (2.4.3), with no trap (2.1.2) and a visible focus ring of at least 2 px; the tab order is recorded in the cell trace; focus lands on D02 §3.2's target for the pattern                                 | D02 :264; `05` :103         | PROPOSED |
 | SA-X-5  | one announcement per condition: a fake-clock run counts live-region updates per condition                                                                                                                                                                                                    | D02 :736 (AD-7)             | PROPOSED |
 | SA-X-6  | the cell's driver (§7.1) reaches the state within 5 s (a ceiling, polled on the tree; no sleep)                                                                                                                                                                                              | T AC 2                      | ruled    |
 | SA-X-7  | no sink capture, log or trace holds a credential, a session value or an account id outside the redaction                                                                                                                                                                                     | T Security notes; C-12.6    | ruled    |
@@ -400,10 +400,10 @@ not executed until its owner answers. D02's adopted decisions handed to this tic
 
 | SA      | Assertion                                                                                                 | Source                      | Status                  |
 | ------- | --------------------------------------------------------------------------------------------------------- | --------------------------- | ----------------------- |
-| SA-LD-1 | the rendered treatment equals the cell's D02 §4 row (T-1 … T-4)                                           | D02 :315–325 (AD-3)         | PROPOSED                |
-| SA-LD-2 | never a bare spinner: CMP-014 only nested in CMP-038 or a busy CMP-001                                    | `14` :3093; D02 :586 (AP-1) | ruled                   |
-| SA-LD-3 | a skeleton (T-2) sits under the host's `aria-busy` with CMP-038's words outside the hidden node           | D02 :299                    | PROPOSED                |
-| SA-LD-4 | progress is announced politely per phase, never per tick                                                  | `14` :3093; D02 :247        | ruled                   |
+| SA-LD-1 | the rendered treatment equals the cell's D02 §4 row (LT-1 … LT-4)                                         | D02 :314–324 (AD-3)         | PROPOSED                |
+| SA-LD-2 | never a bare spinner: CMP-014 only nested in CMP-038 or a busy CMP-001                                    | `14` :3093; D02 :584 (AP-1) | ruled                   |
+| SA-LD-3 | a skeleton (LT-2) sits under the host's `aria-busy` with CMP-038's words outside the hidden node          | D02 :298                    | PROPOSED                |
+| SA-LD-4 | progress is announced politely per phase, never per tick                                                  | `14` :3093; D02 :246        | ruled                   |
 | SA-LD-5 | L-1: the four named stages; the slow words at 5 s on the fake clock                                       | `14` :3092, :3099           | ruled                   |
 | SA-LD-6 | L-1: the reload offer at 15 s                                                                             | `14` :3092; D02 F-4         | blocked on E10-D03 #197 |
 | SA-LD-7 | L-1: `app.boot_started`, `app.boot_completed` `{durationMs, stages}`, `app.boot_failed` `{stage, reason}` | `14` :3097                  | ruled                   |
@@ -414,10 +414,10 @@ not executed until its owner answers. D02's adopted decisions handed to this tic
 | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | -------- |
 | SA-EM-1 | CMP-026's `variant` and `reason` equal D02 §2.1's row for the column's class                                                                       | D02 :196                   | PROPOSED |
 | SA-EM-2 | a heading stating the fact (at the host's level, none skipped), one cause sentence, and an action or an explicit no-action sentence for the role   | `14` :3107; `05` :273      | ruled    |
-| SA-EM-3 | never an icon alone, never a bare "No data" (AP-2, AP-3)                                                                                           | `14` :3107; D02 :586       | ruled    |
+| SA-EM-3 | never an icon alone, never a bare "No data" (AP-2, AP-3)                                                                                           | `14` :3107; D02 :584       | ruled    |
 | SA-EM-4 | `empty_state_shown` `{surface, reason}` once per reason entry, read at the `cv:analytics` sink; never for a load or a failure                      | `14` :3109; THS :20        | ruled    |
 | SA-EM-5 | no WebGL context and no subscription for the panel under test: an init-script `getContext` counter and the gateway's subscribe frames stay at zero | `14` :3108                 | ruled    |
-| SA-EM-6 | "{heading} {cause}" is announced once, politely, in the host's status region                                                                       | D02 :247                   | PROPOSED |
+| SA-EM-6 | "{heading} {cause}" is announced once, politely, in the host's status region                                                                       | D02 :246                   | PROPOSED |
 | SA-EM-7 | E3: the owner sees the recorder action; another role sees the sentence; the recording-start time is shown                                          | `14` :3112; D02 :202 (E-3) | ruled    |
 
 ### 4.4 ER — error (a failed request)
@@ -433,11 +433,11 @@ not executed until its owner answers. D02's adopted decisions handed to this tic
 | SA      | Assertion                                                                                                                                                                                   | Source                  | Status                   |
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------ |
 | SA-DC-1 | `role="alert"` once per Disconnected episode, then a persistent region named "Connection"                                                                                                   | `14` :3133; `15` :877   | ruled                    |
-| SA-DC-2 | the countdown is never announced: CMP-035 sits under `aria-live="off"` or no live region (the attribute read), and zero text mutations land in any live ancestor across a fake-clock minute | `14` :3133; D02 :247    | ruled                    |
-| SA-DC-3 | every affected panel shows its last-good time, exposed by `aria-describedby`, in no live region                                                                                             | `15` :889; D02 :247     | ruled                    |
+| SA-DC-2 | the countdown is never announced: CMP-035 sits under `aria-live="off"` or no live region (the attribute read), and zero text mutations land in any live ancestor across a fake-clock minute | `14` :3133; D02 :246    | ruled                    |
+| SA-DC-3 | every affected panel shows its last-good time, exposed by `aria-describedby`, in no live region                                                                                             | `15` :889; D02 :246     | ruled                    |
 | SA-DC-4 | the region is non-modal: no focus trap, focus unchanged; the positions grid's box minus its intersection with the region's box is never empty, measured at 1280 × 720 and at 200 % zoom     | `15` :877; D02 :406–407 | ruled                    |
 | SA-DC-5 | `ws.disconnected` `{reason, subscriptions}`, `ws.reconnect_attempt` `{attempt}`, `ws.reconnected` `{outageMs, gapFilled}`; an order attempted offline records `order.blocked_offline`       | `14` :3137              | ruled                    |
-| SA-DC-6 | `ws.banner_suppressed` on a suppressed flap                                                                                                                                                 | `14` :3139; D02 :769    | PROPOSED (C-5)           |
+| SA-DC-6 | `ws.banner_suppressed` on a suppressed flap                                                                                                                                                 | `14` :3139; D02 :770    | PROPOSED (C-5)           |
 | SA-DC-7 | a stale panel that is also resyncing shows one of the two                                                                                                                                   | D02 F-12                | blocked on E17-D01 (Q-G) |
 
 ### 4.6 DG — degraded (SCR-153)
@@ -445,7 +445,7 @@ not executed until its owner answers. D02's adopted decisions handed to this tic
 | SA      | Assertion                                                                                             | Source                 | Status |
 | ------- | ----------------------------------------------------------------------------------------------------- | ---------------------- | ------ |
 | SA-DG-1 | a `role="status"` banner with one node for the degraded capability and one for what still works       | `14` :3151             | ruled  |
-| SA-DG-2 | each affected panel's badge repeats the specific degradation in its accessible name                   | `14` :3151; D02 :230   | ruled  |
+| SA-DG-2 | each affected panel's badge repeats the specific degradation in its accessible name                   | `14` :3151; D02 :229   | ruled  |
 | SA-DG-3 | a blocking row is announced once as an alert; an info or warning row once as a status                 | `15` :1040             | ruled  |
 | SA-DG-4 | order entry's permission is a node of the banner's structure with its reason key, never a copy string | `14` :3156; `14` :3151 | ruled  |
 | SA-DG-5 | shedding is disclosed; the environment badge, positions, orders and the stale marks are never shed    | `14` :3152             | ruled  |
@@ -455,11 +455,11 @@ not executed until its owner answers. D02's adopted decisions handed to this tic
 
 | SA       | Assertion                                                                                                                                                                                                  | Source                     | Status         |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | -------------- |
-| SA-403-1 | a heading (one `h1` on the route form, none skipped), a sentence naming the missing capability (never a resource name), a link to a permitted page whose text names it; the route form sets the page title | `14` :3164; D02 :600 (D-2) | PROPOSED       |
-| SA-403-2 | the correlation id is selectable text (a DOM text node, not an image or a pseudo-element, never `user-select: none`), rendered only when a 403 body arrived, never synthesised                             | `14` :3164; D02 :600 (D-4) | PROPOSED       |
+| SA-403-1 | a heading (one `h1` on the route form, none skipped), a sentence naming the missing capability (never a resource name), a link to a permitted page whose text names it; the route form sets the page title | `14` :3164; D02 :598 (D-2) | PROPOSED       |
+| SA-403-2 | the correlation id is selectable text (a DOM text node, not an image or a pseudo-element, never `user-select: none`), rendered only when a 403 body arrived, never synthesised                             | `14` :3164; D02 :598 (D-4) | PROPOSED       |
 | SA-403-3 | rendered from the 403 with no additional fetch (the request counter does not move)                                                                                                                         | `14` :3165                 | ruled          |
 | SA-403-4 | `error.403_shown` by name at the sink (no payload in `14`; ADN :34 carries `variant` as built); the server's `rbac.denied` is not a client event                                                           | `14` :3166; `22` :3273     | ruled (C-7)    |
-| SA-403-5 | no "Request access" control                                                                                                                                                                                | D02 :617 (D-3)             | PROPOSED (C-9) |
+| SA-403-5 | no "Request access" control                                                                                                                                                                                | D02 :614 (D-3)             | PROPOSED (C-9) |
 | SA-403-6 | the account variant's copy differs from the role variant's                                                                                                                                                 | `14` :3164                 | ruled          |
 
 ### 4.8 404 — not found (SCR-155)
@@ -469,8 +469,8 @@ not executed until its owner answers. D02's adopted decisions handed to this tic
 | SA-404-1 | a heading (one `h1`, none skipped), a plain sentence, the attempted pathname echoed as text, likely destinations as a list of links that name their pages; the page title changes | `14` :3175               | ruled    |
 | SA-404-2 | no network call                                                                                                                                                                   | `14` :3176               | ruled    |
 | SA-404-3 | `error.404_shown` `{route}`                                                                                                                                                       | `14` :3177               | ruled    |
-| SA-404-4 | `route` is the matched pattern, never the raw path; the echo drops the query and the hash                                                                                         | D02 :600 (D-7); D02 :769 | PROPOSED |
-| SA-404-5 | admin rows: copy, title and analytics byte-identical to an unknown route's, and no admin chunk is requested                                                                       | D02 :600 (D-1)           | PROPOSED |
+| SA-404-4 | `route` is the matched pattern, never the raw path; the echo drops the query and the hash                                                                                         | D02 :598 (D-7); D02 :770 | PROPOSED |
+| SA-404-5 | admin rows: copy, title and analytics byte-identical to an unknown route's, and no admin chunk is requested                                                                       | D02 :598 (D-1)           | PROPOSED |
 
 ### 4.9 CR — crashed (SCR-156)
 
@@ -481,7 +481,7 @@ not executed until its owner answers. D02's adopted decisions handed to this tic
 | SA-CR-3 | a panel crash leaves the workspace alive; the positions grid and the order ticket survive                                                                                                                                                           | `14` :3187             | ruled    |
 | SA-CR-4 | `app.error_boundary_triggered` `{component, correlationId, stackHash}`                                                                                                                                                                              | `14` :3188             | ruled    |
 | SA-CR-5 | one assertive announcement per crash: panel or route through the shell's pre-rendered region, the app scope through its own alert; focus moves to the fallback heading only when the crash unmounted the focused element, otherwise it is unchanged | `15` :1028             | ruled    |
-| SA-CR-6 | the technical detail holds no server body, header or exchange message; Copy diagnostics is redacted                                                                                                                                                 | D02 :489               | PROPOSED |
+| SA-CR-6 | the technical detail holds no server body, header or exchange message; Copy diagnostics is redacted                                                                                                                                                 | D02 :487               | PROPOSED |
 
 ### 4.10 VM — version mismatch (SCR-157)
 
@@ -499,7 +499,7 @@ not executed until its owner answers. D02's adopted decisions handed to this tic
 | SA-RL-2 | the countdown is announced at most once per 10 s on the fake clock, counted as text mutations in its live region | `14` :3209; `15` :416         | ruled                   |
 | SA-RL-3 | the client honours `Retry-After`: zero requests on that scope before the retry time                              | `14` :3210; `22` :18362–18366 | ruled                   |
 | SA-RL-4 | held actions are replayed only after the explicit confirmation, never silently                                   | `14` :3210                    | ruled                   |
-| SA-RL-5 | `ratelimit.hit` `{scope, endpointClass, retryAfterMs}`; `order.blocked_ratelimited` on a refused order           | `14` :3211; D02 :777          | blocked on E30-D03 #851 |
+| SA-RL-5 | `ratelimit.hit` `{scope, endpointClass, retryAfterMs}`; `order.blocked_ratelimited` on a refused order           | `14` :3211; D02 :778          | blocked on E30-D03 #851 |
 
 ### 4.12 OF — offline (SCR-159; SCR-010 and SCR-001 only)
 
@@ -508,7 +508,7 @@ not executed until its owner answers. D02's adopted decisions handed to this tic
 | SA-OF-1 | a page or banner with a heading and a plain sentence; the tailnet case reads "Not connected to the tailnet" | `14` :3220         | ruled  |
 | SA-OF-2 | detected from request failure within 5 s on the fake clock, not from `navigator.onLine` alone               | `14` :3221         | ruled  |
 | SA-OF-3 | `shell.offline_detected` `{cause}`, `shell.tailscale_unreachable`, `shell.gpu_unavailable`                  | `14` :3222         | ruled  |
-| SA-OF-4 | the backend-unreachable takeover shows no environment                                                       | D02 :123–126 (R-1) | ruled  |
+| SA-OF-4 | the backend-unreachable takeover shows no environment                                                       | D02 :124–126 (R-1) | ruled  |
 
 ## 5. Trading safety (T2 and the negative cells; BQ-5)
 
@@ -534,7 +534,7 @@ loopback stub network only (C-2.11).
 
 ## 6. The analytics contract and the sink (BQ-4)
 
-The contract per pattern is `14`'s entry, verbatim; a field `14` lacks is a C-row, as #1331 BQ-9 ruled (D02 :769).
+The contract per pattern is `14`'s entry, verbatim; a field `14` lacks is a C-row, as #1331 BQ-9 ruled (D02 :770).
 
 | Pattern | Events and payload (`14`)                                                                                           | `14` line  | Status                            |
 | ------- | ------------------------------------------------------------------------------------------------------------------- | ---------- | --------------------------------- |
@@ -553,8 +553,8 @@ The contract per pattern is `14`'s entry, verbatim; a field `14` lacks is a C-ro
 CustomEvent its emitters dispatch through (SEV :2–3 says so; ADN :34 is one). The test sink is **one `window`
 listener on that event, installed by an init script** — no per-feature tap and no second sink. A surface that emits
 nothing at the seam is G-1 to E49-S05, and its analytics assertion is `blocked on` E49-S05 until it does. AD-10
-(D02 :739) splits: the §9 table's stories (D02 :674–703) are checked now where their CMP is built; only the composed
-`States/<frame>` stories (D02 :671) are `pending` until E49-S05 builds them (G-4).
+(D02 :739) splits: the §9 table's stories (D02 :671–700) are checked now where their CMP is built; only the composed
+`States/<frame>` stories (D02 :669) are `pending` until E49-S05 builds them (G-4).
 
 ## 7. The state-injection harness (slice B's contract; BQ-6)
 
@@ -681,11 +681,11 @@ forced-state evidence (D14E08 :80) and E10's deferred rows (SYS :6–10) are cit
 | C-2  | the reason in the accessible name                                     | the reason in the description (D02 :127–136)                        | name + description (SA-T2-3, SA-T2-4)            |
 | C-3  | the matrix as YAML                                                    | no parser in `apps/web`; no dependency without an ADR (T Do NOT)    | JSON (§8.1)                                      |
 | C-4  | server-side hooks for 403, 404 and `10018`                            | the network layer forces them; X01 :97                              | client-only; T-E2 / AC-16 to E49-X02 (§7.2)      |
-| C-5  | analytics per `14`                                                    | `ws.banner_suppressed` is PROPOSED (`14` :3139; D02 :769)           | PROPOSED; asserted once E49-S05 wires it         |
-| C-6  | `error.404_shown` `{route}`                                           | the matched pattern, never the raw path (D02 :600, D-7)             | PROPOSED (SA-404-4)                              |
+| C-5  | analytics per `14`                                                    | `ws.banner_suppressed` is PROPOSED (`14` :3139; D02 :770)           | PROPOSED; asserted once E49-S05 wires it         |
+| C-6  | `error.404_shown` `{route}`                                           | the matched pattern, never the raw path (D02 :598, D-7)             | PROPOSED (SA-404-4)                              |
 | C-7  | the 403's analytics                                                   | the server records `rbac.denied` whatever the UI shows (`22` :3273) | the client asserts `error.403_shown` only        |
 | C-8  | the reserve stays usable under a rate limit                           | `10018` gates stop, cancel and SL (`24` :2255)                      | the `10018` reserve cell blocked on E30-D03 #851 |
-| C-9  | SCR-154 offers "Request access" which notifies the owner (`14` :3161) | no request path; no endpoint notifies the owner (D02 :617, D-3)     | PROPOSED (SA-403-5); no such control asserted    |
+| C-9  | SCR-154 offers "Request access" which notifies the owner (`14` :3161) | no request path; no endpoint notifies the owner (D02 :614, D-3)     | PROPOSED (SA-403-5); no such control asserted    |
 | C-10 | a route row's build status from the manifest                          | `owner` marks the epic, not the build (MAN :18; TREE :48)           | the element the tree resolves (§0)               |
 
 ### 10.3 A-rows (amendments for owners; not applied)
@@ -701,7 +701,7 @@ forced-state evidence (D14E08 :80) and E10's deferred rows (SYS :6–10) are cit
 | G   | Gap                                                                           | Owner         |
 | --- | ----------------------------------------------------------------------------- | ------------- |
 | G-1 | a surface that emits nothing at the `cv:analytics` seam                       | E49-S05 #1385 |
-| G-2 | `ratelimit.hit` and `order.blocked_ratelimited` are not registered (D02 :777) | E30-D03 #851  |
+| G-2 | `ratelimit.hit` and `order.blocked_ratelimited` are not registered (D02 :778) | E30-D03 #851  |
 | G-3 | the health source per degraded cause, for the stub to force                   | E49-S05 #1385 |
 | G-4 | the composed `States/<frame>` stories AD-10 checks for do not exist yet       | E49-S05 #1385 |
 | G-5 | an RN-4 modal's own empty, failed or held state with no host cell to carry it | the owner     |
