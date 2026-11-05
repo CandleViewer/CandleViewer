@@ -27,9 +27,15 @@ from candleviewer.exchange.base.models import AccountRef, ClosedPnl, Position, R
 from candleviewer.exchange.bybit import private_parse as pp
 from candleviewer.exchange.bybit import trading_parse as tp
 from candleviewer.observability.metrics import Metrics
-from candleviewer.oms.closed_pnl_sync import FETCH_SECONDS, ClosedPnlSync, merged
+from candleviewer.oms.closed_pnl_sync import (
+    CLOSED_PNL_LOOKBACK,
+    FETCH_SECONDS,
+    ClosedPnlSync,
+    merged,
+)
 from candleviewer.oms.errors import AccountScopeDenied, OrderEntryRefused, StoreUnavailable
 from candleviewer.oms.ports import RateReading
+from candleviewer.risk.day_boundary import DayBoundary
 from candleviewer.storage.repositories.closed_pnl import (
     VENUE_COLUMNS,
     ClosedPnlRecordRow,
@@ -45,6 +51,7 @@ from candleviewer.storage.repositories.positions import NewPositionSnapshot
 from tests._corpus import frames, rest
 from tests.unit.audit.audit_waits import virtual
 from tests.unit.exchange.bybit._trading import ACCOUNT_A, ACCOUNT_B, account
+from tests.unit.risk.test_day_boundary import Policy
 
 T0 = datetime(2026, 11, 4, 10, 0, tzinfo=UTC)  # the fake loop's 0 s
 XID, ORDER = "5a373bfe-188d-4913-9c81-d57ab5be8068", UUID(int=0x0D)  # the record's orderId
@@ -230,14 +237,22 @@ class Rig:
         )
 
 
-def rig(at: datetime = T0, resolve: Any = None, unresolved: Any = (), **venue: Any) -> Rig:
+def rig(
+    at: datetime = T0,
+    resolve: Any = None,
+    unresolved: Any = (),
+    *,
+    policy: Policy | None = None,
+    **venue: Any,
+) -> Rig:
+    """The sync over fakes, its day from the one resolver over `policy` (offset 0 unless set)."""
     v, store, metrics, loop = Venue(**venue), Store(), Metrics("demo"), asyncio.get_running_loop()
     told = list[str]()
     sync = ClosedPnlSync(
         accounts=Accounts(resolve, list(unresolved)), router=v, records=store, closes=store,
         snapshots=store,
         metrics=metrics, now=lambda: at + timedelta(seconds=loop.time()),
-        on_ended=lambda: told.append("ended"),
+        on_ended=lambda: told.append("ended"), day_start=DayBoundary(policy or Policy()).day_start,
     )  # fmt: skip
     return Rig(v, store, metrics, sync, told)
 
@@ -309,6 +324,36 @@ async def test_a_failed_read_keeps_the_poll_until_one_succeeds() -> None:
     assert r.times() == [0, 60, 120] and r.counted() == {"ok": 1, "failed": 2}
     failed = [e["kind"] for e in logs if e["event"] == "closed_pnl_read_failed"]
     assert failed == ["ConnectionError", "TimeoutError"]
+    await r.sync.stop()
+
+
+@virtual
+async def test_the_reach_is_the_lookback_before_the_resolvers_day_start() -> None:
+    """At +180 the day starts at 21:00Z of the previous UTC date (24 Sec.8.13), so the read
+    reaches `CLOSED_PNL_LOOKBACK` before that, the cap's own reach."""
+    r = rig(policy=Policy(180))
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(1)
+    start = datetime(2026, 11, 3, 21, tzinfo=UTC) - CLOSED_PNL_LOOKBACK
+    assert [(s, e) for _, s, e in r.venue.reads] == [(_us(start), _us(T0))]
+    await r.sync.stop()
+
+
+@virtual
+async def test_a_resolver_that_fails_fails_the_read_and_keeps_the_poll() -> None:
+    """With its day unresolved the sync reads nothing, never from UTC midnight, and reads again
+    `SETTLE_POLL_S` later, as after any failed read."""
+    policy = Policy(failure=OSError("postgres unreachable"))
+    r = rig(policy=policy)
+    with capture_logs() as logs:
+        r.sync.start([ACCOUNT_A])
+        await asyncio.sleep(30)
+        assert r.venue.reads == []
+        policy.failure = None
+        await asyncio.sleep(60)
+    assert r.times() == [60] and r.counted() == {"ok": 1, "failed": 0}
+    failed = [e["kind"] for e in logs if e["event"] == "closed_pnl_read_failed"]
+    assert failed == ["DayBoundaryUnavailable"]
     await r.sync.stop()
 
 
@@ -716,6 +761,7 @@ def test_a_fill_the_store_took_before_the_start_asks_for_nothing(
     sync = ClosedPnlSync(
         accounts=Accounts(), router=Venue(), records=store, closes=store, snapshots=store,
         metrics=Metrics("demo"), now=lambda: T0, on_ended=lambda: None,
+        day_start=DayBoundary(Policy()).day_start,
     )  # fmt: skip
     sync.stored(_fill(closed_size))
     sync.reconnected(ACCOUNT_A)
