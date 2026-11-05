@@ -36,8 +36,10 @@ def _reaches_lookup(entry: dict[str, Any], names: dict[str, dict[str, str]]) -> 
     parts = urlsplit(entry["url"])
     if entry["expect"] in _URL_STEP or parts.scheme not in {"https", "http"}:
         return False
-    # `name_normalisation`: Python's IDNA codec maps every host here as UTS 46 does
-    host = (parts.hostname or "").encode("idna").decode("ascii").lower().removesuffix(".")
+    # `name_normalisation`: ASCII only, so a host with any other character is refused at the url
+    # step (`malformed_url`, returned above; the last test pins it); then lower case, one trailing
+    # dot removed
+    host = (parts.hostname or "").lower().removesuffix(".")
     if host in names["exact"] or host.endswith(tuple(names["suffix"])):
         return False
     return ":" not in host and not re.fullmatch(r"0x[0-9a-f]*|[0-9]+", host.rsplit(".", 1)[-1])
@@ -112,3 +114,25 @@ def test_ssrf_corpus_order_refuses_every_reason_and_ranks_the_address_classes() 
         parts = urlsplit(endpoint)  # `.port` raises on a port that does not parse
         assert parts.scheme in {"https", "http"} and parts.hostname and parts.port != 0, endpoint
         assert not (parts.username or parts.path or parts.query or parts.fragment), endpoint
+
+
+def test_ssrf_corpus_entries_with_a_non_ascii_host_expect_malformed_url() -> None:
+    """Scenario: Abuse cases are executable (edge)
+    Then each abuse case is written concretely enough that E40-X01 can automate it without
+    further interpretation
+
+    (The egress policy reads a host as ASCII only, with no IDNA mapping, the ruling on #1400: a
+    host holding any non-ASCII character is `malformed_url` at the url step, whatever a mapping
+    would make of it, and an internationalised endpoint is allow-listed in its punycode form.
+    `name_normalisation` says so, and every entry with such a host expects `malformed_url`.)
+    """
+    corpus = _corpus()
+    assert corpus["name_normalisation"].startswith("ASCII only")
+    expects = {
+        e["id"]: e["expect"]
+        for e in corpus["entries"]
+        if not (urlsplit(e["url"]).hostname or "").isascii()
+    }
+    # SSRF-62 fullwidth digits, SSRF-63 ideographic full stops, SSRF-84 a Cyrillic look-alike letter
+    assert expects.keys() >= {"SSRF-62", "SSRF-63", "SSRF-84"}
+    assert set(expects.values()) == {"malformed_url"}, expects
