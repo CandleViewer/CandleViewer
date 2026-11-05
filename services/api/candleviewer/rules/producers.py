@@ -69,7 +69,7 @@ ANY_SYMBOL: Final = "*"
 #: Registry scopes the bridge serves: the market ones (#1204 Part B's binding rule).
 MARKET_SCOPES: Final = frozenset({"symbol", "global"})
 
-Refusal = Literal["unregistered", "undemanded", "demand_cap", "lease", "params"]
+Refusal = Literal["unregistered", "undemanded", "demand_cap", "lease", "lease_timeout", "params"]
 _REFUSALS: Final = frozenset(get_args(Refusal))
 _SERIES: Final = (
     "rule_metric_pushes_total", "rule_metric_producer_errors_total",
@@ -373,6 +373,11 @@ class PushSink:
     def lease_refused(self) -> None:
         """A bar-series lease the caps refused: the metric stays ``warmup``, counted."""
         self._bridge.metrics.refused("lease")
+
+    def lease_timed_out(self) -> None:
+        """A bar-series lease still building past its bound (never cancelled): ``warmup``,
+        counted apart from a refusal, its key retried only after a growing backoff."""
+        self._bridge.metrics.refused("lease_timeout")
 
     def params_refused(self) -> None:
         """A demanded parameter set the producer cannot read (a bad ``n``): ``warmup``, counted."""

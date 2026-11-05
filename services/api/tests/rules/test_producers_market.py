@@ -675,3 +675,17 @@ async def test_keyed_consumer_unattached_with_a_pending_symbol_never_spins() -> 
         assert len(turns) <= 1  # parked on the bus for the window, not a 0 s loop
     finally:
         await quotes.stop()
+
+
+async def test_quote_producer_two_events_at_one_exchange_time_the_later_one_wins() -> None:
+    """Only an older event is refused (never back in time): one at the same `ts_event` is the
+    later arrival, so it replaces the held one."""
+    clock = Clock()
+    quotes = QuoteProducer(Bus(), "demo", BookTicks(clock), clock=clock, sleep=_never)
+    async with _rig([_rule("microprice", "on_book_update")], quotes) as rig:
+        await _hand_driven(quotes)
+        quotes.offer(_quote(TS_US, bid_qty=2))
+        quotes.offer(_quote(TS_US, bid_qty=7))
+        assert quotes.flush() == 1
+        mp = rig.source.read(ref("microprice", symbol="BTCUSDT"))
+        assert mp.value == microprice(Decimal("99.9"), Decimal(7), Decimal("100.1"), Decimal(3))
