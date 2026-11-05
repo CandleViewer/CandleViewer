@@ -114,7 +114,7 @@ export function FundingTable({
       minWidthEm: 9,
       cell: (l) =>
         l.kind === "gap"
-          ? none("no rate")
+          ? none(copy.NO_RATE)
           : said(ratePercent(l.rate).text, ratePercent(l.rate).spoken),
     },
     {
@@ -128,7 +128,7 @@ export function FundingTable({
       header: copy.COL_INTERVAL,
       align: "end",
       minWidthEm: 5,
-      cell: () => hours ?? none("not published"),
+      cell: () => hours ?? none(copy.NOT_PUBLISHED),
     },
   ];
 

@@ -6,7 +6,11 @@
 const MINUS = "−";
 const pad = (n: number): string => String(n).padStart(2, "0");
 
-/** "0.0001" → { text: "+0.0100 %", spoken: "plus 0.0100 percent" }; "0" → "0.0000 %". */
+/**
+ * PROPOSED (E24-D05 copy deck): the spoken words "plus" / "minus" / "percent" below are not in D02 §15 /
+ * D03 §5; they live here, beside the format they spell, because `copy.ts` imports this file.
+ * "0.0001" → { text: "+0.0100 %", spoken: "plus 0.0100 percent" }; "0" → "0.0000 %".
+ */
 export function ratePercent(value: string): { readonly text: string; readonly spoken: string } {
   const negative = value.startsWith("-");
   const [int = "0", frac = ""] = (negative ? value.slice(1) : value).split(".");
@@ -21,7 +25,10 @@ export function ratePercent(value: string): { readonly text: string; readonly sp
     : { text: `+${body} %`, spoken: `plus ${body} percent` };
 }
 
-/** 480 → "8 h", 60 → "1 h", 30 → "30 min". */
+/**
+ * PROPOSED (E24-D05 copy deck): the "N min" form for an interval that is not whole hours; "h" is D02 §15's.
+ * 480 → "8 h", 60 → "1 h", 30 → "30 min".
+ */
 export function intervalWords(minutes: number): string {
   return minutes % 60 === 0 ? `${String(minutes / 60)} h` : `${String(minutes)} min`;
 }

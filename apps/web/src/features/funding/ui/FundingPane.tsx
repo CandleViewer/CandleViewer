@@ -100,8 +100,13 @@ export function FundingPane({
   const { history, series } = snapshot;
   const unavailable = history.phase === "unavailable";
   // a read has answered for the series shown: a failed first read says nothing about the interval
+  // (a retry in flight keeps the last good series, so its legend and table stay while the read runs)
+  const lastGood =
+    snapshot.lastSuccessAtMs !== null &&
+    (series.settled.length > 0 || series.gaps.length > 0 || series.intervalMs !== null);
   const answered =
-    history.phase === "ready" || (history.phase === "failed" && snapshot.lastSuccessAtMs !== null);
+    history.phase === "ready" ||
+    ((history.phase === "failed" || history.phase === "loading") && lastGood);
   const retry = (): void => {
     onRetry();
     heading.current?.focus(); // the band goes while it loads: focus stays in the pane
@@ -143,7 +148,8 @@ export function FundingPane({
           {unavailable ? null : plot}
         </div>
       </div>
-      {showTables && !unavailable ? (
+      {/* the empty-table sentence is the answer of a read: not drawn before one has answered */}
+      {showTables && !unavailable && answered ? (
         <div className="cv-funding-pane__table">
           <FundingTable
             symbol={symbol}
