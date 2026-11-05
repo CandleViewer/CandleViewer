@@ -339,6 +339,13 @@ def test_the_walk_refuses_a_key_it_cannot_hold_a_fill_given_twice_and_an_empty_b
             WalkBudget(fills=fills, flats=flats)
 
 
+@pytest.mark.parametrize("size", ["0", "-1"])
+def test_the_walk_refuses_a_fill_of_no_size(size: str) -> None:
+    """As the store's `ex_qty` does, so no close takes a share of a size of 0."""
+    with pytest.raises(ValueError, match="ex_qty"):
+        run(fill(1, "Buy", "1", "100"), fill(2, "Sell", size, "101", order=B))
+
+
 def test_the_walk_keeps_every_digit_of_a_numeric_38_18_product() -> None:
     """Exact intermediates (the orchestrator's ruling): size x price keeps its 36 decimals, which
     a 28-digit context would round."""

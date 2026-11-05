@@ -148,6 +148,8 @@ def walk(
         return Walk(start=None, capped=True)
     if len({fill.exec_id for fill in fills}) < len(fills):
         raise ValueError("a walk reads each fill once")
+    if any(fill.exec_qty <= 0 for fill in fills):
+        raise ValueError("ex_qty: a fill's exec_qty is above 0")
     start = max((at for at in flats if at < anchor), default=None)
     if start is None:
         return Walk(start=None)
