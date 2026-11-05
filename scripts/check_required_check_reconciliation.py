@@ -59,11 +59,18 @@ LANE_RE = re.compile(
     rf'\s*"?([a-z0-9-]+)"?:\s*\{{\s*applicable:\s*(true|false|{_FILTER}(?:\s*\|\|\s*{_FILTER})*),'
     r"\s*result:\s*process\.env\.(RESULT_[A-Z0-9_]+),?\s*\},?"
 )
-# The step that decides `ci-required`: a `run:` block that is the resolver call and its argument
-# (the lane table), with nothing after it in the block, so its exit is the resolver's whatever the
-# shell (`( +)` is the block's indentation: a later line as indented would still be in it).
+# The step that decides `ci-required`: a `run:` block that is RESOLVER_PRELUDE, then the resolver
+# call and its argument (the lane table) piped into CONCLUSION_GUARD, with nothing after it in the
+# block, so its exit is the resolver's, or a failure when the resolver printed no conclusion line
+# (#5785) (`( +)` is the block's indentation: a later line as indented would still be in it).
+RESOLVER_PRELUDE = "set -o pipefail"
+CONCLUSION_GUARD = (
+    " | awk '{ print } /^ci-required conclusion: (success|failure)$/ { seen = 1 } END { if (!seen)"
+    ' print "::error title=ci-required::the resolver printed no conclusion"; exit !seen }\''
+)
 RESOLVER_RUN_RE = re.compile(
-    rf"^\s+run: \|\n( +)node {re.escape(RESOLVER)} \"\$\(node -e '$(.*?)^\s+'\)\""
+    rf"^\s+run: \|\n( +){re.escape(RESOLVER_PRELUDE)}\n\1node {re.escape(RESOLVER)} "
+    rf"\"\$\(node -e '$(.*?)^\s+'\)\"{re.escape(CONCLUSION_GUARD)}"
     r"(?=(?:\n[ \t]*)*(?:\n(?!\1) *\S|\Z))",
     re.M | re.S,
 )
@@ -108,13 +115,23 @@ PATHS_RE = re.compile(r"^\s+paths(-ignore)?:", re.M)
 # continue-on-error on the job, no shell, working-directory or if: on the step.
 JOB_KEYS = ("name", "if", "needs", "runs-on", "timeout-minutes", "permissions", "steps")
 STEP_KEYS = ("name", "id", "env", "run", "timeout-minutes")
-# The one name but FILTER_ and RESULT_ the resolver step's env may set, with exactly this value:
-# the draft flag the resolver reads to report the lanes pr.yml defers while a pull request is a
-# draft (DRAFT_DEFERRED in the resolver) as deferred: a plain context path (the governance proof
-# of the resolver step evaluates paths only), empty on every event without a pull request, and the
-# resolver reads it on pull_request only.
+# The names but FILTER_ and RESULT_ the resolver step's env may set, each at most once and with
+# exactly its value: the draft flag, on which the resolver fails a draft (CI-GATE-005); the full-run
+# flag (#5746: the `ci:full` label, or #5785: a C-10.2 path, security-review-label's output),
+# without which it reads a pull request's skipped heavy lane as deferred to the merge group
+# (LIGHT_DEFERRED); and the merge queue flag (#5785, `changed-paths`' `queue`), without which it
+# defers nothing. Each is false or empty on every event without a pull request, and the resolver
+# reads them on pull_request only.
 DRAFT_FLAG = "PR_DRAFT"
 DRAFT_EXPRESSION = "${{ github.event.pull_request.draft }}"
+FULL_FLAG = "PR_FULL"
+FULL_EXPRESSION = (
+    "${{ contains(github.event.pull_request.labels.*.name, 'ci:full') || "
+    "needs.security-review-label.outputs.security-path == 'true' }}"
+)
+QUEUE_FLAG = "MERGE_QUEUE"
+QUEUE_EXPRESSION = "${{ needs.changed-paths.outputs.queue }}"
+FLAGS = {DRAFT_FLAG: DRAFT_EXPRESSION, FULL_FLAG: FULL_EXPRESSION, QUEUE_FLAG: QUEUE_EXPRESSION}
 # GitHub's default pull_request activity types: a `types` filter that drops one stops a check
 # arriving on every pull request.
 DEFAULT_TYPES = {"pull_request": {"opened", "synchronize", "reopened"}}
@@ -297,8 +314,8 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
     that calls one keeps its own name only while it has a job and every job can.
     `ci-required` must run `if: always()`, with only JOB_KEYS (pr.yml sets no env or defaults),
     its steps checkout, setup-node and one `run:` step, with only STEP_KEYS, that is the resolver
-    call alone (RESOLVER_RUN_RE) on PROGRAM_RE's program, and the only place that sets a FILTER_
-    or RESULT_ name; its env sets those names and, at most, DRAFT_FLAG as DRAFT_EXPRESSION. A lane
+    call alone, guarded by CONCLUSION_GUARD (RESOLVER_RUN_RE), on PROGRAM_RE's program, and the only place that sets a FILTER_
+    or RESULT_ name; its env sets those names and, at most, each of FLAGS as its value. A lane
     counts when its applicability is not the literal `false` and reads
     only FILTER_<NAME> set from the `changed-paths` output <name> (set once, from OUTPUT_STEPS,
     whose `filter` step is FILTER_ACTION_RE),
@@ -338,21 +355,24 @@ def prove_lanes(workflows_dir: str) -> tuple[set[str], list[str]]:
             f"{path}: `{AGGREGATE_CONTEXT}` must run `if: always()` with no job keys but "
             f"{', '.join(JOB_KEYS)} (pr.yml may set no env or defaults), with steps checkout, "
             "setup-node and one step with no `if:`, continue-on-error or shell: (no keys but "
-            f"{', '.join(STEP_KEYS)}) that is the {RESOLVER} call alone, whose exit is the "
+            f"{', '.join(STEP_KEYS)}) that is the {RESOLVER} call alone, after "
+            f"`{RESOLVER_PRELUDE}` and piped into its conclusion guard, whose exit is the "
             "resolver's"
         ]
     env_block = re.search(r"^        env:\n((?:          .*\n)*)", decider[0] + "\n", re.M)
     env_text = env_block[1] if env_block else ""
     named = re.findall(r"^\s+(?:- +)?((?:FILTER|RESULT)_\w+)\s*:", body, re.M)
     set_names = re.findall(r"^          (\w+):", env_text, re.M)
-    draft = re.findall(rf"^          {DRAFT_FLAG}:[ \t]*(.*?)[ \t]*$", env_text, re.M)
-    if sorted(named) != sorted(set(set_names) - {DRAFT_FLAG}) or draft not in (
-        [],
-        [DRAFT_EXPRESSION],
+    flags = {
+        flag: re.findall(rf"^          {flag}:[ \t]*(.*?)[ \t]*$", env_text, re.M) for flag in FLAGS
+    }
+    if sorted(named) != sorted(set(set_names) - set(FLAGS)) or any(
+        values not in ([], [FLAGS[flag]]) for flag, values in flags.items()
     ):
+        allowed = " and ".join(f"{flag} as `{value}`" for flag, value in FLAGS.items())
         return set(), [
             f"{path}: the resolver step's env must set each FILTER_ and RESULT_ name once and "
-            f"nothing else but {DRAFT_FLAG} as `{DRAFT_EXPRESSION}`, and no other part of "
+            f"nothing else but {allowed}, and no other part of "
             f"`{AGGREGATE_CONTEXT}` may set one (a step's own env wins over the job's)"
         ]
     program = PROGRAM_RE.fullmatch(run.group(2))

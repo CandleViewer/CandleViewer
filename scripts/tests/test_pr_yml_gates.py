@@ -195,8 +195,23 @@ def test_gen_runs_the_old_job_on_a_full_install_and_a_bare_python() -> None:
     assert not (ROOT / ".github" / "workflows" / "_job-gen.yml").exists()
 
 
-def _resolve(off: set[str], context: dict[str, str]) -> tuple[int, set[str]]:
-    """Run the resolver step under the env GitHub builds; an unresolved expression is ''."""
+def _env_value(expression: str, values: dict[str, str]) -> str:
+    """A resolver env value: a context path's value, or PR_FULL's OR (#5746, #5785) of its label
+    term, read as `values[term]`, and its C-10.2 term, read as `values[path] == 'true'`."""
+    path = re.fullmatch(r"\$\{\{ ([\w.-]+) \}\}", expression)
+    if path:
+        return values.get(path[1], "")
+    assert expression == "${{ " + FULL + " }}", expression
+    label, c102 = FULL.split(" || ")
+    c102_path = c102.removesuffix(" == 'true'")
+    return str(values.get(label) == "true" or values.get(c102_path) == "true").lower()
+
+
+def _resolve(
+    off: set[str], context: dict[str, str], event: str = ""
+) -> tuple[int, set[str]]:
+    """Run the resolver step under the env GitHub builds; an unresolved expression is ''.
+    `event`: the runner's GITHUB_EVENT_NAME (unset when it is '')."""
     if not (shutil.which("bash") and shutil.which("node")):  # CI must run these fail-closed proofs
         (pytest.fail if os.environ.get("CI") else pytest.skip)(
             "bash and node run the resolver step"
@@ -206,11 +221,9 @@ def _resolve(off: set[str], context: dict[str, str]) -> tuple[int, set[str]]:
     for name in JOBS["changed-paths"]["outputs"]:
         values[f"needs.changed-paths.outputs.{name}"] = "false" if name in off else "true"
     values |= context
-    env = {"PATH": os.environ.get("PATH", "")}
+    env = {"PATH": os.environ.get("PATH", "")} | ({"GITHUB_EVENT_NAME": event} if event else {})
     for name, expression in RESOLVER["env"].items():
-        path = re.fullmatch(r"\$\{\{ ([\w.-]+) \}\}", expression)
-        assert path, expression
-        env[name] = values.get(path[1], "")
+        env[name] = _env_value(expression, values)
     run = ["bash", "-c", RESOLVER["run"]]
     proc = subprocess.run(run, cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
     return proc.returncode, {line for line in proc.stderr.splitlines() if line.startswith("CI-")}
@@ -271,31 +284,76 @@ def test_architecture_mirrors_the_py_lane_beside_coverage_thresholds() -> None:
     assert "architecture" not in _load("_job-py.yml")["jobs"]
 
 
-def _runs(condition: object, on: set[str], inputs: dict[str, Any]) -> bool:
-    """A job `if:` on a feature-branch PR: an input, an OR of filter terms, or neither."""
+#: #5746: the heavy clause, verbatim. A merge group, a merge train's dispatch, a pull request
+#: labelled `ci:full` and (#5785) one that touches a C-10.2 path, main's decision as the
+#: security-review-label job outputs it, run every lane; any other pull request run, draft or not,
+#: the light set.
+C102 = "needs.security-review-label.outputs.security-path == 'true'"
+FULL = "contains(github.event.pull_request.labels.*.name, 'ci:full') || " + C102
+HEAVY = "github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'"
+HEAVY += " || " + FULL
+#: The callee jobs that skip a pull request's own run (#3881): the compose integration lane's.
+NOT_A_PR = "github.event_name != 'pull_request'"
+LABEL_TERM = re.compile(r"contains\(github\.event\.pull_request\.labels\.\*\.name, '([\w:]+)'\)")
+
+
+def _heavy(event: str, labels: tuple[str, ...] = (), c102: bool = False) -> bool:
+    """HEAVY evaluated term by term; a term of another form fails here, so a new one is pinned.
+    `c102`: the security-review-label job's `security-path` output is true (a pull request only)."""
+    value = False
+    for term in HEAVY.split(" || "):
+        if name := re.fullmatch(r"github\.event_name == '(\w+)'", term):
+            value |= event == name[1]
+        elif label := LABEL_TERM.fullmatch(term):
+            value |= event == "pull_request" and label[1] in labels
+        elif term == C102:
+            value |= event == "pull_request" and c102
+        else:
+            raise ValueError(f"a heavy term this test cannot read: {term!r}")
+    return value
+
+
+def _runs(condition: object, on: set[str], inputs: dict[str, Any], event: str, heavy: bool) -> bool:
+    """A job `if:` on a run of `event`: an input, an OR of filter terms, or neither, after the
+    heavy clause (`&& (HEAVY)`) and NOT_A_PR are read for that run."""
     text = str(condition)
     if name := re.fullmatch(r"\$\{\{ inputs\.(\w+) \}\}", text):
-        return _runs(inputs[name[1]], on, {})
+        return _runs(inputs[name[1]], on, {}, event, heavy)
+    if f" && ({HEAVY})" in text:
+        if not heavy:
+            return False
+        text = text.replace(f" && ({HEAVY})", "")
+    if NOT_A_PR in text:
+        if event == "pull_request":
+            return False
+        text = text.replace(NOT_A_PR, "true")
     filters = set(re.findall(r"needs\.changed-paths\.outputs\.(\w+) == 'true'", text))
     return bool(filters & on) if filters else text.lower() != "false" and "github." not in text
 
 
-def _executed(workflow: str, on: set[str], draft: bool = False) -> list[str]:
-    """Jobs a PR run puts on a runner, one per matrix leg; `draft` reads the draft-PR clauses as true."""
+def _executed(
+    workflow: str,
+    on: set[str],
+    event: str = "pull_request",
+    labels: tuple[str, ...] = (),
+    c102: bool = False,
+) -> list[str]:
+    """Jobs a run of `event` puts on a runner, one per matrix leg; `labels`: the PR's labels;
+    `c102`: main's C-10.2 decision for the PR (security-review-label's `security-path`)."""
+    heavy = _heavy(event, labels, c102)
     ran: list[str] = []
     for job_id, job in _load(workflow)["jobs"].items():
         callee = _load(job["uses"]) if "uses" in job else {"jobs": {"": job}}
         call = (callee.get(True) or {}).get("workflow_call") or {}  # YAML 1.1 reads `on` as True
         inputs = {k: v.get("default") for k, v in (call.get("inputs") or {}).items()}
-        # pr.yml's `heavy` input is the draft clause negated: true on a ready PR, false on a draft.
+        # pr.yml's `heavy` input is the heavy clause itself (#5746).
         inputs |= {
-            key: (not draft) if ".draft == true" in str(value) else value
+            key: heavy if value == "${{ " + HEAVY + " }}" else value
             for key, value in (job.get("with") or {}).items()
         }
-        deferred = draft and ".draft == true" in str(job.get("if", ""))
-        called = _runs(job.get("if", True), on, {}) and not deferred
+        called = _runs(job.get("if", True), on, {}, event, heavy)
         for inner_id, inner in callee["jobs"].items() if called else ():
-            if _runs(inner.get("if", True), on, inputs):
+            if _runs(inner.get("if", True), on, inputs, event, heavy):
                 matrix = (inner.get("strategy") or {}).get("matrix") or {}
                 legs = math.prod(_legs(axis, inputs) for axis in matrix.values())
                 ran += [f"{job_id} / {inner_id}".removesuffix(" / ")] * legs
@@ -339,27 +397,242 @@ def _legs(axis: object, inputs: dict[str, object]) -> int:
     # `route` job beside its `bench` job (+1): 5 / 33 / 33 / 69. #5697 splits the history sweeps
     # out of `gitleaks` into `gitleaks-history` (+1): 5 / 34 / 34 / 70. #5505 splits the rest lane
     # into rest-heavy-4 and rest-heavy-5 (+2): 5 / 36 / 36 / 72, and `tests/security/auth` out of
-    # contract-security-2 as contract-security-4 (+1): 5 / 37 / 37 / 73.
+    # contract-security-2 as contract-security-4 (+1): 5 / 37 / 37 / 73. #5746 runs these on a
+    # `ci:full` pull request only; any other pull request runs the light set (the next tests).
     [("docs", 5), ("py", 37), ("py,infra", 37), ("all", 73)],
 )
 def test_executed_job_count_per_change_class(change: str, count: int) -> None:
     on = set(JOBS["changed-paths"]["outputs"]) if change == "all" else set(change.split(","))
-    assert len(_executed("pr.yml", on)) == count
+    assert len(_executed("pr.yml", on, labels=("ci:full",))) == count
 
 
-def test_draft_pr_runs_only_the_light_job_set() -> None:
-    """#5506: a draft starts the light jobs; the heavy lanes skip until ready_for_review."""
+#: #5746: the light set with every filter true, what a pull request without `ci:full` runs, draft
+#: or not; docs/ci-runbook.md lists the same jobs.
+LIGHT = ["changed-paths", "gates", "security-review-label", "dependabot-alerts"]
+LIGHT += ["js / node-version-check", "js / install", "js / lint", "js / typecheck"]
+LIGHT += ["py / py-checks", "py / py", "architecture", "ci-required"]
+
+
+@pytest.mark.parametrize(
+    ("change", "light", "full", "queued"),
+    # #5746: a pull request runs the light set (12 jobs at most, against the issue's target of 15);
+    # a `ci:full` one, a C-10.2 one (#5785, automatically), a merge group and a train run every
+    # lane, and a merge group or train also the compose integration lane's four shards, its stack
+    # job and its verdict (+6: #3881, #4605), which a pull request's run never starts.
+    [("docs", 5, 5, 5), ("py", 8, 37, 43), ("py,infra", 8, 37, 43), ("all", 12, 73, 79)],
+)
+def test_light_and_full_job_counts_per_event(
+    change: str, light: int, full: int, queued: int
+) -> None:
+    on = set(JOBS["changed-paths"]["outputs"]) if change == "all" else set(change.split(","))
+    assert len(_executed("pr.yml", on)) == light
+    assert len(_executed("pr.yml", on, labels=("other", "ci:full"))) == full
+    assert len(_executed("pr.yml", on, c102=True)) == full
+    assert len(_executed("pr.yml", on, "merge_group")) == queued
+    assert len(_executed("pr.yml", on, "workflow_dispatch")) == queued
+    assert len(_executed("pr.yml", on, "merge_group", ("ci:full",))) == queued
+
+
+def test_a_pull_request_without_ci_full_runs_exactly_the_light_set() -> None:
     every = set(JOBS["changed-paths"]["outputs"])
-    draft, ready = _executed("pr.yml", every, draft=True), _executed("pr.yml", every)
-    assert len(draft) < len(ready)
-    for light in ("changed-paths", "gates", "py / py-checks"):
-        assert light in draft
-    assert any(job.startswith("js / ") and "lint" in job for job in draft)
-    assert any(job.startswith("js / ") and "typecheck" in job for job in draft)
+    assert _executed("pr.yml", every) == LIGHT
     heavy = ("py-tests", "py-perf", "py-perf-index", "unit-frontend", "unit-engine", "build")
-    assert not [job for job in draft if any(name in job.split(" / ")[-1] for name in heavy)]
-    assert [job for job in ready if "py-tests" in job]
-    assert not [job for job in draft if job.split(" / ")[0] in ("e2e", "a11y", "engine-bench")]
+    full = _executed("pr.yml", every, labels=("ci:full",))
+    assert all(any(job.endswith(f" / {name}") for job in full) for name in heavy)
+    # #5785: a pull request that touches a C-10.2 path runs the full set automatically, without
+    # `ci:full`; main's decision decides it, not a label (one added by hand reads nothing).
+    assert _executed("pr.yml", every, labels=("ci:fullx", "security-review"), c102=True) == full
+    assert _executed("pr.yml", every, c102=True) == full
+    assert _executed("pr.yml", every, labels=("ci:fullx", "security-review")) == LIGHT
+    # A draft runs the same set: no job condition or input in pr.yml reads the draft flag; only
+    # the resolver step does, to fail a draft with CI-GATE-005 (#5506).
+    assert [job_id for job_id, job in JOBS.items() if ".draft" in json.dumps(job)] == [
+        "ci-required"
+    ]
+    # #3385: gitleaks and trufflehog still scan every pull request, light or not, in `gates`.
+    assert "secret-scan" in [step.get("id") for step in JOBS["gates"]["steps"]]
+    # The runbook names the same jobs (the issue's acceptance: the exact list, in one place).
+    runbook = " ".join((ROOT / "docs" / "ci-runbook.md").read_text(encoding="utf-8").split())
+    assert all(f"`{job}`" in runbook for job in LIGHT), "docs/ci-runbook.md lists the light set"
+    assert f"the light set, every filter true, is {len(LIGHT)} jobs" in runbook.lower()
+
+
+@pytest.mark.parametrize(
+    ("event", "labels", "c102", "heavy"),
+    [
+        ("merge_group", (), False, True),
+        ("workflow_dispatch", (), False, True),
+        ("pull_request", ("ci:full",), False, True),
+        ("pull_request", ("security-review", "ci:full"), False, True),
+        ("pull_request", (), False, False),
+        # #5785: a C-10.2 pull request is heavy without `ci:full`, labelled or not.
+        ("pull_request", ("security-review", "ci:fullx"), True, True),
+        ("pull_request", (), True, True),
+        ("push", (), False, False),
+    ],
+)
+def test_the_heavy_clause_holds_on_its_four_conditions_only(
+    event: str, labels: tuple[str, ...], c102: bool, heavy: bool
+) -> None:
+    assert _heavy(event, labels, c102) is heavy
+
+
+#: The lanes whose job runs on a heavy run only: their `if:` ends in `&& (HEAVY)` (#5746).
+HEAVY_LANES = {"rule-roundtrip", "contract", "integration", "migrations", "security", "e2e"}
+HEAVY_LANES |= {"a11y", "engine-bench", "coverage-thresholds"}
+
+
+def test_every_heavy_lane_and_input_carries_the_four_conditions_verbatim() -> None:
+    assert HEAVY.split(" || ") == [
+        "github.event_name == 'merge_group'",
+        "github.event_name == 'workflow_dispatch'",
+        "contains(github.event.pull_request.labels.*.name, 'ci:full')",
+        "needs.security-review-label.outputs.security-path == 'true'",
+    ]
+    ending = f" && ({HEAVY}) }}}}"
+    assert {lane for lane, job in JOBS.items() if str(job.get("if", "")).endswith(ending)} == (
+        HEAVY_LANES
+    )
+    assert [lane for lane, job in JOBS.items() if HEAVY in json.dumps(job)] == [
+        "js",
+        "py",
+        *[lane for lane in JOBS if lane in HEAVY_LANES],
+    ]
+    for lane in ("js", "py"):
+        assert JOBS[lane]["with"] == {"heavy": "${{ " + HEAVY + " }}"}
+        heavy = _load(JOBS[lane]["uses"])[True]["workflow_call"]["inputs"]["heavy"]
+        assert heavy == {"type": "boolean", "default": True}
+    # #5785: every job that reads the C-10.2 term needs the job whose output it is.
+    for lane in ("js", "py", *HEAVY_LANES):
+        assert "security-review-label" in JOBS[lane]["needs"], lane
+    # The resolver's flags: the third and fourth conditions; the event it reads from the runner;
+    # and (#5785) whether main has an active merge queue rule, without which it defers nothing.
+    assert RESOLVER["env"]["PR_FULL"] == "${{ " + FULL + " }}"
+    assert RESOLVER["env"]["MERGE_QUEUE"] == "${{ needs.changed-paths.outputs.queue }}"
+    resolver = (ROOT / "scripts" / "ci_gate_resolver.mjs").read_text(encoding="utf-8")
+    assert 'process.env.PR_FULL === "true"' in resolver
+    assert 'process.env.MERGE_QUEUE === "true"' in resolver
+
+
+def _step(job: str, step_id: str) -> dict[str, Any]:
+    (step,) = [step for step in JOBS[job]["steps"] if step.get("id") == step_id]
+    return step
+
+
+def _run_step(step: dict[str, Any], cwd: Path, stubs: dict[str, str]) -> tuple[int, str]:
+    """`step`'s `run:` under bash -e (GitHub's default shell), with `stubs` as executables first on
+    PATH; returns its exit status and what it wrote to GITHUB_OUTPUT."""
+    if not (shutil.which("bash") and shutil.which("jq")):
+        (pytest.fail if os.environ.get("CI") else pytest.skip)("bash and jq run this step")
+    bin_dir, output = cwd / "bin", cwd / "github_output"
+    bin_dir.mkdir(exist_ok=True)
+    for name, body in stubs.items():
+        (bin_dir / name).write_text("#!/bin/bash\n" + body, encoding="utf-8")
+        (bin_dir / name).chmod(0o755)
+    output.write_text("", encoding="utf-8")
+    env = {"PATH": f"{bin_dir}:{os.environ.get('PATH', '')}", "GITHUB_OUTPUT": str(output)}
+    env |= {"GITHUB_REPOSITORY": "o/r", "GH_TOKEN": "x", "PR_NUMBER": "1"}
+    proc = subprocess.run(
+        ["bash", "-e", "-c", step["run"]], cwd=cwd, env=env, capture_output=True, timeout=60
+    )
+    return proc.returncode, output.read_text(encoding="utf-8")
+
+
+NONE_TOUCHED = "security-review-label: no C-10.2 security path is touched; nothing to do"
+
+
+@pytest.mark.parametrize(
+    ("printed", "status", "decision"),
+    [
+        (NONE_TOUCHED, 0, "security-path=false\n"),
+        ("C-10.2 security path (infra): 'infra/x'\nsecurity-review-label: `x` is on", 0, None),
+        ("::warning title=security-review-label::short list; `security-review` is on", 0, None),
+        (NONE_TOUCHED + " (not exactly)", 0, None),
+        ("CI-GATE-004", 1, ""),
+    ],
+    ids=["no-path", "path", "unsure-labelled", "other-line", "gate-failed"],
+)
+def test_security_review_label_outputs_mains_c102_decision_failing_toward_full(
+    tmp_path: Path, printed: str, status: int, decision: str | None
+) -> None:
+    """#5785: `security-path` is false only when main's script printed that no C-10.2 path is
+    touched; any other run it completes is true, and a failed one fails the job."""
+    script = tmp_path / "tools" / "ci" / "security_review_label.py"
+    script.parent.mkdir(parents=True)
+    script.write_text(f"print({printed!r})\nraise SystemExit({status})\n", encoding="utf-8")
+    assert JOBS["security-review-label"]["outputs"] == {
+        "security-path": "${{ steps.label.outputs.security-path }}"
+    }
+    code, output = _run_step(_step("security-review-label", "label"), tmp_path, {})
+    expected = "security-path=true\n" if decision is None else decision
+    assert (code != 0, output) == (status != 0, expected)
+
+
+QUEUE_RULE = '[{"type": "required_status_checks"}, {"type": "merge_queue", "parameters": {}}]'
+
+
+@pytest.mark.parametrize(
+    ("gh", "queue"),
+    [
+        (f"echo '{QUEUE_RULE}'", "true"),
+        ("echo '[{\"type\": \"required_status_checks\"}]'", "false"),
+        ("echo '[]'", "false"),
+        ("echo '{\"type\": \"merge_queue\"}'", "false"),
+        ("echo 'not json'", "false"),
+        ("echo 'HTTP 403' >&2; exit 1", "false"),
+        (f"echo '{QUEUE_RULE}'; exit 1", "false"),
+    ],
+    ids=["queue-on", "queue-off", "no-rules", "not-a-list", "garbage", "api-error", "exit-1"],
+)
+def test_changed_paths_outputs_queue_true_only_for_an_active_merge_queue_rule(
+    tmp_path: Path, gh: str, queue: str
+) -> None:
+    """#5785, failing closed: `queue` is true only when main's rules list a `merge_queue` rule;
+    no rule, an API error or an unreadable answer is false, and the step itself passes."""
+    step = _step("changed-paths", "queue")
+    assert '"repos/$GITHUB_REPOSITORY/rules/branches/main"' in step["run"]
+    assert step["env"] == {"GH_TOKEN": "${{ github.token }}"} and "if" not in step
+    assert JOBS["changed-paths"]["outputs"]["queue"] == "${{ steps.queue.outputs.queue }}"
+    assert JOBS["changed-paths"]["permissions"] == {"contents": "read", "pull-requests": "read"}
+    assert _run_step(step, tmp_path, {"gh": gh}) == (0, f"queue={queue}\n")
+
+
+#: Every lane deferred on a light pull request run (#5746) skipped, as that run reports them.
+HEAVY_SKIPPED = {f"needs.{lane}.result": "skipped" for lane in HEAVY_LANES}
+
+
+@pytest.mark.parametrize(
+    ("context", "expected"),
+    [
+        ({}, set()),
+        ({"needs.changed-paths.outputs.queue": "false"}, "queue"),
+        ({"needs.changed-paths.outputs.queue": ""}, "queue"),
+        ({"needs.security-review-label.outputs.security-path": "true"}, "skip"),
+        (
+            {"needs.security-review-label.outputs.security-path": "true"}
+            | {"needs.changed-paths.outputs.queue": "false"},
+            "skip",
+        ),
+    ],
+    ids=["light-queue-on", "light-queue-off", "light-queue-unknown", "c102", "c102-queue-off"],
+)
+def test_resolver_step_defers_a_light_runs_lanes_only_while_the_queue_is_on(
+    context: dict[str, str], expected: str | set[str]
+) -> None:
+    """#5785: a light run (every heavy lane skipped, integration too) passes only with MERGE_QUEUE
+    true; without it each deferred lane is CI-GATE-002 naming the queue. A C-10.2 pull request is
+    a full run: a skipped heavy lane is CI-GATE-002 there whatever the queue says."""
+    code, errors = _resolve(set(), HEAVY_SKIPPED | context, event="pull_request")
+    no_queue = "; the merge queue on main is not confirmed, so a light run defers nothing: label"
+    no_queue += " the PR ci:full"
+    # `integration` runs on the merge group alone (#3881): its skip is deferred on every PR.
+    deferred = HEAVY_LANES - {"integration"}
+    if expected == "queue":
+        assert (code, errors) == (1, {SKIP % lane + no_queue for lane in deferred})
+    elif expected == "skip":
+        assert (code, errors) == (1, {SKIP % lane for lane in deferred})
+    else:
+        assert (code, errors) == (0, set())
 
 
 def test_pr_runs_neither_xstate_job_and_the_nightly_runs_both_through_the_script() -> None:

@@ -14,7 +14,7 @@ name: pr
 # CV-ERR codes surfaced by the resolver: CI-GATE-001 (applicable lane not
 # successful), CI-GATE-002 (gate misconfiguration: applicable lane skipped),
 # CI-GATE-003 (unpinned action / pull_request_target — tools/ci/check_action_pins.py);
-# by the resolver on a draft pull request: CI-GATE-005 (the full matrix runs from ready_for_review, #5506);
+# by the resolver on a draft pull request: CI-GATE-005 (passes only once ready for review, #5506);
 # by the security-review-label job: CI-GATE-004 (C-10.2 path, label not added, #2892); by the
 # dependabot-alerts job: CI-SEC-001/004/005 (C-9.1 #11's Dependabot alert gate, #3558).
 
@@ -23,7 +23,9 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
   # #3433: the merge queue tests `main` plus the PR as a merge group and waits for `ci-required`
-  # on it. Inert until the owner turns on "Require merge queue" for `main`.
+  # on it. Since #5746 this run, or the train's below, is the only full one: a pull request's own
+  # run is the light set, so it is safe only while "Require merge queue" is on for `main` or the
+  # train is the only merge path (docs/ci-runbook.md, #5746).
   merge_group:
     types: [checks_requested]
     branches: [main]
@@ -70,6 +72,8 @@ jobs:
       semgrep: ${{ steps.filter.outputs.semgrep }}
       # Not a path filter: false on a merge group or train, where PR-metadata gates do not apply.
       pr: ${{ steps.change.outputs.pr }}
+      # Not a path filter either (#5785): true only when main has an active merge queue rule.
+      queue: ${{ steps.queue.outputs.queue }}
     permissions:
       contents: read
       pull-requests: read
@@ -124,6 +128,26 @@ jobs:
               printf 'pr=false\nbase=%s\nhead=%s\n' "$TRAIN_BASE" "$TRAIN_HEAD" >> "$GITHUB_OUTPUT" ;;
             *) echo "::error::pr.yml runs on pull_request, merge_group and workflow_dispatch, not $EVENT"; exit 1 ;;
           esac
+
+      # #5785: a light pull request run defers its heavy lanes to the merge group, which is safe
+      # only while the queue is on. Read with the job token (the endpoint needs metadata: read,
+      # which every job token has): `queue` is true only when an active `merge_queue` rule applies
+      # to main; an API error or no such rule gives false, and the resolver then defers nothing.
+      - name: Merge queue on main (a light run's precondition)
+        id: queue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          queue=false
+          if ! rules=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/main"); then
+            echo "::warning title=changed-paths::the rules of main could not be read: a light run defers nothing"
+          elif jq -e 'type == "array" and any(.[]; .type == "merge_queue")' <<<"$rules" >/dev/null; then
+            queue=true
+          else
+            echo "::warning title=changed-paths::no active merge queue rule on main: a light run defers nothing"
+          fi
+          echo "queue=$queue" >> "$GITHUB_OUTPUT"
 
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
@@ -683,6 +707,10 @@ jobs:
   # the script (the PR adding it), it labels every PR: never fewer reviews.
   # It never removes a label. A merge group or train has no PR to label (each PR's own run labelled
   # it first), so the step runs on pull requests only and the job passes there (#3433, #3783).
+  # #5785: its `security-path` output is main's C-10.2 decision for the PR, read from what main's
+  # script prints: false only when it printed that no security path is touched, true otherwise
+  # (empty off a pull request). The heavy clause ORs it in, so a C-10.2 pull request runs the full
+  # set automatically, label or not; every lane needs this job for it.
   security-review-label:
     name: security-review-label
     runs-on: ubuntu-latest
@@ -690,6 +718,8 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+    outputs:
+      security-path: ${{ steps.label.outputs.security-path }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -705,12 +735,16 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          log=$(mktemp)
           if [ -f tools/ci/security_review_label.py ]; then
-            python3 -I tools/ci/security_review_label.py
+            python3 -I tools/ci/security_review_label.py | tee "$log"
           else
             echo "::warning title=security-review-label::main has no tools/ci/security_review_label.py yet: labelling the PR"
             gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels" -f 'labels[]=security-review' --silent
           fi
+          none='security-review-label: no C-10.2 security path is touched; nothing to do'
+          if grep -qxF "$none" "$log"; then path=false; else path=true; fi
+          echo "security-path=$path" >> "$GITHUB_OUTPUT"
 
   # --- C-9.1 #11's Dependabot alert gate (#3558). An open High or Critical alert on `main` blocks
   # every PR, merge group and train, docs-only too, unless its tree fixes the alert since its merge
@@ -760,22 +794,30 @@ jobs:
   # conclusion); its owning ticket replaces the body without changing this
   # call site or its `if:` condition. `secrets: inherit` is intentionally
   # omitted (ADR-0013 rule 6): PR workflows receive no secrets.
+  #
+  # #5746: a run is heavy on a merge group, a merge train's dispatch, a pull request labelled
+  # `ci:full` or (#5785) one that touches a C-10.2 path (security-review-label's `security-path`);
+  # every other pull request run, draft or not, is the light set (docs/ci-runbook.md lists it). The
+  # heavy lanes below end their `if:` in that clause, js and py take it as their `heavy` input, and
+  # the resolver (LIGHT_DEFERRED, fed PR_FULL and MERGE_QUEUE) reads a light run's skip as deferred
+  # to the merge group while main's merge queue is on. It is restated in each place: change them
+  # together.
 
   js:
     name: js
-    needs: changed-paths
+    needs: [changed-paths, security-review-label]
     if: ${{ needs.changed-paths.outputs.js == 'true' }}
     uses: ./.github/workflows/_job-js.yml
     with:
-      heavy: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
+      heavy: ${{ github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full') || needs.security-review-label.outputs.security-path == 'true' }}
 
   py:
     name: py
-    needs: changed-paths
+    needs: [changed-paths, security-review-label]
     if: ${{ needs.changed-paths.outputs.py == 'true' }}
     uses: ./.github/workflows/_job-py.yml
     with:
-      heavy: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
+      heavy: ${{ github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full') || needs.security-review-label.outputs.security-path == 'true' }}
 
   # Mirrors the `py` lane (import-linter runs in py-checks), beside coverage-thresholds (#3076).
   architecture:
@@ -794,48 +836,49 @@ jobs:
   # E35-Q02: rule IR round-trip gate (corpus goldens + mutation check + 10 000-doc property run).
   rule-roundtrip:
     name: rule-roundtrip
-    needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.rules == 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
+    needs: [changed-paths, security-review-label]
+    if: ${{ needs.changed-paths.outputs.rules == 'true' && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full') || needs.security-review-label.outputs.security-path == 'true') }}
     uses: ./.github/workflows/_job-rule-roundtrip.yml
 
   contract:
     name: contract
-    needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.protocol == 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
+    needs: [changed-paths, security-review-label]
+    if: ${{ needs.changed-paths.outputs.protocol == 'true' && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full') || needs.security-review-label.outputs.security-path == 'true') }}
     uses: ./.github/workflows/_job-contract.yml
 
   integration:
     name: integration
-    needs: changed-paths
+    needs: [changed-paths, security-review-label]
     # Integration exercises services/api's fixture-driven pipeline + OMS suite;
     # applicable whenever backend code, tooling or fixtures change. #3881: on a pull request the
     # called workflow skips its `integration` job (its own `if:` reads github.event_name), so the
     # lane runs on the merge group and on a merge train, and the `ci-required` resolver reads a
     # pull request's skip as "runs on the merge group", not as CI-GATE-002 (MERGE_GROUP_ONLY in
     # scripts/ci_gate_resolver.mjs). It restates that job's condition: change both together. The
-    # opt-in `audit-query-plan` job of the same workflow still starts from a labelled PR (once ready for review).
-    if: ${{ needs.changed-paths.outputs.py == 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
+    # opt-in `audit-query-plan` job of the same workflow still starts from a labelled PR on a heavy
+    # (`ci:full`) run.
+    if: ${{ needs.changed-paths.outputs.py == 'true' && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full') || needs.security-review-label.outputs.security-path == 'true') }}
     uses: ./.github/workflows/_job-integration.yml
   migrations:
     name: migrations
-    needs: changed-paths
+    needs: [changed-paths, security-review-label]
     # E03-T10 base gate (single-head/drift/expand-contract/upgrade-path) plus
     # bugfix #1556 (E07-T02 / #168 defect 1) additions: timing budget,
     # lockfile integrity, cv_app privilege matrix; #4014 adds the lock check of
     # the QuestDB DDL files. Applicable whenever a migration revision file,
     # models.py, a DDL file under backend/db/questdb/ or the migration tooling
     # changes.
-    if: ${{ needs.changed-paths.outputs.migrations == 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
+    if: ${{ needs.changed-paths.outputs.migrations == 'true' && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full') || needs.security-review-label.outputs.security-path == 'true') }}
     uses: ./.github/workflows/_job-migrations.yml
 
   security:
     name: security
-    needs: changed-paths
+    needs: [changed-paths, security-review-label]
     # Security scanning applies to any code/infra change, not just one lane, and to a change that
     # touches only the Semgrep rules, fixtures or ignore file the scan reads (#2915). The
     # `ci-required` resolver below restates this condition: change both together. Every PR, a
     # docs-only one too, also gets the secret scans: the `gates` job's secret-scan step (#3385).
-    if: ${{ (needs.changed-paths.outputs.js == 'true' || needs.changed-paths.outputs.py == 'true' || needs.changed-paths.outputs.infra == 'true' || needs.changed-paths.outputs.semgrep == 'true') && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
+    if: ${{ (needs.changed-paths.outputs.js == 'true' || needs.changed-paths.outputs.py == 'true' || needs.changed-paths.outputs.infra == 'true' || needs.changed-paths.outputs.semgrep == 'true') && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full') || needs.security-review-label.outputs.security-path == 'true') }}
     with:
       image_changed: ${{ needs.changed-paths.outputs.image == 'true' }}
     # A called reusable workflow may only use permissions its caller job grants.
@@ -846,23 +889,23 @@ jobs:
       security-events: write
     uses: ./.github/workflows/_job-security.yml
 
-  # Deferred while the PR is a draft (the resolver's DRAFT_DEFERRED set says the same); ready_for_review re-runs them.
+  # Heavy runs only (#5746, the resolver's LIGHT_DEFERRED set says the same).
   e2e:
     name: e2e
-    needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.e2e == 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
+    needs: [changed-paths, security-review-label]
+    if: ${{ needs.changed-paths.outputs.e2e == 'true' && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full') || needs.security-review-label.outputs.security-path == 'true') }}
     uses: ./.github/workflows/_job-e2e.yml
 
   a11y:
     name: a11y
-    needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.e2e == 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
+    needs: [changed-paths, security-review-label]
+    if: ${{ needs.changed-paths.outputs.e2e == 'true' && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full') || needs.security-review-label.outputs.security-path == 'true') }}
     uses: ./.github/workflows/_job-a11y.yml
 
   engine-bench:
     name: engine-bench
-    needs: changed-paths
-    if: ${{ (needs.changed-paths.outputs.engine == 'true' || needs.changed-paths.outputs.protocol == 'true') && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
+    needs: [changed-paths, security-review-label]
+    if: ${{ (needs.changed-paths.outputs.engine == 'true' || needs.changed-paths.outputs.protocol == 'true') && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full') || needs.security-review-label.outputs.security-path == 'true') }}
     uses: ./.github/workflows/_job-engine-bench.yml
 
   coverage-thresholds:
@@ -871,8 +914,8 @@ jobs:
     # so the gate sees every report that could have changed (a py-only PR
     # still needs its services/api number checked; a js-only PR its
     # frontend/engine packages).
-    needs: [changed-paths, js, py]
-    if: ${{ always() && (needs.changed-paths.outputs.js == 'true' || needs.changed-paths.outputs.py == 'true') && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true) }}
+    needs: [changed-paths, security-review-label, js, py]
+    if: ${{ always() && (needs.changed-paths.outputs.js == 'true' || needs.changed-paths.outputs.py == 'true') && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full') || needs.security-review-label.outputs.security-path == 'true') }}
     permissions:
       contents: read
       pull-requests: write
@@ -916,12 +959,17 @@ jobs:
       - name: Resolve ci-required conclusion
         # #3881: the resolver also reads GITHUB_EVENT_NAME, which the runner sets. On a pull request
         # it reads a skipped `integration` lane as deferred to the merge group, not as CI-GATE-002.
-        # On a draft pull request (PR_DRAFT) it reads a skipped heavy lane as deferred until the PR
-        # leaves draft (DRAFT_DEFERRED) and fails with CI-GATE-005 (#5506): a draft runs the light
-        # set only. The path is empty on every event without a pull request (merge_group), and the
-        # resolver reads it on pull_request only.
+        # On a pull request without the `ci:full` label or a C-10.2 path (PR_FULL) it reads a
+        # skipped heavy lane as deferred to the merge group (LIGHT_DEFERRED, #5746): that run is the
+        # light set. It defers only while `changed-paths` found main's merge queue rule
+        # (MERGE_QUEUE, #5785); without it the skip is CI-GATE-002. A draft (PR_DRAFT) fails with CI-GATE-005
+        # (#5506) whatever the lanes say. The flags are false or empty on every event without a
+        # pull request (merge_group), and the resolver reads them on pull_request only. The step
+        # fails unless the resolver printed its conclusion line.
         env:
           PR_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') || needs.security-review-label.outputs.security-path == 'true' }}
+          MERGE_QUEUE: ${{ needs.changed-paths.outputs.queue }}
           FILTER_JS: ${{ needs.changed-paths.outputs.js }}
           FILTER_PY: ${{ needs.changed-paths.outputs.py }}
           FILTER_MIGRATIONS: ${{ needs.changed-paths.outputs.migrations }}
@@ -963,6 +1011,7 @@ jobs:
           RESULT_ENGINE_BENCH: ${{ needs.engine-bench.result }}
           RESULT_COVERAGE_THRESHOLDS: ${{ needs.coverage-thresholds.result }}
         run: |
+          set -o pipefail
           node scripts/ci_gate_resolver.mjs "$(node -e '
             const isTrue = (v) => v === "true";
             const lanes = {
@@ -1004,4 +1053,4 @@ jobs:
               },
             };
             console.log(JSON.stringify(lanes));
-          ')"
+          ')" | awk '{ print } /^ci-required conclusion: (success|failure)$/ { seen = 1 } END { if (!seen) print "::error title=ci-required::the resolver printed no conclusion"; exit !seen }'

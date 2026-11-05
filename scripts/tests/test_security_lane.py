@@ -112,11 +112,13 @@ FILTERS = " || ".join(f"needs.changed-paths.outputs.{f} == 'true'" for f in ("js
 # The pr.yml caller as it stood before the fold; #3104 leaves it and the resolver lane alone.
 CALLER = {
     "name": "security",
-    "needs": "changed-paths",
+    "needs": ["changed-paths", "security-review-label"],  # #5785: the C-10.2 decision
     "if": "${{ ("
     + FILTERS
-    + " || needs.changed-paths.outputs.semgrep == 'true') && !(github.event_name == 'pull_request'"
-    " && github.event.pull_request.draft == true) }}",
+    + " || needs.changed-paths.outputs.semgrep == 'true') && (github.event_name == 'merge_group'"
+    " || github.event_name == 'workflow_dispatch'"
+    " || contains(github.event.pull_request.labels.*.name, 'ci:full')"
+    " || needs.security-review-label.outputs.security-path == 'true') }}",
     "with": {"image_changed": "${{ needs.changed-paths.outputs.image == 'true' }}"},
     "permissions": SARIF,
     "uses": "./.github/workflows/_job-security.yml",

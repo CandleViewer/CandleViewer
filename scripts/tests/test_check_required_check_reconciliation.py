@@ -224,6 +224,11 @@ FORM = "plain block-style YAML"
 FILTER_PY = "          FILTER_PY: ${{ needs.changed-paths.outputs.py }}\n"
 RESULT_PY = "          RESULT_PY: ${{ needs.py.result }}\n"
 PR_DRAFT = f"          {recon.DRAFT_FLAG}: {recon.DRAFT_EXPRESSION}\n"
+PR_FULL = f"          {recon.FULL_FLAG}: {recon.FULL_EXPRESSION}\n"
+PR_QUEUE = f"          {recon.QUEUE_FLAG}: {recon.QUEUE_EXPRESSION}\n"
+C102_TERM = " || needs.security-review-label.outputs.security-path == 'true'"
+# The resolver call's last line, its conclusion guard (#5785) after the argument.
+CALL_END = "          ')\"" + recon.CONCLUSION_GUARD + "\n"
 CI_NAME = "    name: ci-required\n"
 SETUP_NODE = '          node-version: "20"\n'
 SHADOW = "  shadow:\n    name: ci-required\n    runs-on: x\n    steps:\n      - run: echo\n$&"
@@ -282,7 +287,12 @@ NESTED_ERROR = "job 'nested' of lane 'contract' calls another workflow"
         ("pr.yml", '"secret-scan": { applicable: true', '"x": { applicable: true', "secret-scan"),
         ("pr.yml", " py: {", DUPLICATE_JS_LANE + " py: {", "lane 'js' repeats"),
         ("pr.yml", "  node scripts/ci_gate", "  true || node scripts/ci_gate", "exit"),
-        ("pr.yml", "          ')\"\n", "          ')\" || true\n", "whose exit is the resolver's"),
+        ("pr.yml", CALL_END, CALL_END[:-1] + " || true\n", "whose exit is the resolver's"),
+        # #5785: the step fails unless the resolver printed its conclusion line: the guard and the
+        # pipefail prelude that carries the resolver's own exit through it, both verbatim.
+        ("pr.yml", CALL_END, "          ')\"\n", "whose exit is the resolver's"),
+        ("pr.yml", CALL_END, CALL_END.replace("exit !seen", "exit 0"), "whose exit is"),
+        ("pr.yml", "          set -o pipefail\n", "", "whose exit is the resolver's"),
         ("pr.yml", "conclusion\n", "conclusion\n        continue-on-error: true\n", "continue-on"),
         ("_job-security.yml", "if: ${{ inputs.image_changed }}", "if: ${{ false }}", "trivy"),
         # Review round 2 of #3103: each half of a check that runs in two lanes is required.
@@ -316,8 +326,8 @@ NESTED_ERROR = "job 'nested' of lane 'contract' calls another workflow"
         # (a `gates` step may continue on error only while its outcome is a judged lane)
         ("pr.yml", PIN_CHECK, "false, result: process.env.RESULT_PIN_CHECK", "job 'gates' must"),
         # ... and its step is the resolver call alone, whatever shell a default or alias sets.
-        ("pr.yml", "          ')\"\n", "$&          true\n", "whose exit is the resolver's"),
-        ("pr.yml", "          ')\"\n", "$&\n          true\n", "whose exit is the resolver's"),
+        ("pr.yml", CALL_END, "$&          true\n", "whose exit is the resolver's"),
+        ("pr.yml", CALL_END, "$&\n          true\n", "whose exit is the resolver's"),
         ("pr.yml", "\nconcurrency:\n", "\ndefaults:\n  run:\n    shell: bash {0}$&", "or shell:"),
         ("pr.yml", "    name: ci-required\n", "$&    defaults: {run: {shell: sh}}\n", FORM),
         ("pr.yml", RESOLVE, "      - shell: sh\n        name: Resolve ci", "or shell:"),
@@ -390,6 +400,15 @@ NESTED_ERROR = "job 'nested' of lane 'contract' calls another workflow"
         ("pr.yml", PR_DRAFT, '          PR_DRAFT: "true"\n', "step's env"),
         ("pr.yml", PR_DRAFT, PR_DRAFT.replace(".draft }}", ".draft || true }}"), "step's env"),
         ("pr.yml", PR_DRAFT, PR_DRAFT + PR_DRAFT, "step's env"),
+        # #5746: so is the `ci:full` label flag; set by hand it would defer a labelled PR's lanes.
+        ("pr.yml", PR_FULL, '          PR_FULL: "false"\n', "step's env"),
+        ("pr.yml", PR_FULL, PR_FULL.replace("'ci:full'", "'ci:light'"), "step's env"),
+        ("pr.yml", PR_FULL, PR_FULL + PR_FULL, "step's env"),
+        # #5785: its C-10.2 term too, and the merge queue flag, with which a light run defers.
+        ("pr.yml", PR_FULL, PR_FULL.replace(C102_TERM, ""), "step's env"),
+        ("pr.yml", PR_QUEUE, '          MERGE_QUEUE: "true"\n', "step's env"),
+        ("pr.yml", PR_QUEUE, PR_QUEUE.replace(".queue }}", ".queue || 'true' }}"), "step's env"),
+        ("pr.yml", PR_QUEUE, PR_QUEUE + PR_QUEUE, "step's env"),
         ("pr.yml", "\nconcurrency:\n", "\nenv:\n  NODE_OPTIONS: --x$&", "may set no env"),
         (
             "pr.yml",
