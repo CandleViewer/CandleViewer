@@ -3,8 +3,10 @@
 `validate_rule` checks each action's `params` against its catalogue `params_schema`
 (`rules.vocabulary.params_check`, the closed subset the catalogue writes), so validate, compile, a
 save and arming answer alike: `schema_error` at `actions[i].params.<name>`, naming the parameter and
-its bound, never the value. `place_order`'s `stop_loss` is the native stop (C-2.6): one that is not
-a known unit with a value above zero is refused as `native_stop_violation`, as an empty one is.
+its bound, never the value. A number parameter reads decimal text as its number (the #5963
+ruling). `place_order`'s `stop_loss` is the native stop (C-2.6) and mirrors 22's `Offset`: one off
+that shape, or whose value is not above zero, is refused as `native_stop_violation`, as an empty
+one is.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from collections.abc import Iterator, Mapping
 from typing import Any
 
 import pytest
+import yaml
 
 from candleviewer.rules.ir import Rule
 from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleError, RulesManager
@@ -26,19 +29,24 @@ from tests.rules.test_rules_routes import _Env, _ir
 from tests.rules.test_scope import C
 from tests.rules.test_scope_crud import _scoped, _setup
 from tests.rules.test_validator_endpoints import RULE_ID
-from tests.rules.test_vocabulary import _P, _client
+from tests.rules.test_vocabulary import _P, SPEC, _client
 
 REG = default_registry()
 TITLES = {a.type: a.title for a in ACTIONS}
+PLACE_ORDER = next(a for a in ACTIONS if a.type == "place_order")
 OWNER = Actor("u1", "s1", frozenset({"rules:arm_live"}), is_owner=True, step_up_fresh=True)
 NOW = 1_762_300_800_000_000  # the injected clock: no test reads the wall clock
 SENTINEL = -987654.321
 STOP = {"unit": "atr", "value": 1.5}
+ATR = {"unit": "atr", "value": "2"}
 #: A test schema: the subset's keywords the catalogue does not write yet, and a closed object.
 SCHEMA = {
     "type": "object",
     "required": [],
-    "properties": {"a": {"type": "number", "minimum": 1, "exclusiveMaximum": 10}},
+    "properties": {
+        "a": {"type": "number", "minimum": 1, "exclusiveMaximum": 10},
+        "b": {"type": "string", "maxLength": 3},
+    },
     "additionalProperties": False,
 }
 
@@ -70,7 +78,7 @@ def _issue(
 @pytest.mark.parametrize(
     ("action", "name", "bound"),
     [
-        (_order(qty="1"), "qty", "must be a number"),
+        (_order(qty="one"), "qty", "must be a number"),
         (_order(qty=True), "qty", "must be a number"),
         (_action("move_to_breakeven", offset_ticks=1.5), "offset_ticks", "must be a whole number"),
         (_order(side="hold"), "side", "must be one of buy, sell"),
@@ -113,7 +121,7 @@ def test_param_defects_undeclared_key_where_the_schema_takes_none_is_refused_unn
     assert (defect.param, defect.keyword, defect.text) == (
         "",
         "additionalProperties",
-        "'params' takes only a",
+        "'params' takes only a, b",
     )
 
 
@@ -122,12 +130,61 @@ def test_param_defects_undeclared_key_where_the_schema_takes_none_is_refused_unn
     [
         (0, "minimum", "'a' must be at least 1"),
         (10, "exclusiveMaximum", "'a' must be less than 10"),
+        ("0.5", "minimum", "'a' must be at least 1"),
+        ("10", "exclusiveMaximum", "'a' must be less than 10"),
     ],
 )
-def test_param_defects_numeric_bound_is_held_exactly(value: int, keyword: str, text: str) -> None:
+def test_param_defects_numeric_bound_is_held_exactly(value: Any, keyword: str, text: str) -> None:
     (defect,) = param_defects(SCHEMA, {"a": value})
     assert (defect.param, defect.keyword, defect.text) == ("a", keyword, text)
     assert param_defects(SCHEMA, {"a": 1}) == param_defects(SCHEMA, {"a": 9.99}) == []
+    assert param_defects(SCHEMA, {"a": "1"}) == param_defects(SCHEMA, {"a": "9.99"}) == []
+
+
+def test_param_defects_text_longer_than_its_bound_is_refused() -> None:
+    assert param_defects(SCHEMA, {"b": "abc"}) == []
+    (defect,) = param_defects(SCHEMA, {"b": "abcd"})
+    assert (defect.param, defect.keyword, defect.text) == (
+        "b",
+        "maxLength",
+        "'b' must be at most 3 characters",
+    )
+
+
+# ----- decimal text: a number param reads it as its number (the #5963 ruling) -----------------
+
+
+@pytest.mark.parametrize(
+    "held", ["0.5", "1E-7", "+2", 0.5, 2], ids=["text", "exponent", "sign", "float", "int"]
+)
+def test_validator_number_param_takes_decimal_text_or_a_number(held: Any) -> None:
+    assert _errors(_order(qty=held)) == []
+
+
+@pytest.mark.parametrize("held", ["0", "-1", "0.0", "-0"])
+def test_validator_decimal_text_is_held_to_the_bound_as_its_number(held: str) -> None:
+    message = "Action 1 (Place order): 'qty' must be greater than 0."
+    assert _errors(_order(qty=held)) == [_issue("actions[0].params.qty", message)]
+
+
+def test_validator_integer_param_takes_integral_decimal_text_only() -> None:
+    message = "Action 1 (Move stop to breakeven): 'offset_ticks' must be a whole number."
+    refused = _issue("actions[0].params.offset_ticks", message)
+    assert _errors(_action("move_to_breakeven", offset_ticks="1.5")) == [refused]
+    assert _errors(_action("move_to_breakeven", offset_ticks="2")) == []
+    assert _errors(_action("move_to_breakeven", offset_ticks="2.0")) == []
+
+
+@pytest.mark.parametrize(
+    "held",
+    ["abc", "NaN", "Infinity", "-inf", "1e999", "1e-999", "1e99999999999999999999", "0x10",
+     " 0.5", "1_000", "\u0663", "", "."],
+    ids=["text", "nan", "infinity", "inf", "overflow", "underflow", "module_overflow", "hex",
+         "space", "grouped", "other_digits", "empty", "point"],
+)  # fmt: skip
+def test_validator_text_that_is_no_decimal_in_range_is_not_a_number(held: str) -> None:
+    message = "Action 1 (Place order): 'qty' must be a number."
+    assert _errors(_order(qty=held)) == [_issue("actions[0].params.qty", message)]
 
 
 # ----- the native stop (C-2.6) and the stop moves ---------------------------------------------
@@ -137,28 +194,40 @@ def test_param_defects_numeric_bound_is_held_exactly(value: int, keyword: str, t
     "stop",
     [
         {"unit": "price", "value": 0},
+        {"unit": "price", "value": "0"},
         {"unit": "ticks", "value": -5},
         {"unit": "atr_multiple", "value": 2},
         {"unit": "atr"},
         {"value": 2},
         {**STOP, "mode": "atr"},
+        {**ATR, "atr_period": 1},
+        {**ATR, "atr_period": 201},
+        {**ATR, "atr_period": 14.5},
+        {**ATR, "atr_bar_type": "hourly"},
+        {**ATR, "atr_param": "p" * 25},
         "atr",
         {},
         None,
     ],
     ids=[
         "zero",
+        "zero_text",
         "negative",
         "unknown_unit",
         "no_value",
         "no_unit",
         "undeclared",
+        "atr_period_1",
+        "atr_period_201",
+        "atr_period_fraction",
+        "atr_bar_type",
+        "atr_param_25",
         "text",
         "empty",
         "null",
     ],
 )
-def test_validator_stop_without_a_known_unit_and_a_positive_value_is_native_stop_violation(
+def test_validator_stop_off_22_offset_or_not_above_zero_is_native_stop_violation(
     stop: Any,
 ) -> None:
     (issue,) = _errors(_order(stop_loss=stop))
@@ -169,9 +238,41 @@ def test_validator_stop_without_a_known_unit_and_a_positive_value_is_native_stop
     )
 
 
-@pytest.mark.parametrize("unit", ["price", "ticks", "percent", "atr", "r_multiple"])
+@pytest.mark.parametrize("unit", ["ticks", "percent", "r_multiple", "atr", "price"])
 def test_validator_stop_with_a_known_unit_and_a_positive_value_is_taken(unit: str) -> None:
     assert _errors(_order(stop_loss={"unit": unit, "value": 0.5})) == []
+
+
+@pytest.mark.parametrize(
+    "stop",
+    [
+        {"unit": "price", "value": "63900.5"},
+        {**ATR, "atr_period": 14},
+        {**ATR, "atr_period": 2, "atr_bar_type": "heikin_ashi", "atr_param": "p" * 24},
+        {**ATR, "atr_period": 200, "atr_bar_type": "time"},
+    ],
+    ids=["price_text", "atr_period_14", "atr_lower_bounds", "atr_upper_bound"],
+)
+def test_validator_stop_on_22_offset_with_a_value_above_zero_is_taken(stop: Any) -> None:
+    assert _errors(_order(stop_loss=stop)) == []
+
+
+def test_catalogue_native_stop_mirrors_22_offset() -> None:
+    """`stop_loss` is 22's `Offset` member for member, `OffsetUnit` and `BarType` read from 22;
+    `value`, 22's `Decimal`, is a number or decimal text above zero (C-2.6)."""
+    schemas = yaml.safe_load(SPEC.read_text(encoding="utf-8"))["components"]["schemas"]
+    offset, stop = schemas["Offset"], PLACE_ORDER.params_schema["properties"]["stop_loss"]
+    for key in ("type", "description", "required", "additionalProperties"):
+        assert stop[key] == offset[key], key
+    assert list(stop["properties"]) == list(offset["properties"])
+    for name, ref in (("unit", "OffsetUnit"), ("atr_bar_type", "BarType")):
+        assert offset["properties"][name] == {"$ref": f"#/components/schemas/{ref}"}
+        assert stop["properties"][name] == {"type": "string", "enum": schemas[ref]["enum"]}
+        assert schemas[ref]["type"] == "string"
+    for name in ("atr_period", "atr_param"):
+        assert stop["properties"][name] == offset["properties"][name], name
+    assert offset["properties"]["value"] == {"$ref": "#/components/schemas/Decimal"}
+    assert stop["properties"]["value"] == {"type": "number", "exclusiveMinimum": 0}
 
 
 @pytest.mark.parametrize("stop", [{}, None, 0, ""], ids=["empty", "null", "zero", "blank"])
@@ -193,22 +294,28 @@ def test_validator_stop_move_needs_a_known_mode_and_a_value_above_zero(kind: str
     title = TITLES[kind]
     zero = _issue("actions[0].params.value", f"Action 1 ({title}): 'value' must be greater than 0.")
     assert _errors(_action(kind, mode="atr", value=0)) == [zero]
+    assert _errors(_action(kind, mode="atr", value="0")) == [zero]
     modes = "absolute, offset_from_entry, offset_from_price, atr, structure"
     mode = _issue("actions[0].params.mode", f"Action 1 ({title}): 'mode' must be one of {modes}.")
     assert _errors(_action(kind, mode="atr_multiple", value=2)) == [mode]
     assert _errors(_action(kind, mode="structure", value=2)) == []
+    assert _errors(_action(kind, mode="absolute", value="63900.5")) == []
 
 
 @pytest.mark.parametrize(
     "params",
     [
         {"qty": SENTINEL},
+        {"qty": str(SENTINEL)},
         {"side": f"x{SENTINEL}"},
         {"stop_loss": {"unit": "atr", "value": SENTINEL}},
+        {"stop_loss": {"unit": "atr", "value": str(SENTINEL)}},
         {"stop_loss": {"unit": f"u{SENTINEL}", "value": 1}},
+        {"stop_loss": {**ATR, "atr_param": f"{SENTINEL}{'p' * 20}"}},
     ],
-    ids=["number", "enum", "stop_value", "stop_unit"],
-)
+    ids=["number", "number_text", "enum", "stop_value", "stop_value_text", "stop_unit",
+         "stop_atr_param"],
+)  # fmt: skip
 def test_validator_refusal_never_echoes_the_refused_value(params: dict[str, Any]) -> None:
     errors = _errors(_order(**params))
     assert errors and "987654" not in json.dumps(errors)
@@ -263,7 +370,9 @@ def test_routes_keep_their_forbidden_role_and_cross_account_refusals() -> None:
 
 
 def _example(schema: Mapping[str, Any]) -> Any:
-    """A value `schema` takes, each declared property included."""
+    """A value `schema` takes, each declared property included: its `default` where it has one."""
+    if "default" in schema:
+        return schema["default"]
     if "enum" in schema:
         return schema["enum"][0]
     kind = schema.get("type")
