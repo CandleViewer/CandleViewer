@@ -115,7 +115,9 @@ class ReconcileStanding:
     def stale_accounts(self) -> frozenset[AccountId]:
         """The accounts held stale now, one copy of the set made in one call, for the replay of
         23 Sec.15.9 (E29-S07): read on the serving loop as `refusal` is, while the order lane
-        writes the set."""
+        writes the set. E29-T08 (#916 BQ-2): a copy of the stale accounts, which the stuck-order
+        detector reads for its `account_stale` incidents and never writes; no second tracker
+        exists."""
         return frozenset(self._stale)
 
     def mark_stale(self, account_id: AccountId) -> None:
