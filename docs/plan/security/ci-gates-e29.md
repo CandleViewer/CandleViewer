@@ -77,7 +77,9 @@ would retire its exception.
   name (an assignment, annotated or not, a keyword or a dict key), reported on the float's line;
   `float(Decimal(...))` and `float(x.quantize(...))`; and `float(p)` of a parameter or a local
   annotated `Decimal`, `Px`, `Qty`, `Notional`, `Bps`, `Amount`, `Money`, `Price`, `Quantity` or
-  `Figure` (or `| None`). An argument or a name that spans lines is read on every line. Fix: keep
+  `Figure` (or `| None`). An argument or a name that spans lines is read for a money word on every line, and for its
+  duration ending on its first line only, so a money argument that spans lines fires even when it
+  ends in a duration name (`float(` `order.price` `- row.delay` `)` on three lines). Fix: keep
   the `Decimal`; quantize to the tick or step.
 - **Does not match:** a name that ends as a duration does (`_s`, `_ms`, `_us`, `_ns`, `_sec`,
   `_secs`, `_seconds`, `timeout`, `interval`, `delay`, `wait`, `deadline`, `ttl`), a money word in it
@@ -88,8 +90,8 @@ would retire its exception.
 - **Not seen:** a float of a value that neither its name nor its annotation marks as money
   (`level = order.price`, then `float(level)`), `parse_float=float`, an unannotated money value
   under a name the list lacks; other ways to a float (`np.float64(price)`, `price.__float__()`,
-  `builtins.float`, `math.fsum` or `math.isclose` over prices); an argument that mixes money with a
-  trailing duration (`float(price or timeout_s)`), which the duration ending exempts.
+  `builtins.float`, `math.fsum` or `math.isclose` over prices); a one-line argument that mixes money
+  with a trailing duration (`float(price or timeout_s)`), which the duration ending exempts.
   `cv-no-float-prices` covers `storage/**`, `bars/**` and `ingestion/**`, and `cv-decimal-discipline`
   the `float` annotations.
 - **Fixture:** `.semgrep/tests/cv-oms-no-float-money/` (an `oms/` module, one with PEP 695 syntax, an

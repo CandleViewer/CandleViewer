@@ -47,7 +47,11 @@ def decimals(raw, level: Px, tick, step: Qty | None = None):
 
 
 def continued(base, order, row, level):
-    """A money word on a continuation line, of the argument or of the name, is read too."""
+    """A money word on a continuation line, of the argument or of the name, is read too.
+
+    The duration ending is read on the first line only, so a money argument that spans lines still
+    fires when it ends in a duration name; one made of durations alone stays quiet.
+    """
     total = float(  # ruleid: cv-oms-no-float-money
         base
         + order.price
@@ -55,7 +59,15 @@ def continued(base, order, row, level):
     row[
         "price"
     ] = float(level)  # ruleid: cv-oms-no-float-money
-    return total
+    late = float(  # ruleid: cv-oms-no-float-money
+        order.price
+        - row.delay
+    )
+    pause = float(  # ok: cv-oms-no-float-money
+        base.retry_delay
+        + row.backoff_s
+    )
+    return total, late, pause
 
 
 def _seconds(name: str, value: float) -> float:
