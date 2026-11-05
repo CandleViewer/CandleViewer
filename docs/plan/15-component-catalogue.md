@@ -3120,37 +3120,37 @@ This band was added during the cross-document traceability reconciliation (see `
 ### CMP-240 TreeView (E13-D02 G-1)
 
 - **Tier**: Molecule · **Purpose**: a hierarchical list with `role="tree"` semantics; CMP-049 Table's semantics are table / grid, not `role="tree"`, so CMP-049 stays SCR-045's (E13-D02 §10 G-1, §17 C-5).
-- **Props**: TBD (E36-D05 #947). E13-D02 G-1 names the parts, not their prop names: `role="tree"` / `treeitem` / `group`, `aria-multiselectable`, roving tabindex, type-ahead, disclosure, a drag handle with the `Alt+↑/↓` keyboard twin, an inline-rename slot (CMP-058), a per-item action slot (CMP-002 buttons), virtualised above 200 items (E13-D02 §10 G-1).
-- **Variants**: TBD (E36-D05 #947).
+- **Props**: PROPOSED (E36-T01 types them; E36-D05 hand-off §C A-6): `nodes` (each `{id, label, children?}`; SCR-088's label reads "conditions › children › 2 › op: gte") · `expanded` · `onToggle` · `selected` · `onSelect` · `itemActions` (the per-item CMP-002 slot; SCR-088's Copy path) · `multiSelect?`, `onRename?`, `onMove?` (SCR-036 only). **G-row (E13-S01 #423):** E13-D02 G-1 names the parts, not their prop names, and no design row names a prop for the loading / empty states, the hidden / locked item flags or the 200-item virtualisation threshold, so those stay TBD (E36-D05 #947) and the slice adds none. E13-D02 G-1's parts: `role="tree"` / `treeitem` / `group`, `aria-multiselectable`, roving tabindex, type-ahead, disclosure, a drag handle with the `Alt+↑/↓` keyboard twin, an inline-rename slot (CMP-058), a per-item action slot (CMP-002 buttons), virtualised above 200 items (E13-D02 §10 G-1).
+- **Variants**: read-only IR tree (SCR-088: no drag handle, no rename, a Copy path action per item) · editable object tree (SCR-036: multi-select, drag with the `Alt+↑/↓` twin, inline rename) (E36-D05 hand-off §C A-7, PROPOSED).
 - **States**: default, selected, multi-selected, hidden item, locked item, loading, empty (E13-D02 §10 G-1).
 - **A11y**: `role="tree"` / `treeitem` / `group`, `aria-multiselectable`, roving tabindex, type-ahead, disclosure; the drag handle has the `Alt+↑/↓` keyboard twin (E13-D02 §10 G-1).
-- **Tokens**: TBD (E36-D05 #947). Item height per consumer: SCR-036 tree row 24 / 32 px, indent step 16 / 20 px (E13-D02 §2 sizes table); SCR-088 tree item `size.row.compact` / `size.row.comfortable` (E36-D03 §13).
-- **Storybook**: Default, MultiSelect, Nested, InlineRename, Empty, Loading (E13-D02 §10 G-1).
-- **Tests**: TBD (E36-D05 #947); the §0.3 item 7 baseline applies.
-- **Motion spec**: under `motion: reduce` a reorder repositions instantly (no slide), with the announcement carrying the position (E13-D02 §11.6); otherwise TBD (E36-D05 #947).
+- **Tokens**: the connector and disclosure ink `color.text.tertiary`, item text `color.text.primary`, the focus ring `color.focus.ring`; SCR-088's indent per `aria-level` `space.inset.lg`, with `space.rulegroup.indent` → `{space.6}` PROPOSED (E36-D03 §9; E36-D05 hand-off §C A-8, PROPOSED). Item height per consumer: SCR-036 tree row 24 / 32 px, indent step 16 / 20 px (E13-D02 §2 sizes table); SCR-088 tree item `size.row.compact` / `size.row.comfortable` (E36-D03 §13).
+- **Storybook**: Default, MultiSelect, Nested, InlineRename, Empty, Loading (E13-D02 §10 G-1); PROPOSED for SCR-088: ReadOnlyIr, CopyPath (no drag, no rename, `aria-level` to the deepest IR node, a Copy path action per item; E36-D03 §9; E36-D05 hand-off §C A-18).
+- **Tests**: unit, visual, axe (`aria-required-children`), interaction (the APG tree keys `↑` / `↓`, `←` / `→`, `Home` / `End`, `*`, type-ahead; E36-D04 AL-35) (E36-D05 hand-off §C A-9, PROPOSED); the §0.3 item 7 baseline applies.
+- **Motion spec**: under `motion: reduce` a reorder repositions instantly (no slide), with the announcement carrying the position (E13-D02 §11.6); otherwise none on SCR-088 (no reorder, no drag; E36-D03 §10 has no tree row) (E36-D05 hand-off §C A-10, PROPOSED).
 - **Consumers**:
   - SCR-036 Indicator manager: the object tree with multi-select (`Ctrl+Space` toggle, `Shift+↑/↓` extend, `Ctrl+A` per group; selected rows carry `aria-selected="true"`) (E13-D02 §6.3 D22; §10 G-1).
   - The rule node inspector's object list, later (E13-D02 §10 G-1).
   - SCR-088 Rule IR inspector, Tree segment (PROPOSED consumer row): "the IR tree of SCR-088: node = IR key / value, `aria-level`, type-ahead, a Copy path action per item; no drag handle, no rename" (E36-D03 §9, BQ-D03-2 RULED).
   - SCR-088, E35-D03's delta (PROPOSED, D03-A5): account leaves show the masked value "Main (…4f2a)" with a visually-hidden "account, masked"; Copy path on `Enter` (E35-D03 §7, §14 D03-A5); keys `↑` / `↓`, `←` / `→`, `Home` / `End`, type-ahead, `*` (E35-D03 §10).
-- **Design (DS spec):** [E13-D02.md](../design/E13/E13-D02.md) §10 G-1 (E13-D02, status In Review; entry owner E05); consumers: [E36-D03.md](../design/E36/E36-D03.md) §9, [E35-D03.md](../design/E35/E35-D03.md) §7.
+- **Design (DS spec):** [E13-D02.md](../design/E13/E13-D02.md) §10 G-1 (E13-D02, status In Review; entry owner E05); consumers: [E36-D03.md](../design/E36/E36-D03.md) §9, [E35-D03.md](../design/E35/E35-D03.md) §7. **Builder (BQ-05, #423):** E13-S01 (#423) builds CMP-240 in `packages/ui` in its own slice with its stories; E36-S03 consumes it and builds no second TreeView (C-4.15).
 
 ### CMP-243 BulkActionBar (E13-D02 G-4)
 
 - **Tier**: Molecule · **Purpose**: a selection-count toolbar with actions: "N selected" + action buttons + Clear (E13-D02 §10 G-4).
-- **Props**: TBD (E36-D05 #947).
-- **Variants**: TBD (E36-D05 #947).
-- **States**: TBD (E36-D05 #947). E13-D02 G-4 gives one rule: the bar appears with a selection (E13-D02 §10 G-4).
+- **Props**: PROPOSED (E36-T01 types them; E36-D05 hand-off §C A-11): `count` (the "N selected" text) · `actions` (CMP-001 buttons; SCR-080's Disarm · Export) · `onClear` (empties the selection and returns focus to the table).
+- **Variants**: SCR-080 (Disarm · Export · Clear) · SCR-036 (Hide · Show · Lock · Unlock · Delete · Clear selection) (E36-D05 hand-off §C A-12; E13-D02 §6.3 D22).
+- **States**: hidden (no selection) · shown (a selection), PROPOSED (E36-D05 hand-off §C A-13). E13-D02 G-4 gives one rule: the bar appears with a selection (E13-D02 §10 G-4).
 - **A11y**: `role="toolbar"`; appears with a selection; in the Tab order after its list (E13-D02 §10 G-4). Its appearance never moves focus (E36-D03 §2).
-- **Tokens**: TBD (E36-D05 #947). Bar height per consumer: SCR-036 32 / 40 px (E13-D02 §2 sizes table); SCR-080 buttons 24 / 32 px (E36-D03 §13).
-- **Storybook**: TBD (E36-D05 #947).
-- **Tests**: TBD (E36-D05 #947); the §0.3 item 7 baseline applies.
-- **Motion spec**: SCR-080's appear is opacity + 8 px slide, `fast` · `decelerate`, instant under reduce (E36-D03 §10 row 9); otherwise TBD (E36-D05 #947).
+- **Tokens**: SCR-080's buttons `size.control.compact` / `size.control.comfortable`; the appear `motion.duration.fast` · `motion.easing.decelerate` (E36-D03 §10 row 9; E36-D05 hand-off §C A-14, PROPOSED). Bar height per consumer: SCR-036 32 / 40 px (E13-D02 §2 sizes table); SCR-080 buttons 24 / 32 px (E36-D03 §13).
+- **Storybook**: PROPOSED: Hidden, ThreeSelected, ReducedMotion, RulesList, IndicatorManager (E36-D05 hand-off §C A-15).
+- **Tests**: unit, visual, axe, interaction (its appearance never moves focus; Clear returns focus to the table) (E36-D05 hand-off §C A-16, PROPOSED); the §0.3 item 7 baseline applies.
+- **Motion spec**: SCR-080's appear is opacity + 8 px slide, `fast` · `decelerate`, instant under reduce (E36-D03 §10 row 9); otherwise none (E36-D03 §10 row 9 is its only motion) (E36-D05 hand-off §C A-17, PROPOSED).
 - **Consumers**:
   - SCR-036 Indicator manager: "**3 selected** · Hide · Show · Lock · Unlock · Delete · Clear selection", each a CMP-001 button (E13-D02 §6.3 D22).
   - CMP-114 PositionsGrid bulk cancel; the journal (E13-D02 §10 G-4).
   - SCR-080 Rules list (PROPOSED consumer row): "3 selected · Disarm · Export · Clear"; **Clear** empties the selection and returns focus to the table (E36-D03 §2, §9, BQ-D03-2 RULED).
-- **Design (DS spec):** [E13-D02.md](../design/E13/E13-D02.md) §10 G-4 (E13-D02, status In Review; entry owner E05); consumer: [E36-D03.md](../design/E36/E36-D03.md) §2, §9.
+- **Design (DS spec):** [E13-D02.md](../design/E13/E13-D02.md) §10 G-4 (E13-D02, status In Review; entry owner E05); consumer: [E36-D03.md](../design/E36/E36-D03.md) §2, §9. **Builder (BQ-05, #423):** E13-S01 (#423) builds CMP-243 in `packages/ui` in its own slice with its stories; SCR-080 (E36-D03) consumes it.
 
 ### CMP-248 HistoryMarker (E12-D02 NC-2)
 
