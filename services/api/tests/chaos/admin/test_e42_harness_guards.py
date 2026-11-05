@@ -240,7 +240,11 @@ def test_k6_env_is_an_explicit_allow_list(monkeypatch: pytest.MonkeyPatch, tmp_p
     monkeypatch.setenv("CV_ADMIN_PASSWORD", PASSWORD)
     monkeypatch.setenv("CV_ADMIN_USERS_FILE", "/run/users.json")
     monkeypatch.setenv("K6_NO_COLOR", "true")
+    monkeypatch.setenv("CV_ADMIN_MANAGERS_FILE", "/run/managers.json")
+    monkeypatch.setenv("CV_ADMIN_PROBE_ACCOUNT", "probe-account")
     env = run.k6_env(ACCEPT[0], "admin_perf_test", 2, tmp_path)
+    assert env["CV_ADMIN_MANAGERS_FILE"] == "/run/managers.json"  # part 4's own inputs
+    assert env["CV_ADMIN_PROBE_ACCOUNT"] == "probe-account"
     assert "CV_AUTH_PEPPER" not in env and "CV_ADMIN_PERF_DSN" not in env  # S-03
     assert "x" * 32 not in env.values() and "K6_BIN" not in env
     assert [name for name in K6_CALLER if name in env] == []
