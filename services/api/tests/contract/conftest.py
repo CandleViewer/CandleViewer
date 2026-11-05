@@ -9,19 +9,20 @@ there as `e12-q04-conformance.json` and `.md`, and when `GITHUB_STEP_SUMMARY` is
 the job's summary. That every listed case has a test is
 `test_contract_e12_q04_expected_cases_are_the_tests`; that the report keeps quiet when none ran is
 `test_contract_e12_q04_report_prints_only_when_a_case_ran`.
+
+The matrix writer is `_conformance_report.py`'s, which E29-Q02's report (`e29_q02_report.py`, #1147)
+uses too. This file supplies the case list, the report's name, the surface of each module and the
+hooks that writer provides.
 """
 
 from __future__ import annotations
 
-import json
-import os
-from collections import Counter
 from pathlib import Path
 from typing import Any, Final
 
-import pytest
+from tests.contract._conformance_report import ConformanceReport
+from tests.contract.e29_q02_report import pytest_configure  # noqa: F401 (E29-Q02's report)
 
-_ROOT: Final = Path(__file__).resolve().parents[2]  # services/api: node ids are relative to it
 EXPECTED: Final = Path(__file__).with_name("e12_q04_cases.txt")
 #: The surface each listed module's cases exercise, for the matrix.
 SURFACES: Final = {
@@ -29,83 +30,22 @@ SURFACES: Final = {
     "tests/contract/test_market_schemathesis_contract.py": "the same, fuzzed (Schemathesis)",
     "tests/contract/ws/test_ws_bars_e12_q04_contract.py": "bars.{symbol}.{bar_type}.{param}",
 }
-_COLLECTED: Final = pytest.StashKey[set[str]]()
-_OUTCOMES: Final = ("passed", "failed", "error", "skipped", "xfailed", "xpassed")
 
 
-def expected_cases() -> list[str]:
-    """`module::test` per line of `e12_q04_cases.txt`; `#` starts a comment."""
-    lines = (line.partition("#")[0].strip() for line in EXPECTED.read_text("utf-8").splitlines())
-    return [line for line in lines if line]
+def _row(case: str) -> dict[str, Any]:
+    module = case.partition("::")[0]
+    return {"surface": SURFACES.get(module, module), "case": case}
 
 
-_MODULES: Final = frozenset(case.partition("::")[0] for case in expected_cases())
-
-
-def _case(nodeid: str) -> str | None:
-    """`module::test` of an item of a listed module (its parameters dropped), else None."""
-    module, _, name = nodeid.partition("::")
-    return f"{module}::{name.partition('[')[0]}" if module in _MODULES else None
-
-
-@pytest.hookimpl(tryfirst=True)
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """The E12-Q04 cases collected, before `-m` or `-k` deselect any."""
-    config.stash[_COLLECTED] = {case for item in items if (case := _case(item.nodeid))}
-
-
-def _counts(stats: dict[str, list[Any]]) -> dict[str, Counter[str]]:
-    """Each E12-Q04 case's outcomes in the terminal reporter's `stats`."""
-    counts: dict[str, Counter[str]] = {}
-    for outcome in _OUTCOMES:
-        for report in stats.get(outcome, []):
-            if case := _case(getattr(report, "nodeid", "")):
-                counts.setdefault(case, Counter())[outcome] += 1
-    return counts
-
-
-def _matrix(counts: dict[str, Counter[str]], collected: set[str]) -> list[dict[str, Any]]:
-    modules = {case.partition("::")[0] for case in collected}
-    listed = [case for case in expected_cases() if case.partition("::")[0] in modules]
-    rows = []
-    for case in [*listed, *sorted(set(counts) - set(listed))]:
-        got = counts.get(case, Counter())
-        bad = got["failed"] + got["error"] + got["xpassed"]
-        status = "FAILED" if bad else "PASSED" if got["passed"] else "NOT RUN"
-        status = "NEW" if case not in listed and status == "PASSED" else status
-        module = case.partition("::")[0]
-        rows.append({"surface": SURFACES.get(module, module), "case": case, "status": status, **{
-            outcome: got[outcome] for outcome in _OUTCOMES if got[outcome]}})  # fmt: skip
-    return rows
-
-
-def _markdown(rows: list[dict[str, Any]]) -> str:
-    lines = ["| Surface | Case | Outcome | Counts |", "| --- | --- | --- | --- |"]
-    for row in rows:
-        counts = ", ".join(f"{k} {v}" for k, v in row.items() if k in _OUTCOMES)
-        test = row["case"].partition("::")[2]
-        lines.append(f"| {row['surface']} | `{test}` | {row['status']} | {counts or '-'} |")
-    return "\n".join(["### E12-Q04 contract conformance (#420)", "", *lines, ""])
-
-
-def pytest_terminal_summary(terminalreporter: Any, config: pytest.Config) -> None:
-    """The matrix, once some E12-Q04 case recorded an outcome. A run that collected the cases and
-    ran none (a lane whose markers deselect them, `--collect-only`) reports nothing at all."""
-    counts = _counts(terminalreporter.stats)
-    if not counts:
-        return
-    rows = _matrix(counts, config.stash.get(_COLLECTED, set()))
-    terminalreporter.section("E12-Q04 contract conformance (#420): surface x case x outcome")
-    for row in rows:
-        terminalreporter.write_line(f"{row['status']:>8}  {row['case']}")
-        if row["status"] in ("NOT RUN", "FAILED"):
-            terminalreporter.write_line(f"::warning::E12-Q04 case {row['status']}: {row['case']}")
-    if out := os.environ.get("CV_CONFORMANCE_REPORT_DIR"):
-        folder = _ROOT / out
-        folder.mkdir(parents=True, exist_ok=True)
-        report = json.dumps(rows, indent=2) + "\n"
-        (folder / "e12-q04-conformance.json").write_text(report, encoding="utf-8")
-        (folder / "e12-q04-conformance.md").write_text(_markdown(rows), encoding="utf-8")
-    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
-        with Path(summary).open("a", encoding="utf-8") as fh:
-            fh.write(_markdown(rows))
+_REPORT: Final = ConformanceReport(
+    name="e12-q04-conformance",
+    title="E12-Q04 contract conformance (#420)",
+    cases=EXPECTED,
+    columns={"Surface": "surface", "Case": "case", "Outcome": "status"},
+    row=_row,
+)
+# pytest takes the hooks from this module; the E12-Q04 tests read the other two names.
+pytest_collection_modifyitems = _REPORT.pytest_collection_modifyitems
+pytest_terminal_summary = _REPORT.pytest_terminal_summary
+expected_cases = _REPORT.expected_cases
+_COLLECTED: Final = _REPORT.collected
