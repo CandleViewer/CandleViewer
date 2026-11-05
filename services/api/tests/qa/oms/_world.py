@@ -431,6 +431,11 @@ class OmsWorld:
         stand-in that finds nothing, so a test makes the finding."""
         return cast(str, self.call(_discovered, self.runtime, order))
 
+    def command(self, order: dict[str, Any], event: str, *, actor: str) -> str:
+        """`event` sent to the order's machine as `actor`, through B1's facade as a rule, an algo or
+        a group sends one (no route does): the lifecycle state it answers, or the refusal raised."""
+        return cast(str, self.call(_commanded, self.runtime, uuid.UUID(order["id"]), event, actor))
+
     def fill(self, order: dict[str, Any], name: str, qty: str, *, seq: int, **fields: Any) -> None:
         """The venue fills `qty` of the order: its position holds the order's native stop, and the
         fill is pushed on the account's stream."""
@@ -442,6 +447,12 @@ class OmsWorld:
 async def _discovered(runtime: Any, order: NewOrder) -> str:
     parts = runtime._composed()
     return cast(str, await parts.lane.call(parts.machines.discover(order, environment="demo")))
+
+
+async def _commanded(runtime: Any, order_id: uuid.UUID, event: str, actor: str) -> str:
+    parts = runtime._composed()
+    sent = parts.machines.command(ACCOUNT, order_id, event, actor=actor)
+    return cast(str, await parts.lane.call(sent))
 
 
 async def _settled(runtime: Any) -> None:
