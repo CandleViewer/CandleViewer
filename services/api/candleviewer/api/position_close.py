@@ -697,38 +697,45 @@ def make_position_close_router(
             return order_problem(IdempotencyInFlight(retry_after_s=1))
         if len(running) >= MAX_IN_FLIGHT:
             return rate_limited(1, "requests in flight")
-        oms = runtime()
-        if oms is None:
-            return problem(501, "not_implemented", "No OMS is composed on this backend.")
-        if oms.readiness != "ok":
-            return not_ready()
-        named, symbol, cancel = (
-            parsed.exchange_account_ids,
-            parsed.symbol,
-            parsed.cancel_open_orders,
-        )
-        selection = CancelAllRequest(named, symbol, frozenset(), exclude_reduce_only=True)
-        scope = scope_for_target(snapshot, principal.target)
-        try:
-            accounts = await oms.cancel_all.scope(scope, selection)
-            if reads is None:
-                raise StoreUnavailable
-            query = PositionQuery(accounts=accounts.ids, symbol=symbol, open_only=True)
-            rows = await reads.positions(scope, query) if accounts.ids else ()
-        except AccountScopeDenied:
-            return await audit_scope_denied(snapshot, actor, named)
-        except OmsNotReady:
-            return not_ready()
-        except OmsError as exc:
-            return order_problem(exc, pager=paging)
-        settled = CancelAllRequest(accounts.ids, symbol, frozenset(), exclude_reduce_only=True)
-        running.add(held)
-        try:
-            task = oms.run(flatten(oms, accounts, rows, settled, cancel, actor, key, digest, held))
-        except OmsNotReady:
-            running.discard(held)
-            return not_ready()
-        task.add_done_callback(lambda _done: running.discard(held))
+        running.add(held)  # C-2.10: the in-flight key is registered before the first await
+        started = False
+        try:  # until the task's callback holds the key, every way out of here releases it
+            oms = runtime()
+            if oms is None:
+                return problem(501, "not_implemented", "No OMS is composed on this backend.")
+            if oms.readiness != "ok":
+                return not_ready()
+            named, symbol, cancel = (
+                parsed.exchange_account_ids,
+                parsed.symbol,
+                parsed.cancel_open_orders,
+            )
+            selection = CancelAllRequest(named, symbol, frozenset(), exclude_reduce_only=True)
+            scope = scope_for_target(snapshot, principal.target)
+            try:
+                accounts = await oms.cancel_all.scope(scope, selection)
+                if reads is None:
+                    raise StoreUnavailable
+                query = PositionQuery(accounts=accounts.ids, symbol=symbol, open_only=True)
+                rows = await reads.positions(scope, query) if accounts.ids else ()
+            except AccountScopeDenied:
+                return await audit_scope_denied(snapshot, actor, named)
+            except OmsNotReady:
+                return not_ready()
+            except OmsError as exc:
+                return order_problem(exc, pager=paging)
+            settled = CancelAllRequest(accounts.ids, symbol, frozenset(), exclude_reduce_only=True)
+            try:
+                task = oms.run(
+                    flatten(oms, accounts, rows, settled, cancel, actor, key, digest, held)
+                )
+            except OmsNotReady:
+                return not_ready()
+            task.add_done_callback(lambda _done: running.discard(held))
+            started = True
+        finally:
+            if not started:
+                running.discard(held)
         return await asyncio.shield(task)
 
     return router

@@ -9,6 +9,8 @@ import ast
 import asyncio
 import uuid
 import warnings
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -17,6 +19,7 @@ from typing import Any
 import pytest
 
 import candleviewer
+from candleviewer.api.idempotency import IdempotencyCache
 from candleviewer.api.position_close import (
     CLOSE_ALL_PATH,
     CLOSE_PATH,
@@ -27,15 +30,19 @@ from candleviewer.api.position_close import (
 from candleviewer.api.view_as_policy import PROTECTIVE_WRITES, ProtectiveWrites
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.observability.metrics import Metrics
+from candleviewer.oms.cancel_all import CancelAllRequest, ScopedAccounts
 from candleviewer.oms.errors import (
     ExchangeRejected,
     IdempotencyKeyReuse,
+    OmsError,
     OmsNotReady,
     OrderEntryRefused,
     RiskRefused,
+    StoreUnavailable,
     TradingDisabled,
 )
 from candleviewer.oms.idempotency import InFlight, KeyReuse, Replay
+from candleviewer.oms.ports import SubmitActor
 from candleviewer.oms.position_writes import CLOSE_ACTION, FLATTEN_ACTION
 from candleviewer.oms.reconcile_standing import STALE_DETAIL
 from candleviewer.oms.submit import SubmitContext, SubmitOutcome
@@ -51,8 +58,10 @@ from tests.unit.api.position_writes_world import (
     ON_B,
     ON_LIVE,
     USERS,
+    CancelAll,
     World,
     first_close,
+    headers,
     on,
     post,
 )
@@ -638,6 +647,135 @@ async def test_close_all_replay_another_body_under_the_key_is_409_key_reuse_noth
     again = await flatten(world, key=key)  # the key's first body, once more
     assert again.json() == first.json() and again.headers["idempotency-replayed"] == "true"
     assert effects(world) == done
+
+
+# --- closeAllPositions: the in-flight key (C-2.10) -------------------------------------------
+
+
+@dataclass
+class Held(CancelAll):
+    """`CancelAll` that holds a close-all mid-flight: the first call of `at` (`scope`, before the
+    request's task starts, or `run`, the task's first step) sets `entered` and waits on
+    `release`. `refusal`, when set, is raised by every `scope`."""
+
+    at: str | None = None
+    refusal: type[OmsError] | None = None
+    entered: asyncio.Event = field(default_factory=asyncio.Event)
+    release: asyncio.Event = field(default_factory=asyncio.Event)
+    taken: bool = False
+
+    async def _hold(self, step: str) -> None:
+        if step == self.at and not self.taken:
+            self.taken = True
+            self.entered.set()
+            await self.release.wait()
+
+    async def scope(self, scope: Any, request: CancelAllRequest) -> ScopedAccounts:
+        if self.refusal is not None:
+            raise self.refusal()
+        await self._hold("scope")
+        return await super().scope(scope, request)
+
+    async def run(
+        self, accounts: ScopedAccounts, request: CancelAllRequest, *, actor: SubmitActor,
+        request_id: uuid.UUID | None,
+    ) -> object:  # fmt: skip
+        await self._hold("run")
+        return await super().run(accounts, request, actor=actor, request_id=request_id)
+
+
+@pytest.mark.parametrize("at", ["scope", "run"], ids=["before_its_task", "in_its_task"])
+@pytest.mark.parametrize("repeat", [{}, {"symbol": "BTCUSDT"}], ids=["same_body", "another_body"])
+async def test_close_all_replay_a_repeat_in_flight_is_409_with_retry_after(
+    at: str, repeat: dict[str, Any]
+) -> None:
+    """C-2.10: the in-flight key is registered before the first await. A repeat under the key
+    while the first request is held (in its scope read, or in its task's cancel) is 409
+    `idempotency_in_flight` with `Retry-After: 1`, whatever its body; the first runs once, and
+    its answer is the key's."""
+    held = Held(at=at)
+    world, sent = World(cancel_all=held), headers("owner", key=uuid.uuid4())
+    async with world.client() as client:  # one router, so one in-flight guard
+
+        async def second() -> Any:
+            await asyncio.wait_for(held.entered.wait(), timeout=5)  # never an unbounded wait
+            try:
+                return await client.post(CLOSE_ALL_PATH, json=repeat, headers=sent)
+            finally:
+                held.release.set()
+
+        first, refused = await asyncio.gather(
+            client.post(CLOSE_ALL_PATH, json={}, headers=sent), second()
+        )
+        again = await client.post(CLOSE_ALL_PATH, json={}, headers=sent)
+    assert first.status_code == 200, first.text
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["code"] == "idempotency_in_flight"
+    assert refused.headers["retry-after"] == "1"
+    [run] = held.runs
+    assert run.symbol is None  # the first body's
+    assert [r.action for r in world.positions.records] == [FLATTEN_ACTION]
+    assert len(world.submitted()) == 2  # the first's two closes, once
+    assert again.json() == first.json() and again.headers["idempotency-replayed"] == "true"
+
+
+_EARLY: list[Any] = [
+    pytest.param(lambda: World(composed=False), {}, 501, "not_implemented", id="no_oms"),
+    pytest.param(lambda: World(readiness="starting"), {}, 503, "oms_not_ready", id="not_ready"),
+    pytest.param(World, {"exchange_account_ids": [str(MISSING)]}, 403, "account_scope_denied",
+                 id="scope_denied"),
+    pytest.param(lambda: World(cancel_all=Held(refusal=OmsNotReady)), {}, 503, "oms_not_ready",
+                 id="scope_not_ready"),
+    pytest.param(lambda: World(cancel_all=Held(refusal=StoreUnavailable)), {}, 503,
+                 "store_unavailable", id="scope_error"),
+    pytest.param(lambda: World(reads_composed=False), {}, 503, "store_unavailable", id="no_reads"),
+    pytest.param(lambda: World(refuse_run=True), {}, 503, "oms_not_ready", id="run_refused"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("make", "body", "status", "code"), _EARLY)
+async def test_close_all_an_answer_before_its_task_starts_releases_the_key(
+    make: Callable[[], World], body: dict[str, Any], status: int, code: str
+) -> None:
+    """C-2.10: an answer given before the task starts releases the key it registered, so a retry
+    under the same key, on the same router, meets the same answer, never `idempotency_in_flight`;
+    nothing is cancelled or sent."""
+    world, sent = make(), headers("owner", key=uuid.uuid4())
+    async with world.client() as client:  # one router, so one in-flight guard
+        first = await client.post(CLOSE_ALL_PATH, json=body, headers=sent)
+        retry = await client.post(CLOSE_ALL_PATH, json=body, headers=sent)
+    for answer in (first, retry):
+        assert (answer.status_code, answer.json()["code"]) == (status, code), answer.text
+    assert world.cancel_all.runs == [] and world.submitted() == []
+
+
+async def test_close_all_cancelled_before_its_task_starts_releases_the_key() -> None:
+    """A close-all cancelled while it reads its scope (the server stopping, say) releases its key
+    on the way out: a retry under the same key flattens, once."""
+    held = Held(at="scope")
+    world, sent = World(cancel_all=held), headers("owner", key=uuid.uuid4())
+    async with world.client() as client:  # one router, so one in-flight guard
+        cut = asyncio.create_task(client.post(CLOSE_ALL_PATH, json={}, headers=sent))
+        await asyncio.wait_for(held.entered.wait(), timeout=5)
+        cut.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cut
+        retry = await client.post(CLOSE_ALL_PATH, json={}, headers=sent)
+    assert retry.status_code == 200, retry.text
+    assert len(held.runs) == 1 and len(world.submitted()) == 2
+
+
+async def test_close_all_a_finished_task_releases_the_key() -> None:
+    """C-2.10, C-2.18: the key leaves the in-flight set once its task ends. With nothing kept in
+    the 24 h record, a second close-all under the same key on the same router flattens again
+    instead of answering `idempotency_in_flight`."""
+    world = World(cache=IdempotencyCache(max_entry_bytes=0))  # nothing kept, so no replay
+    sent = headers("owner", key=uuid.uuid4())
+    async with world.client() as client:  # one router, so one in-flight guard
+        first = await client.post(CLOSE_ALL_PATH, json={}, headers=sent)
+        second = await client.post(CLOSE_ALL_PATH, json={}, headers=sent)
+    assert (first.status_code, second.status_code) == (200, 200), second.text
+    assert len(world.cancel_all.runs) == 2 and len(world.submitted()) == 4
 
 
 @pytest.mark.parametrize(
