@@ -321,7 +321,8 @@ class ComposePass:
         paid = _sum((*(c.closing_fee for c in closes), *cast(list[Decimal], fees)))
         start = min(cast(list[datetime], opened))
         funding = await self._funding(symbol, start, cast(datetime, f.closed_at))
-        return replace(f, fee=_q(-paid, _8DP), funding=funding, opened_at=start)
+        fee = _q(_EXACT.minus(paid), _8DP)  # negated exactly: `-paid` would round at 28 digits
+        return replace(f, fee=fee, funding=funding, opened_at=start)
 
     async def _funding(self, symbol: str, opened: datetime, closed: datetime) -> Decimal | None:
         """0 with no settlement in the window; absent with one (until #843) or with the symbol's
