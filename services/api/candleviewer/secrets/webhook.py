@@ -10,8 +10,10 @@ blob moved to another alert or column does not open.
 
 The signer signs only ``cv.alert.webhook.v1:{timestamp}:{delivery_id}:{hex digest}``, built here
 from a checked field set: no caller bytes reach the MAC but the 32 digest bytes, so it is no
-general signing oracle. Each call checks its request before any decrypt, opens the DEK under the
-held KEK of the blob's version, and zeroes the DEK and any opened plaintext before it returns. A
+general signing oracle. Each call checks its request before any decrypt; a seal wraps its DEK
+under the current KEK, an open or a sign opens the DEK under the held KEK of the blob's version;
+every wrap and unwrap runs under the broker's `_guard` (`Keks`), and the call zeroes the DEK and
+any opened plaintext before it returns. A
 refusal is a `WebhookCapabilityRefused` with a closed reason, raised after the handler (nothing
 chained), and its log names the operation and the check, never a value (C-12.6). The secret is
 write-only: no capability opens it outside the signer. SR-009's residual applies: `bytes` copies
@@ -23,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from typing import Any, Final, NoReturn, final
 from uuid import UUID
 
@@ -48,8 +51,10 @@ TIMESTAMP_MAX: Final = 10**10 - 1
 _WH_HEAD: Final = len(MAGIC) + 4
 _WH_MIN_BLOB: Final = _WH_HEAD + WEBHOOK_WRAP_LEN + env.NONCE_LEN + env.TAG_LEN
 
-#: The KEKs held, the current first; raises `KekUnavailable` when none is.
-Keks = Callable[[], tuple[LoadedKek, ...]]
+#: The KEKs held, the current first, for the `with` body: the broker's `_guard` (a
+#: `threading.Lock`) is held across it, so no `drop_kek` or rotation fence closes a KEK mid-wrap
+#: (#913 L3b). The body is synchronous and never awaits. Raises `KekUnavailable` when none is held.
+Keks = Callable[[], AbstractContextManager[tuple[LoadedKek, ...]]]
 
 
 def _wh_log() -> Any:
@@ -190,7 +195,8 @@ def _wh_sign(keks: Keks, call: tuple[object, ...]) -> str:
         _wh_bounded_int(delivery_id, DELIVERY_ID_MAX, "delivery_id"),
         _wh_digest(body_digest),
     )
-    secret = _wh_open(keks(), alert, "secret", blob)
+    with keks() as held:
+        secret = _wh_open(held, alert, "secret", blob)
     try:
         if not SECRET_MIN <= len(secret) <= SECRET_MAX:
             raise _WhRefused("webhook_seal_invalid", "secret_length")
@@ -201,7 +207,8 @@ def _wh_sign(keks: Keks, call: tuple[object, ...]) -> str:
 
 def _wh_open_target(keks: Keks, blob: object, alert_id: object) -> str:
     alert = _wh_alert_id(alert_id)
-    raw = _wh_open(keks(), alert, "url", blob)
+    with keks() as held:
+        raw = _wh_open(held, alert, "url", blob)
     try:
         return raw.decode("utf-8")
     finally:
@@ -210,27 +217,32 @@ def _wh_open_target(keks: Keks, blob: object, alert_id: object) -> str:
 
 def rewrap(keks: Keks, blob: object, alert_id: object, field: str) -> bytes:
     """KEK rotation (Amendment 9): the blob with its DEK wrapped by the current KEK, verified before
-    it is returned; the sealed value is unchanged. A blob already current is returned as is. S4's
-    store runs it on the alert rows at the rotation boot."""
+    it is returned; the sealed value is unchanged. The value must open under the DEK first, so a
+    corrupt row is refused (fail closed), never carried to the new KEK. A blob already current is
+    returned as is. S4's store runs it on the alert rows at the rotation boot."""
 
     def run() -> bytes:
         if field not in env.WEBHOOK_FIELDS:
             _wh_invalid("field")
-        alert, held = _wh_alert_id(alert_id), keks()
-        version, wrapped, sealed = _wh_blob(blob)
-        current = held[0]
-        if version == current.version:
-            return MAGIC + version.to_bytes(4, "big") + wrapped + sealed
-        dek = _wh_held(held, version).unwrap_webhook_dek(wrapped, alert_id=alert, field=field)
-        try:
-            again = current.wrap_webhook_dek(dek, alert_id=alert, field=field)
-            check = current.unwrap_webhook_dek(again, alert_id=alert, field=field)
-            same = hmac.compare_digest(check, dek)
-            env.zero(check)
-            if not same:
-                raise _WhRefused("webhook_seal_invalid", "rewrap_verify")
-        finally:
-            env.zero(dek)
+        alert = _wh_alert_id(alert_id)
+        with keks() as held:
+            version, wrapped, sealed = _wh_blob(blob)
+            current = held[0]
+            if version == current.version:
+                return MAGIC + version.to_bytes(4, "big") + wrapped + sealed
+            old = _wh_held(held, version)
+            dek = old.unwrap_webhook_dek(wrapped, alert_id=alert, field=field)
+            check: bytearray | None = None
+            try:
+                env.zero(env.open_(dek, sealed, env.webhook_aad(old.env_name, alert, field)))
+                again = current.wrap_webhook_dek(dek, alert_id=alert, field=field)
+                check = current.unwrap_webhook_dek(again, alert_id=alert, field=field)
+                if not hmac.compare_digest(check, dek):
+                    raise _WhRefused("webhook_seal_invalid", "rewrap_verify")
+            finally:
+                if check is not None:
+                    env.zero(check)
+                env.zero(dek)
         return MAGIC + current.version.to_bytes(4, "big") + again + sealed
 
     return _wh_run("rewrap", run)
@@ -255,7 +267,9 @@ class WebhookSealer:
         return self.__seal("url", url, alert_id)
 
     async def seal_secret(self, secret: bytes | bytearray, alert_id: UUID | str) -> bytes:
-        """The `webhook_secret_enc` blob: 32 to 128 secret bytes, never read back."""
+        """The `webhook_secret_enc` blob: 32 to 128 secret bytes, never read back. The caller
+        passes a `bytearray` it owns and zeroes it once this returns or raises; M2 cannot wipe
+        the caller's buffer (SR-009)."""
         return self.__seal("secret", secret, alert_id)
 
 
@@ -308,7 +322,8 @@ def sealer(keks: Keks) -> WebhookSealer:
         def run() -> bytes:
             alert = _wh_alert_id(alert_id)
             plain = _wh_url(value) if field == "url" else _wh_secret(value)
-            return _wh_seal(keks(), alert, field, plain)
+            with keks() as held:
+                return _wh_seal(held, alert, field, plain)
 
         return _wh_run(f"seal_{field}", run)
 

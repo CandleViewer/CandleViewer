@@ -1177,7 +1177,8 @@ def test_a_structlog_line_reaches_the_buffer_as_its_redacted_event_dict() -> Non
 #: The token, header and signature names the services use, named in the redaction key list.
 _KEY_FORMS = tuple(
     "refresh_token session_token bearer x-api-key x-auth-token x-access-token x-csrf-token"
-    " proxy-authorization sign signature arm_token x-arm-token sealed_seed dek_ref".split()
+    " proxy-authorization sign signature arm_token x-arm-token sealed_seed dek_ref"
+    " webhook_url webhook_url_enc webhook_secret webhook_secret_enc sealed_secret".split()
 )
 #: Field and header names that name no secret.
 _READABLE_NAMES = tuple(

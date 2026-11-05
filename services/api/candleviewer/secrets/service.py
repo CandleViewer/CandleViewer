@@ -34,7 +34,7 @@ import contextlib
 import math
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol, final
 from uuid import UUID
@@ -1232,10 +1232,16 @@ def mint_auth_keyring(service: SecretsService) -> AuthKeyring:
 
 def _webhook_keks(service: SecretsService) -> webhook.Keks:
     """The KEKs held, resolved per call, so a webhook capability holds none: it refuses with
-    `kek_unavailable` before `start()`, after `stop()` and while the KEK is down."""
+    `kek_unavailable` before `start()`, after `stop()` and while the KEK is down. The broker's
+    `_guard` is held across the `with` body, as `CredentialBroker.store` holds it across its wrap
+    (#913 L3b): no `drop_kek` or rotation fence on any loop zeroes a KEK mid-wrap or mid-unwrap.
+    The body is synchronous, so the lock is never held across an await."""
 
-    def held() -> tuple[_kek.LoadedKek, ...]:
-        return service._require()._held_keks()
+    @contextlib.contextmanager
+    def held() -> Iterator[tuple[_kek.LoadedKek, ...]]:
+        broker = service._require()
+        with broker._guard:
+            yield broker._held_keks()
 
     return held
 

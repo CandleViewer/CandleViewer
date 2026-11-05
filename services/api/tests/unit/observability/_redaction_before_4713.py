@@ -49,14 +49,22 @@ KEY_FORMS: Final = frozenset(
         "x_csrf_token",
     }
 )
+#: Names the key list gained after #4713 (#1400 S3: the alert webhook's columns). The rules' shape
+#: stays frozen; the names they read follow `redaction._REDACT_KEY_FORMS`, as `redaction`'s own
+#: copy of the rule before #4713 reads the live list.
+ADDED_SINCE: Final = frozenset(
+    {"webhook_url", "webhook_url_enc", "webhook_secret", "webhook_secret_enc", "sealed_secret"}
+)
 KEY_MARKER: Final = "[redacted:key-name]"
-_KEY_NAMES: Final = "|".join(sorted(re.escape(k).replace("_", "[-_]") for k in KEY_FORMS))
+_KEY_NAMES: Final = "|".join(
+    sorted(re.escape(k).replace("_", "[-_]") for k in KEY_FORMS | ADDED_SINCE)
+)
 _NOT_DOTTED: Final = rf"""(?!(?<=\.)(?:{_KEY_NAMES}):(?!\\[tnr"'])[^\s"'])"""
 _NO_VALUE: Final = (
     r"(?!(?:\[redacted:[a-z-]+\]|\.\.\.\[truncated:oversize\]|<omitted>|\*\*\*|null|none)"
     r"""(?=[\s"',}\]\\]|\.\.\.\[truncated:oversize\](?=[\s"'\\]|\Z)|\Z))"""
 )
-_KEY_FIRST: Final = "".join(sorted({k[0] for k in KEY_FORMS}))
+_KEY_FIRST: Final = "".join(sorted({k[0] for k in KEY_FORMS | ADDED_SINCE}))
 _QUOTED: Final = r"""(?:"(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?)"""
 _TO_LINE_END: Final = r"(?<=cookie)|(?<=input[-_]value)"
 _LABEL_START: Final = r"(?:\b|(?<=\\[tnr]))"

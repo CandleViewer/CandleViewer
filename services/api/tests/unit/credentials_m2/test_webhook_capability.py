@@ -7,7 +7,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -23,7 +25,7 @@ from candleviewer.secrets import (
     webhook,
 )
 from candleviewer.secrets import _envelope as env
-from candleviewer.secrets._kek import LoadedKek
+from candleviewer.secrets._kek import WEBHOOK_WRAP_LEN, LoadedKek
 from candleviewer.secrets.errors import KekUnavailable
 from tests.unit.credentials_m2._vectors import KEK_V1, KEK_V2, kek
 
@@ -48,17 +50,20 @@ def verify(secret: bytes, timestamp: int, delivery_id: int, body: bytes, signatu
 
 
 class _Keks:
-    """The KEKs held, the current first, counting each resolution."""
+    """The KEKs held, the current first, counting each resolution; its `guard` stands in for the
+    broker's `_guard`, held across the `with` body as `service._webhook_keks` holds it."""
 
     def __init__(self, *held: LoadedKek) -> None:
-        self.held, self.calls = held, 0
+        self.held, self.calls, self.guard = held, 0, threading.Lock()
 
-    def __call__(self) -> tuple[LoadedKek, ...]:
+    @contextmanager
+    def __call__(self) -> Iterator[tuple[LoadedKek, ...]]:
         self.calls += 1
-        return self.held
+        with self.guard:
+            yield self.held
 
 
-def _caps(keks: Callable[[], tuple[LoadedKek, ...]]) -> tuple[Any, Any, Any]:
+def _caps(keks: webhook.Keks) -> tuple[Any, Any, Any]:
     return webhook.sealer(keks), webhook.opener(keks), webhook.signer(keks)
 
 
@@ -284,8 +289,10 @@ async def test_sealer_takes_a_url_at_the_bound() -> None:
 # --- no KEK, and a defect -------------------------------------------------------------------
 
 
-def _no_kek() -> tuple[LoadedKek, ...]:
+@contextmanager
+def _no_kek() -> Iterator[tuple[LoadedKek, ...]]:
     raise KekUnavailable("kek_unavailable")
+    yield ()  # a generator: the refusal comes as the `with` is entered
 
 
 async def test_every_capability_refuses_without_a_kek() -> None:
@@ -305,8 +312,10 @@ async def test_a_closed_kek_refuses() -> None:
 
 
 async def test_an_unexpected_failure_is_a_closed_reason_logged_by_type() -> None:
-    def broken() -> tuple[LoadedKek, ...]:
+    @contextmanager
+    def broken() -> Iterator[tuple[LoadedKek, ...]]:
         raise RuntimeError(f"leaky text {URL}")
+        yield ()
 
     with capture_logs() as logs:
         reason = await _refused(webhook.sealer(broken).seal_target(URL, ALERT))
@@ -448,7 +457,9 @@ async def test_rewrap_refuses_a_bad_field_another_alert_or_a_kek_not_held() -> N
         assert info.value.reason == reason
 
 
-async def test_rewrap_refuses_a_wrap_that_does_not_verify(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_rewrap_refuses_a_wrap_that_does_not_verify(
+    monkeypatch: pytest.MonkeyPatch, opened: list[bytearray]
+) -> None:
     old, new = kek(KEK_V1, 1), kek(KEK_V2, 2)
     blob = await webhook.sealer(_Keks(old)).seal_target(URL, ALERT)
     real = LoadedKek.unwrap_webhook_dek
@@ -462,9 +473,77 @@ async def test_rewrap_refuses_a_wrap_that_does_not_verify(monkeypatch: pytest.Mo
         return out
 
     monkeypatch.setattr(LoadedKek, "unwrap_webhook_dek", unwrap)
+    opened.clear()
     with pytest.raises(WebhookCapabilityRefused) as info:
         webhook.rewrap(_Keks(new, old), blob, ALERT, "url")
     assert info.value.reason == "webhook_seal_invalid" and calls == [1, 2]
+    assert [len(b) for b in opened] == [32, len(URL), 32]  # the DEK, the value, the check
+    assert all(b == bytearray(len(b)) for b in opened)  # a refused verify zeroes them all
+
+
+async def test_rewrap_refuses_a_row_whose_value_does_not_open(opened: list[bytearray]) -> None:
+    """A corrupt row fails closed: the DEK opens, the value under it does not, nothing re-wraps."""
+    old, new = kek(KEK_V1, 1), kek(KEK_V2, 2)
+    blob = await webhook.sealer(_Keks(old)).seal_target(URL, ALERT)
+    corrupt = blob[:-1] + bytes([blob[-1] ^ 1])  # the DEK wrap intact, the value's tag damaged
+    opened.clear()
+    with pytest.raises(WebhookCapabilityRefused) as info:
+        webhook.rewrap(_Keks(new, old), corrupt, ALERT, "url")
+    assert info.value.reason == "webhook_seal_invalid"
+    assert len(opened) == 1 and opened[0] == bytearray(32)  # the DEK opened, then zeroed
+
+
+async def test_rewrap_zeroes_the_dek_the_value_and_the_check(opened: list[bytearray]) -> None:
+    old, new = kek(KEK_V1, 1), kek(KEK_V2, 2)
+    blob = await webhook.sealer(_Keks(old)).seal_secret(SECRET, ALERT)
+    opened.clear()
+    webhook.rewrap(_Keks(new, old), blob, ALERT, "secret")
+    assert [len(b) for b in opened] == [32, len(SECRET), 32]
+    assert all(b == bytearray(len(b)) for b in opened)
+
+
+async def test_two_seals_draw_fresh_wrap_and_value_nonces() -> None:
+    """The DEK wrap's nonce and the value's are fresh per seal, read at the offsets the blob
+    layout gives (`b"cvw1" || version(4) || wrap(nonce 12 ...) || nonce 12 ...`)."""
+    sealer = webhook.sealer(_Keks(kek()))
+    one, two = await sealer.seal_secret(SECRET, ALERT), await sealer.seal_secret(SECRET, ALERT)
+    wrap_nonce = slice(webhook._WH_HEAD, webhook._WH_HEAD + env.NONCE_LEN)
+    at = webhook._WH_HEAD + WEBHOOK_WRAP_LEN
+    value_nonce = slice(at, at + env.NONCE_LEN)
+    assert (wrap_nonce.start, wrap_nonce.stop, value_nonce.start) == (8, 20, 68)
+    assert one[wrap_nonce] != two[wrap_nonce]
+    assert one[value_nonce] != two[value_nonce]
+
+
+# --- the broker's guard (Amendment 9, C-2.7) ------------------------------------------------
+
+
+async def test_every_wrap_and_unwrap_runs_under_the_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    old, new = kek(KEK_V1, 1), kek(KEK_V2, 2)
+    stale = await webhook.sealer(_Keks(old)).seal_target(URL, ALERT)
+    keks = _Keks(new, old)
+    seen: list[tuple[str, bool]] = []
+    real_wrap, real_unwrap = LoadedKek.wrap_webhook_dek, LoadedKek.unwrap_webhook_dek
+
+    def wrap(self: LoadedKek, dek: bytearray, *, alert_id: UUID, field: str) -> bytes:
+        seen.append(("wrap", keks.guard.locked()))
+        return real_wrap(self, dek, alert_id=alert_id, field=field)
+
+    def unwrap(self: LoadedKek, wrapped: bytes, *, alert_id: UUID, field: str) -> bytearray:
+        seen.append(("unwrap", keks.guard.locked()))
+        return real_unwrap(self, wrapped, alert_id=alert_id, field=field)
+
+    monkeypatch.setattr(LoadedKek, "wrap_webhook_dek", wrap)
+    monkeypatch.setattr(LoadedKek, "unwrap_webhook_dek", unwrap)
+    sealer, opener, signer = _caps(keks)
+    target, secret = await sealer.seal_target(URL, ALERT), await sealer.seal_secret(SECRET, ALERT)
+    await opener.open_target(target, ALERT)
+    await signer.sign_delivery(secret, ALERT, 1, 1, DIGEST)
+    webhook.rewrap(keks, stale, ALERT, "url")
+    ops = ["wrap", "wrap", "unwrap", "unwrap", "unwrap", "wrap", "unwrap"]
+    assert seen == [(op, True) for op in ops]
+    assert await _refused(opener.open_target(target, OTHER)) == "webhook_seal_invalid"
+    assert not keks.guard.locked()  # released after each call, a refused one too
 
 
 def test_kek_wrap_refuses_a_dek_of_the_wrong_shape() -> None:

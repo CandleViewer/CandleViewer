@@ -323,9 +323,11 @@ keeps no edge to `secrets`.
   `cv.alert.webhook.{url|secret}.v1 | environment | alert id`. The alert id is in both AADs, so
   a blob moved to another alert, or between the two columns, does not open. The URL is at most
   2,048 bytes. The secret is 32 to 128 bytes, entered by the user, and write-only. M2 never returns
-  it, logs it, or puts it in an exception.
-- **The opener.** It opens the URL column alone, for the egress client, which holds the URL in
-  memory for one delivery and never logs or stores it (BQ-02). No capability opens the secret.
+  it, logs it, or puts it in an exception. M2 checks only that 32 to 128 byte bound; entropy
+  policy is S4's route, which generates the secret on the server or rejects low-diversity input.
+- **The opener.** It opens the URL column alone, for the egress client. The opened URL is never
+  returned to a DTO or the API and never logged; M22 holds it in memory for one delivery only and
+  never stores it (BQ-02). No capability opens the secret.
 - **The signer.** It takes a secret blob, the alert id, a delivery id, a Unix timestamp in
   seconds and the 32-byte SHA-256 digest of the raw body. It signs only
   `cv.alert.webhook.v1:{timestamp}:{delivery_id}:{hex digest}` with HMAC-SHA256, and builds that
@@ -333,13 +335,22 @@ keeps no edge to `secrets`.
   set. It refuses a digest that is not exactly 32 bytes, an id or timestamp that is not a positive
   integer in range, or a blob that does not open. The header names, the 300 s window and the
   24 h dedupe are S1's `24` section and the runbook's (C-16.5).
-- **Use.** Every call opens the DEK under the held KEK of the blob's version and zeroes it, and any
-  opened plaintext, after the call. A refusal has a closed reason (`webhook_request_invalid`,
-  `kek_unavailable`, `webhook_kek_not_held`, `webhook_seal_invalid`) and logs the check that failed,
-  never a value (C-12.6). Signing writes no audit record of its own. The delivery row records the
+- **Use.** The sealer wraps a fresh DEK under the current KEK. Every open and sign call opens the
+  DEK under the held KEK of the blob's version. Each call zeroes the DEK, and any opened
+  plaintext, after the call. A refusal has a closed reason (`webhook_request_invalid`,
+  `kek_unavailable`, `webhook_kek_not_held`, `webhook_seal_invalid`, and `webhook_unavailable` for
+  an unexpected failure, logged by its type alone) and logs the check that failed, never a value
+  (C-12.6). Signing writes no audit record of its own. The delivery row records the
   attempt (S5), and configuring a webhook records `alert.webhook_configured` (S4), with no value in
   either.
+- **The loop and lock rule.** Every wrap and unwrap, the re-wrap's included, runs under the broker's
+  `_guard`, as `CredentialBroker.store` holds it across its wrap (#913 L3b). The guard is a
+  `threading.Lock`; the capabilities take it per call, resolve the KEKs held inside it and do only
+  synchronous work under it, so it is never held across an await and never re-entered. A
+  `drop_kek` or a rotation fence on any loop waits for the call, and no KEK is zeroed mid-wrap. The
+  capabilities may be called from any loop, as `store` may.
 - **KEK rotation.** M2 re-wraps a blob's DEK under the current KEK and leaves the sealed value as it
-  is. Each new wrap is verified before it is returned. The re-wrap runs on the alert rows once S4
+  is. Before it re-wraps, the sealed value must open under the DEK, so a corrupt row is refused and
+  never carried to the new KEK. Each new wrap is verified before it is returned. The re-wrap runs on the alert rows once S4
   adds the columns, at the rotation boot with the other rows (Amendments 4 and 8), and
   `security.kek_rotated` waits for them as well.
