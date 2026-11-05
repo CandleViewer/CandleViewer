@@ -70,3 +70,18 @@
 .cv-funding-pane__table {
   background: var(--color-surface-raised);
 }
+
+/* E24-S04: the accruing rate's words beside CMP-126; the word and CMP-227 carry "predicted", never a hue. */
+.cv-funding-readout {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  color: var(--color-text-primary);
+}
+
+/* the interval and the annualised figure are secondary (D03 §5.1 P2); "predicted" stays text.primary */
+.cv-funding-readout__figure {
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}

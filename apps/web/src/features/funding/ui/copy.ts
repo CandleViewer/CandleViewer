@@ -40,11 +40,12 @@ export const TRUNCATED = "Recent history not loaded.";
 export const GAP_WORDS = "missing settlement · not recorded";
 
 /** PROPOSED: the table's caption (its name), after D02 §11's Funding row. */
-export const tableCaption = (symbol: string): string => `Funding rate, ${symbol}, settled`;
+export const tableCaption = (symbol: string, withPredicted = false): string =>
+  `Funding rate, ${symbol}, ${withPredicted ? "settled and predicted (estimated)" : "settled"}`;
 /** PROPOSED: CMP-049's 200-row cap, said in the caption so the table's name carries it (F4). */
 export const showingNewest = (shown: number, total: number): string =>
   `showing the newest ${String(shown)} of ${total.toLocaleString("en-US")}`;
-/** D02 §11's columns; the Annualised column is E24-S04's (out of scope here). */
+/** D02 §11's columns. */
 export const COL_SETTLEMENT = "Settlement (UTC)";
 export const COL_RATE = "Rate (% per interval)";
 export const COL_STATUS = "Status";
@@ -54,5 +55,19 @@ export const STATUS_SETTLED = "settled";
 export const NO_RATE = "no rate";
 /** PROPOSED: the spoken word for an unserved interval cell ("—" drawn). */
 export const NOT_PUBLISHED = "not published";
+export const COL_ANNUALISED = "Annualised (% p.a.)";
+/** PROPOSED: the predicted row's time, when its item carries none. */
+export const NEXT_SETTLEMENT = "next settlement";
 /** PROPOSED: no settled row in view; drawn only once a read has answered. */
 export const NO_ROWS = "No settlements in view.";
+
+/** E24-S04, D02 §5.1 / D03 §5.1. */
+export const PREDICTED_WORD = "predicted";
+/** The chip's tooltip and the CMP-069 body: D02's F10 sentence, verbatim. */
+export const PREDICTED_PROVENANCE =
+  "The rate accruing for the next settlement; it can still move until then. Bybit publishes no separate predicted rate.";
+export const PREDICTED_NA = "Funding n/a";
+/** PROPOSED: D02 §5.1 describes this sentence for the n/a state; it is not in the §15 copy deck. */
+export const PREDICTED_NA_DESCRIPTION = "No predicted rate is published right now.";
+/** PROPOSED: the legend row 0 switch's name; D02 S54-35 only says "the `% p.a.` toggle". */
+export const ANNUALISED_TOGGLE_LABEL = "Annualised (% p.a.)";

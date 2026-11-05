@@ -3,8 +3,9 @@
 // with `last_success_at`), the engine's plot slot and the table alternative, which the group's one
 // "Show tables" toggle shows (E24-D04 A-03, `aria-pressed`; the SCR-054 group owns it, not the pane).
 import { useRef, type JSX, type ReactNode } from "react";
-import { Button, EmptyState, Skeleton, type HeadingLevel } from "@candleviewer/ui";
+import { Button, EmptyState, Skeleton, Toggle, type HeadingLevel } from "@candleviewer/ui";
 import type { FundingSnapshot } from "../fundingFeed";
+import { servesAnnualised } from "../series";
 import * as copy from "./copy";
 import { FundingTable } from "./FundingTable";
 import "./fundingPane.css";
@@ -25,6 +26,12 @@ export interface FundingPaneProps {
   readonly stale?:
     | { readonly tier: "t1" | "t2"; readonly ageS: number; readonly lastTsMs: number | null }
     | undefined;
+  /**
+   * E24-S04: the annualised toggle (`deriv.funding_annualised`). The control exists only while the server
+   * serves an annualised value (BQ-1) and a handler is given; the host holds the state until #5699 lands.
+   */
+  readonly annualised?: boolean;
+  readonly onAnnualisedChange?: ((next: boolean) => void) | undefined;
   /** The group's A-03 "Show tables" state (and `accessibility.always_show_tables`), from the SCR-054 group. */
   readonly showTables?: boolean;
   /** The pane label's level in its host's outline (default 3); the band's heading is one below. */
@@ -123,6 +130,8 @@ export function FundingPane({
   visible,
   countdown,
   stale,
+  annualised = false,
+  onAnnualisedChange,
   showTables = false,
   headingLevel = 3,
   density = "compact",
@@ -169,6 +178,14 @@ export function FundingPane({
         {history.phase === "ready" && history.truncated ? (
           <span className="cv-funding-pane__caption">{copy.TRUNCATED}</span>
         ) : null}
+        {unavailable || onAnnualisedChange === undefined || !servesAnnualised(series) ? null : (
+          <Toggle
+            label={copy.ANNUALISED_TOGGLE_LABEL}
+            checked={annualised}
+            density={density}
+            onChange={onAnnualisedChange}
+          />
+        )}
       </div>
       <div className="cv-funding-pane__body">
         {/* in the DOM from mount and only its text changes, so a failure is said once (05 §6.2) */}

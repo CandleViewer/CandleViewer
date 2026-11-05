@@ -11,8 +11,10 @@ import {
   type CountdownFeedOptions,
   type CountdownSnapshot,
 } from "../countdownFeed";
+import { buildReadout, type FundingReadout } from "../predicted";
+import { FundingMethodologyHost } from "./FundingMethodologyHost";
 import { staleLine } from "./copy";
-import { ratePercent } from "./format";
+import { PredictedReadout, readoutRate } from "./PredictedReadout";
 
 /** D03 S54-31: the charge carries the ticker's stale marker, "Stale 7s · last 15:55:41". */
 const staleNote = (s: CountdownSnapshot["stale"]): string | undefined =>
@@ -26,6 +28,12 @@ export interface FundingCountdownViewProps {
   readonly clockSkewMs: number | undefined;
   /** `false` where another instance on the screen speaks AN-1 / AN-2 (D03 §13). */
   readonly announce?: boolean | undefined;
+  /**
+   * E24-S04: what the accruing rate shows. Absent, the ticker's rate alone: still "predicted (estimated)", never
+   * bare (BQ-2), with no interval or annualised figure until the history feed supplies them.
+   */
+  readonly readout?: FundingReadout | undefined;
+  readonly annualised?: boolean | undefined;
   readonly className?: string | undefined;
 }
 
@@ -35,21 +43,34 @@ export function FundingCountdownView({
   tick,
   clockSkewMs,
   announce = true,
+  readout,
+  annualised = false,
   className,
 }: FundingCountdownViewProps): JSX.Element {
   const note = staleNote(snapshot.stale);
+  const shown =
+    readout ??
+    buildReadout({
+      tickerRate: snapshot.rate,
+      historyReady: false,
+      predicted: null,
+      intervalMinutes: null,
+    });
   return (
-    <FundingCountdown
-      symbol={symbol}
-      tick={tick}
-      rate={snapshot.rate === null ? undefined : ratePercent(snapshot.rate).text}
-      nextFundingTimeMs={snapshot.nextFundingTimeMs ?? undefined}
-      charges={snapshot.charges.map((c) => ({ ...c, staleNote: note }))}
-      clockAlarm={clockAlarmFor(clockSkewMs)}
-      clockSkewMs={clockSkewMs}
-      announce={announce}
-      {...(className === undefined ? {} : { className })}
-    />
+    <FundingMethodologyHost>
+      <FundingCountdown
+        symbol={symbol}
+        tick={tick}
+        rate={readoutRate(shown, annualised)}
+        rateExtra={<PredictedReadout readout={shown} annualised={annualised} />}
+        nextFundingTimeMs={snapshot.nextFundingTimeMs ?? undefined}
+        charges={snapshot.charges.map((c) => ({ ...c, staleNote: note }))}
+        clockAlarm={clockAlarmFor(clockSkewMs)}
+        clockSkewMs={clockSkewMs}
+        announce={announce}
+        {...(className === undefined ? {} : { className })}
+      />
+    </FundingMethodologyHost>
   );
 }
 

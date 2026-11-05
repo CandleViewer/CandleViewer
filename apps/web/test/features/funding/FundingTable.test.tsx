@@ -37,7 +37,7 @@ describe("funding table (D02 §11)", () => {
     const gapRow = rows[2];
     if (gapRow === undefined) throw new Error("no gap row");
     expect(within(gapRow).getByText("missing settlement · not recorded")).toBeTruthy();
-    expect(within(gapRow).getByText("no rate")).toBeTruthy();
+    expect(within(gapRow).getAllByText("no rate")).toHaveLength(2); // rate and annualised
     expect(within(gapRow).getByText("2023-11-14 00:00 – 2023-11-14 16:00")).toBeTruthy();
   });
 
@@ -91,6 +91,23 @@ describe("funding table (D02 §11)", () => {
     fireEvent.click(button);
     expect(header()).toBe("none");
     expect(firstColumn()[0]).toBe("2023-11-14 00:00");
+  });
+
+  it("keeps the predicted row last whatever the sort, never among the settled ones", () => {
+    const predicted = { tMs: (T[3] ?? 0) + 8 * H, rate: "-0.001", annualisedPct: null };
+    const withNext = buildFundingSeries({
+      settled: POINTS,
+      intervalMinutes: 480,
+      coverage: null,
+      predicted,
+    });
+    render(<FundingTable symbol="BTCUSDT" series={withNext} />);
+    const name = "Funding rate, BTCUSDT, settled and predicted (estimated)";
+    const last = () => within(screen.getByRole("table", { name })).getAllByRole("row").at(-1);
+    fireEvent.click(screen.getByRole("button", { name: "Rate (% per interval)" }));
+    expect(last()?.textContent).toContain("predicted");
+    fireEvent.click(screen.getByRole("button", { name: "Rate (% per interval)" }));
+    expect(last()?.textContent).toContain("predicted");
   });
 
   it("orders decimals exactly, never through a float", () => {
