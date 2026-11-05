@@ -43,5 +43,9 @@ export const COL_RATE = "Rate (% per interval)";
 export const COL_STATUS = "Status";
 export const COL_INTERVAL = "Interval (h)";
 export const STATUS_SETTLED = "settled";
-/** PROPOSED: no settled row in view. */
+/** PROPOSED: the spoken word for a gap row's rate cell ("—" drawn). */
+export const NO_RATE = "no rate";
+/** PROPOSED: the spoken word for an unserved interval cell ("—" drawn). */
+export const NOT_PUBLISHED = "not published";
+/** PROPOSED: no settled row in view; drawn only once a read has answered. */
 export const NO_ROWS = "No settlements in view.";

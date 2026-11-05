@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import * as stories from "../../../src/features/funding/ui/FundingPane.stories";
+import { buildFundingSeries } from "../../../src/features/funding/series";
 import { FundingPane } from "../../../src/features/funding/ui/FundingPane";
 import {
   INITIAL_FUNDING_SNAPSHOT,
@@ -107,6 +108,67 @@ describe("funding pane (CMP-186, FundingOnly)", () => {
     render(stories.Retry.render());
     const table = screen.getByRole("table", { name: "Funding rate, BTCUSDT, settled" });
     expect(within(table).getAllByText("settled")).toHaveLength(4);
+  });
+
+  it("does not draw the empty-table sentence while the read is unanswered", () => {
+    const { rerender } = render(
+      <FundingPane
+        symbol="BTCUSDT"
+        onRetry={vi.fn()}
+        snapshot={INITIAL_FUNDING_SNAPSHOT}
+        showTables
+      />,
+    );
+    expect(screen.queryByText("No settlements in view.")).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(region().querySelector('[aria-busy="true"]')).not.toBeNull();
+    // a failed first read has answered nothing either
+    rerender(
+      <FundingPane
+        symbol="BTCUSDT"
+        onRetry={vi.fn()}
+        snapshot={{ ...INITIAL_FUNDING_SNAPSHOT, history: { phase: "failed", status: 503 } }}
+        showTables
+      />,
+    );
+    expect(screen.queryByText("No settlements in view.")).toBeNull();
+    // once a read has answered with nothing, the sentence is the answer
+    render(stories.Empty.render());
+    expect(screen.queryByRole("table")).toBeNull();
+    cleanup();
+    render(
+      <FundingPane
+        symbol="SOLUSDT"
+        onRetry={vi.fn()}
+        showTables
+        snapshot={{
+          ...INITIAL_FUNDING_SNAPSHOT,
+          history: { phase: "ready", empty: true, coverage: "covered", truncated: false },
+        }}
+      />,
+    );
+    expect(screen.getByText("No settlements in view.")).toBeTruthy();
+  });
+
+  it("keeps the last good series, legend and table while a retry is in flight", () => {
+    const rows = 4;
+    const last = Date.parse("2023-11-15T00:00:00Z");
+    const settled = ["0.0001", "-0.00004", "0.00008", "0.0001"].map((rate, i) => ({
+      tMs: last - (3 - i) * 8 * 3_600_000,
+      rate,
+    }));
+    const retrying: FundingSnapshot = {
+      history: { phase: "loading" },
+      series: buildFundingSeries({
+        settled,
+        intervalMinutes: 480,
+        coverage: { noCoverage: false, gaps: [] },
+      }),
+      lastSuccessAtMs: Date.parse("2023-11-15T09:14:02Z"),
+    };
+    render(<FundingPane symbol="BTCUSDT" onRetry={vi.fn()} snapshot={retrying} showTables />);
+    expect(within(region()).getByText("settles every 8 h")).toBeTruthy();
+    expect(within(screen.getByRole("table")).getAllByText("settled")).toHaveLength(rows);
   });
 
   it("says the instrument is unavailable, with no interval, table or settled claim", () => {
