@@ -17,6 +17,9 @@ import { useRef, useState, type JSX } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { ConfirmDialog, Dialog } from "@candleviewer/ui";
+import { AlertHistoryDialog } from "../src/features/alerts/AlertHistoryDialog";
+import { AlertsScreen } from "../src/features/alerts/AlertsScreen";
+import { createAlertsStore } from "../src/features/alerts/alertsStore";
 import { SEARCH_TRIGGER_ID } from "../src/features/app-shell/TopBar";
 import { CoachMarkTour } from "../src/features/onboarding/CoachMarkTour";
 import { SessionLockDialog } from "../src/features/session/SessionLockDialog";
@@ -32,6 +35,7 @@ import { resetVersionReports } from "../src/features/system-states/versionMismat
 import { Cheatsheet } from "../src/keymap/Cheatsheet";
 import { handleWsError } from "../src/lib/ws/errorHandler";
 import { WsErrorHost } from "../src/lib/ws/WsErrorHost";
+import { alert as alertFixture, fakeApi, NOW as ALERTS_NOW } from "./features/alerts/_fixtures";
 import { D02_ROWS } from "./features/recorder/gridFixtures";
 import { POLICY } from "./features/recorder/modelFixtures";
 import { resetShellState, setShellState } from "../src/shell/bootstrap/store";
@@ -369,6 +373,53 @@ const ROWS: readonly Row[] = [
       />
     )),
   },
+  {
+    id: "AlertHistoryDialog",
+    layer: true,
+    role: "dialog",
+    esc: "cancels",
+    scrim: "none",
+    mount: simple(({ open, cancel }) =>
+      open ? (
+        <AlertHistoryDialog
+          alert={alertFixture(1)}
+          api={fakeApi([alertFixture(1)])}
+          onClose={cancel}
+          download={() => undefined}
+        />
+      ) : null,
+    ),
+  },
+  {
+    id: "AlertsScreen delete confirm",
+    layer: true,
+    role: "alertdialog",
+    esc: "cancels",
+    scrim: "none",
+    mount: (spies) => {
+      const api = fakeApi([alertFixture(1)]);
+      api.remove = spies.confirm as typeof api.remove;
+      render(
+        <AlertsScreen
+          api={api}
+          store={createAlertsStore()}
+          source={{ subscribe: () => () => undefined }}
+          permissions={["alerts:read", "alerts:write"]}
+          now={() => ALERTS_NOW}
+          timeZone="UTC"
+        />,
+      );
+      const opener = (): Promise<HTMLElement> =>
+        screen.findByRole("button", { name: "Actions for Alert 1" });
+      return {
+        opener,
+        open: async () => {
+          fireEvent.click(await opener());
+          fireEvent.click(await screen.findByRole("menuitem", { name: /Delete/u }));
+        },
+      };
+    },
+  },
 ];
 
 const TABBABLE =
@@ -551,6 +602,8 @@ const COVERED: Readonly<Record<string, string>> = {
     "ui Dialog row (the mechanism); focus in and back in symbol-search/SymbolSearch.test.tsx",
   "features/recorder/RecordSymbolDialog.tsx": "matrix: RecordSymbolDialog",
   "features/recorder/StopDialog.tsx": "matrix: StopDialog",
+  "features/alerts/AlertHistoryDialog.tsx": "matrix: AlertHistoryDialog",
+  "features/alerts/AlertsScreen.tsx": "matrix: AlertsScreen delete confirm",
   // QuickSwitcher.tsx is not listed on purpose: it only mounts SymbolSearch, which holds the one Dialog.
 };
 const DIALOG_SOURCE =
@@ -571,7 +624,14 @@ describe("dialog conformance: nothing built is missing", () => {
       .filter((p) => DIALOG_SOURCE.test(readFileSync(p, "utf8")))
       .map((p) => relative(root, p).split("\\").join("/"))
       .sort();
-    expect(found).toEqual(Object.keys(COVERED).sort());
+    const listed = Object.keys(COVERED).sort();
+    const missing = found.filter((f) => !listed.includes(f));
+    const stale = listed.filter((f) => !found.includes(f));
+    expect(
+      { missing, stale },
+      "dialog sources with no COVERED entry (add a matrix row), and entries whose source is gone",
+    ).toEqual({ missing: [], stale: [] });
+    expect(found).toEqual(listed);
   });
 });
 
