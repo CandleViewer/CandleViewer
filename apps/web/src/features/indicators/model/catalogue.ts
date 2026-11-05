@@ -1,14 +1,17 @@
 // E13-S01 (#423) S1: the catalogue (`listIndicators`, `22` GET /indicators; D06 §3.1). The library
 // lists every descriptor the server returns, never a hard-coded set (BQ-2). A body that breaks the
 // contract is a failed catalogue (CMP-027 with Retry, no partial list; BQ-14); a value a reader
-// may not know (`unit`, `category`) is tolerated (C-6.3).
+// may not know (`unit`, `category`) is tolerated (C-6.3). Trade-off (BQ-14): `compute` and `pane`
+// are values the client must act on, so an unknown one still fails the whole catalogue, and an
+// additive enum growth on the server (C-6.3) would blank the library until this client learns it.
+// No count of entries is refused: `22` owns none, so the library pages its render instead.
 import { apiFetch } from "../../../lib/http/csrfFetch";
-import { parseParamsSchema, type SchemaResult } from "./schema";
+import { parseParamsSchema, SANITY_MAX_TEXT, type SchemaResult } from "./schema";
 import type { Category, Compute, DescriptorPane, IndicatorDescriptor, Unit } from "./types";
 
 const ID = /^[a-z0-9_]{2,32}$/;
-const MAX_NAME = 80;
-const MAX_ENTRIES = 256;
+/** `22` `IndicatorOutput.id`. */
+const OUTPUT_ID = /^[a-z][a-z0-9_]{0,31}$/;
 const COMPUTE: readonly Compute[] = ["client_worker", "server"];
 const PANE: readonly DescriptorPane[] = ["price", "sub", "both"];
 /** `IndicatorDescriptor.category`, in the library's group order (D02 §4.1). */
@@ -57,16 +60,20 @@ const pick = <T extends string>(set: readonly T[], value: unknown): T | null =>
   typeof value === "string" && (set as readonly string[]).includes(value) ? (value as T) : null;
 
 const plainName = (value: unknown): value is string =>
-  typeof value === "string" && value.length > 0 && value.length <= MAX_NAME;
+  typeof value === "string" && value.length > 0 && value.length <= SANITY_MAX_TEXT;
 
+/**
+ * The outputs, or `null` to refuse. An absent `outputs` is `[]` by design: `22` does not list it in
+ * `required`, so a descriptor without it is legal. A present one keeps `minItems: 1`.
+ */
 function outputsOf(raw: unknown): CatalogueEntry["outputs"] | null {
   if (raw === undefined) return [];
-  if (!Array.isArray(raw)) return null;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
   const out: { id: string; name: string }[] = [];
   for (const item of raw as unknown[]) {
     if (typeof item !== "object" || item === null) return null;
     const { id, name } = item as Record<string, unknown>;
-    if (typeof id !== "string" || !plainName(name)) return null;
+    if (typeof id !== "string" || !OUTPUT_ID.test(id) || !plainName(name)) return null;
     out.push({ id, name });
   }
   return out;
@@ -101,7 +108,7 @@ export function normaliseDescriptor(raw: unknown): CatalogueEntry | null {
 export function normaliseCatalogue(body: unknown): readonly CatalogueEntry[] | null {
   if (typeof body !== "object" || body === null) return null;
   const items = (body as { items?: unknown }).items ?? [];
-  if (!Array.isArray(items) || items.length > MAX_ENTRIES) return null;
+  if (!Array.isArray(items)) return null;
   const seen = new Set<string>();
   const entries: CatalogueEntry[] = [];
   for (const item of items as unknown[]) {

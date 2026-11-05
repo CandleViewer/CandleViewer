@@ -89,6 +89,22 @@ describe("parseParamsSchema: the subset the server serves", () => {
   });
 });
 
+describe("parseParamsSchema: the edges of its bounds", () => {
+  it("accepts minimum equal to maximum (a one-value stepper)", () => {
+    expect(fieldsOf(withProp({ ...PERIOD, minimum: 21, maximum: 21 }))).toMatchObject([
+      { kind: "integer", minimum: 21, maximum: 21, default: 21 },
+    ]);
+  });
+
+  it("accepts a title and 1,024 options at the sanity bounds (no owner in 22 / 24)", () => {
+    const options = Array.from({ length: 1024 }, (_, i) => `v${i}`);
+    const title = "x".repeat(1024);
+    expect(
+      fieldsOf(withProp({ type: "string", title, enum: options, default: "v0" })),
+    ).toMatchObject([{ kind: "enum", title, options }]);
+  });
+});
+
 describe("parseParamsSchema: a hostile schema is refused, never rendered", () => {
   it.each([
     ["$ref on a property", withProp({ ...PERIOD, $ref: "#/x" })],
@@ -103,7 +119,7 @@ describe("parseParamsSchema: a hostile schema is refused, never rendered", () =>
     ["a root that is not an object schema", { type: "array" }],
     ["HTML in a title", withProp({ ...PERIOD, title: "<img src=x onerror=alert(1)>" })],
     ["a control character in a title", withProp({ ...PERIOD, title: "Per\u0000iod" })],
-    ["an over-long title", withProp({ ...PERIOD, title: "x".repeat(81) })],
+    ["a title past the 1,024 sanity bound", withProp({ ...PERIOD, title: "x".repeat(1025) })],
     ["no title", withProp({ type: "integer", minimum: 1, maximum: 5, default: 1 })],
     ["a default outside its bounds", withProp({ ...PERIOD, default: 0 })],
     [
@@ -179,7 +195,7 @@ describe("parseParamsSchema: a hostile schema is refused, never rendered", () =>
   it("refuses a deep or wide enum without recursing", () => {
     let deep: unknown = 1;
     for (let i = 0; i < 10_000; i += 1) deep = [deep];
-    const wide = Array.from({ length: 65 }, (_, i) => `v${i}`);
+    const wide = Array.from({ length: 1025 }, (_, i) => `v${i}`);
     expect(
       parseParamsSchema(withProp({ type: "string", title: "A", enum: [deep], default: "a" })),
     ).toEqual({ ok: false });

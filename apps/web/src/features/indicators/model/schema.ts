@@ -12,8 +12,13 @@ const NAME = /^[a-z][a-z0-9_]{0,31}$/;
 const RESERVED = new Set(["__proto__", "constructor", "prototype"]);
 /** `IndicatorPresetInput.params` `maxProperties` (`22`); one form never shows more. */
 export const MAX_PARAMS = 64;
-const MAX_ENUM = 64;
-const MAX_TEXT = 80;
+/**
+ * Sanity bounds on a rendered name, title or option and on an enum's options: `22` and `24` own no
+ * `maxLength` / `maxItems` for them, so they are generous and PROPOSED to `22`'s owner as contract
+ * rows, never product limits (the catalogue's descriptor and output names share the text bound).
+ */
+export const SANITY_MAX_TEXT = 1024;
+export const SANITY_MAX_ENUM = 1024;
 /** Plain text only: no markup or control characters (SR-E13-09 "no HTML in titles"). */
 const UNSAFE_TEXT = /[<>&\p{Cc}]/u;
 const ALLOWED = new Set(["type", "title", "default", "minimum", "maximum", "multipleOf", "enum"]);
@@ -64,7 +69,7 @@ const own = (record: Record<string, unknown>, key: string): unknown =>
 const safeText = (value: unknown): value is string =>
   typeof value === "string" &&
   value.length > 0 &&
-  value.length <= MAX_TEXT &&
+  value.length <= SANITY_MAX_TEXT &&
   !UNSAFE_TEXT.test(value);
 
 const finite = (value: unknown): value is number =>
@@ -87,12 +92,18 @@ function field(name: string, raw: unknown): ParamField | null {
       : null;
   }
   if (type === "string" && enumValues !== undefined) {
-    if (!Array.isArray(enumValues) || enumValues.length === 0 || enumValues.length > MAX_ENUM) {
+    if (
+      !Array.isArray(enumValues) ||
+      enumValues.length === 0 ||
+      enumValues.length > SANITY_MAX_ENUM
+    ) {
       return null;
     }
     const options: string[] = [];
+    const seen = new Set<string>();
     for (const option of enumValues as unknown[]) {
-      if (!safeText(option) || options.includes(option)) return null;
+      if (!safeText(option) || seen.has(option)) return null;
+      seen.add(option);
       options.push(option);
     }
     if (typeof fallback !== "string" || !options.includes(fallback)) return null;
