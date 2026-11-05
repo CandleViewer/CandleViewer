@@ -891,6 +891,31 @@ def test_contract_24_states_the_final_rule_as_the_sync_builds_it_and_21_its_read
     assert "which 21 §13.1's new row 60 reads over `ix_exec_order`" in log
 
 
+def test_contract_21_states_the_compositions_reads() -> None:
+    """E29-S06 slice 5b (#981): the composition's three account-scoped reads, 21 §13.1 rows 58
+    (the walk's fills with their order rows and the leg groups of the fill's own account), 61 (the
+    orders it composes) and 62 (the hedge probe), and §3.3.13's Readers clause, row 61 reading
+    whether an order's record is stored by `ux_cpr_order`."""
+    doc = _doc("21-database-schema.md")
+    assert [_row(doc, n)[1:4] for n in (58, 61, 62)] == [
+        ["Closed-PnL walk's fills",
+         "the key's `executions` after its start, in order, with order rows and leg groups",
+         "`ix_exec_walk` and the `orders` PK, the fill's account's leg by its PK"],
+        ["Closed-PnL composition orders",
+         "the account's orders by id or venue id, each with its fill times, walk start, record",
+         "the `orders` keys; `ix_exec_order`, `ix_psnap_flat`, `ux_cpr_order`"],
+        ["Closed-PnL hedge probe",
+         "`EXISTS` the account's `positions` of the symbol at `position_idx` 1 or 2",
+         "the `positions` key `(exchange_account_id, symbol, position_idx)`"],
+    ]  # fmt: skip
+    readers = _between(doc, "- **Readers.** `listClosedPnl`", "\n- **Grants")
+    assert not _missing(
+        readers,
+        "and its upsert by order (`ux_cpr_order`), by which its composition also reads whether an "
+        "order's record is stored (row 61).",
+    )
+
+
 def test_contract_24_and_20_state_the_syncs_composition_and_its_fourth_readiness_line() -> None:
     """E29-S06 slice 3b (#981): 24 Sec.8.13 "Its composition" as built, and the orchestrator's
     ruling of 2026-11-04 (22:19Z) with its review of 2026-11-05 (04:05Z): a sync that has faulted,
