@@ -5,6 +5,7 @@ taxonomy each sample records, and the guard."""
 
 from __future__ import annotations
 
+import dataclasses
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -26,13 +27,15 @@ from spike.sl_attach import arms
 from spike.sl_attach.arms import HeldFloor, RunHalted, SlGuardedPort, _costs, prices
 from spike.sl_attach.config import ArmConfig
 from spike.sl_attach.results import Sample
-from spike.sl_attach.tests._rig import MemoryLedger, Rig, error
+from spike.sl_attach.summary import summarise
+from spike.sl_attach.tests._rig import CORPUS, MemoryLedger, Rig, error
 from spike.sl_attach.timing import Exchanged
 from tests._signing import CREDENTIAL_ID
 
 if TYPE_CHECKING:
     from candleviewer.domain.primitives import Side
     from candleviewer.exchange.base.ports import TradingPort
+    from spike.sl_attach.config import Arm
 
 
 async def test_arm_a_attaches_the_stop_on_the_create_and_times_its_ack(tmp_path: Path) -> None:
@@ -43,43 +46,36 @@ async def test_arm_a_attaches_the_stop_on_the_create_and_times_its_ack(tmp_path:
     _, stop, _ = prices(rig.runner.cfg, rig.venue.ref, "buy")
     assert opener["stopLoss"] == str(stop) and opener["slTriggerBy"] == "MarkPrice"
     assert opener["tpslMode"] == "Full" and opener["reduceOnly"] is False
-    assert close["reduceOnly"] is True and "stopLoss" not in close
-    assert rig.venue.stop_writes == []
+    assert close["reduceOnly"] is True and "stopLoss" not in close and not rig.venue.stop_writes
     assert sample.outcome == "ok" and sample.discard_reason is None
     assert sample.ack_ms == pytest.approx(30.0) and sample.rtt_ms == pytest.approx(30.0)
     assert sample.overhead_ms == pytest.approx(0.0) and sample.attempts == 1
     assert sample.protected_lag_ms == 0.0 and sample.skew_ms is not None
     assert sample.requests_order_class == 1 and sample.requests_position_class == 0
     assert sample.ret_code == 0 and sample.s86_code is None and sample.order_ref.startswith("link#")
-    assert rig.venue.size == 0  # closed
+    assert rig.venue.size == 0 and sample.stop_landed is None  # closed; arm (a) owes no write
 
 
-async def test_arm_b_opens_with_the_backstop_then_tightens_on_the_first_execution(
-    tmp_path: Path,
-) -> None:
+async def test_arm_b_opens_with_a_backstop_then_tightens_on_the_first_fill(tmp_path: Path) -> None:
     rig = Rig(tmp_path, create_delay_s=0.03, stop_delay_s=0.12)
     await rig.up()
     [sample] = await rig.drive(lambda: rig.runner.run("b", 1))
     _, stop, backstop = prices(rig.runner.cfg, rig.venue.ref, "buy")
     opener = rig.venue.creates[0]
     assert opener["stopLoss"] == str(backstop)  # never naked (Q5, C-2.6)
-    assert backstop <= rig.venue.ref * Decimal("0.95") and backstop >= rig.venue.ref * Decimal(
-        "0.90"
-    )
+    assert rig.venue.ref * Decimal("0.90") <= backstop <= rig.venue.ref * Decimal("0.95")
     [write] = rig.venue.stop_writes
     assert write["stopLoss"] == str(stop) and write["tpslMode"] == "Full"
     assert write["slTriggerBy"] == "MarkPrice" and "takeProfit" not in write
-    stop_lanes = [a[2] for a in rig.governor.acquired if a[1] == EndpointClass.POSITION]
-    assert stop_lanes == ["critical"]
+    assert [a[2] for a in rig.governor.acquired if a[1] == EndpointClass.POSITION] == ["critical"]
     assert sample.outcome == "ok" and sample.stage == "trading_stop"
     # the fill and its push at t, the stop applied at t + 60 ms (the venue's `time`), its 200
     # at t + 120 ms: all on the exchange clock
-    assert sample.exposure_ms == pytest.approx(120.0)
-    assert sample.exposure_venue_ms == pytest.approx(60.0)
+    assert sample.exposure_ms == pytest.approx(120.0) and sample.exposure_venue_ms == 60.0
     assert sample.push_lag_ms == pytest.approx(0.0) and sample.react_ms == pytest.approx(0.0)
     assert sample.stop_rtt_ms == pytest.approx(120.0) and sample.attempts == 1
     assert sample.requests_order_class == 1 and sample.requests_position_class == 1
-    assert sample.port_parse_ms == 0.0
+    assert sample.port_parse_ms == 0.0 and sample.stop_landed is True
     assert rig.venue.size == 0 and rig.port.protected == {}
 
 
@@ -104,10 +100,10 @@ async def test_a_skewed_sample_is_discarded(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
     await rig.up()
     await rig.drive(rig.runner.measure_offset)
+    await rig.drive(rig.runner.prove_flat)
     rig.venue_skew_ms = 501  # the venue's clock jumps after the offset was taken
     sample = await rig.drive(lambda: rig.runner.sample_b(0))
-    assert sample.outcome == "discarded" and sample.discard_reason == "skew"
-    assert sample.skew_ms == pytest.approx(501.0)
+    assert sample.discard_reason == "skew" and sample.skew_ms == pytest.approx(501.0)
     rig.venue_skew_ms = 500
     kept = await rig.drive(lambda: rig.runner.sample_b(1))
     assert kept.outcome == "ok" and kept.skew_ms == pytest.approx(500.0)
@@ -118,8 +114,8 @@ async def test_a_trading_stop_10016_is_retried_and_its_attempts_counted(tmp_path
     rig.venue.stop_answers = [error(10016, "Internal server error")]
     await rig.up()
     [sample] = await rig.drive(lambda: rig.runner.run("b", 1))
-    assert sample.outcome == "ok" and sample.attempts == 2
-    assert sample.requests_position_class == 2 and len(rig.venue.stop_writes) == 2
+    assert sample.outcome == "ok" and sample.attempts == sample.requests_position_class == 2
+    assert len(rig.venue.stop_writes) == 2
 
 
 def _lookups(rig: Rig) -> list[float]:
@@ -155,18 +151,29 @@ async def test_the_lookups_stop_at_their_total_wait(tmp_path: Path) -> None:
     sent = _lookups(rig)
     assert len(sent) == 5 and sent[-1] - sent[0] == pytest.approx(1000.0)
     assert rig.runner.samples[0].discard_reason == "stopped" and rig.port.protected != {}
+    assert rig.runner.samples[0].stop_landed is False  # E1: not proven unfilled at the halt
 
 
-@pytest.mark.parametrize("rest_s", [0.0, 0.3])
+#: A create answered before the venue acts: 10016 (seen `New` first with `rest_s`), 110079 and
+#: an unmapped code (`UnknownStateError`, E2), a duplicate id (the corpus's 110072, E3).
+OPEN_ANSWERS = [
+    (10016, error(10016, "Internal server error"), 0.0),
+    (10016, error(10016, "Internal server error"), 0.3),
+    (110079, error(110079, "order status unknown"), 0.0),
+    (199999, error(199999, "an unmapped answer"), 0.0),
+    (110072, CORPUS.rest("trading-error-110072"), 0.0),
+]
+
+
+@pytest.mark.parametrize(("code", "answer", "rest_s"), OPEN_ANSWERS)
 async def test_an_ambiguous_create_then_a_late_fill_is_closed_before_the_next_opener(
-    tmp_path: Path, rest_s: float
+    tmp_path: Path, code: int, answer: dict[str, Any], rest_s: float
 ) -> None:
-    """D1's reproduction: the create answers 10016 before the venue acts, the venue fills it
-    100 ms later (on r1, inside arm (b)'s next sample, which then closed 0.004); the run now
-    closes that fill before arm (b)'s next opener is sent. With `rest_s`, the order is seen
-    `New` (not final) before it fills."""
+    """D1's reproduction, E2, E3: the create's answer comes before the venue acts, which fills
+    it 100 ms later. The sample is `ambiguous` (never `rejected`), the order is looked up until
+    final and the fill closed before arm (b)'s next opener is sent; the create is never resent."""
     rig = Rig(tmp_path)
-    rig.venue.create_late = [error(10016, "Internal server error")]
+    rig.venue.create_late = [answer]
     rig.late_s, rig.rest_s = 0.1, rest_s
     await rig.up()
 
@@ -174,7 +181,7 @@ async def test_an_ambiguous_create_then_a_late_fill_is_closed_before_the_next_op
         return [*await rig.runner.run("a", 1), *await rig.runner.run("b", 1)]
 
     [first, second] = await rig.drive(both)
-    assert first.outcome == "ambiguous" and first.stage == "create" and first.ret_code == 10016
+    assert first.outcome == "ambiguous" and first.ret_code == code and first.attempts == 1
     creates = rig.venue.creates
     assert [c["reduceOnly"] for c in creates] == [False, True, False, True]
     assert [c["qty"] for c in creates] == ["0.002"] * 4
@@ -191,9 +198,7 @@ async def test_a_refused_trading_stop_is_recorded_and_the_position_closed(tmp_pa
     [sample] = await rig.drive(lambda: rig.runner.run("b", 1))
     assert sample.outcome == "rejected" and sample.stage == "trading_stop"
     assert sample.ret_code == 10001 and sample.ret_msg_class == "other"
-    assert (
-        sample.adapter_error_code == "INSTRUMENT_FILTER" and sample.s86_code == "INSTRUMENT_FILTER"
-    )
+    assert sample.adapter_error_code == sample.s86_code == "INSTRUMENT_FILTER"
     assert rig.venue.size == 0  # the backstop held it until the close
 
 
@@ -208,6 +213,7 @@ async def test_the_guard_refuses_an_opener_without_a_stop(tmp_path: Path) -> Non
         price=rig.venue.ask,
         order_link_id=rig.runner.links.new(),
     )
+    rig.port.release("BTCUSDT")  # read flat: the stop check alone refuses it
     with pytest.raises(Refused, match=r"C-2\.6"):
         await rig.port.place_order(naked)
     assert rig.venue.creates == [] and rig.tap.log == [] and rig.port.protected == {}
@@ -255,6 +261,7 @@ def _guard(tmp: Path) -> tuple[SlGuardedPort, StopOnly]:
     step = Decimal("0.001")
     port.limits = QtyLimits(step, step, Decimal("0.010"))
     port.ledger = MemoryLedger(tmp, Scrubber(), elapsed=lambda: 0.0)
+    port.release("BTCUSDT")  # proven flat, so each test reaches the check it names
     return port, double
 
 
@@ -351,20 +358,6 @@ async def test_a_refused_opener_leaves_no_floor(tmp_path: Path) -> None:
     assert port.protected == {}
 
 
-async def test_a_refused_close_halts_the_run_and_keeps_the_floor(tmp_path: Path) -> None:
-    rig = Rig(tmp_path)
-    rig.venue.close_answers = [error(110017, "current position is zero, cannot fix reduce-only")]
-    await rig.up()
-    with pytest.raises(RunHalted, match="refused") as halted:
-        await rig.drive(lambda: rig.runner.run("b", 2))
-    [sample] = rig.runner.samples
-    assert halted.value.sample == sample and sample.discard_reason == "stopped"
-    assert rig.venue.size > 0 and ("BTCUSDT", 0) in rig.port.protected
-    with pytest.raises(HeldFloor):
-        await rig.drive(lambda: rig.runner.sample_b(1))
-    assert len(rig.venue.creates) == 2  # the opener and the refused close, nothing after
-
-
 async def test_a_position_still_held_after_the_close_halts_the_run(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
     rig.venue.close_unfilled = True
@@ -382,23 +375,83 @@ async def test_a_lost_fill_push_is_no_fill_and_the_leftover_closed(tmp_path: Pat
     assert [s.discard_reason for s in samples] == ["no_fill", "no_fill"]
     assert [c["reduceOnly"] for c in rig.venue.creates] == [False, True, False, True]
     assert rig.venue.size == 0 and rig.port.protected == {} and rig.venue.stop_writes == []
+    table = cast("dict[str, Any]", summarise(samples)["arms"])["b"]  # E1: each owed its stop
+    assert table["unbounded"] == 2 and table["stop_success_rate"] == 0.0
 
 
-async def test_an_ambiguous_create_that_filled_is_closed(tmp_path: Path) -> None:
-    rig = Rig(tmp_path)
-    rig.venue.create_after = [error(10016, "Internal server error")]
+@pytest.mark.parametrize("cancel", [False, True])
+@pytest.mark.parametrize("arm", ["a", "b"])
+async def test_an_ok_opener_seen_late_is_settled(tmp_path: Path, arm: Arm, cancel: bool) -> None:
+    """E2 (`no_fill`) / E1: acked `ok`, the order rests `New`, then fills or is cancelled past
+    `fill_wait_s`. It is looked up until final; a fill is closed before the floor is freed
+    and in arm (b) owed a stop that never landed; a cancel owes none."""
+    rig = Rig(tmp_path, cfg=ArmConfig(fill_wait_s=0.5))
+    rig.fill_late_s, rig.late_cancel = 1.0, cancel
     await rig.up()
-    [sample] = await rig.drive(lambda: rig.runner.run("a", 1))
+    [sample] = await rig.drive(lambda: rig.runner.run(arm, 1))
+    await rig.drive(lambda: rig.clock.sleep(5.0))  # a fill the run did not wait for lands
+    assert sample.discard_reason == "no_fill" and len(_lookups(rig)) >= 2
+    assert [c["reduceOnly"] for c in rig.venue.creates] == ([False] if cancel else [False, True])
+    assert sample.stop_landed is (False if arm == "b" and not cancel else None)
+    assert rig.venue.size == 0 and rig.port.protected == {}
+
+
+async def test_a_refused_close_halts_and_a_restart_never_opens_over_the_leftover(
+    tmp_path: Path,
+) -> None:
+    """E4: after the halt, the same runner, one over a fresh guard and the fresh guard itself
+    all refuse the next opener, nothing sent."""
+    rig = Rig(tmp_path)
+    rig.venue.close_answers = [error(110017, "current position is zero, cannot fix reduce-only")]
+    await rig.up()
+    with pytest.raises(RunHalted, match="refused") as halted:
+        await rig.drive(lambda: rig.runner.run("b", 2))
+    [sample] = rig.runner.samples
+    assert halted.value.sample == sample and sample.discard_reason == "stopped"
+    assert rig.venue.size > 0 and ("BTCUSDT", 0) in rig.port.protected
+    with pytest.raises(HeldFloor):
+        await rig.drive(lambda: rig.runner.sample_b(1))
+    with pytest.raises(HeldFloor, match="floor is still held"):
+        await rig.drive(lambda: rig.runner.run("b", 1))
+    fresh = SlGuardedPort(rig.port._port)
+    fresh.limits, fresh.ledger = rig.port.limits, rig.port.ledger
+    restarted = dataclasses.replace(rig.runner, port=fresh, samples=[])
+    with pytest.raises(HeldFloor, match="held before the run"):
+        await rig.drive(lambda: restarted.run("b", 1))
+    _, _, backstop = prices(rig.runner.cfg, rig.venue.ref, "buy")
+    with pytest.raises(HeldFloor):
+        await fresh.place_order(_opener("buy", backstop))
+    assert len(rig.venue.creates) == 2 and fresh.protected == {}  # opener, refused close
+
+
+async def test_a_raised_start_read_sends_nothing(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.venue.position_answers = [error(10001, "params error")]
+    await rig.up()
+    with pytest.raises(HeldFloor, match="could not be read flat"):
+        await rig.drive(lambda: rig.runner.run("a", 1))
+    assert rig.venue.creates == [] and rig.port.flat == set()
+
+
+@pytest.mark.parametrize("arm", ["a", "b"])
+async def test_an_ambiguous_create_that_filled_is_closed(tmp_path: Path, arm: Arm) -> None:
+    """In arm (b) its push is lost: no stop write was sent, so it owed one (E1)."""
+    rig = Rig(tmp_path)
+    rig.venue.create_after, rig.venue.drop_every = [error(10016, "Internal server error")], 1
+    await rig.up()
+    [sample] = await rig.drive(lambda: rig.runner.run(arm, 1))
     assert sample.outcome == "ambiguous" and sample.discard_reason is None
+    assert sample.stop_landed is (False if arm == "b" else None) and rig.venue.stop_writes == []
     [_, close] = rig.venue.creates
     assert close["reduceOnly"] is True and close["qty"] == "0.002"
     assert rig.venue.size == 0 and rig.port.protected == {}
 
 
 async def test_a_raised_position_read_in_the_flatten_halts_with_the_floor(tmp_path: Path) -> None:
-    """D3: the self-check reads, then the flatten's read raises: `stopped`, the floor held."""
+    """D3: the start read and the self-check read, then the flatten's read raises: `stopped`,
+    the floor held."""
     rig = Rig(tmp_path)
-    rig.venue.position_answers = [None, error(10001, "params error")]
+    rig.venue.position_answers = [None, None, error(10001, "params error")]
     await rig.up()
     with pytest.raises(RunHalted, match="position read raised"):
         await rig.drive(lambda: rig.runner.run("b", 2))
@@ -410,7 +463,7 @@ async def test_a_raised_position_read_in_the_flatten_halts_with_the_floor(tmp_pa
 
 async def test_a_raised_self_check_read_is_incomplete(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
-    rig.venue.position_answers = [error(10001, "params error")]
+    rig.venue.position_answers = [None, error(10001, "params error")]  # the start read, then
     await rig.up()
     [sample] = await rig.drive(lambda: rig.runner.run("b", 1))
     assert sample.discard_reason == "incomplete" and sample.stop_landed is False
@@ -438,11 +491,13 @@ async def test_a_guard_refused_stop_write_is_a_recorded_discard(
 
 
 async def test_the_close_takes_the_held_qty_not_the_configured_one(tmp_path: Path) -> None:
-    """N1: a leftover of two fills (0.001 held, then the opener's 0.002) closes as 0.003."""
+    """N1: a leftover of two fills (0.001 held after the flat read, then the opener's 0.002)
+    closes as 0.003."""
     rig = Rig(tmp_path)
-    rig.venue.hold_foreign_position(Decimal("0.001"))
     await rig.up()
-    await rig.drive(lambda: rig.runner.run("a", 1))
+    await rig.drive(rig.runner.prove_flat)
+    rig.venue.hold_foreign_position(Decimal("0.001"))
+    await rig.drive(lambda: rig.runner.sample_a(0))
     [_, close] = rig.venue.creates
     assert close["reduceOnly"] is True and close["qty"] == "0.003"
     assert rig.venue.size == 0 and rig.port.protected == {}

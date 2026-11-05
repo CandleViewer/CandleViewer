@@ -20,8 +20,10 @@ position read that raises. An opener whose outcome is open (an ambiguous create:
 timeout, a 5xx; or no fill seen) is first looked up by its `orderLinkId`, realtime then
 history (24 §8.6), until its order is final; the lookups are bounded in count and in total wait
 on the injected clock, and an order still not final at the bound halts the run the same way: a
-late fill could otherwise land after the flat read. A stop write the guard refuses ends the
-sample `refused` (its stop never landed), flattened as any other.
+late fill could otherwise land after the flat read. In arm (b), an opener that filled with no
+stop write sent owed a stop that never landed (`stop_landed` false). A stop write the guard
+refuses ends the sample `refused`, flattened as any other. A run starts only on a symbol read
+flat with no floor held (`prove_flat`): a fresh guard assumes nothing.
 
 `Tap` sits on the port's transport and keeps every exchange: the host's wall clock at send and
 reply, the envelope `time`, the code and the rate headers, from which come the offset, each
@@ -44,9 +46,15 @@ from typing import TYPE_CHECKING, Final
 
 import httpx
 
-from candleviewer.exchange.base.errors import ExchangeError, TransportError, UnknownStateError
+from candleviewer.exchange.base.errors import (
+    DuplicateClientIdError,
+    ExchangeError,
+    TransportError,
+    UnknownStateError,
+)
 from candleviewer.exchange.base.models import (
     Execution,
+    Order,
     OrderAck,
     PlaceOrderRequest,
     Position,
@@ -142,37 +150,43 @@ def taxonomy_reply(body: bytes) -> dict[str, object]:
 
 
 class HeldFloor(Refused):
-    """An opener while the run holds a floor for its symbol: the last position is not proven
-    flat, so this opener could add to it (and replace its tightened stop) or close it."""
+    """An opener while the symbol is not proven flat (a floor held, or never read flat)."""
 
 
 class SlGuardedPort(GuardedPort):
     """#843's guarded surface plus one call, `set_trading_stop`, admitted only to tighten the
     stop of a position one of the run's own openers opened (Q5; C-2.6). Every opener is still
     refused without its native stop, before anything is sent (`GuardedPort.place_order`), and
-    refused while a floor for its symbol is held: only `release` (after a flat read) frees it."""
+    refused while a floor for its symbol is held, or before the symbol was first read flat
+    (E4): only `release` (after a flat read) admits it."""
 
     def __init__(self, port: TradingPort, timings: Timings | None = None) -> None:
         super().__init__(port, timings)
         #: The stop each of the run's openers attached, by (symbol, positionIdx): the floor a
         #: stop write may tighten from.
         self.protected: dict[tuple[str, int], tuple[Side, Decimal]] = {}
+        self.flat: set[str] = set()  #: read flat with no floor held; never assumed
+
+    def holds(self, symbol: str) -> bool:
+        return any(k[0] == symbol for k in self.protected)
 
     def release(self, symbol: str) -> None:
         """The runner read the symbol flat: its floor is no longer live."""
         for key in [k for k in self.protected if k[0] == symbol]:
             del self.protected[key]
+        self.flat.add(symbol)
 
     async def place_order(self, req: PlaceOrderRequest) -> OrderAck:
         key = (req.symbol, req.position_idx)
-        if not req.reduce_only and any(k[0] == req.symbol for k in self.protected):
+        opener = not req.reduce_only
+        if opener and (req.symbol not in self.flat or self.holds(req.symbol)):
             raise HeldFloor("an opener while the last position is not proven flat")
-        if not req.reduce_only and req.stop_loss is not None:
+        if opener and req.stop_loss is not None:
             self.protected[key] = (req.side, req.stop_loss)
         try:
             return await super().place_order(req)
         except Refused:
-            if not req.reduce_only:
+            if opener:
                 self.protected.pop(key, None)
             raise
 
@@ -319,7 +333,9 @@ class RunHalted(Exception):
 
 
 def _open_outcome(exc: ExchangeError) -> Outcome:
-    return "ambiguous" if isinstance(exc, TransportError | UnknownStateError) else "rejected"
+    """110079, an unmapped code and a duplicate id (24 §8.3 rule 3) leave it open, too."""
+    open_ = TransportError | UnknownStateError | DuplicateClientIdError
+    return "ambiguous" if isinstance(exc, open_) else "rejected"
 
 
 @dataclass
@@ -348,7 +364,20 @@ class ArmRunner:
             if read.venue_ms is not None:
                 self.offset.sample(read.sent_wall_ms, read.received_wall_ms, read.venue_ms)
 
+    async def prove_flat(self) -> None:
+        """E4: the symbol reads flat with no floor held, or nothing is sent (`HeldFloor`)."""
+        if self.port.holds(self.cfg.symbol):
+            raise HeldFloor("a halted sample's floor is still held: nothing is sent")
+        try:
+            held = await self._held()
+        except NotFlat as exc:
+            raise HeldFloor("the symbol could not be read flat before the run") from exc
+        if held is not None:
+            raise HeldFloor("the symbol is held before the run's first opener: nothing is sent")
+        self.port.release(self.cfg.symbol)
+
     async def run(self, arm: Arm, count: int) -> list[Sample]:
+        await self.prove_flat()
         out: list[Sample] = []
         for i in range(count):
             if i % self.cfg.offset_every == 0:
@@ -427,21 +456,22 @@ class ArmRunner:
             raise NotFlat(f"the position read raised {type(exc).__name__}") from exc
         return next((p for p in rows if p.symbol == self.cfg.symbol and p.qty > 0), None)
 
-    async def _final(self, link: str) -> bool:
-        """The order of `link` is final: realtime first, then history (a read that raises, or
-        no row, is not final)."""
+    async def _final(self, link: str) -> Order | None:
+        """The order of `link` once final: realtime first, then history (a read that raises, or
+        no row, is not final: `None`)."""
         try:
             rows = await self.port.open_orders(self.account, self.cfg.symbol, order_link_id=link)
             if not any(o.order_link_id == link for o in rows):
                 rows = await self.port.order_history(self.account, order_link_id=link)
         except ExchangeError:
-            return False
+            return None
         order = next((o for o in rows if o.order_link_id == link), None)
-        return order is not None and order.state in TERMINAL
+        return order if order is not None and order.state in TERMINAL else None
 
-    async def _settle(self, link: str) -> None:
+    async def _settle(self, link: str) -> bool:
         """Look the opener's order up until it is final: at most `lookup_tries` reads,
-        `lookup_every_s` apart, within `lookup_wait_s` on the injected clock; else `NotFlat`."""
+        `lookup_every_s` apart, within `lookup_wait_s` on the injected clock; else `NotFlat`.
+        Whether it filled."""
         deadline = self.clock.monotonic() + self.cfg.lookup_wait_s
         for n in range(self.cfg.lookup_tries):
             if n:
@@ -449,8 +479,9 @@ class ArmRunner:
                 if left <= 0:
                     break
                 await self.clock.sleep(min(self.cfg.lookup_every_s, left))
-            if await self._final(link):
-                return
+            order = await self._final(link)
+            if order is not None:
+                return order.filled_qty > 0
         raise NotFlat("the opener's order is not final at the lookup bound")
 
     async def _flatten(self) -> None:
@@ -488,16 +519,21 @@ class ArmRunner:
         discard: Discard | None = None,
         *,
         settle: str | None = None,
+        owed: bool = False,
     ) -> Sample:
         """The sample's end: flat first (`_flatten`), else the run halts with it `stopped`.
-        With `settle` (an opener's link whose outcome is open), its order is final first."""
+        With `settle` (an opener's link whose outcome is open), its order is final first.
+        `owed` (arm (b), no stop sent): a fill, or no proof of none at a halt, is a failed stop."""
         try:
-            if settle is not None:
-                await self._settle(settle)
+            filled = await self._settle(settle) if settle is not None else False
             await self._flatten()
         except NotFlat as exc:
+            if owed:
+                fields["stop_landed"] = False
             stopped = self._finish(fields, outcome, reading, stage, "stopped")
             raise RunHalted(stopped, str(exc)) from exc
+        if owed and filled:
+            fields["stop_landed"] = False
         return self._finish(fields, outcome, reading, stage, discard)
 
     def _finish(
@@ -594,13 +630,16 @@ class ArmRunner:
             reading = _failure(exc, log, CREATE, create=True)
             outcome = _open_outcome(exc)
             settle = link if outcome == "ambiguous" else None
-            return await self._end(fields, outcome, reading, "create", settle=settle)
+            return await self._end(fields, outcome, reading, "create", settle=settle, owed=True)
         fields |= _costs(self.tap.log[mark:])
         if not ack.ok:
-            return await self._end(fields, "rejected", _refusal(ack, create=True), "create")
+            refusal = _refusal(ack, create=True)
+            return await self._end(fields, "rejected", refusal, "create", owed=True)
         if await self.watch.wait(lambda: link in self.watch.first, self.cfg.fill_wait_s):
             return await self._tighten(fields, link, stop, create, mark)
-        return await self._end(fields, "ok", taxonomy.OK, "create", "no_fill", settle=link)
+        return await self._end(
+            fields, "ok", taxonomy.OK, "create", "no_fill", settle=link, owed=True
+        )
 
     async def _tighten(
         self,

@@ -7,6 +7,7 @@ answered in the corpus's `trading-trading-stop-reply` shape (S2 moves it into th
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
@@ -45,7 +46,8 @@ class StopVenue(CorpusVenue):
     `create_late` before it acts, which it then does `Rig.late_s` later (`held_back`: a late
     fill; with `Rig.rest_s`, the order rests `New` that long before it fills);
     `close_answers` answers a reduce-only close unacted, `close_unfilled` acks one unfilled;
-    `position_answers` answers position reads first, one per read (`None`: as the venue)."""
+    `position_answers` answers position reads first, one per read (`None`: as the venue).
+    `Rig.fill_late_s`: an opener acked `ok` rests, then fills (or `late_cancel`) that late."""
 
     def __init__(self, corpus: Corpus, **options: Any) -> None:
         super().__init__(corpus, **options)
@@ -132,7 +134,8 @@ class Rig:
         self.venue_skew_ms = 0
         self.create_delay_s, self.stop_delay_s = create_delay_s, stop_delay_s
         self.ack_delay_s = 0.0
-        self.late_s = self.rest_s = 0.0
+        self.late_s = self.rest_s = self.fill_late_s = 0.0
+        self.late_cancel = False
         self._late: set[asyncio.Task[None]] = set()
         self.venue = StopVenue(CORPUS, now_ms=lambda: self.wall_ms() + self.venue_skew_ms)
         self.tap = Tap(httpx.MockTransport(self._handle), wall_ms=lambda: float(self.wall_ms()))
@@ -201,16 +204,30 @@ class Rig:
         half = delay.get(request.url.path, 0.0) / 2
         if half:  # the venue acts (and stamps its `time`) halfway through the round trip
             await self.clock.sleep(half)
+        body = json.loads(request.content) if request.url.path == "/v5/order/create" else {}
+        park = bool(self.fill_late_s and body and not body["reduceOnly"])
+        self.venue.resting |= park
         response = await self.venue.handle(request)
+        if park:
+            self.venue.resting = False
+            self._later(self._fill_late(str(body["orderLinkId"])))
         while self.venue.held_back:
-            task = asyncio.ensure_future(self._act_late(self.venue.held_back.pop(0)))
-            self._late.add(task)
-            task.add_done_callback(self._late.discard)
+            self._later(self._act_late(self.venue.held_back.pop(0)))
         if half:
             await self.clock.sleep(half)
         if self.ack_delay_s and request.url.path == "/v5/order/create":
             await self.clock.sleep(self.ack_delay_s)  # filled at once, answered late
         return response
+
+    def _later(self, work: Awaitable[None]) -> None:
+        task = asyncio.ensure_future(work)
+        self._late.add(task)
+        task.add_done_callback(self._late.discard)
+
+    async def _fill_late(self, link: str) -> None:
+        await self.clock.sleep(self.fill_late_s)
+        [order] = [o for o in self.venue.orders.values() if o.link == link]
+        (self.venue._cancel if self.late_cancel else self.venue._match)(order)
 
     async def _act_late(self, body: dict[str, Any]) -> None:
         await self.clock.sleep(self.late_s)
