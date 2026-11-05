@@ -27,11 +27,14 @@ from candleviewer.exchange.base.models import AccountRef, ClosedPnl, Position, R
 from candleviewer.exchange.bybit import private_parse as pp
 from candleviewer.exchange.bybit import trading_parse as tp
 from candleviewer.observability.metrics import Metrics
+from candleviewer.oms import closed_pnl_sync as sync_mod
+from candleviewer.oms.closed_pnl_compose import ClosedPnlComposer
 from candleviewer.oms.closed_pnl_sync import (
     CLOSED_PNL_LOOKBACK,
     FETCH_SECONDS,
     ClosedPnlSync,
     merged,
+    venue_record,
 )
 from candleviewer.oms.errors import AccountScopeDenied, OrderEntryRefused, StoreUnavailable
 from candleviewer.oms.ports import RateReading
@@ -56,6 +59,7 @@ from candleviewer.storage.repositories.positions import NewPositionSnapshot
 from tests._corpus import frames, rest
 from tests.unit.audit.audit_waits import virtual
 from tests.unit.exchange.bybit._trading import ACCOUNT_A, ACCOUNT_B, account
+from tests.unit.oms.submit_rig import Instruments, instrument
 from tests.unit.risk.test_day_boundary import Policy
 
 T0 = datetime(2026, 11, 4, 10, 0, tzinfo=UTC)  # the fake loop's 0 s
@@ -311,16 +315,19 @@ def rig(
     unresolved: Any = (),
     *,
     policy: Policy | None = None,
+    composed: bool = False,
     **venue: Any,
 ) -> Rig:
-    """The sync over fakes, its day from the one resolver over `policy` (offset 0 unless set)."""
+    """The sync over fakes, its day from the one resolver over `policy` (offset 0 unless set);
+    with `composed`, its composition over the same store, ETHUSDT settling 480 min apart."""
     v, store, metrics, loop = Venue(**venue), Store(), Metrics("demo"), asyncio.get_running_loop()
-    told = list[str]()
+    told, listed = list[str](), Instruments(listed={"ETHUSDT": instrument(symbol="ETHUSDT")})
     sync = ClosedPnlSync(
         accounts=Accounts(resolve, list(unresolved)), router=v, records=store, closes=store,
         snapshots=store,
         metrics=metrics, now=lambda: at + timedelta(seconds=loop.time()),
         on_ended=lambda: told.append("ended"), day_start=DayBoundary(policy or Policy()).day_start,
+        composer=ClosedPnlComposer(store=store, instruments=listed) if composed else None,
     )  # fmt: skip
     return Rig(v, store, metrics, sync, told)
 
@@ -834,3 +841,141 @@ def test_a_fill_the_store_took_before_the_start_asks_for_nothing(
     sync.stored(_fill(closed_size))
     sync.reconnected(ACCOUNT_A)
     assert sync.fault is None
+
+
+# --- the composition (slice 5b; the orchestrator's rulings of 2026-11-04, 23:45Z) ----------------
+
+OPENER, GROUP = UUID(int=0x0E), UUID(int=0x0F)
+
+
+def _composable(r: Rig, *, closed: str | None = "3", pnl: str | None = "-45") -> NewExecution:
+    """A long of 3 opened on GROUP's leg after a confirmed flat at 07:00 and closed by the record's
+    order at 09:00, no settlement between (480 min apart): the fill `stored` names it by."""
+    s = r.store
+    s.flats[("ETHUSDT", 0)] = (T0 - timedelta(hours=3),)
+    s.orders |= {"x-open": (OPENER, "filled"), XID: (ORDER, "filled")}
+    s.keys |= {OPENER: ("ETHUSDT", "Buy", 0), ORDER: ("ETHUSDT", "Sell", 0)}
+    for n, (oid, price, fee, size, closed_pnl) in enumerate((
+        (OPENER, "1195", "2.151", "0", "0"), (ORDER, "1180", "2.124", closed, pnl),
+    )):  # fmt: skip
+        s.fills.append(("ETHUSDT", WalkFill(
+            exec_id=f"w{n}", exec_ts=T0 - timedelta(minutes=90 - 30 * n), order_id=oid,
+            side="Buy" if oid == OPENER else "Sell", exec_type="Trade", exec_qty=Decimal(3),
+            exec_price=Decimal(price),
+            exec_fee=Decimal(fee), closed_pnl=None if closed_pnl is None else Decimal(closed_pnl),
+            closed_size=None if size is None else Decimal(size), order_position_idx=0,
+            order_exchange_id=XID if oid == ORDER else "x-open",
+            order_group_id=GROUP if oid == OPENER else None,
+        )))  # fmt: skip
+    return replace(_fill(None if closed is None else Decimal(closed)), order_id=ORDER)
+
+
+@virtual
+async def test_a_named_close_is_composed_before_the_read_so_a_failed_read_hides_nothing() -> None:
+    """Q2: a pass composes the orders its stored fills named before it reads the venue; the read
+    failing keeps the poll and those orders for the next pass."""
+    r = rig(composed=True)
+    named = _composable(r)
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(10)
+    r.venue.failures.append(TimeoutError())
+    r.sync.stored(named)
+    await asyncio.sleep(2)
+    item = r.store.rows[record_id(ACCOUNT_A, XID)]
+    assert (item.settled_at, item.qty, item.trade_group_id) == (None, Decimal(3), GROUP)
+    assert (item.gross_pnl, item.fee_pnl, item.funding_pnl) == (
+        Decimal(-45), Decimal("-4.275"), Decimal(0),
+    )  # fmt: skip
+    assert r.counted() == {"ok": 1, "failed": 1} and r.sync._state[ACCOUNT_A].named == {ORDER}
+    await r.sync.stop()
+
+
+@virtual
+async def test_the_read_settles_a_provisional_close_in_place_and_the_walk_finalizes_it() -> None:
+    """A REST-recovered close (no closedSize, no closed PnL) is provisional with no local figure,
+    from the pass its fill asks for, until its record is read, which settles it in place; the
+    walk's `c` then completes the final rule (Q4), which the stated sizes never would (row 60)."""
+    r = rig(composed=True)
+    named = _composable(r, closed=None, pnl=None)
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(10)
+    r.sync.stored(named)
+    await asyncio.sleep(61)  # a fill stating no closedSize asks for a read SETTLE_POLL_S later
+    rid = record_id(ACCOUNT_A, XID)
+    first = r.store.rows[rid]
+    assert (first.settled_at, first.qty, first.gross_pnl, first.trade_group_id) == (
+        None, Decimal(3), None, GROUP,
+    )  # fmt: skip
+    r.venue.records = [_record()]
+    r.sync.reconnected(ACCOUNT_A)
+    await asyncio.sleep(1)
+    settled = r.store.rows[rid]
+    assert (settled.closed_pnl, settled.trade_group_id) == (_record().closed_pnl, GROUP)
+    assert settled.settled_at is not None and settled.final_at is not None
+    await r.sync.stop()
+
+
+@virtual
+async def test_a_failed_composition_is_logged_by_kind_and_keeps_its_orders_and_the_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r = rig(composed=True)
+    named, real = _composable(r), r.store.anchors
+    failures = [StoreUnavailable(), StoreUnavailable()]
+
+    async def anchors(*args: Any) -> tuple[OrderAnchor, ...]:
+        if failures:
+            raise failures.pop()
+        return await real(*args)
+
+    monkeypatch.setattr(r.store, "anchors", anchors)
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(10)
+    with capture_logs() as logs:
+        r.sync.stored(named)
+        await asyncio.sleep(2)
+    assert [e for e in logs if e["event"] == "closed_pnl_compose_failed"] == [
+        {"event": "closed_pnl_compose_failed", "log_level": "warning",
+         "account_id": str(ACCOUNT_A), "kind": "StoreUnavailable"},
+    ] * 2  # fmt: skip
+    assert r.counted()["ok"] == 2 and not r.store.rows  # the read went on
+    await asyncio.sleep(60)
+    assert record_id(ACCOUNT_A, XID) in r.store.rows  # the next pass composed it
+    await r.sync.stop()
+
+
+@virtual
+async def test_the_first_composition_takes_every_record_read_and_later_ones_what_changed() -> None:
+    """Q3: an account's first composition takes each record its read covers, as after a restart;
+    later ones take the records the read changed, the poll's and the named orders'."""
+    r = rig(composed=True, records=[_record()])
+    _composable(r)
+    await r.store.settle(venue_record(_record()))
+    rid = record_id(ACCOUNT_A, XID)
+    r.store.rows[rid] = replace(r.store.rows[rid], final_at=T0)  # final before a restart
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(1)
+    assert r.store.calls["anchors"] == 1 and r.store.rows[rid].gross_pnl == -45
+    r.sync.reconnected(ACCOUNT_A)
+    await asyncio.sleep(1)
+    assert r.store.calls["anchors"] == 1  # unchanged, final and named by no fill
+    await r.sync.stop()
+
+
+@virtual
+async def test_an_accounts_named_orders_are_bounded_and_none_without_a_composer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sync_mod, "NAMED_LIMIT", 1)
+    r, bare = rig(composed=True), rig()
+    r.sync.start([])
+    bare.sync.start([])
+    with capture_logs() as logs:
+        for oid in (ORDER, OPENER, ORDER):
+            r.sync.stored(replace(_fill(Decimal(1)), order_id=oid))
+            bare.sync.stored(replace(_fill(Decimal(1)), order_id=oid))
+    assert (r.sync._state[ACCOUNT_A].named, bare.sync._state[ACCOUNT_A].named) == ({ORDER}, set())
+    assert logs == [{"event": "closed_pnl_named_order_dropped", "log_level": "warning",
+                     "account_id": str(ACCOUNT_A)}]  # fmt: skip
+    await r.sync.stop()
+    await bare.sync.stop()

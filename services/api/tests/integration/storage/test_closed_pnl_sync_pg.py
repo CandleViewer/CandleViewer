@@ -17,6 +17,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.observability.metrics import Metrics
+from candleviewer.oms.closed_pnl_compose import ClosedPnlComposer
 from candleviewer.oms.closed_pnl_sync import ClosedPnlSync
 from candleviewer.risk.day_boundary import DayBoundary
 from candleviewer.storage.repositories.closed_pnl import record_id
@@ -27,8 +28,16 @@ from candleviewer.storage.repositories.positions import NewPositionSnapshot
 from candleviewer.storage.repositories.positions_sqlalchemy import SqlAlchemyPositionStore
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.storage.repositories.risk_policy_sqlalchemy import SqlAlchemyRiskPolicyReads
-from tests.integration.storage.test_closed_pnl_records_migration import _T0, _conn, _put, pg_dsn
-from tests.unit.oms.test_closed_pnl_sync import T0, Accounts, Venue, _at, _reading, _record
+from tests.integration.storage.test_closed_pnl_records_migration import (
+    _T0,
+    _conn,
+    _group,
+    _put,
+    pg_dsn,
+)
+from tests.integration.storage.test_closed_pnl_store_pg import _leg
+from tests.unit.oms.submit_rig import Instruments, instrument
+from tests.unit.oms.test_closed_pnl_sync import T0, Accounts, Venue, _at, _fill, _reading, _record
 
 pytestmark = pytest.mark.integration
 __all__ = ["pg_dsn"]  # the shared module-scoped fixture
@@ -118,5 +127,69 @@ async def test_the_sync_keeps_records_until_final_and_seeds_a_key_once(pg_dsn: s
                 "SELECT count(*) FROM position_snapshots WHERE exchange_account_id = %s", (a,)
             ).fetchone()
         assert rows == (1,) and seeded < T0 - timedelta(days=365)  # one seed, from the venue's
+    finally:
+        await rel.dispose()
+
+
+async def test_a_close_composed_provisional_settles_in_place_and_the_walk_makes_it_final(
+    pg_dsn: str,
+) -> None:
+    """E29-S06 slice 5b: a long of 3 opened on a leg after a confirmed flat and closed by one
+    order's stream fill is composed provisional before the venue read; the record read settles it
+    in place, same id, the venue's columns over the local ones, the walk's `opened_at` and group
+    kept, and the walk's `c` completes the final rule."""
+    opened, closed = T0 - timedelta(minutes=90), T0 - timedelta(minutes=60)
+    with _conn(pg_dsn) as c:
+        a = _put(c, "exchange_accounts")
+        leg = _leg(c, group := _group(c), a)
+        opener = _put(c, "orders", a, symbol="ETHUSDT", side="Buy", exchange_order_id="o-6",
+                      trade_group_leg_id=leg, state="filled")  # fmt: skip
+        closer = _put(c, "orders", a, symbol="ETHUSDT", exchange_order_id="o-7", state="filled")
+        _put(
+            c,
+            "position_snapshots",
+            a,
+            symbol="ETHUSDT",
+            exchange_updated_ts=T0 - timedelta(hours=3),
+        )
+        for exec_id, order, side, price, fee, size, pnl, at in (
+            ("P1", opener, "Buy", 1195, "2.151", 0, 0, opened),
+            ("P2", closer, "Sell", 1180, "2.124", 3, -45, closed),
+        ):
+            _put(c, "executions", a, exec_id=exec_id, order_id=order, symbol="ETHUSDT", side=side,
+                 exec_qty=3, exec_price=price, exec_value=3 * price, exec_fee=Decimal(fee),
+                 closed_size=size, closed_pnl=pnl, exec_ts=at)  # fmt: skip
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "closed-pnl-compose-it")
+    store, venue = SqlAlchemyClosedPnlStore(rel), Venue()
+    listed = Instruments(listed={"ETHUSDT": instrument(symbol="ETHUSDT")})
+    sync = ClosedPnlSync(
+        accounts=Accounts(), router=venue, records=store, closes=SqlAlchemyExecutionStore(rel),
+        snapshots=SqlAlchemyPositionStore(rel), metrics=Metrics("demo"), now=lambda: T0,
+        on_ended=lambda: None, day_start=DayBoundary(SqlAlchemyRiskPolicyReads(rel)).day_start,
+        composer=ClosedPnlComposer(store=store, instruments=listed),
+    )  # fmt: skip
+    rid = record_id(a, "o-7")
+    try:
+        sync.start([])
+        sync.stored(replace(_fill(Decimal(3)), exchange_account_id=a, order_id=closer))
+        await sync.stop()  # the named order stays for the read below, which composes it first
+        assert await sync.read(a)
+        first = await store.get(a, rid)
+        assert first is not None and (first.settled_at, first.qty, first.trade_group_id) == (
+            None, Decimal(3), group,
+        )  # fmt: skip
+        assert (first.gross_pnl, first.fee_pnl, first.funding_pnl, first.opened_at) == (
+            Decimal(-45), Decimal("-4.275"), Decimal(0), opened,
+        )  # fmt: skip
+        venue.records = [_record(exchange_order_id="o-7")]
+        assert await sync.read(a)
+        settled = await store.get(a, rid)
+        assert settled is not None and settled.final_at is not None and settled.id == first.id
+        assert (settled.closed_pnl, settled.qty, settled.closed_at) == (
+            _record().closed_pnl, Decimal(3), _at(_record().closed_at),
+        )  # fmt: skip
+        assert (settled.opened_at, settled.trade_group_id, settled.gross_pnl) == (
+            opened, group, Decimal(-45),
+        )  # fmt: skip
     finally:
         await rel.dispose()
