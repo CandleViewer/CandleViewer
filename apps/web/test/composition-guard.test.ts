@@ -39,6 +39,8 @@ const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
   "confirm-policy":
     "E47-S08 (#1322): resolver and hook for the confirm surfaces (SCR-029/072/076/129), unbuilt (BQ-8)",
   derivatives: "E24-S05 (#780): the liquidation feed and its states; slice 3 mounts it on SCR-054",
+  indicators:
+    "E13-S01 (#423): SCR-034/035/036 ship as story-hosted exports behind no route (BQ-06); #476 mounts them",
 };
 
 interface ParsedImports {
