@@ -228,6 +228,20 @@ describe("funding pane (CMP-186, FundingOnly)", () => {
     expect(within(table).getAllByText("8").length).toBeGreaterThan(0);
   });
 
+  it("carries the stale tier on the region and shows the countdown in the legend", () => {
+    render(stories.Stale.render());
+    expect(region().getAttribute("data-stale")).toBe("t1");
+    expect(within(region()).getByText("Stale 7s · last 15:55:41")).toBeTruthy(); // in text (F6)
+    render(stories.EmptyWithCountdown.render()); // D03 S54-38: "No funding has settled … · next in 03:12:44"
+    const empty = region("SOLUSDT");
+    expect(
+      within(empty).getByRole("heading", { name: "No funding has settled for SOLUSDT yet" }),
+    ).toBeTruthy();
+    expect(empty.querySelector(".cv-funding__digits")?.textContent).toBe(
+      "next in 03:12:44 · 08:00 UTC",
+    );
+  });
+
   it.each(Object.entries(stories).filter(([k]) => k !== "default"))(
     "story %s has no serious axe violation",
     async (_name, story) => {

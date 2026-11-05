@@ -11,6 +11,13 @@ export const settlesEvery = (minutes: number): string => `settles every ${interv
 /** PROPOSED: the interval is not served, so none is stated and no step is drawn (never 8 h). */
 export const INTERVAL_UNKNOWN = "settlement interval not published";
 
+/**
+ * PROPOSED: the ticker's stale state in text (D03 §10.2's form, "Stale 7s · last 15:55:41"), so shading is
+ * never the only signal; with no update yet, the age alone.
+ */
+export const staleLine = (ageS: number, lastTsMs: number | null): string =>
+  `Stale ${String(ageS)}s${lastTsMs === null ? "" : ` · last ${utcTime(lastTsMs).slice(0, 8)}`}`;
+
 /** PROPOSED: the loading region's one sentence (the skeleton is hidden from assistive technology). */
 export const LOADING = "Loading funding history…";
 /** D02 §15 retry band. */
