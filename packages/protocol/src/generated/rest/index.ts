@@ -3979,6 +3979,72 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/market/liquidations/by-price": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Recorded liquidations by price (the top buckets of one window)
+     * @description The recorded histogram of E24-S07 (#782), K01's method (b) and the only liquidation histogram
+     *     by price that v1 ships (24 §6.4, the ruling of 06:52Z 2026-11-04 on #782): the stored
+     *     prints of `getLiquidations` over one window, grouped into price buckets and summed per
+     *     liquidated side. It shows where forced liquidations were recorded; it is not a forecast,
+     *     and no estimated liquidation level or zone is served by any operation (24 §6.4).
+     *
+     *     **Window** (BQ 5): one UTC day at most, never more. It runs from `from` (default 00:00
+     *     UTC of the current UTC day, the day grid of the liquidation bars) to the end of the UTC
+     *     day that contains `from` (the next 00:00 UTC), or to the server's now when that is
+     *     earlier, and never spans two UTC days. `from` may name any instant in the 31-day
+     *     lookback, the same lookback as `getLiquidations` (E24-X01 G1), so a client reads an
+     *     earlier day by naming its 00:00 UTC. Bybit perpetuals have no session, so the client's
+     *     lookback is the current UTC day. `meta.coverage` clamps the window to the store, in
+     *     `LiquidationsPageMeta`'s terms: `first_available_ts` is the first stored print (`null`
+     *     when none is), `covered_from` / `covered_to` the part of the window the store can answer
+     *     for, and `no_coverage` is true when the window ends before `first_available_ts` (or
+     *     nothing is stored), so an empty `items` there means "not recorded", never "no
+     *     liquidations". When `covered_from` is later than `from`, the buckets hold the covered
+     *     part only, and a client shows the partial-coverage state, never a full-day claim. An
+     *     empty `items` with `no_coverage: false` means no print was recorded in the covered part.
+     *
+     *     **Buckets** (24 §6.4): a bucket is `bucket_ticks` × `tick_size` wide, anchored at price
+     *     0, so the bucket of a print at price `p` is `[price_lo, price_hi)` with `price_lo` = ⌊`p` /
+     *     width⌋ × width. A print adds its `notional_usd` to `long_notional_usd` when it closed a
+     *     long (a `sell` print) and to `short_notional_usd` when it closed a short (a `buy` print),
+     *     the liquidated side as `Liquidation.side` and 24 §2.5 `liquidated_side` read it, and
+     *     counts once in `prints`. The sums are exact decimal sums of the stored prints, so the
+     *     answer is not an estimate: `estimated` is required and is `false` on every answer of
+     *     this read. A client draws the estimated badge from that flag alone and draws nothing
+     *     from an answer that lacks it. `items` holds the `top` buckets with the largest
+     *     `long_notional_usd` + `short_notional_usd`, highest first, a tie going to the lower
+     *     `price_lo`; a bucket with no print is never listed. The server computes the buckets; a
+     *     client never re-buckets prints (the ruling on #781, 6618707867). The server groups the
+     *     prints in the store query, one aggregate row per bucket, and never loads the window's
+     *     prints into memory; the handler also bounds what the query reads by a row or time
+     *     guard, which the serving slice states.
+     *
+     *     **Cadence** (BQ 6): a client reads it when the layer is enabled and when the symbol
+     *     changes, then at most once every 5 s, and only after the liquidation feed has delivered
+     *     a new print; never per frame. No rule reads it: it is not in the rule vocabulary.
+     *
+     *     **Bounds** (E24-X01 G1), checked before the store is read: `from` must be before the
+     *     server's now and at most 31 days before it (400 `invalid_time_range`); `bucket_ticks` is
+     *     1–1000, default 20, and `top` is 1–20, default 5, both 400 `validation_failed` when
+     *     outside. The defaults are K01's (§1 item 3); the two ranges are PROPOSED (24 §19.132),
+     *     as no X01 G1 row names them. A malformed `symbol` is 400 `validation_failed`; a well-formed symbol that is
+     *     not listed is 422 `validation_failed`, as on `/market/data-coverage`.
+     */
+    get: operations["getLiquidationsByPrice"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/market/metrics": {
     parameters: {
       query?: never;
@@ -10063,6 +10129,53 @@ export interface components {
       /** Format: date-time */
       ts?: string;
     };
+    /** @description One price bucket `[price_lo, price_hi)` of the recorded prints, summed per liquidated side (24 §2.5 `liquidated_side`): a `sell` print closed a long, a `buy` print closed a short. */
+    LiquidationPriceBucket: {
+      /** @description The summed `notional_usd` of the prints that closed longs; `0` when none did. */
+      long_notional_usd: components["schemas"]["Decimal"];
+      /** @description Exclusive upper edge, `price_lo` + the bucket width. */
+      price_hi: components["schemas"]["Decimal"];
+      /** @description Inclusive lower edge, a whole multiple of the bucket width. */
+      price_lo: components["schemas"]["Decimal"];
+      /** @description The stored prints in the bucket, both sides; a lower bound on distinct liquidation events, as the venue batches them (`getLiquidations`). */
+      prints: number;
+      /** @description The summed `notional_usd` of the prints that closed shorts; `0` when none did. */
+      short_notional_usd: components["schemas"]["Decimal"];
+    };
+    /** @description `getLiquidationsByPrice`'s answer (E24-S07, #782): the top recorded buckets of one window, computed by the server from the stored prints (24 §6.4). Not a page: `top` bounds it. */
+    LiquidationsByPrice: {
+      bucket_ticks: number;
+      /** @description Required, and `false` on every answer of this read: the buckets are exact sums of recorded prints, not an estimate (K01 §6a). A client renders the estimated badge from this flag alone, never from a constant, and draws nothing from an answer without it. */
+      estimated: boolean;
+      /**
+       * Format: date-time
+       * @description The window's inclusive start, as requested or defaulted (00:00 UTC today).
+       */
+      from: string;
+      /** @description At most `top` buckets, the largest total notional first, a tie to the lower `price_lo`. */
+      items: components["schemas"]["LiquidationPriceBucket"][];
+      meta: components["schemas"]["LiquidationsByPriceMeta"];
+      symbol: components["schemas"]["Symbol"];
+      /** @description The symbol's tick size from instrument info; a bucket is `bucket_ticks` × it wide. */
+      tick_size: components["schemas"]["Decimal"];
+      /**
+       * Format: date-time
+       * @description The window's exclusive end: the end of the UTC day that contains `from`, or the server's now when it read the store if that is earlier.
+       */
+      to: string;
+    };
+    /** @description The stored coverage of the window, `LiquidationsPageMeta`'s `coverage` (E24-T03, #667) without the page members: `getLiquidationsByPrice` is not paged. */
+    LiquidationsByPriceMeta: {
+      coverage: {
+        /** Format: date-time */
+        covered_from: string | null;
+        /** Format: date-time */
+        covered_to: string | null;
+        /** Format: date-time */
+        first_available_ts: string | null;
+        no_coverage: boolean;
+      };
+    };
     /** @description `PageMeta` plus the stored coverage of the symbol (E24-T03, #667). */
     LiquidationsPageMeta: components["schemas"]["PageMeta"] & {
       coverage: {
@@ -12368,6 +12481,8 @@ export interface components {
          * @enum {string}
          */
         funding_style?: "line" | "bars";
+        /** @description The recorded liquidations by price on the price pane (E24-S07, K01's method (b)), read from `getLiquidationsByPrice`; exact recorded data, so no acknowledgement and no estimated badge (the ruling of 06:52Z 2026-11-04 on #782); audited as `settings.change` like the other `deriv` keys; client default `false`. */
+        liq_by_price?: boolean;
         /** @description The liquidation filter's minimum print notional in USDT, the shape of the `min_notional_usd` option of `getLiquidations` and 23 `liquidations.{symbol}`: a non-negative `Decimal` string of at most 1,000,000,000 with at most 2 fractional digits; client default `"0"` (6612964585 Q1). */
         liq_min_notional_usd?: components["schemas"]["Decimal"];
         /**
@@ -12382,7 +12497,7 @@ export interface components {
         oi_mode?: "absolute" | "delta";
         /** @description The OI bars' price/OI quadrant classification; client default `true` (6618708569). */
         oi_quadrant_colouring?: boolean;
-        /** @description The estimated liquidation zones (E24-S07, with its acknowledgement); client default `false` (6612964585 Q1). */
+        /** @description Reserved for the estimated liquidation zones, K01's method (a), which v1 does not build (24 §6.4): no client reads or writes it until the K01 real-data re-run reopens (a), and the recorded histogram has its own leaf, `liq_by_price` (24 §19.132); client default `false` (6612964585 Q1). */
         zones_enabled?: boolean;
       };
       notifications?: {
@@ -19582,6 +19697,40 @@ export interface operations {
             items?: components["schemas"]["Liquidation"][];
             meta?: components["schemas"]["LiquidationsPageMeta"];
           };
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  getLiquidationsByPrice: {
+    parameters: {
+      query: {
+        /** @description The bucket width in ticks of the symbol's `tick_size`; default 20 (K01), range 1–1000 PROPOSED (24 §19.132). */
+        bucket_ticks?: number;
+        /** @description Inclusive start of the window (RFC 3339 UTC), at most 31 days before the server's now; default 00:00 UTC of the current UTC day. The window ends at the end of the UTC day that contains `from`, or at the server's now when that is earlier. */
+        from?: string;
+        symbol: components["parameters"]["SymbolQuery"];
+        /** @description How many of the largest buckets to return; default 5 (K01), range 1–20 PROPOSED (24 §19.132). */
+        top?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The top recorded buckets of the window. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LiquidationsByPrice"];
         };
       };
       400: components["responses"]["BadRequest"];
