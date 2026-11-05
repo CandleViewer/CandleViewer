@@ -94,6 +94,22 @@ describe("FundingCountdown (CMP-126)", () => {
     expect(status(host)).toBeEmptyDOMElement();
   });
 
+  it("renders the host's rateExtra after the rate and before the count, and with no rate (n/a)", async () => {
+    const extra = <span role="note">/ 8 h · predicted</span>;
+    const host = await mount(ui({ rate: "+0.0100 %", rateExtra: extra }));
+    const rate = host.querySelector(".cv-funding__rate");
+    const node = within(host).getByRole("note");
+    expect(rate?.compareDocumentPosition(node)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(node.compareDocumentPosition(host.querySelector(".cv-funding__count") as Element)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    const na = await mount(ui({ rateExtra: extra }));
+    expect(within(na).getByRole("note")).toBeTruthy();
+    expect(na.querySelector(".cv-funding__rate")).toBeNull();
+    const idle = await mount(ui({ rate: "+0.0100 %", notTrading: true, rateExtra: extra }));
+    expect(within(idle).queryByRole("note")).toBeNull();
+  });
+
   it("ticks once a second and never speaks per tick", async () => {
     const host = await mount(ui());
     await advance(1_000);

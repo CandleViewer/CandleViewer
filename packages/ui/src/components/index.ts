@@ -35,6 +35,22 @@ export type {
   RecorderStatusRowProps,
 } from "./RecorderStatusRow.js";
 
+export {
+  EstimatedBadge,
+  EstimatedBadgeOutsideProviderError,
+  EstimatedMethodologyProvider,
+  estimatedName,
+  useEstimatedMethodology,
+} from "./EstimatedBadge.js";
+export type {
+  DetectorId,
+  EstimatedBadgeProps,
+  EstimatedBadgeSize,
+  EstimatedBadgeVariant,
+  EstimatedConfidence,
+  EstimatedMethodology,
+  EstimatedMethodologyProviderProps,
+} from "./EstimatedBadge.js";
 export { Tag } from "./Tag.js";
 export type { TagProps } from "./Tag.js";
 

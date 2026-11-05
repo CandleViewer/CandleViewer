@@ -171,3 +171,15 @@ export const ImminentStale: Story = {
 export const ImminentUnderOneMinute: Story = {
   args: { nextFundingTimeMs: at(59_000), charges: [demoPay] },
 };
+
+/** E24-S04: the host's words after the rate (`rateExtra`), here plain text; the app passes its predicted readout. */
+export const WithRateExtra: Story = {
+  args: { rate: "+0.0100 %", rateExtra: <span>/ 8 h · predicted (estimated)</span> },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByText("/ 8 h · predicted (estimated)")).toBeVisible();
+  },
+};
+/** `rateExtra` with no `rate`: the host's "Funding n/a". */
+export const RateExtraNoRate: Story = {
+  args: { rateExtra: <span>Funding n/a</span> },
+};
