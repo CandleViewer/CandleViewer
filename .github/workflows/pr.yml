@@ -256,6 +256,7 @@ jobs:
               - 'docs/plan/28-statechart-catalogue.md'
               - 'docs/plan/29-statechart-adoption-plan.md'
               - 'docs/plan/32-risk-register.md'
+              - 'docs/plan/33-raci.md'
               - 'docs/plan/27-adrs/ADR-0008-trade-group-fanout.md'
               - 'docs/plan/27-adrs/ADR-0009-secrets-and-key-management.md'
               - 'docs/plan/27-adrs/ADR-0014-observability.md'
