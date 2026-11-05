@@ -6,33 +6,33 @@ Components: **CMP-059 CommandPalette** (the binding column, "unbound", the inval
 
 Rule: every line is `[x]` with its evidence, or `[ ]` with the reason.
 
-| Item                     | CMP-059 CommandPalette                    | CMP-094 HotkeyOverlay         | CMP-064 (SCR-113)          | The census paths (§3)                      |
-| ------------------------ | ----------------------------------------- | ----------------------------- | -------------------------- | ------------------------------------------ |
-| Final Penpot link        | [ ] boards 05, 06, 10 pending             | [ ] board 07 pending          | [ ] board 08 pending       | [ ] boards 01–04, 09 pending               |
-| Variants × states        | [x] spec §8                               | [x] spec §9                   | [x] spec §10 (RL-1 … RL-5) | [x] spec §2, §3                            |
-| Keyboard table           | [x] CMP-059's, unchanged                  | [x] spec §9 (search)          | [x] RL-1, RL-4             | [x] spec §2, §4, §7                        |
-| Accessible name and role | [x] CMP-059's                             | [x] CMP-094's                 | [x] CMP-064's              | [x] spec §2 (select announces)             |
-| Live data                | [x] the count, once per query             | [x] the count, once per query | [x] the row's message      | [x] spec §6 (D5)                           |
-| Motion pair              | [x] none                                  | [x] none                      | [x] none                   | [x] the view follows; reduced motion snaps |
-| Density notes            | [x] E10-D03's                             | [x] E10-D03's                 | [x] none                   | [x] none                                   |
-| Essential exceptions     | [x] none                                  | [x] none                      | [x] none                   | [x] none                                   |
-| Tokens used              | [x] E10-D03 §6.1's                        | [x] E10-D03 §6.2's            | [x] CMP-064's              | [x] the pending line: §0 board 01          |
-| Data contract            | [ ] NO: D09-G5                            | [x] the registry              | [x] the registry           | [ ] NO: D09-G4, D09-G6                     |
-| Contrast                 | [ ] measured when boards 05, 10 are drawn | [ ] board 07                  | [ ] board 08               | [ ] boards 01–04                           |
-| Storybook                | [x] §D                                    | [x] §D                        | [x] §D                     | [x] §D                                     |
-| Sign-off                 | [ ] owner approval pending                | [ ] owner approval pending    | [ ] owner approval pending | [ ] owner approval pending                 |
+| Item                     | CMP-059 CommandPalette                    | CMP-094 HotkeyOverlay         | CMP-064 (SCR-113)             | The census paths (§3)                      |
+| ------------------------ | ----------------------------------------- | ----------------------------- | ----------------------------- | ------------------------------------------ |
+| Final Penpot link        | [x] boards 05, 06, 10 drawn (spec §0)     | [x] board 07 drawn (spec §0)  | [x] board 08 drawn (spec §0)  | [x] boards 01–04, 09 drawn (spec §0)       |
+| Variants × states        | [x] spec §8                               | [x] spec §9                   | [x] spec §10 (RL-1 … RL-5)    | [x] spec §2, §3                            |
+| Keyboard table           | [x] CMP-059's, unchanged                  | [x] spec §9 (search)          | [x] RL-1, RL-4                | [x] spec §2, §4, §7                        |
+| Accessible name and role | [x] CMP-059's                             | [x] CMP-094's                 | [x] CMP-064's                 | [x] spec §2 (select announces)             |
+| Live data                | [x] the count, once per query             | [x] the count, once per query | [x] the row's message         | [x] spec §6 (D5)                           |
+| Motion pair              | [x] none                                  | [x] none                      | [x] none                      | [x] the view follows; reduced motion snaps |
+| Density notes            | [x] E10-D03's                             | [x] E10-D03's                 | [x] none                      | [x] none                                   |
+| Essential exceptions     | [x] none                                  | [x] none                      | [x] none                      | [x] none                                   |
+| Tokens used              | [x] E10-D03 §6.1's                        | [x] E10-D03 §6.2's            | [x] CMP-064's                 | [x] the pending line: §0 board 01          |
+| Data contract            | [ ] NO: D09-G5                            | [x] the registry              | [x] the registry              | [ ] NO: D09-G4, D09-G6                     |
+| Contrast                 | [x] spec §21; dark fails, see D09-A19, §J | [x] spec §21: 8.14–15.20 dark | [x] spec §21: 4.76–17.42 dark | [x] spec §21: 8.14+ dark, 7.37+ light      |
+| Storybook                | [x] §D                                    | [x] §D                        | [x] §D                        | [x] §D                                     |
+| Sign-off                 | [ ] owner approval pending                | [ ] owner approval pending    | [ ] owner approval pending    | [ ] owner approval pending                 |
 
 ## §B Who applies what
 
-| A                                        | Target                                           | Applied by                                  |
-| ---------------------------------------- | ------------------------------------------------ | ------------------------------------------- |
-| `05` §3.5, `05`:36, `05`:88, `05`:101    | `05`                                             | this PR (BQ-12)                             |
-| D09-A1 … D09-A4                          | the keymap registry                              | E47-S08 (registry rows; E37-S05 for D09-A4) |
-| D09-A5, D09-A6                           | `15` CMP-094, CMP-059                            | the `15` owner, at the owner's sign-off PR  |
-| D09-A7, D09-A8, D09-A9, D09-A13, D09-A14 | `14` SCR-012, SCR-013, SCR-113, SCR-040, SCR-021 | the `14` owner, at the owner's sign-off PR  |
-| D09-A10, D09-A15, D09-A17                | the inert notice, the refusal, Reset all         | E47-S08                                     |
-| D09-A18                                  | E09-D09 §3.1's registered state vocabularies     | E47-S08, with the E09-D09 owner             |
-| D09-A11, D09-A12, D09-A16                | the palette's sources and events (#5280)         | E10-S05 (#5236)                             |
+| A                                        | Target                                                                | Applied by                                            |
+| ---------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------- |
+| `05` §3.5, `05`:36, `05`:88, `05`:101    | `05`                                                                  | this PR (BQ-12)                                       |
+| D09-A1 … D09-A4                          | the keymap registry                                                   | E47-S08 (registry rows; E37-S05 for D09-A4)           |
+| D09-A5, D09-A6                           | `15` CMP-094, CMP-059                                                 | the `15` owner, at the owner's sign-off PR            |
+| D09-A7, D09-A8, D09-A9, D09-A13, D09-A14 | `14` SCR-012, SCR-013, SCR-113, SCR-040, SCR-021                      | the `14` owner, at the owner's sign-off PR            |
+| D09-A10, D09-A15, D09-A17                | the inert notice, the refusal, Reset all                              | E47-S08                                               |
+| D09-A18, D09-A19 (PROPOSED)              | A18: E09-D09 §3.1's state vocabularies; A19: E09-D09 T2's visual (§J) | A18: E47-S08, with the E09-D09 owner; A19: that owner |
+| D09-A11, D09-A12, D09-A16                | the palette's sources and events (#5280)                              | E10-S05 (#5236)                                       |
 
 ## §C Copy-ready rows (PROPOSED)
 
@@ -102,7 +102,7 @@ Old is a verbatim fragment of the cited line at its pinned commit (the tool chec
 | QA-4 | focus the journal; press `Ctrl+Enter`                                                                       | one non-modal status message names the Ticket view; focus is unchanged; nothing else ran; a second press within 5 s adds no toast while the first is shown; a press after 5 s shows it again; SCR-014's log holds it |
 | QA-5 | hold `↑` on a selected stop for 3 s under a fake clock; release                                             | the polite region received at most one message per 500 ms window and a final message within 250 ms of release; the readout's state updates match; the region is `aria-live="polite"`, never assertive                |
 
-## §H The board plan (drawn later in this PR; a Penpot lane)
+## §H The board plan (drawn: spec §0 and its As built record, §21)
 
 The boards of spec §0, on page `E47-D09`; frames named `<surface>/<state> · <theme>`. Data: a seeded synthetic order, book and graph, declared synthetic on every board's face; only the instrument's tick size comes from a recorded fixture. Each board's frames:
 
@@ -119,14 +119,22 @@ The boards of spec §0, on page `E47-D09`; frames named `<surface>/<state> · <t
 | 09    | `inert/journal · dark`; inset `inert/journal-200 · dark` (200 % and the text scale)                                                                                |
 | 10    | the frames of 05 · hc                                                                                                                                              |
 
-Contrast: every ratio (the "unbound" word, the pending label, the lock row) is measured with the repo contrast tool in each theme when its board is drawn; none is quoted before.
+Contrast: every ratio (the "unbound" word, the pending label, the lock row) is measured with the repo contrast tool in each theme when its board is drawn; none is quoted before. Boards 05, 06 and 10's T2 rows on `color.surface.selected` are measured in spec §21: dark fails, raised as D09-A19 (§J).
 
 ## §I Summary for #1308
 
-1. Text-first keyboard-operability spec + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards pending, drawn later in this PR; `05` §3.5 is the normative expansion.
+1. Text-first keyboard-operability spec + hand-off + default-deny audit tool; 10<!--=COUNT:boards--> boards drawn in the boards PR (spec §0, §21); `05` §3.5 is the normative expansion.
 2. One grammar — select, adjust by unit (`Shift` ×10, `PageUp` / `PageDown` ×100), commit through the pointer's own path, cancel restores — with the merged twins as instances.
 3. 21<!--=COUNT:census--> census rows cover every drag- and hover-only interaction; the tool maps every `14` line that names one.
 4. The order line sends nothing until `Enter`, through the drag's confirm path; `Esc` restores; never one amend per keypress.
 5. The palette lists all 75<!--=COUNT:palette--> commands with their current binding or "unbound"; the cheatsheet is searchable by action or key and shows remaps.
 6. The inert message says where an action works; SCR-113 reports conflicts before Save; refusals name no internals.
 7. The chart keys are E06-D03's and the node graph E37-D02's, with node Move mode added and the pan through it; BQ-0 … BQ-15 are RULED as the defaults (comments 6566806943 and 6567605660).
+
+## §J After the boards: the contrast row (PROPOSED)
+
+§C's shape, one row the drawn boards raised (spec §21, Contrast); its Old is verbatim on its cited line (the tool checks it).
+
+| A       | Target                 | Field (`file`:line) | Old                                      | New                                                                                                                                                                                                                             | Applied by                            |
+| ------- | ---------------------- | ------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| D09-A19 | E09-D09 T2, the visual | D09E09:49           | in `color.text.tertiary`; a `lock` glyph | insert after: ; on a row in `color.surface.selected` (the palette's active row) the label and the glyph take `color.text.secondary` (`text.tertiary` there is 3.98:1 dark, under `05` §5 item 1's 4.5:1; E47-D09 §21; PROPOSED) | the E09-D09 owner (the T2 vocabulary) |

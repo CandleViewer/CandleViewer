@@ -21,8 +21,8 @@ form follows the E47-D04 tool (the same modes, anchored values, default-deny pin
    ruling's sentence verbatim, bold dropped, its last clause naming the closing keyword in words), G-PENDING (BQ-0 ... BQ-15 once
    each, the nine the ruling pins "ruled as the default, pinned", the other seven "ruled as the
    default"), G-BOARDS (at most ten
-   boards, twins at most a third, each pending or drawn with its id and PNG, the not-drawn
-   paragraph), G-GRAMMAR (the four phases; every census row states select, adjust with a unit or
+   boards, twins at most a third, each pending or drawn with its board id, PNG, size, frames, nodes
+   and its theme's gate, the not-drawn paragraph), G-GRAMMAR (the four phases; every census row states select, adjust with a unit or
    "none:", commit and cancel; every unit row filled), G-CENSUS (every `14` line naming a drag or a
    hover maps to a census row or to the exempt list, never both, and nothing else is mapped),
    G-CHORD (every registry pointer chord is named by id in the census), G-ORDER (in the order-line
@@ -35,15 +35,16 @@ form follows the E47-D04 tool (the same modes, anchored values, default-deny pin
    form validity never T2; §3, §4 and §8 cite it; RL-1's Save is a form-validity state, never T2;
    W-8 names its state key and vocabulary owner; the hand-off lists CMP-079 and CMP-019), G-NORM
    (`05` §3.5 owns every K-n and §1.4 mirrors the same ids, each citing `05` §3.5; `05`:36 and
-   `05`:88 fixed; §3.2 byte-identical to the base), G-HEUR, G-WALK (at most ten items), G-OWNER
-   (G-ledger owners are tickets, never an agent), G-UNMERGED, G-URL, G-UNTOUCHED (only this ticket's files, `05` and the
-   boards differ from the merge base with origin/main), G-BUDGET, G-MUTLIST.
+   `05`:88 fixed; §3.2's cells as D04's merge, its prose kept), G-HEUR, G-WALK (at most ten
+   items), G-OWNER (G-ledger owners are tickets, never an agent), G-UNMERGED, G-URL, G-UNTOUCHED
+   (only this ticket's files, `05`, the boards and their kit differ from the merge base with
+   origin/main), G-BUDGET, G-MUTLIST.
 4. **Pins (G-RULED-PIN).** A whole-document default-deny pin set over every unit of both documents
    (each heading, table row by its lead cell and prose line, by heading path and occurrence, with
    a line-shape tag per region) in `e47_d09_ruled_pins.txt`. Anchored values are cut out of the
    pinned text (G-ANCHOR owns them). `--repin-ruled` is the only writer and refuses while a
    placeholder is unfilled. A pin finding in a region another gate already FAILs prints as NOTE.
-5. **--self-test** applies every mutation (M-n) and pin probe (P-n) in memory with the values
+5. **--self-test** applies every mutation (M-n) and probe (P-n) in memory with the values
    frozen at the filled baseline; each must add exactly one FAIL, from the gate it names; the
    texts on disk are checked byte-identical afterwards (sha256). Output is ASCII.
 
@@ -69,7 +70,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE = "4c662fd5b"  # origin/main of the BQ list; every cite is read here unless pinned below
-D04_PIN = "1ff5d8cb9"  # E47-D04, PR #5387 head; re-pinned at merge
+D04_PIN = "48c711e64"  # E47-D04, PR #5387: its merge commit (its head 1ff5d8cb9 has the same text)
 PAL_PIN = "73bfdb08a"  # E10-S05, PR #5280 head (the SCR-012 host as built there)
 
 SPEC_REL = "docs/design/E47/E47-D09.md"
@@ -78,13 +79,21 @@ TOOL_REL = "docs/design/_tools/e47_d09_keyboard_audit.py"
 PIN_REL = "docs/design/_tools/e47_d09_ruled_pins.txt"
 NORM_REL = "docs/plan/05-accessibility-standard.md"  # §3.5 and three lines are edited (BQ-12)
 OWN = (SPEC_REL, HAND_REL, TOOL_REL, PIN_REL, NORM_REL)
-OWN_BOARDS = re.compile(r"docs/design/E47/img/E47-D09-\d\d-[a-z0-9-]+\.png")
+# the boards PR: the PNGs, the sheet kit, its MANIFEST lines and its .prettierignore entry
+OWN_BOARDS = re.compile(
+    r"docs/design/E47/img/E47-D09-\d\d-[a-z0-9-]+\.png|\.prettierignore"
+    r"|docs/design/_tools/sheets/(?:e47-d09/[A-Za-z0-9._/-]+|MANIFEST\.sha256)"
+)
 DRAWN_CELL = re.compile(
     r"drawn: board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
-    r"`docs/design/E47/img/E47-D09-(?P<nn>\d\d)-(?P<slug>[a-z0-9-]+)\.png` \(\d+ × \d+\)"
+    r"`docs/design/E47/img/E47-D09-(?P<nn>\d\d)-(?P<slug>[a-z0-9-]+)\.png` \(\d+ × \d+\), "
+    r"\d+ frames?, [\d,]+ nodes; (?P<gate>dark|light|high-contrast) gate PASS "
+    r"\(own [\d,]+ px, other [\d,]+ px\)"
 )
+# a drawn cell's gate is its row's theme
+GATE_OF = {"dark": "dark", "light": "light", "hc": "high-contrast"}
 PENDING_CELL = "pending: drawn later in this PR"
-SPEC_BUDGET = 450
+SPEC_BUDGET = 480
 HAND_BUDGET = 160
 
 PLAN = {
@@ -134,7 +143,6 @@ FILE_BASE = {
 UNMERGED_PATHS = (
     *(f"E47-D{n:02d}.md" for n in (1, 3, 5, 6, 7, 8, 10, 11)),
     "E31-D01.md",
-    "E37-D04.md",
 )
 
 RULING_ID = "6566806943"  # the rulings of record on #1308 (2026-11-02 01:20Z)
@@ -416,12 +424,12 @@ class Mutation:
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-1",
-        "blank board 01's status in §0",
+        "give board 10 another theme's gate in §0",
         "G-BOARDS",
         "spec",
         "## 0.",
-        "| dark | pending: drawn later in this PR |",
-        "| dark | — |",
+        "nodes; high-contrast gate PASS",
+        "nodes; dark gate PASS",
     ),
     Mutation(
         "M-2",
@@ -637,8 +645,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-MUTLIST",
         "spec",
         "## 18.",
-        "| M-1 | blank board 01's status in §0 | G-BOARDS |",
-        "| M-1 | blank board 01's status in §0 | G-CITE |",
+        "| M-1 | give board 10 another theme's gate in §0 | G-BOARDS |",
+        "| M-1 | give board 10 another theme's gate in §0 | G-CITE |",
     ),
     Mutation(
         "M-26",
@@ -778,6 +786,15 @@ PROBES: tuple[Mutation, ...] = (
         "through the drag's confirm path",
         "through a confirm path",
     ),
+    Mutation(
+        "P-3",
+        "re-word `05` §3.2's prose",
+        "G-NORM",
+        "norm",
+        "### 3.2 ",
+        "Research found no reusable default keymap",
+        "Research found a reusable default keymap",
+    ),
 )
 
 
@@ -910,7 +927,8 @@ def g_quote(t: Texts) -> list[Finding]:
 def g_arow(t: Texts) -> list[Finding]:
     out: list[Finding] = []
     _, _, region = section(t.hand, "## §C")
-    for row in first_table(t.hand, "## §C")[1:]:
+    rows = first_table(t.hand, "## §C")[1:] + first_table(t.hand, "## §J")[1:]
+    for row in rows:
         if len(row) < 5:
             continue
         if not cite_targets(row[2]) or row[3].replace("\\|", "|") not in cited_text(row[2]):
@@ -968,6 +986,8 @@ def g_boards(t: Texts) -> list[Finding]:
             drawn and name and (drawn["nn"], drawn["slug"]) == name.groups()
         ):
             bad.append(f"board {r[0]} is neither pending nor drawn")
+        elif drawn and drawn["gate"] != GATE_OF[r[3]]:
+            bad.append(f"board {r[0]}'s drawn cell names another theme's gate")
     if not any(
         ln.startswith("**Not drawn (the text is binding)**") for ln in body(t.spec, "## 0.")
     ):
@@ -1120,6 +1140,19 @@ def norm_section(text: str, prefix: str) -> list[str]:
     return body(text, prefix)
 
 
+def norm_cells(text: str) -> list[str]:
+    return [ln for ln in norm_section(text, "### 3.2 ") if ln.startswith("|")]
+
+
+def norm_prose(text: str) -> list[str]:
+    return [ln for ln in norm_section(text, "### 3.2 ") if ln.strip() and not ln.startswith("|")]
+
+
+def kept_in_order(base: list[str], now: list[str]) -> bool:
+    it = iter(now)
+    return all(any(ln == x for x in it) for ln in base)
+
+
 def g_norm(t: Texts) -> list[Finding]:
     bad: list[str] = []
     _, _, r14 = section(t.spec, "### 1.4")
@@ -1141,8 +1174,14 @@ def g_norm(t: Texts) -> list[Finding]:
         bad.append("`05` §3.1 item 7 does not cite E06-D03 D6")
     if "once that screen is specced" in t.norm or "E37-D02.md` §13" not in t.norm:
         bad.append("the `05` §3.3 node-graph pointer is not fixed")
-    if norm_section(t.norm, "### 3.2 ") != norm_section(at_base(NORM_REL), "### 3.2 "):
-        bad.append("`05` §3.2 (the locked keymap) differs from the base")
+    # BQ-2 locks §3.2's cells: its table rows equal D04's merge (which edited two cells, its own
+    # ruling); a later "As built" note under the table (E47-S08) is not a cell
+    at_d04 = git("show", f"{D04_PIN}:{NORM_REL}")
+    if norm_cells(t.norm) != norm_cells(at_d04):
+        bad.append(f"`05` §3.2 (the locked keymap) differs from E47-D04's merge ({D04_PIN})")
+    # its prose too: every line D04's merge has stays, in order; a later note may follow
+    if not kept_in_order(norm_prose(at_d04), norm_prose(t.norm)):
+        bad.append(f"`05` §3.2's prose differs from E47-D04's merge ({D04_PIN})")
     return [("G-NORM", b, "norm", "") for b in bad] + (spec_bad if unowned or not mirror else [])
 
 
