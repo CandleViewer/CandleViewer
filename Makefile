@@ -1,4 +1,4 @@
-.PHONY: bench-journal audit-bench governance dev dev-down test gen gen-check contracts up down reset arch security pr-gate audit-net ci-gate-fixture alert-drill alert-drill-stop
+.PHONY: bench-journal audit-bench admin-perf governance dev dev-down test gen gen-check contracts up down reset arch security pr-gate audit-net ci-gate-fixture alert-drill alert-drill-stop
 
 # E02-T01: root convenience targets delegating to pnpm/uv (20-architecture.md
 # §5 Tooling). Thin wrappers only — the pnpm/turbo task graph and the uv/ruff
@@ -127,6 +127,14 @@ alert-drill-stop:
 # CV_AUDIT_SPIKE_ROWS overrides size). Locally it needs Postgres via CV_TEST_PG_DSN; see docs/plan/spikes/E42-K01.md.
 audit-bench:
 	cd services/api && uv run pytest tests/integration/audit/test_query_plan_spike.py -m "integration and perf and not flaky" --no-cov -rA -s -p no:randomly
+
+# E42-Q03 (#1216): the admin audit perf profile (k6, median of 3) against an API on an AUDIT-10M
+# test database; the measured run is the dispatch-only `perf-admin.yml` on cv-bench-01. Needs k6,
+# the API and CV_ADMIN_PERF_DSN / CV_ENVIRONMENT / CV_ADMIN_USERS_FILE / CV_ADMIN_PASSWORD
+# (qa/plans/e42-perf-chaos.md section 3). ARGS must name the API: ARGS='--base-url URL' (no
+# default); add --dry-run to check the guards and start nothing.
+admin-perf:
+	cd services/api && uv run python -m bench.admin.run $(or $(PROFILE),audit) $(ARGS)
 
 # E41-K01: journal analytics tier benchmark (scratch Postgres DSN; needs duckdb/pyarrow/psycopg).
 bench-journal:
