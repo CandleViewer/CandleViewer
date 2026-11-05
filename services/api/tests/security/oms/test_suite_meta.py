@@ -31,9 +31,12 @@ coverage data, and a capture that has not been recorded yet (O-1, E29-K01 #843).
 
 (d) The PR-path budget (the ticket's performance note, BQ-9's "Add (missed)"): the suite's own
 items stay within five minutes, held by `conftest.py` in CPU seconds; it waits on no real clock
-(no `time.sleep`, no `asyncio.sleep` but a bare yield), every property run is bounded, and each
-`TokenBucketGovernor` it builds runs on an injected clock and sleep, the reserve's compressed
-bucket included.
+(no sleep, however imported, but `asyncio.sleep(0)`; no `timeout=`, `wait_for` or
+`asyncio.timeout`), reads none (the stdlib's wall clocks and an event loop's `time`; the CPU clock
+in `conftest.py` alone; the fakes it injects are its only clocks), every property run is bounded
+and every `@given` carries its own bounded `@settings`, and each `TokenBucketGovernor` it builds
+runs on an injected clock and sleep, the reserve's compressed bucket included. A self-test shows
+each of these refused.
 
 And the live guard is E28-X03's, a fixture of every test of this suite.
 """
@@ -296,28 +299,132 @@ def test_every_test_of_the_suite_runs_behind_the_guard(request: pytest.FixtureRe
     assert not unguarded, unguarded
 
 
-def _named(call: ast.Call) -> str:
-    """A call's dotted name as written (`asyncio.sleep`, `settings`), or empty."""
-    return ast.unparse(call.func) if isinstance(call.func, ast.Name | ast.Attribute) else ""
-
-
 def _keywords(call: ast.Call) -> dict[str, ast.expr]:
     return {k.arg: k.value for k in call.keywords if k.arg is not None}
 
 
+#: The stdlib's wall clocks, read by `time.<name>` or `datetime.<...>.<name>` however imported.
+_WALL: Final = {"time", "time_ns", "monotonic", "monotonic_ns", "perf_counter", "perf_counter_ns",
+                "now", "utcnow"}  # fmt: skip
+#: The process's CPU clock: the budget's own, read by `conftest.py` alone.
+_CPU: Final = {"process_time", "process_time_ns"}
+#: Waits with a limit in wall time, however their limit is passed.
+_TIMED: Final = {"asyncio.wait_for", "asyncio.timeout", "asyncio.timeout_at"}
+MAX_EXAMPLES: Final = 25
+
+
+def _aliases(tree: ast.AST) -> dict[str, str]:
+    """Each name a module's imports bind -> the dotted name it stands for."""
+    bound: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                bound[a.asname or a.name.split(".")[0]] = (
+                    a.name if a.asname else a.name.split(".")[0]
+                )
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            bound |= {a.asname or a.name: f"{node.module}.{a.name}" for a in node.names}
+    return bound
+
+
+def _resolved(node: ast.expr, bound: dict[str, str]) -> str:
+    """`node`'s dotted name as written, its head resolved through the imports (`nap` ->
+    `time.sleep`), or empty for an expression that is no name."""
+    if not isinstance(node, ast.Name | ast.Attribute):
+        return ""
+    head, dot, rest = ast.unparse(node).partition(".")
+    return bound.get(head, head) + dot + rest
+
+
+def _bounded(call: ast.Call) -> bool:
+    n = _keywords(call).get("max_examples")
+    return isinstance(n, ast.Constant) and isinstance(n.value, int) and n.value <= MAX_EXAMPLES
+
+
+def _budget_faults(sources: dict[str, str]) -> tuple[list[str], int, int]:
+    """Each way a module of `sources` (file name -> text) waits or runs on: a real sleep (an
+    imported alias resolved), a wall-time limit (`timeout=`, `wait_for`, `asyncio.timeout`), a
+    wall-clock read or reference (the stdlib's clocks, an event loop's `time`; the injected
+    clocks the tests pass, a fake's `now`, are not), the CPU clock outside `conftest.py`, a
+    property run over `MAX_EXAMPLES` or a `@given` with no bounded `@settings` of its own (the CI
+    profile would run it 100 times), a governor on the real clock. With the count of bounded
+    property runs and of governors seen, so a check that reads nothing fails too."""
+    faults: list[str] = []
+    runs = governors = 0
+    for module, text in sources.items():
+        tree = ast.parse(text)
+        bound = _aliases(tree)
+        for node in ast.walk(tree):
+            name = _resolved(node, bound) if isinstance(node, ast.Name | ast.Attribute) else ""
+            head, _dot, last = name.rpartition(".")
+            stdlib = head.split(".")[0] in {"time", "datetime"}
+            if (stdlib and last in _WALL) or (last == "time" and "loop" in head):
+                faults.append(f"{module}: a wall-clock read {ast.unparse(node)}")
+            if stdlib and last in _CPU and module != "conftest.py":
+                faults.append(f"{module}: the CPU clock outside conftest.py")
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                calls = [d for d in node.decorator_list if isinstance(d, ast.Call)]
+                marks = {_resolved(d.func, bound).split(".")[-1]: d for d in calls}
+                if "given" in marks and not ("settings" in marks and _bounded(marks["settings"])):
+                    faults.append(f"{module}: {node.name}: @given with no bounded @settings")
+            if not isinstance(node, ast.Call):
+                continue
+            called = _resolved(node.func, bound)
+            if called.endswith("sleep") and not (
+                called == "asyncio.sleep" and ast.unparse(node).endswith("sleep(0)")
+            ):
+                faults.append(f"{module}: a real wait {ast.unparse(node)}")
+            if "timeout" in _keywords(node) or called in _TIMED:
+                faults.append(f"{module}: a wall-time limit {ast.unparse(node)}")
+            if called.split(".")[-1] == "settings":
+                runs += 1
+                if not _bounded(node):
+                    faults.append(f"{module}: a property run over {MAX_EXAMPLES} examples")
+            if called.endswith("TokenBucketGovernor"):
+                governors += 1
+                if not {"clock", "sleep"} <= set(_keywords(node)):
+                    faults.append(f"{module}: a governor on the real clock")
+    return faults, runs, governors
+
+
 def test_the_suite_keeps_the_pr_path_budget_on_injected_clocks_and_bounded_runs() -> None:
     assert BUDGET_S == 5 * 60  # the ticket's performance note, held by conftest.py
-    calls = [
-        (module.name, node) for module in sorted(_HERE.glob("*.py"))
-        for node in ast.walk(ast.parse(module.read_text("utf-8"))) if isinstance(node, ast.Call)
-    ]  # fmt: skip
-    waits = [(m, _named(c), ast.unparse(c)) for m, c in calls if _named(c).endswith("sleep")]
-    real = [w for w in waits if w[1] != "asyncio.sleep" or w[2] != "asyncio.sleep(0)"]
-    assert not real, f"a real wait: {real}"
-    runs = [(m, _keywords(c).get("max_examples")) for m, c in calls if _named(c) == "settings"]
-    bound = [(m, n.value if isinstance(n, ast.Constant) else None) for m, n in runs]
-    unbounded = [m for m, n in bound if not (isinstance(n, int) and n <= 25)]
-    assert runs and not unbounded, f"a property run with no bound of 25 examples: {unbounded}"
-    built = [(m, _keywords(c)) for m, c in calls if _named(c) == "TokenBucketGovernor"]
-    real_clock = [m for m, kw in built if not {"clock", "sleep"} <= set(kw)]
-    assert built and not real_clock, f"a governor on the real clock: {real_clock}"
+    sources = {m.name: m.read_text("utf-8") for m in sorted(_HERE.glob("*.py"))}
+    faults, runs, governors = _budget_faults(sources)
+    assert faults == [] and runs and governors, (faults, runs, governors)
+
+
+_BUDGET_PROBES: Final = {
+    "sleep": "import time\ntime.sleep(1)\n",
+    "sleep_alias": "from time import sleep as nap\nnap(1)\n",
+    "asyncio_sleep": "import asyncio as aio\naio.sleep(0.5)\n",
+    "time": "from time import time\ntime()\n",
+    "monotonic": "import time as t\nt.monotonic()\n",
+    "perf_counter_ref": "import time\nGovernor(clock=time.perf_counter)\n",
+    "now": "from datetime import datetime\ndatetime.now()\n",
+    "utcnow": "import datetime\ndatetime.datetime.utcnow()\n",
+    "loop_time": "import asyncio\nasyncio.get_running_loop().time()\n",
+    "process_time": "import time\ntime.process_time()\n",
+    "given_unset": "@given(x=st.none())\ndef test_x(x): pass\n",
+    "given_unbounded": "@settings(max_examples=100)\n@given(x=st.none())\ndef test_x(x): pass\n",
+    "timeout": "import asyncio\nasyncio.wait_for(f(), timeout=30)\n",
+    "wait_for": "import asyncio\nasyncio.wait_for(f(), 30)\n",
+    "governor": "TokenBucketGovernor(rate=1)\n",
+}
+_BUDGET_HELD: Final = {
+    "yield": "import asyncio\nasyncio.sleep(0)\n",
+    "fake_clock": "clock = Clock()\nGovernor(clock=clock.now, sleep=clock.sleep)\nclock.now()\n",
+    "given": "@settings(max_examples=25)\n@given(x=st.none())\ndef test_x(x): pass\n",
+    "governor": "TokenBucketGovernor(rate=1, clock=c.now, sleep=c.sleep)\n",
+}
+
+
+def test_the_budget_check_refuses_each_real_wait_clock_and_unbounded_run() -> None:
+    """The budget check's own teeth: each probe module is refused for its one fault; what the
+    suite does instead (a bare yield, a fake clock, a bounded run) is not; and the CPU clock is
+    the budget's in `conftest.py` alone."""
+    for probe, text in _BUDGET_PROBES.items():
+        faults, _runs, _governors = _budget_faults({f"test_{probe}.py": text})
+        assert len(faults) == 1 + (probe == "given_unbounded"), (probe, faults)  # both its marks
+    assert _budget_faults({f"test_{k}.py": v for k, v in _BUDGET_HELD.items()})[0] == []
+    assert _budget_faults({"conftest.py": _BUDGET_PROBES["process_time"]})[0] == []
