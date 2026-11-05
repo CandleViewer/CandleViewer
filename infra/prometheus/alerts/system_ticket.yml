@@ -310,6 +310,157 @@ groups:
         annotations:
           summary: "Rate-limit rejections in OMS"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-omsraterejects"
+      # --- E29-T08 (#916): the OMS tickets the ticket owns (BQ-1, BQ-7, BQ-10, BQ-11, BQ-12). An
+      # any-event ticket holds 9 h 30 m past its window, so one raised in the 22:00-07:00 UTC mute
+      # is sent at 07:00 (ws_gateway.yml header, with its two preconditions); a condition ticket
+      # does not. Each window and hold below that no ruling sets is PROPOSED.
+      - alert: OmsUnknownOrdersAlreadyTerminal
+        # BQ-7: an order a cancel's 110001 parked in `unknown` (24 Sec.8.6) that reconciliation has
+        # not decided in 5 minutes, ten 30 s cycles: a stalled reconciler. The OmsUnknownOrders page
+        # leaves this reason out, and the facade's `order_already_terminal` alert tickets each case
+        # as it parks (20 Sec.12.5). A condition ticket: it clears once the order is decided.
+        expr: sum by (env) (oms_unknown_orders{reason="already_terminal"}) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          component: oms
+        annotations:
+          summary: "An order the venue answered already terminal has waited 5 minutes for reconciliation"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omsunknownordersalreadyterminal"
+      - alert: OmsAccountScopeDenied
+        # BQ-10 (SR-E29-16: scope denials countable apart from capability, and alerted): an order or
+        # exit request refused `account_scope_denied`, a caller acting on an account outside its
+        # scope. Each `code` child is bound at its first refusal, so a first sample with none an
+        # hour before counts, child by child, as BybitRowsRefusedAccount reads its first one; no
+        # guard can watch either series (`lazy-series` in the QA guard baseline). PROPOSED: any
+        # refusal, the hour, the any-event hold, and `auth`, as AuthzDeniedSpike's: neither a
+        # Postgres outage nor an `oms` page hides it (SR-125).
+        expr: >-
+          sum by (env) (increase(oms_submit_rejected_total{code="account_scope_denied"}[1h])) > 0
+          or sum by (env) (increase(oms_exit_refused_total{code="account_scope_denied"}[1h])) > 0
+          or sum by (env) (oms_submit_rejected_total{code="account_scope_denied"}
+          unless oms_submit_rejected_total{code="account_scope_denied"} offset 1h) > 0
+          or sum by (env) (oms_exit_refused_total{code="account_scope_denied"}
+          unless oms_exit_refused_total{code="account_scope_denied"} offset 1h) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: auth
+        annotations:
+          summary: "An order or exit request named an account outside its caller's scope"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omsaccountscopedenied"
+      - alert: OmsIllegalTransitions
+        # BQ-12 item 1 (20 Sec.12.1 "alert > 0"): an order command or step B1's static table does
+        # not list, refused before any send or write (ILLEGAL_TRANSITION): a defect in the order
+        # path. Bound at 0 with the facade, so the first after a restart is an increase.
+        expr: sum by (env) (increase(oms_illegal_transitions_total[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: oms
+        annotations:
+          summary: "The order facade refused a command or step B1 does not allow"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omsillegaltransitions"
+      - alert: OmsReconcileAnomalies
+        # BQ-12 item 1 (20 Sec.12.1 "alert > 0"): an exchange push a final or held order did not
+        # take (S6), or an execution refused as hostile (OM-T04), each audited
+        # `oms.reconcile_anomaly` and paged by the facade (#847). Bound at 0 with the facade.
+        expr: sum by (env) (increase(oms_reconcile_anomaly_total[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: oms
+        annotations:
+          summary: "The OMS refused an exchange push or execution it could not take"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omsreconcileanomalies"
+      - alert: OmsLaneNoticesFailed
+        # BQ-12 item 1 (20 Sec.12.1 "alert > 0"): a notice from the order lane to the serving loop
+        # that never took effect (`lost`: the serving loop had closed; `failed`: the call raised
+        # there), each logged by its call's name. Both children bound at 0 with the lane.
+        expr: sum by (env) (increase(oms_lane_notices_failed_total[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: oms
+        annotations:
+          summary: "A notice from the order lane to the serving loop never took effect"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omslanenoticesfailed"
+      - alert: OmsTierRequestsDropped
+        # BQ-12 item 1 (20 Sec.12.1 "alert > 0"): a risk-limit tier request from the order lane to
+        # the instrument catalogue dropped (`full`: 100 symbols already waiting; `stopped`: the
+        # catalogue had stopped). Both children bound at 0 with the requester.
+        expr: sum by (env) (increase(oms_tier_requests_dropped_total[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: oms
+        annotations:
+          summary: "A risk-limit tier request from the order lane was dropped"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omstierrequestsdropped"
+      - alert: OmsStuckOrderIncidents
+        # BQ-1 (24 Sec.8.13, 20 Sec.12.5): the stuck-order detector raised an `error` incident, an
+        # order whose create went unanswered past CV_OMS_INFLIGHT_STUCK_S (`in_flight`) or whose
+        # cancel or amend did past CV_OMS_PENDING_STUCK_S (`pending`); one still stuck is raised
+        # again after the 300 s cool-down, so the count keeps rising while it stays. The `critical`
+        # kinds page through their own rules (OmsUnknownOrders, NakedPositionDetected,
+        # OmsStaleAccounts). Every kind's child is bound at 0 with the detector.
+        expr: sum by (env, kind) (increase(oms_incidents_total{kind=~"in_flight|pending"}[15m])) > 0
+        for: 0m
+        keep_firing_for: 9h30m
+        labels:
+          severity: ticket
+          component: oms
+        annotations:
+          summary: "The stuck-order detector found an order stuck in flight or pending"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omsstuckorderincidents"
+      - alert: OmsStuckDetectorStalled
+        # BQ-1 (24 Sec.8.13, 20 Sec.6.2): no detector scan has ended for 30 s once the runtime is
+        # ready (its loop stopped, or a scan hung past its 4 s bound), the line at which /readyz's
+        # `oms` check reads degraded; or every scan for 5 minutes failed, since a failed scan still
+        # ends and keeps the age low. Stuck orders and naked positions go unseen; reconciliation's
+        # passes still repair stops (24 Sec.8.5 step 5). PROPOSED: the 1m hold and the 5 minute
+        # window. A component of its own, `oms_detector` (the orchestrator's ruling on #916 PR B's
+        # security look, M1): a page hides the tickets of its component (alertmanager.yml), and
+        # OmsUnknownOrders can stand for hours, so an `oms` page would hide the one ticket that
+        # says the detection behind it is blind. The alert-rule shape, owned by
+        # docs/plan/observability-contract.md ("Get an alert approved": a severity, a component, a
+        # runbook_url; check_alert_rules.py enforces it), has no label that exempts a ticket from
+        # an inhibit, so the component is the form. PostgresDown's inhibit does not list it
+        # either: a Postgres outage fails every scan, and the ticket stands beside that page.
+        expr: >-
+          max by (env) (oms_detector_last_scan_age_seconds) >= 30
+          or (sum by (env) (increase(oms_detector_scans_total{result="failed"}[5m])) > 0
+          unless sum by (env) (increase(oms_detector_scans_total{result="ok"}[5m])) > 0)
+        for: 1m
+        labels:
+          severity: ticket
+          component: oms_detector
+        annotations:
+          summary: "The stuck-order detector has stalled or every scan fails"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omsstuckdetectorstalled"
+      - alert: OmsRateHeadroomExhausted
+        # BQ-11: the OMS's own budget gauge over TradingPort.headroom (24 Sec.14.1), the fewest
+        # spare tokens of the `critical` lane across the environment's accounts: the lane of stops,
+        # cancels and stop-loss attaches, the reserve C-12.7 keeps; an exhausted reserve is the
+        # concern the gauge exists for. Every lane draws the same buckets until E34-T02, so the
+        # ticket reads `critical` alone; NaN, no account read, never fires. PROPOSED, kept by the
+        # orchestrator's ruling on #916 PR B's code look (m3; the ruling of record sets the gauge,
+        # not a rule): one token or fewer for a minute, as IngestionRateLimitHeadroomExhausted
+        # reads the adapter's gauge. Its owner, the E04 alert owner
+        # (docs/plan/observability-contract.md), may re-tune it with its runbook (07 Sec.9).
+        expr: min by (env) (bybit_rate_remaining{endpoint_group="critical"}) <= 1
+        for: 1m
+        labels:
+          severity: ticket
+          component: oms
+        annotations:
+          summary: "The OMS's critical rate lane has one token or fewer to spare"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omsrateheadroomexhausted"
       - alert: EgressIpChanged
         expr: increase(egress_ip_changes_total[1h]) > 0
         for: 0m

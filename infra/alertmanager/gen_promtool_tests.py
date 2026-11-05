@@ -43,11 +43,29 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         "15m",
         {},
     ),
-    "OmsUnknownOrders": ("oms_unknown_orders", "0 2+0x10", "0+0x12", "5m", {}),
     # E29-T05 S8b (20 section 12.5): a position reading owed to protection for 60 s pages; one owed
     # 59 s does not.
     "OmsPositionReadingOwed": (
         "oms_position_reading_owed_age_seconds", "0+0x2 60+0x10", "59+0x12", "5m", {},
+    ),
+    # E29-T08 #916 BQ-8: one untracked row pages at the first evaluation that reads it, no hold.
+    "OmsUntrackedOrders": (
+        'oms_untracked_orders{env="live"}', "0+0x4 2+0x10", "0+0x15", "5m", {"env": "live"}
+    ),
+    # #916 BQ-1: a stale account from 3 min pages once held its minute (pending at 3, firing at 4).
+    "OmsStaleAccounts": (
+        'oms_stale_accounts{env="live"}', "0+0x2 1+0x10", "0+0x15", "5m", {"env": "live"}
+    ),
+    # #916 BQ-12: one clock-halt trip, or one entry the native-stop backstop refused, at 6 min.
+    "OmsClockHaltTripped": (
+        'oms_clock_halt_trips_total{env="live"}', "0+0x5 1+0x20", "0+0x25", "10m", {"env": "live"}
+    ),
+    "OmsNativeStopBackstop": (
+        'oms_native_stop_backstop_total{env="live"}',
+        "0+0x5 1+0x20",
+        "0+0x25",
+        "10m",
+        {"env": "live"},
     ),
     "DiskCritical": ("disk_used_ratio", "0.97+0x10", "0.5+0x10", "5m", {}),
     "AuditChainVerificationFailed": (
@@ -286,6 +304,28 @@ _A_DAY_APART = "0+0x5 1+0x1439 2+0x700"
 _ACCOUNT_ROWS = 'bybit_rows_refused_total{env="live",reason="account"}'
 _ENV_ROWS = 'bybit_rows_refused_total{env="live",reason="environment"}'
 _FIRST_ROW = "_x5 1+0x700"
+# E29-T08 (#916): the OMS series its rules read, each `env="live"`. The submit and exit refusal
+# counters bind a child at its first refusal (no sample before it); the others bind every child at
+# 0 when their runtime is composed.
+_UNKNOWN = 'oms_unknown_orders{{env="live",reason="{}"}}'
+_SUBMIT = 'oms_submit_rejected_total{{code="{}",env="live"}}'
+_EXIT = 'oms_exit_refused_total{{code="{}",env="live",operation="{}"}}'
+_ILLEGAL = 'oms_illegal_transitions_total{env="live"}'
+_ANOMALIES = 'oms_reconcile_anomaly_total{env="live"}'
+_NOTICES = 'oms_lane_notices_failed_total{{env="live",reason="{}"}}'
+_TIERS = 'oms_tier_requests_dropped_total{{env="live",reason="{}"}}'
+_INCIDENTS = 'oms_incidents_total{{env="live",kind="{}"}}'
+_AGE = 'oms_detector_last_scan_age_seconds{env="live"}'
+_SCANS = 'oms_detector_scans_total{{env="live",result="{}"}}'
+_HEADROOM = 'bybit_rate_remaining{{endpoint_group="{}",env="live"}}'
+# A refusal every minute from 5 min, the child bound at the first; one refusal and no more.
+_EVERY_MINUTE, _ONCE = "_x5 1+1x20", "_x5 1+0x20"
+# Two refusals 30 s apart and no more, read every 30 s: the child bound at the first (5:00), the
+# second at 5:30.
+_TWO_30S_APART = "_x10 1 2+0x40"
+_TRANSPORT, _TERMINAL = _UNKNOWN.format("transport"), _UNKNOWN.format("already_terminal")
+_FAILED, _SCANNED = _SCANS.format("failed"), _SCANS.format("ok")
+_CRITICAL, _ENTRY = _HEADROOM.format("critical"), _HEADROOM.format("entry")
 
 
 def _closes(fast: int, under_5: int, slow: int) -> dict[str, str]:
@@ -509,6 +549,111 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("30m", False, {_DEAD: _FLAT}),
         ("6m", False, {_DEAD_OTHER: _RISE}),
     ),
+    # E29-T08 #916 BQ-7: a reason other than already_terminal held its minute pages;
+    # already_terminal alone never does, however long it holds (its ticket's); the 1m `for` from
+    # both sides.
+    "OmsUnknownOrders": (
+        ("5m", True, {_TRANSPORT: "0 2+0x10", _TERMINAL: "0+0x11"}),
+        ("5m", True, {_UNKNOWN.format("missing_remote"): "0 1+0x10"}),
+        ("5m", True, {_UNKNOWN.format("duplicate_unverified"): "0 1+0x10"}),
+        ("10m", False, {_TERMINAL: "0 3+0x20", _TRANSPORT: "0+0x21"}),
+        ("5m", False, {_TRANSPORT: "0+0x4 1+0x5"}),
+        ("6m", True, {_TRANSPORT: "0+0x4 1+0x5"}),
+    ),
+    # #916 BQ-7: an already_terminal order held 5 minutes tickets (a stalled reconciler); pending at
+    # 4 minutes; another reason is the page's; one decided within the hold never fires.
+    "OmsUnknownOrdersAlreadyTerminal": (
+        ("6m", True, {_TERMINAL: "0 1+0x10"}),
+        ("5m", False, {_TERMINAL: "0 1+0x10"}),
+        ("10m", False, {_TRANSPORT: "0 1+0x10", _TERMINAL: "0+0x11"}),
+        ("10m", False, {_TERMINAL: "0 1+0x3 0+0x10"}),
+    ),
+    # #916 BQ-12 item 2: refusals every minute from 5 min fire once held 5 minutes (pending at 9,
+    # firing at 10), each of the three codes; one refusal never does (its first-sample arm ends as
+    # the hold would end), and neither does another code. Two refusals 30 s apart do (FINE below).
+    "OmsSubmitFailing": (
+        ("10m", True, {_SUBMIT.format("store_unavailable"): _EVERY_MINUTE}),
+        ("10m", True, {_SUBMIT.format("audit_unavailable"): _EVERY_MINUTE}),
+        ("10m", True, {_SUBMIT.format("internal_error"): _EVERY_MINUTE}),
+        ("9m", False, {_SUBMIT.format("store_unavailable"): _EVERY_MINUTE}),
+        ("10m", False, {_SUBMIT.format("store_unavailable"): _ONCE}),
+        ("12m", False, {_SUBMIT.format("store_unavailable"): _ONCE}),
+        ("10m", False, {_SUBMIT.format("account_scope_denied"): _EVERY_MINUTE}),
+    ),
+    # #916 BQ-10: a submit or an exit refused account_scope_denied tickets at once, a rise or a
+    # child's first sample, judged child by child (a first cancel refusal beside an amend child an
+    # hour old, at 70 min), and holds through the quiet hours (the hour and 9 h 30 m); another code,
+    # and a count already held an hour before once its first hold ends, are silent.
+    "OmsAccountScopeDenied": (
+        ("6m", True, {_SUBMIT.format("account_scope_denied"): _RISE}),
+        ("6m", True, {_SUBMIT.format("account_scope_denied"): _FIRST_ROW}),
+        ("6m", True, {_EXIT.format("account_scope_denied", "cancel"): _FIRST_ROW}),
+        ("70m", True, {
+            _EXIT.format("account_scope_denied", "amend"): "1+0x700",
+            _EXIT.format("account_scope_denied", "cancel"): "_x65 1+0x700",
+        }),
+        ("10h", True, {_SUBMIT.format("account_scope_denied"): _RISE}),
+        ("11h", False, {_SUBMIT.format("account_scope_denied"): _RISE}),
+        ("6m", False, {
+            _SUBMIT.format("forbidden"): _RISE, _EXIT.format("forbidden", "cancel"): _RISE
+        }),
+        ("11h", False, {_SUBMIT.format("account_scope_denied"): _FLAT}),
+    ),
+    # #916 BQ-12 item 1: the any-event tickets on the facade's, the lane's and the tier requester's
+    # counters (each bound at 0): a step fires at the first evaluation after it and holds past the
+    # quiet-hours mute (firing at 9 h 49 m, resolved at 9 h 52 m); a flat count is an old one.
+    "OmsIllegalTransitions": (
+        ("6m", True, {_ILLEGAL: _RISE}),
+        ("9h49m", True, {_ILLEGAL: _RISE}),
+        ("9h52m", False, {_ILLEGAL: _RISE}),
+        ("30m", False, {_ILLEGAL: _FLAT}),
+    ),
+    "OmsReconcileAnomalies": (
+        ("6m", True, {_ANOMALIES: _RISE}),
+        ("9h49m", True, {_ANOMALIES: _RISE}),
+        ("9h52m", False, {_ANOMALIES: _RISE}),
+        ("30m", False, {_ANOMALIES: _FLAT}),
+    ),
+    "OmsLaneNoticesFailed": (
+        ("6m", True, {_NOTICES.format("lost"): _RISE, _NOTICES.format("failed"): _ZERO}),
+        ("6m", True, {_NOTICES.format("failed"): _RISE}),
+        ("9h49m", True, {_NOTICES.format("lost"): _RISE}),
+        ("9h52m", False, {_NOTICES.format("lost"): _RISE}),
+        ("30m", False, {_NOTICES.format("lost"): _FLAT, _NOTICES.format("failed"): _FLAT}),
+    ),
+    "OmsTierRequestsDropped": (
+        ("6m", True, {_TIERS.format("full"): _RISE, _TIERS.format("stopped"): _ZERO}),
+        ("6m", True, {_TIERS.format("stopped"): _RISE}),
+        ("9h49m", True, {_TIERS.format("full"): _RISE}),
+        ("9h52m", False, {_TIERS.format("full"): _RISE}),
+        ("30m", False, {_TIERS.format("full"): _FLAT, _TIERS.format("stopped"): _FLAT}),
+    ),
+    # #916: the detector stalled: an age at the 30 s line held its minute (29 s never; pending at
+    # 3 min, firing at 4, the 1m `for` from both sides), or every scan failing for 5 minutes with
+    # the age low; failures beside ok scans, and a one-scrape spike of the age read on its own
+    # minute (pending, never firing), are silent.
+    "OmsStuckDetectorStalled": (
+        ("5m", True, {_AGE: "0+60x20"}),
+        ("3m", False, {_AGE: "0+0x2 60+0x10"}),
+        ("4m", True, {_AGE: "0+0x2 60+0x10"}),
+        ("10m", True, {_AGE: "30+0x20"}),
+        ("10m", False, {_AGE: "29+0x20"}),
+        ("10m", True, {_AGE: "3+0x20", _FAILED: "0+12x20", _SCANNED: "50+0x20"}),
+        ("10m", False, {_AGE: "3+0x20", _FAILED: "0+1x20", _SCANNED: "0+11x20"}),
+        ("10m", False, {_AGE: "3+0x20", _FAILED: "0+0x20", _SCANNED: "0+12x20"}),
+        ("5m", False, {_AGE: "3+0x4 40 3+0x15"}),
+    ),
+    # #916 BQ-11: the critical lane at one token or fewer for its minute (pending at 3, firing at
+    # 4); above one, another lane at 0 beside a healthy critical lane, and a one-scrape dip are
+    # silent.
+    "OmsRateHeadroomExhausted": (
+        ("5m", True, {_CRITICAL: "10+0x2 0.5+0x10"}),
+        ("5m", True, {_CRITICAL: "1+0x10"}),
+        ("3m", False, {_CRITICAL: "10+0x2 0.5+0x10"}),
+        ("5m", False, {_CRITICAL: "1.5+0x10"}),
+        ("5m", False, {_ENTRY: "0+0x10", _CRITICAL: "10+0x10"}),
+        ("5m", False, {_CRITICAL: "10+0x2 0 10+0x10"}),
+    ),
 }
 
 #: alert -> cases of (eval_time, {series: values}, the `rule` of each alert expected): #836's
@@ -562,6 +707,18 @@ LABELLED: dict[str, tuple[tuple[str, str, str, bool, dict[str, str]], ...]] = {
         (_CONFIG, "690000+60x40", "35m", False, {"env": "live", "kind": "config_bundle"}),
         (_CONFIG, "690000+60x40", "36m", True, {"env": "live", "kind": "config_bundle"}),
     ),
+    # E29-T08 #916: the detector's `error` incidents, one ticket per kind, held past the mute; the
+    # `critical` kinds page through their own rules, and a flat count is an old incident.
+    "OmsStuckOrderIncidents": (
+        (_INCIDENTS.format("in_flight"), _RISE, "6m", True, {"env": "live", "kind": "in_flight"}),
+        (_INCIDENTS.format("pending"), _RISE, "6m", True, {"env": "live", "kind": "pending"}),
+        (_INCIDENTS.format("pending"), _RISE, "9h49m", True, {"env": "live", "kind": "pending"}),
+        (_INCIDENTS.format("pending"), _RISE, "9h52m", False, {}),
+        (_INCIDENTS.format("unknown"), _RISE, "6m", False, {}),
+        (_INCIDENTS.format("naked"), _RISE, "6m", False, {}),
+        (_INCIDENTS.format("account_stale"), _RISE, "6m", False, {}),
+        (_INCIDENTS.format("in_flight"), _FLAT, "30m", False, {}),
+    ),
 }
 
 # alert -> [(values, eval_time, fires)]: more cases on the same series (`_xN`: N missed scrapes).
@@ -577,10 +734,38 @@ FINE: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("10m", False, {_LOOP: "0+10x40"}),
         ("10m", False, {_LOOP: "0+10x40", _SHARE: "0.5x40"}),
     ),
+    # E29-T08 #916 BQ-12 item 2, kept by the orchestrator's ruling on PR B's code look (m2): two
+    # refusals 30 s apart page. The second keeps the 5 minute increase above 0 until 11 min, past
+    # the hold the first began at 5, so the page fires at 10 and ends at 11.
+    "OmsSubmitFailing": (
+        ("10m", True, {_SUBMIT.format("store_unavailable"): _TWO_30S_APART}),
+        ("11m", False, {_SUBMIT.format("store_unavailable"): _TWO_30S_APART}),
+    ),
 }
 EXTRA: dict[str, list[tuple[str, str, bool]]] = {
     # E29-T05 S8b: a condition page, resolved once the reading is handed on and the gauge reads 0.
     "OmsPositionReadingOwed": [("0+0x2 75+0x4 0+0x10", "10m", False)],
+    # E29-T08 #916 BQ-4: an event page, ended once its 5 minute window has moved past the count
+    # (firing at 14 min, silent at 17), protected or not. A first sample already at 1, a detection
+    # before the first scrape, pages too (PR B's security look, N1), until that sample is 5
+    # minutes old (firing at 6 min, silent at 10).
+    "NakedPositionDetected": [
+        ("0+0x10 1+0x20", "14m", True),
+        ("0+0x10 1+0x20", "17m", False),
+        ("_x5 1+0x20", "6m", True),
+        ("_x5 1+0x20", "10m", False),
+    ],
+    # #916 BQ-8: a condition page, resolved once a pass counts no row.
+    "OmsUntrackedOrders": [("0+0x4 1+0x3 0+0x10", "10m", False)],
+    # #916 BQ-1: the 1m hold from both sides, and a start whose jobs open within the minute.
+    "OmsStaleAccounts": [
+        ("0+0x2 1+0x10", "3m", False),
+        ("0+0x2 1+0x10", "4m", True),
+        ("1 0+0x10", "1m", False),
+    ],
+    # #916 BQ-12: each event page ends once its 15 minute window has moved past the count.
+    "OmsClockHaltTripped": [("0+0x5 1+0x30", "20m", True), ("0+0x5 1+0x30", "22m", False)],
+    "OmsNativeStopBackstop": [("0+0x5 1+0x30", "20m", True), ("0+0x5 1+0x30", "22m", False)],
     # #2496 item 3: the page rides out a gap shorter than its 15m window (the restart after a
     # break-glass run, a failed scrape) and ends once the last reading of 1 has aged out of it.
     # The gauge is a count: a second unresolved reset (2) pages the same as the first.

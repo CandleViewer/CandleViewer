@@ -94,7 +94,8 @@ def test_architecture_log_fields_and_dashboards_documented() -> None:
         assert f"`{field}`" in logging_sec
     dash_sec = _section(text, "### 12.4", "### 12.5")
     dashboards = list((ROOT / "infra" / "grafana" / "dashboards").glob("*.json"))
-    assert len(re.findall(r"^\d\. \*\*", dash_sec, re.M)) == len(dashboards) or dashboards == []
+    # #916: the tenth board (OMS health) is the first numbered with two digits
+    assert len(re.findall(r"^\d+\. \*\*", dash_sec, re.M)) == len(dashboards) or dashboards == []
 
 
 def test_architecture_order_flowchart_sizes_before_validating() -> None:

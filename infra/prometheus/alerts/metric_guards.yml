@@ -31,6 +31,118 @@ groups:
         annotations:
           summary: "Expected metric oms_position_reading_owed_age_seconds is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      # E29-T08 (#916): the series the OMS pages and tickets read, each bound when the runtime that
+      # emits it is composed (every label value of a labelled one at once), so each fires only
+      # unscraped. oms_submit_rejected_total and oms_exit_refused_total bind a child per code at
+      # its first refusal: a guard would stand on a healthy process (the QA guard baseline).
+      - alert: ExpectedMetricMissingOmsUntrackedOrders
+        expr: absent(oms_untracked_orders)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric oms_untracked_orders is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingOmsStaleAccounts
+        expr: absent(oms_stale_accounts)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric oms_stale_accounts is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingOmsClockHaltTripsTotal
+        expr: absent(oms_clock_halt_trips_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric oms_clock_halt_trips_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingOmsNativeStopBackstopTotal
+        expr: absent(oms_native_stop_backstop_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric oms_native_stop_backstop_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingOmsIllegalTransitionsTotal
+        expr: absent(oms_illegal_transitions_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric oms_illegal_transitions_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingOmsReconcileAnomalyTotal
+        expr: absent(oms_reconcile_anomaly_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric oms_reconcile_anomaly_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingOmsLaneNoticesFailedTotal
+        expr: absent(oms_lane_notices_failed_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric oms_lane_notices_failed_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingOmsTierRequestsDroppedTotal
+        expr: absent(oms_tier_requests_dropped_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric oms_tier_requests_dropped_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingOmsIncidentsTotal
+        expr: absent(oms_incidents_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric oms_incidents_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingOmsDetectorScansTotal
+        expr: absent(oms_detector_scans_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric oms_detector_scans_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingOmsDetectorLastScanAgeSeconds
+        expr: absent(oms_detector_last_scan_age_seconds)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric oms_detector_last_scan_age_seconds is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingBybitRateRemaining
+        expr: absent(bybit_rate_remaining)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric bybit_rate_remaining is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - alert: ExpectedMetricMissingCvKekDegradedState
         expr: absent(cv_kek_degraded_state)
         for: 15m

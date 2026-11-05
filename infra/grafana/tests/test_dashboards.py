@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -324,3 +325,92 @@ def test_the_trading_board_shows_the_trade_group_and_sizer_series() -> None:
         assert [s["value"] for s in defaults["thresholds"]["steps"]] == [None, budget]
         assert defaults["custom"]["thresholdsStyle"] == {"mode": "dashed"}
         assert p95.get("description")
+
+
+#: E29-T08 (#916): every series an OMS page or ticket of the ticket reads, plus the detector's scan
+#: time and the reconciliation's pass series beside them.
+OMS_HEALTH_SERIES = (
+    "oms_unknown_orders",
+    "oms_untracked_orders",
+    "oms_stale_accounts",
+    "naked_position_alerts_total",
+    "oms_stuck_orders",
+    "oms_incidents_total",
+    "oms_detector_scans_total",
+    "oms_detector_scan_seconds_bucket",
+    "oms_detector_last_scan_age_seconds",
+    "oms_reconcile_seconds_bucket",
+    "oms_reconcile_passes_total",
+    "oms_reconcile_corrections_total",
+    "oms_submit_rejected_total",
+    "oms_exit_refused_total",
+    "oms_illegal_transitions_total",
+    "oms_reconcile_anomaly_total",
+    "oms_native_stop_backstop_total",
+    "oms_clock_halt_trips_total",
+    "oms_lane_notices_failed_total",
+    "oms_tier_requests_dropped_total",
+    "bybit_rate_remaining",
+)
+
+
+def _oms_health() -> list[dict]:
+    d = json.loads((G / "dashboards" / "oms-health.json").read_text("utf-8"))
+    assert (d["uid"], d["title"]) == ("cv-oms-health", "CV / OMS health")
+    return [p for p in d["panels"] if "targets" in p]
+
+
+def test_the_oms_health_board_draws_every_oms_rule_series_env_filtered() -> None:
+    """#916 (E29-T08): cv-oms-health draws each series the OMS pages and tickets read, every
+    selector env-filtered and grouped by its own bounded labels only, never by an account, an
+    order or a symbol (BQ-11: no account label on any of them)."""
+    exprs = [t["expr"] for p in _oms_health() for t in p["targets"]]
+    for metric in OMS_HEALTH_SERIES:
+        assert any(metric in e for e in exprs), metric
+        assert metric.removesuffix("_bucket") in lint.catalogue_names(), metric
+    for e in exprs:  # a bare name selects every env: each target has a selector, all env-filtered
+        assert "{" in e and e.count('env="$env"') == e.count("{"), e
+    grouped = {
+        label.strip()
+        for e in exprs
+        for by in re.findall(r"by \(([^)]*)\)", e)
+        for label in by.split(",")
+    }
+    bounded = {"le", "kind", "result", "trigger", "reason", "code", "operation", "endpoint_group"}
+    assert grouped <= bounded, grouped - bounded
+
+
+def test_the_oms_health_board_draws_its_rule_and_budget_lines() -> None:
+    """#916: the stall line (30 s, OmsStuckDetectorStalled and /readyz), the scan bound (4 s) and
+    the pass budget (2 s) are dashed lines at their documented values, and the headroom panel's
+    line sits at the 1 token OmsRateHeadroomExhausted reads, low being the bad side: the rule
+    tickets at `<= 1`, so 1 itself is vermillion and anything above it is not."""
+    panels = {p["title"]: p["fieldConfig"]["defaults"] for p in _oms_health()}
+    for title, line in (
+        ("Detector last scan age (ticket at 30 s)", 30),
+        ("Detector scan p95 (bound 4 s)", 4),
+        ("Pass p95 by trigger (budget 2 s)", 2),
+        ("Rate headroom by lane (ticket at 1 or fewer)", 1),
+    ):
+        steps = panels[title]["thresholds"]["steps"]
+        assert steps[0]["value"] is None and len(steps) == 2, title
+        assert abs(steps[1]["value"] - line) < 1e-9, title
+        assert panels[title]["custom"]["thresholdsStyle"] == {"mode": "dashed"}, title
+    headroom = panels["Rate headroom by lane (ticket at 1 or fewer)"]["thresholds"]["steps"]
+
+    def colour(value: float) -> str:
+        """Grafana's pick: the colour of the last step at or below `value`."""
+        return [s["color"] for s in headroom if s["value"] is None or s["value"] <= value][-1]
+
+    assert [colour(v) for v in (0, 0.5, 1)] == [gen.BAD] * 3
+    assert [colour(v) for v in (1.000001, 1.5, 10)] == [gen.OK] * 3
+
+
+def test_the_trading_boards_unknown_orders_stat_reads_what_its_page_reads() -> None:
+    """#916 BQ-7: the page leaves `already_terminal` to its ticket, so the trading board's stat
+    captioned with the page sums every other reason, as the OMS health board's does."""
+    d = json.loads((G / "dashboards" / "trading.json").read_text("utf-8"))
+    [stat] = [p for p in d["panels"] if p.get("title") == "Unknown orders (page > 0 for 60 s)"]
+    known = 'sum(oms_unknown_orders{env="$env",reason!="already_terminal"})'
+    assert [t["expr"] for t in stat["targets"]] == [known]
+    assert known in [t["expr"] for p in _oms_health() for t in p["targets"]]

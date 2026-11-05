@@ -9,6 +9,7 @@ Thresholds come from docs/plan/06-performance-and-load-standard.md section 2.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -709,9 +710,10 @@ def trading() -> Board:
         "short",
         legend="{{endpoint_group}}",
     )
+    # #916 BQ-7: what the page reads, every reason but already_terminal (its ticket's), summed.
     b.stat(
         "Unknown orders (page > 0 for 60 s)",
-        f"oms_unknown_orders{{{E}}}",
+        f'sum(oms_unknown_orders{{{E},reason!="already_terminal"}})',
         "short",
         1,
         1,
@@ -1243,6 +1245,111 @@ def recorder() -> Board:
     return b
 
 
+def oms_health() -> Board:
+    """E29-T08 (#916) board for the OMS pages and tickets (infra/prometheus/alerts/system_page.yml
+    and system_ticket.yml; runbooks in docs/plan/07-release-and-prr.md section 9). Every series is
+    env-filtered and grouped by its own bounded labels alone, never per account or order (BQ-11);
+    a line is drawn at a rule's or a budget's documented value."""
+    b = Board("cv-oms-health", "CV / OMS health", ["oms", "trading"])
+    b.row("Pages")
+    known = f'sum(oms_unknown_orders{{{E},reason!="already_terminal"}})'
+    b.stat("Unknown orders, all but already_terminal (page > 0 for 60 s)", known, "short", 1, 1)
+    b.stat("Untracked orders (page > 0)", f"max(oms_untracked_orders{{{E}}})", "short", 1, 1)
+    b.stat("Stale accounts (page > 0 for 60 s)", f"max(oms_stale_accounts{{{E}}})", "short", 1, 1)
+    naked = _in_range("naked_position_alerts_total")
+    b.stat("Naked-position alerts in the range (page)", naked, "short", 1, 1)
+    b.row("Stuck-order detector")
+    stuck = f"max by (kind) (oms_stuck_orders{{{E}}})"
+    b.ts("Stuck orders by kind", stuck, "short", legend="{{kind}}")
+    raised = f"sum by (kind) (increase(oms_incidents_total{{{E}}}[{RI}]))"
+    b.ts("Incidents per interval by kind", raised, "short", legend="{{kind}}")
+    _describe(b, "in_flight and pending tickets (OmsStuckOrderIncidents); the critical kinds page.")
+    b.ts(
+        "Detector scans/s by result",
+        rate("oms_detector_scans_total", "result"),
+        "ops",
+        legend="{{result}}",
+    )
+    b.ts("Detector scan p95 (bound 4 s)", q("oms_detector_scan_seconds"), "s", None, 4)
+    _threshold_lines(b)
+    age = f"max(oms_detector_last_scan_age_seconds{{{E}}})"
+    b.ts("Detector last scan age (ticket at 30 s)", age, "s", None, 30)
+    _threshold_lines(b)
+    _describe(b, "At 30 s /readyz's oms check reads degraded; OmsStuckDetectorStalled tickets it.")
+    b.row("Reconciliation")
+    took = q("oms_reconcile_seconds", "trigger")
+    b.ts("Pass p95 by trigger (budget 2 s)", took, "s", None, 2, "{{trigger}}")
+    _threshold_lines(b)
+    b.ts(
+        "Passes/s by result",
+        rate("oms_reconcile_passes_total", "result"),
+        "ops",
+        legend="{{result}}",
+    )
+    b.ts(
+        "Corrections/s by kind",
+        rate("oms_reconcile_corrections_total", "kind"),
+        "ops",
+        legend="{{kind}}",
+    )
+    by_reason = f"sum by (reason) (oms_unknown_orders{{{E}}})"
+    b.ts("Unknown orders by reason", by_reason, "short", legend="{{reason}}")
+    _describe(
+        b, "already_terminal tickets once held 5 minutes (a stalled reconciler); the rest page."
+    )
+    b.row("Order path")
+    b.ts(
+        "Submit refusals/s by code",
+        rate("oms_submit_rejected_total", "code"),
+        "ops",
+        legend="{{code}}",
+    )
+    exits = rate("oms_exit_refused_total", "operation, code")
+    b.ts("Exit refusals/s by operation and code", exits, "ops", legend="{{operation}} {{code}}")
+    faults = [
+        ("oms_illegal_transitions_total", "illegal transitions"),
+        ("oms_reconcile_anomaly_total", "reconcile anomalies"),
+        ("oms_native_stop_backstop_total", "native-stop backstops"),
+        ("oms_clock_halt_trips_total", "clock-halt trips"),
+    ]
+    first, legend = faults[0]
+    b.ts(
+        "Order-path faults per interval",
+        f"sum(increase({first}{{{E}}}[{RI}]))",
+        "short",
+        legend=legend,
+    )
+    for refid, (metric, legend) in zip("BCD", faults[1:]):
+        _extra(b, refid, f"sum(increase({metric}{{{E}}}[{RI}]))", legend)
+    notices = f"sum by (reason) (increase(oms_lane_notices_failed_total{{{E}}}[{RI}]))"
+    b.ts(
+        "Lane notices failed and tier requests dropped",
+        notices,
+        "short",
+        legend="notices {{reason}}",
+    )
+    tiers = f"sum by (reason) (increase(oms_tier_requests_dropped_total{{{E}}}[{RI}]))"
+    _extra(b, "B", tiers, "tier requests {{reason}}")
+    headroom = f"min by (endpoint_group) (bybit_rate_remaining{{{E}}})"
+    b.ts(
+        "Rate headroom by lane (ticket at 1 or fewer)",
+        headroom,
+        "short",
+        legend="{{endpoint_group}}",
+    )
+    # low is bad here, and OmsRateHeadroomExhausted reads `<= 1`, so 1 itself is vermillion: Grafana
+    # colours a value by the last step at or below it, so the blue step starts at the next float
+    # above 1 (its dashed line is drawn at 1).
+    b.panels[-1]["fieldConfig"]["defaults"]["thresholds"]["steps"] = [
+        {"color": BAD, "value": None},
+        {"color": OK, "value": math.nextafter(1.0, math.inf)},
+    ]
+    _threshold_lines(b)
+    _describe(b, "The fewest spare tokens across the environment's accounts; NaN with none read.")
+    b.flush()
+    return b
+
+
 BOARDS = {
     "system-health": system,
     "market-data": market,
@@ -1253,6 +1360,7 @@ BOARDS = {
     "frontend": frontend,
     "ga-defects": ga_defects,
     "recorder": recorder,
+    "oms-health": oms_health,
 }
 
 

@@ -65,6 +65,24 @@ _PLANNED_BUT_EMITTED: Final = {
     "cv_outbox_depth": "app.py",
     "oms_position_reading_owed_age_seconds": "oms_stream_wiring.py",
     "oms_unknown_orders": "oms/order_machine.py",
+    # E29-T08 (#916): the series the OMS rules read, each created by the module named, which the
+    # OMS runtime composes (oms_wiring.py): the facade, the submit pipeline and its exit routes,
+    # the clock halt, the lane, the tier requests, the reconciliation (#914, built by
+    # oms_reconcile_wiring.py) and the stuck-order detector (built by oms_detect_wiring.py).
+    "naked_position_alerts_total": "oms/stuck_detector.py",  # and oms/reconcile_report.py
+    "oms_untracked_orders": "oms/reconcile_report.py",
+    "oms_stale_accounts": "oms/reconcile_job.py",
+    "oms_clock_halt_trips_total": "oms/clock_halt.py",
+    "oms_native_stop_backstop_total": "oms/order_machine.py",
+    "oms_illegal_transitions_total": "oms/order_machine.py",
+    "oms_reconcile_anomaly_total": "oms/order_machine.py",
+    "oms_submit_rejected_total": "oms/submit.py",
+    "oms_exit_refused_total": "api/order_exits_common.py",
+    "oms_lane_notices_failed_total": "oms_lane.py",
+    "oms_tier_requests_dropped_total": "oms_wiring.py",
+    "oms_incidents_total": "oms/stuck_detector.py",
+    "oms_detector_scans_total": "oms/stuck_detector.py",
+    "oms_detector_last_scan_age_seconds": "oms/stuck_detector.py",
 }
 
 

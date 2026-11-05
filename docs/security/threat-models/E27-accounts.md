@@ -427,7 +427,7 @@ The compensating controls are SR-E27-19:
   §8.10) and its trade fills raise the P1 without the freeze. Residual: a key holder can bring such an order about
   without placing one (raising leverage or switching the margin mode into a liquidation), bounded by the P1 and
   E39's loss lockouts. As specified, the reconciler adopts a no-intent order as `untracked` and
-  only displays it (E29-T06), and `oms_untracked_orders` does not page (E29-T08);
+  only displays it (E29-T06), and `oms_untracked_orders` pages (`OmsUntrackedOrders`, E29-T08, #916);
 - exchange-side risk limits per sub-UID, so one position's size is capped at the exchange.
 
 ### 4.4 Decisions recorded
@@ -664,7 +664,7 @@ material (SR-069). The table lists the events the model requires and what `audit
 | `cv_key_verification_age_seconds` (the oldest last pass), `cv_key_selfcheck_missed_runs_total`; `/readyz`: the key count, oldest age | KV-E12                                        | #836 2c1a, alerts 2c2; each key's age in a debug log, then `listApiKeys` (#896)        |
 | `cv_key_selfcheck_latch_state` (1 once the job latched read-only; a restart resets it)                                               | KV-E12                                        | #836 2c2: `KeySelfCheckLatched` alerts on it while no key fails                        |
 | `cv_key_soonest_expiry_seconds` (the soonest stored `expiredAt`)                                                                     | Key expiry (Area 1 K8; SR-034)                | #836 2c1a; tickets at 14, 7 and 1 days (2c2); a lapsed key fails `key_expired`         |
-| Executions or orders with no OMS intent, per account                                                                                 | KV-E11                                        | `oms_untracked_orders` planned but not paged (E29-T08); SR-E27-19 makes it a P1        |
+| Executions or orders with no OMS intent, per account                                                                                 | KV-E11                                        | `OmsUntrackedOrders` pages on `oms_untracked_orders` > 0 (E29-T08, #916; SR-E27-19)    |
 | `authz_denied_by_route_total{permission,route,role}`                                                                                 | Denials by route and role (N2)                | #902: `AuthzDeniedSpike` triage; capped at 1040 series (#4530)                         |
 
 Alerts that must reach the Owner's out-of-band channel (SR-126), each proven in the E27-X04 drills: KEK load
@@ -810,11 +810,11 @@ documentation alone.
 | #2417 | P-2: contract-first `exchange-accounts` alignment                                                                                                        | KV-E05, KV-S08, KV-I07, KV-I05, KV-D03 |
 | #848  | E29-T05 private streams; requested: session teardown on revoke (SR-E27-17), no-intent detection (SR-E27-19)                                              | KV-E13, KV-E11                         |
 | #913  | E29-T04 submission pipeline; requested: the key comes only from the scope-checked account (SR-E27-21)                                                    | KV-E14                                 |
-| #916  | E29-T08 OMS alert set; requested: page on `oms_untracked_orders` (SR-E27-19)                                                                             | KV-E11                                 |
+| #916  | E29-T08 OMS alert set; built: `OmsUntrackedOrders` pages on `oms_untracked_orders` (SR-E27-19)                                                           | KV-E11                                 |
 | #1274 | E45-T02 reconciliation triggers on start-up, on reconnect and every 30 s: the backstop for no-intent detection (SR-E27-19)                               | KV-E11                                 |
 | #914  | E29-T06 reconciliation loop: its supported manual dashboard orders conflict with SR-E27-19's no-intent freeze (Owner decision D8, #1778 2026-10-14)      | KV-E11                                 |
 
-The four requests in the #848, #913, #916 and #1274 rows were posted on 2026-10-16:
+The four requests in the #848, #913, #916 and #1274 rows were posted on 2026-10-16 (#916's is now built, as its row says):
 [#848](https://github.com/CandleViewer/CandleViewer/issues/848#issuecomment-6210959367) (SR-E27-17, SR-E27-19),
 [#913](https://github.com/CandleViewer/CandleViewer/issues/913#issuecomment-6210959867) (SR-E27-21),
 [#916](https://github.com/CandleViewer/CandleViewer/issues/916#issuecomment-6210960332) (SR-E27-19) and
@@ -926,6 +926,7 @@ amendment (#2352 added Amendment 2); #2285 owns the security-programme text:
 | 2026-10-19 | amendment author (agent)                                   | E27-T04 closing slice (#837 W6c): KV-T12's control is what #837 ships, with its exception (a record that fails leaves its episode to a kill) and its two residuals (no monitoring while the boot's episode read fails; no page for an account red since boot, #3731), and the journal's failed writes are counted (8.2); KV-T13 joins RR-14 in 04 §16.1; independent security review pending                                                                                       |
 | 2026-10-21 | amendment author (agent; #4010, PR #4055)                  | SR-E27-19 narrowed with 24 §8.10: an order the exchange itself places (a closed `createType` class, each value only once E29-K01 confirms it) and its trade fills page at P1 without the freeze; the SR row, D8, the §4.3 controls list and RSK-068 say so, with the residual (an attacker-induced liquidation, bounded by the P1 and E39's loss lockouts); independent code and security review in PR #4055                                                                       |
 | 2026-10-28 | amendment author (agent; #848 S8b, PR #4879)               | KV-T12's control as S8b ships it: an account the boot pass tracks is owed its boot episode `CV_ACCOUNT_DOWN_S` after the later of its tracking and the private-stream consumer's start, or, while no consumer has started, `CV_OMS_STARTUP_WAIT_S` plus `CV_ACCOUNT_DOWN_S` after the boot pass (20 §6.2); no rating, row or count changes                                                                                                                                         |
+| 2026-11-02 | amendment author (agent; #916 PR B)                        | SR-E27-19's untracked page is built: `OmsUntrackedOrders` (E29-T08, PR B) pages on any untracked order, under its own component; the KV and request rows that asked for it now say so                                                                                                                                                                                                                                                                                              |
 
 ## 12. Addendum: the dev/test account-fixture transport (#2893)
 

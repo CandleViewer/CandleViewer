@@ -5,9 +5,9 @@ The orders are real: each is driven through the order facade and B1 (`order_rig`
 the scenario names, and the row the scan reads is the facade's stored row (its state, its
 `idempotency_state`, its ids), aged as the scenario says, since the in-memory reads keep no
 `order_events` clock (the Postgres read's age is `test_stuck_detection_pg.py`'s). The detector, its
-judgement and its sinks are the real ones (`stuck_rig`). The rule halves read the shipped rule file
-and the promtool cases CI runs (`promtool test rules`); the rules this ticket adds land with its
-second change, after #5185 (BQ-1, BQ-13), with their own near-miss cases. No network, no sleeps.
+judgement and its sinks are the real ones (`stuck_rig`). The rule halves read the shipped rule files
+and the promtool cases CI runs (`promtool test rules`): every rule the ticket owns (BQ-1) brings a
+case that fires and a near-miss that does not (#916's second change, BQ-13). No network, no sleeps.
 """
 
 from __future__ import annotations
@@ -152,13 +152,41 @@ def test_alert_rules_are_tested_not_assumed() -> None:
     """When the alert-rule unit tests run against synthetic metric series
     Then each rule fires exactly for the intended series and not for the near-miss series.
 
-    Each rule over a series this change emits holds a case that fires and a near-miss that does
-    not, which CI's `promtool test rules` runs; the rules this ticket adds bring theirs (BQ-13)."""
-    for alert, series in (
-        ("OmsUnknownOrders", "oms_unknown_orders"),
-        ("NakedPositionDetected", "naked_position_alerts_total"),
-    ):
+    Each Prometheus rule this ticket owns (BQ-1) is in the shipped rule files and holds a case that
+    fires and a near-miss that does not, every input series of each case one the rule reads, which
+    CI's `promtool test rules` runs (#916's second change, BQ-13)."""
+    shipped = {
+        rule["alert"]
+        for path in (_RULES, _RULES.with_name("system_ticket.yml"))
+        for group in yaml.safe_load(path.read_text(encoding="utf-8"))["groups"]
+        for rule in group["rules"]
+    }
+    assert set(_T08_RULES) <= shipped
+    for alert, series in _T08_RULES.items():
         cases = _cases(alert)
         assert any(fires for _s, fires in cases), alert
         assert any(not fires for _s, fires in cases), alert
-        assert all(series in names for names, _fires in cases), alert
+        for names, _fires in cases:
+            assert names, alert
+            assert {name.split("{", 1)[0] for name in names} <= series, (alert, names)
+
+
+#: Every Prometheus rule E29-T08 owns (BQ-1) and the series it reads.
+_T08_RULES: dict[str, set[str]] = {
+    "NakedPositionDetected": {"naked_position_alerts_total"},
+    "OmsUnknownOrders": {"oms_unknown_orders"},
+    "OmsUntrackedOrders": {"oms_untracked_orders"},
+    "OmsStaleAccounts": {"oms_stale_accounts"},
+    "OmsClockHaltTripped": {"oms_clock_halt_trips_total"},
+    "OmsSubmitFailing": {"oms_submit_rejected_total"},
+    "OmsNativeStopBackstop": {"oms_native_stop_backstop_total"},
+    "OmsUnknownOrdersAlreadyTerminal": {"oms_unknown_orders"},
+    "OmsAccountScopeDenied": {"oms_submit_rejected_total", "oms_exit_refused_total"},
+    "OmsIllegalTransitions": {"oms_illegal_transitions_total"},
+    "OmsReconcileAnomalies": {"oms_reconcile_anomaly_total"},
+    "OmsLaneNoticesFailed": {"oms_lane_notices_failed_total"},
+    "OmsTierRequestsDropped": {"oms_tier_requests_dropped_total"},
+    "OmsStuckOrderIncidents": {"oms_incidents_total"},
+    "OmsStuckDetectorStalled": {"oms_detector_last_scan_age_seconds", "oms_detector_scans_total"},
+    "OmsRateHeadroomExhausted": {"bybit_rate_remaining"},
+}
