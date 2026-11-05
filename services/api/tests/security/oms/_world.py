@@ -28,6 +28,7 @@ import pytest
 from anyio.from_thread import start_blocking_portal
 
 import candleviewer.app as appmod
+from candleviewer.domain.primitives import AccountId
 from candleviewer.oms.fakes import InMemoryOrderStore
 from candleviewer.oms.reads import OmsReads
 from candleviewer.oms_wiring import GroupStores, OmsStores
@@ -36,9 +37,11 @@ from candleviewer.storage.repositories.accounts import AccountScope, GrantScope
 from candleviewer.storage.repositories.idempotency_anchors import NewAnchor
 from candleviewer.storage.repositories.orders import OrderRow, settle_accounts
 from candleviewer.storage.repositories.trading_accounts import TradingAccountRow
+from tests.chaos.oms import _world as chaos
 from tests.contract.rbac.rbac_harness import ABSENT, FOREIGN, GRANTED, World, build_world
 from tests.contract.rbac.rbac_harness import user_id_of as uid
 from tests.unit.api import oms_reads_world as rw
+from tests.unit.oms import submit_rig as rig
 from tests.unit.oms import test_oms_runtime as rt
 
 ENVIRONMENT: Final = {GRANTED: "demo", FOREIGN: "demo"}
@@ -107,8 +110,9 @@ def _orders() -> InMemoryOrderStore:
     return store
 
 
-class _Groups:
-    """The trade-group store as the runtime reads it here: no open group, no anchor."""
+class _Groups(rig.Groups):
+    """The trade-group store as the runtime reads it here: no open group, no anchor, and the
+    pipeline's compare-and-sets over the order store's groups (`submit_rig.Groups`)."""
 
     async def list_open_groups(self) -> tuple[()]:
         return ()
@@ -122,7 +126,7 @@ class Runtime(rt.World):
     """`test_oms_runtime`'s world: its stores the order store above and `_Groups`."""
 
     def stores(self) -> OmsStores:
-        return dataclasses.replace(super().stores(), groups=cast(GroupStores, _Groups()))
+        return dataclasses.replace(super().stores(), groups=cast(GroupStores, _Groups(self.store)))
 
 
 @dataclasses.dataclass
@@ -185,16 +189,24 @@ async def _until_ready(runtime: Any, oms: rt.World) -> None:
 
 
 @contextmanager
-def oms_world(bars_state_root: Path) -> Iterator[OmsWorld]:
+def oms_world(bars_state_root: Path, *, submits: bool = False) -> Iterator[OmsWorld]:
     """The world, its bars builders' state under `bars_state_root` (pytest's temporary directory);
-    its patches are undone and its runtime stopped however the caller ends."""
+    its patches are undone and its runtime stopped however the caller ends. With `submits`, an
+    entry the route admits reaches a `202`: the chaos world's market and venue reads (`listed`,
+    `funded`, `tests/chaos/oms/_world.py`) for both accounts."""
     with pytest.MonkeyPatch.context() as mp, start_blocking_portal() as portal:
         oms, reads = Runtime(store=_orders()), _reads()
         oms.accounts.extend(TradingAccountRow(a, "demo", "1001", False, _KEY) for a in ENVIRONMENT)
+        over: dict[str, Any] = {}
+        if submits:  # each account its default profile
+            chaos.listed(oms.ingestion)
+            held: dict[tuple[uuid.UUID, uuid.UUID | None], Any] = {
+                (a, None): rig.profile(AccountId(a)) for a in ENVIRONMENT}  # fmt: skip
+            over["profiles"] = rig.Profiles(held)
         built: list[Any] = []
 
         def runtime(*_a: Any, topics: Any = None, **_kw: Any) -> Any:
-            built.extend((oms.runtime(topics=topics), topics))
+            built.extend((oms.runtime(topics=topics, **over), topics))
             return built[0]
 
         mp.setattr(appmod, "build_oms_runtime", runtime)
@@ -208,6 +220,9 @@ def oms_world(bars_state_root: Path) -> Iterator[OmsWorld]:
         run, topics = built
         try:
             portal.call(_until_ready, run, oms)
+            for port in oms.venue.ports if submits else ():
+                for account in ENVIRONMENT:
+                    chaos.funded(port, AccountId(account))
             yield OmsWorld(pack, oms, run, topics, reads, portal, index)
         finally:
             portal.call(run.stop)

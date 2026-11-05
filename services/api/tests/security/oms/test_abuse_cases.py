@@ -16,7 +16,6 @@ from typing import Any, Final
 
 import pytest
 
-from candleviewer.api import position_close
 from candleviewer.api.oms_reads import aggregate_document
 from candleviewer.auth.csrf import CSRF_HEADER
 from candleviewer.auth.metrics import auth_csrf_refused_total
@@ -273,58 +272,9 @@ def test_ac27_an_owners_write_without_its_csrf_proof_is_refused_before_the_handl
     assert written in ([], [("auth.csrf_refused", reason)]), written
 
 
-# --- Pinned: the per-user limit (OM-D01, SR-044d) -------------------------------------------------
+# --- Pinned: the per-user limit (OM-D01, SR-044d); AC-19's pin, X02-R4, is `test_abuse_ac19.py` --
 
-#: One past the position writes' per-user rate, the shipped rate the order routes are pinned to.
-_BURST: Final = position_close.RATE_PER_MINUTE + 1
 _PER_USER: Final = "X02-R{} (#1152): {} meets a per-user limit (OM-D01)"
-
-
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_PER_USER.format(
-    4, "a burst of orders from one session"))  # fmt: skip
-@pytest.mark.parametrize("shape", ["entry", "refused_late"])
-def test_ac19_a_burst_of_orders_from_one_session_meets_a_429_and_another_user_is_admitted(
-    world: OmsWorld, shape: str
-) -> None:
-    """AC-19 and the rows posted on #982 on 2026-10-23 and 2026-10-24: a burst from one session,
-    of entries or of requests refused late (a malformed `Idempotency-Key`), meets `429
-    rate_limited` with `Retry-After`, and another user's order is still admitted."""
-    late = {"headers": {"Idempotency-Key": "not-a-key"}} if shape == "refused_late" else {}
-    entry = _CLOSE | {"reduce_only": False, "stop_loss": {"unit": "price", "value": "58000"}}
-    answers = [
-        call(world, M, "POST", "/orders", f"ac19|{shape}|{n}", json=entry, **late)[0]
-        for n in range(_BURST)
-    ]
-    limited = [r for r in answers if observed(r) == "429 rate_limited"]
-    assert limited and all(r.headers.get("Retry-After") for r in limited), {
-        observed(r) for r in answers}  # fmt: skip
-    other, _ = call(world, "owner", "POST", "/orders", f"ac19|{shape}|other", json=entry)
-    assert observed(other) != "429 rate_limited"
-
-
-#: What the burst meets on `main` today, step by step of `api/orders.py`: an entry with trading off
-#: stops at step 9 (`trading.oms_enabled`), a malformed key at step 6 (`Idempotency-Key`).
-_TODAY: Final = {"entry": "403 trading_disabled", "refused_late": "400 validation_failed"}
-
-
-@pytest.mark.parametrize("shape", list(_TODAY))
-def test_ac19_the_burst_meets_today_the_step_its_pin_stands_before(
-    world: OmsWorld, shape: str
-) -> None:
-    """X02-R4's non-vacuity: the pin's burst reaches the route and is answered, each request
-    alike and audited, at the step named here and never `429`. A per-user limit added after that
-    step leaves this answer as it is and the pin XFAIL, so it changes this test first."""
-    late = {"headers": {"Idempotency-Key": "not-a-key"}} if shape == "refused_late" else {}
-    entry = _CLOSE | {"reduce_only": False, "stop_loss": {"unit": "price", "value": "58000"}}
-    seen = {
-        (observed(r), tuple(w))
-        for r, w in (
-            call(world, M, "POST", "/orders", f"ac19-today|{shape}|{n}", json=entry, **late)
-            for n in range(_BURST)
-        )
-    }
-    code = _TODAY[shape].split(" ")[1]
-    assert seen == {(_TODAY[shape], (("orders.submit", code),))}, seen
 
 
 class _Tickers:
