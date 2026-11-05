@@ -5920,6 +5920,7 @@ export interface paths {
      * Compile an editor model into canonical rule IR
      * @description Accepts either editor's native model and returns canonical IR plus its `ir_hash`. Compiling the form model and the graph model of the same rule MUST produce an identical hash; that equality is the round-trip guarantee asserted by the contract tests in 24-internal-schemas.md section 11.4.
      *     Limited as `validateRule` is: one token bucket per user, shared by both, past which a call is `429 rate_limited` with `Retry-After` and writes no audit record. A model that would compile to a rule over the bound of 1,000 condition nodes (`RuleIr`), for either editor, is refused `422 rule_ir_invalid` (example `conditionNodes`). A model whose scope is past the account-list bound of `RuleIrScope`, or names an account twice, is refused `422 rule_ir_invalid` (`errors[].field` `scope.account_ids`).
+     *     **Bounded answer (E35, #5879).** `issues` lists at most 50 issues, the errors before the warnings, and a `422 rule_ir_invalid` lists at most 50 `errors`, each the first found in order; `issues_total` counts every issue found, as the `422`'s `detail` does, and `blocks_arming` reads them all, so it can be true while no listed issue explains it. `round_trip.diff` lists at most 50 of the leaves where the two compiled documents differ, in document order, and `diff_total` counts every one; `match` and the divergence count read them all. A list is answered as `validateRule` answers it, and a large check runs on the same check worker, with the same `429` past it.
      */
     post: operations["compileRule"];
     delete?: never;
@@ -6285,6 +6286,20 @@ export interface paths {
      *     `conditions`, found before the schema and semantic checks. A scope past the account-list
      *     bound of `RuleIrScope`, or naming an account twice, is `200` with `valid: false` and one
      *     error, code `schema_error`, class `syntax`, path `scope.account_ids`.
+     *
+     *     **Bounded answer (E35, #5879).** The answer lists at most 50 issues, the errors before
+     *     the warnings, each in the order the checks found them, and `issues_total` counts every
+     *     error and warning found; `valid` and `blocks_arming` read them all, listed or not, so
+     *     `blocks_arming` can be true while no listed issue explains it (a safety-class warning
+     *     found after the first 50). A list that `RuleIr` bounds (`maxItems`) and that holds more
+     *     entries is one `schema_error` at the list, whatever its entries hold; within its bound it
+     *     answers its first refused entry and reads none after it (with its own `minItems` refusal
+     *     when that entry was its first). A list it leaves unbounded (`scope.symbols`,
+     *     `scope.account_ids`, `scope.environments`, a comparison's `set_values`), a metric's
+     *     `params` and an object's unknown members each answer one issue, their first refused
+     *     entry. A large check runs on the server's one check worker, which holds a bounded number
+     *     of checks at once; past it a call is `429 rate_limited` with `Retry-After`, as past the
+     *     bucket.
      */
     post: operations["validateRule"];
     delete?: never;
@@ -10860,6 +10875,8 @@ export interface components {
       idle_locked_at?: string;
       /** @description Correlation id, `urn:cv:req:{uuid}`; matches the `X-Correlation-Id` header and the audit entry. */
       instance?: string;
+      /** @description `rule_ir_invalid` from `compileRule` only: every error the compile found, of which `errors` lists the first 50 (`compileRule`, "Bounded answer"). */
+      issues_total?: number;
       /**
        * Format: date-time
        * @description `no_data_recorded` from `GET /market/bars` only: when recording of the symbol's trade tape began, so the client can offer the first recorded window; null when nothing was ever recorded for the symbol. Optional, additive (C-6.3).
@@ -11983,6 +12000,8 @@ export interface components {
       blocks_arming?: boolean;
       errors: components["schemas"]["RuleValidationIssue"][];
       estimated_evaluations_per_minute?: number;
+      /** @description Every error and warning found; `errors` and `warnings` list at most 50 of them together, the errors first (`validateRule`, "Bounded answer"). */
+      issues_total?: number;
       referenced_actions?: string[];
       referenced_variables?: string[];
       valid: boolean;
@@ -22013,12 +22032,16 @@ export interface operations {
             ir?: components["schemas"]["RuleIr"];
             ir_hash?: string;
             issues?: components["schemas"]["RuleValidationIssue"][];
+            /** @description Every issue found, of which `issues` lists the first 50. */
+            issues_total?: number;
             round_trip?: {
               diff: {
                 counterpart?: unknown;
                 model?: unknown;
                 path?: string;
               }[];
+              /** @description Every leaf where the two compiled documents differ, of which `diff` lists the first 50. */
+              diff_total?: number;
               match: boolean;
             };
           };
