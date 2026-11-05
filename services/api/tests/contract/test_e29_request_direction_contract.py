@@ -469,7 +469,8 @@ async def test_request_direction_a_key_reused_for_another_body_of_close_all_is_4
     request, served = await _asked("closeAllPositions", monkeypatch)
     symbol = sample(_schema_of(request.operation, "body", "symbol"))
     other = request.with_member("body", "symbol", symbol)
-    await send(request, served)
+    first = await send(request, served)
+    assert 200 <= first.status_code < 300, first.text  # the answer the key is stored under
     again = await send(other, served, raise_faults=False)
     assert again.status_code == 409, again.text
     assert again.json()["code"] == "idempotency_key_reuse"
