@@ -72,15 +72,30 @@ def _walk(node: Any, out: dict[str, set[Any]], parents: dict[str, int]) -> None:
             _walk(o, out, parents)
 
 
-def test_corpus_rules_are_valid_but_the_one_that_would_loosen_a_stop() -> None:
+#: Corpus rules whose action params break their published bounds (#5963), with the refusals the
+#: validator gives: modes outside `_STOP_MODE`, and a native stop with no known `unit`. Their
+#: hashes and round trips stay pinned; re-spelling them is a reviewed golden update of its own.
+OFF_VOCABULARY = {
+    "01_sys_native_sl_watchdog.json": [("actions[0].params.mode", "schema_error")],
+    "09_atr_trailing_stop.json": [("actions[0].params.mode", "schema_error")],
+    "12_rsi_oversold_bounce_entry.json": [("actions[0]", "native_stop_violation")],
+    "13_vwap_reclaim_short_exit.json": [("actions[0].params.mode", "schema_error")],
+}
+
+
+def test_corpus_rules_are_valid_but_those_breaking_a_safety_rule_or_a_bound() -> None:
     """Rule 20 keeps its round trip and golden hash, and is refused for every caller: no rule
-    loosens a stop (24-internal-schemas.md section 8.8 rule 5)."""
+    loosens a stop (24-internal-schemas.md section 8.8 rule 5). The `OFF_VOCABULARY` rules keep
+    theirs and are refused for a param outside its published bound (#5963)."""
     assert len(RULES) >= 30
     reg = default_registry()
-    loosens = {"20_widen_stop_through_funding_owner.json": [("actions[0].type", "stop_loosening")]}
+    refused = {
+        "20_widen_stop_through_funding_owner.json": [("actions[0].type", "stop_loosening")],
+        **OFF_VOCABULARY,
+    }
     for p in RULES:
         res = validate_rule(load(p), reg)
-        assert [(e.path, e.code) for e in res.errors] == loosens.get(p.name, []), p.name
+        assert [(e.path, e.code) for e in res.errors] == refused.get(p.name, []), p.name
 
 
 def test_corpus_covers_the_whole_vocabulary() -> None:

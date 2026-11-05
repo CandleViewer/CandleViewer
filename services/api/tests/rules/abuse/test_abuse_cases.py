@@ -107,7 +107,7 @@ def test_ac_e_loosening_a_stop_is_refused_at_save(params: dict[str, Any]) -> Non
     stop = {
         "node_id": "a1",
         "type": "modify_stop_loss",
-        "params": {"mode": "pct", "value": 1, **params},
+        "params": {"mode": "atr", "value": 1, **params},  # a published mode (#5963)
     }
     r = e.c.post("/rules", json={"ir": _ir(actions=[stop])})
     assert r.status_code == 422 and r.json()["code"] == "rule_ir_invalid"
