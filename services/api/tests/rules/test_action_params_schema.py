@@ -13,6 +13,7 @@ value no rule can hold is the content hash's refusal there, and `native_stop_vio
 
 from __future__ import annotations
 
+import decimal
 import json
 from collections.abc import Iterator, Mapping
 from decimal import Decimal
@@ -22,6 +23,7 @@ import pytest
 import yaml
 from httpx import Response
 
+from candleviewer.domain.plain_decimal import PlainWidthError, plain_decimal
 from candleviewer.rules.ir import Rule
 from candleviewer.rules.ir.canonical import NOT_FINITE, OUT_OF_RANGE
 from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleError, RulesManager
@@ -577,7 +579,18 @@ def _schemas(schema: Mapping[str, Any]) -> Iterator[Mapping[str, Any]]:
 
 
 def _numeric_bound(value: object) -> bool:
-    return isinstance(value, int | Decimal) and not isinstance(value, bool)
+    """A bound the reader reads as itself: an `int` or `Decimal`, never a `bool`, finite and in the
+    range a rule can hold (`plain_decimal`), as the reader holds every number it reads."""
+    if not isinstance(value, int | Decimal) or isinstance(value, bool):
+        return False
+    number = Decimal(value)
+    if not number.is_finite():
+        return False
+    try:
+        plain_decimal(number)
+    except (PlainWidthError, decimal.DecimalException):
+        return False
+    return True
 
 
 @pytest.mark.parametrize("spec", ACTIONS, ids=lambda s: s.type)
