@@ -300,7 +300,10 @@ def test_contract_24_lists_the_adapter_record_with_its_venue_order_id() -> None:
     model = _between(_doc("24-internal-schemas.md"), "### 8.1 ", "\n### 8.2 ")
     fill = model[model.index("**`Execution`, as built") : model.index("**`Position`, as built")]
     assert "adds `closed_size`, the venue's `closedSize`: the size the fill closed" in fill
+    assert "NULL where its source does not state it" in fill
+    assert "in its migration slice; not stored yet" in fill
     assert "`position_idx` is its order row's, as the venue's fill has none (§8.13)" in fill
+    assert "from E29-S06's store slices on; not set that way yet" in fill
 
 
 def test_contract_24_names_the_divergence_action_as_the_registry_holds_it() -> None:
