@@ -153,6 +153,18 @@ describe("startShell", () => {
     }
   });
 
+  it("stop() returns every flag to unread; a flag later hidden from the role holds until then", () => {
+    const { port, handle } = started();
+    port.say({
+      t: "system",
+      update: { kind: "health", health: "healthy", feature_flags: { a: true } },
+    });
+    port.say({ t: "system", update: { kind: "health", health: "healthy" } });
+    expect(getShellState().flags.get("a")).toBe(true);
+    handle.stop();
+    expect(getShellState().flags.size).toBe(0);
+  });
+
   it("stop() drops the degraded facts and row 9's hand-over timer (E10-S04, #4723 review)", () => {
     vi.useFakeTimers();
     try {

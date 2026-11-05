@@ -16,6 +16,7 @@
  *    several independent facets (health, kill-switch, feature flags, ...);
  *  - the WS connection state and reconnect countdown;
  *  - the WS latency indicator (budget #3), at most once a second;
+ *  - the resolved feature flags (`../flags/flags.ts`), folded from every `system` frame;
  *  - the SCR-153 degraded facts (E10-S04 #306), folded from every `system` frame,
  *    with row 9's 10 s hand-over to R5 timed here (E17-D02 §6);
  *  - SCR-159's reachability, the liveness probe's verdict (`liveness.ts`), and the desktop
@@ -33,6 +34,7 @@ import {
   type DegradedFacts,
 } from "../../features/system-states/degradedIssues.js";
 import { toLatencyIndicator, type LatencyIndicator } from "../../lib/telemetry/latencyIndicator.js";
+import { INITIAL_FLAGS, reduceFlags, type FlagValues } from "../flags/flags.js";
 import { SHELL_PERF_MARKS, markShellStage } from "../perfMarks.js";
 import type { GpuCrash } from "../ShellPort.js";
 import { REACHABLE, type Reachability } from "./reachability.js";
@@ -109,6 +111,8 @@ export interface ShellState {
   readonly latency: LatencyIndicator;
   /** The CMP-092 rows' facts; `degradedIssues(degraded)` lists the rows. */
   readonly degraded: DegradedFacts;
+  /** Flag name -> resolved value (`23` §15.9); a missing name is unread, read as OFF (`useFlag`). */
+  readonly flags: FlagValues;
   /** `connection` has been `live` this session; a later `connecting` is a loss, not the boot. */
   readonly everLive: boolean;
   /** SCR-159: reachable until a liveness probe goes unanswered (never `navigator.onLine` alone). */
@@ -145,6 +149,7 @@ export const INITIAL_SHELL_STATE: ShellState = Object.freeze({
   systemByKind: Object.freeze({}),
   latency: toLatencyIndicator(null),
   degraded: INITIAL_DEGRADED_FACTS,
+  flags: INITIAL_FLAGS,
   everLive: false,
   reachability: REACHABLE,
   gpuCrash: null,
@@ -203,10 +208,18 @@ export function setShellState(patch: Partial<ShellState>): void {
   for (const listener of listeners) listener();
 }
 
-/** Merges one `SystemUpdate` frame into `systemByKind`, keyed by its `kind`, and folds it into `degraded`. */
+/**
+ * Merges one `SystemUpdate` frame into `systemByKind`, keyed by its `kind`, and folds it into
+ * `degraded` and `flags`.
+ */
 export function applySystemUpdate(update: SystemUpdate): void {
   const degraded = reduceDegraded(state.degraded, update);
-  setShellState({ systemByKind: { ...state.systemByKind, [update.kind]: update }, degraded });
+  const flags = reduceFlags(state.flags, update);
+  setShellState({
+    systemByKind: { ...state.systemByKind, [update.kind]: update },
+    degraded,
+    flags,
+  });
   syncHandover(degraded);
 }
 
@@ -214,6 +227,11 @@ export function applySystemUpdate(update: SystemUpdate): void {
 export function clearDegraded(): void {
   clearHandover();
   setShellState({ degraded: INITIAL_DEGRADED_FACTS });
+}
+
+/** Back to unread (every flag `undefined`, read as OFF): a stopped shell's socket held them. */
+export function clearFlags(): void {
+  setShellState({ flags: INITIAL_FLAGS });
 }
 
 /**

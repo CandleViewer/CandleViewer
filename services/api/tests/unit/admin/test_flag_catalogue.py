@@ -10,9 +10,11 @@ import pytest
 
 from candleviewer.admin.flags import default_registry
 from candleviewer.admin.flags.catalogue import (
+    ADMIN_ACCOUNT_PROFILES,
     ENVIRONMENT_SEEDS,
     TRADING_OMS_ENABLED,
     TRADING_TRADE_GROUPS,
+    UI_WORKSPACE_DOCK,
 )
 from candleviewer.admin.flags.registry import Category
 
@@ -24,6 +26,8 @@ _SECTION_10_7 = {
     ("trading.one_click", _B, False, False, _ALL),
     ("trading.oms_enabled", _B, False, False, _ALL),
     ("trading.trade_groups", _B, False, False, _ALL),
+    ("admin.account_profiles", _B, False, False, _ALL),
+    ("ui.workspace_dock", _B, False, False, _ALL),
     ("engine.webgl_v2", _B, False, False, _ALL),
     ("rules.graph_editor", _B, True, False, _ALL),
     ("rules.form_editor", _B, True, False, _ALL),
@@ -109,6 +113,39 @@ def test_trade_groups_flag_is_an_all_roles_rollout_off_with_its_removal_ticket()
     )
     assert "owner @basiltt" in spec.description and spec.description.endswith("removal #4798")
     assert not (spec.is_killswitch or spec.requires_evidence)
+
+
+def test_account_profiles_flag_is_an_all_roles_ui_flag_off_with_its_removal_ticket() -> None:
+    """E28-S01 (#971) BQ-09 as ruled, C-4.13: the screens' backend-defined flag, off by default and
+    while the store cannot be read, never seeded on, owned, with its removal ticket; a UI flag,
+    visible to every role, as a Manager reaches SCR-130 (23 15.9); never a kill switch
+    or the live gate (C-4.14)."""
+    spec = default_registry()[ADMIN_ACCOUNT_PROFILES]
+    assert (spec.gates, spec.default, spec.fail_closed_value, spec.visibility.value) == (
+        Category.UI_SURFACE,
+        False,
+        False,
+        "all_roles",
+    )
+    assert "owner @basiltt" in spec.description and spec.description.endswith("removal #5667")
+    assert not (spec.is_killswitch or spec.requires_evidence)
+    assert ADMIN_ACCOUNT_PROFILES not in ENVIRONMENT_SEEDS
+
+
+def test_workspace_dock_flag_is_an_all_roles_ui_flag_off_with_its_removal_ticket() -> None:
+    """E15-S03 (#476) BQ-02 (b) as ruled, C-4.13: the workspace route's backend-defined flag, off by
+    default and while the store cannot be read, never seeded on, owned, with its removal ticket; a
+    UI flag every role reads (23 15.9); never a kill switch or the live gate (C-4.14)."""
+    spec = default_registry()[UI_WORKSPACE_DOCK]
+    assert (spec.gates, spec.default, spec.fail_closed_value, spec.visibility.value) == (
+        Category.UI_SURFACE,
+        False,
+        False,
+        "all_roles",
+    )
+    assert "owner @basiltt" in spec.description and spec.description.endswith("removal #5672")
+    assert not (spec.is_killswitch or spec.requires_evidence)
+    assert UI_WORKSPACE_DOCK not in ENVIRONMENT_SEEDS
 
 
 _ROLES = ("owner", "manager", "viewer")
