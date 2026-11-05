@@ -339,3 +339,81 @@ describe("RunMode selection matrix", () => {
     expect(selectRunMode(undefined, canvas(true), null)).toBe("inline");
   });
 });
+
+describe("E11-S09 PR 2a: setSync (BQ-9) and the extended sync (BQ-7)", () => {
+  const modes = { time: true, crosshair: false, levels: true };
+  const origin = { worker: "w1", chart: 2, seq: 7 };
+  const cmd = (c: object): object => ({ t: "command", id: 1, cmd: { k: "setSync", ...c } });
+
+  it.each([
+    ["a setSync into a group", cmd({ groupId: "A", modes, relay: true })],
+    ["a setSync out of every group", cmd({ groupId: null, modes, relay: false })],
+    ["a sync with an origin", { t: "sync", groupId: "A", timeRange: [1, 2], origin }],
+    ["a crosshair-only sync", { t: "sync", groupId: "A", crosshair: 5, origin }],
+    ["a legacy sync", { t: "sync", groupId: "A", timeRange: [1, 2], crosshair: null }],
+    ["a workerId init", { ...valid[0], config: { bench: false, syncGroup: "A", workerId: "w" } }],
+  ])("test_rejectReason_accepts_%s", (_name, msg) => {
+    expect(rejectReason(msg)).toBeNull();
+  });
+
+  it.each([
+    ["setSync with scale (BQ-24)", cmd({ groupId: "A", modes: { ...modes, scale: true } })],
+    ["setSync without relay", cmd({ groupId: "A", modes })],
+    ["setSync with a numeric group", cmd({ groupId: 4, modes, relay: false })],
+    ["setSync with a 129-char group", cmd({ groupId: "g".repeat(129), modes, relay: false })],
+    ["setSync with a string mode", cmd({ groupId: "A", modes: { ...modes, time: "y" } })],
+  ])("test_rejectReason_rejects_%s", (_name, msg) => {
+    expect(rejectReason(msg)).toBe("malformed command");
+  });
+
+  it.each([
+    [
+      "a non-integer seq",
+      { t: "sync", groupId: "A", crosshair: 1, origin: { ...origin, seq: 1.5 } },
+    ],
+    [
+      "a negative chart",
+      { t: "sync", groupId: "A", crosshair: 1, origin: { ...origin, chart: -1 } },
+    ],
+    [
+      "a numeric worker",
+      { t: "sync", groupId: "A", crosshair: 1, origin: { ...origin, worker: 3 } },
+    ],
+    ["a NaN crosshair", { t: "sync", groupId: "A", crosshair: Number.NaN, origin }],
+    ["a non-string group", { t: "sync", groupId: 1, crosshair: 1 }],
+    ["an empty group", { t: "sync", groupId: "", crosshair: 1 }],
+    ["a group outside the charset", { t: "sync", groupId: "a<b>", crosshair: 1 }],
+    ["a reversed range", { t: "sync", groupId: "A", timeRange: [2, 1], origin }],
+    ["an empty range", { t: "sync", groupId: "A", timeRange: [2, 2], origin }],
+    [
+      "an empty worker",
+      { t: "sync", groupId: "A", crosshair: 1, origin: { ...origin, worker: "" } },
+    ],
+    [
+      "a 129-char worker",
+      { t: "sync", groupId: "A", crosshair: 1, origin: { ...origin, worker: "w".repeat(129) } },
+    ],
+  ])("test_rejectReason_rejects_a_sync_with_%s", (_name, msg) => {
+    expect(rejectReason(msg)).toBe("malformed sync");
+  });
+
+  it.each([
+    ["a numeric workerId", { syncGroup: null, workerId: 9 }],
+    ["an empty workerId", { syncGroup: null, workerId: "" }],
+    ["a 129-char workerId", { syncGroup: null, workerId: "w".repeat(129) }],
+    ["a workerId outside the charset", { syncGroup: null, workerId: "w\n1" }],
+    ["a numeric syncGroup", { syncGroup: 4 }],
+    ["an empty syncGroup", { syncGroup: "" }],
+    ["a 129-char syncGroup", { syncGroup: "g".repeat(129) }],
+    ["a syncGroup outside the charset", { syncGroup: "g h" }],
+  ])("test_rejectReason_rejects_an_init_with_%s", (_name, config) => {
+    const msg = { ...valid[0], config: { bench: false, ...config } };
+    expect(rejectReason(msg)).toBe("malformed init");
+  });
+
+  it("test_rejectReason_accepts_an_init_whose_syncGroup_is_absent_or_a_safe_128_char_id", () => {
+    for (const syncGroup of [undefined, null, "g".repeat(128), "pane-1:a_b.c"]) {
+      expect(rejectReason({ ...valid[0], config: { bench: false, syncGroup } })).toBeNull();
+    }
+  });
+});

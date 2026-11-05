@@ -20,8 +20,13 @@ import {
   type DegradeDetails,
   ENGINE_WORKER_LOST,
   type FromWorker,
+  groupName,
+  MAX_GROUP_ID,
+  MAX_PANE_KEY,
+  MAX_PANES,
   type RunMode,
 } from "../worker/protocol.js";
+import { checkSyncModes, DEFAULT_SYNC_MODES, type SyncModes } from "../sync/SyncGroup.js";
 import { createPane, type PaneInternal } from "./pane.js";
 import { checkScaleOptions, createTimeScale } from "./scales.js";
 import type {
@@ -85,6 +90,23 @@ function positiveInt(value: number | undefined, fallback: number, name: string):
  * Mounts a chart into `opts.container` and returns its facade synchronously (§8). Capability
  * detection is lazy (first frame or `getStats`), so no caller needs to await anything.
  */
+/** BQ-9: an app-named group id, bounded; the engine never invents or persists one. */
+function groupId(id: string): void {
+  if (!groupName(id)) {
+    throw new RangeError(
+      `chart-engine: a sync group id is 1..${MAX_GROUP_ID} characters of [A-Za-z0-9._:-]`,
+    );
+  }
+}
+
+/** PR 1a m4: the next pane key; keys are never reused, and the worker rejects one past 0xffff. */
+export function mintPaneKey(seq: number): number {
+  if (seq > MAX_PANE_KEY) {
+    throw new RangeError(`chart-engine: a chart mints at most ${MAX_PANE_KEY + 1} pane keys`);
+  }
+  return seq;
+}
+
 export function createChart(opts: ChartOptions): Chart {
   return openChart(opts, false);
 }
@@ -97,6 +119,10 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
   // The hard ceilings are checked up front (E11-T01 security notes: no unbounded allocation).
   positiveInt(opts.maxBars, CHART_DEFAULTS.maxBars, "maxBars");
   positiveInt(opts.memoryBudgetMb, CHART_DEFAULTS.memoryBudgetMb, "memoryBudgetMb");
+  // E11-S09 PR 2a (BQ-17, BQ-24): checked before anything mounts; `scale: true` throws.
+  let syncModes: SyncModes =
+    opts.syncModes === undefined ? DEFAULT_SYNC_MODES : checkSyncModes(opts.syncModes);
+  if (opts.syncGroup !== undefined) groupId(opts.syncGroup);
 
   const surface = mountSurface(opts.container);
   const doc = opts.container.ownerDocument;
@@ -114,6 +140,8 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
   let renderProfile: FrameStats["renderProfile"] | null = null;
   let lastStats: FrameStats | null = null;
   let lastRange = { from: 0, to: 1 };
+  /** BQ-26: the worker frame `viewportChanged` last spoke for (-1: none since the last `ready`). */
+  let lastFrameId = -1;
   let stops: AxisStops | null = null; // the axis stops (E11-S06), from the first `axes` message
   /** E11-S09 PR 1b: splitters, stubs and regions, from the first `layout` message. */
   let chrome: PaneChrome | null = null;
@@ -150,6 +178,7 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
   function onWorker(msg: FromWorker): void {
     switch (msg.t) {
       case "ready":
+        lastFrameId = -1; // a handoff's fresh scheduler counts its frames from 0 again
         renderProfile = msg.renderProfile;
         // A `ready` after a frame (a handoff, a restart) also moves the stats off the stale profile.
         if (lastStats !== null) lastStats = { ...lastStats, renderProfile: msg.renderProfile };
@@ -193,10 +222,16 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
           });
         }
         badge.set(!head.autoScale); // the facade's first pane's row speaks for the chart
+        // BQ-26: one message a frame, so one `viewportChanged` a frame; a message without a
+        // frameId (an older worker) takes the next one after the last.
+        lastFrameId = msg.frameId ?? lastFrameId + 1;
+        const o = msg.origin; // copied: an inline bus may reuse the worker's object
         emit("viewportChanged", {
           timeStart: msg.timeStart,
           timeEnd: msg.timeEnd,
           barSpacing: msg.barSpacing,
+          frameId: lastFrameId,
+          ...(o !== undefined && { syncId: { worker: o.worker, chart: o.chart, seq: o.seq } }),
         });
         return;
       }
@@ -301,6 +336,13 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
     host.command({ k: "setViewport", timeStart: r.from, timeEnd: r.to });
   });
 
+  // BQ-17: `init` carries the group; modes other than the default ride one `setSync` after it.
+  if (opts.syncModes !== undefined) {
+    const { time, crosshair, levels } = syncModes;
+    const modes = { time, crosshair, levels };
+    host.command({ k: "setSync", groupId: opts.syncGroup ?? null, modes, relay: false });
+  }
+
   const chart: ChartInternal = {
     get panes(): readonly Pane[] {
       return [...panes];
@@ -318,10 +360,14 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
     runMode: host.runMode,
     addPane(paneOpts: PaneOptions): Pane {
       assertLive();
+      // PR 1a carry: the worker refuses a pane past MAX_PANES, so the facade never keeps one.
+      if (panes.length >= MAX_PANES) {
+        throw new RangeError(`chart-engine: a chart holds at most ${MAX_PANES} panes`);
+      }
+      const key = mintPaneKey(paneSeq);
       const scale = paneOpts.priceScale;
       if (scale !== undefined) checkScaleOptions(scale);
       paneSeq += 1;
-      const key = paneSeq - 1;
       const pane = createPane(`pane-${paneSeq}` as PaneId, paneOpts, {
         key,
         assertLive,
@@ -351,6 +397,15 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
         pane.priceScale.setOptions(rest);
       }
       return pane;
+    },
+    setSyncGroup(id: string | null, modes?: Partial<SyncModes>): void {
+      assertLive();
+      if (id !== null) groupId(id);
+      const next = modes === undefined ? syncModes : checkSyncModes({ ...syncModes, ...modes });
+      syncModes = next;
+      // `relay` is the main-thread relay's switch (E11-S09 PR 2b); one worker needs none.
+      const wire = { time: next.time, crosshair: next.crosshair, levels: next.levels };
+      host.command({ k: "setSync", groupId: id, modes: wire, relay: false });
     },
     removePane(id: PaneId): void {
       panes.find((p) => p.id === id)?.remove();

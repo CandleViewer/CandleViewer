@@ -134,6 +134,11 @@ export class FrameScheduler {
   private under = 0;
   private underFrom = 0; // `t` of the first frame of the current run under 85 %
   private readonly shedAt = new Float64Array(CADENCE_MS.length).fill(-Infinity);
+  /** Between `prepare()` and `finish()` (BQ-12): the frame's start, its `t`, and whether it ran. */
+  private prepared = false;
+  private startedAt = 0;
+  private laidOutAt = 0;
+  private frameT = 0;
 
   constructor(
     readonly graph: SceneGraph,
@@ -185,19 +190,44 @@ export class FrameScheduler {
 
   /** A throwing mutation or hook ends the frame, never the loop: the queue left re-wakes it. */
   private frame(t: number): void {
+    this.prepare(t);
+    this.finish();
+  }
+
+  /**
+   * E11-S09 PR 2a (BQ-12): a frame's first half, input → animations → drain → layout (and the
+   * crosshair the layout hook resolves). The runtime publishes and applies sync between this and
+   * `finish()`, so a member woken by a peer renders on the same frame.
+   */
+  prepare(t: number): void {
     this.scheduled = false;
+    this.prepared = false;
     let done = false;
     try {
-      this.run(t);
+      this.first(t);
       done = true;
     } finally {
       if (!done) this.settle(this.queue.length > 0); // the throw itself propagates (26 §11)
     }
+    this.prepared = true;
   }
 
-  /** input → drain → layout → update/collect → build → submit (06 §4.3, BQ-S4, BQ-43). */
-  private run(t: number): void {
-    const { ctx, sink, timings, hooks } = this;
+  /** The second half, collect → build → submit; a no-op unless `prepare()` completed. */
+  finish(): void {
+    if (!this.prepared) return;
+    this.prepared = false;
+    let done = false;
+    try {
+      this.second();
+      done = true;
+    } finally {
+      if (!done) this.settle(this.queue.length > 0);
+    }
+  }
+
+  /** input → drain → layout (06 §4.3, BQ-S4, BQ-43). */
+  private first(t: number): void {
+    const { ctx, timings, hooks } = this;
     const start = this.clock.now();
     this.marks?.mark(MARK_FRAME_START);
     timings.ms.fill(0);
@@ -219,7 +249,17 @@ export class FrameScheduler {
     const laidOut = this.clock.now();
     this.marks?.mark(MARK_LAYOUT_END);
     timings.layoutMs = laidOut - at;
-    at = laidOut;
+    this.startedAt = start;
+    this.laidOutAt = laidOut;
+    this.frameT = t;
+  }
+
+  /** update/collect → build → submit. */
+  private second(): void {
+    const { ctx, sink, timings, hooks } = this;
+    const start = this.startedAt;
+    const t = this.frameT;
+    let at = this.laidOutAt;
     ctx.budgetMsRemaining = this.budgetMs - (at - start);
     sink.reset();
     // Spent before collect: shed every rung, each still on its cadence floor (BQ-35 closed).

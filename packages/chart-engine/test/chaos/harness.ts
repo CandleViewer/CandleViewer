@@ -91,13 +91,17 @@ export function frames(ms: number): void {
 export const codes = (out: readonly FromWorker[]): [string, boolean][] =>
   out.flatMap((m) => (m.t === "error" ? [[m.code, m.recoverable] as [string, boolean]] : []));
 
-/** The last message of kind `t`; a `frame` without its volatile timing fields. */
+/**
+ * The last message of kind `t`; a `frame` without its volatile timing fields, a `viewport`
+ * without its frame counter (E11-S09 PR 2a, BQ-26: how many frames ran is not scene state).
+ */
 export function last(out: readonly FromWorker[], t: FromWorker["t"]): unknown {
   const m = out.filter((x) => x.t === t).at(-1);
-  if (m?.t !== "frame") return m;
+  if (m?.t !== "frame" && m?.t !== "viewport") return m;
   const stable: Record<string, unknown> = { ...m };
   delete stable["frameTimeMs"];
   delete stable["uploadedBytes"];
+  delete stable["frameId"];
   return stable;
 }
 

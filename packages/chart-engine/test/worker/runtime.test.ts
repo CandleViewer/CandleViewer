@@ -264,6 +264,7 @@ describe("interaction", () => {
         logAvailable: false,
         logReason: "no-price-origin",
         anchorTick: null,
+        frameId: expect.any(Number), // E11-S09 PR 2a (BQ-26), additive
       },
     ]);
     expect(of("a11y")).toHaveLength(1);
@@ -285,10 +286,13 @@ describe("interaction", () => {
     rt.handle({ t: "sync", groupId: "g", timeRange: [10, 20], crosshair: 15 });
     frame();
     expect(of("viewport").map((v) => v.id)).toEqual([1]);
-    expect(of("a11y")).toEqual([{ t: "a11y", id: 1, cursorSummary: "1970-01-01T00:00:00.000Z" }]);
+    // E11-S09 PR 2a (BQ-13): a peer's crosshair is drawn, never announced (no summary, no a11y).
+    expect(of("a11y")).toEqual([]);
+    expect(rt.syncCounters(1)?.remoteCrosshair).toBe(15);
     rt.handle({ t: "sync", groupId: "g", timeRange: [10, 20], crosshair: null });
     frame();
-    expect(of("a11y").at(-1)?.cursorSummary).toBe("");
+    expect(rt.syncCounters(1)?.remoteCrosshair).toBeNull();
+    expect(rt.syncCounters(2)?.applied).toBe(0);
   });
 
   // E11-S08 (BQ-135) changed this pin: an explicit pick always replies; hover is edge-triggered.

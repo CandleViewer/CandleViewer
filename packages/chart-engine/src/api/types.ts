@@ -5,6 +5,9 @@
 // Types only: no React, no DOM globals, no I/O here (C-2.16). `HTMLElement` is a type reference.
 
 import type { DataRange, InstanceRing, SeriesProjection } from "../layers/plugin-api.js";
+import type { SyncModes } from "../sync/SyncGroup.js";
+
+export type { SyncModes };
 
 // ---- §8 verbatim ----------------------------------------------------------
 
@@ -16,6 +19,9 @@ export interface ChartOptions {
   timeZone?: "UTC" | string; // default 'UTC'
   density?: "comfortable" | "compact" | "dense";
   syncGroup?: string;
+  // E11-S09 PR 2a (BQ-17, additive): what the sync group shares, from mount; default time and
+  // crosshair on. `scale: true` is refused (BQ-24: reserved).
+  syncModes?: Partial<SyncModes>;
   maxBars?: number; // default 200_000
   memoryBudgetMb?: number; // default 600
   // Design delta BQ-258 (E11-S11): the design fonts' bytes for the SDF atlas (C-2.16: the
@@ -39,6 +45,9 @@ export interface Chart {
   getDomMirrorRoot(): HTMLElement;
   getVisibleWindow(): VisibleWindow | null;
   getFocusedUnit(): FocusedUnit | null;
+  // E11-S09 PR 2a (BQ-17, additive): join an app-named sync group (null: leave) with `modes`
+  // merged over the current ones. Throws on `scale: true` (BQ-24) or a group id over 128 chars.
+  setSyncGroup(groupId: string | null, modes?: Partial<SyncModes>): void;
 }
 
 export interface Pane {
@@ -157,7 +166,15 @@ export interface ChartEvents {
   click: { time: number; price: number; button: number; modifiers: Modifiers };
   orderLineDragged: { id: string; price: number; commit: boolean };
   drawingChanged: { drawing: Drawing; phase: "create" | "update" | "delete" };
-  viewportChanged: { timeStart: number; timeEnd: number; barSpacing: number };
+  // E11-S09 PR 2a (BQ-26, additive): once per chart per worker frame, `frameId` naming it;
+  // `syncId` is the peer publication that moved it (BQ-7's origin token), absent for a local move.
+  viewportChanged: {
+    timeStart: number;
+    timeEnd: number;
+    barSpacing: number;
+    frameId: number;
+    syncId?: SyncId;
+  };
   visibleRangeNeedsData: { fromTime: number; toTime: number }; // triggers paging
   frameStats: FrameStats;
   /** E12-S06 (BQ-9, additive): the visible range holds no bar (`empty`, no grid drawn) or some. */
@@ -563,4 +580,11 @@ export interface FocusedUnit {
   readonly paneId: PaneId;
   readonly barIndex: number;
   readonly priceLevel?: number;
+}
+
+/** E11-S09 PR 2a (BQ-26): a sync's origin, (worker, chart, seq); no string is built per frame. */
+export interface SyncId {
+  readonly worker: string;
+  readonly chart: number;
+  readonly seq: number;
 }
