@@ -37,6 +37,8 @@ export const noRestrictedImportsRuleSet = {
         "@candleviewer/rule-graph/src/**/*",
         "@candleviewer/dock/src/*",
         "@candleviewer/dock/src/**/*",
+        "@candleviewer/rule-editor-core/src/*",
+        "@candleviewer/rule-editor-core/src/**/*",
       ],
       message: "Deep import banned (§9 #18) — import the package's declared entry point instead.",
     },

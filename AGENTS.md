@@ -117,6 +117,7 @@ CandleViewer/
 │  ├─ protocol/               # REST/WS types + codecs, GENERATED from the contract
 │  ├─ rule-graph/             # pure rule IR ⇄ node-graph adapter, typed ports, analysis (no React/DOM)
 │  ├─ dock/                   # pure dock layout tree: ops, presets, drop resolution (no React/DOM)
+│  ├─ rule-editor-core/       # pure rule form model, IR adapter, vocabulary cache, diagnostics (no React/DOM)
 │  ├─ fixtures/bybit/         # recorded Bybit captures, redacted (one dated directory per capture)
 │  └─ config/                 # shared eslint/tsconfig/tailwind/vitest presets
 ├─ services/

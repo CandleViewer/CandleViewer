@@ -727,6 +727,7 @@ CandleViewer/
 │  │  └─ src/runtime/             # binary frame decoders, seq/resync helpers
 │  ├─ rule-graph/                 # pure rule IR ⇄ node-graph adapter, typed ports, analysis (no React/DOM)
 │  ├─ dock/                       # pure dock layout tree: ops, presets, drop resolution (no React/DOM)
+│  ├─ rule-editor-core/           # pure rule form model, IR adapter, vocabulary cache, diagnostics (no React/DOM)
 │  ├─ fixtures/                   # recorded Bybit fixtures + golden outputs, shared by TS & Py
 │  │  ├─ raw/                     # captured WS sessions (jsonl.gz), redacted
 │  │  ├─ golden/                  # expected bars/footprint/profile/CVD outputs
