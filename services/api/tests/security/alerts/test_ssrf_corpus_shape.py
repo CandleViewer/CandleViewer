@@ -57,7 +57,7 @@ def test_ssrf_corpus_entries_are_classed_reasoned_and_scripted() -> None:
     corpus = _corpus()
     entries, resolvers = corpus["entries"], corpus["resolvers"]
     assert [e["id"] for e in entries] == [f"SSRF-{n:02d}" for n in range(1, len(entries) + 1)]
-    assert len(entries) >= 86  # SSRF-01 to SSRF-86 when this was written
+    assert len(entries) >= 87  # SSRF-01 to SSRF-87 when this was written
     for e in entries:
         assert {"id", "class", "url", "expect"} <= set(e) <= _FIELDS, e["id"]
         assert e["class"] in corpus["classes"], f"{e['id']}: class {e['class']!r}"
@@ -116,6 +116,23 @@ def test_ssrf_corpus_order_refuses_every_reason_and_ranks_the_address_classes() 
         assert not (parts.username or parts.path or parts.query or parts.fragment), endpoint
 
 
+def test_ssrf_corpus_entries_that_pass_are_exactly_the_permitted_and_pinned_ones() -> None:
+    """Scenario: Abuse cases are executable (edge)
+    Then each abuse case is written concretely enough that E40-X01 can automate it without
+    further interpretation
+
+    (The entries that pass the policy are a fixed set: SSRF-01 and SSRF-02 are `permitted`, as
+    are SSRF-82 and SSRF-83, the allow-listed name with a trailing dot and in upper case; SSRF-54
+    is `pinned` to its first lookup's address. An entry moved into or out of the set fails here,
+    before E40-S03 runs the corpus.)
+    """
+    entries = _corpus()["entries"]
+    permitted = {e["id"] for e in entries if e["expect"] == "permitted"}
+    pinned = {e["id"]: e.get("connect_to") for e in entries if e["expect"] == "pinned"}
+    assert permitted == {"SSRF-01", "SSRF-02", "SSRF-82", "SSRF-83"}
+    assert pinned == {"SSRF-54": "203.0.113.20"}
+
+
 def test_ssrf_corpus_entries_with_a_non_ascii_host_expect_malformed_url() -> None:
     """Scenario: Abuse cases are executable (edge)
     Then each abuse case is written concretely enough that E40-X01 can automate it without
@@ -124,10 +141,14 @@ def test_ssrf_corpus_entries_with_a_non_ascii_host_expect_malformed_url() -> Non
     (The egress policy reads a host as ASCII only, with no IDNA mapping, the ruling on #1400: a
     host holding any non-ASCII character is `malformed_url` at the url step, whatever a mapping
     would make of it, and an internationalised endpoint is allow-listed in its punycode form.
-    `name_normalisation` says so, and every entry with such a host expects `malformed_url`.)
+    `name_normalisation` and the `url` step say so, and each such entry expects `malformed_url`.)
     """
     corpus = _corpus()
     assert corpus["name_normalisation"].startswith("ASCII only")
+    url_step = corpus["order"][0]  # the first step, where such a host is refused
+    assert url_step["step"] == "url", url_step
+    for rule in (corpus["name_normalisation"], url_step["rule"]):  # `order` says it too
+        assert "ASCII only" in rule, rule
     expects = {
         e["id"]: e["expect"]
         for e in corpus["entries"]

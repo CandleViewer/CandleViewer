@@ -5,7 +5,7 @@
   "order": [
     {
       "step": "url",
-      "rule": "the scheme is https or http and the authority parses as one host, with no userinfo and no percent-encoding",
+      "rule": "the scheme is https or http and the authority parses as one host, ASCII only, with no userinfo and no percent-encoding",
       "refuses": ["malformed_url", "userinfo", "scheme"]
     },
     {
@@ -577,6 +577,13 @@
       "url": "https://e.example/h",
       "via": "failing",
       "expect": "unresolvable"
+    },
+    {
+      "id": "SSRF-87",
+      "class": "allow_list",
+      "url": "https://xn--80a.example/h",
+      "via": "public",
+      "expect": "not_on_allow_list"
     }
   ]
 }
