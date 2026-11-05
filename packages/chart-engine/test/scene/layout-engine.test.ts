@@ -5,7 +5,7 @@ import { BatchBuilder } from "../../src/scene/batch-builder.js";
 import { LAYER_ORDER } from "../../src/scene/dirty.js";
 import { FrameScheduler } from "../../src/scene/frame-scheduler.js";
 import { SceneGraph } from "../../src/scene/graph.js";
-import { LayoutEngine } from "../../src/scene/layout-engine.js";
+import { LayoutEngine, splitPair } from "../../src/scene/layout-engine.js";
 import { NullSeries } from "../../src/scene/null-series.js";
 import { TestClock } from "./test-clock.js";
 
@@ -195,6 +195,100 @@ describe("LayoutEngine: shares, minimum height and collapse (E11-S09, BQ-11)", (
         fill: near(1 - taken),
         stub: 0,
       });
+    }
+  });
+});
+
+describe("LayoutEngine: the splitters (E11-S09 PR 1b; ruling 6623589909, BQ-11 rider)", () => {
+  const four = () => {
+    const c = chart(4);
+    for (let p = 0; p < 4; p += 1) c.layout.addPane(`p${p}`);
+    c.layout.setSize(864, 424); // plot 400 px: 100 px each
+    c.frame();
+    return c;
+  };
+  const shares = (l: LayoutEngine): number[] => l.panes.map((p) => p.share);
+
+  it("a splitter move changes only the two adjacent panes (D02:361)", () => {
+    const { layout, frame } = four();
+    expect(layout.moveBoundary(1, 0.05, false)).toBe(true); // p1 grows into p2
+    frame();
+    expect(shares(layout)).toEqual([0.25, 0.3, 0.2, 0.25].map((x) => expect.closeTo(x, 12)));
+    expect(layout.panes.map((p) => p.rect[3])).toEqual([100, 120, 80, 100]);
+    expect(sum(shares(layout))).toBe(1);
+  });
+
+  it("a key clamps at the minimum; a drag folds the shrunk pane into its neighbour", () => {
+    const { layout, frame } = four();
+    layout.moveBoundary(0, -1, false); // End's opposite: p0 down to 48 of 400 px, p1 takes the rest
+    frame();
+    expect(layout.panes.map((p) => p.rect[3])).toEqual([48, 152, 100, 100]);
+    expect(layout.moveBoundary(0, -0.02, false)).toBe(false); // at the limit: nothing changes
+    expect(layout.moveBoundary(2, 0.2, true)).toBe(true); // p3 would be 20 px: it folds into p2
+    frame();
+    expect(layout.panes.map((p) => p.collapsed)).toEqual([false, false, false, true]);
+    expect(layout.panes[3]?.lastShare).toBeCloseTo(0.25, 12);
+    expect(layout.panes.map((p) => p.rect[3])).toEqual([44, 140, 184, 32]); // stub px first
+  });
+
+  it("beside a stub, a move toward it reopens it from that neighbour only; away does nothing", () => {
+    const { layout, frame } = four();
+    layout.moveBoundary(2, 0.2, true); // p3 folds into p2
+    frame();
+    const before = shares(layout);
+    expect(layout.moveBoundary(2, 0.05, true)).toBe(false); // away from the stub
+    expect(layout.moveBoundary(2, -0.05, true)).toBe(true); // toward it: back to 0.25
+    frame();
+    expect(layout.panes[3]?.collapsed).toBe(false);
+    expect(shares(layout).slice(0, 2)).toEqual(
+      before.slice(0, 2).map((x) => expect.closeTo(x, 12)),
+    );
+    expect(shares(layout).slice(2)).toEqual([0.25, 0.25].map((x) => expect.closeTo(x, 12)));
+    expect(layout.moveBoundary(3, 0.1, true)).toBe(false); // no row below the last pane
+  });
+
+  it("property: splitPair keeps the pair's sum and never leaves an open side under the minimum", () => {
+    const rng = mulberry32(20261105);
+    for (let c = 0; c < 2000; c += 1) {
+      const [a, b, min] = [rng() * 0.6, rng() * 0.6, rng() * 0.2];
+      const by = (rng() - 0.5) * 1.2;
+      const fold = rng() < 0.5;
+      const next = splitPair(a, b, by, min, fold);
+      const rest = a + b - next;
+      const ok = fold
+        ? next === 0 || next === a + b || (next >= min && rest >= min)
+        : a + b < 2 * min
+          ? next === a
+          : next >= min && rest >= min - 1e-12;
+      expect(ok, `case ${c}: ${[a, b, by, min, fold, next].join(" ")}`).toBe(true);
+    }
+  });
+
+  it("property: seeded splitter moves keep the sum at 1, the untouched shares and the tiling", () => {
+    const rng = mulberry32(20261106);
+    const int = (n: number): number => Math.floor(rng() * n);
+    for (let c = 0; c < 300; c += 1) {
+      const n = 2 + int(5);
+      const { layout, frame } = chart(n);
+      for (let p = 0; p < n; p += 1) layout.addPane(`p${p}`);
+      layout.setSize(864, 300 + int(900));
+      frame();
+      for (let op = 0; op < 10; op += 1) {
+        const i = int(n - 1);
+        const before = shares(layout);
+        layout.moveBoundary(i, (rng() - 0.5) * 0.4, int(2) === 0);
+        frame();
+        const after = shares(layout);
+        for (let k = 0; k < n; k += 1) {
+          if (k !== i && k !== i + 1) expect(after[k], `case ${c}`).toBeCloseTo(before[k] ?? 0, 12);
+        }
+        let y = 0;
+        for (const p of layout.panes) {
+          expect(p.rect[1]).toBe(y);
+          y += p.rect[3];
+        }
+        expect([sum(after), y], `case ${c}`).toEqual([1, layout.height - 24]);
+      }
     }
   });
 });

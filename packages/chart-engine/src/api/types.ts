@@ -273,6 +273,11 @@ export interface PaneOptions {
   /** Share of the chart height, in (0, 1]; default 1. */
   heightRatio?: number;
   /**
+   * E11-S09 PR 1b (BQ-15, additive): the pane's name in its region, stub, splitters and
+   * announcements (E11-D02 §8, "Volume pane"); default "Price pane" first, then "Pane N".
+   */
+  label?: string;
+  /**
    * E11-S05 (README BQ-121, C-35): the persisted scale, applied at `addPane`; the lock is session
    * state and never part of it.
    */

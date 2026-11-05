@@ -170,9 +170,31 @@ export type Command =
    * pane its share and rescales the unlisted ones into the rest (the worker normalises, BQ-11).
    */
   | { readonly k: "addPane"; readonly pane: number; readonly share?: number }
-  | { readonly k: "removePane"; readonly pane: number }
-  | { readonly k: "setPaneShares"; readonly shares: readonly (readonly [number, number])[] }
+  | {
+      readonly k: "removePane";
+      readonly pane: number;
+      /** E11-S09 PR 1b (additive, R58): acked on the `layout` that announces the re-key. */
+      readonly seq?: number;
+    }
+  | {
+      readonly k: "setPaneShares";
+      readonly shares: readonly (readonly [number, number])[];
+      /** E11-S09 PR 1b (additive): echoed as the next `layout`'s `ack` (a splitter's Home key). */
+      readonly seq?: number;
+    }
   | { readonly k: "setPaneCollapsed"; readonly pane: number; readonly collapsed: boolean }
+  /**
+   * E11-S09 PR 1b (additive): a splitter key. The boundary under pane `pane` moves by `by` share
+   * units (+ grows that pane), clamped at the minimums; only it and the pane below change. The
+   * worker always posts a `layout` after it, so the host announces the result once per key; `seq`
+   * comes back as that `layout`'s `ack`, so a layout posted before the key is never taken for it.
+   */
+  | {
+      readonly k: "moveSplitter";
+      readonly pane: number;
+      readonly by: number;
+      readonly seq?: number;
+    }
   | { readonly k: "release" };
 
 /** E11-S09 (BQ-4): one pane's laid-out rows, CSS px; a collapsed pane's `height` is its stub. */
@@ -311,6 +333,12 @@ export type FromWorker =
       /** The time strip's [top, height], under the last pane. */
       readonly timeAxis: readonly [number, number];
       readonly plotWidth: number;
+      /**
+       * E11-S09 PR 1b (additive): the `seq` of the last `moveSplitter` / `setPaneShares` /
+       * `removePane` handled since the previous `layout`, when it carried one (posted once, then
+       * cleared). A removal's acking `layout` lists every slot's key after the re-key (R58).
+       */
+      readonly ack?: number;
     }
   /**
    * E12-S06 (BQ-9, additive): the main series' visible range holds no bar (`empty`) or some
@@ -532,11 +560,18 @@ function validCommand(cmd: unknown): boolean {
     case "addPane":
       return paneKey(cmd["pane"]) && optional(cmd["share"], isShare);
     case "removePane":
-      return paneKey(cmd["pane"]);
+      return paneKey(cmd["pane"]) && optional(cmd["seq"], seriesId);
     case "setPaneShares":
-      return isShares(cmd["shares"]);
+      return isShares(cmd["shares"]) && optional(cmd["seq"], seriesId);
     case "setPaneCollapsed":
       return paneKey(cmd["pane"]) && isBool(cmd["collapsed"]);
+    case "moveSplitter":
+      return (
+        paneKey(cmd["pane"]) &&
+        finite(cmd["by"]) &&
+        Math.abs(cmd["by"] as number) <= 1 &&
+        optional(cmd["seq"], seriesId)
+      );
     case "release":
       return true;
     default:

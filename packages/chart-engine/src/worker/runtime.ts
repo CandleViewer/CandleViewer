@@ -225,6 +225,8 @@ interface Instance {
    * until E12 mounts series per pane); and the layout count last posted (BQ-4). */
   readonly paneBlocks: PaneUniforms[];
   layoutPosted: number;
+  /** E11-S09 PR 1b: a splitter key's `seq`, echoed once as the next `layout`'s `ack`; -1 none. */
+  ack: number;
   ready: boolean;
   /** The scheduler's requested frame, run by the shared callback; null while parked. */
   readonly slot: { frame: scene.FrameCallback | null };
@@ -567,16 +569,16 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
    * until E12 mounts series per pane, so removing its key while others remain hands it the next
    * pane's key, share, collapse and transform; that pane's node, row and block go.
    */
-  function removePane(inst: Instance, key: number): void {
+  function removePane(inst: Instance, key: number): boolean {
     const { layout } = inst;
     const p = layout.byKey(key);
-    if (p === undefined) return;
+    if (p === undefined) return false;
     inst.gestures.pane = 0; // the slots shift: a price gesture re-targets on the next pointer
     if (layout.panes.length === 1) {
       p.key = -1;
       inst.graph.markResize();
       touch(inst);
-      return;
+      return true;
     }
     let i = layout.panes.indexOf(p);
     let gone = p;
@@ -589,18 +591,23 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     if (i === 0) i = 1; // [0] stays `uniforms`; every block is rewritten each frame
     inst.paneBlocks.splice(i, 1);
     touch(inst);
+    return true;
   }
 
   /** BQ-3: the listed keys' shares; an unknown key refuses the whole command. */
-  function setShares(inst: Instance, shares: readonly (readonly [number, number])[]): void {
+  function setShares(inst: Instance, shares: readonly (readonly [number, number])[]): boolean {
     const ids: [string, number][] = [];
     for (const [key, share] of shares) {
       const p = inst.layout.byKey(key);
-      if (p === undefined) return fail(inst.id, `no pane ${key} on chart ${inst.id}`);
+      if (p === undefined) {
+        fail(inst.id, `no pane ${key} on chart ${inst.id}`);
+        return false;
+      }
       ids.push([p.id, share]);
     }
     inst.layout.setShares(ids);
     touch(inst);
+    return true;
   }
 
   /** F-13 (BQ-92): no export while the pixels cannot be trusted; the reason, never a stale PNG. */
@@ -988,11 +995,25 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         addPane(inst, cmd.pane, cmd.share);
         return;
       case "removePane":
-        removePane(inst, cmd.pane);
+        // R58: the re-key is announced on the `layout` that acks the removal (an unknown key
+        // removes nothing, so nothing acks it).
+        if (removePane(inst, cmd.pane) && cmd.seq !== undefined) inst.ack = cmd.seq;
         return;
       case "setPaneShares":
-        setShares(inst, cmd.shares);
+        if (setShares(inst, cmd.shares) && cmd.seq !== undefined) {
+          inst.ack = cmd.seq; // a splitter's Home: a `layout` follows even when nothing moved
+          inst.graph.markResize();
+        }
         return;
+      case "moveSplitter": {
+        const p = inst.layout.byKey(cmd.pane);
+        if (p === undefined) return;
+        inst.layout.moveBoundary(inst.layout.panes.indexOf(p), cmd.by, false);
+        if (cmd.seq !== undefined) inst.ack = cmd.seq;
+        inst.graph.markResize(); // a `layout` follows even at a limit: the key's announcement
+        touch(inst);
+        return;
+      }
       case "setPaneCollapsed": {
         const p = inst.layout.byKey(cmd.pane);
         if (p !== undefined && inst.layout.setCollapsed(p.id, cmd.collapsed)) touch(inst);
@@ -1093,6 +1114,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         uniforms,
         paneBlocks: [uniforms],
         layoutPosted: -1,
+        ack: -1,
         autoscale: new AutoScaler(viewport, (pane) =>
           pane === 0 ? (deps.priceSources ?? NO_SOURCES) : NO_SOURCES,
         ),
@@ -1107,6 +1129,13 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
           hover: (x) => crosshairAt(inst, screenToTime(viewport, x)),
           animate: (m) => inst.scheduler.animate(m),
           say: (code) => (inst.axes.say = code),
+          split(row, dy): void {
+            // A drag folds a pane pushed under the minimum (D02 §8); LAYOUT only, no upload.
+            const l = scene.layout;
+            let avail = 0; // the open rows' px: share units of this drag (no allocation per row)
+            for (const p of l.panes) avail += p.collapsed ? 0 : p.rect[3];
+            if (avail > 0 && l.moveBoundary(row, dy / avail, true)) touch(inst);
+          },
         }),
         // G-28: the degraded-2d re-init keeps the registrations, re-placed under the new view.
         objects: old ? old.objects.rebind(viewport) : new ObjectIndex(viewport, 0, "main"),
@@ -1294,7 +1323,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         })),
         timeAxis: [l.timeAxis[1], l.timeAxis[3]],
         plotWidth: l.timeAxis[2],
+        ...(inst.ack >= 0 ? { ack: inst.ack } : {}),
       });
+      inst.ack = -1;
     }
     if (inst.axesDirty || inst.axes.say !== SAY.none) {
       inst.axesDirty = false;
