@@ -168,7 +168,8 @@ describe("accessibility", () => {
     "story %s has no serious or critical axe violation",
     async (_name, story) => {
       render((story as { render: () => JSX.Element }).render());
-      // jsdom has no canvas; contrast is the Storybook / Playwright axe run's
+      // jsdom has no canvas, so contrast is off here. These stories are not yet registered in
+      // packages/ui/.storybook/main.ts, so no run checks their contrast today: slice 3 registers them.
       const res = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
       const bad = res.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
       expect(bad).toEqual([]);
