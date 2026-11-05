@@ -48,3 +48,31 @@ tests/qa/oms/test_conformance_s1_s5.py::test_s5_fills_delivered_before_the_bind_
 tests/qa/oms/test_conformance_s1_s5.py::test_s5_a_stale_push_is_ignored_and_a_fill_never_is | S5: getOrder, orders and executions topics | E29-TC-459
 tests/qa/oms/test_conformance_s1_s5.py::test_s5_a_push_stamped_far_ahead_of_the_clock_does_not_hide_a_later_one | S5: getOrder, orders topic | E29-TC-459
 tests/qa/oms/test_conformance_s1_s5.py::test_s5_the_rest_ack_only_accepts_and_the_stream_alone_fills | S5: placeOrder, getOrder, orders, executions and machine topics | E29-TC-550, E29-TC-500
+
+# C4b: 24 Sec.8.2's rules S6 to S9 through REST and the WS frames on the composed app, as the Owner
+# (tests/qa/oms/test_conformance_s6_s9.py on C4a's world; the plan ids from E29-TC-450 up are its
+# part 2, #5789 at 956473fea, if it merges as is). A row is the half of each plan case a client
+# reads, with the stored steps, audit records and venue calls its Oracle names; it is not full
+# coverage. What the rows leave out, by plan case:
+#   TC-454, TC-554: the anomaly counter (E29-G-09) and B8's attach for a late fill (its notice has
+#   no owner until E32, so the world pages it). TC-450: the refusal of a command by a final and by
+#   an `untracked` order only; the matrix is the chart's table (T0). TC-456, TC-506: Postgres cut
+#   at boot, a store that hangs or stops, the write refused at T4 (Q04 s12); the refused write is
+#   the first persist's, where the PG test's cut meets the anchor read. TC-455: a cancel or a
+#   create in flight, a history that does not fold to its row (unit) and the SIGKILL leg (Q04
+#   s14); TC-507 is not here: a stop with a request out waits the 10 s drain. TC-500: the intent before the send only (its REST half is C4a's).
+#   TC-555: the lockout's state (E29-G-06) and the fill kept for the next pass. TC-460: the
+#   Owner's half (a Manager's is X02's) and `held` orders (TC-800). TC-603: what a client reads,
+#   not the pass nor its `order.adopted_untracked` record. TC-556: the stop's cancel while its
+#   position is open (TC-109).
+tests/qa/oms/test_conformance_s6_s9.py::test_s6_a_push_after_the_order_ended_is_an_anomaly_and_changes_nothing | S6: getOrder, cancelOrder, orders and executions topics | E29-TC-454, E29-TC-554, E29-TC-450
+tests/qa/oms/test_conformance_s6_s9.py::test_s6_a_fill_after_the_order_ended_is_consumed_and_its_position_handed_over | S6: getOrder, orders and executions topics | E29-TC-454
+tests/qa/oms/test_conformance_s6_s9.py::test_s7_an_order_the_store_cannot_record_is_refused_and_nothing_is_sent | S7: placeOrder, orders topic | E29-TC-506, E29-TC-456
+tests/qa/oms/test_conformance_s6_s9.py::test_s7_a_cancel_the_store_cannot_record_is_refused_and_leaves_the_order_as_it_was | S7, S8: cancelOrder, getOrder, orders topic | E29-TC-456
+tests/qa/oms/test_conformance_s6_s9.py::test_s7_a_store_failure_after_the_send_is_never_a_503 | S7: placeOrder, orders topic | E29-TC-506
+tests/qa/oms/test_conformance_s6_s9.py::test_s8_the_intent_is_stored_before_the_create_leaves_and_its_outcome_after | S8: placeOrder, getOrder, orders topic | E29-TC-500, E29-TC-456
+tests/qa/oms/test_conformance_s6_s9.py::test_s8_a_write_whose_answer_was_cut_is_rebuilt_from_its_row_and_never_applied_twice | S7, S8: getOrder, orders, executions and machine topics | E29-TC-456
+tests/qa/oms/test_conformance_s6_s9.py::test_s8_a_restarted_process_rebuilds_the_order_as_its_events_left_it | S8: amendOrder, getOrder, orders, executions and machine topics | E29-TC-455
+tests/qa/oms/test_conformance_s6_s9.py::test_s9_a_fill_no_order_owns_opens_the_lockout_once_per_key_and_touches_no_order | S9: getOrder, orders and executions topics | E29-TC-555
+tests/qa/oms/test_conformance_s6_s9.py::test_s9_an_order_no_row_is_bound_to_is_listed_not_snapshotted_and_never_commanded | S9: listOrders, getOrder, cancelOrder, orders topic | E29-TC-460, E29-TC-603, E29-TC-450
+tests/qa/oms/test_conformance_s6_s9.py::test_s9_a_recorded_stops_order_is_materialised_never_foreign | S9: listOrders, getOrder, orders and executions topics | E29-TC-556
