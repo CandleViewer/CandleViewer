@@ -20,11 +20,16 @@ pure: no I/O, no log and no clock. Nothing imports it yet: the composition slice
   that states no `closedSize`, and, in hedge mode, a fill with no order row: until the walk next
   goes flat, each close gives its `c` and closing fee share only. The walk goes flat at a
   confirmed flat, after a fill that leaves it no size, or where a fill it reads closes all it
-  holds; the remainder of a fill it cannot read opens unreadable.
+  holds; the remainder of a fill it cannot read opens unreadable. The first, a REST-recovered
+  fill, leaves the walk sure of its count of sizes, so its closes stay `sizes_sure`; the other
+  two put that count in doubt until the walk next goes flat, and a fill of the first kind does
+  not lift the doubt.
 - **Disagreement.** A stated `closedSize` the walk disagrees with, above 0 on a fill that
   opens or other than `c` on one of the other side: until a confirmed flat after it, never one
-  of the walk's own count, each close is `disagreeing` and unreadable, its record has no local
-  figures, and `c` stays `min(exec_qty, open size)` whatever the fill states.
+  of the walk's own count, each close is `disagreeing`, unreadable and not `sizes_sure`, its
+  record has no local figures, and `c` stays `min(exec_qty, open size)` whatever the fill states.
+- **Finality.** The composition decides it per record from the flags of that record's closes,
+  never from `clean`, which speaks for the whole walk: a span after them does not touch them.
 - **Bounds (C-2.18).** A walk handed more fills or flats than its `WalkBudget` is `capped`: it
   gives nothing, never a part, and is never `clean`. Its caller reads one row past each budget,
   so a capped walk knows more are stored, and logs.
@@ -53,7 +58,7 @@ _EXACT: Final = Context(prec=400)
 _WIDE: Final = Context(prec=80)
 _ZERO: Final = Decimal(0)
 _NO_GROUPS: Final[Mapping[UUID, UUID]] = MappingProxyType({})
-_Mode = Literal["read", "unreadable", "disagreeing"]
+_Mode = Literal["read", "no_pnl", "unreadable", "disagreeing"]  # each graver than the last
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,17 +78,21 @@ class WalkClose:
     """A fill that closes: `closed` is its `c` and `closing_fee` its fee's closing share. The
     entry value and the opening fees it takes, the position's average entry and `opened_at` are
     None while it is `unreadable`; a `disagreeing` close is unreadable too, and its record has no
-    local figures. `groups` are the trade groups the position's opening fills' orders name."""
+    local figures. `sizes_sure` when the walk trusts the open size it counts, and so the close's
+    `c`: a fill with no closed PnL leaves it trusted (module docstring). `groups` are the trade
+    groups the position's opening fills' orders name."""
 
     fill: WalkFill
     closed: Decimal
     closing_fee: Decimal
     entry_value: Decimal | None
     opening_fees: Decimal | None
+    #: At this close; a record's is sum(entry_value) / sum(closed) of its closes, never their mean.
     avg_entry: Decimal | None
     opened_at: datetime | None
     groups: frozenset[UUID]
     unreadable: bool
+    sizes_sure: bool
     disagreeing: bool
 
 
@@ -91,7 +100,8 @@ class WalkClose:
 class Walk:
     """`start` is the confirmed flat the walk starts at, None with no start or when `capped`, and
     `open_size` what it holds at its end. `clean` when it has a start, stays within its budget and
-    reads every fill it walks, none unreadable and none disagreeing."""
+    reads every fill it walks, none unreadable and none disagreeing. With no `start`, capped or
+    not, it gives no closes and its `open_size` means nothing: read `capped` and `start` first."""
 
     start: datetime | None
     closes: tuple[WalkClose, ...] = ()
@@ -179,8 +189,9 @@ def _step(
         _open(held, fill, qty, fill.exec_fee, order_groups)
         return read
     c = min(qty, held.size)
-    unreadable = orphan or fill.closed_pnl is None or (qty > held.size and stated is None)
-    read = _enter(held, unreadable=unreadable, disagrees=stated is not None and stated != c)
+    unreadable = orphan or (qty > held.size and stated is None)
+    no_pnl, disagrees = fill.closed_pnl is None, stated is not None and stated != c
+    read = _enter(held, unreadable=unreadable, disagrees=disagrees, no_pnl=no_pnl)
     value, fees = _share(held.value, c, held.size), _share(held.fees, c, held.size)
     closing_fee, known = _share(fill.exec_fee, c, qty), held.mode == "read"
     closes.append(
@@ -194,6 +205,7 @@ def _step(
             opened_at=held.opened_at if known else None,
             groups=frozenset(held.groups),
             unreadable=not known,
+            sizes_sure=held.mode in ("read", "no_pnl"),
             disagreeing=held.mode == "disagreeing",
         )
     )
@@ -207,14 +219,17 @@ def _step(
     return read
 
 
-def _enter(held: _Held, *, unreadable: bool, disagrees: bool) -> bool:
-    """The disagreement span on a disagreeing `closedSize`, else the unreadable span on a fill the
-    walk cannot read: whether the walk read the fill."""
+def _enter(held: _Held, *, unreadable: bool, disagrees: bool, no_pnl: bool = False) -> bool:
+    """The disagreement span on a disagreeing `closedSize`, else the unreadable span on a fill that
+    puts the walk's count of sizes in doubt, else the span of a fill with no closed PnL, which
+    leaves it sure; a span gives way only to a graver one. Whether the walk read the fill."""
     if disagrees:
         held.mode = "disagreeing"
-    elif unreadable and held.mode == "read":
+    elif unreadable and held.mode in ("read", "no_pnl"):
         held.mode = "unreadable"
-    return not (unreadable or disagrees)
+    elif no_pnl and held.mode == "read":
+        held.mode = "no_pnl"
+    return not (unreadable or disagrees or no_pnl)
 
 
 def _open(
