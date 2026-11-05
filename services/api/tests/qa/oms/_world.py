@@ -50,7 +50,7 @@ from candleviewer.oms.reads import OmsReads
 from candleviewer.oms_wiring import GroupStores, OmsStores
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.storage.repositories.accounts import AccountScope, GrantScope
-from candleviewer.storage.repositories.orders import OrderRow, settle_accounts
+from candleviewer.storage.repositories.orders import NewOrder, OrderRow, settle_accounts
 from candleviewer.storage.repositories.trading_accounts import TradingAccountRow
 from tests.contract.rbac.rbac_harness import GRANTED, World, bearer, build_world, user_id_of
 from tests.unit.api import oms_reads_world as rw
@@ -63,8 +63,8 @@ ACCOUNT: Final = AccountId(GRANTED)
 KEY: Final = uuid.UUID(cr.KEYS["demo"])  # the account's active key
 REF: Final = AccountRef(account_id=ACCOUNT, uid="1001", environment="demo", key_ref=str(KEY))
 #: The symbols the world lists: a test that leaves an order unresolved keeps its position key, so
-#: it has a symbol of its own.
-SYMBOLS: Final = (sr.SYMBOL, "ETHUSDT", "SOLUSDT")
+#: it has a symbol of its own (so has one the OMS cancelled unfilled: its stop waits for the read).
+SYMBOLS: Final = (sr.SYMBOL, "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT")
 T0_US: Final = int(rt.T0.timestamp()) * 1_000_000  # the facade's clock, as the venue stamps it
 #: The topics the adapter subscribes, each by the neutral topic its parser reads it as.
 _TOPIC: Final = {pp.TOPICS[topic]: topic for ops in REQUIRED_OPS for topic in ops}
@@ -108,6 +108,8 @@ class Venue(rt.Venue):
     a fee rate) and is the source of the account's private stream."""
 
     def port(self, env: str) -> rt.Port:
+        if self.ports:  # the one venue, whichever process asks: its orders outlive a restart
+            return self.ports[-1]
         port = rt.Port(environment=cast(Any, env), now_us=lambda: T0_US)
         cash, none = Decimal(100_000), Decimal(0)
         port.set_wallet(Wallet(
@@ -270,6 +272,7 @@ class OmsWorld:
     oms: Runtime
     runtime: Any
     portal: Any
+    rebuild: Callable[[], Any]
     keys: int = 0
     doors: list[Door] = field(default_factory=list)
 
@@ -282,14 +285,34 @@ class OmsWorld:
         return self.oms.venue.ports[-1]
 
     def call(self, fn: Any, *args: Any) -> Any:
-        return self.portal.call(fn, *args)
+        """`fn(*args)` on the runtime's loop, cancelled and failed once `WAIT_S` has gone by, so a
+        stalled call never hangs the run."""
+        done = self.portal.start_task_soon(fn, *args)
+        try:
+            return done.result(WAIT_S)
+        except TimeoutError:
+            if done.done():  # the call's own failure, not the wait's
+                raise
+            done.cancel()
+            pytest.fail(f"{getattr(fn, '__qualname__', fn)} stalled on the loop for {WAIT_S}s")
 
     def settle(self) -> None:
         """Every turn the runtime's loop and its order lane have in hand, taken."""
         self.call(_settled, self.runtime)
 
+    def restart(self) -> None:
+        """The process ends and another starts over the same stores and venue: the runtime stops,
+        one built as the first was starts and hydrates what the stores hold, and the app serves
+        through it. B1's command attempts are the process's own, so they start empty."""
+        self.call(self.runtime.stop)
+        b01._ATTEMPTS.clear()
+        self.runtime = self.app.state.oms_runtime = self.rebuild()
+        self.call(_until_ready, self.runtime, self.oms)
+        self.settle()
+
     def reset(self) -> None:
         """Between tests: each door opened, the venue's methods, scripts and holdings undone."""
+        self.oms.store._fault = None  # one a failed test left armed
         for door in self.doors:
             door.open()
             self.port.__dict__.pop(door.method, None)
@@ -304,14 +327,22 @@ class OmsWorld:
         self, method: str, path: str, body: Any = None, headers: dict[str, str] | None = None
     ) -> httpx.Response:
         sent = {**bearer("owner"), **(headers or {})}
-        return cast(httpx.Response, self.pack.client.request(method, path, json=body, headers=sent))
+        with self.threaded(
+            lambda: self.pack.client.request(method, path, json=body, headers=sent)
+        ) as reply:
+            try:
+                return cast(httpx.Response, reply.result(WAIT_S))
+            except TimeoutError:
+                if reply.done():  # the request's own failure, not the wait's
+                    raise
+                pytest.fail(f"{method} {path} did not answer within {WAIT_S}s")
 
     def key(self) -> dict[str, str]:
         self.keys += 1
         return {"Idempotency-Key": str(uuid.UUID(int=0xC4A0_0000 + self.keys))}
 
-    def place(self, **over: Any) -> httpx.Response:
-        return self.rest("POST", "/orders", _BODY | over, self.key())
+    def place(self, *, key: dict[str, str] | None = None, **over: Any) -> httpx.Response:
+        return self.rest("POST", "/orders", _BODY | over, key or self.key())
 
     def amend(self, order: dict[str, Any], etag: str, **terms: Any) -> httpx.Response:
         return self.rest("PATCH", f"/orders/{order['id']}", terms, {"If-Match": etag, **self.key()})
@@ -374,23 +405,40 @@ class OmsWorld:
         async def held(*args: Any, **kwargs: Any) -> Any:
             door.requests.append(args[0])
             door.arrived.set()
-            await door.gate.wait()
+            try:
+                await asyncio.wait_for(door.gate.wait(), WAIT_S)
+            except TimeoutError:
+                raise AssertionError(f"the door of {method} stayed shut for {WAIT_S}s") from None
             return await real(*args, **kwargs)
 
         setattr(self.port, method, held)
         return door
 
     @contextmanager
+    def threaded(self, call: Callable[..., Any], *args: Any) -> Iterator[Future[Any]]:
+        """`call(*args)`, a REST request, on a thread of its own: its answer is read with
+        `.result(WAIT_S)`, and leaving the block never waits for it (a stall fails at that read)."""
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            yield pool.submit(call, *args)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+
+    @contextmanager
     def pending(self, door: Door, call: Callable[..., Any], *args: Any) -> Iterator[Future[Any]]:
-        """`call(*args)`, a REST request, on a thread of its own and parked at `door` until the
-        block ends: the venue's answer is held while the test puts an event inside it."""
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(call, *args)
+        """`call(*args)` on a thread of its own and parked at `door` until the block ends: the
+        venue's answer is held while the test puts an event inside it."""
+        with self.threaded(call, *args) as future:
             try:
                 assert door.arrived.wait(WAIT_S), "no call reached the door"
                 yield future
             finally:
                 door.open()
+
+    def next_venue_id(self) -> str:
+        """The exchange order id the venue gives the next order, in `FakeTradingPort`'s format (its
+        counter is private); a test that pushes under it asserts the bound row came to hold it."""
+        return f"fake-{self.port._next_id + 1:012d}"
 
     def venue_position(self, order: OrderRow, qty: str) -> None:
         """The venue's position of the order's symbol, `qty` of it, holding the stop the create
@@ -398,14 +446,29 @@ class OmsWorld:
         held = cr.position(ACCOUNT, qty=qty, stop_loss=order.stop_loss)
         self.port.seed_position(held.model_copy(update={"symbol": order.symbol}))
 
+    def parsed(self, topic: str, *rows: dict[str, Any]) -> list[Any]:
+        """One frame of `rows` on `topic`, as the venue sends it, read by the adapter's parser."""
+        pushed = pp.classify(push(topic, *rows, created=T0_US // 1_000))
+        assert isinstance(pushed, pp.Push)
+        return list(pp.read_push(pushed, REF, now_us=T0_US))
+
     def deliver(self, topic: str, *rows: dict[str, Any]) -> None:
         """One frame of `rows` on the account's private stream, as the venue sends it, read by the
         adapter's own parser: each event queued on the stream in order, then settled."""
-        pushed = pp.classify(push(topic, *rows, created=T0_US // 1_000))
-        assert isinstance(pushed, pp.Push)
-        for event in pp.read_push(pushed, REF, now_us=T0_US):
+        for event in self.parsed(topic, *rows):
             self.call(self.port.push, event)
         self.settle()
+
+    def discover(self, order: NewOrder) -> str:
+        """The reconciliation pass's own call for an exchange order no row is bound to (24 Sec.8.5
+        step 3c): the facade records `order` as it stands, `untracked`. The world's pass is the
+        stand-in that finds nothing, so a test makes the finding."""
+        return cast(str, self.call(_discovered, self.runtime, order))
+
+    def command(self, order: dict[str, Any], event: str, *, actor: str) -> str:
+        """`event` sent to the order's machine as `actor`, through B1's facade as a rule, an algo or
+        a group sends one (no route does): the lifecycle state it answers, or the refusal raised."""
+        return cast(str, self.call(_commanded, self.runtime, uuid.UUID(order["id"]), event, actor))
 
     def fill(self, order: dict[str, Any], name: str, qty: str, *, seq: int, **fields: Any) -> None:
         """The venue fills `qty` of the order: its position holds the order's native stop, and the
@@ -413,6 +476,17 @@ class OmsWorld:
         row = self.row(order)
         self.venue_position(row, qty)
         self.deliver(FILLS, fill_row(row, name, qty, seq=seq, **fields))
+
+
+async def _discovered(runtime: Any, order: NewOrder) -> str:
+    parts = runtime._composed()
+    return cast(str, await parts.lane.call(parts.machines.discover(order, environment="demo")))
+
+
+async def _commanded(runtime: Any, order_id: uuid.UUID, event: str, actor: str) -> str:
+    parts = runtime._composed()
+    sent = parts.machines.command(ACCOUNT, order_id, event, actor=actor)
+    return cast(str, await parts.lane.call(sent))
 
 
 async def _settled(runtime: Any) -> None:
@@ -440,6 +514,7 @@ def fill_row(order: OrderRow, name: str, qty: str, *, seq: int, **fields: Any) -
     price, rate = order.price or Decimal(0), Decimal("0.00055")
     values: dict[str, Any] = {
         "orderId": order.exchange_order_id, "orderLinkId": order.order_link_id, "seq": seq,
+        "symbol": order.symbol,
         "execId": f"{order.order_link_id}-{name}", "execQty": qty, "execPrice": _text(price),
         "side": order.side, "orderQty": _text(order.qty), "orderType": "Limit",
         "execFee": _text(Decimal(qty) * price * rate), "feeRate": str(rate), "isMaker": False,
@@ -454,6 +529,7 @@ def order_row(order: OrderRow, status: str, filled: str = "0", **fields: Any) ->
     left = order.qty - Decimal(filled) if status in ("New", "PartiallyFilled") else Decimal(0)
     values: dict[str, Any] = {
         "orderId": order.exchange_order_id, "orderLinkId": order.order_link_id, "side": order.side,
+        "symbol": order.symbol,
         "orderType": "Limit", "orderStatus": status, "price": _text(order.price or Decimal(0)),
         "timeInForce": "GTC", "qty": _text(order.qty), "cumExecQty": filled, "leavesQty": str(left),
         "createdTime": str(T0_US // 1_000), "updatedTime": str(T0_US // 1_000),
@@ -483,10 +559,12 @@ def oms_world(bars_state_root: Path) -> Iterator[OmsWorld]:
         held = sr.profile(ACCOUNT, allowed_symbols=list(SYMBOLS))
         profiles = sr.Profiles(held={(ACCOUNT, None): held, (ACCOUNT, held.profile_id): held})
         built: list[Any] = []
+        make: list[Callable[[], Any]] = []
 
         def runtime(*_a: Any, topics: Any = None, feed: Any = None, **_kw: Any) -> Any:
             over = {} if feed is None else {"feed": feed}
-            built.append(oms.runtime(topics=topics, profiles=profiles, **over))
+            make.append(lambda: oms.runtime(topics=topics, profiles=profiles, **over))
+            built.append(make[0]())
             return built[0]
 
         mp.setattr(appmod, "build_oms_runtime", runtime)
@@ -496,11 +574,12 @@ def oms_world(bars_state_root: Path) -> Iterator[OmsWorld]:
         pack.client.portal = portal  # one loop for every request: the runtime's (CR-S3C2-01)
         pack.app.state.feature_flags.oms_enabled.value = True  # `trading.oms_enabled`, a read view
         saved, b01._ATTEMPTS = b01._ATTEMPTS, OrderedDict()
-        [run] = built
+        [run], [again] = built, make
+        world = OmsWorld(pack, oms, run, portal, again)
         try:
-            portal.call(_until_ready, run, oms)
-            yield OmsWorld(pack, oms, run, portal)
+            world.call(_until_ready, run, oms)
+            yield world
         finally:
-            portal.call(run.stop)
+            world.call(world.runtime.stop)
             b01._ATTEMPTS = saved
             pack.client.portal = None

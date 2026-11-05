@@ -21,6 +21,7 @@ import pytest
 
 from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.exchange.base.fakes import FakeReject, LandedThenAmbiguous
+from candleviewer.oms.order_machine import MAX_PUSH_LEAD_MS
 from tests.qa.oms._world import (
     ACCOUNT,
     FILLS,
@@ -104,6 +105,12 @@ def listed(world: OmsWorld, order: dict[str, Any]) -> list[str]:
 def anomalies(world: OmsWorld, mark: int) -> list[str]:
     """The anomaly records the order lane wrote after the first `mark` of its audit records."""
     return [a for a, _ in world.oms.writer.records[mark:] if a in _ANOMALIES]
+
+
+def lockouts(world: OmsWorld, mark: int) -> list[str]:
+    """The lockout's own record, `oms.no_intent_detected`, written after the first `mark`: all
+    that shows a lockout opened, as its state has no reading (E29-G-06)."""
+    return [a for a, _ in world.oms.writer.records[mark:] if a == "oms.no_intent_detected"]
 
 
 def protection(ws: Any, order: dict[str, Any]) -> str:
@@ -261,6 +268,7 @@ def test_s4_a_repeated_exec_id_never_double_counts(world: OmsWorld) -> None:
     row = world.row(order)
     assert (row.state, row.cum_exec_qty) == ("partially_filled", _D("0.006"))
     assert world.fills(order) == ["e1", "e2"]
+    assert lockouts(world, mark) == []  # no lockout opened
     assert len(world.oms.pager.calls) == pages and anomalies(world, mark) == []
     assert named(order, (e["exec_id"] for e in world.order(order)["executions"])) == ["e1", "e2"]
     assert listed(world, order) == ["e1", "e2"]
@@ -310,7 +318,7 @@ def test_s5_fills_delivered_before_the_bind_wait_for_it_and_apply_in_order(
             row = world.call(world.oms.store.get_by_link_id, ACCOUNT, create.order_link_id)
             assert row.exchange_order_id is None
             unbound = {"id": str(row.id), "order_link_id": row.order_link_id}  # as REST names it
-            xid = f"fake-{world.port._next_id + 1:012d}"  # the id the venue will give it
+            xid = world.next_venue_id()  # the id the venue will give it
             world.venue_position(row, "0.010")
             for name, ms, seq, qty, price in (  # delivered in this order, applied by (ts_exec, seq)
                 ("e3", 20, 4, "0.003", "60300"),
@@ -327,6 +335,7 @@ def test_s5_fills_delivered_before_the_bind_wait_for_it_and_apply_in_order(
             ]
             assert exec_ids(waiting, unbound) == [] and world.fills(unbound) == []
             assert _D(world.order(unbound)["filled_qty"]) == 0 and listed(world, unbound) == []
+            assert lockouts(world, mark) == []  # no lockout opened
             assert len(world.oms.pager.calls) == pages and anomalies(world, mark) == []
             door.open()
             answer = placing.result(WAIT_S)
@@ -343,7 +352,8 @@ def test_s5_fills_delivered_before_the_bind_wait_for_it_and_apply_in_order(
     row = world.row(order)
     assert (row.state, row.cum_exec_qty, row.avg_price) == ("filled", _D("0.010"), _D(60_190))
     assert row.exchange_order_id == xid and len(world.creates(order)) == 1
-    assert len(world.oms.pager.calls) == pages and anomalies(world, mark) == []  # no lockout
+    assert lockouts(world, mark) == []  # no lockout opened
+    assert len(world.oms.pager.calls) == pages and anomalies(world, mark) == []
 
 
 def test_s5_a_stale_push_is_ignored_and_a_fill_never_is(world: OmsWorld) -> None:
@@ -372,14 +382,16 @@ def test_s5_a_push_stamped_far_ahead_of_the_clock_does_not_hide_a_later_one(
     world: OmsWorld,
 ) -> None:
     """S5, E29-TC-459 (step 3): the order took a push stamped ten minutes ahead of the facade's
-    clock (`Triggered`). A push stamped more than 60 s ahead moves the order's watermark only to
-    that lead, so a `Cancelled` stamped 90 s ahead, older than the first push but past the lead,
-    is not stale: it is taken and the order is `cancelled`."""
+    clock (`Triggered`). A push stamped more than `MAX_PUSH_LEAD_MS` (60 s) ahead moves the
+    order's watermark only to that lead: a `Cancelled` a millisecond inside it is stale, ignored,
+    and one a millisecond past it is taken, the order `cancelled`. A cap moved either way fails."""
     order, _ = placed(world)
-    row = world.row(order)
+    row, lead = world.row(order), _BASE_MS + MAX_PUSH_LEAD_MS
     with world.socket("orders") as ws:
         world.deliver(ORDERS, order_row(row, "Triggered", updatedTime=str(_BASE_MS + 600_000)))
-        world.deliver(ORDERS, order_row(row, "Cancelled", updatedTime=str(_BASE_MS + 90_000)))
+        world.deliver(ORDERS, order_row(row, "Cancelled", updatedTime=str(lead - 1)))
+        assert world.order(order)["state"] == "triggered"  # inside the cap: older than the mark
+        world.deliver(ORDERS, order_row(row, "Cancelled", updatedTime=str(lead + 1)))
         frames = ws.sent()
     assert [state for _, state in stages(frames, order)] == ["triggered", "cancelled"]
     assert world.order(order)["state"] == "cancelled"
