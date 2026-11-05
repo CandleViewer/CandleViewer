@@ -1,6 +1,7 @@
 # ADR-0033 — Renko brick sizing and series rebuild semantics
 
-- Status: **accepted** (ratified by the owner 2026-10-09; decision record on #1778, item N).
+- Status: **accepted** (ratified by the owner 2026-10-09; decision record on #1778, item N); Addendum 1
+  2026-11-03 (as built, E12-K02).
 - Date: 2026-10-07
 - Deciders: Owner (`@basiltt`) — **ratified 2026-10-09** as written (decision record on #1778, 2026-10-09).
 - Numbering note: the ticket (E12-K01, #525) says "ADR-0014"; 0014 is taken (Observability) and 0031 is reserved by
@@ -260,3 +261,48 @@ registry, generation swap with reader leases, bounded executor, metrics), the co
 (`docs(protocol)!:`), and a `32-risk-register.md` entry. The QuestDB-path re-measure is **folded into E12-T07**,
 whose gate scope is: production `Decimal` builders, E08 PGWire read path **including cursor release**, reference VPS,
 and cancel p95 <= 250 ms **under load**.
+
+## Addendum 1 — 2026-11-03: rebuild and invalidation as built (E12-K02, #526)
+
+_Status: records the state of `main` at `c6b53ad9d`; the Decision 2 text above is unchanged and still
+binds E12-S12. E12-S12 (#535) adds Addendum 2 when the rebuild ships. The consumer view is
+`docs/plan/36-bar-semantics-reference.md` §5 and §7._
+
+**Built.**
+
+- `generation` is part of every stored bar's key (`(ts, symbol, bar_param, generation, index)`, QuestDB
+  migration 0004) and of both wires; `index` restarts only inside a fresh generation.
+- Decision 1's epoch rule maps onto `generation`: there is no separate epoch column. A builder cold
+  start begins a new generation above any this process or a discarded state blob recorded, and older
+  generations stay readable beside it, so a read may span several. A tick-size change refuses the
+  renko state and starts a new epoch the same way.
+- A generation change reaches WS subscribers as a full snapshot (`meta.reason: "generation_swap"`),
+  never a delta, and clients replace the series; this is the "client ingestion" rule of Decision 2.
+- `build_version` is recorded per row (all six families at version 1). Reads serve rows below the
+  running version as stored, count them (`bars_stale_build_version_total`) and request a rebuild
+  (`bars_rebuild_scheduled_total`).
+- A closed bar that is not stored is recorded as a coverage hole, served in `meta.coverage_holes` and
+  queued for heal (#5432); nothing consumes that queue until the rebuild executor exists.
+
+**Not built (pending E12-S12, #535; #1997 job, #2127 contract-first).**
+
+- No rebuild executor runs: a requested rebuild is logged (`bars_rebuild_unexecuted`) and older-version
+  rows are **not healed**.
+- No current-generation pointer, no swap, no reader leases on a generation and no generation GC.
+  (The series spec leases of E12-T03 are a different mechanism: reference counts on a live series.)
+  Reads therefore return every stored generation in the window rather than one pinned generation.
+- No cancellation token, bounded rebuild executor, 250 000-bar staging cap, `bar_rebuild_busy` /
+  `bar_rebuild_too_large` errors, rebuild REST/WS shapes or `bar_rebuild_*` metrics.
+- The replay rule of Decision 2 point 6 is therefore satisfied vacuously today: nothing can swap a
+  generation under a replay session. It becomes an obligation on E12-S12.
+
+**Measured since the decision.** The E12-T04 harness measured the production `Decimal` builders at
+25 471 to 35 449 prints/s (28 to 39 s per 1M prints, developer laptop,
+`services/api/bench/bar_determinism/baseline.json`), against about 1M/s for the prototypes above. The
+10 s NFR fails on the production path (#2167, RSK-062), which this ADR's Consequences anticipated. The
+E12-T07 gate and E12-Q05 (#528) reference-host numbers are still pending; until they land, the prototype
+tables above are prototype figures, not production expectations.
+
+**Alternatives still rejected.** `Task.cancel()` as the sole cancel mechanism, a single multi-row
+"commit" publish (QuestDB has none), and an unbounded staging buffer: nothing built since changes the
+reasons above.

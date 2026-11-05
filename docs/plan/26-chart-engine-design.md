@@ -158,6 +158,10 @@ Three consecutive frames over 16.7 ms shed the next rung and request one LOD lev
 
 Columnar, typed-array based, append-optimised, with stable indices.
 
+What a bar the engine stores means (per family open and close rules, `(generation, index)` identity,
+`confirm` and amends, generation swaps) is the producer's contract in `36-bar-semantics-reference.md`; this
+section is the client-side storage only.
+
 ```text
 BarStore (per series)
   time:     Float64Array   (µs since epoch)

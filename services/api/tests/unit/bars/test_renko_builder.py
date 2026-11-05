@@ -115,6 +115,17 @@ def test_renko_wick_down_brick_and_forming_update() -> None:
     assert ups[0].kind == "open" and ups[1].kind == "update" and not ups[1].bar.closed
 
 
+def test_renko_late_print_joins_the_forming_run_and_the_clock_closes_nothing() -> None:
+    """E12-K02 §2.6: a late print joins the forming run; bricks never close on the clock."""
+    b = _renko()
+    _feed(b, ["100.00", "100.50"])  # ts 1_000, 1_001: one forming run
+    (late,) = b.on_trade(trade(500, "100.20", "1", seq=2))
+    assert (late.kind, late.bar.index, late.bar.closed, late.bar.volume) == ("update", 0, False, 3)
+    assert b.on_clock(10**15) == ()
+    (brick,) = closes(_feed(b, ["101.00"]))
+    assert (brick.index, brick.volume, brick.trade_count) == (0, D(4), 4)
+
+
 # --- Scenario: Time-based indicators are refused, not silently wrong -------------------------
 
 

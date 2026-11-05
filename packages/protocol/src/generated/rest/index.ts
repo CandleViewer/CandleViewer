@@ -3657,8 +3657,13 @@ export interface paths {
      *     | `pnf`         | `box:reversal` in ticks                         | `10:3`         |
      *     | `heikin_ashi` | underlying time interval                        | `5`            |
      *
-     *     Non-time bars are **not** anchored to wall-clock; each bar carries `open_time` and
-     *     `close_time` derived from its first/last trade.
+     *     **As built (E12-K02):** `renko` `atr:*` (deferred to R2, ADR-0033), `pnf` and
+     *     `heikin_ashi` (a client-side chart transform over time bars) are refused with 422,
+     *     naming the supported alternative; the table keeps their reserved grammar.
+     *
+     *     Non-time bars are **not** anchored to wall-clock; each bar carries `t` and
+     *     `close_time` derived from its first/last trade. Per-family open and close rules,
+     *     timestamps and edge cases are in `36-bar-semantics-reference.md`.
      *
      *     A `volume` or `delta` `param` below 10 times the symbol's `qty_step` is refused with 400
      *     `validation_failed`, naming the bound, and so is any `volume` or `delta` request while that

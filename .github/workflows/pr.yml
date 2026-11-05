@@ -255,6 +255,11 @@ jobs:
               - 'docs/plan/28-statechart-catalogue.md'
               - 'docs/plan/29-statechart-adoption-plan.md'
               - 'docs/plan/32-risk-register.md'
+              # The bar-semantics trace test reads 36, the E12 QA plan and the engine tests 36 cites (#526).
+              - 'docs/plan/36-bar-semantics-reference.md'
+              - 'qa/plans/e12-bars-and-series-test-plan.md'
+              - 'packages/chart-engine/test/layers/heikin-ashi.test.ts'
+              - 'packages/chart-engine/test/worker/runtime-kinds.test.ts'
               - 'docs/plan/27-adrs/ADR-0008-trade-group-fanout.md'
               - 'docs/plan/27-adrs/ADR-0009-secrets-and-key-management.md'
               - 'docs/plan/27-adrs/ADR-0014-observability.md'
