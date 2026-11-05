@@ -1,7 +1,7 @@
 """E39-T01 (#881) slice 2: the day key (E39-K01 §5.6) and its transitional-key rule.
 
-An offset change never shortens the key in progress (`21:4329`, SR-E39-09): it keeps its start and
-ends at the first new-offset boundary at or after its old end, 24 h to under 48 h.
+An offset change never moves the key in progress (`24` §8.13, SR-E39-09): the new offset takes
+effect at its end, and the next key, to the new offset's first midnight after it, is the short one.
 """
 
 from __future__ import annotations
@@ -17,11 +17,11 @@ from candleviewer.risk.clock import (
     MIN_OFFSET,
     DayCalendar,
     DayKey,
-    first_boundary_at_or_after,
     grid_key,
 )
 
 H = timedelta(hours=1)
+US = timedelta(microseconds=1)
 MIDNIGHT = datetime(2026, 11, 4, tzinfo=UTC)
 
 
@@ -43,8 +43,6 @@ def test_grid_key_starts_at_local_midnight(offset: int, start: datetime) -> None
 def test_grid_key_a_boundary_instant_opens_the_new_key() -> None:
     key = grid_key(MIDNIGHT, 0)
     assert key.start == MIDNIGHT and MIDNIGHT in key and key.end not in key
-    assert first_boundary_at_or_after(MIDNIGHT, 0) == MIDNIGHT
-    assert first_boundary_at_or_after(MIDNIGHT + H, 0) == MIDNIGHT + 24 * H
 
 
 @pytest.mark.parametrize("offset", [-721, 841])  # literals: the bounds themselves are pinned
@@ -69,41 +67,63 @@ def test_calendar_advance_rolls_only_at_the_end() -> None:
     assert cal.key.start == MIDNIGHT + 24 * H and cal.offset_minutes == 0
 
 
-@pytest.mark.parametrize(("offset", "hours"), [(-720, 36), (-60, 25), (60, 47), (840, 34)])
-def test_change_offset_the_spike_cases(offset: int, hours: int) -> None:  # K01 §4.4
-    cal = DayCalendar(0, MIDNIGHT + H)
-    key = cal.change_offset(offset, MIDNIGHT + 2 * H)
-    assert key.start == MIDNIGHT and key.end - key.start == hours * H
+@pytest.mark.parametrize(
+    ("old", "new", "hours"),
+    [(0, -720, 12), (0, -60, 1), (0, 60, 23), (0, 840, 10), (-720, 720, 24)],
+)
+def test_change_offset_keeps_the_day_and_shortens_the_next(old: int, new: int, hours: int) -> None:
+    cal = DayCalendar(old, MIDNIGHT + 13 * H)  # K01 §4.4's cases, and two coinciding midnights
+    day = cal.key
+    assert cal.change_offset(new, MIDNIGHT + 14 * H) == day and cal.offset_minutes == old
+    assert not cal.advance(day.end - US) and cal.advance(day.end)
+    assert cal.key == DayKey(day.end, day.end + hours * H) and cal.offset_minutes == new
+    end = cal.key.end
+    assert cal.advance(end) and cal.key == DayKey(end, end + 24 * H)
 
 
-def test_change_offset_every_offset_from_utc_never_shortens_then_whole_days() -> None:
+def test_change_offset_every_offset_from_utc_keeps_the_day_then_whole_days() -> None:
     for offset in range(MIN_OFFSET, MAX_OFFSET + 1):
         cal = DayCalendar(0, MIDNIGHT + H)
-        key = cal.change_offset(offset, MIDNIGHT + H)
-        assert key.start == MIDNIGHT, offset
-        assert 24 * H <= key.end - key.start < 48 * H, offset
+        assert cal.change_offset(offset, MIDNIGHT + H) == DayKey(MIDNIGHT, MIDNIGHT + 24 * H)
+        assert cal.advance(MIDNIGHT + 24 * H), offset
+        key = cal.key
+        assert key.start == MIDNIGHT + 24 * H and 0 * H < key.end - key.start <= 24 * H, offset
         assert grid_key(key.end, offset).start == key.end, offset  # ends on the new grid
-        assert cal.advance(key.end)
-        assert cal.key == grid_key(key.end, offset), offset
+
+
+def test_calendar_keeps_its_offset_across_days() -> None:
+    cal = DayCalendar(60, MIDNIGHT)
+    end = cal.key.end
+    assert cal.advance(end) and (cal.key, cal.offset_minutes) == (DayKey(end, end + 24 * H), 60)
 
 
 def test_change_offset_same_offset_keeps_the_key() -> None:
     cal = DayCalendar(60, MIDNIGHT)
     before = cal.key
     assert cal.change_offset(60, MIDNIGHT + H) == before
+    assert cal.advance(before.end) and cal.key == DayKey(before.end, before.end + 24 * H)
 
 
-def test_change_offset_twice_in_one_key_stretches_it_to_60_hours() -> None:
+@pytest.mark.parametrize(("second", "hours"), [(-720, 12), (0, 24)])
+def test_change_offset_twice_in_one_key_the_later_one_wins(second: int, hours: int) -> None:
     cal = DayCalendar(0, MIDNIGHT + H)
-    assert cal.change_offset(60, MIDNIGHT + H).end == MIDNIGHT + 47 * H
-    key = cal.change_offset(-720, MIDNIGHT + 2 * H)
-    assert key == DayKey(MIDNIGHT, MIDNIGHT + 60 * H)  # longer, never shorter (module docstring)
+    cal.change_offset(60, MIDNIGHT + H)
+    assert cal.change_offset(second, MIDNIGHT + 2 * H) == DayKey(MIDNIGHT, MIDNIGHT + 24 * H)
+    assert cal.advance(MIDNIGHT + 24 * H) and cal.key.end == MIDNIGHT + (24 + hours) * H
 
 
 def test_change_offset_rolls_first_when_the_key_has_ended() -> None:
     cal = DayCalendar(0, MIDNIGHT)
-    key = cal.change_offset(-60, MIDNIGHT + 30 * H)
-    assert key.start == MIDNIGHT + 24 * H and key.end == MIDNIGHT + 49 * H
+    assert cal.change_offset(-60, MIDNIGHT + 30 * H) == DayKey(MIDNIGHT + 24 * H, MIDNIGHT + 48 * H)
+    assert cal.advance(MIDNIGHT + 48 * H) and cal.key.end == MIDNIGHT + 49 * H
+
+
+@pytest.mark.parametrize("hours", [25, 30])  # at the short key's end, and past it
+def test_advance_past_the_short_key_lands_on_the_new_grid(hours: int) -> None:
+    cal = DayCalendar(0, MIDNIGHT)
+    cal.change_offset(-60, MIDNIGHT + H)
+    assert cal.advance(MIDNIGHT + hours * H)
+    assert cal.key == DayKey(MIDNIGHT + 25 * H, MIDNIGHT + 49 * H)
 
 
 @given(
@@ -114,15 +134,16 @@ def test_change_offset_rolls_first_when_the_key_has_ended() -> None:
     second=st.integers(MIN_OFFSET, MAX_OFFSET),
     later=st.integers(0, 47 * 3600),
 )
-def test_change_offset_never_shortens_the_key(
+def test_change_offset_never_moves_the_key_in_progress(
     at: datetime, first: int, second: int, later: int
 ) -> None:
     cal = DayCalendar(first, at)
-    now = min(at + timedelta(seconds=later), cal.key.end - timedelta(microseconds=1))
     before = cal.key
-    after = cal.change_offset(second, now)
-    assert after.start == before.start and after.end >= before.end
-    assert after.end - after.start < 48 * H
+    now = min(at + timedelta(seconds=later), before.end - US)
+    assert cal.change_offset(second, now) == before
+    assert cal.advance(before.end)
+    after = cal.key
+    assert after.start == before.end and timedelta(0) < after.end - after.start <= 24 * H
     assert grid_key(after.end, second).start == after.end
 
 
