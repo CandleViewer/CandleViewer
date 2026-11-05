@@ -373,12 +373,32 @@ async def test_two_closing_orders_on_one_position_each_compose_their_own_close()
     fill(store, 1, OPEN, "Buy", "2", "100", fee="0.12", closed="0", group=G1)
     fill(store, 2, CLOSE, "Sell", "1", "103", fee="0.0618", closed="1", pnl="3")
     fill(store, 3, CLOSE2, "Sell", "1", "105", fee="0.063", closed="1", pnl="5")
-    done = await composer(store).begin(ACCOUNT_A).compose([CLOSE, CLOSE2])
+    for oid in (CLOSE, CLOSE2):
+        await store.settle(venue_record(_record(exchange_order_id=f"x-{oid.int}", qty=N(1))))
+    done = await composer(store).begin(ACCOUNT_A).compose([CLOSE, CLOSE2], finalize=True)
     assert [(c.row.qty, figures(c), c.row.trade_group_id) for c in done] == [
         (N(1), (N(3), N("-0.1218"), N(0), N("2.8782")), G1),
         (N(1), (N(5), N("-0.123"), N(0), N("4.877")), G1),
     ]  # fmt: skip
     assert store.calls["walk_fills"] == 1
+    # Q4: each is final on its own close of 1, never on the walk's two closes summing to 2.
+    stamped = [store.rows[c.row.id].final_at is not None for c in done]
+    assert ([c.final for c in done], stamped) == ([True, True], [True, True])
+
+
+async def test_a_held_record_with_no_close_of_its_own_stays_open_beside_a_siblings_close() -> None:
+    """Q4: CLOSE2's settled, filled record says `qty` 1, but its one stored fill opens (an opening
+    fill of the long is missing from the store); the walk holds CLOSE's sure close of 1, equal to
+    that `qty`. The record has no close of its own, so it is never final."""
+    store = Store(flats={("ETHUSDT", 0): (START,)})
+    for oid, side in ((OPEN, "Buy"), (CLOSE, "Sell"), (CLOSE2, "Sell")):
+        order(store, oid, side)
+    fill(store, 1, OPEN, "Buy", "1", "100", closed="0")
+    fill(store, 2, CLOSE, "Sell", "1", "103", closed="1", pnl="3")
+    fill(store, 3, CLOSE2, "Sell", "1", "104", closed="0")  # flat: it opens a short
+    await store.settle(venue_record(_record(exchange_order_id=f"x-{CLOSE2.int}", qty=N(1))))
+    c = await compose(store, CLOSE2, finalize=True)
+    assert (c.closed, c.final, store.rows[c.row.id].final_at) == (None, False, None)
 
 
 async def test_a_record_closing_two_episodes_takes_funding_from_the_first_opening() -> None:
