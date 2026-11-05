@@ -116,10 +116,43 @@ export const ENGINE_SERIES_INCOMPATIBLE = "ENGINE_SERIES_INCOMPATIBLE";
 export type PickPointer = "mouse" | "pen" | "touch";
 const PICK_POINTERS: ReadonlySet<unknown> = new Set(["mouse", "pen", "touch"]);
 
+/** E14-T04 (#359): the selection operations and the plot's two modes. */
+export type SelectionOp = "replace" | "add" | "toggle" | "clear";
+const SELECTION_OPS: ReadonlySet<unknown> = new Set(["replace", "add", "toggle", "clear"]);
+export type InteractionMode = "cursor" | "select-area";
+/** Bounds on the drawing commands (an availability control, like BQ-138's ceilings). */
+export const MAX_ANCHORS = 1_024;
+export const MAX_LEVELS = 32;
+export const MAX_SELECTION = 10_000;
+export const MAX_ID_LENGTH = 256;
+
 export type Command =
   | { readonly k: "setViewport"; readonly timeStart: number; readonly timeEnd: number }
   | { readonly k: "setSeriesOptions"; readonly series: number; readonly options: object }
-  | { readonly k: "addDrawing"; readonly drawingId: string; readonly kind: string }
+  /**
+   * E14-T04 (#359, additive): with `anchors` (flat `[time µs, tick, …]`) the drawing is registered
+   * in, or replaced in, the object index; `visible: false` keeps it out of every pick.
+   */
+  | {
+      readonly k: "addDrawing";
+      readonly drawingId: string;
+      readonly kind: string;
+      readonly anchors?: readonly number[];
+      readonly widthPx?: number;
+      readonly zIndex?: number;
+      readonly locked?: boolean;
+      readonly visible?: boolean;
+      readonly levels?: readonly number[];
+    }
+  | { readonly k: "removeDrawing"; readonly drawingId: string }
+  | { readonly k: "setSelection"; readonly ids: readonly string[]; readonly op: SelectionOp }
+  | { readonly k: "selectAll"; readonly pane?: number }
+  | {
+      readonly k: "setInteractionMode";
+      readonly mode: InteractionMode;
+      readonly readOnly?: boolean;
+    }
+  | { readonly k: "focusObject"; readonly drawingId: string | null; readonly handle?: number }
   | { readonly k: "setTheme"; readonly theme: ThemeLut }
   | { readonly k: "setLod"; readonly candles: 0 | 1 | 2; readonly footprint: 0 | 1 | 2 | 3 }
   /** The app's resolved motion mode changed (E11-S04 BQ-104): `reduce` stops a glide. */
@@ -326,6 +359,15 @@ export type FromWorker =
       /** E12-S06 (additive): the series a series batch was for, so the host frees its lane. */
       readonly series?: number;
     }
+  /** E14-T04 (#359, additive): the selection, on change only; `handle` -1 for the body. */
+  | {
+      readonly t: "selection";
+      readonly id: ChartId;
+      readonly ids: readonly string[];
+      readonly focused: string | null;
+      readonly handle: number;
+      readonly mode: InteractionMode;
+    }
   | {
       readonly t: "exported";
       readonly id: ChartId;
@@ -448,6 +490,31 @@ function validScale(cmd: Record<string, unknown>): boolean {
   );
 }
 
+const idOk = (v: unknown): boolean => typeof v === "string" && v.length <= MAX_ID_LENGTH;
+const wholeInt = (v: unknown): boolean => Number.isSafeInteger(v);
+const idList = (v: unknown): boolean =>
+  Array.isArray(v) && v.length <= MAX_SELECTION && v.every(idOk);
+const finiteList = (v: unknown, max: number): boolean =>
+  Array.isArray(v) && v.length <= max && v.every(finite);
+const pairs = (n: number): boolean => n > 0 && n % 2 === 0; // at least one anchor
+const px = (v: unknown): boolean => finite(v) && v >= 0 && v <= 256;
+
+/** E14-T04: an id and a kind; anchors in pairs within MAX_ANCHORS, finite numbers, booleans. */
+function validDrawing(cmd: Record<string, unknown>): boolean {
+  const a = cmd["anchors"];
+  return (
+    idOk(cmd["drawingId"]) &&
+    typeof cmd["kind"] === "string" &&
+    cmd["kind"].length <= 64 &&
+    optional(a, (v) => finiteList(v, 2 * MAX_ANCHORS) && pairs((v as unknown[]).length)) &&
+    optional(cmd["widthPx"], px) &&
+    optional(cmd["zIndex"], finite) &&
+    optional(cmd["locked"], isBool) &&
+    optional(cmd["visible"], isBool) &&
+    optional(cmd["levels"], (v) => finiteList(v, MAX_LEVELS))
+  );
+}
+
 function validCommand(cmd: unknown): boolean {
   if (!isObj(cmd)) return false;
   switch (cmd["k"]) {
@@ -458,7 +525,23 @@ function validCommand(cmd: unknown): boolean {
     case "setSeriesOptions":
       return Number.isSafeInteger(cmd["series"]) && isObj(cmd["options"]);
     case "addDrawing":
-      return typeof cmd["drawingId"] === "string" && typeof cmd["kind"] === "string";
+      return validDrawing(cmd);
+    case "removeDrawing":
+      return idOk(cmd["drawingId"]);
+    case "setSelection":
+      return SELECTION_OPS.has(cmd["op"]) && idList(cmd["ids"]);
+    case "selectAll":
+      return optional(cmd["pane"], seriesId);
+    case "setInteractionMode":
+      return (
+        (cmd["mode"] === "cursor" || cmd["mode"] === "select-area") &&
+        optional(cmd["readOnly"], isBool)
+      );
+    case "focusObject":
+      return (
+        (cmd["drawingId"] === null || idOk(cmd["drawingId"])) &&
+        optional(cmd["handle"], (h) => wholeInt(h) && (h as number) >= -1)
+      );
     case "setTheme":
       return isObj(cmd["theme"]);
     case "setLod":
