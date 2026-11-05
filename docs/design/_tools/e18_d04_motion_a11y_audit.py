@@ -4,8 +4,8 @@
 Offline and default-deny. The shared gates (git, cites, pins, G-T2 vocabulary, closing keywords,
 public text, G-UNTOUCHED, the runner and the mutation harness) live in `spec_audit_lib.py`; this
 file keeps only E18-D04's rows. It reads, AS TEXT at the pinned base, the plan and design texts
-the spec cites, the ticket JSON and the token JSON, and, from the working tree, the spec and its
-figure. The only repo code it runs is `relative_luminance()` of
+the spec cites, the ticket JSON and the token JSON, and, from the working tree, the spec, its
+figure and its hand-off (PR 1b). The only repo code it runs is `relative_luminance()` of
 `docs/research/_tools/cvd_simulate.py`, loaded by path. Four simulations are its own: the
 marker hold (section 3), the fill hold (section 4), the LOD sweep over `LOD_PROFILE_M0`
 (section 5) and the one polite region's arbitration (section 7.3); each written number in those
@@ -14,7 +14,7 @@ event to a 1 000 ms window.
 
 Gates: G-CITE, G-PINS, G-VERSION, G-AC, G-BQ, G-TOKENS, G-MOTION (AC 1), G-HOLD, G-FLASH,
 G-LOD (AC 3), G-LIVE (AC 2), G-KEYS, G-STOPS, G-FIGURE, G-SURVIVE, G-PARITY, G-ROUTE, G-T2,
-G-WCAG, G-ENV, G-NOCLOSE, G-PUBLIC, G-UNTOUCHED and G-MUTLIST (section 13.3 equals this
+G-WCAG, G-ENV, G-HANDOFF, G-NOCLOSE, G-PUBLIC, G-UNTOUCHED and G-MUTLIST (section 13.3 equals this
 tool's list).
 The BQ list is comment 6609418330 on #498, RULED by comment 6609843435 (G-BQ). Pins: each BQ
 bullet's sha256[:16] in RULED_PINS below, no separate pins file; `--repin-ruled` is the only
@@ -44,8 +44,7 @@ import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE = "c56a10bc3"  # origin/main at the design-read fold; every cite is read here
-D03_HEAD = "77f390860"  # #5780's head, #497's text (its ruling folded), cited by section only
-D03_PR = "#5780"  # the D03 text PR the pin is conditional on
+D03_PINS = ("`c9e93a209` (#5780)", "`5bca9e264` (#5781)")  # squash commits; D03 identical at both
 CHECKLIST = "6626707818"  # the owner checklist comment on #498 (section 12)
 BQ_LIST = "6609418330"  # the BQ list on #498
 RULING = "6609843435"  # the orchestrator's ruling of record on it
@@ -54,12 +53,13 @@ BQ_COUNT = 10
 
 SPEC_REL = "docs/design/E18/E18-D04.md"
 FIG_REL = "docs/design/E18/img/E18-D04-figA-focus-order.svg"
+HANDOFF_REL = "docs/design/E18/E18-D04-handoff.md"
 TOOL_REL = "docs/design/_tools/e18_d04_motion_a11y_audit.py"
 LIB_REL = "docs/design/_tools/spec_audit_lib.py"
 LIB_SHA256 = "62b56d6446b218cd300a9e2591e47b84f20962a6c33a58ebe9b8c2fbc83f48fd"
 ATTR_REL = ".gitattributes"
 ATTR_BUDGET = (3, 0)  # BQ-1: figure A marked linguist-generated, so it leaves the count
-OWN = (SPEC_REL, FIG_REL, TOOL_REL)
+OWN = (SPEC_REL, FIG_REL, HANDOFF_REL, TOOL_REL)
 BACKLOG_REL = "docs/plan/backlog/E18.json"
 # G-BQ: sha256[:16] of each RULED BQ bullet; `--repin-ruled` rewrites the block, nothing else.
 PINS_OPEN = 'RULED_PINS = """\n'
@@ -240,6 +240,11 @@ SURVIVE_ROWS = 6
 LEVELS = ("L0", "L1", "L2", "L3")
 OWNER_RE = re.compile(r"#\d+|\bE\d\d-[A-Z]\d\d\b|\bowner\b")
 SVG_NS = "http" + "://www.w3.org/2000/svg"  # split so the public scan never reads it as a link
+AROW_RE = re.compile(
+    r"^### (A-\d+) · [^\n]* · (`\d\d`|[A-Z0-9]+):(\d+) · (replace|insert after)$", re.MULTILINE
+)
+FENCE_RE = re.compile(r"Old:\n\n```text\n(.*?)\n```\n\nNew:\n\n```text\n(.*?)\n```", re.DOTALL)
+PAIR_CMPS = ("CMP-109", "CMP-182", "CMP-228")
 AGENT_RE = re.compile(r"\blens\b|\bagent\b", re.IGNORECASE)
 
 
@@ -450,10 +455,10 @@ def g_pins(t: L.Tree) -> list[str]:
 
 def g_version(t: L.Tree) -> list[str]:
     spec, v = t.text("spec"), sec(t, "### 13.1 Version line")
-    miss = [n for n in (BASE, D03_HEAD, D03_PR, "re-pinned", "#497", "--repin-ruled") if n not in v]
+    miss = [n for n in (BASE, *D03_PINS, "re-pinned", "#497", "--repin-ruled") if n not in v]
     if f"Base `origin/main` `{BASE}`" not in spec:
         miss.append("the Inputs line's base")
-    if f"`{D03_HEAD}`" not in spec or f"if {D03_PR} merges as is" not in spec:
+    if any(spec.count(p) < 2 for p in D03_PINS) or "D03's tree identical at both" not in spec:
         miss.append("the D03 pin")
     heading = next((ln for ln in spec.split("\n") if ln.startswith("## 12. Owner walkthrough")), "")
     if f"comment {CHECKLIST}" not in heading or f"comment {CHECKLIST}" not in bullet(spec, "BQ-1"):
@@ -823,17 +828,40 @@ def g_env(t: L.Tree) -> list[str]:
     return [n for n in need if n not in r10]
 
 
+def g_handoff(t: L.Tree) -> list[str]:
+    h = t.text("handoff")
+    want = [r[0] for r in rows(sec(t, "### 10.3"))]
+    body = L.section(h, "## §C Copy-ready A-rows")
+    heads = list(AROW_RE.finditer(body))
+    bad = [] if [m.group(1) for m in heads] == want else [f"blocks {[m.group(1) for m in heads]}"]
+    for i, m in enumerate(heads):
+        chunk = body[m.end() : heads[i + 1].start() if i + 1 < len(heads) else len(body)]
+        f = FENCE_RE.search(chunk)
+        doc = m.group(2).strip("`")
+        old, new = (f.group(1), f.group(2)) if f else ("", "")
+        if old != (docs().line(doc, int(m.group(3))) or "\0"):
+            bad.append(f"{m.group(1)} Old is not {m.group(2)}:{m.group(3)}")
+        if not new.strip() or (m.group(4) == "replace" and new == old):
+            bad.append(f"{m.group(1)} has no New")
+    pairs = L.section(h, "## Motion-pair lines")
+    for cmp in PAIR_CMPS:
+        line = next((ln for ln in pairs.split("\n") if ln.startswith(f"- [ ] {cmp} ")), "")
+        if "motion pair: E18-D04 §2" not in line or "`instant` (reduce" not in line:
+            bad.append(f"{cmp} motion-pair line")
+    return bad
+
+
 def g_noclose(t: L.Tree) -> list[str]:
-    return L.closing_keywords(t.named("spec", "figure"))
+    return L.closing_keywords(t.named("spec", "figure", "handoff"))
 
 
 def g_public(t: L.Tree) -> list[str]:
-    named = t.named("spec")
+    named = t.named("spec", "handoff")
     fig = [("figure", t.text("figure").replace(SVG_NS, ""))]
     return (
         L.scan_public([*named, *fig])
         + L.comment_findings(named)
-        + L.whitespace_hygiene(t.named("spec", "figure"))
+        + L.whitespace_hygiene(t.named("spec", "figure", "handoff"))
     )
 
 
@@ -859,8 +887,8 @@ def g_mutlist(t: L.Tree) -> list[str]:
 # fmt: off
 GATES = tuple(L.Gate("G-" + f.__name__[2:].upper(), f) for f in (
     g_cite, g_pins, g_version, g_ac, g_bq, g_tokens, g_motion, g_hold, g_flash, g_lod, g_live,
-    g_keys, g_stops, g_figure, g_survive, g_parity, g_route, g_t2, g_wcag, g_env, g_noclose,
-    g_public, g_untouched, g_mutlist,
+    g_keys, g_stops, g_figure, g_survive, g_parity, g_route, g_t2, g_wcag, g_env, g_handoff,
+    g_noclose, g_public, g_untouched, g_mutlist,
 ))
 # fmt: on
 
@@ -880,8 +908,8 @@ _M = L.Mutation
 MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-1", "G-CITE", "a cite past the end of `26`", "spec", "`26`:801", "`26`:99999"),
     _M("M-2", "G-PINS", "a pinned cite moved off its line", "spec", "(K02:56)", "(K02:55)"),
-    _M("M-3", "G-VERSION", "the D03 pin loses its condition", "spec",
-       "if #5780 merges as is", "once #5780 merges"),
+    _M("M-3", "G-VERSION", "the D03 pin loses a squash commit", "spec",
+       "`5bca9e264` (#5781), D03", "#5781, D03"),
     _M("M-4", "G-AC", "a scenario name reworded", "spec",
        'AC "LOD switching does not flicker"', 'AC "LOD switching does not flash"'),
     _M("M-5", "G-BQ", "the heading drops the ruling", "spec",
@@ -943,6 +971,10 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-33", "G-UNTOUCHED", "the attributes line grows", "@numstat:.gitattributes", "", "4 0"),
     _M("M-34", "G-VERSION", "the checklist comment uncited", "spec",
        "posted on #498, comment 6626707818)", "posted on #498)"),
+    _M("M-35", "G-HANDOFF", "an Old drifts from its line", "handoff",
+       "- **As built (E47-S02, #1358)", "- **As built (E47-S02)"),
+    _M("M-36", "G-HANDOFF", "a motion-pair line lost", "handoff",
+       "- [ ] CMP-228 PreviewTile", "- [ ] PreviewTile"),
 )
 # fmt: on
 
@@ -955,7 +987,7 @@ def read(rel: str) -> str:
 def read_tree() -> L.Tree:
     base = repo().diff_base(BASE)
     return L.Tree(
-        files={"spec": read(SPEC_REL), "figure": read(FIG_REL)},
+        files={"spec": read(SPEC_REL), "figure": read(FIG_REL), "handoff": read(HANDOFF_REL)},
         changed=repo().changed_paths(base),
         numstat={ATTR_REL: repo().numstat(base, ATTR_REL)},
     )
