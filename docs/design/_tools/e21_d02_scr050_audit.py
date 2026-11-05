@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""E21-D02 (#440) audit: the SCR-050 Heatmap + DOM ladder hi-fi spec (text first; boards later).
+"""E21-D02 (#440) audit: the SCR-050 Heatmap + DOM ladder hi-fi spec (text first, then the ten boards).
 
 Offline and default-deny. It reads, AS TEXT at a pinned commit (`git show`), the plan and design
-texts the spec cites at the base and the E21-D01 memo at its PR head, and, from the working tree,
-the spec `docs/design/E21/E21-D02.md` and the pins file. The only repo code it runs is the two
+texts the spec cites at the base and the E21-D01 memo at its merge commit, and, from the working
+tree, the spec `docs/design/E21/E21-D02.md`, the pins file and the size in each board PNG's IHDR. The only repo code it runs is the two
 measuring modules the spec names: `contrast_ratio()` of `docs/design/_tools/contrast_check.py`
 and `simulate()` / `delta_e76()` of `docs/research/_tools/cvd_simulate.py`, loaded by path.
 
@@ -42,7 +42,8 @@ from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE = "67fe8b526"  # origin/main when the spec was written; every plan cite is read here
-M_HEAD = "934a56142"  # PR #5382 (E21-D01) head; re-pinned to its merge commit when it merges
+M_HEAD = "934a56142"  # PR #5382 (E21-D01) head, where the text was first read
+M_MERGE = "2d264b10f"  # PR #5382's merge commit; M is read here (the head's text, byte-identical)
 M_PR = "#5382"
 BQ_LIST = "6576276584"  # the BQ list on #440
 RULING = "6576656158"  # the orchestrator's ruling of record on it (2026-11-02 12:03Z)
@@ -53,6 +54,11 @@ TOOL_REL = "docs/design/_tools/e21_d02_scr050_audit.py"
 PIN_REL = "docs/design/_tools/e21_d02_ruled_pins.txt"
 CAT_REL = "docs/plan/14-screens-catalogue.md"
 IMG_PREFIX = "docs/design/E21/img/E21-D02-"
+# Penpot page `E21-D02` of the file `E21-D02 boards`
+PAGE_ID = "cb0c3916-2579-81a4-8008-e35aafca5471"
+KIT_PREFIX = "docs/design/_tools/sheets/e21-d02/"  # the sheet kit that drew the boards
+# the kit's lines in the shared manifest and its ignore entry
+KIT_SHARED = ("docs/design/_tools/sheets/MANIFEST.sha256", ".prettierignore")
 OWN = (SPEC_REL, TOOL_REL, PIN_REL)
 BACKLOG_REL = "docs/plan/backlog/E21.json"
 
@@ -67,7 +73,7 @@ PLAN = {
     "26": "docs/plan/26-chart-engine-design.md",
 }
 KEYED = {
-    "M": ("docs/design/research/e21-dom-heatmap.md", M_HEAD),
+    "M": ("docs/design/research/e21-dom-heatmap.md", M_MERGE),
     "D09E09": ("docs/design/E09/E09-D09.md", BASE),
     "D01E17": ("docs/design/E17/E17-D01.md", BASE),
     "D02E17": ("docs/design/E17/E17-D02.md", BASE),
@@ -419,7 +425,7 @@ def g_quote(t: Texts) -> list[Finding]:
 
 def g_version(t: Texts) -> list[Finding]:
     v = section(t.spec, "### 16.1 Version line")
-    need = (BASE, M_HEAD, M_PR, "re-pinned to the merge commit")
+    need = (BASE, M_MERGE, M_HEAD, M_PR, "re-pinned to its merge commit")
     miss = [n for n in need if n not in v]
     if f"Base `origin/main` `{BASE}`" not in t.spec:
         miss.append("Inputs pinned base")
@@ -642,6 +648,30 @@ def g_env(t: Texts) -> list[Finding]:
     return [("G-ENV", f"missing: {', '.join(bad)}")] if bad else []
 
 
+# A drawn section 0 Status cell: the board id, its own PNG with the size in that PNG's IHDR, the
+# frame and node counts and the dark theme gate; a light board adds its -light.png twin and gate.
+DRAWN_RE = re.compile(
+    r"drawn: board id `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`, `"
+    + re.escape(IMG_PREFIX)
+    + r"(\d\d)-[a-z0-9-]+\.png` \(\d+ × \d+\), \d+ frames?, [\d,]+ nodes; "
+    r"dark gate PASS \(own [\d,]+ px, other [\d,]+ px\)"
+)
+PNG_RE = re.compile(
+    r"`(" + re.escape(IMG_PREFIX) + r"[a-z0-9-]+\.png)` \((\d+) × (\d+)(?: each)?\)"
+)
+ANY_PNG_RE = re.compile(r"`(" + re.escape(IMG_PREFIX) + r"[a-z0-9-]+\.png)`")
+
+
+def png_size(rel: str) -> tuple[int, int] | None:
+    p = ROOT / rel
+    if not p.is_file():
+        return None
+    head = p.read_bytes()[:24]
+    if head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+
+
 def g_boards(t: Texts) -> list[Finding]:
     got = board_rows(t.spec)
     bad = []
@@ -651,11 +681,28 @@ def g_boards(t: Texts) -> list[Finding]:
     if twins * 3 > len(got):
         bad.append(f"{twins} light twins of {len(got)}")
     for r in got:
-        if len(r) < 5 or r[4] != "PENDING" or not r[1].startswith(f"`E21-D02 / {r[0]} "):
+        if len(r) < 5 or not r[1].startswith(f"`E21-D02 / {r[0]} "):
             bad.append(f"board {r[0] if r else '?'}")
+            continue
+        m = DRAWN_RE.match(r[4])
+        if m is None or m.group(1) != r[0]:
+            bad.append(f"board {r[0]}: not a drawn cell")
+            continue
+        pngs = PNG_RE.findall(r[4])
+        for rel in ANY_PNG_RE.findall(r[4]):
+            if png_size(rel) is None:
+                bad.append(f"board {r[0]}: {rel.rsplit('/', 1)[-1]} is not a PNG on disk")
+        for rel, w, h in pngs:
+            if png_size(rel) != (int(w), int(h)):
+                bad.append(f"board {r[0]}: {rel.rsplit('/', 1)[-1]} is not {w} x {h} on disk")
+        if "light" in r[3] and (
+            not any(rel.endswith("-light.png") for rel, _w, _h in pngs)
+            or "light gate PASS" not in r[4]
+        ):
+            bad.append(f"board {r[0]}: no light twin and gate")
     if "**Not drawn — the text is binding**" not in t.spec:
         bad.append("not-drawn paragraph")
-    if "page `E21-D02`" not in t.spec or "page id" not in t.spec:
+    if "page `E21-D02`" not in t.spec or f"page id `{PAGE_ID}`" not in t.spec:
         bad.append("page by name and id")
     return [("G-BOARDS", "; ".join(bad))] if bad else []
 
@@ -706,7 +753,11 @@ def g_untouched(t: Texts) -> list[Finding]:
     bad = [
         p
         for p in t.paths
-        if p not in OWN and p != CAT_REL and not (p.startswith(IMG_PREFIX) and p.endswith(".png"))
+        if p not in OWN
+        and p != CAT_REL
+        and p not in KIT_SHARED
+        and not p.startswith(KIT_PREFIX)
+        and not (p.startswith(IMG_PREFIX) and p.endswith(".png"))
     ]
     if CAT_REL in t.paths and t.numstat.split()[:2] != ["1", "0"]:
         bad.append(f"{CAT_REL} is not one added line ({t.numstat})")
@@ -737,8 +788,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-3",
         "G-VERSION",
         "the version line drops the re-pin",
-        "re-pinned to the merge commit when #5382",
-        "kept when #5382",
+        "re-pinned to its merge commit by the boards PR",
+        "kept by the boards PR",
     ),
     Mutation("M-4", "G-AC", "a scenario name reworded", 'AC "Spike gate enforced"', 'AC "Spike'),
     Mutation(
@@ -797,7 +848,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-15",
         "G-BOARDS",
         "a fourth light twin",
-        r"(`E21-D02 / 03 densities`[^\n]*\| )dark( +\| PENDING)",
+        r"(`E21-D02 / 03 densities`[^\n]*\| )dark( +\| drawn)",
         r"\1light\2",
         regex=True,
     ),
@@ -888,12 +939,34 @@ MUTATIONS: tuple[Mutation, ...] = (
         "ACCEPT 14 of 16; OVERRIDE BQ-4 and BQ-7",
         "ACCEPT 16 of 16",
     ),
+    Mutation(
+        "M-29",
+        "G-BOARDS",
+        "a drawn PNG's size drifts from its IHDR",
+        "02-tiers-500-unavailable.png` (3280 × 1947)",
+        "02-tiers-500-unavailable.png` (3280 × 1952)",
+    ),
+    Mutation(
+        "M-30",
+        "G-BOARDS",
+        "a light twin's gate dropped",
+        ", light gate PASS",
+        ", light gate not run",
+    ),
+    Mutation(
+        "M-31",
+        "G-BOARDS",
+        "a drawn board reverts to pending",
+        r"(`E21-D02 / 10 keyboard-table-reflow`[^\n]*\| dark +\| )drawn: [^|]*",
+        r"\1PENDING ",
+        regex=True,
+    ),
 )
 
 
 def mutation_rows(ms: tuple[Mutation, ...] = MUTATIONS) -> str:
-    head = "| M    | Gate        | Mutation                                    |\n| ---- | ----------- | ------------------------------------------- |\n"
-    return head + "\n".join(f"| {m.mid:<4} | {m.gate:<11} | {m.what:<43} |" for m in ms)
+    head = "| M    | Gate        | Mutation                                 |\n| ---- | ----------- | ---------------------------------------- |\n"
+    return head + "\n".join(f"| {m.mid:<4} | {m.gate:<11} | {m.what:<40} |" for m in ms)
 
 
 def g_mutlist(t: Texts) -> list[Finding]:
@@ -1024,7 +1097,9 @@ def fill() -> int:
     spec = p.read_text(encoding="utf-8")
     start = spec.index("### 16.3")
     head_end = spec.index("\n", start) + 1
-    p.write_text(spec[:head_end] + "\n" + mutation_rows() + "\n", encoding="utf-8")
+    nxt = spec.find("\n## ", head_end)  # the As built section follows the table
+    tail = "" if nxt < 0 else spec[nxt:]
+    p.write_text(spec[:head_end] + "\n" + mutation_rows() + "\n" + tail, encoding="utf-8")
     print("section 16.3 written")
     return 0
 
