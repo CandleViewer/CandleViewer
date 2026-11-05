@@ -48,11 +48,17 @@ it (CI-SEC-006; the date is the R3 security gate of threat model section 5.4):
 | ------------------------ | ---------------------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cv-oms-unscoped-select` | `storage/repositories/oms_reads_sqlalchemy.py`, `position_holder_statement`  | `refusal-audit-holder` | The account holding a position id the scope does not view, read for the refusal's audit record alone and never served (SR-E29-13, ruling Q12); in the module's `UNSCOPED`, which its unit test pins        |
 | `cv-oms-unscoped-select` | `storage/repositories/orders_sqlalchemy.py`, `in_scope_statement` (`holder`) | `refusal-audit-holder` | Beside the scoped row, the account of the order holding the id, so only the holding account leaves the database for an out-of-scope id (ruling Q12)                                                        |
-| `cv-oms-unscoped-select` | `storage/repositories/orders_sqlalchemy.py`, `link_taken_statement`          | `global-link-check`    | 24 section 8.3 rule 5's yes or no over the global `ux_orders_link`: a bool across every account by design, asked by the allocator and never on an API route or WS topic (`OrderLinkLookup`); in `UNSCOPED` |
+| `cv-oms-unscoped-select` | `storage/repositories/orders_sqlalchemy.py`, `link_taken_statement`          | `global-link-check`    | 24 section 8.3 rule 5's yes or no over the global `ux_orders_link`: a bool across every account by design, asked by the allocator and reconciler (below), never on an API route or WS topic; in `UNSCOPED` |
 | `cv-oms-env-branch`      | `oms/ports.py`, `InterimRiskGate.check`                                      | `interim-risk-gate-r4` | Ruling R4's interim risk gate: a demo order is admitted unevaluated and every other environment's is refused, announced by `oms_interim_ports{port="risk_gate"}` until E39-S01 replaces it                 |
 | `cv-oms-env-branch`      | `oms/ports.py`, `NoArmRecords.check`                                         | `interim-arm-records`  | SR-043's interim stand-in: every live order is `session_not_armed` until E30-S04 brings arm records                                                                                                        |
 | `cv-oms-env-branch`      | `oms_wiring.py`, `TradingSwitchesBinding.refusal`                            | `live-enable-gate`     | The live trading switch (C-2.21's synchronous check, rulings Q4 and Q6): a live account's order needs the setting and the flag; demo and testnet never meet it, and any other value is live's              |
 | `cv-oms-env-branch`      | `oms_wiring.py`, `OmsRuntime._compose` (the size step's figures)             | `live-no-day-figures`  | 24 section 9.3.6: live has no day figures, so every live entry is refused; `DayRiskFigures` serves demo and testnet only                                                                                   |
+
+`link_taken_statement` answers `link_id_taken`, which has two callers: the allocator, through its
+`OrderLinkLookup` (`OrderRepository.exists`), and step 3c of the reconciliation pass
+(`oms/reconciler.py`), which asks it about an exchange order whose id no row of its own account
+holds, so that an id another account's row holds is recorded as an anomaly and never adopted (24
+section 8.5). Neither reads more than the yes or no.
 
 The four environment branches are policy on the environment's risk class, not a venue difference, so
 `ExchangeCapabilities` has no field for them; moving each onto a record the composition root builds
@@ -71,7 +77,10 @@ would retire its exception.
   name (an assignment, annotated or not, a keyword or a dict key), reported on the float's line;
   `float(Decimal(...))` and `float(x.quantize(...))`; and `float(p)` of a parameter or a local
   annotated `Decimal`, `Px`, `Qty`, `Notional`, `Bps`, `Amount`, `Money`, `Price`, `Quantity` or
-  `Figure` (or `| None`). Fix: keep the `Decimal`; quantize to the tick or step.
+  `Figure` (or `| None`). An argument or a name that spans lines is read for a money word on every line, and for its
+  duration ending on its first line only, so a money argument that spans lines fires even when it
+  ends in a duration name (`float(` `order.price` `- row.delay` `)` on three lines). Fix: keep
+  the `Decimal`; quantize to the tick or step.
 - **Does not match:** a name that ends as a duration does (`_s`, `_ms`, `_us`, `_ns`, `_sec`,
   `_secs`, `_seconds`, `timeout`, `interval`, `delay`, `wait`, `deadline`, `ttl`), a money word in it
   or not (`price_age_s`); counts and clocks; `float("inf")`; a money word inside another (`slot`,
@@ -81,8 +90,8 @@ would retire its exception.
 - **Not seen:** a float of a value that neither its name nor its annotation marks as money
   (`level = order.price`, then `float(level)`), `parse_float=float`, an unannotated money value
   under a name the list lacks; other ways to a float (`np.float64(price)`, `price.__float__()`,
-  `builtins.float`, `math.fsum` or `math.isclose` over prices); an argument that mixes money with a
-  trailing duration (`float(price or timeout_s)`), which the duration ending exempts.
+  `builtins.float`, `math.fsum` or `math.isclose` over prices); a one-line argument that mixes money
+  with a trailing duration (`float(price or timeout_s)`), which the duration ending exempts.
   `cv-no-float-prices` covers `storage/**`, `bars/**` and `ingestion/**`, and `cv-decimal-discipline`
   the `float` annotations.
 - **Fixture:** `.semgrep/tests/cv-oms-no-float-money/` (an `oms/` module, one with PEP 695 syntax, an
@@ -102,22 +111,23 @@ would retire its exception.
   built, which the order and position routes reach: `storage/repositories/orders*.py`, `oms_*.py`,
   `positions*.py`, `executions*.py` and `recorded_stops*.py`. Fix: add the account, or the
   principal's `scope_clause(scope, environment, account, trade=...)`.
-- **Does not match:** a correlated `EXISTS` that selects no row of the tables (`select(literal(1))`
-  correlated to its outer statement, as the startup sweep's are), an insert's `RETURNING` CTE,
-  another table. The predicate is looked for, not proven: one compared with any right-hand side
-  passes (a join's `_O.exchange_account_id == _L.exchange_account_id`), and so does a select inside a
-  scoped `where`'s arguments. A predicate in a `where` on another statement fires: write it in the
-  chain.
-- **Not seen:** a table only in `select_from`, an alias passed in or built by a helper, a tuple of five
-  or more, a table or column list imported under another name (`orders as order_table`,
-  `ORDER_COLUMNS as _ORDER_COLUMNS`), a column tuple built at module level, an alias made by
-  `sa.alias(orders, ...)` and bound to a name (`orders.alias(...)` is seen), a column added by
-  `.add_columns(...)`, an UPDATE or a DELETE (the rule reads selects only), text SQL (these stores
-  build Core only; `cv-storage-sql-construction` owns text), and the stores outside the scope:
-  `order_path_symbols_sqlalchemy.py` (the instrument refresh's seed, symbol
-  names across every account, answered to no request), `reconcile_sqlalchemy.py` (the reconciliation
-  pass, one account per call), and the trade-group, notification and admin stores of their own epics.
-  Each store's `UNSCOPED` set, which its unit test pins, names its unscoped builders beside the rule.
+- **Does not match:** an insert's `RETURNING` CTE, another table. The predicate is looked for, not
+  proven: one compared with any right-hand side passes (a join's
+  `_O.exchange_account_id == _L.exchange_account_id`), and so does a select inside a scoped
+  `where`'s arguments. A predicate in a `where` on another statement fires: write it in the chain.
+- **Not seen:** a select whose selected expressions name none of the tables, the table only in its
+  `where` or `select_from` (`select(literal(1)).where(_O.id == rs.order_id)`): the rule reads what
+  a select returns, not whether it is correlated, so the startup sweep's correlated `EXISTS`
+  subqueries pass, and so would an uncorrelated one over every account's rows; an alias passed in
+  or built by a helper, a tuple of five or more, a table or column list imported under another name
+  (`orders as order_table`, `ORDER_COLUMNS as _ORDER_COLUMNS`), a column tuple built at module
+  level, an alias made by `sa.alias(orders, ...)` and bound to a name (`orders.alias(...)` is seen),
+  a column added by `.add_columns(...)`, an UPDATE or a DELETE (the rule reads selects only), text
+  SQL (these stores build Core only; `cv-storage-sql-construction` owns text), and the stores
+  outside the scope: `order_path_symbols_sqlalchemy.py` (the instrument refresh's seed, symbol names
+  across every account, answered to no request), `reconcile_sqlalchemy.py` (the reconciliation pass,
+  one account per call), and the trade-group, notification and admin stores of their own epics. Each
+  store's `UNSCOPED` set, which its unit test pins, names its unscoped builders beside the rule.
 - **Fixture:** `.semgrep/tests/cv-oms-unscoped-select/`, with the annotated statement that proves the
   marker placement the three exceptions use.
 
@@ -133,9 +143,9 @@ would retire its exception.
   place (`row["payload"].update(...)`) unless by such a call, and an `INSERT ... SELECT`
   (`.from_select(...)`), whose payload the database picks; in any module, an insert or update of
   `<module>.order_events` whose `.values(payload=...)` is not that call; and text SQL that writes the
-  table (an `INSERT INTO`, `UPDATE ... SET` or `COPY` of `order_events`), which would skip the
-  redaction that runs in Python before the bind. Scope: `services/api/candleviewer/**`, not
-  migrations. Fix: write
+  table (an `INSERT INTO`, a SQL comment between the two words too, `UPDATE ... SET` or `COPY` of
+  `order_events`), which would skip the redaction that runs in Python before the bind. Scope:
+  `services/api/candleviewer/**`, not migrations. Fix: write
   `"payload": redact_exchange_payload(event.payload)` through the Core builder, as
   `orders_sqlalchemy._event_values` does.
 - **Does not match:** a `payload` in a module that writes no `order_events` row (a WS frame's, a
@@ -149,8 +159,10 @@ would retire its exception.
   read where the helper is, as `_event_values`' is); a dict held in a variable then passed to
   `.values(rows)`; a payload changed through a name (`p = values["payload"]; p["sign"] = ...`) or by
   `|=`; text SQL with an alias between the table and its columns
-  (`INSERT INTO order_events AS oe (...)`); a statement split across string literals. The in-memory
-  fake (`oms/fakes.py`) redacts the same way, proven by its own tests. The threat model's record-type
+  (`INSERT INTO order_events AS oe (...)`), or with a SQL comment other than between `INSERT` and
+  `INTO` (`INSERT INTO /* tag */ order_events`) or a nested block comment between them
+  (`INSERT /* a /* b */ c */ INTO`); a statement split across string literals. The in-memory fake
+  (`oms/fakes.py`) redacts the same way, proven by its own tests. The threat model's record-type
   form (section 6 item 4) waits for closed payload schemas (SR-E29-08 item 3, G-1):
   `NewOrderEvent.payload` is a plain `Mapping` today.
 - **Fixture:** `.semgrep/tests/cv-oms-order-events-unredacted/`.
@@ -174,7 +186,10 @@ would retire its exception.
   exchange call outside the adapter package" is narrowed to network clients, as
   `cv-adapter-isolation` already bans the vendor's identifiers outside the adapter.
 - **Not seen:** a client handed in by another module (the composition root hands the OMS its port),
-  a call on a module name the list lacks.
+  a call on a module name the list lacks, a module name built at runtime
+  (`importlib.import_module(name)`), which `cv-adapter-isolation` misses too, and an exchange SDK
+  (`import pybit`, `import ccxt`), which that rule sees only where the vendor's name is written as a
+  word.
 - **Fixture:** `.semgrep/tests/cv-oms-no-network-client/`.
 
 ## cv-oms-env-branch
@@ -182,33 +197,42 @@ would retire its exception.
 - **Protects:** 24 section 14.2 rule 3 and section 17.4 L2 ("capabilities drive behaviour, not
   conditionals"); C-2.11; OM-E03.
 - **Matches,** in OMS modules: an environment compared with one of its values (`==`, `!=`, `is`,
-  `is not` against `"live"`, `"demo"` or `"testnet"`, or a member `LIVE`, `DEMO` or `TESTNET` of an
-  enum whose name holds `Env`, also inside a call such as `Environment("live")`), membership of an
-  environment-named value (`env`, `environment`, `self._env`, `order.environment`, and an
-  environment's `.value`: `settings.environment.value`) in a constant (`env not in _NOT_LIVE`) or in
-  a literal collection, and membership of any value in a literal collection of environment values;
-  in an `if`, a `while`, a conditional expression, a comprehension or an assignment alike. Fix: read a
-  field of `ExchangeCapabilities` or of another record the composition root builds.
+  `is not`, or `operator.eq`, `ne`, `is_` or `is_not` under any import name, against `"live"`,
+  `"demo"` or `"testnet"` in any letter case (`env.name == "LIVE"`), or a member `LIVE`, `DEMO` or
+  `TESTNET` of an enum whose name holds `Env`, also inside a call such as `Environment("live")`),
+  membership of an environment-named value (`env`, `environment`, `self._env`, `order.environment`,
+  and an environment's `.value` or `.name`: `settings.environment.value`) in a constant
+  (`env not in _NOT_LIVE`) or in a literal collection, and membership of any value in a literal
+  collection of environment values; in an `if`, a `while`, a conditional expression, a comprehension
+  or an assignment alike. Fix: read a field of `ExchangeCapabilities` or of another record the
+  composition root builds.
 - **Exemption:** a test whose `if` body is a single `raise` of a class, bare or called with a message
-  (a string, an f-string or a name), and that has no `else` or `elif`, a fail-closed self-check. Seven
-  pass on `main` without an annotation:
+  (a string, an f-string or a name), and that has no `else` or `elif`, a fail-closed self-check; a
+  `from` clause, or a method called on the new exception (`.with_traceback(...)`), is reported.
+  Seven pass on `main` without an annotation:
   `ports.refuse_live_without_reconciliation`, `stream_consumer.refuse_live_without_position_rows`,
   `oms_stream_wiring.refuse_live_without_freeze`, the reconcile wiring's and the reconcile job's
   always-remediate checks, `DayRiskFigures`' constructor and the runtime's machine-event sink check.
   An `if` that raises and has an `else` or an `elif`, or whose body does more than raise, is reported
-  on its `if` line, and so is a raise-only `if` that does work for one environment: a call or an
-  `await` in the raise's arguments (`raise Refused(_open_live_route(port))`), or a walrus in its
+  on its `if` line, and so is a raise-only `if` that does work for one environment: a call in the
+  raise's arguments (`raise Refused(_open_live_route(port))`); an `await`, or a call to anything but
+  a class named in CapWords, anywhere in the raise (`raise _open_live_route(port)`,
+  `raise await ready`, `raise Refused if _open_live_route(port) else Unready`); or a walrus in its
   condition, which keeps the test for a later branch (`(live := env == "live")`); the fixture holds
   each.
 - **Does not match:** a comparison of two environment values (C-2.11's isolation checks:
   `account.environment != self._environment`, `Validator.check_route`), an execution mode
-  (`mode == "paper"`), another enum's `LIVE` (`ViewAsPhase.LIVE`).
+  (`mode == "paper"`), another enum's `LIVE` (`ViewAsPhase.LIVE`; its name as a string,
+  `phase.name == "LIVE"`, fires).
 - **Not seen:** `match`/`case`, a table keyed by the environment (`ENV_LETTER[environment]`, data as
   `ExchangeCapabilities` is), a boolean computed elsewhere (`is_live`), an environment under a name
   the pattern lacks, an environment enum imported under a name without `Env` (`PE.LIVE`), a value
-  tested for membership in the environment (`"live" in env`). In a raise-only `if`: an exception used
-  as control flow (`raise _UseTradeSocket`, which an `except` one frame up answers with the live
-  work) and an exception whose constructor does work, both of which read as a bare raise.
+  tested for membership in the environment (`"live" in env`), `operator.contains`, or an operator
+  passed as a value (`partial(operator.eq, "live")`). In a raise-only `if`: a call or an `await` in
+  its condition after the environment test (`env == "live" and await open_live(port)`), where four
+  of the seven checks call a predicate; an exception used as control flow (`raise _UseTradeSocket`,
+  which an `except` one frame up answers with the live work); and a class, or a function named like
+  one, whose call does the work (`raise Refused(port)`), which reads as an exception's construction.
 - **Fixture:** `.semgrep/tests/cv-oms-env-branch/`, with the annotated statement that proves the marker
   placement the four exceptions use.
 

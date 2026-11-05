@@ -68,4 +68,11 @@ def bulk(rows):
 
 
 _INSERT = sa.text("INSERT INTO order_events (order_id, seq, payload) VALUES (:o, :s, :p)")  # ruleid: cv-oms-order-events-unredacted
+_TAGGED = sa.text("INSERT /* importer */ INTO order_events (order_id, payload) VALUES (:o, :p)")  # ruleid: cv-oms-order-events-unredacted
+# A statement over two lines is reported on its `INSERT` line, so the marker sits in its SQL comment.
+_NOTED = sa.text("""INSERT -- importer  # ruleid: cv-oms-order-events-unredacted
+    INTO order_events (order_id, payload) VALUES (:o, :p)""")
+_QUOTED = sa.text('INSERT INTO "public"."order_events" (order_id, payload) VALUES (:o, :p)')  # ruleid: cv-oms-order-events-unredacted
+_QUOTED_SET = sa.text('UPDATE "public"."order_events" SET payload = :p WHERE order_id = :o')  # ruleid: cv-oms-order-events-unredacted
+_QUOTED_COPY = sa.text('COPY "public"."order_events" (order_id, payload) FROM STDIN')  # ruleid: cv-oms-order-events-unredacted
 _READ = sa.text("SELECT payload FROM order_events WHERE order_id = :o")  # ok: cv-oms-order-events-unredacted

@@ -28,7 +28,7 @@ rules:
               - pattern: float($ARG)
               - metavariable-regex:
                   metavariable: $ARG
-                  regex: '^(?!.*(?i:_s|_ms|_us|_ns|_secs?|_seconds|timeout|interval|delay|wait|deadline|ttl)\W*$)(?=.*(?:(?<![A-Za-z])|(?<=[a-z])(?=[A-Z]))(?i:price|px|qty|quantity|size|notional|amount|amt|cost|fee|commission|pnl|profit|loss|balance|equity|margin|exposure|collateral|cash|usdt|usd|leverage|mark|risk|sl|tp|distance|trailing)(?:e?s)?(?![a-z])|.*(?:_value|[a-z]Value)s?(?![a-z]))'
+                  regex: '^(?!.*(?i:_s|_ms|_us|_ns|_secs?|_seconds|timeout|interval|delay|wait|deadline|ttl)\W*$)(?=(?s:.*(?:(?<![A-Za-z])|(?<=[a-z])(?=[A-Z]))(?i:price|px|qty|quantity|size|notional|amount|amt|cost|fee|commission|pnl|profit|loss|balance|equity|margin|exposure|collateral|cash|usdt|usd|leverage|mark|risk|sl|tp|distance|trailing)(?:e?s)?(?![a-z])|.*(?:_value|[a-z]Value)s?(?![a-z])))'
           - patterns:
               - pattern-either:
                   - pattern: $NAME = float($ARG)
@@ -38,7 +38,7 @@ rules:
               - focus-metavariable: $ARG
               - metavariable-regex:
                   metavariable: $NAME
-                  regex: '^(?!.*(?i:_s|_ms|_us|_ns|_secs?|_seconds|timeout|interval|delay|wait|deadline|ttl)\W*$)(?=.*(?:(?<![A-Za-z])|(?<=[a-z])(?=[A-Z]))(?i:price|px|qty|quantity|size|notional|amount|amt|cost|fee|commission|pnl|profit|loss|balance|equity|margin|exposure|collateral|cash|usdt|usd|leverage|mark|risk|sl|tp|distance|trailing)(?:e?s)?(?![a-z])|.*(?:_value|[a-z]Value)s?(?![a-z]))'
+                  regex: '^(?!.*(?i:_s|_ms|_us|_ns|_secs?|_seconds|timeout|interval|delay|wait|deadline|ttl)\W*$)(?=(?s:.*(?:(?<![A-Za-z])|(?<=[a-z])(?=[A-Z]))(?i:price|px|qty|quantity|size|notional|amount|amt|cost|fee|commission|pnl|profit|loss|balance|equity|margin|exposure|collateral|cash|usdt|usd|leverage|mark|risk|sl|tp|distance|trailing)(?:e?s)?(?![a-z])|.*(?:_value|[a-z]Value)s?(?![a-z])))'
           - pattern: float(Decimal(...))
           - pattern: float($MOD.Decimal(...))
           - pattern: float($VALUE.quantize(...))
