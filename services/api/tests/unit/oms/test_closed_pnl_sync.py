@@ -1077,3 +1077,39 @@ async def test_the_carry_is_bounded_and_what_it_drops_is_logged(
          "account_id": str(ACCOUNT_A), "left": 1},
     ]  # fmt: skip
     await r.sync.stop()
+
+
+@virtual
+async def test_a_late_fill_never_finalizes_a_record_before_the_read_replaces_it() -> None:
+    """The S5b review's M1 (e): pass N reads `qty` 2 with one closing fill of 1 stored, so the
+    record stays open; a second fill of 1 is stored and names the order, whose row is `filled`
+    though its third fill is not stored, and pass N+1's read says `qty` 3. The step before the
+    read never finalizes, so the read replaces 2 with 3 and the settled step leaves it open."""
+    r = rig(composed=True, records=[_record(qty=Decimal(2))])
+    s = r.store
+    s.flats[("ETHUSDT", 0)] = (T0 - timedelta(hours=3),)
+    s.orders |= {"x-open": (OPENER, "filled"), XID: (ORDER, "filled")}
+    s.keys |= {OPENER: ("ETHUSDT", "Buy", 0), ORDER: ("ETHUSDT", "Sell", 0)}
+
+    def fill(n: int, oid: UUID, minutes: int, qty: str, closed: str, pnl: str) -> WalkFill:
+        return WalkFill(
+            exec_id=f"w{n}", exec_ts=T0 - timedelta(minutes=minutes), order_id=oid,
+            side="Buy" if oid == OPENER else "Sell", exec_type="Trade", exec_qty=Decimal(qty),
+            exec_price=Decimal(1190), exec_fee=Decimal("0.5"), closed_pnl=Decimal(pnl),
+            closed_size=Decimal(closed), order_position_idx=0,
+            order_exchange_id=XID if oid == ORDER else "x-open",
+            order_group_id=GROUP if oid == OPENER else None,
+        )  # fmt: skip
+
+    s.fills += [("ETHUSDT", fill(0, OPENER, 90, "3", "0", "0")),
+                ("ETHUSDT", fill(1, ORDER, 60, "1", "1", "-5"))]  # fmt: skip
+    rid = record_id(ACCOUNT_A, XID)
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(1)
+    assert (s.rows[rid].qty, s.rows[rid].final_at) == (Decimal(2), None)  # pass N: c 1 of 2
+    s.fills.append(("ETHUSDT", fill(2, ORDER, 50, "1", "1", "-5")))
+    r.venue.records = [_record(qty=Decimal(3))]
+    r.sync.stored(replace(_fill(Decimal(1)), order_id=ORDER))
+    await asyncio.sleep(2)
+    assert (s.rows[rid].qty, s.rows[rid].final_at) == (Decimal(3), None)  # pass N+1: c 2 of 3
+    await r.sync.stop()
