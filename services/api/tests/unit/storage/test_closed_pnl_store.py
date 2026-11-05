@@ -429,3 +429,37 @@ async def test_finalize_takes_the_accounts_lock_before_its_update(stamps: bool) 
     assert await _store(rec).finalize(_A, rid) is stamps
     assert _ran(rec) == ["cap", "LOCK", _sql(mod.finalize_statement(_A, rid))]
     assert rec.ran[1] == (mod.LOCK, {"account": str(_A)}) and rec.commits == int(stamps)
+
+
+@pytest.mark.parametrize("stamps", [True, False], ids=["written", "no-row"])
+async def test_the_flag_and_its_clear_take_the_accounts_lock_before_their_update(
+    stamps: bool,
+) -> None:
+    """E29-S06 slice 5c (24 Sec.8.13): the flag sets `divergent` with the pair its record names on
+    a settled row of the account, final or not; the clear keeps the pair; each commits only when
+    it met a row (`cpr_pair` is the backstop)."""
+    rid, pair = _venue().id, (Decimal("-49.275"), Decimal("-47.4065323"))
+    flag, clear = mod.mark_statement(_A, rid, *pair), mod.clear_statement(_A, rid)
+    for kind, stmt in (("flag", flag), ("clear", clear)):
+        rec = _Recorder([{"id": rid}] if stamps else [])
+        store = _store(rec)
+        wrote = await (
+            store.mark_divergent(_A, rid, *pair)
+            if kind == "flag"
+            else store.clear_divergent(_A, rid)
+        )
+        assert wrote is stamps
+        assert _ran(rec) == ["cap", "LOCK", _sql(stmt)] and rec.commits == int(stamps)
+    where = (
+        "WHERE closed_pnl_records.exchange_account_id = $4::UUID AND closed_pnl_records.id = "
+        "$5::UUID AND closed_pnl_records.settled_at IS NOT NULL RETURNING closed_pnl_records.id"
+    )
+    sql, params = _sql(flag)
+    assert sql.startswith("UPDATE closed_pnl_records SET divergent=$1::BOOLEAN, audited_local_net")
+    assert sql.endswith(where) and "final_at" not in sql
+    assert (params["audited_local_net"], params["audited_closed_pnl"]) == pair
+    sql, _ = _sql(clear)
+    assert "audited" not in sql and sql.endswith(
+        "WHERE closed_pnl_records.exchange_account_id = $2::UUID AND closed_pnl_records.id = "
+        "$3::UUID AND closed_pnl_records.divergent RETURNING closed_pnl_records.id"
+    )
