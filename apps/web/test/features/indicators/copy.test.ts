@@ -10,6 +10,9 @@ import {
   DECK_VERSION,
   PROPOSED,
   PROPOSED_KEYS,
+  rangeHelp,
+  SETTINGS,
+  settingsTitle,
   unavailableText,
   UNSUPPORTED_PARAM,
   validationText,
@@ -76,7 +79,12 @@ describe("the deck, verbatim", () => {
   });
 
   it("writes no word for an entry with no compute path until BQ-02 (c) is ruled", () => {
-    expect(Object.keys(PROPOSED)).toEqual(["indicator.param_whole", "indicator.param_choice"]);
+    expect(Object.keys(PROPOSED)).toEqual([
+      "indicator.param_whole",
+      "indicator.param_choice",
+      "indicator.schema_refused",
+      "indicator.apply_refused",
+    ]);
     expect(unavailableText("no_path")).toBeNull();
   });
 });
@@ -115,5 +123,30 @@ describe("the other words", () => {
   it("bind replaces each span once and never re-reads a bound value", () => {
     expect(bind("{a} and {b}", { a: "{b}", b: "x" })).toBe("{b} and x");
     expect(bind("{missing}", {})).toBe("{missing}");
+  });
+});
+
+describe("SCR-035's words (S4)", () => {
+  const r = (key: string, at: number): string | undefined => deck.strings[key]?.strings[at];
+
+  it("binds the header and the help lines to the deck's own examples", () => {
+    expect(settingsTitle("EMA 21", "price", "5m")).toBe(r("d02.12.r15", 0));
+    expect(rangeHelp({ kind: "integer", minimum: 1, maximum: 5000, step: 1 })).toBe(
+      r("d02.12.r18", 0),
+    );
+    expect(rangeHelp({ kind: "number", minimum: 0.1, maximum: 10, step: 0.1 })).toBe(
+      r("d02.12.r18", 1),
+    );
+  });
+
+  it("takes every word from the deck or the PROPOSED list", () => {
+    const every = new Set([
+      ...Object.values(deck.strings).flatMap((e) => e.strings),
+      ...Object.values(PROPOSED),
+    ]);
+    const words = Object.values(SETTINGS).flatMap((v) =>
+      typeof v === "string" ? [v] : Object.values(v),
+    );
+    for (const word of words) expect(every).toContain(word);
   });
 });
