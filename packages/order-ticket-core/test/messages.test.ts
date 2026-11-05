@@ -128,6 +128,8 @@ describe("messages: pinned to the E30-D06 deck (BQ 11)", () => {
     expect(at("invalid_stop_distance", { kind: "level", side: "short" }).key).toBe(
       "ticket.order.v.sl.side.short",
     );
+    expect(at("take_profit_side", { side: "long" }).key).toBe("ticket.order.v.tp.side.long");
+    expect(at("take_profit_side", { side: "short" }).key).toBe("ticket.order.v.tp.side.short");
     expect(at("reduce_only_no_position", { read: "unread" })).toBe(PENDING);
     expect(at("invalid_stop_distance", { kind: "non_positive", side: "long" })).toBe(PENDING);
     expect(at("take_profit_side", { kind: "non_positive", side: "short" })).toBe(PENDING);
