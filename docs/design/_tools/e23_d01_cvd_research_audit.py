@@ -8,14 +8,15 @@ rows. It reads the memo and `14` from the working tree and every cited source AS
 pin (`git show BASE:path`); it executes no repo code.
 
 Gates:
-  G-SECTIONS  the H2 headings, in order (the BQ heading in its "ruling pending" form).
+  G-SECTIONS  the H2 headings, in order (the BQ heading in its RULED form).
   G-CITE      every `KEY`:N, `KEY`:N-M and ", :N" tail names a declared key and resolves, on a
               non-blank line, at BASE; an undeclared backticked key before ":N" FAILs.
   G-QUOTE     every double-quoted string of QUOTE_MIN characters or more stands verbatim in a
               source its own line cites, or in this ticket's body; quotes pair on every line.
   G-AC        the three scenario names stand verbatim in the AC trace and in the ticket; every
               status cell is done, heuristic-only or open.
-  G-BQ        the heading names the posted BQ comment; rows BQ-0..BQ-9, once each, in order.
+  G-BQ        the heading names the ruling of record, the section the posted BQ comment; rows
+              BQ-0..BQ-9, once each, in order, each with its ruled verdict.
   G-HEURISTIC every F row is `(heuristic)`, F-1..F-n in order; no participant, count, timing or
               rate is claimed anywhere; the header says no session was run.
   G-DEFAULTS  the section 6 rows carry the BQ list's ORCH-defaults, a cited evidence cell, a
@@ -33,6 +34,9 @@ Gates:
   G-WALK      the owner walkthrough has one to ten items and ends on `approved` on #610.
   G-HYGIENE   closing keywords, whitespace, public text, HTML comments, R7, no image embed, and
               "CVD" never written for colour vision.
+  G-RULING    the ruling's pins: both branch names in the deviations, ADR-0017 never the CVD
+              ADR, the two in-flight heads pinned "if it merges as is", the view-as T2 in
+              section 9, the 20-frame capture stated exactly in section 1.
   G-UNTOUCHED only the memo, this tool and `14` differ from the merge base; `14` gains exactly
               POINTER_LINE after SCR-052's sign-off checklist line.
 
@@ -64,6 +68,19 @@ PUBLISHED_JSON = "docs/plan/backlog/_tools/published.json"
 TICKET_KEY = "E23-D01"
 ISSUE = 610
 BQ_COMMENT = "6652673585"
+RULING_COMMENT = "6653785991"
+RULINGS = (
+    "AMEND",
+    "AMEND",
+    "AMEND",
+    "AMEND",
+    "AGREE",
+    "AGREE +rider",
+    "AGREE +rider",
+    "AGREE +rider",
+    "AMEND",
+    "AGREE +rider",
+)
 BQ_COUNT = 10
 QUOTE_MIN = 12
 
@@ -73,6 +90,7 @@ KEYED = {
     "E25D05": "docs/design/E25/E25-D05.md",
     "E11D04": "docs/design/E11/E11-D04.md",
     "E14D05": "docs/design/E14/E14-D05.md",
+    "E09D09": "docs/design/E09/E09-D09.md",
     "E24R": "docs/design/research/e24-deriv-reading.md",
     "E18R": "docs/research/digests/e18-footprint-cell-reading.md",
     "DG01": "docs/research/digests/01-tradingview-charting.digest.md",
@@ -85,7 +103,13 @@ KEYED = {
     "README": "docs/design/README.md",
 }
 
-BQ_HEADING = f"## BQ list — defaults built; ruling pending (comment {BQ_COMMENT})"
+BQ_HEADING = f"## BQ list — RULED (comment {RULING_COMMENT})"
+BRANCHES = ("`design/cvd-research`", "`design/e23-cvd-research`")
+ADR_TAKEN = "not ADR-0017: that number is taken"
+HEAD_PINS = (("#5747", "`14d504e8a558`"), ("#5898", "`cb9f31c9f9c1`"))
+AS_IS = "_if it merges as is_"
+VIEW_AS = ("`rbac.view_as`", "alert-on-divergence", "Read-only while viewing as {user}.")
+CAPTURE = "the only recorded BTCUSDT trade capture is 20 frames on 2026-10-19"
 SECTIONS = (
     f"## Acceptance-criteria trace ({TICKET_KEY}, issue #{ISSUE})",
     "## Deviations",
@@ -292,11 +316,22 @@ def g_ac(t: L.Tree) -> list[str]:
 def g_bq(t: L.Tree) -> list[str]:
     memo = t.text("memo")
     bad = [] if BQ_HEADING in memo.split("\n") else ["heading"]
-    if f"comment {BQ_COMMENT}" not in L.section(memo, "## BQ list"):
+    sec = L.section(memo, "## BQ list")
+    if f"comment {BQ_COMMENT}" not in sec:
         bad.append("the BQ comment id")
-    ids = [lead(r) for r in rows(memo, "## BQ list")]
+    if f"the ruling of record is comment {RULING_COMMENT}" not in sec:
+        bad.append("the ruling of record's comment id")
+    table = rows(memo, "## BQ list")
+    ids = [lead(r) for r in table]
     if ids != [f"BQ-{n}" for n in range(BQ_COUNT)]:
         bad.append(f"ids {ids}")
+    got = tuple(r[2] if len(r) > 2 else "" for r in table)
+    if len(got) == BQ_COUNT and got != RULINGS:
+        bad += [
+            f"BQ-{n}: {g!r}, ruled {w!r}"
+            for n, (g, w) in enumerate(zip(got, RULINGS, strict=True))
+            if g != w
+        ]
     return bad
 
 
@@ -456,6 +491,30 @@ def g_hygiene(t: L.Tree) -> list[str]:
     return bad + [f"colour-vision 'CVD': {m.group(0)!r}" for m in COLOUR_CVD_RE.finditer(memo)]
 
 
+def g_ruling(t: L.Tree) -> list[str]:
+    memo = t.text("memo")
+    head = memo.split("\n## ")[0]
+    dev = L.section(memo, "## Deviations")
+    bad = [f"deviations lack {b}" for b in BRANCHES if b not in dev]
+    bad += [
+        f"line {n}: ADR-0017 named without {ADR_TAKEN!r}"
+        for n, ln in enumerate(memo.split("\n"), 1)
+        if "ADR-0017" in ln and ADR_TAKEN not in ln
+    ]
+    if AS_IS not in head:
+        bad.append("the header does not pin in-flight heads as they merge")
+    bad += [
+        f"header lacks {pr} at {sha}"
+        for pr, sha in HEAD_PINS
+        if f"{pr} " not in head or sha not in head
+    ]
+    sec9 = L.section(memo, "## 9.")
+    bad += [f"section 9 lacks {v!r}" for v in VIEW_AS if v not in sec9]
+    if CAPTURE not in L.section(memo, "## 1."):
+        bad.append("section 1 does not state the recorded capture exactly")
+    return bad
+
+
 def g_untouched(t: L.Tree) -> list[str]:
     bad = L.untouched(t.changed, OWN, budgets={CAT_REL: (1, 0)}, numstat=t.numstat)
     base = t.text("base_cat").split("\n")
@@ -484,6 +543,7 @@ GATES: tuple[L.Gate, ...] = (
     L.Gate("G-BOARDS", g_boards),
     L.Gate("G-WALK", g_walk),
     L.Gate("G-HYGIENE", g_hygiene),
+    L.Gate("G-RULING", g_ruling),
     L.Gate("G-UNTOUCHED", g_untouched),
 )
 
@@ -527,6 +587,20 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "docs/plan/15-component-catalogue.md"),
     _M("M-19", "G-UNTOUCHED", "the pointer line carries a decision", "cat",
        "(E23-D01; heuristic walkthrough", "(E23-D01; binding decisions"),
+    _M("M-20", "G-BQ", "the ruling of record unnamed", "memo",
+       f"the ruling of record is comment {RULING_COMMENT}", "the ruling is pending"),
+    _M("M-21", "G-BQ", "a verdict other than the ruled one", "memo",
+       r"(\| BQ-4 +\| [^|]*\| )AGREE ", r"\1AMEND ", regex=True),
+    _M("M-22", "G-RULING", "the deviation keeps the ticket's branch only", "memo",
+       "the PR uses `design/e23-cvd-research`", "the PR keeps it"),
+    _M("M-23", "G-RULING", "ADR-0017 cited as the CVD ADR", "memo",
+       "E23-T05's, numbered when it is written, not ADR-0017: that number is taken",
+       "ADR-0017"),
+    _M("M-24", "G-RULING", "the #5747 pin dropped", "memo", "at `14d504e8a558`", "at its head"),
+    _M("M-25", "G-RULING", "the view-as T2 dropped", "memo",
+       "with the reason `rbac.view_as`,", "with a reason,"),
+    _M("M-26", "G-RULING", "the capture misstated", "memo",
+       "is 20 frames on 2026-10-19", "is a few frames"),
 )
 # fmt: on
 
