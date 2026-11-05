@@ -39,9 +39,10 @@ jobs:
       contents: read
     env:
       # One user per test that claims the role: no two tests share a lockout counter or a TOTP step.
-      FIXTURE_OWNERS: "2"
-      FIXTURE_MANAGERS: "1"
-      FIXTURE_VIEWERS: "0"
+      # apps/web/test/e2e-admin-workflow.test.ts holds these at least the claims the specs make.
+      FIXTURE_OWNERS: "7"
+      FIXTURE_MANAGERS: "4"
+      FIXTURE_VIEWERS: "2"
       CV_E2E_REAL_API: http://127.0.0.1:8000
       CV_E2E_REAL_PREVIEW_PORT: "4173"
       # Every compose command here, and the audit slice's `docker compose exec` in the specs.
