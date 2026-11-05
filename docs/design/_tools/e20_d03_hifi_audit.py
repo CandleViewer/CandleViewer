@@ -119,7 +119,9 @@ CANVAS, TEXT, SECONDARY, TERTIARY = (
     "color.text.tertiary",
 )
 RING, OVERLAY, RAISED = "color.focus.ring", "color.surface.overlay", "color.surface.raised"
-# Section 2.2: (pair, ink, against, floor); "@shipped" is the shipped remap, any "@" row reported.
+BORDER = "color.border.default"
+# Section 2.2: (pair, ink, against, floor); "@shipped" is the shipped remap, any "@" row reported;
+# "@exempt" is the T2 hairline, an inactive control's boundary WCAG 1.4.11 exempts (no floor).
 PAIRS: tuple[tuple[str, str, str, float], ...] = (
     ("cell value, neutral", TEXT, CANVAS, 4.5),
     ("cell value, buy shade", TEXT, BUY_SHADE, 4.5),
@@ -133,8 +135,9 @@ PAIRS: tuple[tuple[str, str, str, float], ...] = (
     ("T2 reason, SCR-033", SECONDARY, OVERLAY, 4.5),
     ("T2 label on the gated primary fill", TERTIARY, RAISED, 4.5),
     ("T2 reason, SCR-045", SECONDARY, RAISED, 4.5),
-    ("gated primary hairline, `Apply`", "color.border.default", OVERLAY + "@reported", 3.0),
-    ("gated primary hairline, `Export CSV`", "color.border.default", RAISED + "@reported", 3.0),
+    ("T2 hairline on its fill", BORDER, RAISED + "@exempt", 0.0),
+    ("T2 hairline on the panel, `Apply`", BORDER, OVERLAY + "@exempt", 0.0),
+    ("T2 hairline on the panel, `Export CSV`", BORDER, RAISED + "@exempt", 0.0),
     ("hint chip", SECONDARY, "color.surface.selected", 4.5),
     ("validation message", TEXT, OVERLAY, 4.5),
     ("invalid field boundary", "color.status.danger.default", "color.surface.overlay", 3.0),
@@ -294,7 +297,22 @@ def ratio(a: str, b: str) -> float:
 def pair_row(pair: str, fg: str, bg: str, floor: float) -> list[str]:
     vals = [f"{ratio(ink(n, p, fg), ink(n, p, bg)):.2f}" for n in THEMES for p in PALETTES]
     cell = f"{floor:g}, reported" if "@" in bg else f"{floor:g}"
+    cell = "exempt" if bg.endswith("@exempt") else cell
     return [pair, f"`{fg}`", f"`{bg.split('@')[0]}`", cell, *vals]
+
+
+def hairline_arow() -> str:
+    """A-14's measured pairs (standard palette; dark / light / high contrast), informational."""
+
+    def trio(bg: str) -> str:
+        return " / ".join(
+            f"{ratio(ink(n, 'standard', BORDER), ink(n, 'standard', bg)):.2f}" for n in THEMES
+        )
+
+    return (
+        f"`{BORDER}` on `{CANVAS}` (a panel, D09E09:307) {trio(CANVAS)}, on `{RAISED}` (the "
+        f"fill) {trio(RAISED)} and on `{OVERLAY}` (the panel behind `Apply`) {trio(OVERLAY)}"
+    )
 
 
 def grey(hexv: str) -> float:
@@ -508,8 +526,11 @@ def g_tokens(t: L.Tree) -> list[str]:
 def g_contrast(t: L.Tree) -> list[str]:
     want = [pair_row(*p) for p in PAIRS]
     bad = [] if rows(sec(t, "### 2.2 The contrast matrix")) == want else ["2.2 differs (--fill)"]
+    a14 = [x for x in t.text("spec").split("\n") if x.startswith("| A-14 ")]
+    if len(a14) != 1 or hairline_arow() not in a14[0]:
+        bad.append("A-14's hairline pairs differ from the measurement")
     for w in want:
-        if w[3].endswith("reported"):
+        if w[3].endswith("reported") or w[3] == "exempt":
             continue
         low = min(float(v) for v in w[4:])
         if low < float(w[3]):
@@ -708,6 +729,12 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        r"(\| motion \(E20-D04 #601\)[^\n]*\| )§5", r"\1E20-D04", regex=True),
     _M("M-34", "G-T2", "R-4 loses the gated primary fill", "spec",
        "takes the fill `color.surface.raised`", "takes the fill `color.surface.overlay`"),
+    _M("M-35", "G-CONTRAST", "an exempt row written as a pass", "spec",
+       r"(\| T2 hairline on its fill +\|[^\n]*?\| )exempt( *\|)", r"\g<1>3     \2", regex=True),
+    _M("M-36", "G-CONTRAST", "A-14's hairline figure drifts", "spec",
+       r"(\| A-14 [^\n]*?\(the fill\) )(\d\.\d\d)", r"\g<1>3.00", regex=True),
+    _M("M-37", "G-CONTRAST", "A-14's canvas hairline figure drifts", "spec",
+       r"(\| A-14 [^\n]*?\(a panel, D09E09:307\) )(\d\.\d\d)", r"\g<1>1.60", regex=True),
 )
 # fmt: on
 
