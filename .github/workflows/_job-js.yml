@@ -158,13 +158,14 @@ jobs:
       # a change only to tools/contrast or the token formats selected no package. The tag selector
       # matches the changed files against the inputs of the test:cov tasks tagged `unit-frontend`
       # (packages/ui/turbo.json lists those files), so it selects ui's tests (#3367).
-      - name: Turbo test:cov (ui, app-web, app-electron) --filter=...[origin/main]
+      - name: Turbo test:cov (ui, app-web, app-electron, order-ticket-core) --filter=...[origin/main]
         run: >
           pnpm turbo run test:cov
           --filter='@candleviewer/ui...[origin/main]'
           --filter='tag:unit-frontend[origin/main]'
           --filter='@candleviewer/web...[origin/main]'
           --filter='@candleviewer/desktop...[origin/main]'
+          --filter='@candleviewer/order-ticket-core...[origin/main]'
           --summarize
       - name: Record which packages turbo scheduled (coverage gate N/A vs CI-COV-003)
         if: always()
@@ -174,6 +175,7 @@ jobs:
           --filter='tag:unit-frontend[origin/main]'
           --filter='@candleviewer/web...[origin/main]'
           --filter='@candleviewer/desktop...[origin/main]'
+          --filter='@candleviewer/order-ticket-core...[origin/main]'
       - name: Record lane duration in job summary
         if: always()
         run: node tools/ci/write-turbo-summary.mjs unit-frontend >> "$GITHUB_STEP_SUMMARY"
@@ -187,6 +189,7 @@ jobs:
             apps/web/coverage/lcov.info
             apps/desktop/coverage/lcov.info
             packages/ui/coverage/lcov.info
+            packages/order-ticket-core/coverage/lcov.info
             apps/web/junit.xml
             apps/desktop/junit.xml
             packages/ui/junit.xml

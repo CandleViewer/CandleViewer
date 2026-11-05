@@ -128,6 +128,27 @@ module.exports = {
       },
     },
     {
+      name: "no-deep-imports-order-ticket-core",
+      severity: "error",
+      comment:
+        "§9 #18 deep-import ban: only `@candleviewer/order-ticket-core`'s declared entry points " +
+        "may be imported, never `packages/order-ticket-core/src/**` directly from outside it.",
+      from: { pathNot: "^packages/order-ticket-core" },
+      to: { path: "^packages/order-ticket-core/src" },
+    },
+    {
+      name: "order-ticket-core-framework-free",
+      severity: "error",
+      comment:
+        "E30-T01 (#984 BQ 15, the C-2.16 shape): packages/order-ticket-core may not import React, " +
+        "the chart engine, the design system, another workspace package but the protocol, or an " +
+        "app, so the ticket core stays pure, worker-safe and testable with no DOM or network.",
+      from: { path: "^packages/order-ticket-core/src" },
+      to: {
+        path: "(^|node_modules/)(react|react-dom)($|/)|^packages/(?!protocol/|order-ticket-core/)|^apps/",
+      },
+    },
+    {
       name: "chart-engine-no-react",
       severity: "error",
       comment:

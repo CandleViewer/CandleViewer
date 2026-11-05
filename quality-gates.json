@@ -5,6 +5,7 @@
     "packages/chart-engine": { "lines": 85.0, "branches": 75.0 },
     "packages/rule-graph": { "lines": 85.0, "branches": 75.0 },
     "packages/dock": { "lines": 85.0, "branches": 75.0 },
+    "packages/order-ticket-core": { "lines": 95.0, "branches": 85.0 },
     "packages/protocol": { "lines": 80.0, "branches": 70.0 },
     "packages/ui": { "lines": 80.0, "branches": 70.0 },
     "packages/fixtures": { "lines": 80.0, "branches": 70.0 },
