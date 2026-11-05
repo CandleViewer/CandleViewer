@@ -10,10 +10,10 @@ export async function loadPreferences(): Promise<A11yPreferences> {
   return parsePreferences(body.accessibility);
 }
 
-/** Partial deep-merge PUT of the `accessibility` subtree only. */
+/** Partial deep-merge PATCH of the `accessibility` subtree only (`22` `/settings`). */
 export async function savePreferences(patch: Partial<A11yPreferences>): Promise<A11yPreferences> {
   const r = await apiFetch(URL, {
-    method: "PUT",
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ accessibility: patch }),
   });

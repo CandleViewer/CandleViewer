@@ -101,7 +101,7 @@ describe("AccessibilitySettingsScreen (SCR-117)", () => {
     fireEvent.click(screen.getByLabelText("Disable canvas animation"));
     expect(flags).toHaveBeenLastCalledWith(expect.objectContaining({ animate: false }));
     await waitFor(() => expect(f).toHaveBeenCalledTimes(2));
-    expect(f.mock.calls[1]?.[1]).toMatchObject({ method: "PUT" });
+    expect(f.mock.calls[1]?.[1]).toMatchObject({ method: "PATCH" });
   });
 
   it("shows OS default and honours an explicit override", async () => {
