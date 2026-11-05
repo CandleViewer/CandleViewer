@@ -17,10 +17,13 @@ from uuid import UUID
 
 import psycopg
 import pytest
+import sqlalchemy as sa
 from psycopg import sql
 from psycopg.types.json import Jsonb
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import IntegrityError
 
+from candleviewer.db.models import closed_pnl_records
 from candleviewer.storage.repositories import closed_pnl_sqlalchemy as cpr
 from candleviewer.storage.repositories.closed_pnl import ClosedPnlQuery as Query
 from candleviewer.storage.repositories.closed_pnl import ComposedRecord, FillKey, VenueRecord
@@ -93,6 +96,43 @@ async def test_the_store_composes_settles_once_replaces_until_final_then_freezes
         held = await store.get(a, orderless.id)
         assert held is not None and held.trade_group_id is None  # settling never writes it
         assert not await store.finalize(a, orderless.id)  # never final (cpr_final)
+    finally:
+        await rel.dispose()
+
+
+async def test_the_flag_takes_a_settled_row_with_its_pair_final_or_not_and_the_clear_keeps_it(
+    pg_dsn: str,
+) -> None:
+    """E29-S06 slice 5c (21 Sec.3.3.13): the flag sets `divergent` with the pair on a settled row
+    of its account, written once final too (the guard leaves it); the clear keeps the pair; an
+    unsettled row takes none, and `cpr_pair` refuses one written around the store."""
+    with _conn(pg_dsn) as c:
+        a, b = _put(c, "exchange_accounts"), _put(c, "exchange_accounts")
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "closed-pnl-flag-it")
+    store, pair = cpr.SqlAlchemyClosedPnlStore(rel), (Decimal("-49.275"), Decimal(10))
+    rid = _record(VenueRecord, a).id
+    try:
+        await store.compose(_record(ComposedRecord, a))
+        assert not await store.mark_divergent(a, rid, *pair)  # unsettled: no flag
+        assert await store.settle(_record(VenueRecord, a)) == "settled"
+        assert not await store.mark_divergent(b, rid, *pair)  # another account's: none
+        assert await store.finalize(a, rid) and await store.mark_divergent(a, rid, *pair)
+        held = await store.get(a, rid)
+        assert held is not None and held.final_at is not None
+        assert (held.divergent, held.audited_local_net, held.audited_closed_pnl) == (True, *pair)
+        assert await store.clear_divergent(a, rid) and not await store.clear_divergent(a, rid)
+        held = await store.get(a, rid)
+        assert held is not None and (held.divergent, held.audited_local_net) == (False, pair[0])
+        unsettled = _record(ComposedRecord, a, exchange_order_id="o-2")
+        await store.compose(unsettled)
+        async with rel.unit_of_work() as uow:  # `cpr_pair`: the backstop under the store
+            stmt = (
+                sa.update(closed_pnl_records)
+                .where(closed_pnl_records.c.id == unsettled.id)
+                .values(divergent=True, audited_local_net=pair[0], audited_closed_pnl=pair[1])
+            )
+            with pytest.raises(IntegrityError, match="cpr_pair"):
+                await uow.session.execute(stmt)
     finally:
         await rel.dispose()
 
