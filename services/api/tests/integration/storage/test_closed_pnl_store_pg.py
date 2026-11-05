@@ -18,6 +18,7 @@ from uuid import UUID
 import psycopg
 import pytest
 from psycopg import sql
+from psycopg.types.json import Jsonb
 from sqlalchemy.engine import make_url
 
 from candleviewer.storage.repositories import closed_pnl_sqlalchemy as cpr
@@ -170,6 +171,70 @@ async def test_the_reads_page_both_ways_total_in_sql_and_read_rows_56_to_58(pg_d
         await rel.dispose()
 
 
+def _leg(c: psycopg.Connection[tuple[Any, ...]], group: UUID, account: UUID) -> UUID:
+    """A leg of `group` for `account`, sized from the account's default profile (0037)."""
+    [(profile,)] = c.execute(
+        "SELECT id FROM account_profiles WHERE exchange_account_id = %s AND is_default", (account,)
+    ).fetchall()
+    snapshot = {"profile_id": str(profile), "account_id": str(account), "version": 1}
+    leg: UUID = _put(c, "trade_group_legs", account, trade_group_id=group,
+                     account_profile_id=profile, profile_version=1, sequence_no=0, target_qty=1,
+                     resolved_leverage=5, resolved_sl_price=100,
+                     profile_snapshot=Jsonb(snapshot))  # fmt: skip
+    return leg
+
+
+async def test_rows_58_61_and_62_stay_in_the_account_and_a_foreign_leg_names_no_group(
+    pg_dsn: str,
+) -> None:
+    """E29-S06 slice 5b (C-12.4): row 58 names a fill's group through a leg of its own account
+    alone, so an order on another account's leg names none and its fill is still walked; row 61
+    reads each order's fill times, walk start and record, and row 62 the hedge probe, neither
+    answering for another account."""
+    with _conn(pg_dsn) as c:
+        a, b = _put(c, "exchange_accounts"), _put(c, "exchange_accounts")
+        group = _group(c)
+        own, foreign = _leg(c, group, a), _leg(c, group, b)
+
+        def put(table: str, account: UUID = a, **cols: Any) -> Any:
+            return _put(c, table, account, **cols)
+
+        opener = put("orders", side="Buy", exchange_order_id="o-open", trade_group_leg_id=own)
+        crossed = put("orders", side="Buy", exchange_order_id="o-x", trade_group_leg_id=foreign)
+        closer = put("orders", exchange_order_id="o-close", state="filled")
+        put("orders", b, exchange_order_id="o-close")  # the venue id under another account
+        put("position_snapshots", exchange_updated_ts=_T0 - _S)  # the walks' start
+        put("position_snapshots", exchange_updated_ts=_T0 + 9 * _S)  # after the first fills
+        for n, (order, closed) in enumerate(
+            ((opener, 0), (crossed, 0), (closer, 1), (closer, None))
+        ):
+            put("executions", exec_id=f"x{n}", order_id=order, exec_ts=_T0 + n * _S,
+                closed_size=closed)  # fmt: skip
+        put("closed_pnl_records", exchange_order_id="o-close")
+        put("positions", symbol="SOLUSDT", position_idx=1)
+        put("positions", b, symbol="BTCUSDT", position_idx=2)
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "closed-pnl-compose-it")
+    store = cpr.SqlAlchemyClosedPnlStore(rel)
+    try:
+        fills = await store.walk_fills(a, "SOLUSDT", 0, FillKey(_T0 - _S), 10)
+        assert [(f.exec_id, f.order_group_id) for f in fills] == [
+            ("x0", group), ("x1", None), ("x2", None), ("x3", None),
+        ]  # fmt: skip
+        found = await store.anchors(a, [opener], ["o-close", "o-none"])
+        assert sorted((x.order_id, x.first_fill, x.last_fill, x.last_close, x.start, x.held)
+                      for x in found) == sorted([
+            (opener, _T0, _T0, None, _T0 - _S, False),
+            (closer, _T0 + 2 * _S, _T0 + 3 * _S, _T0 + 2 * _S, _T0 - _S, True),
+        ])  # fmt: skip
+        [held] = await store.anchors(b, [], ["o-close"])  # b's own order, never a's
+        assert (held.exchange_order_id, held.first_fill, held.held) == ("o-close", None, False)
+        assert await store.anchors(b, [opener, closer], []) == ()
+        probes = [await store.hedged(*k) for k in ((a, "SOLUSDT"), (a, "BTCUSDT"), (b, "SOLUSDT"))]
+        assert probes == [True, False, False]
+    finally:
+        await rel.dispose()
+
+
 def test_rows_56_to_58_plan_over_the_indexes_they_name(pg_dsn: str) -> None:
     """EXPLAIN of each store read as asyncpg runs it, a prepared statement on its generic plan,
     sequential scans priced out (the `test_orders_store_pg.py` probe). Rows 55 and 59 read
@@ -188,7 +253,9 @@ def test_rows_56_to_58_plan_over_the_indexes_they_name(pg_dsn: str) -> None:
         (cpr.pending_statement(a, _T0, 5), ("ix_cpr_pending", "ux_orders_exch_id")),
         (cpr.walk_flats_statement(a, "SOLUSDT", 0, _T0, 5), ("ix_psnap_flat",)),
         (cpr.walk_fills_statement(a, "SOLUSDT", 0, FillKey(_T0, "e"), 5),
-         ("ix_exec_walk", "orders_pkey")),
+         ("ix_exec_walk", "orders_pkey", "trade_group_legs_pkey")),
+        (cpr.hedge_statement(a, "SOLUSDT"),  # row 62, slice 5b; row 61 reads analysed tables
+         ("positions_exchange_account_id_symbol_position_idx_key",)),
     ):  # fmt: skip
         compiled = stmt.compile(dialect=dialect, compile_kwargs={"render_postcompile": True})
         args = sql.SQL(", ").join(
@@ -288,3 +355,47 @@ def test_rows_55_and_59_read_their_indexes_and_never_sort_every_record(pg_dsn: s
         for sort in (n for n in nodes if n["Node Type"] in ("Sort", "Incremental Sort")):
             [child] = sort["Plans"]
             assert int(child["Actual Rows"]) * int(child["Actual Loops"]) <= most, text
+
+
+def test_row_61_reads_each_orders_own_keys_on_analysed_tables(pg_dsn: str) -> None:
+    """E29-S06 slice 5b: on its own database, one account's 2,000 orders of two symbols with
+    three fills each, 500 confirmed flats and 1,000 records, analysed, the composition's read of
+    two orders by id and one by venue id takes each order by its key, its fill times from
+    `ix_exec_order` in order, its start from `ix_psnap_flat` and its record from `ux_cpr_order`:
+    never an account-wide scan (empty, unanalysed tables cost every index alike)."""
+    dsn = _fresh(pg_dsn)
+    assert _alembic(dsn, "upgrade", "head").returncode == 0
+    with _conn(dsn) as c:
+        a = _put(c, "exchange_accounts")
+        c.execute(
+            "INSERT INTO orders (id, exchange_account_id, order_link_id, exchange_order_id, "
+            "symbol, side, intent, order_type, qty, state) SELECT md5('o' || n)::uuid, %s, "
+            "'ext-' || md5('o' || n), 'o-' || n, (ARRAY['SOLUSDT', 'BTCUSDT'])[n %% 2 + 1], "
+            "'Sell', 'entry', 'Market', 4, 'filled' FROM generate_series(1, 2000) n", (a,),
+        )  # fmt: skip
+        c.execute(
+            "INSERT INTO executions (id, exchange_account_id, order_id, exec_id, symbol, side, "
+            "exec_qty, exec_price, exec_value, exec_type, is_maker, exec_ts, closed_size) SELECT "
+            "md5('x' || n || k)::uuid, %s, md5('o' || n)::uuid, 'x' || n || '-' || k, "
+            "(ARRAY['SOLUSDT', 'BTCUSDT'])[n %% 2 + 1], 'Sell', 1, 150, 150, 'Trade', false, "
+            "%s + (3 * n + k) * interval '1 s', 1 FROM generate_series(1, 2000) n, "
+            "generate_series(1, 3) k", (a, _T0),
+        )  # fmt: skip
+        c.execute(
+            "INSERT INTO position_snapshots (exchange_account_id, symbol, size, reason, "
+            "exchange_updated_ts) SELECT %s, 'SOLUSDT', 0, 'ws_push', %s + n * interval '12 s' "
+            "FROM generate_series(1, 500) n", (a, _T0),
+        )  # fmt: skip
+        c.execute(
+            "INSERT INTO closed_pnl_records (id, exchange_account_id, exchange_order_id, symbol, "
+            "side, closed_at) SELECT md5('r' || n)::uuid, %s, 'o-' || n, 'SOLUSDT', 'long', %s "
+            "FROM generate_series(2, 2000, 2) n", (a, _T0),
+        )  # fmt: skip
+        c.execute("ANALYZE orders, executions, position_snapshots, closed_pnl_records")
+        ids = [r[0] for r in c.execute("SELECT md5('o' || n)::uuid FROM unnest('{6,9}'::int[]) n")]
+    nodes, text = _plan(dsn, cpr.anchors_statement(a, ids, ["o-12"]))
+    print(f"\n--- row 61\n{text}")  # the PR's evidence (`-s`)
+    names = {n["Index Name"] for n in nodes if "Index Name" in n}
+    assert {"orders_pkey", "ux_orders_exch_id", "ix_exec_order", "ix_psnap_flat"} <= names, text
+    assert "ux_cpr_order" in names and not names & {"ix_orders_recent", "ix_exec_acct_time"}, text
+    assert not [n for n in nodes if n["Node Type"] == "Seq Scan"], text
