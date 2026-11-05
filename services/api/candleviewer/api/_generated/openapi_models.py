@@ -6726,12 +6726,18 @@ class Signal1(BaseModel):
     deterministic: StrictBool | None = None
     confidence: Literal["exact", "estimated"] | None = None
     dependencies: list[str] | None = None
+    scope: Annotated[
+        Literal["symbol", "position", "account", "global"] | None,
+        Field(
+            description="What the value is about: a symbol's market, a position, an account, or the session as a whole (`global`). It is the metric descriptor's `scope`; with `dependencies` it places the metric in one of the rule editors' seven picker categories (E36-D01 R2).\n"
+        ),
+    ] = None
     when_unavailable: str | None = None
     available: StrictBool = True
     unavailable_reason: str | None = None
     missing_dependency: dict[str, Any] | None = None
     recorder_action: dict[str, Any] | None = None
-    __null_refused = field_validator("display_name", "enum_values", "params_schema", "description", "warmup_bars", "deterministic", "confidence", "dependencies", "when_unavailable", "unavailable_reason", "missing_dependency", "recorder_action", mode="before")(_refuse_null)
+    __null_refused = field_validator("display_name", "enum_values", "params_schema", "description", "warmup_bars", "deterministic", "confidence", "dependencies", "scope", "when_unavailable", "unavailable_reason", "missing_dependency", "recorder_action", mode="before")(_refuse_null)
 
 
 class Operator(BaseModel):
@@ -6753,6 +6759,12 @@ class Action1(BaseModel):
     targets: dict[str, str] | None = None
     available: StrictBool = True
     simulate_only: StrictBool = False
+    places_orders: Annotated[
+        StrictBool | None,
+        Field(
+            description='True when the action can open or add to a position. The rule editors key the "places orders" word and the native-stop lines on it. An absent `places_orders` means unknown, and a client treats the action as placing orders.\n'
+        ),
+    ] = None
     restriction: str | None = None
     notes: str | None = None
     loosens_risk: Annotated[
@@ -6761,7 +6773,7 @@ class Action1(BaseModel):
             description="Always false: no rule may loosen a stop, and an action that could is refused for every role (`stop_loosening`, 24-internal-schemas.md section 8.8 rule 5). The field stays until the 24-internal-schemas.md section 19.26 follow-up retires it.\n"
         ),
     ] = False
-    __null_refused = field_validator("display_name", "params_schema", "idempotent", "guarded", "targets", "restriction", "notes", mode="before")(_refuse_null)
+    __null_refused = field_validator("display_name", "params_schema", "idempotent", "guarded", "targets", "places_orders", "restriction", "notes", mode="before")(_refuse_null)
 
 
 class Guard(BaseModel):

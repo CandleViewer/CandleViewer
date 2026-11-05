@@ -25916,6 +25916,14 @@ components:
               deterministic: { type: boolean }
               confidence: { type: string, enum: [exact, estimated] }
               dependencies: { type: array, items: { type: string } }
+              scope:
+                type: string
+                enum: [symbol, position, account, global]
+                description: >
+                  What the value is about: a symbol's market, a position, an account, or the
+                  session as a whole (`global`). It is the metric descriptor's `scope`; with
+                  `dependencies` it places the metric in one of the rule editors' seven picker
+                  categories (E36-D01 R2).
               when_unavailable: { type: string }
               available: { type: boolean, default: true }
               unavailable_reason: { type: string }
@@ -25946,6 +25954,12 @@ components:
               targets: { type: object, additionalProperties: { type: string } }
               available: { type: boolean, default: true }
               simulate_only: { type: boolean, default: false }
+              places_orders:
+                type: boolean
+                description: >
+                  True when the action can open or add to a position. The rule editors key the
+                  "places orders" word and the native-stop lines on it. An absent
+                  `places_orders` means unknown, and a client treats the action as placing orders.
               restriction: { type: string }
               notes: { type: string }
               loosens_risk:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import typing
+from dataclasses import replace
 from pathlib import Path
 
 import jsonschema
@@ -25,7 +26,13 @@ from candleviewer.rules.vocabulary import (
     undescribed_metrics,
 )
 from candleviewer.rules.vocabulary import build as vbuild
-from candleviewer.rules.vocabulary.catalogue import ACTIONS, OPERATORS, RETIRED_ACTIONS, TRIGGERS
+from candleviewer.rules.vocabulary.catalogue import (
+    ACTIONS,
+    OPERATORS,
+    RETIRED_ACTIONS,
+    TRIGGERS,
+    ActionSpec,
+)
 from candleviewer.rules.vocabulary.metrics import kernel_params_schema
 from candleviewer.rules.vocabulary.registry import DuplicateMetricError
 from tests.rules._check_limiter import unthrottled
@@ -119,6 +126,72 @@ def test_actions_declare_permission_simulate_only() -> None:
     assert "simulate" in po["restriction"]
     full = {a["id"]: a for a in _vocab(permissions={"orders:write"})["actions"]}
     assert full["place_order"]["simulate_only"] is False
+
+
+#: The actions that can open or add to a position (`ActionSpec.places_orders`).
+PLACES_ORDERS = {
+    "place_order",
+    "scale_in",
+    "reverse_position",
+    "arm_chase_limit",
+    "start_iceberg_slice",
+    "start_twap",
+}
+
+
+def test_vocabulary_signals_carry_their_descriptor_scope() -> None:
+    """E37-S02 (24 section 19.118): each signal serves its descriptor's `scope`, which the rule
+    editors' picker categories read (E36-D01 R2)."""
+    served = {s["id"]: s["scope"] for s in _vocab()["signals"]}
+    assert served == {d.name: d.scope for d in default_registry()}
+    assert set(served.values()) == {"symbol", "position", "account", "global"}
+
+
+def test_vocabulary_scope_is_read_from_the_descriptor() -> None:
+    """The served `scope` is the descriptor's, its one owner, and no list in `build.py`: three
+    metrics no table knows serve the scope each was registered with."""
+    scopes: dict[str, typing.Literal["account", "global", "position"]] = {
+        "zz_account": "account",
+        "zz_global": "global",
+        "zz_position": "position",
+    }
+    registry = MetricRegistry(
+        MetricDescriptor(name=name, title="Z", unit="count", scope=scope)
+        for name, scope in scopes.items()
+    )
+    served = {s["id"]: s["scope"] for s in build_vocabulary(registry)["signals"]}
+    assert served == scopes
+
+
+def test_vocabulary_actions_carry_places_orders() -> None:
+    """E37-S02 (24 section 19.118): every action serves `places_orders`, true for exactly the six
+    that can open or add to a position, whatever the caller holds."""
+    for perms in ((), {"orders:write"}, {"*"}):
+        acts = _vocab(permissions=perms)["actions"]
+        assert all(isinstance(a["places_orders"], bool) for a in acts), perms
+        assert {a["id"] for a in acts if a["places_orders"]} == PLACES_ORDERS, perms
+
+
+def test_vocabulary_places_orders_is_read_from_the_catalogue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The served flag is the catalogue's `ActionSpec.places_orders`, its one owner, and no list
+    in `build.py`: with every spec flipped, the served flags flip. `PLACES_ORDERS` stays the
+    value pin (above)."""
+    flipped = tuple(replace(a, places_orders=not a.places_orders) for a in ACTIONS)
+    monkeypatch.setattr(vbuild, "ACTIONS", flipped)
+    served = {a["id"]: a["places_orders"] for a in _vocab()["actions"]}
+    assert served == {a.type: a.places_orders for a in flipped}
+    assert {t for t, placing in served.items() if not placing} == PLACES_ORDERS
+
+
+def test_action_spec_states_permissions_and_places_orders() -> None:
+    """A spec that leaves `places_orders` (or `permissions`) out fails to build: the flag has no
+    default, so a new order-placing type is never served as one that places no orders."""
+    with pytest.raises(TypeError, match="places_orders"):
+        ActionSpec("new_type", "New type", {}, ())  # type: ignore[call-arg]  # the omission under test
+    with pytest.raises(TypeError, match="permissions"):
+        ActionSpec("new_type", "New type", {})  # type: ignore[call-arg]  # the omission under test
 
 
 def test_no_action_offers_to_loosen_a_stop() -> None:

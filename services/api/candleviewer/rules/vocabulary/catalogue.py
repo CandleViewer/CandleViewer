@@ -46,8 +46,10 @@ class ActionSpec:
     type: str
     title: str
     params_schema: dict[str, Any]
-    permissions: tuple[str, ...] = ()
-    places_orders: bool = False
+    #: No default: a spec states who may use it and whether it can open or add to a position, so a
+    #: new order-placing type that leaves the flag out fails to build instead of serving `false`.
+    permissions: tuple[str, ...]
+    places_orders: bool
     idempotent: bool = False
     guarded: bool = False
     note: str = ""
