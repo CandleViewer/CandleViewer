@@ -2,7 +2,7 @@
  * E42-S06 (#1084) part 1b: SCR-143 at R-350 inside the admin area (E42-D05 §5; the plan's §3–§5):
  * a region per component and the fixed tiles, the tab order, the reads on mount and Re-read only,
  * a frame that renders its own tile alone (the ticket's integration test), the outage it survives,
- * focus left to the shell on mount, and a `403`. CMP-178 is wrapped to count each tile's renders.
+ * the detail view's focus, and a `403`. CMP-178 is wrapped to count each tile's renders.
  */
 import { createRequire } from "node:module";
 import { createElement, type JSX } from "react";
@@ -86,9 +86,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function open(): ReturnType<typeof render> {
+function open(path = "/admin/health"): ReturnType<typeof render> {
   return render(
-    <MemoryRouter initialEntries={["/admin/health"]}>
+    <MemoryRouter initialEntries={[path]}>
       <InShellProvider>
         <AdminArea routeId="R-350" owner={null} />
       </InShellProvider>
@@ -258,6 +258,61 @@ describe("SCR-143 System health", () => {
     fireEvent.click(retry);
     await waitFor(() => expect(screen.queryByText(/^Health report unavailable/)).toBeNull());
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Re-read" }));
+  });
+
+  it("test_page_the_detail_view_takes_focus_and_gives_it_back_to_its_tile", async () => {
+    open();
+    await settled();
+    fireEvent.click(within(tile("Recorder (recorder)")).getByRole("link"));
+    const back = await screen.findByRole("link", { name: "All components" });
+    expect(document.activeElement).toBe(back);
+    expect(screen.getByRole("heading", { level: 2, name: "Recorder (recorder)" })).toBeTruthy();
+    expect(
+      screen.getByText("error · recorder gap on BTCUSDT · last seen 2026-10-22 14:02 UTC"),
+    ).toBeTruthy();
+    const recorder = screen.getByRole("link", { name: "Open Recorder & storage" });
+    expect(recorder.getAttribute("href")).toBe("/admin/recorder");
+    expect(document.title).toBe("System health - Recorder (recorder) - CandleViewer");
+    fireEvent.click(back);
+    const link = await within(
+      await screen.findByRole("region", { name: "Recorder (recorder)" }),
+    ).findByRole("link");
+    await waitFor(() => expect(document.activeElement).toBe(link));
+  });
+
+  it("test_page_a_detail_view_for_a_name_no_tile_has_says_so_and_never_echoes_it", async () => {
+    open("/admin/health?component=Free%20money%20here");
+    await settled();
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("No such component.");
+    expect(screen.queryByText(/Free money/)).toBeNull();
+  });
+
+  it("test_page_an_anchor_shaped_name_the_answered_report_lacks_is_never_echoed", async () => {
+    open("/admin/health?component=send_funds_now");
+    await settled();
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("No such component.");
+    expect(document.body.textContent).not.toMatch(/send_funds_now/);
+    expect(document.title).toBe("System health - No such component - CandleViewer");
+    // No tile has it: closing hands focus to Re-read, never to <body>.
+    fireEvent.click(screen.getByRole("link", { name: "All components" }));
+    const reread = await screen.findByRole("button", { name: "Re-read" });
+    await waitFor(() => expect(document.activeElement).toBe(reread));
+  });
+
+  it("test_page_the_detail_view_keeps_the_pages_state_lines_and_a_failed_first_read", async () => {
+    replies.set(HEALTH, { status: 503, body: { code: "store_unavailable" } });
+    open("/admin/health?component=recorder");
+    const line = await screen.findByText(/^Health report unavailable — the server is busy/);
+    expect(
+      within(line.closest("p") as HTMLElement).getByRole("button", { name: "Retry" }),
+    ).toBeTruthy();
+    // The report failed before any body: a component-shaped name still heads its view.
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("Recorder (recorder)");
+    const down = { ...(BODIES[HEALTH] as object), components: [{ name: "oms", state: "down" }] };
+    replies.set(HEALTH, { status: 200, body: down });
+    fireEvent.click(screen.getByRole("button", { name: "Re-read" }));
+    expect(await screen.findByText(/^Down: Order manager\./)).toBeTruthy();
+    expect(screen.getByText(/^Overall: /)).toBeTruthy();
   });
 
   it("test_page_a_403_on_an_ops_read_withdraws_the_page_and_asks_nothing_more", async () => {
