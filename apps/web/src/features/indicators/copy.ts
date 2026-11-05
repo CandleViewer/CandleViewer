@@ -30,6 +30,42 @@ export const DECK = {
   "d02.12.r21": {
     strings: ["Unsupported parameter type — this parameter can't be edited here."],
   },
+  // S4 (SCR-035, the settings dialog).
+  "d02.12.r10": {
+    strings: [
+      "You have the maximum of 8 server-computed indicators. Remove one to add another.",
+      "Server-computed indicators are at capacity for this symbol.",
+      "Server-computed indicators are at capacity. Try again later.",
+      "Retry",
+    ],
+  },
+  "d02.12.r15": { strings: ["EMA 21 · price pane · 5m", "edited", "Used by 2 armed rules"] },
+  "d02.12.r16": { strings: ["Inputs", "Style", "Visibility", "Scale", "Alerts"] },
+  "d02.12.r18": {
+    strings: ["1–5000 bars", "0.1–10, step 0.1", "Source: series available on this chart"],
+  },
+  /** [0] is form validity (E09-D09 §9.1, no key); [1] is the Style tab's one note (C-b). */
+  "indicator.style_pending": {
+    strings: ["Fix the highlighted field first.", "Style tokens arrive with E13-D04"],
+  },
+  "d02.12.r22": { strings: ["This indicator has no parameters."] },
+  "d02.12.r23": {
+    strings: [
+      "Preview: last 200 bars, display-only",
+      "Updating…",
+      "Preview on Apply — this indicator is computed on the server.",
+    ],
+  },
+  "d02.12.r24": {
+    strings: [
+      "Reset to catalogue defaults",
+      "Reset to my default",
+      "Save as default for this indicator",
+      "Cancel",
+      "Apply",
+      "Applying…",
+    ],
+  },
 } as const;
 
 /**
@@ -53,6 +89,10 @@ export const PROPOSED = {
   "indicator.param_whole": "{title} must be a whole number.",
   /** D11's select sentence is the source field's; a generic enum has none. */
   "indicator.param_choice": "Choose one of the listed options.",
+  /** S4: the one safe error for a schema outside the closed subset (BQ-11 rider, Q-12). */
+  "indicator.schema_refused": "This indicator's settings can't be shown.",
+  /** S4: a re-tune the engine or the server refused, other than at capacity (no deck row). */
+  "indicator.apply_refused": "These settings weren't applied.",
 } as const;
 
 const RANGE = "{title} must be between {min} and {max}.";
@@ -93,3 +133,46 @@ export function validationText(spec: EditableField, rule: ValueRule): string {
 }
 
 export const UNSUPPORTED_PARAM = DECK["d02.12.r21"].strings[0];
+
+const r23 = DECK["d02.12.r23"].strings;
+const r24 = DECK["d02.12.r24"].strings;
+
+/** SCR-035's words (D02 §12 :467–:476 through the deck; S4). */
+export const SETTINGS = {
+  edited: DECK["d02.12.r15"].strings[1],
+  tabs: { inputs: DECK["d02.12.r16"].strings[0], style: DECK["d02.12.r16"].strings[1] },
+  fixFirst: DECK["indicator.style_pending"].strings[0],
+  stylePending: DECK["indicator.style_pending"].strings[1],
+  noParams: DECK["d02.12.r22"].strings[0],
+  previewWindow: r23[0],
+  updating: r23[1],
+  previewServer: r23[2],
+  reset: r24[0],
+  cancel: r24[3],
+  apply: r24[4],
+  atCapacity: DECK["d02.12.r10"].strings[2],
+  schemaRefused: PROPOSED["indicator.schema_refused"],
+  applyRefused: PROPOSED["indicator.apply_refused"],
+} as const;
+
+/**
+ * The header "EMA 21 · price pane · 5m" (d02.12.r15) from its parts. "price pane" is the deck's;
+ * the sub-pane word is r02's tab word in lower case (a G-row on #423: the deck draws no sub-pane
+ * header).
+ */
+export function settingsTitle(label: string, pane: "price" | "sub", timeframe: string): string {
+  return `${label} · ${pane === "price" ? "price pane" : "sub-pane"} · ${timeframe}`;
+}
+
+/** The help line under a number field: d02.12.r18's two forms, bound from the schema (D02 D10). */
+export function rangeHelp(spec: {
+  readonly kind: "integer" | "number";
+  readonly minimum: number;
+  readonly maximum: number;
+  readonly step: number;
+}): string {
+  const span = `${spec.minimum}–${spec.maximum}`;
+  // Every integer parameter of the v1 catalogue counts bars (period, depth, offset): a G-row if one
+  // ever does not, since the descriptor carries no unit per parameter.
+  return spec.kind === "integer" && spec.step === 1 ? `${span} bars` : `${span}, step ${spec.step}`;
+}
