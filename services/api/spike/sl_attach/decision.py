@@ -2,8 +2,10 @@
 decision"): arm (b)'s p99 `exposure_ms` above 1.5 s means the OMS defaults to attach-only;
 otherwise the `trading-stop` window is accepted at the measured p99.
 
-A run below the ticket's floors (200 kept samples per arm, three symbols) answers
-`insufficient`, never a verdict. An offline run's answer carries `evidence: false`: the corpus is
+A run below the ticket's floors answers `insufficient`, never a verdict. The floors count the
+samples each arm's percentile is read from (`measured`: the `ok` ones, 200 per arm, spanning
+three symbols), never the kept total: a run of 190 refused stop writes and 10 successes has no
+p99 worth a verdict. An offline run's answer carries `evidence: false`: the corpus is
 docs-transcribed, so it proves the wiring, never the venue. Arm (b) is measured as a
 backstop-then-tighten modify (Q5), which the answer says.
 """
@@ -32,20 +34,20 @@ def _p99(table: Mapping[str, object]) -> float | None:
     return latency.get("p99") if isinstance(latency, Mapping) else None
 
 
-def _kept(table: Mapping[str, object]) -> int:
-    kept = table["kept"]
-    return kept if isinstance(kept, int) else 0
+def _measured(table: Mapping[str, object]) -> int:
+    measured = table["measured"]
+    return measured if isinstance(measured, int) else 0
 
 
 def _symbols(table: Mapping[str, object]) -> int:
-    symbols = table["symbols"]
+    symbols = table["measured_symbols"]
     return len(symbols) if isinstance(symbols, list) else 0
 
 
 def decide(summary: Mapping[str, object], *, offline: bool) -> dict[str, object]:
     a, b = _arm(summary, "a"), _arm(summary, "b")
     p99 = _p99(b)
-    floors = all(_kept(t) >= MIN_SAMPLES_PER_ARM and _symbols(t) >= MIN_SYMBOLS for t in (a, b))
+    floors = all(_measured(t) >= MIN_SAMPLES_PER_ARM and _symbols(t) >= MIN_SYMBOLS for t in (a, b))
     verdict: Verdict
     if not floors or p99 is None:
         verdict = "insufficient"
@@ -56,6 +58,8 @@ def decide(summary: Mapping[str, object], *, offline: bool) -> dict[str, object]
     return {
         "verdict": verdict,
         "arm_b_p99_ms": p99,
+        "arm_b_measured": _measured(b),
+        "arm_b_success_rate": b.get("success_rate"),
         "threshold_ms": DECISION_P99_MS,
         "deadline_ms": DEADLINE_MS,
         "deadline_met": None if p99 is None else p99 <= DEADLINE_MS,

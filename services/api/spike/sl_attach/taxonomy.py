@@ -60,9 +60,12 @@ S86: Final[dict[int, str]] = {
     110089: _RISK,
     3400139: _RISK,
 }
-#: §8.6's "Retryable: yes" rows; an order create that has left is never resent (its row's
-#: "order creates" rule), so for a create they are not.
+#: §8.6's "Retryable: yes" rows. Its "Order creates" rule takes `retryable` away from a create
+#: only for the open outcomes (10016, 10019), 110079 and an unmapped code (already outside the
+#: set): a create's rate limit (10006, 10018, 10403, 10429) stays retryable, as the adapter
+#: retries it (`rest.py`'s `RateLimitError` branch).
 S86_RETRYABLE: Final = frozenset({10006, 10016, 10018, 10019, 10403, 10429, 110079})
+_NOT_RESENT: Final = OPEN_CREATE_CODES | {110079}
 _DUPLICATES: Final = frozenset({20006, 110072})
 UNKNOWN: Final = "EXCHANGE_UNKNOWN"
 
@@ -78,25 +81,28 @@ def s86_code(ret_code: int, ret_msg: str, *, create: bool) -> str:
     return S86.get(ret_code, UNKNOWN)
 
 
-def s86_transport(status: int | None) -> str:
+def s86_transport(status: int | None, *, create: bool) -> str:
     """§8.6's transport-level line: HTTP 403, 429, 5xx; anything else (a timeout, a reset, an
-    unreadable answer) is a transport error."""
+    unreadable answer) is a transport error. A create's 5xx is an open outcome ("Order
+    creates"): `TRANSPORT_ERROR`, as the adapter's `AmbiguousResultError` reports it."""
     if status == 403:
         return "IP_NOT_ALLOWED"
     if status == 429:
         return _RATE
-    if status is not None and 500 <= status <= 599:
+    if status is not None and 500 <= status <= 599 and not create:
         return _UNAVAILABLE
     return _TRANSPORT
 
 
 def adapter_code(ret_code: int, ret_msg: str, *, create: bool) -> tuple[str, bool]:
     """The code and `retryable` the adapter reports as built: `map_ret_code`, and for a create
-    the port's open outcome (10016, 10019: an ambiguous result, never resent)."""
+    the port's open outcome (10016, 10019: an ambiguous result, never resent). A create's
+    `UNKNOWN_STATE` (110079, unmapped) is never resent; its rate limit is retried."""
     if create and ret_code in OPEN_CREATE_CODES:
         return _TRANSPORT, False
     error = map_ret_code(ret_code, ret_msg, create=create)
-    return error.code.value, error.retryable and not create
+    unknown = error.code.value == "UNKNOWN_STATE"
+    return error.code.value, error.retryable and not (create and unknown)
 
 
 def msg_class(ret_code: int, ret_msg: str) -> str:
@@ -127,14 +133,15 @@ def read_answer(ret_code: int, ret_msg: str, adapter: str | None, *, create: boo
     """A venue answer with a code: `adapter` is the code the port reported (an ack's
     `error_code`, or a raised error's), `None` when it reported none."""
     internal = s86_code(ret_code, ret_msg, create=create)
-    retryable = ret_code in S86_RETRYABLE and not create
+    retryable = ret_code in S86_RETRYABLE and not (create and ret_code in _NOT_RESENT)
     seen = adapter if adapter is not None else adapter_code(ret_code, ret_msg, create=create)[0]
     return Reading(
         ret_code, msg_class(ret_code, ret_msg), seen, internal, retryable, seen != internal
     )
 
 
-def read_transport(adapter: str, status: int | None) -> Reading:
+def read_transport(adapter: str, status: int | None, *, create: bool) -> Reading:
     """A failure with no venue code: a transport fault, or a local refusal (never sent)."""
-    internal = adapter if adapter == "RATE_BUDGET_EXCEEDED" else s86_transport(status)
+    local = adapter == "RATE_BUDGET_EXCEEDED"
+    internal = adapter if local else s86_transport(status, create=create)
     return Reading(None, None, adapter, internal, None, adapter != internal)

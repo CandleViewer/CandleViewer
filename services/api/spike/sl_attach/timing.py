@@ -45,10 +45,11 @@ class Exchanged:
 
 
 def skew_ms(exchange: Exchanged, offset_ms: float) -> float | None:
-    """`|venue - (mid + offset)|`, or `None` when the reply carried no envelope `time`."""
+    """`|venue - (mid + offset)|`, unrounded (the 500 ms rule compares the raw value; the
+    record rounds it), or `None` when the reply carried no envelope `time`."""
     if exchange.venue_ms is None:
         return None
-    return _r(abs(exchange.venue_ms - (exchange.mid_wall_ms + offset_ms)))
+    return abs(exchange.venue_ms - (exchange.mid_wall_ms + offset_ms))
 
 
 def skew_discard(skew: float | None, uncertainty_ms: float | None) -> bool:

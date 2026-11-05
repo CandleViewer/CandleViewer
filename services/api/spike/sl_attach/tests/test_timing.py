@@ -61,6 +61,13 @@ def test_the_500_ms_edge(skew: int, discarded: bool) -> None:
     assert skew_discard(measured, 10.0) is discarded
 
 
+def test_the_rule_reads_the_raw_skew_not_the_rounded_one() -> None:
+    """N1: 500.0004 ms rounds to 500.0 at 3 dp, but it is past the limit."""
+    measured = skew_ms(_exchange(1640), 99.9996)
+    assert measured is not None and measured > 500.0
+    assert skew_discard(measured, 10.0) is True
+
+
 def test_a_late_venue_clock_is_skew_too() -> None:
     assert skew_ms(_exchange(1140 - 501), 100.0) == pytest.approx(501.0)
 

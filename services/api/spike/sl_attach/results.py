@@ -5,13 +5,14 @@ The row is a pydantic model that refuses an unknown field. It names the order on
 token (`order_ref`), never an id, and holds `retMsg` only as a short class. Before anything is
 written every row passes #843's scrubber check (`Scrubber.check`): a row that still carries a
 registered value (a key id, a UID, an order or link id) is refused whole (`LeakDetected`), so
-the files hold scrubbed rows or none. Both files are created 0600.
+the files hold scrubbed rows or none. Both files go through #843's `outputs.write_file`
+(created 0600, `O_NOFOLLOW`: a symlink planted at either name is refused, never followed).
 """
 
 from __future__ import annotations
 
+import io
 import json
-import os
 import types
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -21,6 +22,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from pydantic import BaseModel, ConfigDict
 
+from spike.oms_demo_path.outputs import write_file
 from spike.oms_demo_path.scrub import Scrubber
 from spike.sl_attach.config import Arm
 
@@ -107,21 +109,17 @@ SCHEMA: Final = pa.schema(
 )
 
 
-def _private(path: Path) -> int:
-    return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-
-
 def write_samples(directory: Path, samples: Sequence[Sample], scrubber: Scrubber) -> None:
     """Both files, every row checked first; nothing is written if any row is refused."""
     rows = [s.model_dump(mode="json") for s in samples]
     lines = [json.dumps(row, separators=(",", ":"), sort_keys=True) for row in rows]
     for line in lines:
         scrubber.check(line)
+    parquet = io.BytesIO()
+    pq.write_table(pa.Table.from_pylist(rows, schema=SCHEMA), parquet)
     directory.mkdir(parents=True, exist_ok=True)
-    with os.fdopen(_private(directory / JSONL), "w", encoding="utf-8") as handle:
-        handle.writelines(f"{line}\n" for line in lines)
-    with os.fdopen(_private(directory / PARQUET), "wb") as sink:
-        pq.write_table(pa.Table.from_pylist(rows, schema=SCHEMA), sink)
+    write_file(directory / JSONL, "".join(f"{line}\n" for line in lines).encode(), append=False)
+    write_file(directory / PARQUET, parquet.getvalue(), append=False)
 
 
 def _validated(rows: Iterable[dict[str, object]]) -> list[Sample]:

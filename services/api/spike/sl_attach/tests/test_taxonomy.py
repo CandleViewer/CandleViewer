@@ -5,6 +5,9 @@ transport line."""
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from candleviewer.exchange.bybit import mapping
@@ -39,8 +42,32 @@ def test_every_mapped_row_against_s86(code: int) -> None:
         assert adapter == reading.s86_code and not reading.divergent
 
 
-def test_every_s86_row_is_a_mapped_code() -> None:
-    assert set(taxonomy.S86) == set(mapping._RET_CODE_MAP) | {10001}
+_DOC = Path(__file__).resolve().parents[5] / "docs" / "plan" / "24-internal-schemas.md"
+#: Rows §8.6 keeps out of the general table: `0` (success) and the create-only duplicates,
+#: unmapped on any other call.
+_NOT_GENERAL = {0, 20006, 110072}
+
+
+def _s86_rows() -> dict[int, tuple[str, bool]]:
+    """`24` §8.6's table as written: retCode -> (its internal code, "Retryable: yes")."""
+    text = _DOC.read_text(encoding="utf-8").split("### 8.6 ", 1)[1].split("\n### ", 1)[0]
+    rows: dict[int, tuple[str, bool]] = {}
+    for line in text.splitlines():
+        cells = [c.strip() for c in line.split("|")]
+        if len(cells) < 6 or not cells[1].startswith("`"):
+            continue
+        internal = re.findall(r"`([A-Z_]+)`", cells[3])
+        for code in map(int, re.findall(r"`(\d+)`", cells[1])):
+            if code not in _NOT_GENERAL and internal:
+                rows[code] = (internal[0], cells[4].startswith("yes"))
+    return rows
+
+
+def test_the_table_is_s86_as_written() -> None:
+    rows = _s86_rows()
+    assert len(rows) == 41
+    assert taxonomy.S86 == {code: internal for code, (internal, _) in rows.items()}
+    assert {code for code, (_, yes) in rows.items() if yes} == taxonomy.S86_RETRYABLE
 
 
 def test_the_corpus_error_fixtures() -> None:
@@ -88,6 +115,14 @@ def test_10016_is_open_on_a_create_and_retryable_on_a_stop_write() -> None:
         True,
     )
     assert taxonomy.adapter_code(110079, "x", create=True) == ("UNKNOWN_STATE", False)
+    assert taxonomy.read_answer(110079, "x", None, create=True).retryable is False
+
+
+@pytest.mark.parametrize("code", [10006, 10018, 10403, 10429])
+def test_a_create_rate_limit_stays_retryable(code: int) -> None:
+    reading = taxonomy.read_answer(code, "Too many visits!", None, create=True)
+    assert (reading.s86_code, reading.retryable, reading.divergent) == ("RATE_LIMITED", True, False)
+    assert taxonomy.adapter_code(code, "Too many visits!", create=True) == ("RATE_LIMITED", True)
 
 
 def test_the_observed_adapter_code_wins_over_the_table() -> None:
@@ -106,8 +141,14 @@ def test_the_observed_adapter_code_wins_over_the_table() -> None:
     ],
 )
 def test_the_transport_line(status: int | None, internal: str) -> None:
-    reading = taxonomy.read_transport("TRANSPORT_ERROR", status)
+    reading = taxonomy.read_transport("TRANSPORT_ERROR", status, create=False)
     assert reading.ret_code is None and reading.s86_code == internal
     assert reading.divergent is (internal != "TRANSPORT_ERROR")
-    budget = taxonomy.read_transport("RATE_BUDGET_EXCEEDED", None)
+    budget = taxonomy.read_transport("RATE_BUDGET_EXCEEDED", None, create=False)
     assert budget.s86_code == "RATE_BUDGET_EXCEEDED" and not budget.divergent
+
+
+@pytest.mark.parametrize("status", [500, 503, 599])
+def test_a_create_5xx_is_an_open_outcome_as_the_adapter_reports(status: int) -> None:
+    reading = taxonomy.read_transport("TRANSPORT_ERROR", status, create=True)
+    assert reading.s86_code == "TRANSPORT_ERROR" and not reading.divergent

@@ -12,7 +12,8 @@ from spike.oms_demo_path.safety import Refused
 #: The ticket's symbols. The low-liquidity third is not named yet (BQ-4): S1 trades BTCUSDT
 #: only, since the reused `GuardedPort` admits no other symbol; S3 widens the allow-list.
 SYMBOLS: Final = (BTCUSDT, "ETHUSDT")
-#: The ticket's floors for a decision-grade run: >=200 kept samples per arm, three symbols.
+#: The ticket's floors for a decision-grade run: >=200 measured (`ok`) samples per arm, three
+#: symbols among them.
 MIN_SAMPLES_PER_ARM: Final = 200
 MIN_SYMBOLS: Final = 3
 #: A sample whose host-versus-exchange skew passes this is discarded (#856 Technical notes).

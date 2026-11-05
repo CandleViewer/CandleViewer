@@ -5,7 +5,9 @@ requests per protected position (reads apart: they feed 24 §8.7's `reserved_for
 and the headroom of arm (b)'s p99 under §8.8 rule 2's 2 s. Each arm is also split by symbol.
 
 A discarded sample is outside every statistic but its count; the success rate is `ok` over the
-kept samples; the cost counts only samples that protected a position (`ok`).
+kept samples; the cost counts only samples that protected a position (`ok`). The percentiles
+read the `ok` samples only, so `measured` (their count) and `measured_symbols` are what the
+decision's floors read: a rejected or ambiguous sample never counts towards a percentile's `n`.
 """
 
 from __future__ import annotations
@@ -44,7 +46,8 @@ def arm_table(samples: Sequence[Sample], arm: Arm) -> dict[str, object]:
     kept = [s for s in mine if s.outcome != "discarded"]
     dropped = [s for s in mine if s.outcome == "discarded"]
     ok = [s for s in kept if s.outcome == "ok"]
-    values = [v for s in ok if (v := getattr(s, METRIC[arm])) is not None]
+    measured = [s for s in ok if getattr(s, METRIC[arm]) is not None]
+    values: list[float] = [getattr(s, METRIC[arm]) for s in measured]
     latency = stats(values, digits=3)
     table: dict[str, object] = {
         "metric": METRIC[arm],
@@ -53,6 +56,8 @@ def arm_table(samples: Sequence[Sample], arm: Arm) -> dict[str, object]:
         "discarded": dict(sorted(Counter(str(s.discard_reason) for s in dropped).items())),
         "outcomes": dict(sorted(Counter(s.outcome for s in kept).items())),
         "success_rate": None if not kept else round(len(ok) / len(kept), 4),
+        "measured": len(values),
+        "measured_symbols": sorted({s.symbol for s in measured}),
         "latency_ms": latency,
         "ret_codes": _histogram(kept),
         "requests_per_protected_position": {

@@ -66,6 +66,18 @@ def test_parquet_and_its_twin_round_trip(tmp_path: Path) -> None:
         assert stat.S_IMODE((tmp_path / name).stat().st_mode) == 0o600
 
 
+@pytest.mark.parametrize("name", [PARQUET, JSONL])
+def test_a_symlink_at_either_name_is_refused_never_followed(tmp_path: Path, name: str) -> None:
+    """m3: the writer is #843's `write_file` (`O_NOFOLLOW`)."""
+    target = tmp_path / "elsewhere"
+    target.write_text("untouched", encoding="utf-8")
+    (tmp_path / "run").mkdir()
+    (tmp_path / "run" / name).symlink_to(target)
+    with pytest.raises(OSError):
+        write_samples(tmp_path / "run", [sample()], Scrubber())
+    assert target.read_text(encoding="utf-8") == "untouched"
+
+
 def test_a_row_carrying_a_registered_value_is_refused_and_nothing_written(tmp_path: Path) -> None:
     scrubber = Scrubber()
     scrubber.secret("a1b2c3d4e5f6-key-id")
