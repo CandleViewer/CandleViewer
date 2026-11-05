@@ -9,10 +9,13 @@ routes its orders to (`TradingRouter.port_for`), for the `AccountRef` the size s
 the lane the adapter assigns (poll), never the stop and cancel reserve:
 
 - equity and the available margin: the venue's wallet; a negative equity is None;
-- `realised_loss_today`: the venue's closed P&L since 00:00 UTC on the injected wall clock, a loss
-  as a positive figure, a net gain as 0. The adapter pages through the day inside one read, so a
-  day with more records than fit in `FIGURES_READ_TIMEOUT_S` fails closed (None); reading only
-  the records since the last read is E39-T01's;
+- `realised_loss_today` (24 Sec.8.13 "`DayRiskFigures` stays demo and testnet only"): the venue's
+  records whose own `updatedTime` (`closed_at`) falls in the resolver's `[day_start, next_start)`
+  for the injected wall clock, each counted on its own, never merged by order, from one read that
+  starts `CLOSED_PNL_LOOKBACK` before `day_start`, the sync's reach; a loss as a positive figure, a
+  net gain as 0. It is None when the resolver fails (`DayBoundaryUnavailable`, never UTC
+  midnight), a record names another account (C-2.11), or the adapter's pages do not cover the span
+  within `FIGURES_READ_TIMEOUT_S`; reading only the records since the last read is E39-T01's;
 - `committed_risk`: the sum of `|entry - stop| x qty` over the venue's positions and its open
   entry orders (reduce-only orders and the venue's position stops and take-profits add no risk).
   The stop distance is the stop the venue records on the item (a position's trailing distance
@@ -32,16 +35,19 @@ The reads run concurrently, each within `FIGURES_READ_TIMEOUT_S` and all within
 nothing, and is logged by its figure and error type alone (balances are Confidential, C-12.6).
 Figures the `AccountFigures` model refuses make every account figure None, logged as
 `figures` with the error type alone.
-Each answer is kept `FIGURES_TTL_S` on the injected monotonic clock. `invalidate` drops the
-account's wallet, day's loss and book and bumps their generation, so a read in flight across it
-answers its value but keeps none of it: the next read is the venue's. Overlapping reads on one
-account are not serialised here; 24 Sec.9.3.6's overlap rule is the size step's (S4-S-b2).
+Each answer is kept `FIGURES_TTL_S` on the injected monotonic clock, and the day's loss only
+while the wall clock is inside the day it was summed for: a kept loss is stale, and never served,
+from that day's `next_start` (or before its `day_start`), and a read that fails never falls back
+to one, so an unknown or stale figure fails the entry closed (`figure_unknown`). `invalidate`
+drops the account's wallet, day's loss and book and bumps their generation, so a read in flight
+across it answers its value but keeps none of it: the next read is the venue's. Overlapping reads
+on one account are not serialised here; 24 Sec.9.3.6's overlap rule is the size step's (S4-S-b2).
 
 `peek` (E28-T05 #909, the trade-group preview's) answers what `read` would from what is kept: the
-wallet, the day's loss, the book and each symbol's fee, every one younger than `FIGURES_TTL_S`,
-with the tiers read in place. Anything else, another environment's account included, is None, so
-the preview's leg is `figure_unknown`. It is synchronous, asks for no port and starts nothing: it
-never reads the venue (SR-E28-22, F-09), and it keeps and drops nothing.
+wallet, the day's loss (inside its day), the book and each symbol's fee, every one younger than
+`FIGURES_TTL_S`, with the tiers read in place. Anything else, another environment's account
+included, is None, so the preview's leg is `figure_unknown`. It is synchronous, asks for no port
+and starts nothing: it never reads the venue (SR-E28-22, F-09), and it keeps and drops nothing.
 """
 
 from __future__ import annotations
@@ -69,7 +75,9 @@ from candleviewer.exchange.base.models import (
 )
 from candleviewer.exchange.base.ports import TradingPort
 from candleviewer.observability import spawn_child
+from candleviewer.risk.day_boundary import TradingDay, TradingDays
 
+from .closed_pnl_sync import CLOSED_PNL_LOOKBACK
 from .ports import UNKNOWN_FIGURES, FiguresReading, Interim, RuntimePortName, SymbolRates
 
 #: How long a figure read from the venue is kept, on the monotonic clock.
@@ -155,10 +163,26 @@ class _Book:
     orders: Sequence[Order]
 
 
-def _fresh[K, T](kept: dict[K, _Kept[T]], key: K, now: float) -> T | None:
-    """The value kept under `key` while younger than `FIGURES_TTL_S`, else None."""
+@dataclass(frozen=True, slots=True)
+class _DayLoss:
+    """The day's loss and the day it was summed for, so it is never served past that day."""
+
+    loss: Decimal
+    day: TradingDay
+
+
+class _OtherAccount(Exception):
+    """A record of the closed-PnL read names another account (C-2.11)."""
+
+
+def _fresh[K, T](
+    kept: dict[K, _Kept[T]], key: K, now: float, valid: Callable[[T], bool] | None = None
+) -> T | None:
+    """The value kept under `key` while younger than `FIGURES_TTL_S` and `valid`, else None."""
     held = kept.get(key)
-    return held.value if held is not None and now - held.at < FIGURES_TTL_S else None
+    if held is None or now - held.at >= FIGURES_TTL_S:
+        return None
+    return held.value if valid is None or valid(held.value) else None
 
 
 class DayRiskFigures(Interim):
@@ -176,16 +200,17 @@ class DayRiskFigures(Interim):
         *,
         port_for: Callable[[Environment], TradingPort],
         tiers: Tiers,
+        days: TradingDays,
         now: Callable[[], datetime],
         monotonic: Callable[[], float],
     ) -> None:
         if environment not in _SERVED:
             raise ValueError(f"DayRiskFigures serves demo and testnet only, not {environment!r}")
         self._environment = environment
-        self._port_for, self._tiers = port_for, tiers
+        self._port_for, self._tiers, self._days = port_for, tiers, days
         self._now, self._monotonic = now, monotonic
         self._wallets: dict[AccountId, _Kept[Wallet]] = {}
-        self._losses: dict[AccountId, _Kept[Decimal]] = {}
+        self._losses: dict[AccountId, _Kept[_DayLoss]] = {}
         self._books: dict[AccountId, _Kept[_Book]] = {}
         self._fees: dict[tuple[AccountId, Symbol], _Kept[FeeRate]] = {}
         self._generations: dict[tuple[str, object], int] = {}
@@ -214,8 +239,9 @@ class DayRiskFigures(Interim):
             )
             wallet = spawn_child(group, read_wallet, name="oms-figures-wallet")
             read_loss = self._kept(
-                self._losses, key, "day_loss", deadline, lambda: self._loss(port, account)
-            )
+                self._losses, key, "day_loss", deadline, lambda: self._loss(port, account),
+                valid=self._today,
+            )  # fmt: skip
             lost = spawn_child(group, read_loss, name="oms-figures-day-loss")
             read_book = self._kept(self._books, key, "book", deadline, lambda: _book(port, account))
             book = spawn_child(group, read_book, name="oms-figures-book")
@@ -223,9 +249,10 @@ class DayRiskFigures(Interim):
                 spawn_child(group, self._rates(port, account, s, deadline), name="oms-figures-fee")
                 for s in unique
             ]
+        day_loss = lost.result()
         return self._reading(
-            wallet.result(), lost.result(), book.result(), fallback_sl_offset_pct,
-            dict(zip(unique, (fee.result() for fee in fees), strict=True)),
+            wallet.result(), None if day_loss is None else day_loss.loss, book.result(),
+            fallback_sl_offset_pct, dict(zip(unique, (fee.result() for fee in fees), strict=True)),
         )  # fmt: skip
 
     def peek(
@@ -238,7 +265,7 @@ class DayRiskFigures(Interim):
         if account.environment != self._environment:  # nothing of another venue's is kept
             return None
         key, now = account.account_id, self._monotonic()
-        wallet, lost = _fresh(self._wallets, key, now), _fresh(self._losses, key, now)
+        wallet, lost = _fresh(self._wallets, key, now), _fresh(self._losses, key, now, self._today)
         book = _fresh(self._books, key, now)
         fees = {symbol: _fresh(self._fees, (key, symbol), now) for symbol in dict.fromkeys(symbols)}
         if wallet is None or lost is None or book is None or None in fees.values():
@@ -246,7 +273,7 @@ class DayRiskFigures(Interim):
         rates = {
             symbol: SymbolRates(self._margin(symbol), _taker(fee)) for symbol, fee in fees.items()
         }
-        return self._reading(wallet, lost, book, fallback_sl_offset_pct, rates)
+        return self._reading(wallet, lost.loss, book, fallback_sl_offset_pct, rates)
 
     def invalidate(self, account_id: AccountId) -> None:
         stores: dict[str, dict[AccountId, Any]] = {
@@ -306,14 +333,17 @@ class DayRiskFigures(Interim):
         figure: str,
         deadline: float,
         read: Callable[[], Awaitable[T]],
+        *,
+        valid: Callable[[T], bool] | None = None,
     ) -> T | None:
-        """The figure kept under `key` while younger than `FIGURES_TTL_S`, else read again within
-        `FIGURES_READ_TIMEOUT_S` and the read's `deadline`. A read that fails is None and keeps
-        nothing; one that `invalidate` crossed answers its value and keeps nothing either."""
+        """The figure kept under `key` while younger than `FIGURES_TTL_S` and `valid`, else read
+        again within `FIGURES_READ_TIMEOUT_S` and the read's `deadline`. A read that fails is None
+        and keeps nothing; one that `invalidate` crossed answers its value and keeps nothing
+        either."""
         now = self._monotonic()  # the stamp is the read's START: slow re-reads sooner
-        if (held := _fresh(kept, key, now)) is not None:
+        if (held := _fresh(kept, key, now, valid)) is not None:
             return held
-        kept.pop(key, None)
+        kept.pop(key, None)  # never served again: a failed read below answers None, not this
         generation = self._generations.get((figure, key), 0)
         loop = asyncio.get_running_loop()
         try:
@@ -326,11 +356,22 @@ class DayRiskFigures(Interim):
             kept[key] = _Kept(value, now)
         return value
 
-    async def _loss(self, port: TradingPort, account: AccountRef) -> Decimal:
-        now = self._now().astimezone(UTC)
-        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        records = await port.closed_pnl(account, _us(midnight), _us(now))
-        return max(Decimal(0), -sum((r.closed_pnl for r in records), Decimal(0)))
+    async def _loss(self, port: TradingPort, account: AccountRef) -> _DayLoss:
+        """The day's loss (module docstring): a resolver or a read that fails raises, and
+        `_kept` answers None for it."""
+        now = self._now()
+        day = await self._days.resolve(now)
+        reach = day.day_start - CLOSED_PNL_LOOKBACK  # the sync's reach: one lookback for both
+        records = await port.closed_pnl(account, _us(reach), _us(now))
+        if any(r.account_id != account.account_id for r in records):
+            raise _OtherAccount
+        start, end = _us(day.day_start), _us(day.next_start)  # `next_start` as served
+        net = sum((r.closed_pnl for r in records if start <= r.closed_at < end), Decimal(0))
+        return _DayLoss(max(Decimal(0), -net), day)
+
+    def _today(self, kept: _DayLoss) -> bool:
+        """A kept loss is served only inside the day it was summed for."""
+        return kept.day.holds(self._now())
 
 
 async def _book(port: TradingPort, account: AccountRef) -> _Book:
