@@ -64,6 +64,8 @@ KEYED = {
     "R32": L.DocRef(".claude/rules/32-design-specs.md", BASE),
     "README": L.DocRef("docs/design/README.md", BASE),
 }
+_NEW = ("D02E30", "D05E15", "D02E40", "D01E17")  # the design read's owners; each id names its path
+KEYED |= {k: L.DocRef(f"docs/design/{k[3:]}/{k[3:]}-{k[:3]}.md", BASE) for k in _NEW}
 CITE_RE = L.cite_regex(KEYED, ranges=True, spaced=True)
 MIN_CITES = 150  # a broken grammar parses far fewer
 
@@ -78,7 +80,7 @@ SCR_LINES = {
 # fmt: on
 GATED = frozenset({151, 152, 153, 157, 158, 159})  # BQ-0: the recipes that show a T2 control
 EMPTY_ENUM_LINES = (333, 336)  # D10E08: the closed `reason` enumeration
-TREATMENTS = ("T-1", "T-2", "T-3", "T-4")
+TREATMENTS = ("LT-1", "LT-2", "LT-3", "LT-4")
 NOTHING_YET = ("chart pane", "panel, row, card or table")  # rows with no content shown yet
 ANTI = (
     "a bare spinner with no staged description",
@@ -97,7 +99,8 @@ DISCLOSE = (
     "the pathname only, never the query or the hash",
     "the matched route pattern",
 )
-REPLAY = ("original intent id / `Idempotency-Key`", "a new id only after Discard")  # R158-5, C-2.10
+_KEEP = "original `Idempotency-Key` if the body is unchanged"  # R158-5, C-2.10: re-preview first
+REPLAY = ("re-runs the preview", _KEEP, "a new key if it changed")  # a changed body: a new key
 ACCESS_OK = ("withdrew", "| A-1 ", "no endpoint")  # a line naming "Request access" says why not
 CMP_RE = re.compile(r"CMP-\d{3}")
 FRAME_RE = re.compile(r"`(SCR-15\d/[a-z0-9-]+)`")
@@ -111,7 +114,7 @@ TOKEN_RE = re.compile(
 )
 RUBRIC_QS = 13  # Q1..Q13 (the a11y lens added Q11..Q13)
 CLAUSE_RE = re.compile(r"(DQ-[A-Z]{2}-\d) \((P\d)\)")
-# E49-D01 §4's floors, #5860 at 6138f6f81 (BQ-0 e; re-pinned when it merges)
+# E49-D01 §4's floors, #5860 at aed6b1182 (BQ-0 e; re-pinned when it merges)
 FLOORS = {"DQ-BS-2": "P2", "DQ-BS-3": "P2", "DQ-CO-1": "P3", "DQ-CO-2": "P3", "DQ-AX-1": "P2"}
 FLOORS |= {"DQ-AX-2": "P2", "DQ-AX-4": "P2", "DQ-AX-5": "P2", "DQ-TS-3": "P1"}
 ARCH_RE = re.compile(r"D04E47 :(\d+) \((workspace|full-page form|dialog)\)")
@@ -354,11 +357,11 @@ def g_loading(t: L.Tree) -> list[str]:
     for r in got:
         if len(r) < 6 or r[5] not in TREATMENTS:
             bad.append(f"{r[0]}: not exactly one treatment")
-        elif (r[5] == "T-1") != r[1].startswith("app boot"):
-            bad.append(f"{r[0]}: T-1 is SCR-150's only")
-        elif r[2] == "yes" and r[5] == "T-2":
+        elif (r[5] == "LT-1") != r[1].startswith("app boot"):
+            bad.append(f"{r[0]}: LT-1 is SCR-150's only")
+        elif r[2] == "yes" and r[5] == "LT-2":
             bad.append(f"{r[0]}: a refresh holds its frame; a skeleton is a first load's")
-        elif r[1] in NOTHING_YET and r[2:5] == ["no", "no", "yes"] and r[5] != "T-2":
+        elif r[1] in NOTHING_YET and r[2:5] == ["no", "no", "yes"] and r[5] != "LT-2":
             bad.append(f"{r[0]}: unknown total, known layout is the skeleton")
     for s in NOTHING_YET:
         combos = {tuple(k[2:]) for k in keys if k[:2] == (s, "no")}
@@ -366,9 +369,9 @@ def g_loading(t: L.Tree) -> list[str]:
             bad.append(f"{s}: not every combination")
     if any("CMP-014" in c for r in got for c in r):
         bad.append("CMP-014 in a cell")
-    t2 = bullet(sec(t, "## 4. The loading decision table"), "- **T-2 ")
+    t2 = bullet(sec(t, "## 4. The loading decision table"), "- **LT-2 ")
     if "CMP-038" not in t2 or "never alone" not in t2:
-        bad.append("T-2 without the words")
+        bad.append("LT-2 without the words")
     return bad
 
 
@@ -394,7 +397,7 @@ def g_replay(t: L.Tree) -> list[str]:
     ad = [r for r in rows(t, "## 11. Adopted") if "R158-5" in r[1]]
     bad = [] if r5 else ["R158-5 missing"]
     bad += [f"R158-5 lacks {p!r}" for p in REPLAY if r5 and p not in r5[0][2]]
-    return bad + ([] if ad else ["no AD row reuses the held intent's id"])
+    return bad + ([] if ad else ["no AD row owns the replay key rule"])
 
 
 def g_contrast(t: L.Tree) -> list[str]:
@@ -529,7 +532,7 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-12", "G-EMPTY", "a new reason key", "spec",
        r"\| `no_matches`(\s+)\|", r"| `no_filter`\1   |", regex=True),
     _M("M-13", "G-LOADING", "a cell with two answers", "spec",
-       r"(\| L-6 [^\n]*\| )T-2(\s+\|)", r"\1T-2 or T-3\2", regex=True),
+       r"(\| L-6 [^\n]*\| )LT-2(\s+\|)", r"\1LT-2 or LT-3\2", regex=True),
     _M("M-14", "G-LOADING", "a combination left out", "spec",
        r"(\| L-5 [^\n]*?\| yes\s+\| )no(\s+\|)", r"\1yes\2", regex=True),
     _M("M-15", "G-ANTI", "an anti-pattern reworded", "spec",
@@ -563,19 +566,20 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        r"\n\| SCR-153 \| unchanged [^\n]*", "", regex=True),
     _M("M-30", "G-DISCLOSE", "the echo keeps the query", "spec",
        "the pathname only, never the query or the hash", "the path with its query"),
-    _M("M-31", "G-REPLAY", "a replay mints a new id", "spec",
-       "Replay carries the original intent id", "Replay mints a new intent id"),
+    _M("M-31", "G-REPLAY", "an unchanged body mints a new key", "spec",
+       "under the original `Idem", "under a new `Idem"),
     _M("M-32", "G-REPLAY", "the replay decision unowned", "spec",
-       "the held intent's id (R158-5)", "the held intent's id (R158-x)"),
+       "a new key on a changed one (R158-5)", "a new key on a changed one (R158-x)"),
     _M("M-33", "G-ANALYTICS", "SCR-154 keeps the stale audit name", "spec",
        "**Analytics (`14` :3166):** `rbac.denied`", "**Analytics (`14` :3166):** `authz.denied`"),
     _M("M-34", "G-LOADING", "a refresh gets a skeleton", "spec",
-       r"(\| L-10 [^\n]*\| )T-3(\s+\|)", r"\1T-2\2", regex=True),
+       r"(\| L-10 [^\n]*\| )LT-3(\s+\|)", r"\1LT-2\2", regex=True),
     _M("M-35", "G-RUBRIC", "a focus row names the wrong archetype", "spec",
        "D04E47 :202 (dialog)", "D04E47 :202 (workspace)"),
     _M("M-36", "G-RUBRIC", "a clause floor lowered", "spec", "DQ-TS-3 (P1)", "DQ-TS-3 (P3)"),
     _M("M-37", "G-CONTRAST", "an unregistered pair claimed registered", "spec",
        "| proposed (A-8) ", "| `pairs.mjs` :1 "),
+    _M("M-38", "G-REPLAY", "a changed body keeps the key", "spec", "new key if it", "key if it"),
 )
 # fmt: on
 
