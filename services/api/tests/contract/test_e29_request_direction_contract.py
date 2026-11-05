@@ -32,9 +32,9 @@ member of a list (the router ignores it, as every list does, and 22 declares no 
 reads by id (a path, whose `400` `test_oms_read_routes_contract` has, and `getOrder`'s
 `include_events`, unit-tested in `test_oms_reads_route`); `setPositionTpSl` (no router serves it:
 `test_e29_oms_schemathesis_contract` pins that). 22's lookup members of `listOrders`
-(`idempotency_key`, `order_link_id`) are read by no route yet, so their wrong-type cases are
-`xfail` (strict) and their bounds wait: #5552 implements the lookup, and its change deletes the
-marker.
+(`idempotency_key`, `order_link_id`) are read by no route yet, so their cases (the wrong type and
+the `maxItems` of 20) are `xfail` (strict): #5552 implements the lookup, and its change deletes
+the marker.
 """
 
 from __future__ import annotations
@@ -243,7 +243,9 @@ def _members(*, required: bool) -> list[Any]:
     wrong type every member of a body, each path or query parameter and the key; for a missing
     one each required member of a body and the key (never `X-CSRF-Token`, module docstring)."""
     unread = pytest.mark.xfail(
-        strict=True, reason="22's lookup (#2303, implemented by #5552) is read by no route yet"
+        strict=True,
+        raises=AssertionError,
+        reason="22's lookup (#2303, implemented by #5552) is read by no route yet",
     )
     found: list[tuple[str, str, str]] = []
     for operation_id in (*_WRITES, *_LISTS):
@@ -272,33 +274,40 @@ def _schema_of(operation_id: str, place: str, name: str) -> Any:
 
 def _bounds() -> list[Any]:
     """`(operation, place, name, bound)` for each of `_BOUNDS` that 22 declares on a member the
-    sweep breaks, each a `pytest.param` (the lookup members of `_UNREAD` wait for their route)."""
+    sweep breaks, each a `pytest.param` (a lookup member of `_UNREAD` keeps its marker)."""
     found = []
     for member in _members(required=False):
-        if member.values not in _UNREAD:
-            schema = _schema_of(*member.values)
-            found += [
-                pytest.param(*member.values, bound, id=f"{member.id}-{bound}")
-                for bound in _BOUNDS
-                if schema.get(bound, False) is not False
-            ]
+        schema = _schema_of(*member.values)
+        found += [
+            pytest.param(*member.values, bound, id=f"{member.id}-{bound}", marks=member.marks)
+            for bound in _BOUNDS
+            if schema.get(bound, False) is not False
+        ]
     return found
 
 
-def _uuids(count: int) -> list[str]:
-    """`count` distinct ids, the items of the lists 22 bounds."""
-    return [f"00000000-0000-4000-8000-{n:012d}" for n in range(1, count + 1)]
+#: The items of the lists 22 bounds, by number: a uuid, an order link id (the `ext-` form).
+_SHAPES: Final = ("00000000-0000-4000-8000-{:012d}", "ext-{:032x}")
+
+
+def _items(schema: Any, count: int) -> list[Any]:
+    """`count` distinct items of the array `schema`, of the first of `_SHAPES` its items take; one
+    of another kind is a `LookupError`, which the `xfail` of a lookup member does not absorb."""
+    for shape in _SHAPES:
+        made = [shape.format(n) for n in range(1, count + 1)]
+        if accepts(schema, made[0]):
+            return made
+    raise LookupError(f"extend _SHAPES: 22's items are {schema['items']}")
 
 
 def _beside(schema: Any, bound: str) -> tuple[Any, Any]:
     """The value at the `bound` 22 declares on `schema` (22 takes it) and the first one past it."""
-    assert "items" not in schema or schema["items"].get("format") == "uuid", "extend _uuids"
     limit = schema[bound]
     match bound:
         case "maxItems":
-            return _uuids(limit), _uuids(limit + 1)
+            return _items(schema, limit), _items(schema, limit + 1)
         case "uniqueItems":
-            return _uuids(2), _uuids(1) * 2
+            return _items(schema, 2), _items(schema, 1) * 2
         case "minimum":
             return limit, limit - 1
         case "maximum":
