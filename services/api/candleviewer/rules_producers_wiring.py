@@ -39,6 +39,8 @@ producer here reads one shipped market path and writes through its own `PushSink
   than the book, or a book not LIVE, pushes nothing and stays ``warmup`` without holding back
   the shallower wants; `book_staleness_ms` needs no view. It holds no book tier.
   `BookTicks` keeps ``on_book_update`` to one tick per symbol per window across both producers.
+* Lost feeds: `FeedHealthWatch` maps a lost ``{env}.health.feed`` event to its symbol and feed
+  (the adapter's `StreamForTopic`) and marks that feed's pushed refs ``source_degraded``.
 
 `build_bridge` composes them; the composition root calls it only with `rules_evaluator_enabled`
 on, so with the flag off nothing here is built, spliced or subscribed (C-4.13).
@@ -72,8 +74,10 @@ from candleviewer.bus import Bus, QueuePolicy, StreamInvalidated, Subscription, 
 from candleviewer.bus.models import LIVE_ENVS, WILDCARD
 from candleviewer.domain.events import MarketEvent
 from candleviewer.exchange.base.models import BookLevel, TickerEvent
+from candleviewer.exchange.base.ports import StreamForTopic
 from candleviewer.ingestion.ticker_topic import BUS_QUEUE_MAX, MAX_SYMBOLS
 from candleviewer.ingestion.ticker_topic import WINDOW_S as TICKER_WINDOW_S
+from candleviewer.ingestion.watchdog import FeedHealthEvent
 from candleviewer.observability import spawn
 from candleviewer.observability.metrics import Metrics
 from candleviewer.orderbook_wiring import BookView
@@ -934,6 +938,87 @@ class BookDepthProducer:
                     sink.failed(exc)
 
 
+#: Feed states that mean a feed is lost (`ingestion/watchdog.py`); ``healthy`` clears nothing.
+LOST_FEED_STATES: Final = frozenset({"stale", "degraded", "delisted"})
+#: The adapter's stream kinds (`StreamForTopic`) -> the producers' ``feeds``.
+STREAM_FEEDS: Final = {
+    "trades": "trades", "orderbook_delta": "book", "orderbook_snapshot": "book",
+    "tickers": "ticker",
+}  # fmt: skip
+#: The health consumer's bus queue (a few events per feed and minute).
+HEALTH_QUEUE_MAX: Final = 256
+
+
+class FeedHealthWatch:
+    """Lost feeds into the bridge: a ``stale``, ``degraded`` or ``delisted`` event on
+    ``{env}.health.feed`` marks the pushed refs of the producers reading that feed
+    (`ProducerBridge.feed_degraded`), so the alert evaluator disarms loudly before the lost bound.
+
+    It pushes no metric; it is added to the bridge beside the producers only so it subscribes
+    exactly while the bridge is attached. The event names a venue topic, which the adapter's
+    `StreamForTopic` maps to a symbol (None: every symbol) and stream kinds; a topic it cannot map
+    marks nothing (the watchdog's lost bound still covers it). An invalidation marker loses only
+    marks, never a value: it is logged and the lost bound covers the gap."""
+
+    def __init__(
+        self,
+        bus: Bus,
+        env: str,
+        mark: Callable[[str | None, str], int],
+        topics: StreamForTopic,
+        *,
+        maxsize: int = HEALTH_QUEUE_MAX,
+    ) -> None:
+        if env not in LIVE_ENVS:
+            raise ValueError("a metric producer subscribes a live env only")
+        self.name = "feed_health"
+        self.metrics: frozenset[str] = frozenset()
+        self.feeds: frozenset[str] = frozenset()
+        self._bus, self._env, self._mark, self._topics = bus, env, mark, topics
+        self._maxsize = maxsize
+        self._sink: PushSink | None = None
+        self._sub: Subscription | None = None
+        self._task: asyncio.Task[None] | None = None
+
+    def attach(self, sink: PushSink) -> None:
+        self._sink = sink
+        if self._sub is None:
+            self._sub = self._bus.subscribe(
+                "rule-producers-feed-health",
+                TopicPattern(env=self._env, domain="health", detail="feed"),
+                QueuePolicy.INVALIDATE_ON_FULL, maxsize=self._maxsize,
+            )  # fmt: skip
+        if self._task is None:
+            self._task = spawn(self._run(), name="rule-producers-feed-health")
+
+    async def detach(self) -> None:
+        self._sink = None
+        task, self._task = self._task, None
+        if task is not None:
+            task.cancel()
+            await asyncio.wait({task})
+        sub, self._sub = self._sub, None
+        if sub is not None:
+            self._bus.unsubscribe(sub)
+
+    def offer(self, item: object) -> int:
+        """One bus item; the refs marked."""
+        if isinstance(item, StreamInvalidated):
+            _log().warning("rules.feed_health_invalidated")
+            return 0
+        if not isinstance(item, FeedHealthEvent) or item.state not in LOST_FEED_STATES:
+            return 0
+        symbol, kinds = self._topics(item.topic)
+        feeds = sorted({STREAM_FEEDS[k] for k in kinds if k in STREAM_FEEDS})
+        return sum(self._mark(symbol, feed) for feed in feeds)
+
+    async def _run(self) -> None:
+        while (sub := self._sub) is not None:
+            item = await sub.get()
+            if (sink := self._sink) is not None:
+                sink.guard(self.offer, item)
+
+
 def build_bridge(
     bus: Bus,
     env: str,
@@ -941,9 +1026,10 @@ def build_bridge(
     *,
     bars: BarFieldProducer | None,
     books: Callable[[], BookReader | None],
+    topics: StreamForTopic,
     metrics: Metrics | None = None,
 ) -> ProducerBridge:
-    """The bridge with its four producers, for `RulesService.bind`.
+    """The bridge with its four producers and the feed-health watch, for `RulesService.bind`.
     Called by the composition root only with `rules_evaluator_enabled` on (C-4.13): nothing here
     subscribes before the bridge attaches at `RulesService.start`. `bars` is the producer
     already spliced into `wire_bars` (None: the bar fields stay unproduced)."""
@@ -952,7 +1038,7 @@ def build_bridge(
     ticks = BookTicks()
     producers: tuple[MetricProducer | None, ...] = (
         bars, QuoteProducer(bus, env, ticks, books=books), TickerProducer(bus, env),
-        BookDepthProducer(books, ticks),
+        BookDepthProducer(books, ticks), FeedHealthWatch(bus, env, bridge.feed_degraded, topics),
     )  # fmt: skip
     for producer in producers:
         if producer is not None:
