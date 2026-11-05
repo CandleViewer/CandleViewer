@@ -15,11 +15,14 @@ operation, a code of `x-error-codes` with a status 22 gives that code, and the `
 response declares.
 
 `validation_failed` is `400` when the request is malformed (an unparseable body, a bad query
-parameter or cursor) and `422` when a well-formed body fails semantic validation, and an operation's
+parameter) and `422` when a well-formed body fails semantic validation, and an operation's
 declared responses name which (the orchestrator's ruling on F6; #5868 states it in 22's `Problem`,
 where the registry keeps `400`). So an answer needs a status its operation declares and one 22 gives
 the code: the registry's and, for this code, `422` too (`_ALSO`). An operation that declares `400`
-alone fails on a `422`, and no route is listed.
+alone fails on a `422`, and no route is listed. Every break answers `validation_failed`, but a
+bad cursor answers `invalid_cursor`, its own code: any other code fails, even one whose status is
+`400` (`tick_size_violation`), and so does a body with a member `Problem` does not declare
+(`Problem` admits extra members, which E29-TC-650 still fails).
 
 Left out, each for its reason: `X-CSRF-Token` (required by 22, but SR-041's guard is the composed
 app's middleware, which these worlds do not run, and it answers `403`); `If-Match` (a plain
@@ -51,6 +54,7 @@ from tests.contract._e29_oms_world import (
     operation,
     parameters,
     supply,
+    undeclared,
 )
 from tests.contract._generated_contract import SPEC
 from tests.unit.api.oms_reads_world import ACCOUNT_A
@@ -199,21 +203,22 @@ async def send(request: Request, served: Served, *, raise_faults: bool = True) -
         )  # fmt: skip
 
 
-def refused(request: Request, answer: httpx.Response) -> None:
-    """`answer` is a refusal as 22 declares it for the operation: a `400` or `422` it lists, a code
-    of the registry with a status 22 gives that code (`_ALSO`), and the `Problem` its response
-    names."""
+def refused(request: Request, answer: httpx.Response, code: str = "validation_failed") -> None:
+    """`answer` is a refusal as 22 declares it for the operation: a `400` or `422` it lists, with
+    the problem `code` the break has (`validation_failed`, but a bad cursor's own) at a status 22
+    gives that code (`_ALSO`), and the `Problem` its response names, with no member it leaves
+    undeclared (`Problem` admits extra members, which E29-TC-650 still fails)."""
     responses = operation(request.operation)[2]["responses"]
     assert answer.status_code in (400, 422), answer.text
     assert str(answer.status_code) in responses, f"22 lists no {answer.status_code}"
     body = answer.json()
-    code = body["code"]
-    assert code in _STATUS, body
+    assert body["code"] == code, body
     given = {_STATUS[code]} | _ALSO.get(code, set())
     assert answer.status_code in given, f"22 gives {code} {sorted(given)}: {answer.text}"
     assert answer.headers["content-type"].startswith("application/problem+json")
     (media,) = inline(responses[str(answer.status_code)])["content"].values()
     Draft202012Validator(media["schema"], format_checker=_FORMATS).validate(body)
+    assert [f"{p} is undeclared" for p in undeclared(body, media["schema"], "$")] == []
 
 
 # --- the breaks, each derived from 22 -------------------------------------------------------
@@ -225,6 +230,12 @@ def _strange(schema: Any, place: str) -> Any:
     long = "x" * (schema.get("maxLength", 0) + 1)
     candidates = _STRANGERS if place == "body" else ("x", long)
     return next(value for value in candidates if not accepts(schema, value))
+
+
+def _code(place: str, name: str) -> str:
+    """The problem code a break of member `name` is refused with: `validation_failed`, but for a
+    bad cursor, `invalid_cursor`, a code of its own."""
+    return "invalid_cursor" if (place, name) == ("query", "cursor") else "validation_failed"
 
 
 def _members(*, required: bool) -> list[Any]:
@@ -348,7 +359,7 @@ async def test_request_direction_a_member_of_the_wrong_type_is_refused(
     schema = _schema_of(operation_id, place, name)
     request = request.with_member(place, name, _strange(schema, place))
     assert not request.conforms()
-    refused(request, await send(request, served))
+    refused(request, await send(request, served), _code(place, name))
     assert (operation_id not in _LISTS) or served.world.store.calls == []  # a list read nothing
 
 
@@ -374,7 +385,7 @@ async def test_request_direction_a_value_past_a_bound_22_declares_is_refused(
     assert request.with_member(place, name, within).conforms()
     request = request.with_member(place, name, past)
     assert not request.conforms()
-    refused(request, await send(request, served))
+    refused(request, await send(request, served), _code(place, name))
     assert (operation_id not in _LISTS) or served.world.store.calls == []  # a list read nothing
 
 

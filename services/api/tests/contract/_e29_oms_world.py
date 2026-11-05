@@ -30,6 +30,7 @@ from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.api.recording_writes import WriteLimiter
 from candleviewer.oms.ports import InterimRiskGate
+from tests.contract import test_order_exits_contract as exits_contract
 from tests.contract._generated_contract import SPEC
 from tests.unit.api import oms_reads_world as reads_world
 from tests.unit.api import position_writes_world as position_world
@@ -59,6 +60,8 @@ ARM: Final = "armed"  # the token the worlds' arm records pass on a live account
 _UNLIMITED: Final = 10**6  # writes a minute: the fuzz outruns the worlds' limits (429 is C1's)
 _NOW: Final = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
 _KEYS: Final = itertools.count(1)
+#: C1's walk of the members of an answer that its schema leaves undeclared (E29-TC-650).
+undeclared: Final = exits_contract._undeclared
 
 
 def inline(node: Any) -> Any:
