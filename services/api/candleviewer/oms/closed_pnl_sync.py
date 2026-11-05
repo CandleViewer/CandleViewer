@@ -299,12 +299,13 @@ class ClosedPnlSync:
         return "the closed-PnL sync task ended" if ended else None
 
     def _ended(self, task: asyncio.Task[None]) -> None:
-        """An end other than a cancel, by an error or a return, is logged at ERROR by its kind,
-        and, unless `stop()` asked for it, told to `on_ended`: once, as a task ends once. A stop's
-        cancel is no fault, nor is the lane's at its end. The error is retrieved either way."""
-        if task.cancelled():
+        """Any end `stop()` did not ask for, by an error, a return or a cancel (as the order lane's
+        death cancels what is left on it), is a fault: logged at ERROR by its kind and told to
+        `on_ended` once, as a task ends once. An end a stop asked for is told to no one, and is
+        logged unless it is that stop's cancel. The error is retrieved either way."""
+        error = asyncio.CancelledError() if task.cancelled() else task.exception()
+        if self._stopped and task.cancelled():
             return
-        error = task.exception()
         kind = "returned" if error is None else type(error).__name__
         _log().error("closed_pnl_sync_ended", kind=kind)
         if not self._stopped:

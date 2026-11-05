@@ -670,8 +670,9 @@ def oms_runtime_of(state: State) -> OmsRuntime | None:
 def _oms_state(runtime: OmsRuntime | None) -> str | None:
     """`/readyz`'s `oms` check: the runtime's while it runs (its readiness, `degraded` too once its
     environment's lock is lost, #913 L2, and once ready while its private-stream consumer is not
-    doing its job, E29-T05 S8b, or once its closed-PnL sync's task has ended unasked, E29-S06,
-    paged once and never a gate on order entry; 24 Sec.8.12 "Readiness"), else no check."""
+    doing its job, E29-T05 S8b, or once its closed-PnL sync has faulted (its task ended unasked,
+    or a start the lane did not confirm), E29-S06, paged once and never a gate on order entry;
+    24 Sec.8.12 "Readiness"), else no check."""
     return runtime.readyz if runtime is not None and runtime.started else None
 
 
