@@ -65,6 +65,7 @@ export const REFRESH_INVALID = json(
 /** `me.py` `_unauthenticated()`: `GET /me` has its own problem body. */
 const ME_UNAUTHENTICATED = json(
   {
+    // e2e-egress: an RFC 7807 problem type id, never fetched
     type: "https://candleviewer.local/errors/unauthenticated",
     title: "Missing, malformed or expired access token",
     status: 401,

@@ -94,6 +94,7 @@ test("@abuse @plan-AB-4 CSP: a stylesheet from another origin is refused (style-
         });
         const link = doc.createElement("link");
         link.rel = "stylesheet";
+        // e2e-egress: a probe the CSP refuses (an .invalid host never resolves), and the guard aborts it
         link.href = "https://styles.invalid/hide-badge.css";
         doc.head.append(link);
       }),

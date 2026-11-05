@@ -770,6 +770,19 @@ ran.
   never go over WS matched no specs — either the tag was renamed/removed by
   accident or the harness itself regressed. This must never silently pass;
   restore the tag or the specs it should match.
+- **CI-E2E-005** (e2e egress check failed, `apps/web/test/e2e-egress.test.ts` in
+  `unit-frontend`, E49-Q01): an e2e source under `apps/web/e2e` or `apps/desktop/e2e` names a URL
+  whose host is not loopback by the `isLocal` pattern (`packages/fixtures/src/e2e/egress.ts`), or a
+  `@ga-regression` spec runs outside the egress guard (a web pack spec must take `test` from
+  `apps/web/e2e/support/pack.ts`; a desktop one must launch through `support/shell.ts`). Point the
+  URL at loopback or a stub route. A URL the test never fetches (an RFC 7807 problem type id, a
+  probe the app must refuse) may take `// e2e-egress: <reason>` alone on the line above it, and only
+  when its host is a reserved name that never resolves (`.invalid`, `.test`, `.example`, `.local`,
+  `.localhost`, `example.com`/`.net`/`.org`); a real host stays red. A host built by concatenation
+  fails. Never add a host to the check's allowlist without the security CODEOWNER (the file has a
+  CODEOWNERS line), and never `bybit.com` or `bytick.com`: the check refuses them in a URL or a
+  route glob, whatever the allowlist or a marker says (C-13.5). A desktop pack spec must also
+  close through `closeShell`.
 - **CI-A11Y-001** (new serious/critical axe-core violation): open the axe
   report artifact, find the new violation's rule id and selector, fix the
   markup (see `docs/plan/05-accessibility-standard.md`) — never suppress a

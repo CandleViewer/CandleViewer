@@ -131,9 +131,9 @@ test.describe("Navigation and window-open denial (SR-113)", () => {
     const electronWindow = await app.firstWindow();
 
     const openedHandle = await electronWindow.evaluate(() => {
-      const popup = (
-        globalThis as unknown as { open: (url: string, target: string) => unknown }
-      ).open("https://example.com", "_blank");
+      const popup = (globalThis as unknown as { open: (url: string, target: string) => unknown })
+        // e2e-egress: a window.open probe the shell denies, so nothing loads
+        .open("https://example.com", "_blank");
       return popup === null;
     });
 
