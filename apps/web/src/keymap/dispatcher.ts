@@ -3,6 +3,7 @@ import {
   composesCharacter,
   eventBinding,
   isBareBinding,
+  requiresArm,
   type KeyEventLike,
   type KeymapCommand,
 } from "./keymap";
@@ -25,6 +26,11 @@ export type DispatchResult =
   | { readonly status: "inert"; readonly commandId: string; readonly notified: boolean }
   /** An order entry while the arm reads unarmed (BQ-5): taken (default prevented), not run, and said why. */
   | { readonly status: "unarmed"; readonly commandId: string; readonly notified: boolean }
+  /**
+   * An armed order entry while new exposure is closed (E29-S07 #1028, review fold m1): taken, not
+   * run, and the verdict's reason said once, politely (G-T2.3).
+   */
+  | { readonly status: "blocked"; readonly commandId: string; readonly notified: boolean }
   /** `Ctrl+K` with no palette yet: taken (default prevented) and never reported (BQ-7, D9). */
   | { readonly status: "reserved"; readonly binding: string }
   /** A key A-D05-2's rule leaves alone: neither run nor reported, its default not prevented. */
@@ -41,6 +47,12 @@ export interface DispatcherDeps {
   readonly now: () => number;
   /** The arm an order entry needs (BQ-5); without one it reads unarmed (fail closed). */
   readonly arm?: ArmPort;
+  /**
+   * The new-exposure verdict for an arm-gated order entry (`features/reconciliation/newExposure`):
+   * the reason sentence when it is closed, `null` when open. Never consulted for any other
+   * command, an exit's included (C-2.6). Absent: nothing more than the arm.
+   */
+  readonly exposureRefusal?: (cmd: KeymapCommand) => string | null;
   /** Counts an inert press by command id and the view it was pressed in (`hotkey.inert_pressed`). */
   readonly countInert?: (commandId: string, view: string) => void;
   /** Current bindings (profile); defaults to the keymap defaults. */
@@ -143,6 +155,11 @@ export function createDispatcher(deps: DispatcherDeps) {
       if (!armAllows(command, arm)) {
         const notified = tell(command, viewOf(activeContexts), armMessage(command), repeat);
         return { status: "unarmed", commandId: command.id, notified };
+      }
+      const refusal = requiresArm(command) ? (deps.exposureRefusal?.(command) ?? null) : null;
+      if (refusal !== null) {
+        const notified = tell(command, viewOf(activeContexts), refusal, repeat);
+        return { status: "blocked", commandId: command.id, notified };
       }
       if (repeat && ignoresRepeat(command)) {
         return { status: "repeat", commandId: command.id };
