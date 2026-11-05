@@ -1858,6 +1858,14 @@ seed named another account (`24-internal-schemas.md` §8.13, C-2.11), and it kep
 component, which a Postgres outage never inhibits. The series is unlabelled by account; the logs name
 it.
 
+Closed-PnL divergence (E29-S06, #981; the orchestrator's ruling Q5 of 2026-11-04; `system_ticket.yml`,
+`component: oms`, runbook in `07-release-and-prr.md` section 9, promtool cases generated into
+`infra/prometheus/tests/system_alerts.test.yml`): Ticket — `OmsClosedPnlDivergence`, when
+`rate(oms_closed_pnl_divergence_total[15m])` stays above 0 for 30 minutes: closed-PnL records keep
+diverging from the venue's figures, or keep leaving the reach with no venue figure
+(`24-internal-schemas.md` §8.13). A lone record is the dashboard's. The series is unlabelled by
+account; the record and its WARNING log name it.
+
 Accounts set (E27-T04, #837, `infra/prometheus/alerts/accounts.yml`, runbooks in
 `07-release-and-prr.md` section 9, promtool cases generated into
 `infra/prometheus/tests/system_alerts.test.yml`): Page — `AccountDown` (component `account_health`),
