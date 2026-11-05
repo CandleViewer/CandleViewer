@@ -5,6 +5,8 @@ import type {
   AdminGrace,
   AdminLayoutProps,
   AdminStripItem,
+  AuditActionTriggerProps,
+  AuditMarker,
   AuditRowListProps,
   AuditRowProps,
   ButtonProps,
@@ -24,6 +26,7 @@ import type {
   TableTreeRow,
   UpdatesPausedChipProps,
   ColumnPickerProps,
+  CopyableCodeBlockProps,
   FileDropProps,
   FreshnessMarkerProps,
   RecorderCellOptions,
@@ -34,6 +37,8 @@ import type {
   RecorderRowState,
   RecorderStatusRowData,
   RecorderStatusRowProps,
+  PaginationLabels,
+  PaginationProps,
   TableRowContext,
   WatchlistGroupTabsProps,
   WatchlistRowProps,
@@ -294,6 +299,32 @@ describe("@candleviewer/ui CMP-099 PrintExportBar (E29-S04)", () => {
 
   it("exports CMP-099's types (checked by the typechecker)", () => {
     const props: [ExportFormat, PrintExportBarProps] | null = null;
+    expect(props).toBeNull();
+  });
+});
+
+describe("@candleviewer/ui audit log components (E42-S04)", () => {
+  it.each([
+    ["AuditActionTrigger", Atoms.AuditActionTrigger],
+    ["CopyableCodeBlock", Atoms.CopyableCodeBlock],
+    ["Pagination", Atoms.Pagination],
+    ["auditMarkerText", Atoms.auditMarkerText],
+  ])("exports %s from the package entry as a function", (_name, value) => {
+    expect(typeof value).toBe("function");
+  });
+
+  it("exports the marker's copy and each props type (checked by the typechecker)", () => {
+    expect(Atoms.AUDIT_MARKER_COPY.recorded).toBe("Recorded in the audit log");
+    expect(Atoms.PAGINATION_COPY.nav).toBe("Pagination");
+    const props:
+      | [
+          AuditActionTriggerProps,
+          AuditMarker,
+          CopyableCodeBlockProps,
+          PaginationLabels,
+          PaginationProps,
+        ]
+      | null = null;
     expect(props).toBeNull();
   });
 });

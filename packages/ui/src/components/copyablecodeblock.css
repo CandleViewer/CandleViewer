@@ -1,0 +1,48 @@
+/*
+ * CMP-068 CopyableCodeBlock (E42-D04 AD-2, §15). Tokens only and static. The region is a `pre` on
+ * `color.surface.sunken` (the stand-in for the absent `color.surface.code`) in `type.num.sm` (`font.family.mono`,
+ * the stand-in for `font.mono`), `color.text.primary`, `space.inset.sm` inside and `radius.control` corners. The
+ * text keeps its own line breaks and is never wrapped, so the region scrolls both ways: at 200 % zoom it is the one
+ * thing on the page that scrolls sideways (`16:128`). Its block size stops at the host's `maxHeight`
+ * (`--cv-codeblock-max-height`; no size token exists), else it grows. The Copy sits at the region's end,
+ * `space.inset.xs` under it. Keyboard focus is CMP-039's ring on the region itself.
+ */
+.cv-codeblock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-inset-xs);
+  min-width: 0;
+}
+
+.cv-codeblock__pre {
+  box-sizing: border-box;
+  min-width: 0;
+  max-block-size: var(--cv-codeblock-max-height, none);
+  margin: 0;
+  padding: var(--space-inset-sm);
+  overflow: auto;
+  border-radius: var(--radius-control);
+  background: var(--color-surface-sunken);
+  color: var(--color-text-primary);
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+  white-space: pre;
+  tab-size: 2;
+}
+
+.cv-codeblock__code {
+  font: inherit;
+}
+
+.cv-codeblock__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Forced colours drop the fill: a real CanvasText edge keeps the region's bounds, its text in CanvasText. */
+@media (forced-colors: active) {
+  .cv-codeblock__pre {
+    border: 1px solid CanvasText;
+    color: CanvasText;
+  }
+}

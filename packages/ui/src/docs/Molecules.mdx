@@ -126,6 +126,22 @@ roles and names.
 | meta       | text (`p`)           | —         | One plain line, never live, e.g. "All times UTC · as of 14:02:11".                              |
 | marker     | text                 | —         | A CMP-093 audited-read line, never live.                                                        |
 
+### Pagination (CMP-053, cursor mode: a nav of buttons)
+
+| Keys                         | Action                                                                                      |
+| ---------------------------- | ------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab              | Newest, Newer, Older: one stop each, a T2 one included.                                     |
+| Enter / Space                | Asks for that page, once per press: a held key's repeats ask for nothing more.              |
+| Enter / Space on a T2 button | Asks for nothing; the reason, already shown under the buttons or by the host, is said once. |
+
+| Element | Role             | Name                 | Notes                                                                                                               |
+| ------- | ---------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| pager   | navigation       | "Pagination"         | No `aria-current`, page number or total (keyset paging).                                                            |
+| button  | button (CMP-001) | Newest, Newer, Older | T2: `aria-disabled`, the lock ("Not available") leading the label, described by its reason alone; never `disabled`. |
+| reason  | text (`p`)       | —                    | A reason no host node carries, once, under the buttons; `blockedReason` replaces the direction reasons.             |
+
+Focus after a page loads is the host's: the new page's first row, or the pressed button after a failed read.
+
 ### AuditRow (CMP-173, compact: a list of links)
 
 | Keys            | Action                                                 |
@@ -139,6 +155,33 @@ roles and names.
 | row          | listitem             | —                                                                               | One per entry.                                                                                  |
 | link         | link                 | its words: time (UTC), actor, action label and code, subject, outcome, severity | The fields are " · " apart in plain text, read as written. No hash, IP or `detail` is shown.    |
 | glyph        | none (`aria-hidden`) | —                                                                               | The octagon (error, critical) or the triangle (warning); the severity word carries the meaning. |
+
+### CopyableCodeBlock (CMP-068, a focusable scroll region)
+
+| Keys            | Action                                                                                    |
+| --------------- | ----------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab | The region, then its Copy: two stops, in that order.                                      |
+| Arrows, PgUp/Dn | On the focused region, the browser scrolls it (both ways: the text never wraps).          |
+| Enter / Space   | On Copy, copies the text exactly; CMP-033 says "Copied" once. The region takes no action. |
+
+| Element | Role                        | Name                             | Notes                                                                               |
+| ------- | --------------------------- | -------------------------------- | ----------------------------------------------------------------------------------- |
+| region  | region (`<pre tabindex=0>`) | `label`, e.g. "Raw record"       | The text as given, never parsed or interpreted as markup; `data-language` names it. |
+| Copy    | button (CMP-033)            | `copyLabel`, else "Copy {label}" | After the region. Its status is the block's only voice.                             |
+
+### AuditActionTrigger (CMP-093, no pattern of its own: a marker line)
+
+| Keys | Action                                                                                                                 |
+| ---- | ---------------------------------------------------------------------------------------------------------------------- |
+| None | No stop of its own: the wrapped control keeps its keys. A gated control's press does nothing and says its reason once. |
+
+| Element | Role       | Name    | Notes                                                                                                                          |
+| ------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| control | its own    | its own | Enabled: `aria-describedby` gains the marker. Gated (T2): the reason alone, the lock leading its label, never `disabled`.      |
+| reason  | text (`p`) | —       | While gated, under the control (2a), unless the host's one notice carries it (`disabledReasonId`, or CMP-079's `notice` form). |
+| marker  | text (`p`) | —       | "Recorded in the audit log · {label} ({code})", or "Recorded · needs your confirmation — …"; always visible, never live.       |
+
+The component makes no request: the endpoint the control calls writes the audit record (`14` §0.5 item 8).
 
 ### SystemHealthTile (CMP-178, a CMP-050 region tile, no pattern of its own)
 

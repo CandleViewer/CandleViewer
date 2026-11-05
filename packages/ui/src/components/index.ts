@@ -136,6 +136,9 @@ export type {
   ConfirmMeta,
 } from "./ConfirmDialog.js";
 
+export { CopyableCodeBlock } from "./CopyableCodeBlock.js";
+export type { CopyableCodeBlockProps } from "./CopyableCodeBlock.js";
+
 export { CopyButton, useCopy } from "./CopyButton.js";
 export type { CopyButtonProps, CopyStatus, UseCopyOptions, UseCopyResult } from "./CopyButton.js";
 
@@ -246,6 +249,13 @@ export type {
   AdminStripKind,
   AdminStripSeverity,
 } from "./AdminLayout.js";
+export { AUDIT_MARKER_COPY, AuditActionTrigger, auditMarkerText } from "./AuditActionTrigger.js";
+export type {
+  AuditActionTriggerChild,
+  AuditActionTriggerProps,
+  AuditMarker,
+} from "./AuditActionTrigger.js";
+
 export { AUDIT_ACTION_LABELS, AUDIT_ROW_COPY, AuditRow, AuditRowList } from "./AuditRow.js";
 export type { AuditRowListProps, AuditRowProps } from "./AuditRow.js";
 
@@ -326,6 +336,9 @@ export type { NumericStepperInputProps, StepDirection } from "./NumericStepperIn
 
 export { PageHeader } from "./PageHeader.js";
 export type { PageHeaderProps } from "./PageHeader.js";
+
+export { PAGINATION_COPY, Pagination } from "./Pagination.js";
+export type { PaginationLabels, PaginationProps } from "./Pagination.js";
 
 export { Popover } from "./Popover.js";
 export type {

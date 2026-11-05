@@ -632,6 +632,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.action.*`.
 - **Storybook**: Default, CursorMode, CursorKeyset, RateLimited.
 - **Tests**: unit, visual, axe, keyboard.
+- **As built (E42-S04)**: cursor mode only (`mode?: "cursor"`, the default and its one value); page mode (`page`, `pageCount?`, `pageSize?` / `onPageSizeChange`) and the Default story ship with its first consumer. `onNext` / `onPrev` are built as `onNewer` and `onOlder`, beside a required `onNewest`, and there is no `cursor` prop: the host keeps its cursors. Each press asks for its page once; a held key's repeats are dropped (E42-D04 §12). The reasons are per direction: `newerReason?` gates Newest and Newer (`admin.newest` on page 1), `olderReason?` gates Older (`admin.oldest`), and `blockedReason?` gates all three in their place (a `429`'s `admin.rate_limited`); `newerReasonId?`, `olderReasonId?` and `blockedReasonId?` point at a host node that already shows the reason (the `audit.end` line, a panel's one notice), and a reason no host node carries shows once under the buttons (2a), every button it gates pointing at that one line. The buttons are CMP-001 secondary buttons that take T2 through their own `disabledReason` (`aria-disabled`, focusable, the `lock` leading the label), not through a CMP-079 element: the reasons are `admin.*` state keys, outside CMP-079's `rbac.*` vocabulary. `labels?` overrides `PAGINATION_COPY` (E42-D04 §14 `labels.page.*`) and `density?` reaches the buttons.
 
 ### CMP-054 SearchBox
 
@@ -780,6 +781,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `font.mono`, `color.surface.code`.
 - **Storybook**: JSON, YAML, LongScrollable.
 - **Tests**: unit, visual, axe.
+- **As built (E42-S04)**: adds `label` (required; names the region, "Raw record" on SCR-136, E42-D04 AD-2), `copyLabel?` (default "Copy {label}"), `id?` (for a host's `aria-controls`) and `onCopied?`. The `pre` is a focusable scroll region (`tabindex="0"`, `role="region"` named by `label`, WCAG 2.1.1), the code inside it as given: never parsed, highlighted or reformatted, markup staying text; `language` is written as `data-language`. CMP-033's Copy follows it and copies `code` exactly; the block speaks only through CMP-033's status. `maxHeight?` is a CSS length the host sizes, through `--cv-codeblock-max-height` (no size token exists); without it the block grows with the text, and only the region scrolls sideways. Stand-in tokens (E42-D04 §15): `color.surface.sunken` for the absent `color.surface.code`, and `type.num.sm` (`font.family.mono`) for `font.mono`. Storybook names the stories Json, Yaml and LongScrollable.
 
 ### CMP-069 InfoPanel ("i" expandable methodology note)
 
@@ -1054,6 +1056,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: n/a.
 - **Storybook**: Marker (the visible line); otherwise documented via integration test.
 - **Tests**: integration test asserting audit POST fired with correct shape for a representative sample of wrapped actions.
+- **As built (E42-S04)**: a marker, not a contract wrapper: `action`, `target` and `before?` / `after?` are not built, because the endpoint the control calls writes the audit record and the component makes no request (`14` §0.5 item 8, C-2.9; #1135's ruling on BQ-12); a unit test pins that a press fires no request, in place of the integration test. Props: `marker: {codes, label?, confirm?}` (the registered codes the endpoint writes, joined by " + "; `label` defaults to each code's `AUDIT_ACTION_LABELS` label, a code without one reading as itself; `confirm` gives a step-up action's lead, "Recorded · needs your confirmation — …"; with no code, the lead alone), `disabledReason?`, `disabledReasonId?`, `align?: "start"|"end"` and one child control that takes the T2 contract. Enabled, the marker joins the control's `aria-describedby` after the host's own ids. Gated (its `disabledReason`, one a CMP-079 RbacGate hands down, or the control's own), the reason shows under the control (2a) and alone describes it, the `lock` leading the label, and the marker stays visible; `disabledReasonId?`, or RbacGate's `notice` form, makes the host's one notice the reason node and draws no line (BQ-9; an explicit id wins over the gate's notice). `auditMarkerText` and `AUDIT_MARKER_COPY` are exported. Storybook ships Marker and MarkerOnDisabledControl.
 
 ### CMP-094 HotkeyOverlay ("? " cheatsheet)
 
