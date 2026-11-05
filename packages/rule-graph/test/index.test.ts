@@ -26,6 +26,7 @@ describe("the public entry", () => {
       "portTypeOfMetric",
       "portsOf",
       "readLayout",
+      "toCompileModel",
       "toGraph",
       "toIr",
     ]);

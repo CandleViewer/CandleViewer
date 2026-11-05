@@ -1,0 +1,1573 @@
+{
+  "model": {
+    "envelope": {
+      "rule_id": "00000000-0000-4000-8000-0000000e3709",
+      "version": 3,
+      "name": "First Tier C graph",
+      "description": "",
+      "enabled": false,
+      "mode": "disabled",
+      "scope": { "level": "position", "symbols": ["BTCUSDT"], "environments": ["demo"] },
+      "limits": {},
+      "editor": "graph",
+      "ir_version": 1,
+      "created_at": 1792849330000000,
+      "updated_at": 1792849330000000
+    },
+    "nodes": [
+      { "id": "n1", "type": "trigger", "data": { "type": "on_bar_close", "timeframe": "1m" } },
+      {
+        "id": "n2",
+        "type": "logicGate",
+        "data": { "op": "all_of", "children": [null, null, null, null] }
+      },
+      {
+        "id": "n3",
+        "type": "logicGate",
+        "data": {
+          "op": "all_of",
+          "children": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "id": "n4",
+        "type": "logicGate",
+        "data": {
+          "op": "all_of",
+          "children": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "id": "n5",
+        "type": "logicGate",
+        "data": {
+          "op": "all_of",
+          "children": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "id": "n6",
+        "type": "logicGate",
+        "data": {
+          "op": "all_of",
+          "children": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        }
+      },
+      {
+        "id": "n7",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "spread_bps" },
+          "right": { "const": 78 }
+        }
+      },
+      {
+        "id": "n8",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "atr" },
+          "right": { "const": 0 }
+        }
+      },
+      {
+        "id": "n9",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "vwap" },
+          "right": { "const": 9 }
+        }
+      },
+      {
+        "id": "n10",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "atr" },
+          "right": { "const": 73 }
+        }
+      },
+      {
+        "id": "n11",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "vwap" },
+          "right": { "const": 95 }
+        }
+      },
+      {
+        "id": "n12",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "rsi" },
+          "right": { "const": 95 }
+        }
+      },
+      {
+        "id": "n13",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "rsi" },
+          "right": { "const": 23 }
+        }
+      },
+      {
+        "id": "n14",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "rsi" },
+          "right": { "const": 34 }
+        }
+      },
+      {
+        "id": "n15",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "rsi" },
+          "right": { "const": 50 }
+        }
+      },
+      {
+        "id": "n16",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "atr" },
+          "right": { "const": 56 }
+        }
+      },
+      {
+        "id": "n17",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "cvd" },
+          "right": { "const": 72 }
+        }
+      },
+      {
+        "id": "n18",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "price" },
+          "right": { "const": 50 }
+        }
+      },
+      {
+        "id": "n19",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "rsi" },
+          "right": { "const": 0 }
+        }
+      },
+      {
+        "id": "n20",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "cvd" },
+          "right": { "const": 84 }
+        }
+      },
+      {
+        "id": "n21",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "spread_bps" },
+          "right": { "const": 0 }
+        }
+      },
+      {
+        "id": "n22",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "spread_bps" },
+          "right": { "const": 44 }
+        }
+      },
+      {
+        "id": "n23",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "spread_bps" },
+          "right": { "const": 86 }
+        }
+      },
+      {
+        "id": "n24",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "rsi" },
+          "right": { "const": 26 }
+        }
+      },
+      {
+        "id": "n25",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "rsi" },
+          "right": { "const": 84 }
+        }
+      },
+      {
+        "id": "n26",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "rsi" },
+          "right": { "const": 65 }
+        }
+      },
+      {
+        "id": "n27",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "atr" },
+          "right": { "const": 69 }
+        }
+      },
+      {
+        "id": "n28",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "vwap" },
+          "right": { "const": 50 }
+        }
+      },
+      {
+        "id": "n29",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "spread_bps" },
+          "right": { "const": 90 }
+        }
+      },
+      {
+        "id": "n30",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "price" },
+          "right": { "const": 17 }
+        }
+      },
+      {
+        "id": "n31",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "atr" },
+          "right": { "const": 95 }
+        }
+      },
+      {
+        "id": "n32",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "rsi" },
+          "right": { "const": 75 }
+        }
+      },
+      {
+        "id": "n33",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "atr" },
+          "right": { "const": 31 }
+        }
+      },
+      {
+        "id": "n34",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "price" },
+          "right": { "const": 66 }
+        }
+      },
+      {
+        "id": "n35",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "spread_bps" },
+          "right": { "const": 19 }
+        }
+      },
+      {
+        "id": "n36",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "price" },
+          "right": { "const": 40 }
+        }
+      },
+      {
+        "id": "n37",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "rsi" },
+          "right": { "const": 83 }
+        }
+      },
+      {
+        "id": "n38",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "atr" },
+          "right": { "const": 82 }
+        }
+      },
+      {
+        "id": "n39",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "price" },
+          "right": { "const": 82 }
+        }
+      },
+      {
+        "id": "n40",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "price" },
+          "right": { "const": 71 }
+        }
+      },
+      {
+        "id": "n41",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "spread_bps" },
+          "right": { "const": 74 }
+        }
+      },
+      {
+        "id": "n42",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "price" },
+          "right": { "const": 77 }
+        }
+      },
+      {
+        "id": "n43",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "cvd" },
+          "right": { "const": 25 }
+        }
+      },
+      {
+        "id": "n44",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "cvd" },
+          "right": { "const": 49 }
+        }
+      },
+      {
+        "id": "n45",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "spread_bps" },
+          "right": { "const": 62 }
+        }
+      },
+      {
+        "id": "n46",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "spread_bps" },
+          "right": { "const": 75 }
+        }
+      },
+      {
+        "id": "n47",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "cvd" },
+          "right": { "const": 74 }
+        }
+      },
+      {
+        "id": "n48",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "price" },
+          "right": { "const": 67 }
+        }
+      },
+      {
+        "id": "n49",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "rsi" },
+          "right": { "const": 72 }
+        }
+      },
+      {
+        "id": "n50",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "cvd" },
+          "right": { "const": 35 }
+        }
+      },
+      {
+        "id": "n51",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "vwap" },
+          "right": { "const": 73 }
+        }
+      },
+      {
+        "id": "n52",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "vwap" },
+          "right": { "const": 30 }
+        }
+      },
+      {
+        "id": "n53",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "cvd" },
+          "right": { "const": 16 }
+        }
+      },
+      {
+        "id": "n54",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "atr" },
+          "right": { "const": 64 }
+        }
+      },
+      {
+        "id": "n55",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "rsi" },
+          "right": { "const": 21 }
+        }
+      },
+      {
+        "id": "n56",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "price" },
+          "right": { "const": 42 }
+        }
+      },
+      {
+        "id": "n57",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "cvd" },
+          "right": { "const": 73 }
+        }
+      },
+      {
+        "id": "n58",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "vwap" },
+          "right": { "const": 4 }
+        }
+      },
+      {
+        "id": "n59",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "rsi" },
+          "right": { "const": 18 }
+        }
+      },
+      {
+        "id": "n60",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "vwap" },
+          "right": { "const": 70 }
+        }
+      },
+      {
+        "id": "n61",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "atr" },
+          "right": { "const": 72 }
+        }
+      },
+      {
+        "id": "n62",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "vwap" },
+          "right": { "const": 17 }
+        }
+      },
+      {
+        "id": "n63",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "vwap" },
+          "right": { "const": 82 }
+        }
+      },
+      {
+        "id": "n64",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "cvd" },
+          "right": { "const": 56 }
+        }
+      },
+      {
+        "id": "n65",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "rsi" },
+          "right": { "const": 12 }
+        }
+      },
+      {
+        "id": "n66",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "cvd" },
+          "right": { "const": 72 }
+        }
+      },
+      {
+        "id": "n67",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "cvd" },
+          "right": { "const": 15 }
+        }
+      },
+      {
+        "id": "n68",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "atr" },
+          "right": { "const": 49 }
+        }
+      },
+      {
+        "id": "n69",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "rsi" },
+          "right": { "const": 62 }
+        }
+      },
+      {
+        "id": "n70",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "vwap" },
+          "right": { "const": 77 }
+        }
+      },
+      {
+        "id": "n71",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "cvd" },
+          "right": { "const": 49 }
+        }
+      },
+      {
+        "id": "n72",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "atr" },
+          "right": { "const": 74 }
+        }
+      },
+      {
+        "id": "n73",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "atr" },
+          "right": { "const": 42 }
+        }
+      },
+      {
+        "id": "n74",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "atr" },
+          "right": { "const": 55 }
+        }
+      },
+      {
+        "id": "n75",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "price" },
+          "right": { "const": 86 }
+        }
+      },
+      {
+        "id": "n76",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "cvd" },
+          "right": { "const": 7 }
+        }
+      },
+      {
+        "id": "n77",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "atr" },
+          "right": { "const": 59 }
+        }
+      },
+      {
+        "id": "n78",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "vwap" },
+          "right": { "const": 15 }
+        }
+      },
+      {
+        "id": "n79",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "rsi" },
+          "right": { "const": 58 }
+        }
+      },
+      {
+        "id": "n80",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "cvd" },
+          "right": { "const": 89 }
+        }
+      },
+      {
+        "id": "n81",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "rsi" },
+          "right": { "const": 75 }
+        }
+      },
+      {
+        "id": "n82",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "cvd" },
+          "right": { "const": 64 }
+        }
+      },
+      {
+        "id": "n83",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "cvd" },
+          "right": { "const": 44 }
+        }
+      },
+      {
+        "id": "n84",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "spread_bps" },
+          "right": { "const": 93 }
+        }
+      },
+      {
+        "id": "n85",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "atr" },
+          "right": { "const": 78 }
+        }
+      },
+      {
+        "id": "n86",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "vwap" },
+          "right": { "const": 43 }
+        }
+      },
+      {
+        "id": "n87",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "vwap" },
+          "right": { "const": 63 }
+        }
+      },
+      {
+        "id": "n88",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "cvd" },
+          "right": { "const": 64 }
+        }
+      },
+      {
+        "id": "n89",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "vwap" },
+          "right": { "const": 25 }
+        }
+      },
+      {
+        "id": "n90",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "vwap" },
+          "right": { "const": 47 }
+        }
+      },
+      {
+        "id": "n91",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "vwap" },
+          "right": { "const": 19 }
+        }
+      },
+      {
+        "id": "n92",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "vwap" },
+          "right": { "const": 13 }
+        }
+      },
+      {
+        "id": "n93",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "cvd" },
+          "right": { "const": 29 }
+        }
+      },
+      {
+        "id": "n94",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "cvd" },
+          "right": { "const": 71 }
+        }
+      },
+      {
+        "id": "n95",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "vwap" },
+          "right": { "const": 47 }
+        }
+      },
+      {
+        "id": "n96",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "spread_bps" },
+          "right": { "const": 37 }
+        }
+      },
+      {
+        "id": "n97",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "vwap" },
+          "right": { "const": 79 }
+        }
+      },
+      {
+        "id": "n98",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "cvd" },
+          "right": { "const": 14 }
+        }
+      },
+      {
+        "id": "n99",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "cvd" },
+          "right": { "const": 44 }
+        }
+      },
+      {
+        "id": "n100",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "rsi" },
+          "right": { "const": 69 }
+        }
+      },
+      {
+        "id": "n101",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "atr" },
+          "right": { "const": 55 }
+        }
+      },
+      {
+        "id": "n102",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "vwap" },
+          "right": { "const": 45 }
+        }
+      },
+      {
+        "id": "n103",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "cvd" },
+          "right": { "const": 51 }
+        }
+      },
+      {
+        "id": "n104",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "rsi" },
+          "right": { "const": 68 }
+        }
+      },
+      {
+        "id": "n105",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "cvd" },
+          "right": { "const": 49 }
+        }
+      },
+      {
+        "id": "n106",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "price" },
+          "right": { "const": 94 }
+        }
+      },
+      {
+        "id": "n107",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "vwap" },
+          "right": { "const": 34 }
+        }
+      },
+      {
+        "id": "n108",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "atr" },
+          "right": { "const": 66 }
+        }
+      },
+      {
+        "id": "n109",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "atr" },
+          "right": { "const": 98 }
+        }
+      },
+      {
+        "id": "n110",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "cvd" },
+          "right": { "const": 57 }
+        }
+      },
+      {
+        "id": "n111",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "spread_bps" },
+          "right": { "const": 8 }
+        }
+      },
+      {
+        "id": "n112",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "cvd" },
+          "right": { "const": 10 }
+        }
+      },
+      {
+        "id": "n113",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "rsi" },
+          "right": { "const": 38 }
+        }
+      },
+      {
+        "id": "n114",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gt",
+          "left": { "metric": "atr" },
+          "right": { "const": 51 }
+        }
+      },
+      {
+        "id": "n115",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "spread_bps" },
+          "right": { "const": 94 }
+        }
+      },
+      {
+        "id": "n116",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lte",
+          "left": { "metric": "rsi" },
+          "right": { "const": 38 }
+        }
+      },
+      {
+        "id": "n117",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "spread_bps" },
+          "right": { "const": 72 }
+        }
+      },
+      {
+        "id": "n118",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "gte",
+          "left": { "metric": "spread_bps" },
+          "right": { "const": 20 }
+        }
+      },
+      {
+        "id": "n119",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "vwap" },
+          "right": { "const": 13 }
+        }
+      },
+      {
+        "id": "n120",
+        "type": "condition",
+        "data": {
+          "kind": "comparison",
+          "op": "lt",
+          "left": { "metric": "cvd" },
+          "right": { "const": 45 }
+        }
+      },
+      {
+        "id": "n121",
+        "type": "action",
+        "data": {
+          "type": "modify_stop_loss",
+          "params": { "mode": "atr", "value": 2, "only_tighten": true }
+        }
+      }
+    ],
+    "edges": [
+      { "id": "e1", "source": "n3", "sourcePort": "out", "target": "n2", "targetPort": "in" },
+      { "id": "e2", "source": "n4", "sourcePort": "out", "target": "n2", "targetPort": "in" },
+      { "id": "e3", "source": "n5", "sourcePort": "out", "target": "n2", "targetPort": "in" },
+      { "id": "e4", "source": "n6", "sourcePort": "out", "target": "n2", "targetPort": "in" },
+      { "id": "e5", "source": "n7", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e6", "source": "n8", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e7", "source": "n9", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e8", "source": "n10", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e9", "source": "n11", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e10", "source": "n12", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e11", "source": "n13", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e12", "source": "n14", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e13", "source": "n15", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e14", "source": "n16", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e15", "source": "n17", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e16", "source": "n18", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e17", "source": "n19", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e18", "source": "n20", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e19", "source": "n21", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e20", "source": "n22", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e21", "source": "n23", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e22", "source": "n24", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e23", "source": "n25", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e24", "source": "n26", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e25", "source": "n27", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e26", "source": "n28", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e27", "source": "n29", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e28", "source": "n30", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e29", "source": "n31", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e30", "source": "n32", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e31", "source": "n33", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e32", "source": "n34", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e33", "source": "n35", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e34", "source": "n36", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e35", "source": "n37", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e36", "source": "n38", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e37", "source": "n39", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e38", "source": "n40", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e39", "source": "n41", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e40", "source": "n42", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e41", "source": "n43", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e42", "source": "n44", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e43", "source": "n45", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e44", "source": "n46", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e45", "source": "n47", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e46", "source": "n48", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e47", "source": "n49", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e48", "source": "n50", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e49", "source": "n51", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e50", "source": "n52", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e51", "source": "n53", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e52", "source": "n54", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e53", "source": "n55", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e54", "source": "n56", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e55", "source": "n57", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e56", "source": "n58", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e57", "source": "n59", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e58", "source": "n60", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e59", "source": "n61", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e60", "source": "n62", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e61", "source": "n63", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e62", "source": "n64", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e63", "source": "n65", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e64", "source": "n66", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e65", "source": "n67", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e66", "source": "n68", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e67", "source": "n69", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e68", "source": "n70", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e69", "source": "n71", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e70", "source": "n72", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e71", "source": "n73", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e72", "source": "n74", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e73", "source": "n75", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e74", "source": "n76", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e75", "source": "n77", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e76", "source": "n78", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e77", "source": "n79", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e78", "source": "n80", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e79", "source": "n81", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e80", "source": "n82", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e81", "source": "n83", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e82", "source": "n84", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e83", "source": "n85", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e84", "source": "n86", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e85", "source": "n87", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e86", "source": "n88", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e87", "source": "n89", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e88", "source": "n90", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e89", "source": "n91", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e90", "source": "n92", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e91", "source": "n93", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e92", "source": "n94", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e93", "source": "n95", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e94", "source": "n96", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e95", "source": "n97", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e96", "source": "n98", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e97", "source": "n99", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e98", "source": "n100", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e99", "source": "n101", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e100", "source": "n102", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e101", "source": "n103", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e102", "source": "n104", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e103", "source": "n105", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e104", "source": "n106", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e105", "source": "n107", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e106", "source": "n108", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e107", "source": "n109", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e108", "source": "n110", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e109", "source": "n111", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e110", "source": "n112", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e111", "source": "n113", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e112", "source": "n114", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e113", "source": "n115", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e114", "source": "n116", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e115", "source": "n117", "sourcePort": "out", "target": "n5", "targetPort": "in" },
+      { "id": "e116", "source": "n118", "sourcePort": "out", "target": "n6", "targetPort": "in" },
+      { "id": "e117", "source": "n119", "sourcePort": "out", "target": "n3", "targetPort": "in" },
+      { "id": "e118", "source": "n120", "sourcePort": "out", "target": "n4", "targetPort": "in" },
+      { "id": "e119", "source": "n2", "sourcePort": "out", "target": "n121", "targetPort": "when" }
+    ]
+  },
+  "layout": {
+    "positions": {
+      "n1": { "x": 0, "y": 0 },
+      "n2": { "x": 720, "y": 0 },
+      "n3": { "x": 480, "y": 0 },
+      "n4": { "x": 480, "y": 240 },
+      "n5": { "x": 480, "y": 480 },
+      "n6": { "x": 480, "y": 720 },
+      "n7": { "x": 240, "y": 0 },
+      "n8": { "x": 240, "y": 240 },
+      "n9": { "x": 240, "y": 480 },
+      "n10": { "x": 240, "y": 720 },
+      "n11": { "x": 240, "y": 960 },
+      "n12": { "x": 240, "y": 1200 },
+      "n13": { "x": 240, "y": 1440 },
+      "n14": { "x": 240, "y": 1680 },
+      "n15": { "x": 240, "y": 1920 },
+      "n16": { "x": 240, "y": 2160 },
+      "n17": { "x": 240, "y": 2400 },
+      "n18": { "x": 240, "y": 2640 },
+      "n19": { "x": 240, "y": 2880 },
+      "n20": { "x": 240, "y": 3120 },
+      "n21": { "x": 240, "y": 3360 },
+      "n22": { "x": 240, "y": 3600 },
+      "n23": { "x": 240, "y": 3840 },
+      "n24": { "x": 240, "y": 4080 },
+      "n25": { "x": 240, "y": 4320 },
+      "n26": { "x": 240, "y": 4560 },
+      "n27": { "x": 240, "y": 4800 },
+      "n28": { "x": 240, "y": 5040 },
+      "n29": { "x": 240, "y": 5280 },
+      "n30": { "x": 240, "y": 5520 },
+      "n31": { "x": 240, "y": 5760 },
+      "n32": { "x": 240, "y": 6000 },
+      "n33": { "x": 240, "y": 6240 },
+      "n34": { "x": 240, "y": 6480 },
+      "n35": { "x": 240, "y": 6720 },
+      "n36": { "x": 240, "y": 6960 },
+      "n37": { "x": 240, "y": 7200 },
+      "n38": { "x": 240, "y": 7440 },
+      "n39": { "x": 240, "y": 7680 },
+      "n40": { "x": 240, "y": 7920 },
+      "n41": { "x": 240, "y": 8160 },
+      "n42": { "x": 240, "y": 8400 },
+      "n43": { "x": 240, "y": 8640 },
+      "n44": { "x": 240, "y": 8880 },
+      "n45": { "x": 240, "y": 9120 },
+      "n46": { "x": 240, "y": 9360 },
+      "n47": { "x": 240, "y": 9600 },
+      "n48": { "x": 240, "y": 9840 },
+      "n49": { "x": 240, "y": 10080 },
+      "n50": { "x": 240, "y": 10320 },
+      "n51": { "x": 240, "y": 10560 },
+      "n52": { "x": 240, "y": 10800 },
+      "n53": { "x": 240, "y": 11040 },
+      "n54": { "x": 240, "y": 11280 },
+      "n55": { "x": 240, "y": 11520 },
+      "n56": { "x": 240, "y": 11760 },
+      "n57": { "x": 240, "y": 12000 },
+      "n58": { "x": 240, "y": 12240 },
+      "n59": { "x": 240, "y": 12480 },
+      "n60": { "x": 240, "y": 12720 },
+      "n61": { "x": 240, "y": 12960 },
+      "n62": { "x": 240, "y": 13200 },
+      "n63": { "x": 240, "y": 13440 },
+      "n64": { "x": 240, "y": 13680 },
+      "n65": { "x": 240, "y": 13920 },
+      "n66": { "x": 240, "y": 14160 },
+      "n67": { "x": 240, "y": 14400 },
+      "n68": { "x": 240, "y": 14640 },
+      "n69": { "x": 240, "y": 14880 },
+      "n70": { "x": 240, "y": 15120 },
+      "n71": { "x": 240, "y": 15360 },
+      "n72": { "x": 240, "y": 15600 },
+      "n73": { "x": 240, "y": 15840 },
+      "n74": { "x": 240, "y": 16080 },
+      "n75": { "x": 240, "y": 16320 },
+      "n76": { "x": 240, "y": 16560 },
+      "n77": { "x": 240, "y": 16800 },
+      "n78": { "x": 240, "y": 17040 },
+      "n79": { "x": 240, "y": 17280 },
+      "n80": { "x": 240, "y": 17520 },
+      "n81": { "x": 240, "y": 17760 },
+      "n82": { "x": 240, "y": 18000 },
+      "n83": { "x": 240, "y": 18240 },
+      "n84": { "x": 240, "y": 18480 },
+      "n85": { "x": 240, "y": 18720 },
+      "n86": { "x": 240, "y": 18960 },
+      "n87": { "x": 240, "y": 19200 },
+      "n88": { "x": 240, "y": 19440 },
+      "n89": { "x": 240, "y": 19680 },
+      "n90": { "x": 240, "y": 19920 },
+      "n91": { "x": 240, "y": 20160 },
+      "n92": { "x": 240, "y": 20400 },
+      "n93": { "x": 240, "y": 20640 },
+      "n94": { "x": 240, "y": 20880 },
+      "n95": { "x": 240, "y": 21120 },
+      "n96": { "x": 240, "y": 21360 },
+      "n97": { "x": 240, "y": 21600 },
+      "n98": { "x": 240, "y": 21840 },
+      "n99": { "x": 240, "y": 22080 },
+      "n100": { "x": 240, "y": 22320 },
+      "n101": { "x": 240, "y": 22560 },
+      "n102": { "x": 240, "y": 22800 },
+      "n103": { "x": 240, "y": 23040 },
+      "n104": { "x": 240, "y": 23280 },
+      "n105": { "x": 240, "y": 23520 },
+      "n106": { "x": 240, "y": 23760 },
+      "n107": { "x": 240, "y": 24000 },
+      "n108": { "x": 240, "y": 24240 },
+      "n109": { "x": 240, "y": 24480 },
+      "n110": { "x": 240, "y": 24720 },
+      "n111": { "x": 240, "y": 24960 },
+      "n112": { "x": 240, "y": 25200 },
+      "n113": { "x": 240, "y": 25440 },
+      "n114": { "x": 240, "y": 25680 },
+      "n115": { "x": 240, "y": 25920 },
+      "n116": { "x": 240, "y": 26160 },
+      "n117": { "x": 240, "y": 26400 },
+      "n118": { "x": 240, "y": 26640 },
+      "n119": { "x": 240, "y": 26880 },
+      "n120": { "x": 240, "y": 27120 },
+      "n121": { "x": 960, "y": 0 }
+    },
+    "collapsed": [],
+    "comments": [],
+    "extra": {}
+  }
+}

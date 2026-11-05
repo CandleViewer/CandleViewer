@@ -1,0 +1,54 @@
+{
+  "model": {
+    "envelope": {
+      "rule_id": "00000000-0000-4000-8000-0000000e3704",
+      "version": 3,
+      "name": "Tighten the stop while a position is open",
+      "description": "",
+      "enabled": false,
+      "mode": "disabled",
+      "scope": { "level": "position", "symbols": ["BTCUSDT"], "environments": ["demo"] },
+      "limits": {},
+      "editor": "graph",
+      "ir_version": 1,
+      "created_at": 1792849330000000,
+      "updated_at": 1792849330000000
+    },
+    "nodes": [
+      { "id": "n1", "type": "trigger", "data": { "type": "on_bar_close", "timeframe": "1m" } },
+      {
+        "id": "n2",
+        "type": "condition",
+        "data": { "kind": "comparison", "op": "is_true", "left": { "metric": "position_open" } }
+      },
+      {
+        "id": "n3",
+        "type": "action",
+        "data": {
+          "type": "modify_stop_loss",
+          "params": { "mode": "atr", "value": 2, "only_tighten": true }
+        }
+      },
+      {
+        "id": "n4",
+        "type": "condition",
+        "data": { "kind": "comparison", "op": "gt", "right": { "const": 30 } }
+      }
+    ],
+    "edges": [
+      { "id": "e1", "source": "n2", "sourcePort": "out", "target": "n3", "targetPort": "when" }
+    ]
+  },
+  "layout": {
+    "positions": {
+      "n1": { "x": 0, "y": 0 },
+      "n2": { "x": 240, "y": 0 },
+      "n3": { "x": 480, "y": 0 },
+      "n4": { "x": 240, "y": 240 }
+    },
+    "collapsed": [],
+    "comments": [],
+    "extra": {}
+  },
+  "connect": { "source": "n2", "sourcePort": "out", "target": "n4", "targetPort": "left" }
+}

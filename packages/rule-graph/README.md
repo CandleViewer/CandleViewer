@@ -12,6 +12,13 @@ and compiles the rule and returns the `ir_hash` that is stored.
   `edges`) and back, as `rules/compiler/graph.py` builds them. A shared node is one node with an
   edge per use. Positions, collapsed nodes and comments travel in a `GraphLayout`, stored as
   `graph_layout` and never hashed; `nodesNeedingLayout` is the hook for auto-layout (E37-T02).
+- `toCompileModel(graph, layout?)`: the graph as `POST /rules/{ruleId}/compile` reads it with
+  `editor: "graph"` (`rules/compiler/graph.py`): the envelope at the top level with the trigger as
+  `trigger`, server node types, `{from, to, port}` edges with each list's `in` edges in list order
+  (an inline operand as an `operand` node, its id apart from every id a node or an edge names).
+  Every edge it sends into a node feeds a port its node reads. Its `graph_layout` sends only the
+  presentation keys the client owns (positions, collapsed nodes and comments); the stored layout's
+  other keys are not sent.
 - `canonicalise(ir)`, `hash(ir)` and `compareWithServer(clientHash, serverHash)`: the server's
   canonical bytes and their sha256 (`rules/ir/canonical.py`), for display only (see below).
 - `PORT_TYPES`, `PORT_COMPAT`, `canConnect`, `NODE_PORTS`, `portsOf` and `portTypeOfMetric`: the
@@ -44,5 +51,10 @@ and compiles the rule and returns the `ir_hash` that is stored.
   `canonicalise` on a 200-node graph take at most 20 ms each, and scale linearly to 1 000 nodes.
 - Contract (`services/api/tests/contract/test_rule_graph_hash_contract.py`): the compile route
   answers each vector's `ir_hash`.
+- Compile model (`test/compileModel.test.ts`): each rule of the shape, a seeded property that the
+  model compiles back to its document, and the golden
+  `packages/fixtures/golden/rule-graph/compile_models.json` (`CV_RULE_GRAPH_WRITE_GOLDEN=1`
+  rewrites it), which `services/api/tests/contract/test_rule_graph_compile_model_contract.py`
+  compiles to each vector's `ir_hash`.
 
 The commands are listed in `AGENTS.md` §4.

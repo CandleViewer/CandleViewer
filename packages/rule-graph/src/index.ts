@@ -2,6 +2,8 @@
 // schema and re-exported, never hand-written.
 export type { RuleIr } from "@candleviewer/protocol/rule-ir";
 export { nodesNeedingLayout, readLayout, toGraph } from "./adapter/toGraph.js";
+export { toCompileModel } from "./adapter/toCompileModel.js";
+export type { CompileEdge, CompileModel, CompileNode } from "./adapter/toCompileModel.js";
 export { toIr } from "./adapter/toIr.js";
 export { findCycles } from "./analysis/cycles.js";
 export { findDanglingPorts, type DanglingPort } from "./analysis/dangling.js";
