@@ -5,21 +5,27 @@ venue's time, where row 57 finds a confirmed flat; and the sync keeps the venue'
 the closed-PnL store (slice 2): inserted settled, replaced until final, made final by its rule, a
 read after final never applied, and the ruled seed stored once per key. The venue is
 `test_closed_pnl_sync.py`'s fake, its records and readings derived from the transcribed ones there;
-the Postgres fixture and helpers are `test_closed_pnl_records_migration.py`'s."""
+the Postgres fixture and helpers are `test_closed_pnl_records_migration.py`'s. Slice 5c: a
+divergence record through a real `AuditWriter` and the chain insert, ahead of its flag."""
 
 from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.audit.writer import AuditWriter
 from candleviewer.observability.metrics import Metrics
+from candleviewer.oms.closed_pnl_compare import ClosedPnlComparer, Tolerance
 from candleviewer.oms.closed_pnl_compose import ClosedPnlComposer
 from candleviewer.oms.closed_pnl_sync import ClosedPnlSync
+from candleviewer.oms_closed_pnl_wiring import DivergenceAudit
 from candleviewer.risk.day_boundary import DayBoundary
+from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
 from candleviewer.storage.repositories.closed_pnl import record_id
 from candleviewer.storage.repositories.closed_pnl_sqlalchemy import SqlAlchemyClosedPnlStore
 from candleviewer.storage.repositories.executions import NewExecution
@@ -28,6 +34,7 @@ from candleviewer.storage.repositories.positions import NewPositionSnapshot
 from candleviewer.storage.repositories.positions_sqlalchemy import SqlAlchemyPositionStore
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.storage.repositories.risk_policy_sqlalchemy import SqlAlchemyRiskPolicyReads
+from tests.integration.audit.test_two_writers_one_chain import _assert_one_chain, _rows, _verify
 from tests.integration.storage.test_closed_pnl_records_migration import (
     _T0,
     _conn,
@@ -192,4 +199,74 @@ async def test_a_close_composed_provisional_settles_in_place_and_the_walk_makes_
             opened, group, Decimal(-45),
         )  # fmt: skip
     finally:
+        await rel.dispose()
+
+
+async def test_a_divergence_record_reaches_the_audit_chain_ahead_of_its_flag(
+    pg_dsn: str, tmp_path: Path
+) -> None:
+    """E29-S06 slice 5c (24 Sec.8.13, Sec.15.5): the long of 3 opened at the record's own entry and
+    composed to -49.275 against the venue's -47.4065323 is compared after the settle; its record
+    goes through a real `AuditWriter` and the chain insert into `audit_log`, whose chain verifies,
+    and the item is flagged with the pair it names."""
+    opened, closed = T0 - timedelta(minutes=90), T0 - timedelta(minutes=60)
+    entry = _record().avg_entry_price
+    with _conn(pg_dsn) as c:
+        a = _put(c, "exchange_accounts")
+        opener = _put(c, "orders", a, symbol="ETHUSDT", side="Buy", exchange_order_id="o-8",
+                      state="filled")  # fmt: skip
+        closer = _put(c, "orders", a, symbol="ETHUSDT", exchange_order_id="o-9", state="filled")
+        _put(c, "position_snapshots", a, symbol="ETHUSDT",
+             exchange_updated_ts=T0 - timedelta(hours=3))  # fmt: skip
+        for exec_id, order, side, price, fee, size, pnl, at in (
+            ("D1", opener, "Buy", entry, "2.151", 0, 0, opened),
+            ("D2", closer, "Sell", Decimal(1180), "2.124", 3, -45, closed),
+        ):
+            _put(c, "executions", a, exec_id=exec_id, order_id=order, symbol="ETHUSDT", side=side,
+                 exec_qty=3, exec_price=price, exec_value=3 * price, exec_fee=Decimal(fee),
+                 closed_size=size, closed_pnl=pnl, exec_ts=at)  # fmt: skip
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "closed-pnl-compare-it")
+    store, venue, metrics = SqlAlchemyClosedPnlStore(rel), Venue(), Metrics("demo")
+    writer = AuditWriter(SqlAlchemyAuditRepository(rel), str(tmp_path / "lane.wal"))
+    tolerance = Tolerance(Decimal("1e-8"), Decimal("0.01"))
+    comparer = ClosedPnlComparer(
+        marks=store, writer=DivergenceAudit(writer, environment="demo"), tolerance=tolerance,
+        metrics=metrics,
+    )  # fmt: skip
+    listed = Instruments(listed={"ETHUSDT": instrument(symbol="ETHUSDT")})
+    sync = ClosedPnlSync(
+        accounts=Accounts(), router=venue, records=store, closes=SqlAlchemyExecutionStore(rel),
+        snapshots=SqlAlchemyPositionStore(rel), metrics=metrics, now=lambda: T0,
+        on_ended=lambda: None, day_start=DayBoundary(SqlAlchemyRiskPolicyReads(rel)).day_start,
+        composer=ClosedPnlComposer(store=store, instruments=listed), comparer=comparer,
+    )  # fmt: skip
+    rid = record_id(a, "o-9")
+    try:
+        await writer.start()
+        venue.records = [_record(exchange_order_id="o-9")]
+        assert await sync.read(a)
+        await writer.flush(10.0)
+        held = await store.get(a, rid)
+        assert held is not None and held.settled_at is not None
+        assert (held.divergent, held.audited_local_net, held.audited_closed_pnl) == (
+            True, Decimal("-49.275"), _record().closed_pnl,
+        )  # fmt: skip
+        rows = _rows(pg_dsn)
+        assert [r[2] for r in rows] == [str(rid)]
+        _assert_one_chain(rows, await _verify(SqlAlchemyAuditRepository(rel)))
+        with _conn(pg_dsn) as c:
+            stored = c.execute(
+                "SELECT action, actor_label, severity, reason, after_state FROM audit_log"
+            ).fetchall()
+        [(action, actor, severity, reason, state)] = stored
+        assert (action, actor, severity, reason) == (
+            "pnl.divergence_detected", "system:oms", "warning", "closed_pnl_divergence",
+        )  # fmt: skip
+        assert state["account_id"] == str(a)  # the figures as text, at the stored scale
+        assert Decimal(state["difference"]) == Decimal("-1.8684677")
+        assert await sync.read(a)  # the same pair again: no second record
+        await writer.flush(10.0)
+        assert len(_rows(pg_dsn)) == 1
+    finally:
+        await writer.stop()
         await rel.dispose()
