@@ -90,9 +90,16 @@ def _verdict(status: str) -> tuple[str, str]:
 
 def test_selection_reads_the_rules_pr_yml_declares_and_keeps_no_copy() -> None:
     workflow = path_filters.load_workflow()
-    declared = yaml.safe_load(path_filters.filter_step(workflow)["with"]["filters"])
+    step = path_filters.filter_step(workflow)
+    declared = yaml.safe_load(step["with"]["filters"])
     assert path_filters.load_filters() == declared
-    assert set(declared) == set(workflow["jobs"]["changed-paths"]["outputs"]) - {"pr"}
+    # The filter outputs are the ones that read the filter step (#5922): any other output of the
+    # job (`pr`, `queue`, the next one added) is not a path filter and is not counted here.
+    reads = re.compile(r"\$\{\{\s*steps\." + re.escape(step["id"]) + r"\.outputs\.(\w+)\s*\}\}")
+    outputs = workflow["jobs"]["changed-paths"]["outputs"]
+    filters = {name: m.group(1) for name, v in outputs.items() if (m := reads.fullmatch(str(v)))}
+    assert all(name == read for name, read in filters.items())  # each output names its own filter
+    assert set(declared) == set(filters)
     assert vars(pr_gate)["path_filters"] is path_filters  # the gate reads pr.yml through the module
 
 
