@@ -50,10 +50,10 @@ class Synced(World):
     records: Store = field(default_factory=Store)
 
     def stores(self) -> OmsStores:
-        return replace(super().stores(), closed_pnl=self.records)
+        return replace(super().stores(), closed_pnl=cast(Any, self.records))
 
 
-def keyed(world: World, *, read: bool = True) -> World:
+def keyed[W: World](world: W, *, read: bool = True) -> W:
     """The demo account, of the process's environment and holding a key; the flags read unless
     `read` is False."""
     InMemorySubmissionStore(world.store).seed_account(cr.ref())
@@ -92,8 +92,9 @@ async def test_the_sync_is_built_from_the_runtimes_parts_and_starts_once_ready(
         parts = runtime._composed()
         sync = parts.closed_pnl
         assert isinstance(sync, ClosedPnlSync) and sync._task is None
-        assert sync._router is parts.submission._router and sync._accounts is parts.route.accounts
-        assert sync._records is world.records and sync._closes is world.store.executions
+        accounts, closes = cast(object, sync._accounts), cast(object, sync._closes)
+        assert sync._router is parts.submission._router and accounts is parts.route.accounts
+        assert sync._records is world.records and closes is world.store.executions
         assert sync._snapshots is parts.stream.positions._snapshots
         [clock] = world.position_clocks
         assert isinstance(clock, ExchangeWallClock) and sync._now is clock
@@ -197,8 +198,9 @@ async def test_a_resyncing_status_asks_the_sync_for_a_read_then_reconciliation_f
         assert isinstance(runtime._composed().stream.reconciliation, ClosedPnlResyncs)
         assert world.gauge("reconciliation") == 0.0
         [port] = world.venue.ports
-        status = {"state": "resyncing", "reason": "reconnected", "epoch": 1, "ts": T0_US}
-        port.push(PrivateStreamStatus(account_id=cr.ACCOUNT, **status))
+        port.push(PrivateStreamStatus(
+            account_id=cr.ACCOUNT, state="resyncing", reason="reconnected", epoch=1, ts=T0_US
+        ))  # fmt: skip
         await until(lambda: len(asked) == 2)
     assert asked == [("sync", cr.ACCOUNT), ("reconnected", cr.ACCOUNT)]
 
