@@ -108,26 +108,49 @@ describe("validate: the result", () => {
   });
 
   it("validate_aStopOrTargetPastZero_withNoReference_isListed (#5886 fold 2)", () => {
+    // `pct_equity` sizing: unlike `fixed_qty`, it does not list the reference price itself, so
+    // only the stop / target past-zero check can put `reference_price` in the list (#5886 m1).
+    const sized = {
+      sizing: { mode: "pct_equity", pct: "1", round_to_lot: true },
+    } as Partial<OrderDraft>;
     const none = ctx({ ticker: null });
-    const stop = validate(draft({ ...MARKET, stopLoss: off("percent", "150") }), none);
+    const stop = validate(draft({ ...MARKET, ...sized, stopLoss: off("percent", "150") }), none);
     expect(stop).toMatchObject({ failures: [], exactness: "partial" });
     expect(stop.unmirrored).toContain("reference_price");
-    const sell = { ...MARKET, side: "sell", stopLoss: off("ticks", "9") } as const;
+    const sell = { ...MARKET, ...sized, side: "sell", stopLoss: off("ticks", "9") } as const;
     const target = validate(draft({ ...sell, takeProfit: off("ticks", "700000") }), none);
     expect(target.unmirrored).toContain("reference_price");
     expect(target.failures.map((f) => f.rule)).not.toContain("take_profit_side");
     // With no instrument grid a tick is unknown: a ticks stop is listed, a percent one judged raw.
     const noGrid = ctx({ instrument: { ...BTC, tick_size: "0" } });
-    const ticks = validate(draft({ stopLoss: off("ticks", "600000") }), noGrid);
+    const ticks = validate(draft({ ...sized, stopLoss: off("ticks", "600000") }), noGrid);
     expect(ticks.failures.map((f) => f.rule)).not.toContain("invalid_stop_distance");
     expect(ticks.unmirrored).toContain("instrument");
-    const tp = validate(draft({ side: "sell", takeProfit: off("ticks", "700000") }), noGrid);
+    const tp = validate(
+      draft({ ...sized, side: "sell", takeProfit: off("ticks", "700000") }),
+      noGrid,
+    );
     expect(tp.failures.map((f) => f.rule)).not.toContain("take_profit_side");
+    expect(tp.unmirrored).toContain("instrument");
     const pct = validate(draft({ stopLoss: off("percent", "100") }), noGrid);
     expect(pct.failures.find((f) => f.rule === "invalid_stop_distance")?.params).toEqual({
       kind: "non_positive",
       side: "long",
     });
+  });
+
+  it("validate_aStringReduceOnly_withPctEquitySizing_isOnlyReduceOnlyInvalid (#5886 m2)", () => {
+    const d = {
+      ...draft({
+        stopLoss: off("ticks", "9"),
+        sizing: { mode: "pct_equity", pct: "1", round_to_lot: true },
+      }),
+      reduceOnly: "true",
+    } as unknown as OrderDraft;
+    const result = validate(d, ctx());
+    expect(result.failures.map((f) => `${f.field}:${f.rule}`)).toEqual([
+      "reduce_only:reduce_only_invalid",
+    ]);
   });
 
   it("validate_anAbsentMinimum_isListed_andNeverGuessed (S1 grids: null, not a default)", () => {
