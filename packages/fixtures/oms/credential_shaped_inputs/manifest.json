@@ -10,7 +10,7 @@
   "rest": {
     "POST /v5/order/create": { "payload": "echo_headers.json" },
     "POST /v5/order/cancel": { "payload": "echo_url.json" },
-    "POST /v5/order/amend": { "payload": "echo_key.json" }
+    "POST /v5/order/amend": { "payload": "echo_letters.json" }
   },
   "ws": { "private": ["frames.jsonl"] },
   "slots": {
@@ -30,7 +30,7 @@
       "derived_from": ["../bybit/2026-10-05/rest/trading-error-110001.json"],
       "derivation": "The transcribed `110001` row with its message text followed by a signed URL whose key, timestamp and signature are placeholders. The code is unchanged."
     },
-    "echo_key.json": {
+    "echo_letters.json": {
       "derived_from": ["../bybit/2026-10-05/rest/trading-error-110001.json"],
       "derivation": "The transcribed `110001` row with its message text followed by a placeholder letters-only key. The code is unchanged."
     },

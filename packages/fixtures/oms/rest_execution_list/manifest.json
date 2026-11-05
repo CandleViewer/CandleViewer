@@ -2,7 +2,7 @@
   "$schema": "../manifest.schema.json",
   "scenario": "rest_execution_list",
   "origin": "ticket",
-  "description": "The execution read, `GET /v5/execution/list`: the transcribed reply, one ETHPERP Trade fill with an empty link id and a next-page cursor. Nothing is derived. Docs-transcribed: K01's execution lists replace it.",
+  "description": "The execution read, `GET /v5/execution/list`: the transcribed reply, one ETHPERP Trade fill with an empty link id and a next-page cursor that the port's walk refuses to see twice. Nothing is derived. Docs-transcribed: K01's execution lists replace it.",
   "environment": "demo",
   "evidence": "docs-transcribed",
   "rules": ["S4", "S5"],

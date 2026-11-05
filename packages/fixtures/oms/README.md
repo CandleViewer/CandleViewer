@@ -74,6 +74,9 @@ conditionals cannot. In short:
 - `rest` maps `"<METHOD> <path>"` to a stub: `payload` (a corpus file or a derived file) and an
   optional `http_status` (200 when absent; a documentation example states none, so this is the
   scenario's choice, not evidence). A stub answers every call of its route the same way.
+  A read reply that keeps its next-page cursor never ends the trading port's walk, which raises on
+  a cursor it has already seen: the three transcribed read replies keep theirs (their class), so a
+  consumer clears it in its test or serves a second page; a derived read stub has it cleared.
 - `ws.private` lists the files whose frames the private stream delivers, in this order. A fixture's
   frames are its delivery order: a gap, a reversal or a repeat is its own scenario, never random.
 - `files` declares each derived file: `derived_from` (corpus files that exist) and `derivation`

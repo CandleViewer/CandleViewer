@@ -2,7 +2,7 @@
   "$schema": "../manifest.schema.json",
   "scenario": "rest_order_realtime",
   "origin": "ticket",
-  "description": "The open-order read, `GET /v5/order/realtime`: the transcribed reply, one open ETHUSDT limit order with TP/SL under a foreign link id and a next-page cursor. Nothing is derived. Docs-transcribed: K01's recorded read replaces it.",
+  "description": "The open-order read, `GET /v5/order/realtime`: the transcribed reply, one open ETHUSDT limit order with TP/SL under a foreign link id and a next-page cursor that the port's walk refuses to see twice. Nothing is derived. Docs-transcribed: K01's recorded read replaces it.",
   "environment": "demo",
   "evidence": "docs-transcribed",
   "rules": ["S1", "S9"],

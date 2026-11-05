@@ -2,7 +2,7 @@
   "$schema": "../manifest.schema.json",
   "scenario": "rest_order_history",
   "origin": "ticket",
-  "description": "The history read, `GET /v5/order/history`: the transcribed reply, one cancelled BTCUSDT PostOnly order and a next-page cursor, an order of nobody's we know. Nothing is derived. Docs-transcribed: K01's `retention` reads replace it.",
+  "description": "The history read, `GET /v5/order/history`: the transcribed reply, one cancelled BTCUSDT PostOnly order, an order of nobody's we know, and a next-page cursor that the port's walk refuses to see twice. Nothing is derived. Docs-transcribed: K01's `retention` reads replace it.",
   "environment": "demo",
   "evidence": "docs-transcribed",
   "rules": ["S1"],
