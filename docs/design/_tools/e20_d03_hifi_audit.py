@@ -119,7 +119,7 @@ CANVAS, TEXT, SECONDARY, TERTIARY = (
     "color.text.tertiary",
 )
 RING, OVERLAY, RAISED = "color.focus.ring", "color.surface.overlay", "color.surface.raised"
-# Section 2.2, row by row: (pair, ink, against, floor). "@shipped" measures the shipped remap.
+# Section 2.2: (pair, ink, against, floor); "@shipped" is the shipped remap, any "@" row reported.
 PAIRS: tuple[tuple[str, str, str, float], ...] = (
     ("cell value, neutral", TEXT, CANVAS, 4.5),
     ("cell value, buy shade", TEXT, BUY_SHADE, 4.5),
@@ -131,8 +131,10 @@ PAIRS: tuple[tuple[str, str, str, float], ...] = (
     ("unit suffix", TERTIARY, CANVAS, 4.5),
     ("T2 label, SCR-033", TERTIARY, OVERLAY, 4.5),
     ("T2 reason, SCR-033", SECONDARY, OVERLAY, 4.5),
-    ("T2 label, SCR-045", TERTIARY, RAISED, 4.5),
+    ("T2 label on the gated primary fill", TERTIARY, RAISED, 4.5),
     ("T2 reason, SCR-045", SECONDARY, RAISED, 4.5),
+    ("gated primary hairline, `Apply`", "color.border.default", OVERLAY + "@reported", 3.0),
+    ("gated primary hairline, `Export CSV`", "color.border.default", RAISED + "@reported", 3.0),
     ("hint chip", SECONDARY, "color.surface.selected", 4.5),
     ("validation message", TEXT, OVERLAY, 4.5),
     ("invalid field boundary", "color.status.danger.default", "color.surface.overlay", 3.0),
@@ -191,6 +193,7 @@ SIG_STATES = (
 AROW_COUNT = 8
 # G-T2: verbs E09-D09 section 3.2 lacks, PROPOSED here and routed (A-11).
 PROPOSED_VERBS = frozenset({"export market data"})
+T2_FILL = ("takes the fill `color.surface.raised` with a `color.border.default` hairline",)
 # G-RULED: sha256[:16] of each BQ bullet; `--repin` rewrites the block, nothing else.
 PINS_OPEN = 'BQ_PINS = """\n'
 PINS_CLOSE = '"""  # end of the BQ pins'
@@ -290,7 +293,7 @@ def ratio(a: str, b: str) -> float:
 
 def pair_row(pair: str, fg: str, bg: str, floor: float) -> list[str]:
     vals = [f"{ratio(ink(n, p, fg), ink(n, p, bg)):.2f}" for n in THEMES for p in PALETTES]
-    cell = f"{floor:g}, reported" if bg.endswith("@shipped") else f"{floor:g}"
+    cell = f"{floor:g}, reported" if "@" in bg else f"{floor:g}"
     return [pair, f"`{fg}`", f"`{bg.split('@')[0]}`", cell, *vals]
 
 
@@ -570,7 +573,7 @@ def g_format(t: L.Tree) -> list[str]:
 def g_t2(t: L.Tree) -> list[str]:
     spec = t.text("spec")
     r4 = next((ln for ln in spec.split("\n") if ln.startswith("- **R-4 ")), "")
-    bad = L.t2_markers(r4) + L.no_disabled_tokens(spec)
+    bad = L.t2_markers(r4) + L.t2_markers(r4, T2_FILL) + L.no_disabled_tokens(spec)
     d09 = repo().show(BASE, KEYED["D09E09"].rel) or ""
     bad += L.t2_reason_keys(spec, L.d09_keys(d09))
     verbs = L.d09_verbs(d09)
@@ -703,6 +706,8 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        r"(\| 125 % +\| 1\.25 +\| )30", r"\g<1>24", regex=True),
     _M("M-33", "G-BOARDS", "an undrawn cell without its binding text", "spec",
        r"(\| motion \(E20-D04 #601\)[^\n]*\| )§5", r"\1E20-D04", regex=True),
+    _M("M-34", "G-T2", "R-4 loses the gated primary fill", "spec",
+       "takes the fill `color.surface.raised`", "takes the fill `color.surface.overlay`"),
 )
 # fmt: on
 
