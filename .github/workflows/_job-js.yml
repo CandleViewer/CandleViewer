@@ -70,6 +70,8 @@ jobs:
       - name: Install (frozen lockfile, no lifecycle scripts — SR-130, SR-138)
         run: python3 tools/ci/registry_retry.py --registry npm -- pnpm install --frozen-lockfile --ignore-scripts
       - name: Install allowlisted postinstall builds (SR-138 exception list)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1" # this job never launches Electron (#5955)
         run: node tools/ci/run-allowed-postinstall.mjs
       - name: pnpm dedupe --check (no redundant duplicate deps, SR-138 companion gate)
         run: pnpm dedupe --check
@@ -96,7 +98,10 @@ jobs:
           node-version-file: ".nvmrc"
       - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
       - run: python3 tools/ci/registry_retry.py --registry npm -- pnpm install --frozen-lockfile --ignore-scripts
-      - run: node tools/ci/run-allowed-postinstall.mjs
+      - name: Install allowlisted postinstall builds (no Electron download, #5955)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1" # this job never launches Electron (#5955)
+        run: node tools/ci/run-allowed-postinstall.mjs
       - name: Turbo lint --filter=...[origin/main]
         run: pnpm turbo run lint --filter='...[origin/main]' --summarize
       # E14-X03 (#549; DR6, SR-E14-01): the lint ban on the drawing render paths cannot be switched
@@ -123,7 +128,10 @@ jobs:
           node-version-file: ".nvmrc"
       - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
       - run: python3 tools/ci/registry_retry.py --registry npm -- pnpm install --frozen-lockfile --ignore-scripts
-      - run: node tools/ci/run-allowed-postinstall.mjs
+      - name: Install allowlisted postinstall builds (no Electron download, #5955)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1" # this job never launches Electron (#5955)
+        run: node tools/ci/run-allowed-postinstall.mjs
       # The name filter maps each changed file to the package that holds it, and tools/ is in none:
       # a change only to the token formats' declarations, which ui's tests import, selected no
       # package. The tag selector matches the changed files against the inputs of the typecheck
@@ -153,7 +161,10 @@ jobs:
           node-version-file: ".nvmrc"
       - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
       - run: python3 tools/ci/registry_retry.py --registry npm -- pnpm install --frozen-lockfile --ignore-scripts
-      - run: node tools/ci/run-allowed-postinstall.mjs
+      - name: Install allowlisted postinstall builds (no Electron download, #5955)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1" # this job never launches Electron (#5955)
+        run: node tools/ci/run-allowed-postinstall.mjs
       # A name filter maps each changed file to the package that holds it, and tools/ is in none:
       # a change only to tools/contrast or the token formats selected no package. The tag selector
       # matches the changed files against the inputs of the test:cov tasks tagged `unit-frontend`
@@ -208,7 +219,10 @@ jobs:
           node-version-file: ".nvmrc"
       - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
       - run: python3 tools/ci/registry_retry.py --registry npm -- pnpm install --frozen-lockfile --ignore-scripts
-      - run: node tools/ci/run-allowed-postinstall.mjs
+      - name: Install allowlisted postinstall builds (no Electron download, #5955)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1" # this job never launches Electron (#5955)
+        run: node tools/ci/run-allowed-postinstall.mjs
       - name: Turbo test:cov (chart-engine, protocol, rule-graph, dock) --filter=...[origin/main]
         run: >
           pnpm turbo run test:cov
@@ -259,7 +273,7 @@ jobs:
           node-version-file: ".nvmrc"
       - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
       - run: python3 tools/ci/registry_retry.py --registry npm -- pnpm install --frozen-lockfile --ignore-scripts
-      - run: node tools/ci/run-allowed-postinstall.mjs
+      - run: python3 tools/ci/registry_retry.py --registry github --attempts 2 -- node tools/ci/run-allowed-postinstall.mjs
       - name: Turbo build --filter=...[origin/main] (generated-code freshness is E03-T06's gate)
         run: pnpm turbo run build --filter='...[origin/main]' --summarize
       - name: Record lane duration in job summary

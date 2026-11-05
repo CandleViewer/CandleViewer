@@ -671,6 +671,13 @@ index alone, removing nothing.
   `REGISTRY_RETRY_TIMEOUT`), and its whole process group was killed before the next attempt. On
   its own it is a warning; the step fails only when CI-INFRA-002 follows. A green run that needed
   a retry carries a `::warning::` and a step-summary line naming the registry.
+- **Electron binary (#5955).** Only a job that launches Electron (`e2e-electron`, `build`'s
+  hardening gate, the Electron perf matrix) downloads it, through `registry_retry.py --registry
+github` (the message names GitHub releases); every other job sets
+  `ELECTRON_SKIP_BINARY_DOWNLOAD=1` on the `run-allowed-postinstall.mjs` step, which skips only
+  the `electron` entry. Two attempts: a second consecutive failure is reported as CI-INFRA-002. A CI-INFRA-002 naming
+  GitHub releases is an outage: re-run the job, unless a `run-allowed-postinstall:` refusal line
+  precedes it, which is an allowlist (SR-138) failure, not an outage.
 - **Retry, not a mirror (#5113, E03-T14 BQ-8).** Registry outages (threat model
   `docs/plan/threat-models/E03-supply-chain.md` A5, R4) are met by retrying, not by a local
   registry cache: a cache is more infrastructure to run and secure, and GHCR / Docker Hub images

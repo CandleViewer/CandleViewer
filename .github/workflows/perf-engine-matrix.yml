@@ -72,7 +72,10 @@ jobs:
           node-version-file: ".nvmrc"
       - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: node tools/ci/run-allowed-postinstall.mjs
+      - name: Install allowlisted postinstall builds (no Electron download, #5955)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1" # this job never launches Electron (#5955)
+        run: node tools/ci/run-allowed-postinstall.mjs
       - name: Install the lockfile's Playwright Chromium (run-matrix resolves Playwright from apps/desktop)
         working-directory: apps/desktop
         run: pnpm exec playwright install --with-deps chromium
@@ -114,7 +117,7 @@ jobs:
       - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
       - run: pnpm install --frozen-lockfile --ignore-scripts
       # Electron 42 and later ship no postinstall: the SR-138 runner fetches the binary (#1819).
-      - run: node tools/ci/run-allowed-postinstall.mjs
+      - run: python3 tools/ci/registry_retry.py --registry github --attempts 2 -- node tools/ci/run-allowed-postinstall.mjs
       # The system libraries a browser needs, installed as _job-e2e.yml's e2e-electron installs them.
       - name: Install the browser system libraries (as the e2e Electron job does)
         working-directory: apps/desktop

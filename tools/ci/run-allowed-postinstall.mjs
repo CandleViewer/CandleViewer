@@ -17,6 +17,12 @@
 // another package, or a pinned bin the installed package no longer ships or that resolves outside
 // it, fails the run, and so does an allowlist file that is a link.
 //
+// ELECTRON_SKIP_BINARY_DOWNLOAD=1 (#5955): a job that never launches Electron sets it on this step
+// and the runner skips the `electron` entry's bin, which would otherwise download the ~100 MB
+// binary (Electron 45's install.js does not honour the variable itself, so the runner does). Only
+// the exact value "1" skips; any other non-empty value is reported and ignored, so the download
+// still happens. The allowlist and every pinned bin are checked first, whether or not it skips.
+//
 // Usage: node tools/ci/run-allowed-postinstall.mjs
 
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -201,7 +207,21 @@ function main() {
       shell: process.platform === "win32",
     });
   }
+  const skipValue = process.env.ELECTRON_SKIP_BINARY_DOWNLOAD;
+  const skipElectron = skipValue === "1";
+  if (skipValue !== undefined && skipValue !== "" && !skipElectron) {
+    process.stdout.write(
+      `ELECTRON_SKIP_BINARY_DOWNLOAD=${JSON.stringify(skipValue)} is not "1": ignored, electron's binary is fetched\n`,
+    );
+  }
   for (const { entry, file, packageDir, version } of pinned) {
+    if (skipElectron && entry.name === "electron") {
+      process.stdout.write(
+        `skipping electron@${version}'s ${entry.run.bin} bin: ELECTRON_SKIP_BINARY_DOWNLOAD=1 ` +
+          "(this job never launches Electron)\n",
+      );
+      continue;
+    }
     const label = `${entry.name}@${version}'s ${entry.run.bin} bin`;
     process.stdout.write(`running ${label} (${path.relative(repoRoot, file)})\n`);
     const started = Date.now();
