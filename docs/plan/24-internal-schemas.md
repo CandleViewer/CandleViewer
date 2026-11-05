@@ -123,8 +123,8 @@ class Instrument(BaseModel):
     min_leverage: Decimal
     leverage_step: Decimal
     funding_interval_min: int              # e.g. 480 = 8 h — NEVER assume 8 h
-    upper_funding_rate: Decimal
-    lower_funding_rate: Decimal
+    upper_funding_rate: Decimal | None     # None: no bound in instrument info (PROPOSED, §19.110)
+    lower_funding_rate: Decimal | None     # None: no bound in instrument info (PROPOSED, §19.110)
     copy_trading: bool                     # informational; feature de-scoped
     metadata_version: int                  # bumped when any field above changes
     fetched_at: TsUs
@@ -6887,3 +6887,38 @@ The orchestrator assigned this number on 2026-11-03 (ruling of record on #1029, 
 - §9.4 rule 8 and §9.5: the pre-send intent pass (#3863's follow-up). As built, only `previewTradeGroup` runs it; the planner and the fan-out run none, and the submit is not built. Rule 8 no longer names E28-T05 (#909) as the pass's owner: it belongs in the planner both run, and no open ticket places it yet.
 - Beside this section, no contract changes: ADR-0006 Amendment 2 and Validation status, and ADR-0044 (v1 order entry is REST in every environment; the exchange's reject text is code-only to clients and stored redacted; its risks name the E30 and `11-user-stories.md` texts that still show the exchange's message); `20` §3.5, §5 (the planned layout drops `ws_trade.py`), §9, §10.2 and §13.2 (REST in every environment, the shipped interface names, rows for the stream consumer and the exit routes; the live 500 ms figure assumed a WS trade path) and §16; `21` §3.3.4 (automatic adoption only; the `exchange_updated_ts` note); `28` B1.6 (text only); `04` SR-057, SR-058, O8, row 17 and the E29 paragraph's tense; the E29 threat model's §2 (E3b) and §12.3 notes.
 - No migration, REST operation, WS frame, table, column, chart or `machine_hash` change.
+
+### 19.110 2026-11-03 — 22 `getFundingHistory` / `FundingPageMeta`, `Position.funding_estimate` / `FundingEstimate`, `Settings.deriv`: the funding pane's contract, contract first (E24-S03, #778)
+
+Assigned by the orchestrator on #778 (6610230823); it keeps this number through its rebases.
+
+- The orchestrator's ruling of record on #778 (6610230823; BQ items 3, 6, 7 and 8 as recommended, scope D02 §16 rec. 9), contract first (C-6.1), additive (C-6.3), landing E24-D02 §16's G5 and G11 and G1's funding rows; the basis key follows the ruling on #783 (6612480577), and the liquidation keys, the REST-only carrier, the accepted 64-gap cap and the backend slice follow the ruling 6612964585 (Q1–Q4); the OI keys follow the ruling on #777 (6618708569) and the served `annualised_pct` the ruling on #779 (6618709412). Display preferences have no local-storage fallback, so the contract carries them.
+- 22 `getFundingHistory` (G5): `funding_interval_minutes` is stated as instrument info's `fundingInterval` and gains `minimum: 1`, a response-side narrowing (the resolver raises rather than serve an unknown interval, so no shipped answer carried a value below 1), and the response gains `upper_funding_rate` and `lower_funding_rate`, instrument info's `upperFundingRate` and `lowerFundingRate`, each `null` when the instrument carries none and never `0`. The history's step is the interval; a countdown runs to the ticker's `nextFundingTime`, never to a multiple of it (E24-D02 F11).
+- §1 `InstrumentInfo`'s `upper_funding_rate` / `lower_funding_rate` become `Decimal | None` (PROPOSED), `None` when instrument info carries no bound. The adapter's `Decimal(0)` default for a missing bound (`exchange/bybit/instruments.py:202-210`) is the serving slice's to change; until it does, a stored `0` cannot be told from a real zero bound, and the serving handler must not serve that default as a bound.
+- 22 `getFundingHistory`'s items gain `annualised_pct` (the ruling on #779, 6618709412), every item, the predicted one included: a `Decimal` percentage the server computes as §2.7's `annualized_rate`, the rate × (525 600 / `funding_interval_minutes`) × 100 (`domain/funding.py` `annualised_pct`); a client displays it and never computes it.
+- 22 `getFundingHistory`'s `meta` becomes the new `FundingPageMeta` (BQ 6): `PageMeta` plus `coverage`, `LiquidationsPageMeta`'s `first_available_ts`, `covered_from`, `covered_to` and `no_coverage`, and a `gaps[]` of at most 64 spans. A gap is a span of the covered part in which a settlement was due and none is stored: its `from` is the stored settlement before it (or `covered_from` when none is stored before it inside the covered part), its `to` the stored settlement after it (or `covered_to`), both exclusive, and it is listed when `to − from` exceeds one interval; past 64 the oldest are joined into one span, which never leaves a missing settlement out. An empty page with `no_coverage: true` is "not recorded"; with `false`, no funding settled in the window.
+- 22 `Position` gains `funding_estimate` (G11), the new `FundingEstimate`: `amount` (never negative, which its pattern holds, quantised to 8 dp `ROUND_HALF_UP` as §1.5's funding payments), `direction` (`pay`, `receive`, `none`), `funding_rate`, `settles_at` and `computed_at`, computed by the server as the position's value at mark times the accruing rate (C-2.12). `listPositions` and `getPosition` serve it, `null` when flat or with no accruing rate (`null` is the answer "no charge", the one exception to `listPositions`' absent-member rule), so its RBAC is theirs, `positions:read` over the granted accounts (C-12.4). The other `Position` carriers, the `setPositionLeverage` `200` and `AccountConsequenceSummary.open_positions`, send it absent. No new operation, an aggregate row carries none, and 23 `PositionUpdate` is unchanged. The serving handler's tests must include a Manager reading an unassigned account's position (no estimate leaks; the read's scope refusal holds) and a caller without `positions:read`.
+- 22 `Settings` gains the `deriv` group (G1), `additionalProperties: false`, eight leaves: `oi_mode` (`absolute | delta`, client default `absolute`) and `oi_quadrant_colouring` (client default `true`), by the ruling on #777 (6618708569), `funding_style` (`line | bars`, client default `line`), `funding_annualised` (client default `false`), `basis_source` (`enum: [last, mark]`, client default `last`, the ruling on #783, 6612480577), and, by the ruling 6612964585 Q1, `liq_mode` (`bars | heatmap`, client default `bars`), `liq_min_notional_usd` (the shared `Decimal` string, the shape of the `min_notional_usd` option of `getLiquidations` and 23 `liquidations.{symbol}`, non-negative, at most 1,000,000,000 with at most 2 fractional digits, client default `"0"`) and `zones_enabled` (client default `false`). E24-D02 §10's keys are flattened to one level (`deriv.funding.style` is the leaf `deriv.funding_style`), as the leaf table of `/settings` takes a group's members as its leaves; `zones_enabled` carries no `liq_` prefix, as ruled. `liq_min_notional_usd` meets D02 §10's "number, USDT", and supersedes E24-D03's PROPOSED integer row (D03-G3: a whole number of USDT): two fractional digits are accepted. `updateSettings` judges every patch leaf against that table and refuses an undeclared key or a value outside a leaf's enum, type or range with `422 validation_failed`, writing nothing. Annualising is a display transform of a rate only; money is never annualised on the client. `deriv.basis.annualised` (dropped by 6612480577) is the one key of D02 §10's nine not in it.
+- The new `getFundingHistory` members (the bounds, `annualised_pct`, `meta.coverage`) and `funding_estimate` are optional until the handlers serve them; a client reads an absent member as unknown. The `deriv` leaves are accepted by `updateSettings` through the regenerated models. No WS frame, table, column, chart or `machine_hash` change, and no migration.
+
+The carrier as the server computes it (3(b) of 6610230823; 22 `FundingEstimate`):
+
+```python
+class FundingEstimate(BaseModel):
+    """One position's estimated charge at the next settlement. Server-computed only (C-2.12)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    amount: Decimal          # >= 0, settle coin (USDT): |position value at mark x funding_rate|,
+                             # quantised to 8 dp ROUND_HALF_UP (§1.5 funding payments)
+    direction: Literal["pay", "receive", "none"]  # long pays / short receives when the rate > 0,
+                             # the reverse when < 0; "none" (amount 0) when the rate is exactly 0
+    funding_rate: Decimal    # the accruing rate per interval used (the ticker's fundingRate)
+    settles_at: TsUs         # the settlement it is for (the ticker's nextFundingTime)
+    computed_at: TsUs        # when the mark and the rate were read; a client marks it stale
+
+# Position.funding_estimate: FundingEstimate | None
+#   listPositions / getPosition: None when the position is flat or no accruing rate is held
+#     ("no charge", never a zero amount);
+#   setPositionLeverage 200 and AccountConsequenceSummary.open_positions: never set (absent).
+```
