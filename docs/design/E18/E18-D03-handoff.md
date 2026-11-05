@@ -1,6 +1,52 @@
-# E18-D03 — Hand-off (`16` §11.4): CMP-109, CMP-132, CMP-182 and CMP-228's `footprint` kind
+# E18-D03 — Hand-off (§A–§G for the footprint layer: CMP-109, CMP-132, CMP-182 and CMP-228's `footprint` kind)
 
-The pack is [E18-D03.md](E18-D03.md): every "A-n" below is its §C row, applied to `15` and `16` by PR 2 (the boards PR); every "R-n", "W-n", "C-n" or "OQ-n" is the pack's. The keyboard tables add no global binding and leave `Esc` untouched (`05` §3). Boards are PENDING (the pack's §0): the Penpot file `E18-D03 boards`, page `E18-D03`, is referenced by page name and page id only (R32 R7).
+The pack is [E18-D03.md](E18-D03.md): every "A-n" below is its §C row, applied to `15` and `16` by PR 2 (the boards PR); every "R-n", "W-n", "C-n" or "OQ-n" is the pack's. This hand-off takes E24-D05's form (§A placement … §F references, §G the `16` §11.4 checklists), so a consuming story reads the same parts in the same order (`16` §11.5 re-opens against them). The keyboard tables add no global binding and leave `Esc` untouched (`05` §3). Boards are PENDING (the pack's §0): the Penpot file `E18-D03 boards`, page `E18-D03`, is referenced by page name and page id only (R32 R7).
+
+## §A Placement
+
+| Component | `15` heading | Screens                        | Contract in the pack |
+| --------- | ------------ | ------------------------------ | -------------------- |
+| CMP-109   | `15`:1267    | SCR-030 (the footprint column) | pack §5, §6, §10     |
+| CMP-132   | `15`:1632    | SCR-030, SCR-056 (the rows)    | pack §3, §8, §10     |
+| CMP-182   | `15`:2377    | SCR-030                        | pack §5, §10         |
+| CMP-228   | `15`:2968    | SCR-032 (the `footprint` kind) | pack §7, §10         |
+
+CMP-197 and CMP-046 are used as `15` states them, plus the footprint rows and fields of pack §6 (A-11, A-12); SCR-056's panel frame stays E25-D02's (#668).
+
+## §B The contract table
+
+`15`'s fields today are the merged text; the §C rows replace or extend them in PR 2. Until then the pack's sections are the contract the stories build against.
+
+| Field         | CMP-109                    | CMP-132                                | CMP-182                    | CMP-228 (`footprint`)        |
+| ------------- | -------------------------- | -------------------------------------- | -------------------------- | ---------------------------- |
+| Props         | A-1; the API sketch A-21   | `15` CMP-132, unchanged                | `15` CMP-182, unchanged    | A-10                         |
+| States        | A-4; pack §5.4             | the registered states (`15`:1637); A-7 | pack §5.3, §5.4            | A-10                         |
+| Tokens        | A-3; pack §2.1             | `15` CMP-132; pack §3.3 (A-20)         | A-8                        | CMP-228's own plus CMP-109's |
+| A11y          | A-2; pack §6 (W-3)         | `15` CMP-132, unchanged                | CMP-109's; the badge (R-5) | `role="img"`, W-18           |
+| Motion        | E18-D04 (#498)             | E18-D04 (#498)                         | E18-D04 (#498)             | none                         |
+| Data contract | `24`:819; the wire's flags | G-4 (E18-S08 #632)                     | `24` §4.1's bars           | SYNTHETIC sample only        |
+| Storybook     | A-5                        | `15` CMP-132                           | A-9                        | A-10                         |
+
+## §C Copy-ready rows (the pack's §C)
+
+The rows are the pack's §C, not copied here: A-1 … A-6 and A-21 (CMP-109), A-7 (CMP-132), A-8 and A-9 (CMP-182), A-10 (CMP-228), A-11 (CMP-197), A-12 (CMP-046), A-13 and A-14 (`16`'s tokens), each with its Old verbatim at the base and its New. PR 2 (the boards PR) applies them to `15` and `16` byte for byte after their owners stamp them and lands the token JSON and the pair rows through `16` §11.2 (G-2); E18-S06 #589 the engine uniforms; E18-S01 / E18-S11 #741 build CMP-109 and CMP-182; E18-S08 #632 the brackets; E18-S10 #674 the tile. The routed rows A-15 … A-20 go to their owners (pack §13.3).
+
+## §D Storybook
+
+Each list runs in dark, light and high contrast × the entry's densities (pack §10): CMP-109 the matrix cellMode × displayMode × imbalanced × LOD-text-hidden (A-5); CMP-182 HighZoom, LowZoom and AllCellModes kept, the density axis and the collapse added (A-9); CMP-132 `15`'s registered stories; CMP-228 the `footprint` kind's stories (A-10). Each §G block's Table 1 names the stories per state.
+
+## §E Test hooks (PROPOSED: the parents are silent)
+
+- **Role and name first.** Tests query the mirror levels by role and by the composition of pack §6 (W-3); the canvas cell has no role (§G, CMP-109's Table 3).
+- **Strings byte for byte.** A rendered string equals its W-row (pack §11) with the fixture's figures.
+- **Announcements on a fake clock.** A forming-cell update and a key repeat announce nothing; the badge once per tier change (R-5).
+- **No `data-testid`** unless an element has no role.
+
+## §F References
+
+**Motion:** E18-D04 (#498) owns it; PR 2 cites its spec for each motion pair line. **Accessibility:** pack §6 and R-4, R-5. **Tokens and contrast:** pack §2 (§2.3–§2.5 computed by the tool). **Copy:** pack §11 (W-n), E18-D05 (#499) rules the PROPOSED words.
+
+## §G Handoff checklists (`16` §11.4)
 
 The lines are `16` §11.4's thirteen, as `16` §11.2 / §11.4 and `02`:56 ask (the BQ ruling's missed row): Penpot link, variants × states, keyboard table, name / role table, live data, motion pair (N/A → E18-D04 #498), density notes, essential exceptions, tokens, data contract, contrast and CVD, design QA, sign-off.
 
@@ -149,7 +195,3 @@ Rule: every line is `[x]` with its evidence, or `[ ]` with its reason (a PR stil
 | `footprint` | CVD-safe      | CMP-228 · PreviewTile / Kind=Footprint, Palette=CvdSafe | FootprintCvdSafe | the twins             |
 | `footprint` | dense         | CMP-228 · PreviewTile / Kind=Footprint, Density=Dense   | FootprintDense   | chart density         |
 | `footprint` | empty / error | CMP-228 · PreviewTile / Kind=Footprint, State=Error     | Empty, Error     | "Preview unavailable" |
-
-## Who applies what
-
-PR 2 (the boards PR) applies A-1 … A-14 to `15` and `16` byte for byte after their owners stamp them and lands the token JSON and the pair rows through `16` §11.2 (G-2); E18-S06 #589 the engine uniforms; E18-S01 / E18-S11 #741 build CMP-109 and CMP-182; E18-S08 #632 the brackets; E18-S10 #674 the tile.

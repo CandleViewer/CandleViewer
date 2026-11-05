@@ -192,6 +192,8 @@ FORMAT_ROWS = 7
 INVALIDATIONS = 5
 MODES = (f"Bid {TIMES} Ask", "Volume", "Delta", "Delta / Total")
 HANDOFF_CMPS = ("CMP-109", "CMP-132", "CMP-182", "CMP-228")
+# E24-D05's hand-off form: section A placement ... section G the `16` section 11.4 checklists.
+HANDOFF_PARTS = ("§A", "§B", "§C", "§D", "§E", "§F", "§G")
 # `16` section 11.4's thirteen lines, in order (the ruling's missed row; `02`:56).
 HANDOFF_ITEMS = (
     "**Final Penpot link**",
@@ -209,10 +211,16 @@ HANDOFF_ITEMS = (
     "**Sign-off**",
 )
 AROW_RE = re.compile(
-    r"^### (A-\d+) · (CMP-\d+|tokens) · `(15|16)`:(\d+) · (replace|insert after)$", re.MULTILINE
+    r"^### (A-\d+) · (CMP-\d+|tokens) · `(15|16)`:(\d+)(?:\u2013(\d+))? · (replace|insert after)$",
+    re.MULTILINE,
 )
 FENCE_RE = re.compile(r"Old:\n\n```text\n(.*?)\n```\n\nNew:\n\n```text\n(.*?)\n```", re.DOTALL)
-AROW_COUNT = 14
+# A-15 … A-20 are section 13.3's routed rows, so the API sketch's row takes the next free id.
+AROW_IDS = (*(f"A-{i}" for i in range(1, 15)), "A-21")
+AROW_COUNT = len(AROW_IDS)
+# Once every row is applied, CMP-109's entry in `15` keeps neither struck member (A-1, A-21).
+CMP109_HEAD = "### CMP-109 FootprintCell"
+STRUCK_RE = re.compile(r'isImbalanced\?: boolean;|"orderEstimated"')
 BAN_RE = re.compile(r"\b(?:dash(?:ed)?|hatch(?:ed)?)\b", re.IGNORECASE)
 BAN_OK = re.compile(r"\b(?:never|no|not|nor|withdrawn|struck|reserved|retired)\b", re.IGNORECASE)
 # G-RULED: sha256[:16] of each RULED BQ bullet; `--repin-ruled` rewrites the block, nothing else.
@@ -241,6 +249,7 @@ KEY_CITES = (
     L.KeyCite("26", 284, "**Glyph set**: printable ASCII"),
     L.KeyCite("26", 286, "**mandatory, not opportunistic**"),
     L.KeyCite("26", 287, "a per-cell glyph run"),
+    L.KeyCite("26", 288, "**Batching**: all cell text in a pane is a single draw call"),
     L.KeyCite("26", 297, "Measured budget: 5,000 glyphs"),
     L.KeyCite("16", 750, "7. Ticket's linked downstream engineering ticket"),
 )
@@ -625,15 +634,29 @@ def g_env(t: L.Tree) -> list[str]:
     return [n for n in need if n not in r1]
 
 
+def applied_15(got: list[tuple[re.Match[str], str, str]]) -> list[str]:
+    """`15` at the base with every section C row on it applied, bottom row first."""
+    lines = list(docs().lines("15") or ())
+    for h, _old, new in sorted(got, key=lambda g: -int(g[0].group(4))):
+        if h.group(3) != "15":
+            continue
+        lo = int(h.group(4))
+        hi = int(h.group(5) or lo)
+        at = slice(lo - 1, hi) if h.group(6) == "replace" else slice(hi, hi)
+        lines[at] = new.split("\n")
+    return lines
+
+
 def g_arows(t: L.Tree) -> list[str]:
     got = arows(t.text("spec"))
     bad = [] if len(got) == AROW_COUNT else [f"{len(got)} rows, not {AROW_COUNT}"]
     names = L.token_names(repo(), BASE)
-    for i, (h, old, new) in enumerate(got, start=1):
+    for i, (h, old, new) in enumerate(got):
         aid, doc, n = h.group(1), h.group(3), int(h.group(4))
-        if aid != f"A-{i}":
+        if i >= AROW_COUNT or aid != AROW_IDS[i]:
             bad.append(f"{aid} out of order")
-        if not old or old != line_of(doc, n):
+        span = "\n".join(line_of(doc, k) for k in range(n, int(h.group(5) or n) + 1))
+        if not old or old != span:
             bad.append(f"{aid} Old is not `{doc}`:{n}")
         if not new.strip():
             bad.append(f"{aid} has no New")
@@ -648,12 +671,15 @@ def g_arows(t: L.Tree) -> list[str]:
             for name in L.check_token_refs(line, names):
                 if name not in PROPOSED or "PROPOSED" not in line:
                     bad.append(f"{aid} binds {name}")
+    entry = L.section("\n".join(applied_15(got)), CMP109_HEAD)
+    bad += [f"applied CMP-109 keeps {m.group(0)}" for m in STRUCK_RE.finditer(entry)]
     return bad
 
 
 def g_handoff(t: L.Tree) -> list[str]:
     h = t.text("handoff")
-    bad = []
+    heads = [m.group(1) for m in re.finditer(r"^## (§[A-G]) ", h, re.MULTILINE)]
+    bad = [] if heads == list(HANDOFF_PARTS) else [f"parts {heads}, not {list(HANDOFF_PARTS)}"]
     for cmp in HANDOFF_CMPS:
         block = L.section(h, f"## Handoff checklist — {cmp} ")
         miss = [i for i in HANDOFF_ITEMS if f"- [ ] {i}" not in block and f"- [x] {i}" not in block]
@@ -760,6 +786,14 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "## Handoff checklist — CMP-109", "Fix" + "es#497.\n\n## Handoff checklist — CMP-109"),
     _M("M-32", "G-PUBLIC", "a local path", "handoff", "file `E18-D03 boards`",
        "file `" + "/" + "home/x/E18-D03 boards`"),
+    _M("M-33", "G-AROWS", "A-21's Old loses a line of its range", "spec",
+       '  isImbalanced?: boolean;\n  inputSource: "aggTrades" | "numTrades" | "orderEstimated";\n',
+       "  isImbalanced?: boolean;\n"),
+    _M("M-34", "G-AROWS", "A-21's New keeps `orderEstimated`", "spec",
+       '  inputSource: "aggTrades" | "numTrades";\n```',
+       '  inputSource: "aggTrades" | "numTrades" | "orderEstimated";\n```'),
+    _M("M-35", "G-HANDOFF", "the hand-off drops section E", "handoff",
+       "## §E Test hooks", "## Test hooks"),
 )
 # fmt: on
 
