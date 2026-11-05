@@ -20,7 +20,7 @@ Gates:
               rate is claimed anywhere; the header says no session was run.
   G-DEFAULTS  the section 6 rows carry the BQ list's ORCH-defaults, a cited evidence cell, a
               dissent with its override reason and the deciding probe.
-  G-TESTABLE  AD-1..AD-12 in order; each has a satisfies clause, a "a wireframe violates it if"
+  G-TESTABLE  AD-1..AD-16 in order; each has a satisfies clause, a "a wireframe violates it if"
               clause, a feeding F id and an owner ticket.
   G-R9        no R9 word in a display name, marker label or announcement; no direction or
               verdict word in a tooltip or popover cell; the word list equals R9_WORDS; the
@@ -97,7 +97,7 @@ SECTIONS = (
     "## 4. Persona walkthrough",
     "## 5. Competitive review (public knowledge via the merged digests)",
     "## 6. Recommended defaults with their dissent",
-    "## 7. Adopted decisions AD-1..AD-12 (ranked; heuristic, PROPOSED)",
+    "## 7. Adopted decisions AD-1..AD-16 (ranked; heuristic, PROPOSED)",
     "## 8. Divergence copy and the `(estimated)` proposal (R9)",
     "## 9. States checklist for E23-D02",
     "## 10. Downstream feeds",
@@ -118,7 +118,7 @@ DEFAULT_PINS = (
     ("Smoothing", "off"),
 )
 DISSENT_WORDS = ("overrid", "refused", "not proposed")
-AD_COUNT = 12
+AD_COUNT = 16
 VIOLATES = "a wireframe violates it if "
 R9_WORDS = (
     "bearish",
@@ -164,14 +164,14 @@ POINTER_LINE = (
     " heuristic walkthrough, no participants: PROPOSED session anchor with its boundary named,"
     " line + per-bar histogram, smoothing off, observation-only divergence labels with the"
     " `(estimated)` copy, the manual-anchor paths and the states checklist for E23-D02;"
-    " contradictions C1–C10 and gaps G1–G7 for their owners)."
+    " contradictions C1\u2013C10 and gaps G1\u2013G7 for their owners)."
 )
 PRE_POINTER = "- **Design sign-off acceptance checklist:** [ ] CVD line"
 
 CITE_RE = re.compile(
-    r"`(?P<key>[A-Za-z0-9.]+)`:(?P<lo>\d+)(?:–(?P<hi>\d+))?(?P<more>(?:, :\d+(?:–\d+)?)*)"
+    r"`(?P<key>[A-Za-z0-9.]+)`:(?P<lo>\d+)(?:\u2013(?P<hi>\d+))?(?P<more>(?:, :\d+(?:\u2013\d+)?)*)"
 )
-MORE_RE = re.compile(r":(\d+)(?:–(\d+))?")
+MORE_RE = re.compile(r":(\d+)(?:\u2013(\d+))?")
 QUOTE_RE = re.compile(r'"([^"\n]*)"')
 ID_RE = re.compile(r"(?<![\w-])(?:(F|AD|OQ|BQ)-(\d+)|(RQ|H|C|G|Q|W|A|L)(\d+))(?![\w])")
 HDEF_RE = re.compile(r"(?<![\w-])H(\d+):")
@@ -337,7 +337,7 @@ def g_testable(t: L.Tree) -> list[str]:
     table = rows(t.text("memo"), "## 7.")
     bad: list[str] = []
     if [lead(r) for r in table] != [f"AD-{n}" for n in range(1, AD_COUNT + 1)]:
-        bad.append("AD ids not AD-1..AD-12 in order")
+        bad.append(f"AD ids not AD-1..AD-{AD_COUNT} in order")
     for r in table:
         if len(r) < 6:
             bad.append(f"{lead(r)}: short row")
@@ -461,8 +461,8 @@ def g_untouched(t: L.Tree) -> list[str]:
     base = t.text("base_cat").split("\n")
     idx = [i for i, ln in enumerate(base) if ln.startswith(PRE_POINTER)]
     if len(idx) != 1:
-        return bad + ["SCR-052's checklist line not found once at BASE"]
-    want = base[: idx[0] + 1] + [POINTER_LINE] + base[idx[0] + 1 :]
+        return [*bad, "SCR-052's checklist line not found once at BASE"]
+    want = [*base[: idx[0] + 1], POINTER_LINE, *base[idx[0] + 1 :]]
     if t.text("cat").split("\n") != want:
         bad.append("`14` differs from BASE plus the one pointer line")
     return bad
