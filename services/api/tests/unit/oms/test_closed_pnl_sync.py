@@ -199,6 +199,17 @@ class Store:
         self.rows[record_id] = replace(row, final_at=T0)
         return True
 
+    async def mark_divergent(
+        self, account_id: UUID, rid: UUID, local_net: Decimal, closed_pnl: Decimal
+    ) -> bool:
+        self.rows[rid] = replace(self.rows[rid], divergent=True, audited_local_net=local_net,
+                                 audited_closed_pnl=closed_pnl)  # fmt: skip
+        return True
+
+    async def clear_divergent(self, account_id: UUID, rid: UUID) -> bool:
+        self.rows[rid] = replace(self.rows[rid], divergent=False)
+        return True
+
     async def pending(
         self, account_id: UUID, reach: datetime, limit: int
     ) -> tuple[PendingRecord, ...]:
@@ -207,6 +218,7 @@ class Store:
             r for r in self.rows.values()
             if r.final_at is None and r.exchange_order_id in self.orders and r.closed_at >= reach
         ]  # fmt: skip
+        rows = sorted(rows, key=lambda r: r.closed_at)[:limit]  # row 56's order and bound
         return tuple(PendingRecord(r, *self.orders[str(r.exchange_order_id)]) for r in rows)
 
     async def walk_flats(
@@ -317,10 +329,12 @@ def rig(
     *,
     policy: Policy | None = None,
     composed: bool = False,
+    comparer: Any = None,
     **venue: Any,
 ) -> Rig:
     """The sync over fakes, its day from the one resolver over `policy` (offset 0 unless set);
-    with `composed`, its composition over the same store, ETHUSDT settling 480 min apart."""
+    with `composed`, its composition over the same store, ETHUSDT settling 480 min apart, and
+    `comparer`, built over the store, its comparison."""
     v, store, metrics, loop = Venue(**venue), Store(), Metrics("demo"), asyncio.get_running_loop()
     told, listed = list[str](), Instruments(listed={"ETHUSDT": instrument(symbol="ETHUSDT")})
     sync = ClosedPnlSync(
@@ -329,6 +343,7 @@ def rig(
         metrics=metrics, now=lambda: at + timedelta(seconds=loop.time()),
         on_ended=lambda: told.append("ended"), day_start=DayBoundary(policy or Policy()).day_start,
         composer=ClosedPnlComposer(store=store, instruments=listed) if composed else None,
+        comparer=comparer and comparer(store, metrics),
     )  # fmt: skip
     return Rig(v, store, metrics, sync, told)
 

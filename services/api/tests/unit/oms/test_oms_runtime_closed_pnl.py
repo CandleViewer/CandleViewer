@@ -22,6 +22,7 @@ from structlog.testing import capture_logs
 from candleviewer.app import _oms_state
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.models import PrivateStreamStatus
+from candleviewer.oms.closed_pnl_compare import ClosedPnlComparer, Tolerance
 from candleviewer.oms.closed_pnl_compose import ClosedPnlComposer
 from candleviewer.oms.closed_pnl_sync import (
     CLOSED_PNL_LOOKBACK,
@@ -35,6 +36,7 @@ from candleviewer.oms.ports import NoReconciliation
 from candleviewer.oms.reconcile_job import ReconcileJobs
 from candleviewer.oms.repository import ExecutionRepository
 from candleviewer.oms.stop_gate import ResolvingStopGate
+from candleviewer.oms_closed_pnl_wiring import DivergenceAudit
 from candleviewer.oms_stream_wiring import ExchangeWallClock
 from candleviewer.oms_wiring import ClosedPnlResyncs, InstrumentsBinding, OmsStores
 from candleviewer.risk.day_boundary import DayBoundary, day_containing
@@ -110,6 +112,13 @@ async def test_the_sync_is_built_from_the_runtimes_parts_and_starts_once_ready(
         composer = sync._composer  # slice 5b: over the same store, the catalogue read in place
         assert isinstance(composer, ClosedPnlComposer) and composer.store is world.records
         assert isinstance(composer.instruments, InstrumentsBinding)
+        comparer = sync._comparer  # slice 5c: the same store's flags, the lane's own writer
+        assert isinstance(comparer, ClosedPnlComparer) and comparer._marks is world.records
+        assert (
+            isinstance(comparer._writer, DivergenceAudit)
+            and comparer._writer._writer is world.writer
+        )
+        assert comparer._tolerance == Tolerance(Decimal("1e-8"), Decimal("0.01"))
         [clock] = world.position_clocks
         assert isinstance(clock, ExchangeWallClock) and sync._now is clock
         await settle()
