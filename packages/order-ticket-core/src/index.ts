@@ -1,8 +1,10 @@
 /**
  * `@candleviewer/order-ticket-core` (E30-T01, #984): the one order-ticket core every ticket
- * surface shares. Slice S1 exports the model, exact decimals and instrument grids; validation,
- * the sizing mirror and the submit pipeline follow in S2–S4.
+ * surface shares: the model, exact decimals and instrument grids (S1), entry classification,
+ * `validate()` (S2a); the deck messages (S2b), the sizing mirror and the submit pipeline follow.
  */
 export * from "./model.js";
 export * from "./decimal.js";
 export * from "./instrument.js";
+export * from "./classify.js";
+export * from "./validate.js";
