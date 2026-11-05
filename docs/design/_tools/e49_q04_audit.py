@@ -119,7 +119,9 @@ ASSERT_SECTIONS = {
     "OF": "### 4.12 OF",
 }
 STATUS_RE = re.compile(r"(ruled|PROPOSED)( \(C-\d+\))?|blocked on \S.*")
-TOKEN_RE = re.compile(r"LD:L-(\d+)|E1|E2|E3|ER|DC(/T2)?|DG(/T2)?|403|404|CR|VM(/T2)?|RL(/T2)?|OF")
+TOKEN_RE = re.compile(
+    r"LD:L-(\d+)|E1|E2|E3|ER|DC(/T2)?|DG(/T2)?|403|404|CR|VM(/T2)?|RL(/T2)?|OF(/T2)?"
+)
 TICK_RE = re.compile(r"`([^`]+)`")
 EVENT_RE = re.compile(r"`([a-z_0-9]+(?:\.[a-z_0-9]+)*)`")
 PAYLOAD_RE = re.compile(r"`(\{[^}`]*\})`")
@@ -128,6 +130,7 @@ SCR14_RE = re.compile(r"^### (SCR-\d{3}) — ", re.MULTILINE)
 RN1_ROWS = frozenset(f"SCR-{n}" for n in range(150, 160))
 L1_ROWS = frozenset({"SCR-010"})
 OF_ROWS = frozenset({"SCR-010", "SCR-001"})
+OF_T2_ROWS = frozenset({"SCR-010"})  # SCR-159's Safety cluster (D02 :570, R159-6)
 HEADING = f"## The questions BQ-0 … BQ-9 — RULED (comment {RULING})"
 HOST_TYPE_RE = re.compile(r"(Modal|Menus?|Banner|Blocking banner|Global banner)\b(?!/)")
 TYPE14_RE = re.compile(r"^- \*\*Type:\*\* (.*)$", re.MULTILINE)
@@ -143,6 +146,22 @@ HARNESS_NEEDS = (
     "API origin is loopback",
     "**new main-entry",
     "**proposed on #1362 first**",
+    "**is** the panel throw, not a sibling call",
+)
+A2_NEEDS = (  # section 8.1: the A2 row shape, its files and its gates
+    "`apps/web/e2e/state-matrix/matrix.json`",
+    "`apps/web/test/e2e-state-matrix.test.ts`",
+    "`tag`",
+    "`host` (`SCR-nnn`)",
+    "`{col, t2, ld}`",
+    "**G-MIRROR**",
+)
+R2_KEYS = (  # D02 R-2's reason keys (D02 :136-138), in SA-T2-3
+    "`feed.*`",
+    "`health.offline`",
+    "`health.protocol_incompatible`",
+    "`ratelimit.held`",
+    "`ratelimit.scope.*` are banner messages, never a reason",
 )
 PACK_NEEDS = (
     "**`@ga-regression` plus exactly one `@ga-area-state-matrix`**",
@@ -309,8 +328,10 @@ def g_tokens(t: L.Tree) -> list[str]:
                 bad.append(f"{sid}: no D02 row {tok!r}")
             elif m.group(1) == "1" and sid not in L1_ROWS:
                 bad.append(f"{sid}: L-1 is SCR-150's, on SCR-010 only")
-            elif tok == "OF" and sid not in OF_ROWS:
+            elif column(tok) == "OF" and sid not in OF_ROWS:
                 bad.append(f"{sid}: OF is the shell's")
+            elif tok == "OF/T2" and sid not in OF_T2_ROWS:
+                bad.append(f"{sid}: OF/T2 is the shell's Safety cluster, SCR-010's")
     return bad
 
 
@@ -391,8 +412,9 @@ def g_harness(t: L.Tree) -> list[str]:
 
 
 def g_pack(t: L.Tree) -> list[str]:
-    block = sec(t, "### 8.2 The generated specs")
+    block, a2 = sec(t, "### 8.2 The generated specs"), sec(t, "### 8.1 The matrix data")
     bad = [f"section 8.2 lacks {x!r}" for x in PACK_NEEDS if x not in block]
+    bad += [f"section 8.1 lacks {x!r}" for x in A2_NEEDS if x not in a2]
     for n, ln in enumerate(t.text("spec").split("\n"), 1):
         if "`@state-matrix`" in ln and not re.search(r"\bnever\b|\bnot\b", ln):
             bad.append(f"spec:{n}: a bare `@state-matrix` tag")
@@ -401,7 +423,13 @@ def g_pack(t: L.Tree) -> list[str]:
 
 def g_t2(t: L.Tree) -> list[str]:
     block = sec(t, "## 5. Trading safety")
-    return L.t2_markers(block) + L.no_disabled_tokens(t.text("spec"))
+    bad = L.t2_markers(block) + L.no_disabled_tokens(t.text("spec"))
+    row = next((r for r in L.table_rows(block) if r and r[0] == "SA-T2-3"), ["", ""])
+    bad += [f"SA-T2-3 lacks R-2's {k}" for k in R2_KEYS if k not in row[1]]
+    shell = next((r for r in matrix(t) if r and r[0] == "SCR-010"), ["", "", "", ""])
+    if "OF/T2" not in tokens(shell[3]):
+        bad.append("SCR-010 lacks the Safety cluster's OF/T2")
+    return bad
 
 
 def g_ruling(t: L.Tree) -> list[str]:
@@ -523,6 +551,16 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-33", "G-PACK", "a bare pack tag", "spec",
        "**`@ga-regression` plus exactly one `@ga-area-state-matrix`**", "**`@state-matrix`**"),
     _M("M-34", "G-UNTOUCHED", "the `03` pointer grows", f"@numstat:{T03_REL}", "", "5 0"),
+    _M("M-35", "G-TOKENS", "OF/T2 off SCR-010", "spec",
+       r"(\| SCR-001 \|[^\n]*)`OF`", r"\1`OF/T2`", regex=True),
+    _M("M-36", "G-T2", "the shell's OF cell loses its T2", "spec",
+       r"(\| SCR-010 \|[^\n]*)`OF/T2`", r"\1`OF`", regex=True),
+    _M("M-37", "G-T2", "SA-T2-3 drops an R-2 key", "spec",
+       r"(\| SA-T2-3 \|[^\n]*)`health\.offline`, ", r"\1", regex=True),
+    _M("M-38", "G-HARNESS", "forceState read as a sibling call", "spec",
+       "**is** the panel throw, not a sibling call", "a sibling call of the panel throw"),
+    _M("M-39", "G-PACK", "the A2 row shape loses `host`", "spec",
+       "and `host` (`SCR-nnn`) on", "and on"),
 )
 # fmt: on
 

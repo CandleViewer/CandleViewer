@@ -9,7 +9,7 @@ BQ-9 RULED (comment 6643527392 on the list 6642015197).** Branch `chore/e49-stat
 ruling's pre-check base `d5f2e0bc1`. The contracts in flight are pinned at their heads, each **if it merges as is**
 and re-pinned at its merge (BQ-0 a): E49-D02 as `D02` from PR #5877 at `0cba71f9b`; the E49-Q01 pack (#1335) from
 #5850 at `eda159017` (`GAP`, `GAT`), #5851 at `9d6613be7` and #5853 at `960dd7bd7`; E49-D01's protocol from #5860 at
-`6138f6f81` (since moved; re-pinned at its merge); the Draft #5829 at `3eebfe684`, whose chart probe this plan
+`aed6b1182`; the Draft #5829 at `3eebfe684`, whose chart probe this plan
 leaves untouched (C-4.15).
 
 **Honest scope.** Agent-authored. Nothing here has run: no cell is claimed passing, no harness exists yet, no
@@ -179,7 +179,9 @@ E17-D01 Q-G (Stale vs Resyncing, D02 F-12) is **blocked on** E17-D01, never deci
 
 Every `### SCR-` entry of `14` is one row (149). A row is either **cells** (the columns it lists) or **one
 row-level N/A** with its RN reason. In a cell row, every column not listed is N/A by one of the NR rules the row
-names; no NR rule names a listed column. Both are mechanical (the audit's G-CELLS).
+names; no NR rule names a listed column. Both are checked for **form only** (the audit's G-CELLS): a
+column is listed or excused by a named NR rule; whether the excuse is true of the row is a reviewer's read of `14`,
+never gated (SCR-062's NR-5 was untrue, `14` :1525: group state arrives on a WS topic, so it carries `DC`).
 
 ### 3.1 Row-level N/A (RN)
 
@@ -216,7 +218,8 @@ hold, RN-3 where it has no data source, else RN-4 naming its host, which must be
 RN-4 modal is asserted on its host's `/T2` cell (so SCR-080 carries `DG/T2` for SCR-085's arming), and the modal's own
 empty, failed or held states with no host cell are G-5. 78 rows carry cells; 71 are row-level N/A.
 
-Token forms in §3.3: `LD:L-n` names the D02 §4 row; `/T2` marks a cell whose controls are gated (§5); `404` on
+Token forms in §3.3: `LD:L-n` names the D02 §4 row; `/T2` marks a cell whose controls are gated (§5), `OF/T2` on
+SCR-010 only (SCR-159's Safety cluster, D02 :570; SA-OF-5); `404` on
 an admin row is D-1's identical 404, elsewhere a deleted or unknown object id under the row's route.
 
 ### 3.3 The matrix
@@ -229,7 +232,7 @@ an admin row is D-1's identical 404, elsewhere a deleted or unknown object id un
 | SCR-004 | Forced password change                            | `shipped` (`features/auth/ChangePasswordScreen.tsx`)        | `ER` `CR` `RL`                                                | NR-2, NR-4, NR-5, NR-6, NR-7, NR-8, NR-10, NR-12, NR-13              |
 | SCR-005 | Session expired / re-auth modal                   | `shipped` (`features/session/SessionLockDialog.tsx`)        | —                                                             | RN-4 (host SCR-010)                                                  |
 | SCR-006 | Step-up authentication modal (S)                  | `shipped` (`features/stepUp/StepUpDialog.tsx`)              | —                                                             | RN-4 (host SCR-010)                                                  |
-| SCR-010 | App shell (global chrome)                         | `shipped` (`features/app-shell/ShellLayout.tsx`)            | `LD:L-1` `ER` `DC` `DG` `404` `CR` `VM` `RL` `OF`             | NR-2, NR-4, NR-7                                                     |
+| SCR-010 | App shell (global chrome)                         | `shipped` (`features/app-shell/ShellLayout.tsx`)            | `LD:L-1` `ER` `DC` `DG` `404` `CR` `VM` `RL` `OF/T2`          | NR-2, NR-4, NR-7                                                     |
 | SCR-011 | Navigation rail (expanded) & workspace switcher   | `shipped` (`features/app-shell/NavRail.tsx`)                | `LD:L-6` `E1` `ER`                                            | NR-3, NR-4, NR-5, NR-6, NR-7, NR-8, NR-9, NR-10, NR-11, NR-12        |
 | SCR-012 | Command palette                                   | `pending`                                                   | —                                                             | RN-4 (host SCR-010)                                                  |
 | SCR-013 | Hotkey cheatsheet overlay                         | `shipped` (`keymap/Cheatsheet.tsx`)                         | `LD:L-7` `ER`                                                 | NR-2, NR-4, NR-5, NR-6, NR-7, NR-8, NR-9, NR-10, NR-11, NR-12        |
@@ -281,7 +284,7 @@ an admin row is D-1's identical 404, elsewhere a deleted or unknown object id un
 | SCR-059 | Detector settings dialog                          | `pending`                                                   | —                                                             | RN-3                                                                 |
 | SCR-060 | Order ticket panel (single account)               | `pending`                                                   | `LD:L-6` `ER` `DC/T2` `DG/T2` `403` `CR` `VM/T2` `RL/T2`      | NR-2, NR-4, NR-8, NR-12                                              |
 | SCR-061 | Trade-group ticket (multi-account fan-out)        | `pending`                                                   | `LD:L-6` `ER` `DC/T2` `DG/T2` `403` `CR` `VM/T2` `RL/T2`      | NR-2, NR-4, NR-8, NR-12                                              |
-| SCR-062 | Trade-group manager                               | `pending`                                                   | `LD:L-6` `E1` `ER` `404` `CR` `VM/T2` `RL/T2`                 | NR-3, NR-4, NR-5, NR-6, NR-12, NR-14                                 |
+| SCR-062 | Trade-group manager                               | `pending`                                                   | `LD:L-6` `E1` `ER` `DC` `404` `CR` `VM/T2` `RL/T2`            | NR-3, NR-4, NR-6, NR-12, NR-14                                       |
 | SCR-063 | Positions & orders grid panel                     | `pending`                                                   | `LD:L-6` `E1` `ER` `DC/T2` `DG/T2` `403` `CR` `VM/T2` `RL/T2` | NR-3, NR-4, NR-8, NR-12                                              |
 | SCR-064 | Position SL/TP editor (modal)                     | `pending`                                                   | —                                                             | RN-4 (host SCR-063)                                                  |
 | SCR-065 | Scaled / ladder order builder                     | `pending`                                                   | —                                                             | RN-4 (host SCR-060)                                                  |
@@ -509,28 +512,29 @@ not executed until its owner answers. D02's adopted decisions handed to this tic
 | SA-OF-2 | detected from request failure within 5 s on the fake clock, not from `navigator.onLine` alone               | `14` :3221         | ruled  |
 | SA-OF-3 | `shell.offline_detected` `{cause}`, `shell.tailscale_unreachable`, `shell.gpu_unavailable`                  | `14` :3222         | ruled  |
 | SA-OF-4 | the backend-unreachable takeover shows no environment                                                       | D02 :124–126 (R-1) | ruled  |
+| SA-OF-5 | SCR-010's Safety cluster is T2 while offline (§5), reason key `health.offline`, rendered 2a inline          | D02 :570 (R159-6)  | ruled  |
 
 ## 5. Trading safety (T2 and the negative cells; BQ-5)
 
 A `/T2` cell asserts D02's R-2 (D02 :127–136), the G-T2 gate of R32 :17, on every new-order control of the row:
 
-| SA      | Assertion                                                                                                                                                                                                                                                                                         | Marker          |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| SA-T2-1 | the control keeps its native role and its full label                                                                                                                                                                                                                                              | G-T2.1a         |
-| SA-T2-2 | `aria-disabled="true"`, never `disabled`: the control stays in the Tab order                                                                                                                                                                                                                      | G-T2.1b         |
-| SA-T2-3 | its reason node is in the DOM at mount and linked by `aria-describedby` (never tooltip-only); the cell asserts the reason **key**, never a copy string (D02 R-4): `feed.disconnected`, `feed.private_down` (both PROPOSED), `health.protocol_incompatible`, `ratelimit.held`, `ratelimit.scope.*` | G-T2.1c, G-T2.4 |
-| SA-T2-4 | CMP-079 wraps it and the CMP-019 `lock` glyph named "Not available" leads the accessible name                                                                                                                                                                                                     | G-T2.1d         |
-| SA-T2-5 | the label never takes `color.text.disabled`, never `opacity.disabled` (read from the computed token class, not pixels)                                                                                                                                                                            | G-T2.2          |
-| SA-T2-6 | `Enter` or `Space` changes nothing and re-shows the reason with one polite announcement: the live region is in the DOM before the key press and exactly one text change lands in it per press (repeated presses counted, never coalesced); a read-only panel carries one notice                   | G-T2.3, G-T2.5  |
-| SA-T2-7 | the cell **fails** if any new-order control is operable (an enabled, focusable control whose activation sends a request)                                                                                                                                                                          | T AC 4          |
-| SA-T2-8 | negative cells: cancel, close and the kill switch stay **enabled** while disconnected (D17 :9, :429; D02 :406–407); while rate-limited, cancel, close, flatten and stop changes stay enabled and are never held (D30 :265, :268; `24` :2318, :2320–2324, :2326)                                   | C-2.6, C-12.7   |
+| SA      | Assertion                                                                                                                                                                                                                                                                                                                                                                                                            | Marker          |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| SA-T2-1 | the control keeps its native role and its full label                                                                                                                                                                                                                                                                                                                                                                 | G-T2.1a         |
+| SA-T2-2 | `aria-disabled="true"`, never `disabled`: the control stays in the Tab order                                                                                                                                                                                                                                                                                                                                         | G-T2.1b         |
+| SA-T2-3 | its reason node is in the DOM at mount and linked by `aria-describedby` (never tooltip-only); the cell asserts the reason **key**, never a copy string (D02 R-4); the reason keys are R-2's (D02 :136–138): `feed.*` (`feed.disconnected`, `feed.private_down`; PROPOSED), `health.offline`, `health.protocol_incompatible` (PROPOSED) and `ratelimit.held`; `ratelimit.scope.*` are banner messages, never a reason | G-T2.1c, G-T2.4 |
+| SA-T2-4 | CMP-079 wraps it and the CMP-019 `lock` glyph named "Not available" leads the accessible name                                                                                                                                                                                                                                                                                                                        | G-T2.1d         |
+| SA-T2-5 | the label never takes `color.text.disabled`, never `opacity.disabled` (read from the computed token class, not pixels)                                                                                                                                                                                                                                                                                               | G-T2.2          |
+| SA-T2-6 | `Enter` or `Space` changes nothing and re-shows the reason with one polite announcement: the live region is in the DOM before the key press and exactly one text change lands in it per press (repeated presses counted, never coalesced); a read-only panel carries one notice                                                                                                                                      | G-T2.3, G-T2.5  |
+| SA-T2-7 | the cell **fails** if any new-order control is operable (an enabled, focusable control whose activation sends a request)                                                                                                                                                                                                                                                                                             | T AC 4          |
+| SA-T2-8 | negative cells: cancel, close and the kill switch stay **enabled** while disconnected (D17 :9, :429; D02 :406–407); while rate-limited, cancel, close, flatten and stop changes stay enabled and are never held (D30 :265, :268; `24` :2318, :2320–2324, :2326)                                                                                                                                                      | C-2.6, C-12.7   |
 
 A T2 control is asserted only where `14` §0.5 rule 5 routes it to T2 (`14` :85): a hidden admin destination, a
 server refusal and form-validity disabling are not T2. Degraded (DG) asserts the banner as structure (SA-DG-4); a
-blocking DG row's controls are `/T2`. Under an IP-level `10018` hold the reserve cell of SA-T2-8 is **blocked on**
-E30-D03 #851 (F-1). AC 4's "reason in the accessible name" is read as name + description (C-2). The words are
-E49-D03's (#1332 feeds keys, not strings) and their exact-text tests E49-S06's. Every `/T2` cell runs against the
-loopback stub network only (C-2.11).
+blocking DG row's controls are `/T2`; SCR-010's `OF/T2` is SCR-159's Safety cluster (D02 :570, SA-OF-5). Under an
+IP-level `10018` hold the reserve cell of SA-T2-8 is **blocked on** E30-D03 #851 (F-1). AC 4's "reason in the
+accessible name" is read as name + description (C-2). The words are E49-D03's (#1332 feeds keys, not strings) and
+their exact-text tests E49-S06's. Every `/T2` cell runs against the loopback stub network only (C-2.11).
 
 ## 6. The analytics contract and the sink (BQ-4)
 
@@ -573,9 +577,11 @@ already drives the state — `e17/transport-states.spec.ts` for SCR-152, `auth/d
 SCR-155, `shell/system-states.spec.ts` for SCR-157 and SCR-159 — or the generated one, never a second copy. No
 second sink, WS driver, GL probe, axe helper or route table is built.
 
-`forceState(panelId, state)` is the typed test-process entry over the matrix's panel ids; its `state` admits only
-**degraded, empty, error and loading** states, never a healthier one (connected, armed, live): the harness can
-never make the UI claim a capability it lacks. It never bypasses server RBAC (T Security notes).
+`forceState(panelId, state)` **is** the panel throw, not a sibling call: it is the module's one entry, typed over
+the matrix's panel ids, and its only effect is a throw inside the named panel (the CR cell); every other column is
+driven by the gateway or the stubs above. Its `state` admits only **degraded, empty, error and loading** states,
+never a healthier one (connected, armed, live): the harness can never make the UI claim a capability it lacks. It
+never bypasses server RBAC (T Security notes).
 
 ### 7.2 Gating and what the harness is not
 
@@ -611,12 +617,23 @@ attached.
 
 ### 8.1 The matrix data and its self-check (slice A2)
 
-The matrix of §3.3 is mirrored as JSON, or a typed TS module, with the row × column × cell shape (`cells` or
-`rowNa`, `naBy`), beside the specs and named by nothing but the matrix (no SCR slug in a file name). A vitest
-self-check reads `14` with `node:fs`, as the pack's gate test reads `11` (`apps/web/test/e2e-ga-pack.test.ts`, if
-#5850 merges as is), and fails on a missing or an unknown id both ways (T AC 1), on a column neither listed nor
-excused, on an NR rule that names a listed column, and on a route row whose tag disagrees with the manifest (§0). No
-YAML parser and no new dependency (C-3).
+The matrix of §3.3 is mirrored as JSON at `apps/web/e2e/state-matrix/matrix.json`, beside the specs of §8.2 and
+named by nothing but the matrix (no SCR slug in a file name); a typed TS module `matrix.ts` in the same directory is
+the alternative, with the same shape. One object per §3.3 row:
+
+- `id` (`SCR-nnn`) and `surface` (the §3.3 text);
+- `tag`: `"shipped"` with `path` (the module under `apps/web/src`), or `"pending"` with no `path`;
+- a cell row: `cells`, one `{col, t2, ld}` per token — `col` one of §2's thirteen codes, `t2` the `/T2` flag
+  (boolean), `ld` the D02 §4 row `"L-n"` on the `LD` cell only — and `naBy`, the NR ids;
+- a row-level N/A: `rowNa`, the RN id, and `host` (`SCR-nnn`) on an RN-4 row only; no `cells`.
+
+The self-check `apps/web/test/e2e-state-matrix.test.ts` reads `14` with `node:fs`, as the pack's gate test reads
+`11` (`apps/web/test/e2e-ga-pack.test.ts`, if #5850 merges as is), and runs these gates: **G-MIRROR** (each object
+equals its §3.3 row), G-SCRSET (a missing or an unknown id, both ways; T AC 1), G-CELLS (a column neither listed nor
+excused, or an NR rule naming a listed column), G-HOST (a modal, menu or banner with cells; an RN-4 `host` that is
+no cell row), G-TOKENS (`ld` 1 … 11, L-1 on SCR-010 only; `OF` on SCR-010 and SCR-001, `OF/T2` on SCR-010 only),
+G-BUILD and G-ROUTE (§0). Like this audit's G-CELLS, the gates prove form, not the truth of an excuse. No YAML
+parser and no new dependency (C-3).
 
 ### 8.2 The generated specs (slice C)
 
@@ -751,16 +768,18 @@ below and each must fail only its own gate.
 
 ### 14.1 Gates
 
-G-CITE (every cite resolves, non-blank, at its pin), G-PINS (each ruled cite is in the plan and its line carries
-the ruled text), G-SCRSET (the matrix's ids equal `14`'s, both ways), G-CELLS (every cell row covers the thirteen
-columns exactly once; RN rows by rule), G-HOST (a modal, menu or banner in `14` is row-level N/A; RN-4 names a
-host that is a cell row), G-TOKENS (cell tokens and D02 §4 rows valid; L-1 on SCR-010 only; `OF` on SCR-010 and
-SCR-001 only), G-BUILD (each `shipped` path names its id at the base), G-ROUTE (a route row's tag equals the
-manifest's status, §0), G-ASSERT (every column has its assertion section and every SA row a source and a status),
-G-ANALYTICS (each pattern's event names stand on the cited `14` line), G-T2 (§5 names every G-T2 marker),
-G-HARNESS (§7 states the ruled gating), G-PACK (§8.2's tag form, no test for a `pending` cell, no bare tag),
-G-RULING (the RULED form, each bullet's verdict), G-CHECKLIST (≤ 10 items), G-NOCLOSE, G-PUBLIC, G-UNTOUCHED (the
-plan and the tool, and the `03` pointer at exactly two added lines) and G-MUTLIST (14.2 equals the tool's list).
+G-CITE (every cite resolves, non-blank, at its pin), G-PINS (each ruled cite is in the plan and its line carries the
+ruled text), G-SCRSET (the matrix's ids equal `14`'s, both ways), G-CELLS (every cell row covers the thirteen
+columns exactly once; RN rows by rule; form only, §3.2), G-HOST (a modal, menu or banner in `14` is row-level N/A;
+RN-4 names a host that is a cell row), G-TOKENS (cell tokens and D02 §4 rows valid; L-1 on SCR-010 only; `OF` on
+SCR-010 and SCR-001 only, `OF/T2` on SCR-010 only), G-BUILD (each `shipped` path names its id at the base), G-ROUTE
+(a route row's tag equals the manifest's status, §0), G-ASSERT (every column has its assertion section and every SA
+row a source and a status), G-ANALYTICS (each pattern's event names stand on the cited `14` line), G-T2 (§5 names
+every G-T2 marker; SA-T2-3 carries R-2's keys; SCR-010 carries `OF/T2`), G-HARNESS (§7 states the ruled gating and
+`forceState` as the throw), G-PACK (§8.1's A2 shape, file and gates; §8.2's tag form, no test for a `pending` cell,
+no bare tag), G-RULING (the RULED form, each bullet's verdict), G-CHECKLIST (≤ 10 items), G-NOCLOSE, G-PUBLIC,
+G-UNTOUCHED (the plan and the tool, and the `03` pointer at exactly two added lines) and G-MUTLIST (14.2 equals the
+tool's list).
 
 ### 14.2 Mutations
 
@@ -800,3 +819,8 @@ plan and the tool, and the `03` pointer at exactly two added lines) and G-MUTLIS
 | M-32 | G-HARNESS   | the harness may force a healthier state |
 | M-33 | G-PACK      | a bare pack tag                         |
 | M-34 | G-UNTOUCHED | the `03` pointer grows                  |
+| M-35 | G-TOKENS    | OF/T2 off SCR-010                       |
+| M-36 | G-T2        | the shell's OF cell loses its T2        |
+| M-37 | G-T2        | SA-T2-3 drops an R-2 key                |
+| M-38 | G-HARNESS   | forceState read as a sibling call       |
+| M-39 | G-PACK      | the A2 row shape loses `host`           |
