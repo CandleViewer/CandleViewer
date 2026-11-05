@@ -1286,6 +1286,7 @@ Drag preview                Drop zones
 - **Performance:** The CVD series updates at a capped 10 Hz (updates coalesced from the `metrics.{symbol}` stream into one render per 100 ms frame) regardless of trade rate; the panel's budget is <=2 ms CPU + <=1 ms GPU per frame, and it must remain >=58 fps with 3 CVD panels open during a 5,000 trades/min burst. Divergence detection runs incrementally on bar close, never over the whole series.
 - **Analytics/audit:** `cvd.interval_changed`, `cvd.mode_changed` (absolute/session/anchored), `cvd.divergence_marker_clicked`, `cvd.anchor_set` (analytics).
 - **Design sign-off acceptance checklist:** [ ] CVD line + per-bar delta histogram drawn together with a shared time axis aligned to the chart [ ] session / anchored / rolling modes drawn [ ] divergence markers drawn with a text label and the _(estimated)_ chip where the detection is heuristic [ ] recorder-dependent empty state [ ] stale-data shading after 2 s [ ] accessible table alternative reachable from the panel header
+- **UX research:** [e23-cvd-reading.md](../design/research/e23-cvd-reading.md) (E23-D01; heuristic walkthrough, no participants: PROPOSED session anchor with its boundary named, line + per-bar histogram, smoothing off, observation-only divergence labels with the `(estimated)` copy, the manual-anchor paths and the states checklist for E23-D02; contradictions C1–C11 and gaps G1–G7 for their owners).
 
 ### SCR-053 — Tape / Time & Sales + big-trade bubbles panel
 
