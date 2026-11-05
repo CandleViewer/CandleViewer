@@ -138,6 +138,20 @@ async def test_one_resolver_over_the_stores_column_gives_the_cap_and_the_sync_th
     assert start == day.day_start - CLOSED_PNL_LOOKBACK
 
 
+async def test_the_cap_and_the_sync_hand_the_one_resolver_instants_from_one_clock() -> None:
+    """Slice 4's lens fold (N1; 24 Sec.8.13 "one window and one lookback for the cap and the
+    view"): the order path's daily-loss figure reads the clock the sync reads, the exchange-synced
+    one the position store is built over, never the runtime's host clock beside it."""
+    world = Synced()
+    async with started(world.runtime()) as runtime:
+        parts = runtime._composed()
+        sync, figures = parts.closed_pnl, parts.submission._deps.figures
+        assert sync is not None and isinstance(figures, DayRiskFigures)
+        [clock] = world.position_clocks
+        assert isinstance(clock, ExchangeWallClock)
+        assert figures._now is clock and sync._now is clock
+
+
 async def test_the_stop_ends_the_sync_before_anything_it_reads_through_closes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
