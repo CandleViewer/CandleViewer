@@ -11,8 +11,8 @@ inside it.
 The shape is E29-X02's `tests/security/oms/_world.py` (#982, #5715), whose role matrix, seeded
 final orders and scope cells stay X02's. This world adds what a lifecycle needs: a catalogue and a
 quote so a create is admitted, a private stream fed by the venue's port, reads that follow the
-runtime's rows, and the REST, WS and push helpers. When #5715 merges one of the two takes the
-other's place.
+runtime's rows, and the REST, WS and push helpers. When #5715 merges, X02's world is the base and
+these additions move onto it.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import asyncio
 import threading
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
@@ -70,6 +70,10 @@ T0_US: Final = int(rt.T0.timestamp()) * 1_000_000  # the facade's clock, as the 
 _TOPIC: Final = {pp.TOPICS[topic]: topic for ops in REQUIRED_OPS for topic in ops}
 ORDERS, FILLS = _TOPIC["order"], _TOPIC["execution"]
 _MARK: Final = {"kind": "notice", "severity": "info", "message": "marker", "reason": "qa.marker"}
+#: How long any wait of the world may last, in seconds: the runtime's start, a call reaching a door,
+#: a parked request answering, a read of the socket. A bound on a wait that cannot be answered,
+#: never a delay a test relies on: what is waited for is an event, and a late one fails the test.
+WAIT_S: Final = 20
 _BODY: Final = {
     "exchange_account_id": str(ACCOUNT), "symbol": sr.SYMBOL, "side": "buy", "order_type": "limit",
     "price": "60000", "sizing": {"mode": "fixed_qty", "qty": "0.010"},
@@ -203,11 +207,27 @@ class Socket:
     world: OmsWorld
     ws: Any
 
-    def recv(self) -> dict[str, Any]:
-        """The next frame, pings answered; one that never comes fails at the suite's bound."""
+    def _within[T](self, what: str, read: Callable[[], T]) -> T:
+        """`read()`, which blocks on the socket, run on a worker thread so that it fails the test
+        once `WAIT_S` has gone by, not at the suite's bound; the socket's closing at the end of its
+        block unblocks a read left behind (as `tests/contract/rbac/test_scope_and_ws.py` reads).
+        The bound is on the whole read, however many frames (pings, `connection_quality`) pass."""
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            return pool.submit(read).result(timeout=WAIT_S)
+        except TimeoutError:
+            pytest.fail(f"{what} did not come within {WAIT_S}s")
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+
+    def _next(self) -> dict[str, Any]:
         while (frame := self.ws.receive_json())["t"] == "ping":
             self.ws.send_json({"t": "pong", "id": frame["id"]})
         return cast(dict[str, Any], frame)
+
+    def recv(self) -> dict[str, Any]:
+        """The next frame, pings answered."""
+        return self._within("a frame", self._next)
 
     def sub(self, ch: str) -> dict[str, Any]:
         """Subscribed to `ch`, its snapshot read and returned: a frame published before it is
@@ -216,26 +236,30 @@ class Socket:
             {} if ch.startswith("machines.") else {"opts": {"exchange_account_ids": [str(ACCOUNT)]}}
         )
         self.ws.send_json({"t": "sub", "id": ch, "p": {"topics": [{"ch": ch, **scope}]}})
-        while not ((frame := self.recv())["t"] == "snap" and frame.get("ch") == ch):
-            assert frame["t"] in ("sub_ok", "snap", "d"), frame
-        return cast(dict[str, Any], frame["p"])
 
-    def drain(self) -> list[dict[str, Any]]:
-        """Every frame sent so far: those up to a marker broadcast now, twice over, so a frame
-        still queued behind the first marker's priority lane is read too."""
+        def snapshot() -> dict[str, Any]:
+            while not ((frame := self._next())["t"] == "snap" and frame.get("ch") == ch):
+                assert frame["t"] in ("sub_ok", "snap", "d"), frame
+            return cast(dict[str, Any], frame["p"])
+
+        return self._within(f"the snapshot of {ch}", snapshot)
+
+    def sent(self) -> list[dict[str, Any]]:
+        """Every frame the world has sent this client, read once the world has settled: those up to
+        a marker broadcast now, twice over, so a frame still queued behind the first marker's
+        priority lane is read too (the marker rides `orders` and `executions`' lane, FIFO). A frame
+        that never came is missing from the list for the assertions to show, never waited for."""
+        self.world.settle()
         frames: list[dict[str, Any]] = []
-        for _ in range(2):
-            self.world.call(self.world.app.state.ws_hub.broadcast_system, _MARK)
-            while (frame := self.recv()).get("p") != _MARK:
-                frames.append(frame)
+
+        def read() -> None:
+            for _ in range(2):
+                self.world.call(self.world.app.state.ws_hub.broadcast_system, _MARK)
+                while (frame := self._next()).get("p") != _MARK:
+                    frames.append(frame)
+
+        self._within("the marker after the frames sent", read)
         return frames
-
-    def until(self, done: Callable[[list[dict[str, Any]]], bool]) -> list[dict[str, Any]]:
-        """Every frame until `done` holds of those read, and those sent with it."""
-        frames: list[dict[str, Any]] = []
-        while not done(frames):
-            frames.append(self.recv())
-        return [*frames, *self.drain()]
 
 
 @dataclass
@@ -324,9 +348,11 @@ class OmsWorld:
         events = self.call(self.oms.store.list_for_order, ACCOUNT, uuid.UUID(order["id"]))
         return [(e.kind, e.source, e.to_state) for e in events]
 
-    def fills(self) -> list[str]:
-        """The `exec_id` of every execution the store holds."""
-        return [x.exec_id for x in self.oms.store._fills.values()]
+    def fills(self, order: dict[str, Any]) -> list[str]:
+        """The names (`fill_row`'s) of the executions the store holds for the order."""
+        link = f"{order['order_link_id']}-"
+        held = [x.exec_id for x in self.oms.store._fills.values() if x.exec_id.startswith(link)]
+        return named(order, held)
 
     # the venue
     def sent(self, method: str) -> list[Any]:
@@ -336,7 +362,8 @@ class OmsWorld:
         """Every create the venue received for the order, each carrying its native stop (C-2.6)."""
         sent = [r for r in self.sent("place_order") if isinstance(r, PlaceOrderRequest)]
         creates = [r for r in sent if r.order_link_id == order["order_link_id"]]
-        assert all(create.stop_loss == Decimal(order["stop_loss"]) for create in creates)
+        stops, want = [create.stop_loss for create in creates], Decimal(order["stop_loss"])
+        assert stops == [want] * len(creates), f"C-2.6: the order's stop is {want}, sent {stops}"
         return creates
 
     def hold(self, method: str) -> Door:
@@ -360,7 +387,7 @@ class OmsWorld:
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(call, *args)
             try:
-                assert door.arrived.wait(20), "no call reached the door"
+                assert door.arrived.wait(WAIT_S), "no call reached the door"
                 yield future
             finally:
                 door.open()
@@ -380,14 +407,12 @@ class OmsWorld:
             self.call(self.port.push, event)
         self.settle()
 
-    def fill(
-        self, order: dict[str, Any], exec_id: str, qty: str, *, seq: int, **fields: Any
-    ) -> None:
+    def fill(self, order: dict[str, Any], name: str, qty: str, *, seq: int, **fields: Any) -> None:
         """The venue fills `qty` of the order: its position holds the order's native stop, and the
         fill is pushed on the account's stream."""
         row = self.row(order)
         self.venue_position(row, qty)
-        self.deliver(FILLS, fill_row(row, exec_id, qty, seq=seq, **fields))
+        self.deliver(FILLS, fill_row(row, name, qty, seq=seq, **fields))
 
 
 async def _settled(runtime: Any) -> None:
@@ -402,16 +427,23 @@ def _text(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
-def fill_row(order: OrderRow, exec_id: str, qty: str, *, seq: int, **fields: Any) -> dict[str, Any]:
+def named(order: dict[str, Any], exec_ids: Iterable[str]) -> list[str]:
+    """The names `fill_row` gave the order's executions: a test's own labels for them."""
+    return [x.removeprefix(f"{order['order_link_id']}-") for x in exec_ids]
+
+
+def fill_row(order: OrderRow, name: str, qty: str, *, seq: int, **fields: Any) -> dict[str, Any]:
     """A trade fill of the stored `order`, `qty` of it at its price, its fee the transcribed taker
-    rate of its own value (derived); `fields` replace the row's members."""
+    rate of its own value (derived); `fields` replace the row's members. Its `execId` is the
+    order's `order_link_id` and `name`: no two orders share one, so a test run again meets none
+    the store holds."""
     price, rate = order.price or Decimal(0), Decimal("0.00055")
     values: dict[str, Any] = {
         "orderId": order.exchange_order_id, "orderLinkId": order.order_link_id, "seq": seq,
-        "execId": exec_id, "execQty": qty, "execPrice": _text(price), "side": order.side,
-        "orderQty": _text(order.qty), "orderType": "Limit",
-        "execFee": _text(Decimal(qty) * price * rate),
-        "feeRate": str(rate), "isMaker": False, "execTime": str(T0_US // 1_000),
+        "execId": f"{order.order_link_id}-{name}", "execQty": qty, "execPrice": _text(price),
+        "side": order.side, "orderQty": _text(order.qty), "orderType": "Limit",
+        "execFee": _text(Decimal(qty) * price * rate), "feeRate": str(rate), "isMaker": False,
+        "execTime": str(T0_US // 1_000),
     }  # fmt: skip
     return linear_execution(**(values | fields))
 
@@ -433,7 +465,7 @@ async def _until_ready(runtime: Any, oms: rt.World) -> None:
     await runtime.start()
     for flag in oms.flags:  # a fake flag view's first read
         flag.read()
-    await asyncio.wait_for(runtime.wait_ready(), 20)
+    await asyncio.wait_for(runtime.wait_ready(), WAIT_S)
 
 
 @contextmanager

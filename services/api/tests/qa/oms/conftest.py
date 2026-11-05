@@ -19,6 +19,8 @@ def _oms(tmp_path_factory: pytest.TempPathFactory) -> Iterator[OmsWorld]:
 
 @pytest.fixture
 def world(_oms: OmsWorld) -> Iterator[OmsWorld]:
-    """The module's world, its venue as the test before left it, undone once the test is over."""
+    """The module's world, its venue as the test before left it, undone once the test is over.
+    A test runs once in it: an order a test leaves `unknown` keeps its symbol's position key, so
+    the same test again would be refused (its fills' ids are the order's own, so they are not)."""
     yield _oms
     _oms.reset()
