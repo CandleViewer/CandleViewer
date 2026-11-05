@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 import candleviewer
+from candleviewer.api.idempotency import IdempotencyCache
 from candleviewer.api.position_close import (
     CLOSE_ALL_PATH,
     CLOSE_PATH,
@@ -762,6 +763,19 @@ async def test_close_all_cancelled_before_its_task_starts_releases_the_key() -> 
         retry = await client.post(CLOSE_ALL_PATH, json={}, headers=sent)
     assert retry.status_code == 200, retry.text
     assert len(held.runs) == 1 and len(world.submitted()) == 2
+
+
+async def test_close_all_a_finished_task_releases_the_key() -> None:
+    """C-2.10, C-2.18: the key leaves the in-flight set once its task ends. With nothing kept in
+    the 24 h record, a second close-all under the same key on the same router flattens again
+    instead of answering `idempotency_in_flight`."""
+    world = World(cache=IdempotencyCache(max_entry_bytes=0))  # nothing kept, so no replay
+    sent = headers("owner", key=uuid.uuid4())
+    async with world.client() as client:  # one router, so one in-flight guard
+        first = await client.post(CLOSE_ALL_PATH, json={}, headers=sent)
+        second = await client.post(CLOSE_ALL_PATH, json={}, headers=sent)
+    assert (first.status_code, second.status_code) == (200, 200), second.text
+    assert len(world.cancel_all.runs) == 2 and len(world.submitted()) == 4
 
 
 @pytest.mark.parametrize(
