@@ -17,6 +17,7 @@ from uuid import UUID
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.models import RateHeadroom
 from candleviewer.observability.metrics import Metrics
@@ -32,7 +33,7 @@ from candleviewer.oms.reconcile_job import (
     leaf_of,
 )
 from candleviewer.oms.reconcile_report import STALE_NOTICE
-from candleviewer.oms.reconcile_standing import STALE_AFTER_S
+from candleviewer.oms.reconcile_standing import STALE_AFTER_S, STALE_DETAIL
 from candleviewer.statechart import build as build_chart
 from candleviewer.statechart.bindings import b19_reconciliation as b19
 from candleviewer.statechart.factory import default_clock
@@ -860,6 +861,34 @@ def _failing(
         await send(job, sent, payload)
 
     monkeypatch.setattr(driver, "_send_job", failing)
+
+
+async def test_a_starts_premark_refuses_each_unopened_account_and_calls_no_listener(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """24 Sec.8.5 (#5233 on #5584's listener): the start marks each account it is to open before
+    its first open, so a start cut short leaves each unopened account refused with
+    `account_stale`, and the mark calls no listener, so a socket open during the start sees no
+    transient `oms.account_stale`; a real lock later is still heard, once."""
+    heard: list[AccountId] = []
+    job.standing.listen(heard.append)
+    seen: list[tuple[AccountId, Any]] = []
+
+    async def cut(account: AccountId, _trigger: str) -> None:  # the start cut before any open
+        seen.append((account, job.standing.refusal(account)))
+
+    driver = _driver(job, timers)
+    monkeypatch.setattr(driver, "trigger", cut)
+    await driver.start([ACCOUNT, OTHER])
+    try:
+        stale = OrderEntryRefusal("account_stale", STALE_DETAIL)
+        assert dict(seen) == {ACCOUNT: stale, OTHER: stale}  # refused before the first open
+        assert (job.standing.refusal(ACCOUNT), job.standing.refusal(OTHER)) == (stale, stale)
+        assert (heard, job.standing.stale_accounts()) == ([], frozenset())
+        job.standing.mark_stale(ACCOUNT)  # a real lock: heard exactly once
+        assert heard == [ACCOUNT]
+    finally:
+        await driver.stop()
 
 
 async def test_a_start_send_that_fails_holds_that_account_alone_until_a_trigger_reaches_it(

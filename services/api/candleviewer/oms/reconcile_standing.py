@@ -23,6 +23,11 @@ records; this enforces:
   no notice of its own (a restored one, or one set ahead of B19's) reaches the sockets already
   open. A listener that raises is logged by its class and never reaches the writer: the lock
   stands either way.
+* **Pre-marked, unheard, at a start** (`premark`, 24 Sec.8.5): the start refuses each account it
+  is to open before its first open, and only that open clears the mark (`restored`). The mark is
+  no lock, so the listener never hears it and the replay never reads it (`stale_accounts`): a
+  socket open during the start sees no transient `oms.account_stale`. It refuses entry as a lock
+  does, and a lock gained over it (a restored `stale_lockout`, a refused snapshot) is heard.
 
 It is neither account health nor B20's risk lockout, and protective paths (a stop attach, restore
 or tightening, a cancel, a close) never consult it (C-2.6): only the order-entry gate does.
@@ -82,6 +87,8 @@ class ReconcileStanding:
 
     def __init__(self) -> None:
         self._stale: set[AccountId] = set()
+        #: The start's pre-marks (`premark`): refused as stale, never heard nor replayed.
+        self._premarked: set[AccountId] = set()
         self._held = False
         self._gained: LockGained | None = None
 
@@ -93,14 +100,15 @@ class ReconcileStanding:
         """`OrderEntryCheck`: refuses a stale account's entry with `account_stale` (24 Sec.8.10),
         and every account's while the standing is held. A set read and a flag read, O(1) and in
         memory, from the serving loop, while the order lane writes the set (C-2.20, C-2.21)."""
-        if account_id in self._stale:
+        if account_id in self._stale or account_id in self._premarked:
             return OrderEntryRefusal("account_stale", STALE_DETAIL)
         if self._held:
             return OrderEntryRefusal("account_stale", UNSTARTED_DETAIL)
         return None
 
     def is_stale(self, account_id: AccountId) -> bool:
-        return account_id in self._stale
+        """Refused as stale: a lock or a start's pre-mark."""
+        return account_id in self._stale or account_id in self._premarked
 
     def stale_accounts(self) -> frozenset[AccountId]:
         """The accounts held stale now, one copy of the set made in one call, for the replay of
@@ -123,12 +131,20 @@ class ReconcileStanding:
                     error=type(exc).__name__,
                 )
 
+    def premark(self, account_id: AccountId) -> None:
+        """The start's mark before an account's first open (module docstring): refused as stale,
+        the listener not called. Only `restored` (the open) or `clear` lifts it. Idempotent."""
+        self._premarked.add(account_id)
+
     def clear(self, account_id: AccountId) -> None:
         """Only after B19 recorded `OPERATOR_RESOLVED` (BQ-5)."""
         self._stale.discard(account_id)
+        self._premarked.discard(account_id)
 
     def restored(self, account_id: AccountId, state: str) -> None:
-        """Start-up: the account's restored B19 leaf state decides, as no entry action re-ran."""
+        """Start-up: the account's restored B19 leaf state decides, as no entry action re-ran;
+        it lifts the start's pre-mark, and a restored lock is heard as a gain."""
+        self._premarked.discard(account_id)
         if state == STALE_STATE:
             self.mark_stale(account_id)
         else:
@@ -149,8 +165,9 @@ class ReconcileStanding:
 
     @property
     def stale_count(self) -> int:
-        """`oms_stale_accounts` (20 Sec.12.1), which the job driver sets (PR 2b)."""
-        return len(self._stale)
+        """`oms_stale_accounts` (20 Sec.12.1), which the job driver sets (PR 2b): every account
+        refused as stale, a start's pre-marks included."""
+        return len(self._stale | self._premarked)
 
 
 @dataclass(frozen=True, slots=True)

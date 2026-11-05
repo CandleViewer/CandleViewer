@@ -147,6 +147,41 @@ def test_a_listener_that_raises_is_logged_and_the_lock_stands(error: type[Except
     ]
 
 
+def test_a_starts_premark_refuses_entry_unheard_and_unreplayed_until_its_open() -> None:
+    """24 Sec.8.5 (#5233 on #5584's listener): the start's pre-mark refuses entry as a lock does,
+    with the same code and text, but it is no lock: the listener never hears it and the replay
+    never reads it. The open (`restored`) lifts it, a lock gained over it is heard once, and an
+    Owner's unlock (`clear`) lifts both."""
+    standing = ReconcileStanding()
+    heard: list[AccountId] = []
+    standing.listen(heard.append)
+    standing.premark(ACCOUNT)
+    standing.premark(OTHER)
+    standing.premark(OTHER)  # idempotent
+    stale = OrderEntryRefusal("account_stale", STALE_DETAIL)
+    assert (standing.refusal(ACCOUNT), standing.refusal(OTHER)) == (stale, stale)
+    assert (standing.is_stale(ACCOUNT), standing.stale_count) == (True, 2)
+    assert (heard, standing.stale_accounts()) == ([], frozenset())
+    standing.restored(ACCOUNT, "idle")  # its open: no lock, nothing heard
+    assert (standing.refusal(ACCOUNT), heard) == (None, [])
+    standing.mark_stale(OTHER)  # a real lock over the pre-mark: heard, once
+    standing.mark_stale(OTHER)
+    assert (heard, standing.stale_accounts()) == ([OTHER], frozenset({OTHER}))
+    standing.clear(OTHER)
+    assert (standing.refusal(OTHER), standing.stale_count) == (None, 0)
+
+
+def test_a_restored_lock_over_a_premark_is_heard_once() -> None:
+    """E29-S07: a restored `stale_lockout` is a gain even where the start pre-marked the account."""
+    standing = ReconcileStanding()
+    heard: list[AccountId] = []
+    standing.listen(heard.append)
+    standing.premark(ACCOUNT)
+    standing.restored(ACCOUNT, "stale_lockout")
+    standing.restored(ACCOUNT, "stale_lockout")
+    assert heard == [ACCOUNT] and standing.stale_accounts() == frozenset({ACCOUNT})
+
+
 def test_protective_paths_never_consult_the_standing() -> None:
     """C-2.6, BQ-5: only the order-entry gate reads the standing; the stop writers, the cancel
     and close paths and the exits never name it. Its writers are the pass's own modules (the

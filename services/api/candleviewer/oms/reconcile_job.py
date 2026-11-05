@@ -292,14 +292,15 @@ class ReconcileJobs:
         self._gauge(lambda: float(self._standing.stale_count))
         for account in ordered:  # fail closed first: only an open clears it, never a cut start
             if account not in self._jobs:
-                self._standing.mark_stale(account)
+                self._standing.premark(account)  # no lock: no notice (24 Sec.8.5)
         for account in ordered:
             try:
                 await self.trigger(account, "startup")
             except Exception as exc:  # any failure holds this account; the others still start
                 if self._life != life:  # a stop overtook the start: it holds and pages nothing
                     raise
-                self._standing.mark_stale(account)  # unknown: refused until a trigger reaches it
+                if not self._standing.is_stale(account):  # unknown: refused until a trigger
+                    self._standing.mark_stale(account)  # reaches it; a pre-mark still holds
                 self._unstarted.add(account)
                 _log().critical("reconcile_job_unopened", account_id=str(account),
                                 failure=type(exc).__name__, cv_page=True)  # fmt: skip
