@@ -11,6 +11,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import e15_d16_handoff_check as check
@@ -77,7 +79,7 @@ def test_index_missing_component_fails() -> None:
         for i, line in enumerate(lines)
         if line.startswith("| US-LAY-004 ") and "CMP-188" in line
     )
-    lines[row] = lines[row].replace("CMP-188 PriceAxis (`15`:2423); ", "")
+    lines[row] = re.sub(r"CMP-188 PriceAxis \(`15`:\d+\); ", "", lines[row])
     result = only("G-INDEX", findings(pack="\n".join(lines)))
     assert result == ["G-INDEX US-LAY-004 omits CMP-188 (`18` §2.16)"]
 
@@ -127,3 +129,30 @@ def test_block_ends_at_the_next_peer_heading() -> None:
     lines = ["# t", "## 1. a", "x", "### 1.1 b", "y", "## 2. c", "z"]
     assert check.block(lines, "## 1. ") == ["## 1. a", "x", "### 1.1 b", "y"]
     assert check.block(lines, "### 1.1 ") == ["### 1.1 b", "y"]
+
+
+def test_self_test_passes_on_the_tree() -> None:
+    assert check.self_test(ROOT) == []
+
+
+def test_self_test_covers_every_gate() -> None:
+    assert [gate for gate, _ in check.MUTATIONS] == [
+        "G-LINK",
+        "G-HASH",
+        "G-INDEX",
+        "G-DECK",
+    ]
+
+
+def test_check_flag_sets_the_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(check, "check", lambda *a, **k: ["G-LINK pack:1 mutated"])
+    assert check.main([]) == 0
+    assert check.main(["--check"]) == 1
+
+
+def test_self_test_failure_sets_the_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(check, "check", lambda *a, **k: [])
+    monkeypatch.setattr(
+        check, "self_test", lambda *a, **k: ["G-LINK mutation did not apply"]
+    )
+    assert check.main(["--self-test"]) == 1

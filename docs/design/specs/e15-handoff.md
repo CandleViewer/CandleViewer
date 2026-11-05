@@ -1,11 +1,13 @@
 # E15-D16 — Engineering hand-off pack for the layouts and workspaces band (US-LAY-001..008)
 
-**Ticket:** E15-D16 (#370) · **Epic:** E15 · **Kind:** design hand-off pack, text only · **Status:** v1, the
-**pre-stage** (PR 1 of 2, `Refs #370`, `Partial:`). The closing version v1.1 (PR 2) follows when the boards of
-E15-D09, E15-D10, E15-D11 and E15-D13 have merged and the E15-D15 hold is lifted (§15). Every question of the
-BQ list (#370, 6573343304) is ruled: **R370**, the orchestrator's ruling of 2026-11-02 10:01Z — Option 2,
-BQ-02b, BQ-12, BQ-16b and BQ-19 overridden, every other row accepted with its rider. Cited below as
-"R370 BQ-nn". The rows marked PROPOSED are still the owner's to accept. **Owner approval pending.**
+**Ticket:** E15-D16 (#370) · **Epic:** E15 · **Kind:** design hand-off pack, text only · **Status:** v1.1, the
+**closing version** (PR 2 of 2, `Closes #370`; v1, the pre-stage, merged as #5475). v1.1 closes on the merged
+text packs of E15-D09, E15-D10, E15-D11 and E15-D13 and the E15-D15 hold's lift; their boards follow as a
+v1.2 re-pin (§15). Every question of the BQ list (#370, 6573343304) is ruled: **R370**, the orchestrator's
+ruling of 2026-11-02 10:01Z — Option 2, BQ-02b, BQ-12, BQ-16b and BQ-19 overridden, every other row accepted
+with its rider. Cited below as "R370 BQ-nn". The closing BQ list (6615752716) is ruled by **R370c**, the
+ruling of 2026-11-03 21:51Z (6616312502), cited "R370c BQ-nn" (§R.1); R370 governs where R370c is silent.
+The rows marked PROPOSED are still the owner's to accept. **Owner approval pending.**
 
 **What this file is.** The single entry point for the engineers who build US-LAY-001..008 in Sprints 06–09:
 for each story, the screens, the components, the spec sections, the boards and the acceptance-relevant states
@@ -14,10 +16,13 @@ for each story, the screens, the components, the spec sections, the boards and t
 what must not regress (§10); the events (§11); the gaps (§13) and the design-QA preview (§16). It designs
 nothing (T Out of scope): a question that needs design goes back to its owning ticket as a row here.
 
-**Base.** `origin/main` 67fe8b5265 (2026-11-02; re-read from ecadc403e6, which differs only in `docs/plan/` 20, 21 and 24, none a cite key). Every `KEY`:line cite below is read there; the parents'
-texts have not changed since the BQ list's base e5b286ed50. **In flight, pinned at their heads (`RULE`:79,
-R6):** #5410 at 417ae42c8c, #5411 at 08e055c5f5, #5439 at 7b62ed4ec8 and #5447 at d77d02a176, each read
-"if #N merges as is" and re-pinned to its merge commit at v1.1.
+**Base.** `origin/main` b81479ab0 (2026-11-03), stacked on #5709 at 458dcf2ca (D05's focus rows;
+the `D05` cites and the deck's `D05` keys are re-based on it). v1's cites, read at 67fe8b5265, are re-read there: those into
+`05`, `14`, `15` and `CON` moved with their files and are re-numbered; three `14` cites v1 set one line past their
+heading are corrected (§2.1, §2.3); the parents' texts are unchanged (G-HASH, G-DECK). **Merged, re-cited:**
+#5410 as 9b77e6b831 and #5447 as 16ccef846f. **In flight, pinned at their heads, not awaited (`RULE`:79, R6;
+R370c BQ-02):** #5411 at 9f15e72999, #5439 at b37cf484b2 and #5695 at 991f2e7b6c, each read "if #N merges as
+is" and re-cited at its merge in v1.2.
 
 **Key.** `D02`..`D15` = `docs/design/E15/E15-Dnn.md`; `D03H`..`D13H` = the `-handoff.md` twins; `LF`, `MG`,
 `RD`, `DSC` = the builder specs [`e15-layout-flows.md`](e15-layout-flows.md),
@@ -37,16 +42,16 @@ item 4). Its test is `docs/design/_tools/test_e15_d16_handoff_check.py`.
 
 ## Acceptance-criteria trace (#370)
 
-| Ticket item                                                                     | Where        | Status at v1                                                                                                                   |
+| Ticket item                                                                     | Where        | Status at v1.1                                                                                                                 |
 | ------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| AC 1 — every story names its screens, components, spec pages, frames and states | §2           | done: eight story rows, each with a spec section (G-INDEX); four parents' boards "text only, boards PENDING" with a G-row each |
+| AC 1 — every story names its screens, components, spec pages, frames and states | §2           | done: eight story rows, each with a spec section (G-INDEX); four parents' "text only, boards PENDING"; board ids at v1.2 (§15) |
 | AC 2 — an engineer builds CMP-082 PanelHeader from the pack alone               | §3.2, §14.2  | the dry run at READY, labelled (heuristic); every NOT FOUND answered here as a gap (R370 BQ-15)                                |
-| AC 3 — a prop mismatch is resolved; the catalogue is corrected                  | §5           | PROPOSED A-rows; applied by E15-D13 PR 3 or by this pack's closing version, one `15` writer at a time (R370 BQ-09)             |
+| AC 3 — a prop mismatch is resolved; the catalogue is corrected                  | §5           | PROPOSED A-rows, applied after #5411 merges (one `15` writer; R370 BQ-09); C-rows CR-01..CR-06 (§5.3)                          |
 | AC 4 — copy is consistent across surfaces                                       | §7; DECK     | 13 concept groups diffed; each difference noted as deliberate or given one PROPOSED wording (G-DECK)                           |
 | AC 5 — an open question is listed with an owner and a date; the story flagged   | §13          | the register: grade, owner lane, decision date before the consuming sprint, the story flagged                                  |
 | Scope — handoff index                                                           | §2           | done                                                                                                                           |
 | Scope — component build order                                                   | §3           | done; "agreed with the FE lead" = an orchestrator ruling plus a consumer comment on #403 (R370 BQ-07)                          |
-| Scope — test-id convention                                                      | §4           | PROPOSED; QA's confirmation is G-12 (R370 BQ-08)                                                                               |
+| Scope — test-id convention                                                      | §4           | PROPOSED (D-5); QA's confirmation is G-12, carried to #434 (R370c BQ-09)                                                       |
 | Scope — state / prop reconciliation                                             | §5           | done; mismatches as A-rows (AC 3)                                                                                              |
 | Scope — Storybook story list                                                    | §6           | done; the differences from #5411's stories are C-rows                                                                          |
 | Scope — copy deck                                                               | §7; DECK     | 508<!--=COUNT:deck.entries--> strings from eleven sources                                                                      |
@@ -63,7 +68,7 @@ item 4). Its test is `docs/design/_tools/test_e15_d16_handoff_check.py`.
 
 | BQ                                                  | Ruling, as applied here                                                                                                                                                                                                                         |
 | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 01                                                  | One pre-stage text PR (`Refs #370`, `Partial:`), then the closing v1.1 — closed only when the four boards PRs have merged and the D15 hold is lifted (§15)                                                                                      |
+| 01                                                  | One pre-stage text PR (`Refs #370`, `Partial:`), then the closing v1.1 — closed only when the four boards PRs have merged and the D15 hold is lifted (§15); superseded by R370c BQ-02 + BQ-11 (§R.1)                                            |
 | 02b (OVERRIDE)                                      | **Option 2:** this pack, DECK and one small index / deck / link / hash check with its test; no 2,500-line audit tool and no ruled-pins file (C-4.9)                                                                                             |
 | 03b                                                 | Undrawn parents are "text only, boards PENDING" with a G-row each (G-P1..G-P4); re-pinned at each boards PR's head "if #N merges as is" and re-cited at its merge (R6)                                                                          |
 | 05                                                  | The three focus rows stay PROPOSED (§9.3); the exception on #369 is the orchestrator's to record, only after the owner has seen F-01 / F-02 / F-12; the hold stands until E15-D05's text carries them (`D15`:509); F-02 does not reopen D15-C-d |
@@ -76,19 +81,33 @@ item 4). Its test is `docs/design/_tools/test_e15_d16_handoff_check.py`.
 | 13b                                                 | A PROPOSED T2 row per gated control found on SCR-049, SCR-150 and SCR-153, or "no gated control" after a read; a missing reason key is PROPOSED with its vocabulary owner (`RULE`:49–:56); RBAC stays presentation only (§8.2)                  |
 | 15                                                  | No session; an agent dry run at READY labelled (heuristic) and the owner protocol; "cold-build passed" and "session held" are not ticked as human-run                                                                                           |
 | 16b (OVERRIDE)                                      | No `14` pointer lines: T names no `14` edit (C-4.9); the pointers live in this pack (§2.3)                                                                                                                                                      |
-| 18                                                  | Text only, no Penpot page and no PNG in PR 1, recorded as a **PROPOSED Deviation** (D-1): README's line says "no exceptions" (`README`:44); only the owner's C-10.1 approval waives it                                                          |
+| 18                                                  | Text only, no Penpot page and no PNG in PR 1, recorded as a **PROPOSED Deviation** (D-1; superseded by R370c BQ-05, §R.1): README's line says "no exceptions" (`README`:44); only the owner's C-10.1 approval waives it                         |
 | 19 (OVERRIDE)                                       | `large-pr-approved` is asked in advance for PR 1, justified at open; PR 2 stays small; two PRs in total                                                                                                                                         |
 | 02a, 03a, 04, 06, 10, 11a, 13a, 14, 16a, 17, 20, 21 | As proposed. Riders: BQ-14 cites `11` and names C-14.2 (60 fps) as the owner, never 55 fps as the Done line; BQ-16a an unticked checklist; BQ-20 the title and branch fit C-4.4; BQ-21 a lift of D15's own text                                 |
 
 No `22` / `23` / `24` change and no new issue. The G-T2 statement appears once (§8.1) and every section that
 shows a gated control cites it (`RULE`:57–:59, G-T2.5 / G-T2.6).
 
+### R.1 The closing ruling (R370c; 6616312502, on the closing BQ list 6615752716)
+
+R370c supersedes R370 BQ-01's gate (the four boards PRs) and BQ-18's PROPOSED status of D-1; nothing else.
+
+| BQ      | Ruling, as applied here                                                                                                                                      | Where          |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
+| 02 + 11 | v1.1 closes on D09 / D10 / D11 / D13's merged text packs, re-cited at their merge commits (§0), and the hold's lift; boards PENDING rows stay; v1.2 re-pins  | §0, §13, §15   |
+| 03 (a)  | E15-D05 is re-opened (`16` §11.5, `16`:664) in its own small PR (#5709, branch `docs/e15-d05-focus-rows`); the hold lifts at that PR's merge, not before     | §9.3; G-H1     |
+| 05 (b)  | D-1 is waived 2026-11-03 under the owner's 2026-10-29 delegation; the owner may veto (owner checklist item 9, a yes / no)                                    | §16.3; §14.1   |
+| 07 (a)  | the pack wins: #5695 fixed its event names to D06's itself; CMP-082's 4-of-9 stories and G-14's toolbar name are C-rows; consumer comments at Done, not here | §5.3; §11      |
+| 09 (a)  | Done with D-5 PROPOSED; G-12 (QA's confirmation of §4) carried to #434; never "agreed with QA"                                                               | §4; §13; §16.3 |
+| assumed | `--check` / `--self-test` on the check; one link comment per reader at Done (`16`:750, item 7); `15` single-writer; late dates flagged; owner list §14.1     | §16.4; §5; §13 |
+
 ## 0. Status and evidence
 
-**Nothing of the band is built on `main`.** In flight: E15-T02's first two slices, #5410 (`packages/dock`, the
-layout tree and its pure operations, at 417ae42c8c) and #5411 (CMP-080 DockPanel, CMP-081 DockGrid, CMP-082
-PanelHeader and CMP-083 SplitPane with their stories, at 08e055c5f5); E15-X01's STRIDE model, #5439 at
-7b62ed4ec8; and the workspace route `/w/:workspaceId`, #5447 at d77d02a176 — each "if #N merges as is".
+**On `main`:** E15-T02's first slice, #5410 (`packages/dock`, the layout tree and its pure operations, merged
+as 9b77e6b831), and the workspace route `/w/:workspaceId`, #5447 (merged as 16ccef846f). **In flight, not
+awaited:** E15-T02's second slice, #5411 (CMP-080 DockPanel, CMP-081 DockGrid, CMP-082 PanelHeader and CMP-083
+SplitPane with their stories, at 9f15e72999); E15-X01's STRIDE model, #5439 at b37cf484b2; and E15-T03's
+SyncBus with the CMP-196 linker, #5695 at 991f2e7b6c — each "if #N merges as is".
 
 | Parent        | #   | State at the base | Cited at                                                                                   |
 | ------------- | --- | ----------------- | ------------------------------------------------------------------------------------------ |
@@ -99,13 +118,13 @@ PanelHeader and CMP-083 SplitPane with their stories, at 08e055c5f5); E15-X01's 
 | E15-D06       | 360 | closed            | text #4470, boards #4496                                                                   |
 | E15-D07       | 361 | closed            | text #4502, boards #4640                                                                   |
 | E15-D08       | 362 | closed            | text #4503, boards #4911                                                                   |
-| E15-D09       | 363 | **open**          | text #4553 (tritan re-derive #4659); its boards PENDING (G-P1)                             |
-| E15-D10       | 364 | **open**          | PR 1 #5094, PR 2 #5108; PR 3 (boards) PENDING (G-P2)                                       |
-| E15-D11       | 365 | **open**          | PR 1 #5074, PR 2 #5098; PR 3 (boards) PENDING (G-P3)                                       |
+| E15-D09       | 363 | **open**          | text #4553 as 5c767dd9c6 (#4659 as d117dc7328); boards PENDING (G-P1)                      |
+| E15-D10       | 364 | **open**          | #5094 as a584e5ef9b, #5108 as c179308446; PR 3 (boards) PENDING (G-P2)                     |
+| E15-D11       | 365 | **open**          | #5074 as 8e2c37d004, #5098 as 028382b987; PR 3 (boards) PENDING (G-P3)                     |
 | E15-D12       | 366 | closed            | #5071, #5088, boards #5390                                                                 |
-| E15-D13       | 367 | **open**          | PR 1 #5055, PR 2 #5073, PR 2T #5075; PR 3 (boards) PENDING (G-P4)                          |
+| E15-D13       | 367 | **open**          | #5055 / #5073 / #5075 as 85006431bf / 8e81397680 / 18d92caf3f; boards PENDING (G-P4)       |
 | E15-D14       | 368 | closed            | #5077, rows #5097                                                                          |
-| E15-D15 input | 369 | closed            | #5034; **the hold F-01 / F-02 / F-12** (`D15`:509, :791); added to `blocked_by` in this PR |
+| E15-D15 input | 369 | closed            | #5034; **the hold F-01 / F-02 / F-12** (`D15`:509, :791); in `blocked_by` from #5460 (D-8) |
 
 **Readers.** E15-T02 (#403) and E15-S01 (#401), building now in Sprint 06; E15-S02 (#435), E15-T03 (#436) and
 E15-X01 (#437) in Sprint 07; E15-S03 (#476) and E15-S04 (#477) in Sprint 08; E15-S05..S08 (#558..#561) and the
@@ -120,7 +139,7 @@ QA lane E15-Q01 (#434), E15-Q02 (#552) and E15-Q06 (#555) in Sprint 09; E15-D17 
 | D02    | the layout tree, the hotkey map, the regions and order, the gated set and the state keys, the events       | `D02`:576, :610, :639, :679                   |
 | D03    | the panel chrome and the tab strip at hi-fi, the region name (D-4, D-5), the copy deck, the security rules | `D03`:169–:170, :272, :630, :820              |
 | D04    | the dock: zones, the pointer and keyboard storyboards, move mode, keys and announcements, the copy deck    | `D04`:139, :147, :171, :240, :311, :390       |
-| D05    | the gallery, the apply, the rail switcher, keys and announcements, the copy deck                           | `D05`:344, :360, :362, :476                   |
+| D05    | the gallery, the apply, the rail switcher, keys and announcements, the copy deck                           | `D05`:344, :360, :362, :490                   |
 | D06    | the sync groups and axes, the account axis, names and announcements, the copy deck                         | `D06`:212, :239, :351, :395                   |
 | D07    | the picker and the panel menu, the copy deck, keys and announcements, security                             | `D07`:260, :381, :606, :698, :758             |
 | D08    | SCR-025 and SCR-029, the copy deck, the A, C and G rows                                                    | `D08`:275, :696, :852                         |
@@ -188,23 +207,23 @@ the Agent-delivery adaptations), or say **text only, boards PENDING** with the G
 | US-LAY-008 | E15-S08 #561 (09); E15-K01 #371                                                        | SCR-021, SCR-153                                     | `RD` §2–§8 and §10 (`RD`:9, :46, :123, :204); D12 §8, §11 (`D12`:123, :162); D15 SR-45, SR-46                                                             | E15-D12 boards 01–06, 09; E15-D02 22                                                                                                 | the narrow collapse to tabs; an armed panel hidden and disarmed; the suggestion row; reduced active; full by choice; the manual controls; the never-shed list                                                                                                                                                                       | nothing                                                     |
 
 **Owned elsewhere, by pointer.** SCR-010 the app shell (`14`:276, E10's), SCR-043 the price-scale menus
-(`14`:1071, E11's; E15 adds only its link item, D06) and SCR-089 rule import / export (`14`:2081, E26's; US-LAY-007
+(`14`:1076, E11's; E15 adds only its link item, D06) and SCR-089 rule import / export (`14`:2096, E26's; US-LAY-007
 shares its file-import pattern only). Their components are the shared rows of §2.2.
 
 ### 2.2 Components per story (every `18` §2.16 component; E15-owned in §3.2, shared by pointer to `15`)
 
 | Story      | E15-owned (full entry in §3.2)                                                                                                    | Shared (the `15` entry owns it; C-16.5)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| US-LAY-001 | CMP-073, CMP-080, CMP-081, CMP-082, CMP-083, CMP-214, CMP-215, CMP-216, CMP-217, CMP-218; plus CMP-249, CMP-251, CMP-252, CMP-253 | CMP-001 Button (`15`:48); CMP-043 Dialog (`15`:505); CMP-050 Card (`15`:594); CMP-196 MultiChartLinker (`15`:2560)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| US-LAY-002 | CMP-073, CMP-080, CMP-081, CMP-082, CMP-217, CMP-218; plus CMP-252                                                                | CMP-001 Button (`15`:48); CMP-004 Toggle (`15`:82); CMP-014 Spinner (`15`:186); CMP-015 Skeleton (`15`:195); CMP-027 ErrorState (`15`:323); CMP-038 InlineSpinnerText (`15`:443); CMP-040 FormField (`15`:470); CMP-043 Dialog (`15`:505); CMP-044 ConfirmDialog (`15`:516); CMP-065 FormSection (`15`:739); CMP-207 BuildFooter (`15`:2706)                                                                                                                                                                                                                                                                                                        |
-| US-LAY-003 | CMP-080, CMP-081, CMP-217, CMP-218; plus CMP-253                                                                                  | CMP-001 Button (`15`:48); CMP-004 Toggle (`15`:82); CMP-011 Tag / Chip (`15`:153); CMP-040 FormField (`15`:470); CMP-043 Dialog (`15`:505); CMP-065 FormSection (`15`:739); CMP-196 MultiChartLinker (`15`:2560)                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| US-LAY-004 | CMP-218                                                                                                                           | CMP-004 Toggle (`15`:82); CMP-011 Tag / Chip (`15`:153); CMP-040 FormField (`15`:470); CMP-041 Menu (`15`:482); CMP-043 Dialog (`15`:505); CMP-188 PriceAxis (`15`:2423); CMP-189 TimeAxis (`15`:2436)                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| US-LAY-005 | CMP-073, CMP-080, CMP-081, CMP-082, CMP-083, CMP-213, CMP-214, CMP-215, CMP-216, CMP-217, CMP-218; plus CMP-249, CMP-250, CMP-251 | CMP-041 Menu (`15`:482); CMP-043 Dialog (`15`:505); CMP-048 Combobox (`15`:565); CMP-050 Card (`15`:594); CMP-061 UserMenu (`15`:699); CMP-070 AppShell (`15`:793); CMP-071 NavRail (`15`:803); CMP-072 TopBar (`15`:813); CMP-075 EnvBadgeLocal (`15`:843); CMP-076 ConnectionStatus (`15`:853); CMP-084 GlobalSearchTrigger (`15`:949); CMP-085 SkipLink (`15`:958); CMP-105 AccountMultiSelect (`15`:1194); CMP-208 StatusBar (`15`:2719); CMP-209 RightRail (`15`:2730); CMP-210 HealthChips (`15`:2741); CMP-211 PanicButtons (`15`:2751); CMP-212 ToastHost (`15`:2764); CMP-219 SymbolPicker (`15`:2839); CMP-220 IntervalPicker (`15`:2851) |
-| US-LAY-006 | CMP-073, CMP-217                                                                                                                  | CMP-001 Button (`15`:48); CMP-016 Tooltip (`15`:206); CMP-019 Icon (`15`:238); CMP-022 Kbd (`15`:269); CMP-043 Dialog (`15`:505); CMP-050 Card (`15`:594); CMP-071 NavRail (`15`:803)                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| US-LAY-007 | none                                                                                                                              | CMP-001 Button (`15`:48); CMP-027 ErrorState (`15`:323); CMP-033 CopyButton (`15`:390); CMP-043 Dialog (`15`:505); CMP-044 ConfirmDialog (`15`:516); CMP-067 FileDrop (`15`:759); CMP-068 CopyableCodeBlock (`15`:769); CMP-234 ValidationPanel (`15`:3019)                                                                                                                                                                                                                                                                                                                                                                                         |
-| US-LAY-008 | CMP-083, CMP-214, CMP-215, CMP-216; plus CMP-251 (the collapsed group)                                                            | CMP-028 Callout / Banner (`15`:334); CMP-069 InfoPanel (`15`:778); CMP-092 DegradedModeBanner (`15`:1028); CMP-227 EstimatedBadge (`15`:2931)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| US-LAY-001 | CMP-073, CMP-080, CMP-081, CMP-082, CMP-083, CMP-214, CMP-215, CMP-216, CMP-217, CMP-218; plus CMP-249, CMP-251, CMP-252, CMP-253 | CMP-001 Button (`15`:48); CMP-043 Dialog (`15`:505); CMP-050 Card (`15`:595); CMP-196 MultiChartLinker (`15`:2583)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| US-LAY-002 | CMP-073, CMP-080, CMP-081, CMP-082, CMP-217, CMP-218; plus CMP-252                                                                | CMP-001 Button (`15`:48); CMP-004 Toggle (`15`:82); CMP-014 Spinner (`15`:186); CMP-015 Skeleton (`15`:195); CMP-027 ErrorState (`15`:323); CMP-038 InlineSpinnerText (`15`:443); CMP-040 FormField (`15`:470); CMP-043 Dialog (`15`:505); CMP-044 ConfirmDialog (`15`:516); CMP-065 FormSection (`15`:741); CMP-207 BuildFooter (`15`:2729)                                                                                                                                                                                                                                                                                                        |
+| US-LAY-003 | CMP-080, CMP-081, CMP-217, CMP-218; plus CMP-253                                                                                  | CMP-001 Button (`15`:48); CMP-004 Toggle (`15`:82); CMP-011 Tag / Chip (`15`:153); CMP-040 FormField (`15`:470); CMP-043 Dialog (`15`:505); CMP-065 FormSection (`15`:741); CMP-196 MultiChartLinker (`15`:2583)                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| US-LAY-004 | CMP-218                                                                                                                           | CMP-004 Toggle (`15`:82); CMP-011 Tag / Chip (`15`:153); CMP-040 FormField (`15`:470); CMP-041 Menu (`15`:482); CMP-043 Dialog (`15`:505); CMP-188 PriceAxis (`15`:2446); CMP-189 TimeAxis (`15`:2459)                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| US-LAY-005 | CMP-073, CMP-080, CMP-081, CMP-082, CMP-083, CMP-213, CMP-214, CMP-215, CMP-216, CMP-217, CMP-218; plus CMP-249, CMP-250, CMP-251 | CMP-041 Menu (`15`:482); CMP-043 Dialog (`15`:505); CMP-048 Combobox (`15`:565); CMP-050 Card (`15`:595); CMP-061 UserMenu (`15`:701); CMP-070 AppShell (`15`:795); CMP-071 NavRail (`15`:805); CMP-072 TopBar (`15`:815); CMP-075 EnvBadgeLocal (`15`:846); CMP-076 ConnectionStatus (`15`:857); CMP-084 GlobalSearchTrigger (`15`:954); CMP-085 SkipLink (`15`:963); CMP-105 AccountMultiSelect (`15`:1200); CMP-208 StatusBar (`15`:2742); CMP-209 RightRail (`15`:2753); CMP-210 HealthChips (`15`:2764); CMP-211 PanicButtons (`15`:2774); CMP-212 ToastHost (`15`:2787); CMP-219 SymbolPicker (`15`:2862); CMP-220 IntervalPicker (`15`:2874) |
+| US-LAY-006 | CMP-073, CMP-217                                                                                                                  | CMP-001 Button (`15`:48); CMP-016 Tooltip (`15`:206); CMP-019 Icon (`15`:238); CMP-022 Kbd (`15`:269); CMP-043 Dialog (`15`:505); CMP-050 Card (`15`:595); CMP-071 NavRail (`15`:805)                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| US-LAY-007 | none                                                                                                                              | CMP-001 Button (`15`:48); CMP-027 ErrorState (`15`:323); CMP-033 CopyButton (`15`:390); CMP-043 Dialog (`15`:505); CMP-044 ConfirmDialog (`15`:516); CMP-067 FileDrop (`15`:761); CMP-068 CopyableCodeBlock (`15`:771); CMP-234 ValidationPanel (`15`:3042)                                                                                                                                                                                                                                                                                                                                                                                         |
+| US-LAY-008 | CMP-083, CMP-214, CMP-215, CMP-216; plus CMP-251 (the collapsed group)                                                            | CMP-028 Callout / Banner (`15`:334); CMP-069 InfoPanel (`15`:780); CMP-092 DegradedModeBanner (`15`:1034); CMP-227 EstimatedBadge (`15`:2954)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
-**Gated controls on every row (G-T2.6):** CMP-079 RbacGate (`15`:890) and CMP-019 Icon `lock` (`15`:238) join
+**Gated controls on every row (G-T2.6):** CMP-079 RbacGate (`15`:895) and CMP-019 Icon `lock` (`15`:238) join
 the component list of every story whose surfaces show a T2 control — US-LAY-001, 002, 004, 005, 006 and 007 —
 and of US-LAY-001 / 003 through SCR-049's maximised cell (§8.2). The statement is §8.1's.
 
@@ -213,19 +232,19 @@ and of US-LAY-001 / 003 through SCR-049's maximised cell (§8.2). The statement 
 | Screen                       | `14` entry | Normative source here          | Stories                |
 | ---------------------------- | ---------- | ------------------------------ | ---------------------- |
 | SCR-011 rail and switcher    | `14`:314   | D05 §10–§11; §9 (FM-15, SR-14) | US-LAY-002, US-LAY-006 |
-| SCR-020 workspace page       | `14`:508   | D03; D02 §4                    | US-LAY-001, 002, 005   |
-| SCR-021 dock                 | `14`:543   | D04; D15 §4                    | US-LAY-001, 005, 008   |
-| SCR-022 preset gallery       | `14`:568   | D05 §2–§9                      | US-LAY-001, US-LAY-006 |
-| SCR-023 sync configuration   | `14`:593   | D06                            | US-LAY-003, US-LAY-004 |
-| SCR-024 panel picker         | `14`:621   | D07 §4                         | US-LAY-005             |
-| SCR-025 workspace settings   | `14`:636   | D08 §2–§5                      | US-LAY-002, US-LAY-003 |
-| SCR-026 import (and Export…) | `14`:652   | D09                            | US-LAY-007             |
-| SCR-027 floating window      | `14`:666   | D10 (boards PENDING, G-P2)     | US-LAY-005             |
-| SCR-028 panel context menu   | `14`:680   | D07 §5                         | US-LAY-005             |
-| SCR-029 unsaved / conflict   | `14`:693   | D08 §4–§6                      | US-LAY-002             |
-| SCR-049 multi-chart grid     | `14`:1165  | `MG` (boards PENDING, G-P3)    | US-LAY-001, US-LAY-003 |
-| SCR-150 boot and restore     | `14`:3055  | `RD` §9; D12 §8                | US-LAY-002             |
-| SCR-153 degraded mode        | `14`:3110  | `RD` §6–§8                     | US-LAY-008             |
+| SCR-020 workspace page       | `14`:510   | D03; D02 §4                    | US-LAY-001, 002, 005   |
+| SCR-021 dock                 | `14`:545   | D04; D15 §4                    | US-LAY-001, 005, 008   |
+| SCR-022 preset gallery       | `14`:570   | D05 §2–§9                      | US-LAY-001, US-LAY-006 |
+| SCR-023 sync configuration   | `14`:595   | D06                            | US-LAY-003, US-LAY-004 |
+| SCR-024 panel picker         | `14`:623   | D07 §4                         | US-LAY-005             |
+| SCR-025 workspace settings   | `14`:638   | D08 §2–§5                      | US-LAY-002, US-LAY-003 |
+| SCR-026 import (and Export…) | `14`:654   | D09                            | US-LAY-007             |
+| SCR-027 floating window      | `14`:668   | D10 (boards PENDING, G-P2)     | US-LAY-005             |
+| SCR-028 panel context menu   | `14`:682   | D07 §5                         | US-LAY-005             |
+| SCR-029 unsaved / conflict   | `14`:695   | D08 §4–§6                      | US-LAY-002             |
+| SCR-049 multi-chart grid     | `14`:1170  | `MG` (boards PENDING, G-P3)    | US-LAY-001, US-LAY-003 |
+| SCR-150 boot and restore     | `14`:3090  | `RD` §9; D12 §8                | US-LAY-002             |
+| SCR-153 degraded mode        | `14`:3146  | `RD` §6–§8                     | US-LAY-008             |
 
 ## 3. The component build order (R370 BQ-07)
 
@@ -256,29 +275,29 @@ critical violations** in every story of §6 in dark and light (`FER`:39), plus t
 
 | Entry                       | `15`      | Role                                                      | Keyboard model                                                              | Axe and the named check                                                                                             |
 | --------------------------- | --------- | --------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| CMP-073 WorkspaceSwitcher   | `15`:824  | `tree` on the rail; the combobox search (CMP-048)         | D15 KB-17 (no chord), KB-23; FM-15, FM-24, FM-25                            | `aria-current` on the open row; the dirty and restored markers in words                                             |
-| CMP-080 DockPanel           | `15`:901  | `region`, named by R-5 (§9.1)                             | D15 KB-05, KB-06, KB-11 (PROPOSED); the panel is a focus target, not a stop | the region's name carries the environment word on `chart`, `dom`, `positions` (A-01)                                |
-| CMP-081 DockGrid            | `15`:913  | the layout; RG-10, the one polite region                  | D15 KB-07 (PROPOSED), the ring (`D15`:277)                                  | DOM order equals reading order after every move (A-03)                                                              |
-| CMP-082 PanelHeader         | `15`:925  | heading (`h2`; `h3` in a tab group) + `toolbar`           | D15 KB-22; the handle a button "Move {Kind}"                                | every control and the handle ≥ 24 px; the name never changes with width                                             |
-| CMP-083 SplitPane           | `15`:937  | `separator`                                               | D15 KB-14: arrows 2 %, `Shift` 10 %, `Home`, `End`                          | `aria-valuenow`, `aria-valuemin`, `aria-valuemax`; the 24 px band                                                   |
-| CMP-213 FuzzyList           | `15`:2775 | `listbox` half of the combobox                            | D15 KB-23; FM-13                                                            | T2 options `aria-disabled`, arrow-reachable; the count throttled (SR-44); T2 options per §8.1 (T2-11, T2-12, T2-14) |
-| CMP-214 DockDropZone        | `15`:2786 | overlay (no role); the chooser is CMP-249's               | D15 KB-13 (the two stages)                                                  | no zone takes `aria-disabled` (T2-20); the refusal is a sentence, once                                              |
-| CMP-215 FloatingWindowFrame | `15`:2798 | an independent document                                   | D10 §7 (`D10`:300); FM-06, FM-07                                            | the environment word in every window title (SD-02; D10 C-t)                                                         |
-| CMP-216 PanelMenu           | `15`:2809 | `menu` on CMP-041, named "Panel options, {region name}"   | D15 KB-10 (PROPOSED), KB-23; FM-26                                          | the first item neither T2 nor sentence-form takes focus; T2 items per §8.1 (T2-09, T2-10)                           |
-| CMP-217 LayoutPresetMenu    | `15`:2819 | `menu`; the gallery's `listbox`                           | D15 KB-01, KB-02, KB-03, KB-23; FM-14, FM-16                                | each preset named in words ("Two by two, four panels"); T2 per §8.1 (T2-01..T2-03)                                  |
-| CMP-218 SyncMenu            | `15`:2829 | the popover (CMP-017) or the 200 % modal (CMP-043)        | D15 KB-08, KB-09 (PROPOSED, pending H-3), KB-22; FM-27                      | each axis a labelled `switch`; a group's colour never without its letter                                            |
-| CMP-249 MoveModeBar         | `15`:3129 | `status`, `aria-atomic="false"`                           | `D13H` Table K rows CMP-249; D15 KB-13                                      | F-05: the bar's own line is spoken (§9.2)                                                                           |
-| CMP-250 MinimisedPanelTray  | `15`:3144 | `toolbar` "Minimised panels"                              | `D13H` Table K rows CMP-250                                                 | each tab named by its panel's region name, with the environment word                                                |
-| CMP-251 DockTabGroup        | `15`:3159 | `tablist`, automatic activation                           | `D13H` Table K rows CMP-251                                                 | each tab `aria-controls` its panel's `region`; no `tabpanel` added                                                  |
-| CMP-252 WorkspaceTabStrip   | `15`:3174 | `tablist` "Workspaces", manual activation                 | `D13H` Table K rows CMP-252; KB-20 (`F2`, PROPOSED), KB-21                  | the dirty and restored states in the tab's name; T2 writes `aria-disabled`; T2 per §8.1 (T2-01..T2-08)              |
-| CMP-253 MultiChartGrid      | `15`:3189 | `region` "Chart grid, 2 by 2, Live"; each cell a `region` | D15 KB-15 (PROPOSED); `MG` §6                                               | one `Tab` stop, roving cells; the maximised cell's arm control T2 (§8.2); the arm control T2-21 per §8.1            |
+| CMP-073 WorkspaceSwitcher   | `15`:826  | `tree` on the rail; the combobox search (CMP-048)         | D15 KB-17 (no chord), KB-23; FM-15, FM-24, FM-25                            | `aria-current` on the open row; the dirty and restored markers in words                                             |
+| CMP-080 DockPanel           | `15`:906  | `region`, named by R-5 (§9.1)                             | D15 KB-05, KB-06, KB-11 (PROPOSED); the panel is a focus target, not a stop | the region's name carries the environment word on `chart`, `dom`, `positions` (A-01)                                |
+| CMP-081 DockGrid            | `15`:918  | the layout; RG-10, the one polite region                  | D15 KB-07 (PROPOSED), the ring (`D15`:277)                                  | DOM order equals reading order after every move (A-03)                                                              |
+| CMP-082 PanelHeader         | `15`:930  | heading (`h2`; `h3` in a tab group) + `toolbar`           | D15 KB-22; the handle a button "Move {Kind}"                                | every control and the handle ≥ 24 px; the name never changes with width                                             |
+| CMP-083 SplitPane           | `15`:942  | `separator`                                               | D15 KB-14: arrows 2 %, `Shift` 10 %, `Home`, `End`                          | `aria-valuenow`, `aria-valuemin`, `aria-valuemax`; the 24 px band                                                   |
+| CMP-213 FuzzyList           | `15`:2798 | `listbox` half of the combobox                            | D15 KB-23; FM-13                                                            | T2 options `aria-disabled`, arrow-reachable; the count throttled (SR-44); T2 options per §8.1 (T2-11, T2-12, T2-14) |
+| CMP-214 DockDropZone        | `15`:2809 | overlay (no role); the chooser is CMP-249's               | D15 KB-13 (the two stages)                                                  | no zone takes `aria-disabled` (T2-20); the refusal is a sentence, once                                              |
+| CMP-215 FloatingWindowFrame | `15`:2821 | an independent document                                   | D10 §7 (`D10`:300); FM-06, FM-07                                            | the environment word in every window title (SD-02; D10 C-t)                                                         |
+| CMP-216 PanelMenu           | `15`:2832 | `menu` on CMP-041, named "Panel options, {region name}"   | D15 KB-10 (PROPOSED), KB-23; FM-26                                          | the first item neither T2 nor sentence-form takes focus; T2 items per §8.1 (T2-09, T2-10)                           |
+| CMP-217 LayoutPresetMenu    | `15`:2842 | `menu`; the gallery's `listbox`                           | D15 KB-01, KB-02, KB-03, KB-23; FM-14, FM-16                                | each preset named in words ("Two by two, four panels"); T2 per §8.1 (T2-01..T2-03)                                  |
+| CMP-218 SyncMenu            | `15`:2852 | the popover (CMP-017) or the 200 % modal (CMP-043)        | D15 KB-08, KB-09 (PROPOSED, pending H-3), KB-22; FM-27                      | each axis a labelled `switch`; a group's colour never without its letter                                            |
+| CMP-249 MoveModeBar         | `15`:3158 | `status`, `aria-atomic="false"`                           | `D13H` Table K rows CMP-249; D15 KB-13                                      | F-05: the bar's own line is spoken (§9.2)                                                                           |
+| CMP-250 MinimisedPanelTray  | `15`:3173 | `toolbar` "Minimised panels"                              | `D13H` Table K rows CMP-250                                                 | each tab named by its panel's region name, with the environment word                                                |
+| CMP-251 DockTabGroup        | `15`:3188 | `tablist`, automatic activation                           | `D13H` Table K rows CMP-251                                                 | each tab `aria-controls` its panel's `region`; no `tabpanel` added                                                  |
+| CMP-252 WorkspaceTabStrip   | `15`:3203 | `tablist` "Workspaces", manual activation                 | `D13H` Table K rows CMP-252; KB-20 (`F2`, PROPOSED), KB-21                  | the dirty and restored states in the tab's name; T2 writes `aria-disabled`; T2 per §8.1 (T2-01..T2-08)              |
+| CMP-253 MultiChartGrid      | `15`:3218 | `region` "Chart grid, 2 by 2, Live"; each cell a `region` | D15 KB-15 (PROPOSED); `MG` §6                                               | one `Tab` stop, roving cells; the maximised cell's arm control T2 (§8.2); the arm control T2-21 per §8.1            |
 
 ## 4. The test-id convention — PROPOSED (R370 BQ-08)
 
 **Status.** PROPOSED under R370 BQ-08 for the E2E suite (Playwright, web and Electron). The QA lane's
 confirmation is G-12 (E15-Q01 #434, due before Sprint 07); this pack never calls it "agreed with QA". It is
 compatible with what is in flight: #5411's tests query by role and name only (`packages/ui/test/Dock.test.tsx`
-at 08e055c5f5) and its components carry `data-cmp`.
+at 9f15e72999) and its components carry `data-cmp`.
 
 1. **The accessible role and name come first** (`FER`:39). E15's names are fixed by rule — the panel region's
    R-5 name, the menu's "Panel options, {region name}", "Workspaces", "Minimised panels", "Close Scalping" — so
@@ -307,16 +326,16 @@ at 08e055c5f5) and its components carry `data-cmp`.
 ## 5. The state and prop reconciliation (AC 3; R370 BQ-09)
 
 Each E15 entry's `15` props and states against what the merged designs require. A mismatch becomes a
-copy-ready **A-row, PROPOSED**: E15-D13's PR 3 (#367, open) applies it if it opens first, otherwise this
-pack's closing version applies it to `15` by these rows alone — one `15` writer at a time; nothing is reduced
-silently. The three rows E15-D15 routed to `15` (`D15`:581–:583, A-3..A-5) were applied by #5073 and stand at
+copy-ready **A-row, PROPOSED**: E15-D13's PR 3 (#367, open) applies it if it opens first; otherwise it is
+**applied after #5411 merges**, by these rows alone, since #5411 writes `15` and `15` has one writer at a time
+(R370c, assumed) — v1.1 does not touch `15`; nothing is reduced silently. The three rows E15-D15 routed to `15` (`D15`:581–:583, A-3..A-5) were applied by #5073 and stand at
 the base; G-04 (no `15` entry for the three new dock components, `D15`:564) was closed by the same PR.
 
 ### 5.1 The table
 
 | Entry   | `15` props and states against the designs                                                                                                                                                           | Result                                               |
 | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| CMP-073 | `workspaces[]` carries `dirty` but no `restored`, while the rail marks a restored workspace (`D05`:514) and CMP-252 has `restored`                                                                  | **A-01**                                             |
+| CMP-073 | `workspaces[]` carries `dirty` but no `restored`, while the rail marks a restored workspace (`D05`:528) and CMP-252 has `restored`                                                                  | **A-01**                                             |
 | CMP-080 | `title` is "kind, symbol and the spelled interval" and the A11y line binds `aria-label={title}`, while the same line says an order-capable panel's name ends with the environment word (R-5; SD-01) | **A-02** (a safety disclosure; also CR-01 for #5411) |
 | CMP-080 | `state?` has no value for the dock-side placeholder a popped-out panel leaves (FM-06; `D04`:229; `D10`:281)                                                                                         | **A-03**                                             |
 | CMP-080 | the description's qualifiers (R-5 item 2: sync group and axes, environment for non-order kinds, conflict, provenance, "Reduced") have no slot                                                       | **A-04**                                             |
@@ -329,7 +348,7 @@ the base; G-04 (no `15` entry for the three new dock components, `D15`:564) was 
 | CMP-216 | `regionName`, `undoAvailable`, `footnote`, `foldedActions`                                                                                                                                          | none                                                 |
 | CMP-217 | `mode: "layout" \| "cell"` and the cell arrangements (E15-D11)                                                                                                                                      | none                                                 |
 | CMP-218 | `account: "unavailable"`, `scaleLink`, `conflicts`, `variant`                                                                                                                                       | none                                                 |
-| CMP-249 | the speech is the bar's own line, "PROPOSED, its owner E15-D04's follow-up" (`15`:3135), pending this pack's lift (`D13`:326 OQ-1)                                                                  | **A-06** (the lift; §9.2)                            |
+| CMP-249 | the speech is the bar's own line, "PROPOSED, its owner E15-D04's follow-up" (`15`:3164), pending this pack's lift (`D13`:326 OQ-1)                                                                  | **A-06** (the lift; §9.2)                            |
 | CMP-250 | `panels[]` with `environment?`                                                                                                                                                                      | none                                                 |
 | CMP-251 | `collapsed?`, `overflow?`, conditions (E15-D12 added)                                                                                                                                               | none                                                 |
 | CMP-252 | `dirty`, `restored`, `canSave` + `saveReason?`, `renameError?`                                                                                                                                      | none                                                 |
@@ -339,25 +358,27 @@ the base; G-04 (no `15` entry for the three new dock components, `D15`:564) was 
 
 | Id   | Where                          | Old                                                                             | New                                                                                                                                                                                                            | Route                                   |
 | ---- | ------------------------------ | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| A-01 | `15`:827 CMP-073 Props         | "`workspaces: {id, name, isDefault, isOpen, dirty, sortOrder}[]`"               | "`workspaces: {id, name, isDefault, isOpen, dirty, restored, sortOrder}[]`" (the rail's "Restored" marker, `D05`:514)                                                                                          | E15-D13 PR 3; builder E15-S03 #476      |
-| A-02 | `15`:905 CMP-080 A11y          | "`role=\"region\"` `aria-label={title}`"                                        | "`role=\"region\"` named by E15-D15 R-5: `{title}`, then `, {Environment}` (\"Live\" or \"Demo\") when `kind` is `chart`, `dom` or `positions` — \"Chart, BTCUSDT 1 minute, Live\""                            | E15-D13 PR 3; builder E15-T02 #403      |
-| A-03 | `15`:904 CMP-080 Props         | "`state?: \"loading\" \| \"compact\" \| \"error\" \| \"maximised\"`"            | "`state?: \"loading\" \| \"compact\" \| \"error\" \| \"maximised\" \| \"popped-out\"` (the dock-side placeholder a Pop out leaves, E15-D04 §7; E15-D15 FM-06)"                                                 | E15-D13 PR 3; builder E15-S02 #435      |
-| A-04 | `15`:905 CMP-080 A11y (append) | —                                                                               | "the region's description (`aria-describedby`) carries the state qualifiers in E15-D15 R-5's order: sync group and axes, environment (non-order kinds), conflict, provenance, \"Reduced\"; never a live value" | E15-D13 PR 3; builders E15-T02, E15-S04 |
-| A-05 | `15`:917 CMP-081 A11y          | "re-computed and exposed via `aria-owns` if DOM order can't match visual order" | "the DOM order is rebuilt to the visual order after every mutation by moving the per-pane hosts, never remounting them; no `aria-owns` path (E15-D15 §5.1)"                                                    | E15-D13 PR 3; builder E15-T02 #403      |
-| A-06 | `15`:3135 CMP-249 A11y         | "PROPOSED, its owner E15-D04's follow-up"                                       | "lifted by E15-D16 §9.2 (E15-D15 F-05; E15-D13 OQ-1)"                                                                                                                                                          | E15-D13 PR 3 or this pack's v1.1        |
+| A-01 | `15`:829 CMP-073 Props         | "`workspaces: {id, name, isDefault, isOpen, dirty, sortOrder}[]`"               | "`workspaces: {id, name, isDefault, isOpen, dirty, restored, sortOrder}[]`" (the rail's "Restored" marker, `D05`:528)                                                                                          | E15-D13 PR 3; builder E15-S03 #476      |
+| A-02 | `15`:910 CMP-080 A11y          | "`role=\"region\"` `aria-label={title}`"                                        | "`role=\"region\"` named by E15-D15 R-5: `{title}`, then `, {Environment}` (\"Live\" or \"Demo\") when `kind` is `chart`, `dom` or `positions` — \"Chart, BTCUSDT 1 minute, Live\""                            | E15-D13 PR 3; builder E15-T02 #403      |
+| A-03 | `15`:909 CMP-080 Props         | "`state?: \"loading\" \| \"compact\" \| \"error\" \| \"maximised\"`"            | "`state?: \"loading\" \| \"compact\" \| \"error\" \| \"maximised\" \| \"popped-out\"` (the dock-side placeholder a Pop out leaves, E15-D04 §7; E15-D15 FM-06)"                                                 | E15-D13 PR 3; builder E15-S02 #435      |
+| A-04 | `15`:910 CMP-080 A11y (append) | —                                                                               | "the region's description (`aria-describedby`) carries the state qualifiers in E15-D15 R-5's order: sync group and axes, environment (non-order kinds), conflict, provenance, \"Reduced\"; never a live value" | E15-D13 PR 3; builders E15-T02, E15-S04 |
+| A-05 | `15`:922 CMP-081 A11y          | "re-computed and exposed via `aria-owns` if DOM order can't match visual order" | "the DOM order is rebuilt to the visual order after every mutation by moving the per-pane hosts, never remounting them; no `aria-owns` path (E15-D15 §5.1)"                                                    | E15-D13 PR 3; builder E15-T02 #403      |
+| A-06 | `15`:3164 CMP-249 A11y         | "PROPOSED, its owner E15-D04's follow-up"                                       | "lifted by E15-D16 §9.2 (E15-D15 F-05; E15-D13 OQ-1)"                                                                                                                                                          | E15-D13 PR 3 or this pack's v1.1        |
 
 The `15` line numbers are the base's; whichever PR applies a row re-reads its Old text first. A-02 is a
 safety disclosure (SD-01, C-2.11 "separate UI chrome"), so the builder applies it from the pack before the
 catalogue edit lands; it is on E15-T02's acceptance-blocking list (§9.4).
 
-### 5.3 C-rows on in-flight code (consumer comments on #403; R6)
+### 5.3 C-rows on in-flight code (consumer comments on #403 and #435 at Done, not before; R6; R370c BQ-07)
 
-| Id    | In flight (if #5411 merges as is, 08e055c5f5)                                                                                   | Reading taken                                                                                 |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| CR-01 | `DockPanel` has no `environment` prop and its test names the region "Chart BTCUSDT 1 minute" (`packages/ui/test/Dock.test.tsx`) | R-5's form, "Chart, BTCUSDT 1 minute, Live" (A-02); the fixture's commas and environment word |
-| CR-02 | the header's toolbar is named "{kind} actions" ("Chart actions")                                                                | RG-08 names it by the panel's name (`D15`:269); the builder confirms with E15-D13's Table N   |
-| CR-03 | the stories differ from `15`'s lists (§6.2)                                                                                     | `15` owns the lists; the missing stories land with their builders                             |
-| CR-04 | `DockGridView` and `SplitPane` are in `packages/ui` while `packages/dock` (#5410) holds the tree                                | consistent with step 1–3 of §3.1; nothing to change                                           |
+| Id    | In flight (if #5411 merges as is, 9f15e72999)                                                                                    | Reading taken                                                                                 |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| CR-01 | `DockPanel` has no `environment` prop and its test names the region "Chart BTCUSDT 1 minute" (`packages/ui/test/Dock.test.tsx`)  | R-5's form, "Chart, BTCUSDT 1 minute, Live" (A-02); the fixture's commas and environment word |
+| CR-02 | the header's toolbar is named "{kind} actions" ("Chart actions") (G-14)                                                          | the pack wins: RG-08's panel name (`D15`:269); a C-row for #403, with E15-D13's Table N       |
+| CR-03 | the stories differ from `15`'s lists (§6.2)                                                                                      | `15` owns the lists; the missing stories land with their builders                             |
+| CR-04 | `DockGridView` and `SplitPane` are in `packages/ui` while `packages/dock` (#5410) holds the tree                                 | consistent with step 1–3 of §3.1; nothing to change                                           |
+| CR-05 | CMP-082's "As built" line ships 4 of `15`'s 9 stories and carries the pickers, badges, sync and `statusWords?` to E15-S02 (#435) | the pack wins: §6.1's nine stand; E15-S02 builds the five (CS-04); a C-row for #435 and #403  |
+| CR-06 | #5695 named the sync events `sync.group_joined` / `sync.group_left`; fixed to D06's names in #5695 itself, at 991f2e7b6c         | D06's `sync.panel_joined_group` / `sync.panel_left_group` (`D06`:519–:520); no alias (§11)    |
 
 ## 6. The Storybook story list (R370 BQ-10)
 
@@ -365,22 +386,22 @@ catalogue edit lands; it is on E15-T02's acceptance-blocking list (§9.4).
 
 | Entry   | Title (`Organisms/Dock/*` unless named) | Stories (`15`)                                                                                                                                                                                                                                                                    | Builder                                         | `15`      |
 | ------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | --------- |
-| CMP-073 | its own tree                            | Default, Empty(first-run), ManyWorkspaces, Dirty, ViewAs, FromTabOverflow                                                                                                                                                                                                         | E15-S03 #476                                    | `15`:830  |
-| CMP-080 | DockPanel                               | Default, Focused, FocusSameBox, Loading, CompactView, Error, Maximised, ReadOnlyNotice, Closable, Resizing(keyboard demo)                                                                                                                                                         | E15-T02 #403                                    | `15`:907  |
-| CMP-081 | DockGrid                                | OnePane, TwoByTwo, OnePlusThree, CustomDrag, NAryRow, TabsetLeaf, FourPanelsCompact1280                                                                                                                                                                                           | E15-T02 #403                                    | `15`:919  |
-| CMP-082 | PanelHeader                             | Default, WithActions, WithSyncBadge, NoSync, NarrowHeader, CollapseSteps, ConflictGlyph, Focused, OrderPanelLive                                                                                                                                                                  | E15-S02 #435; E15-S04 badge                     | `15`:931  |
-| CMP-083 | SplitPane                               | Horizontal, Vertical, Focused, AtMinimum, Dragging, NAry, InPanel                                                                                                                                                                                                                 | E15-T02 #403                                    | `15`:943  |
-| CMP-213 | `Molecules/*`                           | Default, Grouped, WithChips, DisabledWithReason, SearchActive, CategoryFiltered, NoResults, Skeleton, LongList                                                                                                                                                                    | E15-S02 #435; T2 per §8.1 (T2-11, T2-12, T2-14) | `15`:2781 |
-| CMP-214 | DockDropZone                            | EdgeZones, CentreTabify, ActiveZone, InvalidZone, ReducedSet, KeyboardChooser, LargeOverSmall                                                                                                                                                                                     | E15-T02 geometry; E15-S02                       | `15`:2792 |
-| CMP-215 | FloatingWindowFrame                     | Demo, Live, Unfocused, AlwaysOnTop, PinInOverflow, Unconfirmed, ViewAs, NarrowStep1..NarrowStep4, DisplayGone                                                                                                                                                                     | E15-S02 #435                                    | `15`:2804 |
-| CMP-216 | PanelMenu                               | Default, WithSyncGroup, ViewerRestricted, BrowserBuild, NoSettings, UndoAvailable, CollapsedOwnActions, LimitT2, ResetConfirm, EdgeFlip, Clamped                                                                                                                                  | E15-S02 #435; T2 per §8.1 (T2-09, T2-10)        | `15`:2815 |
-| CMP-217 | `Organisms/*`                           | Default, ActiveLayout, WithSavedLayouts, Overflow, SavesGated, CellMode, CellModeShrinkConfirm                                                                                                                                                                                    | E15-S01 #401; T2 per §8.1 (T2-01..T2-03)        | `15`:2825 |
-| CMP-218 | `Molecules/*`                           | Unsynced, GroupA, AllAxesOn, PartialAxes, Conflict, ScaleLinkRefused, Modal200, GridNewCells                                                                                                                                                                                      | E15-S04 #477                                    | `15`:2835 |
-| CMP-249 | MoveModeBar                             | StageOne, StageTwo, Refused, TwoLines200, Leaving                                                                                                                                                                                                                                 | E15-S02 #435                                    | `15`:3137 |
-| CMP-250 | MinimisedPanelTray                      | OnePanel, ThreePanels, OrderPanelLive, FocusedTab                                                                                                                                                                                                                                 | E15-S02 #435                                    | `15`:3152 |
-| CMP-251 | DockTabGroup                            | TwoTabs, FiveTabs, FocusedTab, DraggingTab, LongLabel, Collapsed1100, CollapsedOverflow1024, PendingConditions, HiddenArmedDisarmed                                                                                                                                               | E15-S02 #435; E15-S08 #561                      | `15`:3167 |
-| CMP-252 | WorkspaceTabStrip                       | Default, Dirty, Restored, LongName, Overflow, RenameInPlace, RenameError, CloseOnFocus, SavesGated                                                                                                                                                                                | E15-S03 #476; T2 per §8.1 (T2-01..T2-08)        | `15`:3182 |
-| CMP-253 | MultiChartGrid                          | OneByTwo, TwoByTwo, ThreeByThree, OnePlusThree, Custom, ActiveCell, NarrowSteps, Switcher, Zoom200, Maximised, EmptyCell, LoadingCell, UnavailableCell, DelistedCell, ShortHistory, BudgetConfirm, BudgetRunning, Reduced, TradingLocked, MaximisedArmed, Disarming, DisarmFailed | E15-S06 #559; T2-21 per §8.1                    | `15`:3197 |
+| CMP-073 | its own tree                            | Default, Empty(first-run), ManyWorkspaces, Dirty, ViewAs, FromTabOverflow                                                                                                                                                                                                         | E15-S03 #476                                    | `15`:832  |
+| CMP-080 | DockPanel                               | Default, Focused, FocusSameBox, Loading, CompactView, Error, Maximised, ReadOnlyNotice, Closable, Resizing(keyboard demo)                                                                                                                                                         | E15-T02 #403                                    | `15`:912  |
+| CMP-081 | DockGrid                                | OnePane, TwoByTwo, OnePlusThree, CustomDrag, NAryRow, TabsetLeaf, FourPanelsCompact1280                                                                                                                                                                                           | E15-T02 #403                                    | `15`:924  |
+| CMP-082 | PanelHeader                             | Default, WithActions, WithSyncBadge, NoSync, NarrowHeader, CollapseSteps, ConflictGlyph, Focused, OrderPanelLive                                                                                                                                                                  | E15-S02 #435; E15-S04 badge                     | `15`:936  |
+| CMP-083 | SplitPane                               | Horizontal, Vertical, Focused, AtMinimum, Dragging, NAry, InPanel                                                                                                                                                                                                                 | E15-T02 #403                                    | `15`:948  |
+| CMP-213 | `Molecules/*`                           | Default, Grouped, WithChips, DisabledWithReason, SearchActive, CategoryFiltered, NoResults, Skeleton, LongList                                                                                                                                                                    | E15-S02 #435; T2 per §8.1 (T2-11, T2-12, T2-14) | `15`:2804 |
+| CMP-214 | DockDropZone                            | EdgeZones, CentreTabify, ActiveZone, InvalidZone, ReducedSet, KeyboardChooser, LargeOverSmall                                                                                                                                                                                     | E15-T02 geometry; E15-S02                       | `15`:2815 |
+| CMP-215 | FloatingWindowFrame                     | Demo, Live, Unfocused, AlwaysOnTop, PinInOverflow, Unconfirmed, ViewAs, NarrowStep1..NarrowStep4, DisplayGone                                                                                                                                                                     | E15-S02 #435                                    | `15`:2827 |
+| CMP-216 | PanelMenu                               | Default, WithSyncGroup, ViewerRestricted, BrowserBuild, NoSettings, UndoAvailable, CollapsedOwnActions, LimitT2, ResetConfirm, EdgeFlip, Clamped                                                                                                                                  | E15-S02 #435; T2 per §8.1 (T2-09, T2-10)        | `15`:2838 |
+| CMP-217 | `Organisms/*`                           | Default, ActiveLayout, WithSavedLayouts, Overflow, SavesGated, CellMode, CellModeShrinkConfirm                                                                                                                                                                                    | E15-S01 #401; T2 per §8.1 (T2-01..T2-03)        | `15`:2848 |
+| CMP-218 | `Molecules/*`                           | Unsynced, GroupA, AllAxesOn, PartialAxes, Conflict, ScaleLinkRefused, Modal200, GridNewCells                                                                                                                                                                                      | E15-S04 #477                                    | `15`:2858 |
+| CMP-249 | MoveModeBar                             | StageOne, StageTwo, Refused, TwoLines200, Leaving                                                                                                                                                                                                                                 | E15-S02 #435                                    | `15`:3166 |
+| CMP-250 | MinimisedPanelTray                      | OnePanel, ThreePanels, OrderPanelLive, FocusedTab                                                                                                                                                                                                                                 | E15-S02 #435                                    | `15`:3181 |
+| CMP-251 | DockTabGroup                            | TwoTabs, FiveTabs, FocusedTab, DraggingTab, LongLabel, Collapsed1100, CollapsedOverflow1024, PendingConditions, HiddenArmedDisarmed                                                                                                                                               | E15-S02 #435; E15-S08 #561                      | `15`:3196 |
+| CMP-252 | WorkspaceTabStrip                       | Default, Dirty, Restored, LongName, Overflow, RenameInPlace, RenameError, CloseOnFocus, SavesGated                                                                                                                                                                                | E15-S03 #476; T2 per §8.1 (T2-01..T2-08)        | `15`:3211 |
+| CMP-253 | MultiChartGrid                          | OneByTwo, TwoByTwo, ThreeByThree, OnePlusThree, Custom, ActiveCell, NarrowSteps, Switcher, Zoom200, Maximised, EmptyCell, LoadingCell, UnavailableCell, DelistedCell, ShortHistory, BudgetConfirm, BudgetRunning, Reduced, TradingLocked, MaximisedArmed, Disarming, DisarmFailed | E15-S06 #559; T2-21 per §8.1                    | `15`:3226 |
 
 The visual-regression baseline is complete on day one when every row is a committed story (T Scope). A
 story list changes only in `15`, by its owner's A-row; this table re-reads `15` at v1.1.
@@ -389,7 +410,7 @@ story list changes only in `15`, by its owner's A-row; this table re-reads `15` 
 
 | Id    | Difference                                                                                                                       | Reading taken                                                                      |
 | ----- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| CS-01 | `D13H` Table S lists CMP-251's five stories; `15`:3167 adds E15-D12's four                                                       | `15`'s nine (E15-D12's later ruled text); Table S is the earlier snapshot          |
+| CS-01 | `D13H` Table S lists CMP-251's five stories; `15`:3196 adds E15-D12's four                                                       | `15`'s nine (E15-D12's later ruled text); Table S is the earlier snapshot          |
 | CS-02 | #5411 DockPanel: Default, Focused, Loading, CompactView, Error, Maximised, Closable — not FocusSameBox, ReadOnlyNotice, Resizing | `15`'s ten; the three land with E15-T02's later slices (CR-03)                     |
 | CS-03 | #5411 DockGrid adds FocusedPanel and KeyboardResize and has not CustomDrag or FourPanelsCompact1280                              | the two missing stories land with E15-T02; the two extra are kept as the builder's |
 | CS-04 | #5411 PanelHeader: Default, WithActions, InTabGroup, NarrowHeader                                                                | the rest are E15-S02's and E15-S04's (their builders, §6.1); InTabGroup kept       |
@@ -420,8 +441,8 @@ parents' placeholder names (Scalping, Swing, alex) and never a real account.
 | CG-01 | unsaved changes                  | identical: "{name}, unsaved changes" (D03, D05, D08), "This workspace isn't saved." (D03, D05, D08, D09), "This layout isn't saved yet." (D03, D05), "You have unsaved layout changes." (D05, D08)                                                                                                                                                                                     | consistent                                                                                                                                                                                                                                                               |
 | CG-02 | nothing to save                  | "No unsaved changes" (`D03`:643, no full stop) against "No unsaved changes." (`D03`:658; `D08`:718)                                                                                                                                                                                                                                                                                    | **AC-01 PROPOSED:** `ws.save.clean` takes the full stop, as a reason sentence does (G-T2.4's form); owner E15-D03 (closed) by a consumer comment on #319; builders E15-S01, E15-S03                                                                                      |
 | CG-03 | discarding                       | "Discard changes" identical on the settings and the unsaved dialogs; "Discard changes loses them." against "Your unsaved changes are lost." (revert)                                                                                                                                                                                                                                   | deliberate: the first names a button's consequence, the second the result of Revert to saved                                                                                                                                                                             |
-| CG-04 | what cannot be taken back        | "It can't be restored." (`D05`:500, delete layout) against "It can't be undone." / "Deleting can't be undone." (`D08`:727, :751) and "can't be recovered" for a replaced version (`D08`:744, :745, :794, :796)                                                                                                                                                                         | **AC-02 PROPOSED:** delete layout reads "It can't be undone." as delete workspace does, so "restore" keeps only its restore senses (CG-13); "can't be recovered" stays for a version replaced — deliberate. Owner E15-D05 by a consumer comment on #321; builder E15-S01 |
-| CG-05 | what a preset replaces           | "Applying a preset replaces the current layout. Settings of surviving panels are kept." (`D05`:486); "Applying {preset} replaces them." (`D05`:511; `D08`:766); "Then {preset} is applied." (`D08`:804)                                                                                                                                                                                | consistent: no surface says settings are reset (T Technical notes' example does not occur); the autosave line's "replaces the saved layout" (`D08`:723) is a different concept                                                                                           |
+| CG-04 | what cannot be taken back        | "It can't be restored." (`D05`:514, delete layout) against "It can't be undone." / "Deleting can't be undone." (`D08`:727, :751) and "can't be recovered" for a replaced version (`D08`:744, :745, :794, :796)                                                                                                                                                                         | **AC-02 PROPOSED:** delete layout reads "It can't be undone." as delete workspace does, so "restore" keeps only its restore senses (CG-13); "can't be recovered" stays for a version replaced — deliberate. Owner E15-D05 by a consumer comment on #321; builder E15-S01 |
+| CG-05 | what a preset replaces           | "Applying a preset replaces the current layout. Settings of surviving panels are kept." (`D05`:500); "Applying {preset} replaces them." (`D05`:525; `D08`:766); "Then {preset} is applied." (`D08`:804)                                                                                                                                                                                | consistent: no surface says settings are reset (T Technical notes' example does not occur); the autosave line's "replaces the saved layout" (`D08`:723) is a different concept                                                                                           |
 | CG-06 | what an import drops             | D09's report "Imported {clash}: {panels}, {layouts}, {dropped_items} dropped, {remapped} remapped." (`D09`:956) against SR-25 "Imported Scalping (2): 7 panels, 2 layouts, 2 items dropped." (`D15`:319, from the wireframe `D02`:520)                                                                                                                                                 | **AC-03 PROPOSED:** the build speaks D09's string (the import's hi-fi, later than the wireframe); SR-25's fixture is not a second string. Owner E15-D15 by a consumer comment on #369; builder E15-S07                                                                   |
 | CG-07 | what reduced mode still supports | "Order entry and positions keep full speed." (`RD`:210, :214) against "Order entry and positions are unaffected." (`RD`:213 = SR-45) and the grid's "Every chart still shows its price, your orders and your positions." (`MG`:150)                                                                                                                                                    | deliberate: before (the suggestion: speed) and during (the reduced row: effect); the grid names its own sheds. E15-D11 confirms CP-28 against `RD`'s CP-4 at its PR 3 (G-07)                                                                                             |
 | CG-08 | an automatic disarm              | "One-click trading disarmed: {Kind} too small to trade." (D03, D04, SR-34) and "…: {Kind} hidden in a tab." (`RD`:224) share one grammar; the grid's "One-click trading disarmed: chart returned to the grid." is `polite` (`MG`:138) and its "Chart trading is still armed on chart 3." (`MG`:152–:153) differs from `RD`'s "Couldn't disarm one-click trading on {Kind}." (`RD`:232) | **AC-04 PROPOSED:** the grid's CP-16 is assertive, once, with its reason (A30; SR-34's level, `D15`:328; BG-01) — a safety announcement. "Chart trading" against "one-click trading": G-08 to E15-D11 with E30's arm vocabulary                                          |
@@ -520,10 +541,15 @@ rows (C-10.1; the digest). Until then the rows below are **PROPOSED A-rows for E
 E15-D05 · area/charting-ui; consumer comment on #321), written in the FM grammar; they are not ruled by being
 written here. E15-S01 (#401) builds against them; its own BQ-12 (the Undo toast's successor) is answered by AF-12.
 
+**The lift (R370c BQ-03 (a)).** E15-D05 is re-opened under `16` §11.5 (`16`:664) and the three rows land in
+E15-D05's own text through its own small PR (#5709, branch `docs/e15-d05-focus-rows`, `re-sync needed` comments on #401
+and #403). **The hold lifts at that PR's merge**; at v1.1 it has not merged, so G-H1 stays open and this
+section is not closed. The rows above stay this pack's reading until then; E15-D05's merged text wins after.
+
 | Id    | Operation                                | Destination (PROPOSED)                                                                                                                                                                                                                              | Source of the form                                                                                   |
 | ----- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | AF-01 | Delete layout (Your layouts), FM-18      | on Cancel: returns to the row's Delete…; after Delete layout: moves to the neighbouring row's name field (the row below, else the row above), or to the Presets listbox's first card when the section empties; announced once (SR-17)               | D15's own default 3, lifted (`D15`:131); the form of D08-D13's neighbouring tab (`D08`:153)          |
-| AF-02 | Preset apply, FM-14                      | kept on the element that had focus when the chord was pressed, if it survives the apply; else moves to the first surviving panel's header in reading order; announced once (SR-01); the gallery's own return (FM-16) unchanged                      | D15's own default 1, lifted (`D15`:129); `05`:96 read for a layout mutation                          |
+| AF-02 | Preset apply, FM-14                      | kept on the element that had focus when the chord was pressed, if it survives the apply; else moves to the first surviving panel's header in reading order; announced once (SR-01); the gallery's own return (FM-16) unchanged                      | D15's own default 1, lifted (`D15`:129); `05`:100 read for a layout mutation                         |
 | AF-12 | The Undo toast closes under focus, FM-12 | returns to the element that held focus before the toast took it; if that element is gone, the case's own successor — FM-11's (`D04`:264) for an Undo after Close, AF-02's for an Undo after a preset apply; announced once by the undo's own string | R370 BQ-05; no merged text or `05` rule yields it (G-05), so this row is the pack's PROPOSED default |
 
 **AF-02 does not reopen D15-C-d.** A preset apply rebuilds every panel (`D05`:344): FM-11's "panel that took
@@ -535,7 +561,7 @@ Delete…): the pack lifts D15's text and adds no new design.
 
 The Blocking and Major F rows, the safety disclosures and the `05` floors: zero serious or critical axe
 violations; a dragging alternative for every drag (WCAG 2.5.7); targets of at least 24 px (2.5.8); focus never
-obscured (2.4.11) (`05`:94–:101).
+obscured (2.4.11) (`05`:98–:105).
 
 | Builder      | Blocking for its acceptance                                                                                                                                                                                                      |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -585,28 +611,28 @@ E15-S02's (`D10`:451–:470).
    bindings, P&L, positions or orders** (`D09`:911, `e15.export.excluded`; `D09`:283).
 5. **A deep link carries workspace and panel identity only** — `/w/:workspaceId?focus=:panelId`, never an account
    id, key, token or symbol; opening it re-authorises through the normal session (`D07`:762; the route
-   `/w/:workspaceId`, #5447 if it merges as is).
+   `/w/:workspaceId`, #5447, merged as 16ccef846f).
 6. **Degraded mode never sheds a safety disclosure:** the environment badge, the arm state, positions and
    orders and their update rate, and every error state stay (`RD`:143–:149; SD-04).
 
 Also held: SD-01..SD-08 (D15 §8.2, lifted); protective actions never gated (§8.1); analytics carry closed sets
 only, never a symbol, a name or an account (`D02`:681); the pack's examples use the parents' placeholder names
-only. **E15-X01's STRIDE model** (#5439 at 7b62ed4ec8, if it merges as is) is the threat source; its rows are
-cited at v1.1, once merged (D09 G-12 until then).
+only. **E15-X01's STRIDE model** (#5439 at b37cf484b2, if it merges as is; not awaited, R370c BQ-02) is the
+threat source; its rows are cited at the v1.2 re-pin, once merged (D09 G-12 until then).
 
 ### 10.2 The budgets (each number its owner's; R370 BQ-14)
 
 | Budget                                                   | Story      | Owner of the number                                  | Cite                 |
 | -------------------------------------------------------- | ---------- | ---------------------------------------------------- | -------------------- |
-| the frame budget: 60 fps, < 16 ms p95 frame              | all        | **C-14.2** (the Done line)                           | `CON`:936, :960–:961 |
+| the frame budget: 60 fps, < 16 ms p95 frame              | all        | **C-14.2** (the Done line)                           | `CON`:951, :975–:976 |
 | ≥ 55 fps with four active order-flow panes               | US-LAY-001 | `11`'s NFR; C-14.2 owns the frame budget, not 55 fps | `11`:2754            |
 | ≤ 3 s four-pane restore to interactive (warm cache)      | US-LAY-002 | `11`                                                 | `11`:2774            |
 | sync propagation within one frame                        | US-LAY-003 | `11`                                                 | `11`:2794            |
-| crosshair sync ≤ 4 ms across six panels, no React render | US-LAY-003 | `14` SCR-023                                         | `14`:611             |
-| panel mount ≤ 150 ms                                     | US-LAY-005 | `14` SCR-024                                         | `14`:629             |
-| layout transition ≤ 200 ms                               | US-LAY-001 | `15` CMP-080                                         | `15`:922             |
-| preset rebuild ≤ 300 ms                                  | US-LAY-001 | `14` SCR-022                                         | `14`:586             |
-| context menu open ≤ 80 ms                                | US-LAY-005 | `14` SCR-028                                         | `14`:684             |
+| crosshair sync ≤ 4 ms across six panels, no React render | US-LAY-003 | `14` SCR-023                                         | `14`:613             |
+| panel mount ≤ 150 ms                                     | US-LAY-005 | `14` SCR-024                                         | `14`:631             |
+| layout transition ≤ 200 ms                               | US-LAY-001 | `15` CMP-080                                         | `15`:927             |
+| preset rebuild ≤ 300 ms                                  | US-LAY-001 | `14` SCR-022                                         | `14`:588             |
+| context menu open ≤ 80 ms                                | US-LAY-005 | `14` SCR-028                                         | `14`:686             |
 | a 2 MB import checked within 500 ms, in a worker         | US-LAY-007 | E15-D09 (the ticket's figure)                        | `D09`:144            |
 
 ### 10.3 The protective constraints (implemented, never rediscovered)
@@ -614,7 +640,7 @@ cited at v1.1, once merged (D09 G-12 until then).
 | Constraint                                                       | Why                                                        | Source    |
 | ---------------------------------------------------------------- | ---------------------------------------------------------- | --------- |
 | panel focus is the 2 px **inset** frame plus the header bar      | a changed content box resizes the canvas and drops a frame | `DSC`:43  |
-| **static chrome**: no per-frame repaint                          | the chrome never competes with the engine                  | `15`:922  |
+| **static chrome**: no per-frame repaint                          | the chrome never competes with the engine                  | `15`:927  |
 | the drag preview is **CSS-transform-only**, never a live panel   | a drag costs no chart frame                                | `D04`:392 |
 | **one layout mutation per drop**; per-pane hosts re-parented     | no WebGL context remounted; focus survives the move        | `D04`:393 |
 | splitter writes **one per animation frame**                      | a recreated GL context stalls visibly                      | `D04`:394 |
@@ -643,7 +669,7 @@ symbol, a name or an account; a T2 control emits nothing; no sink exists yet (E1
 | `layout.panel_floated`; `panel.redocked`; `window.*`                                                                                       | —; `originSlotExists`; D10's                                                          | Pop out; Return; the window's life          | `D04`:383; `D10`:44, :569 | E15-S02      |
 | `layout.maximised`; `layout.panel_minimised`, `layout.panel_restored`                                                                      | —                                                                                     | `F11` or the menu; the tray                 | `D04`:384, :388           | E15-S02      |
 | `layout.saved`; `layout.reset`                                                                                                             | `trigger`, `restored`; `trigger`                                                      | Save, Save restored layout; Revert to saved | `D03`:808, :812           | E15-S01, S03 |
-| `layout.preset_previewed`, `layout.preset_saved_as`, `layout.preset_deleted`                                                               | `presetId`; `layoutId`, `hotkeySlot`; `layoutId`                                      | the gallery                                 | `D05`:563–:566            | E15-S01      |
+| `layout.preset_previewed`, `layout.preset_saved_as`, `layout.preset_deleted`                                                               | `presetId`; `layoutId`, `hotkeySlot`; `layoutId`                                      | the gallery                                 | `D05`:577–:580            | E15-S01      |
 | `layout.cost_confirm`; metric `layout.frame_cost_at_confirm`                                                                               | `choice`, `panel_count_bucket`; `measured_p95_ms`, `estimated_p95_ms`                 | the cost confirm                            | `D03`:815–:816            | E15-S01      |
 | `sync.group_created`, `sync.group_changed`, `sync.axis_toggled`, `sync.panel_joined_group`, `sync.panel_left_group`, `sync.conflict_shown` | per `D06`                                                                             | the popover                                 | `D06`:516–:521            | E15-S04      |
 | `scale.link_refused`; `scale.percent_suggested_accepted`                                                                                   | `reason`, `decadeA`, `decadeB`; —                                                     | the refusal; the percent accepted           | `D06`:522–:523            | E15-S05      |
@@ -661,10 +687,11 @@ symbol, a name or an account; a T2 control emits nothing; no sink exists yet (E1
 | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | EV-C1 | T's `workspace.restore_completed{ms,paneCount}` against D12's `{ms, paneCount, failedPanes}` (`RD`:268; D12 C-11)                                                           | **lifted, not PROPOSED (R370 BQ-12):** D12's three properties, fired at interactive; T's shape is its subset              |
 | EV-C2 | `layout.preset_applied` is `{entry, panel_count_bucket}` in `D03`:811 and `{presetId, entry, keepSymbols, panelCount}` in D05 D-15 (`D05`:152)                              | PROPOSED: D05's union is primary (the gallery's owner); `panelCount` sent as D03's bucket (`D03`:818). E15-S01            |
-| EV-C3 | `14` lists `layout.panel_moved` without properties (`14`:562); D04-A-4 adds them                                                                                            | D04's `{from, to, method, zone}`; `method` is the required signal. E15-S02                                                |
-| EV-C4 | `panel.added` (`14`:535, :630) against `layout.panel_added` (`14`:562); `panel.removed` against `layout.panel_removed`; `workspace.saved` against `layout.saved` (`14`:535) | PROPOSED: the `layout.*` names primary (`D02` §9's ticket names), the `panel.*` / `workspace.saved` aliases. E15-S01, S02 |
-| EV-C5 | `panel.floated{panelType, display}` (`14`:674) against `layout.panel_floated` (`14`:562)                                                                                    | PROPOSED: `layout.panel_floated` primary, `panel.floated` its alias with D10's properties. E15-S02                        |
+| EV-C3 | `14` lists `layout.panel_moved` without properties (`14`:564); D04-A-4 adds them                                                                                            | D04's `{from, to, method, zone}`; `method` is the required signal. E15-S02                                                |
+| EV-C4 | `panel.added` (`14`:537, :632) against `layout.panel_added` (`14`:564); `panel.removed` against `layout.panel_removed`; `workspace.saved` against `layout.saved` (`14`:537) | PROPOSED: the `layout.*` names primary (`D02` §9's ticket names), the `panel.*` / `workspace.saved` aliases. E15-S01, S02 |
+| EV-C5 | `panel.floated{panelType, display}` (`14`:676) against `layout.panel_floated` (`14`:564)                                                                                    | PROPOSED: `layout.panel_floated` primary, `panel.floated` its alias with D10's properties. E15-S02                        |
 | EV-C6 | `sync.scale_link_refused{symbolA, symbolB}` (the ticket's) against `scale.link_refused{reason, decadeA, decadeB}` (`D06`:522)                                               | D06's: a symbol is never a property. E15-S05                                                                              |
+| EV-C7 | #5695 first emitted `sync.group_joined` / `sync.group_left`; it now emits D06's `sync.panel_joined_group` / `sync.panel_left_group` (at 991f2e7b6c; CR-06)                  | **fixed in #5695 itself (R370c BQ-07):** the signed-off D06 names (`D06`:519–:520) win; no alias. E15-T03, E15-S04        |
 
 ## 12. Design-ahead (reports, promises nothing; R370 BQ-17)
 
@@ -682,11 +709,11 @@ Sprint 06 = 10-30..11-05 (now); Sprint 07 = 11-06..11-12; Sprint 08 = 11-13..11-
 
 Grades Blocking · Major · Minor · Info. **Decide by** is the last day before the consuming sprint; a row whose
 date has passed reads "late — flagged on #nnn" and is never back-dated. The affected story is flagged so it is
-not started blind.
+not started blind. G-P1..G-P4 do not gate v1.1 (R370c BQ-02): each closes at the v1.2 re-pin, at its merge.
 
 | Id   | Grade    | Gap                                                                                                                   | Owner lane                                                                   | Decide by  | Story flagged                                        |
 | ---- | -------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ---------- | ---------------------------------------------------- |
-| G-H1 | Blocking | the D15 hold: F-01, F-02, F-12 in E15-D05's text, or the exception on #369 (§9.3)                                     | E15-D05 · area/charting-ui; the exception the orchestrator's after the owner | 2026-11-05 | US-LAY-006, US-LAY-001 — late, to be flagged on #401 |
+| G-H1 | Blocking | the D15 hold: F-01, F-02, F-12 in E15-D05's text; lifts at the E15-D05 re-open PR's merge (§9.3; R370c BQ-03)         | E15-D05's re-open, branch `docs/e15-d05-focus-rows` (this lane; R370c BQ-03) | 2026-11-05 | US-LAY-006, US-LAY-001 — late, to be flagged on #401 |
 | G-P1 | Major    | SCR-026's boards (E15-D09's last PR) — US-LAY-007's frames are text only                                              | E15-D09 #363                                                                 | 2026-11-19 | US-LAY-007                                           |
 | G-P2 | Major    | SCR-027's boards (E15-D10 PR 3)                                                                                       | E15-D10 #364                                                                 | 2026-11-05 | US-LAY-005                                           |
 | G-P3 | Major    | SCR-049's boards (E15-D11 PR 3)                                                                                       | E15-D11 #365                                                                 | 2026-11-19 | US-LAY-001, US-LAY-003                               |
@@ -695,8 +722,8 @@ not started blind.
 | G-08 | Minor    | "chart trading" (`MG`:151–:153) against "one-click trading" (`RD`:232; SR-33, SR-34) for the same arm state (CG-08)   | E15-D11 with E30-D05's lane                                                  | 2026-11-19 | US-LAY-001, US-LAY-003                               |
 | G-09 | Minor    | SCR-153's E15 rows hold no gated control (§8.2), to be confirmed against E09-D09 §2.1 step 3a                         | E15-S08 #561 with E09-D09's lane                                             | 2026-11-19 | US-LAY-008                                           |
 | G-10 | Minor    | the sync announcements name "Chart 15m" where the region name spells the interval (CG-10); default PROPOSED: spell it | E15-S04 #477 with E15-D06's lane                                             | 2026-11-12 | US-LAY-003                                           |
-| G-12 | Major    | QA's confirmation of the test-id convention (§4)                                                                      | E15-Q01 #434                                                                 | 2026-11-05 | all — late for #403 and #401, to be flagged there    |
-| G-14 | Minor    | the header toolbar's name: "{kind} actions" in #5411 against RG-08's panel name (CR-02)                               | E15-T02 #403 with E15-D13's Table N                                          | 2026-11-05 | US-LAY-001, US-LAY-005 — late, to be flagged on #403 |
+| G-12 | Major    | QA's confirmation of the test-id convention (§4); D-5 stays PROPOSED at Done (R370c BQ-09)                            | E15-Q01 #434 (carried there at Done)                                         | 2026-11-05 | all — late for #403 and #401, to be flagged there    |
+| G-14 | Minor    | the header toolbar's name: "{kind} actions" in #5411 against RG-08's panel name; ruled a C-row, CR-02 (R370c BQ-07)   | E15-T02 #403 with E15-D13's Table N                                          | 2026-11-05 | US-LAY-001, US-LAY-005 — late, to be flagged on #403 |
 | G-15 | Info     | D15 §15.1 routes E15-S07 as #1093 (`D15`:797); the published map gives #560, which this pack uses                     | E15-D15's owner (a consumer comment on #369)                                 | —          | US-LAY-007                                           |
 
 **Inherited, by pointer** (each parent's owner and date stand; listed so no builder meets them mid-sprint): D15
@@ -720,7 +747,8 @@ No hand-off session is claimed (Deviation D-2). In its place:
 6. Read §10.2: are the budgets' owners right (C-14.2 for the frame budget)?
 7. Read §11: are the three required events the ones you want reported after release?
 8. Read §5.2: should A-02 (the environment word in the region name) land before E15-T02 merges?
-9. Confirm the PROPOSED Deviation D-1 (no Penpot page and no PNG for this pack) or ask for boards.
+9. D-1 (no Penpot page and no PNG for this pack) was waived 2026-11-03 under your 2026-10-29 delegation
+   (R370c BQ-05). Keep the waiver: **yes / no** (a no asks for boards).
 10. Note any question as a gap: it joins §13 with an owner and a date.
 
 ### 14.2 The dry run (AC 2) — at READY, by a reader outside E15, labelled (heuristic)
@@ -731,12 +759,12 @@ where each answer sits (heuristic); the outside reader's run is recorded at READ
 
 | Question a builder asks                           | Answered by                                                           |
 | ------------------------------------------------- | --------------------------------------------------------------------- |
-| which props, which states?                        | §3.2 → `15`:925; §5.1 (none missing)                                  |
+| which props, which states?                        | §3.2 → `15`:930; §5.1 (none missing)                                  |
 | which role, which heading level?                  | §3.2: heading `h2`, `h3` in a tab group, and a `toolbar`              |
 | what is the region's name?                        | §9.1 R-5; A-02                                                        |
-| what is the toolbar's name?                       | **open: G-14** (CR-02)                                                |
+| what is the toolbar's name?                       | the panel's name, RG-08 (CR-02, a C-row; R370c BQ-07)                 |
 | which keys?                                       | §3.2 → D15 KB-22; the handle a button "Move {Kind}"                   |
-| what collapses first at narrow widths?            | `15`:925's contract, E15-D03 D-3's order (`D03`:168)                  |
+| what collapses first at narrow widths?            | `15`:930's contract, E15-D03 D-3's order (`D03`:168)                  |
 | which sizes and tokens?                           | `D13H` Table R (`D13H`:79): header 24 / 32, the badge pill 20 / 28    |
 | what does focus look like?                        | §10.3: the inset frame and the header bar; never a resize             |
 | which stories?                                    | §6.1 (nine; E15-S02 and E15-S04 build them)                           |
@@ -749,19 +777,29 @@ where each answer sits (heuristic); the outside reader's run is recorded at READ
 
 | #   | Question                                                           | Answer, folded into |
 | --- | ------------------------------------------------------------------ | ------------------- |
-| 1   | (the author's trace) what is the header toolbar's accessible name? | open — G-14         |
+| 1   | (the author's trace) what is the header toolbar's accessible name? | CR-02 (G-14), v1.1  |
 
 ## 15. Versions and the late-change rule
 
-- **v1 (this PR, the pre-stage):** the merged texts cited at the base; the four parents' boards PENDING
+- **v1 (#5475, the pre-stage):** the merged texts cited at the base; the four parents' boards PENDING
   (G-P1..G-P4); the in-flight PRs pinned at their heads.
-- **v1.1 (PR 2, closing):** when E15-D09's, E15-D10's, E15-D11's and E15-D13's boards PRs have merged and the
-  hold is lifted (§9.3): each boards PR is re-pinned at its head when it opens and re-cited at its merge; the
-  "text only" marks become board ids; the in-flight PRs are re-cited at their merge commits; the A-rows E15-D13
-  PR 3 did not apply are applied to `15`; the dry run's record is attached; `Closes #370`.
+- **v1.1 (this PR, closing; C-row VC-01, which corrects v1's sentence here):** v1.1 closes on the **merged text
+  packs** of E15-D09, E15-D10, E15-D11 and E15-D13, re-cited at their merge commits (§0), and the hold's lift
+  at the E15-D05 re-open PR's merge (§9.3) — not on their boards PRs (R370c BQ-02). The undrawn boards stay
+  "text only, boards PENDING" (R370 BQ-03b); the in-flight PRs are re-pinned at their heads and not awaited;
+  `15` is not touched (§5); `Closes #370`.
+- **v1.2 (the re-pin, after Done):** when the boards PRs of #363, #364, #365 and #367 merge (their lanes', not
+  awaited), each is re-cited at its merge and its "text only" mark becomes the Penpot page name and id with
+  the board ids (`README`:44–:57); the in-flight PRs are re-cited at their merge commits; the A-rows left are
+  applied after #5411 merges.
 - **A late change.** A parent edit moves a lifted hash (G-HASH) or a deck string (G-DECK): the pack is
   re-issued in the parent's PR or the next pack PR, never left stale. A decision made after Sprint 05 joins §13
   with an owner and a date before its consuming sprint (AC 5).
+
+| Version | PR    | Date       | Change                                                                                                                                 |
+| ------- | ----- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| v1      | #5475 | 2026-11-02 | the pre-stage, merged as 56ec82017                                                                                                     |
+| v1.1    | this  | 2026-11-03 | R370c applied (§R.1); cites re-read at b81479ab0; pins moved (§0); CR-05, CR-06, EV-C7; VC-01; the check's `--check` and `--self-test` |
 
 ## 16. The design-QA preview, sign-off, deviations, paths and the check
 
@@ -788,10 +826,10 @@ where each answer sits (heuristic); the outside reader's run is recorded at READ
 The CDO sign-off and the Architect's attendance become **the owner's approval** (Agent-delivery adaptations;
 C-10.1): owner approval pending. The DoD is reported, never pre-ticked:
 
-- [ ] `docs/design/specs/e15-handoff.md` merged with an entry for every US-LAY-001..008 — this PR (pre-stage).
+- [ ] `docs/design/specs/e15-handoff.md` merged with an entry for every US-LAY-001..008 — #5475, then v1.1.
 - [ ] Build order recommended and agreed with the FE lead — §3; the orchestrator's ruling plus #403's comment.
-- [ ] Test-id convention agreed with QA — §4, PROPOSED; G-12.
-- [ ] Reconciliation complete; the catalogue corrected — §5; A-01..A-06 PROPOSED, applied at E15-D13 PR 3 or v1.1.
+- [ ] Test-id convention agreed with QA — **not claimed**: §4 PROPOSED (D-5); G-12 carried to #434.
+- [ ] Reconciliation complete; the catalogue corrected — §5; A-01..A-06 PROPOSED, applied after #5411 merges.
 - [ ] Storybook story list published — §6.
 - [ ] Copy deck complete and consistency-diffed — §7; DECK.
 - [ ] Security, accessibility and performance lists carried — §9, §10.
@@ -800,24 +838,28 @@ C-10.1): owner approval pending. The DoD is reported, never pre-ticked:
 - [ ] Cold build passed — **not ticked as human-run** (R370 BQ-15): the dry run at READY (§14.2).
 - [ ] Handoff session held — **substituted**: the protocol (§14.1); no session claimed.
 - [ ] Design-QA checklist published in advance — §16.1.
-- [ ] CDO sign-off (Status = Done) — the owner's approval; not in Sprint 05; the D15 hold must be lifted first.
+- [ ] CDO sign-off (Status = Done) — the owner's approval; not in Sprint 05; the D15 hold lifts first (§9.3).
+- [ ] Downstream tickets linked — one link comment per reader at Done (`16`:750, item 7), with the C-row
+      consumer comments (#403, #435); none posted before Done.
 
 ### 16.3 Deviations (recorded, not hidden)
 
-- **D-1 (PROPOSED, for the owner):** no Penpot page and no PNG for this pack. README requires both on every
-  design ticket, "no exceptions" (`README`:44–:57); the orchestrator does not waive it (R370 BQ-18). The pack
-  draws nothing (T Out of scope) and points at the parents' committed PNGs; only the owner's approval (C-10.1)
-  can accept this, as for E14-D12's D-2.
+- **D-1 (waived 2026-11-03 under the 2026-10-29 delegation; owner may veto):** no Penpot page and no PNG for
+  this pack. README requires both on every design ticket, "no exceptions" (`README`:44–:57). R370 BQ-18 left it
+  to the owner; R370c BQ-05 (b) records the waiver by the owner's delegate, as for E14-D12's D-2. The pack draws
+  nothing (T Out of scope) and points at the parents' committed PNGs. The veto is owner checklist item 9.
 - **D-2:** no hand-off session; a written protocol, a dry run and a Q&A log stand in (§14; Agent-delivery
   adaptations).
-- **D-3:** two PRs, a pre-stage and a closing version (R370 BQ-01); `Refs #370` with a `Partial:` line here.
-- **D-4:** larger than C-4.8's preference under one ticket; `large-pr-approved` asked in advance (R370 BQ-19).
+- **D-3:** two PRs, a pre-stage (#5475, `Refs #370`, `Partial:`) and this closing version (`Closes #370`).
+- **D-4:** v1 was larger than C-4.8's preference, with `large-pr-approved` (R370 BQ-19); v1.1 is small.
 - **D-5:** the test-id convention is PROPOSED under the orchestrator's ruling, not agreed with QA (R370 BQ-08).
-- **D-6:** catalogue corrections are A-rows, applied by E15-D13 PR 3 or v1.1, not by this PR (R370 BQ-09).
+- **D-6:** catalogue corrections are A-rows, applied after #5411 merges, not by v1 or v1.1 (R370 BQ-09).
 - **D-7:** the PR title `docs(charting-ui): add the E15-D16 layouts and workspaces hand-off pack (pre-stage)` and the
   docs-only paths and gates replace the brief's generic frontend paths, commands and the issue's title
   `[E15-D16] Engineering handoff pack for the layouts & workspaces band` (C-4.4, C-4.10).
-- **D-8:** E15-D15 is consumed as an input; this PR adds it to E15-D16's `blocked_by` (`E15J`; validated).
+- **D-8:** E15-D15 is consumed as an input; #5460 added it to E15-D16's `blocked_by` (`E15J`; validated).
+- **D-9:** v1.1 closes before the four boards PRs and the in-flight code PRs merge (R370c BQ-02); boards and
+  merge commits follow in the v1.2 re-pin (§15).
 
 ### 16.4 Paths and the check
 
@@ -825,10 +867,11 @@ C-10.1): owner approval pending. The DoD is reported, never pre-ticked:
 | -------------------------------------------------- | ------------------------------------------------------------------ |
 | `docs/design/specs/e15-handoff.md`                 | this pack (T Scope's path)                                         |
 | `docs/design/E15/E15-D16-copy.json`                | DECK                                                               |
-| `docs/design/_tools/e15_d16_handoff_check.py`      | the check: G-LINK, G-HASH, G-INDEX, G-DECK; `--fill`, `--json`     |
+| `docs/design/_tools/e15_d16_handoff_check.py`      | the four gates; `--check`, `--self-test`, `--fill`, `--json`       |
 | `docs/design/_tools/test_e15_d16_handoff_check.py` | its test: the gates pass on the tree and fail on one mutation each |
 | `docs/plan/backlog/E15.json`, `all-tickets.json`   | unchanged here: E15-D15 joins E15-D16's `blocked_by` in #5460      |
 
-Run `python3 -I docs/design/_tools/e15_d16_handoff_check.py` from the repository root; it exits 0 when every
-gate passes. It does not check G-T2 coverage (§8), the R6 pin format or a boards-PENDING row per undrawn
+Run `python3 -I docs/design/_tools/e15_d16_handoff_check.py --check --self-test` from the repository root:
+`--check` exits 1 on any finding; `--self-test` applies one mutation per gate to in-memory copies and passes
+only when each adds exactly one finding of its gate (the other packs' tools' form). It does not check G-T2 coverage (§8), the R6 pin format or a boards-PENDING row per undrawn
 parent; those stand as reviewed prose (Option 2, R370 BQ-02b).
