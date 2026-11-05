@@ -10,6 +10,7 @@ import type {
 } from "../gl/capability.js";
 import type { LossDetails } from "../gl/context-loss.js";
 import type { InteractionMode, SelectionOp } from "../hit/selection.js";
+import { ingestMetrics, type ThemeMetrics } from "../theme/ThemeIngest.js";
 import type { AtlasDetails } from "../text/atlas.js";
 import type { ChartFont } from "../text/platform.js";
 import { INT32_TICKS } from "../viewport/transform.js";
@@ -117,9 +118,10 @@ export const ENGINE_SERIES_INCOMPATIBLE = "ENGINE_SERIES_INCOMPATIBLE";
 export type PickPointer = "mouse" | "pen" | "touch";
 const PICK_POINTERS: ReadonlySet<unknown> = new Set(["mouse", "pen", "touch"]);
 
-/** E14-T04 (#359): the selection operations and the plot's two modes. */
-export type { InteractionMode, SelectionOp };
+/** E14-T04 (#359): the selection operations, the plot's two modes and the theme's numbers. */
+export type { InteractionMode, SelectionOp, ThemeMetrics };
 const SELECTION_OPS: ReadonlySet<unknown> = new Set(["replace", "add", "toggle", "clear"]);
+export type EditIntent = "move" | "resize" | "delete";
 /** Bounds on the drawing commands (an availability control, like BQ-138's ceilings). */
 export const MAX_ANCHORS = 1_024;
 export const MAX_LEVELS = 32;
@@ -153,7 +155,11 @@ export type Command =
       readonly readOnly?: boolean;
     }
   | { readonly k: "focusObject"; readonly drawingId: string | null; readonly handle?: number }
-  | { readonly k: "setTheme"; readonly theme: ThemeLut }
+  | { readonly k: "nudgeSelection"; readonly bars: number; readonly ticks: number }
+  | { readonly k: "deleteSelection" }
+  | { readonly k: "cancelDrag" }
+  | { readonly k: "boundsOf"; readonly ids: readonly string[]; readonly reqId: number }
+  | { readonly k: "setTheme"; readonly theme: ThemeLut; readonly metrics?: ThemeMetrics }
   | { readonly k: "setLod"; readonly candles: 0 | 1 | 2; readonly footprint: 0 | 1 | 2 | 3 }
   /** The app's resolved motion mode changed (E11-S04 BQ-104): `reduce` stops a glide. */
   | { readonly k: "setMotion"; readonly reduce: boolean }
@@ -368,6 +374,35 @@ export type FromWorker =
       readonly handle: number;
       readonly mode: InteractionMode;
     }
+  /**
+   * `update` at most once per frame while dragging; exactly one `commit` per gesture covering every
+   * drawing it changed; nothing on `Esc`. Anchors flat `[t µs, tick, …]` (engine units).
+   */
+  | {
+      readonly t: "drawingsChanged";
+      readonly id: ChartId;
+      readonly phase: "update" | "commit";
+      readonly intent: EditIntent;
+      readonly changes: readonly { readonly id: string; readonly anchors: readonly number[] }[];
+    }
+  | {
+      readonly t: "refused";
+      readonly id: ChartId;
+      readonly ids: readonly string[];
+      readonly reason: "locked" | "read-only";
+      readonly intent: EditIntent;
+    }
+  /** `boundsOf`'s reply: `rect` [x0, y0, x1, y1] CSS px, `handles` [cx, cy, …] per anchor. */
+  | {
+      readonly t: "bounds";
+      readonly id: ChartId;
+      readonly reqId: number;
+      readonly items: readonly {
+        readonly id: string;
+        readonly rect: readonly number[];
+        readonly handles: readonly number[];
+      }[];
+    }
   | {
       readonly t: "exported";
       readonly id: ChartId;
@@ -498,6 +533,15 @@ const finiteList = (v: unknown, max: number): boolean =>
   Array.isArray(v) && v.length <= max && v.every(finite);
 const pairs = (n: number): boolean => n > 0 && n % 2 === 0; // at least one anchor
 const px = (v: unknown): boolean => finite(v) && v >= 0 && v <= 256;
+/** `ThemeTokens.metrics`: finite and within `METRIC_RANGES` (one rule, ThemeIngest's). */
+const metricsOk = (m: unknown): boolean => {
+  try {
+    ingestMetrics(m);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 /** E14-T04: an id and a kind; anchors in pairs within MAX_ANCHORS, finite numbers, booleans. */
 function validDrawing(cmd: Record<string, unknown>): boolean {
@@ -542,8 +586,15 @@ function validCommand(cmd: unknown): boolean {
         (cmd["drawingId"] === null || idOk(cmd["drawingId"])) &&
         optional(cmd["handle"], (h) => wholeInt(h) && (h as number) >= -1)
       );
+    case "nudgeSelection":
+      return wholeInt(cmd["bars"]) && wholeInt(cmd["ticks"]);
+    case "deleteSelection":
+    case "cancelDrag":
+      return true;
+    case "boundsOf":
+      return idList(cmd["ids"]) && Number.isSafeInteger(cmd["reqId"]);
     case "setTheme":
-      return isObj(cmd["theme"]);
+      return isObj(cmd["theme"]) && optional(cmd["metrics"], metricsOk);
     case "setLod":
       return (
         [0, 1, 2].includes(cmd["candles"] as number) &&

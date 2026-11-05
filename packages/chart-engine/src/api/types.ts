@@ -4,6 +4,7 @@
 // markers, each as the narrowest shape the engine needs today (package README "Design deltas").
 // Types only: no React, no DOM globals, no I/O here (C-2.16). `HTMLElement` is a type reference.
 
+import type { ThemeMetrics } from "../theme/ThemeIngest.js";
 import type { DataRange, InstanceRing, SeriesProjection } from "../layers/plugin-api.js";
 
 // ---- §8 verbatim ----------------------------------------------------------
@@ -40,6 +41,24 @@ export interface Chart {
   getVisibleWindow(): VisibleWindow | null;
   getFocusedUnit(): FocusedUnit | null;
 }
+
+// E14-T04: anchors in engine units, µs time and ticks (the host maps them to the store's points,
+// E14-T02 PR-B / E14-S10); bounds in canvas CSS px (focus rings, surrogates).
+export interface DrawingAnchor {
+  time: number;
+  price: number; // in ticks (the price scale's integer tick), not a decimal price
+}
+export interface DrawingChange {
+  id: string;
+  anchors: readonly DrawingAnchor[];
+}
+export interface DrawingBounds {
+  id: string;
+  rect: Rect;
+  handles: readonly Rect[]; // one per anchor: the 24 px target, centred on the anchor
+}
+// E14-T04: §8 `ThemeMetrics`, declared once where it is validated (theme/ThemeIngest.ts).
+export type { ThemeMetrics };
 
 export interface Pane {
   readonly id: PaneId;
@@ -162,6 +181,25 @@ export interface ChartEvents {
   frameStats: FrameStats;
   /** E12-S06 (BQ-9, additive): the visible range holds no bar (`empty`, no grid drawn) or some. */
   dataState: { state: "empty" | "ready" };
+  // E14-T04 (#359, additive): edge-triggered selection. `update` (coalesced, at most once per
+  // frame) carries the live drag for the readout; `commit` (exactly one per gesture, covering every
+  // drawing it changed) is the only one the app puts in history; `Esc` posts neither. A refused
+  // edit names its ids.
+  selection: {
+    ids: readonly string[];
+    focused: { id: string; handle: number } | null;
+    mode: "cursor" | "select-area";
+  };
+  drawingsChanged: {
+    changes: readonly DrawingChange[];
+    phase: "update" | "commit";
+    intent: "move" | "resize" | "delete";
+  };
+  refused: {
+    ids: readonly string[];
+    reason: "locked" | "read-only";
+    intent: "move" | "resize" | "delete";
+  };
   error: {
     code: string;
     message: string;
@@ -262,6 +300,8 @@ export interface ThemeTokens {
   readonly palette: "default" | "cvd-safe";
   readonly convention: "standard" | "inverted";
   readonly colors: Readonly<Record<string, string>>;
+  /** E14-T04 (D08 BQ-04, D09 G-1): the handle and drag numbers, validated (`ingestMetrics`). */
+  readonly metrics?: ThemeMetrics;
 }
 
 export type Density = "comfortable" | "compact" | "dense";

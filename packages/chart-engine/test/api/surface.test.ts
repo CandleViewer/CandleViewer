@@ -98,6 +98,9 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "ChartOptions",
       "Density",
       "Drawing",
+      "DrawingAnchor",
+      "DrawingBounds",
+      "DrawingChange",
       "FocusedUnit",
       "FootprintCellRef",
       "FootprintData",
@@ -140,6 +143,7 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "SeriesType",
       "TextStyle",
       "TextureId",
+      "ThemeMetrics",
       "ThemeTokens",
       "TimeScale",
       "Unsubscribe",
@@ -231,9 +235,12 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "crosshair",
       "dataState",
       "drawingChanged",
+      "drawingsChanged", // E14-T04 (#359)
       "error",
       "frameStats",
       "orderLineDragged",
+      "refused", // E14-T04
+      "selection", // E14-T04
       "viewportChanged",
       "visibleRangeNeedsData",
     ]);

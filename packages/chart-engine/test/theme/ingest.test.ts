@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 import { ENGINE_THEME_INVALID } from "../../src/theme/codes.js";
 import { SLOT_COUNT, SLOT_INDEX, THEME_SLOTS } from "../../src/theme/slots.js";
 import {
+  DEFAULT_METRICS,
   PACKED_THEME_LENGTH,
   ThemeIngestError,
   ThemeState,
+  ingestMetrics,
   ingestTheme,
   packTheme,
   parseHexColor,
@@ -141,6 +143,34 @@ describe("ingestTheme: ENGINE_THEME_INVALID names the key", () => {
     [{ palette: "default", convention: "standard", colors: "x" }, "colors", "invalid"],
   ])("%j → %s %s", (input, key, reason) => {
     expect(caught(() => ingestTheme(input))).toMatchObject({ key, reason });
+  });
+});
+
+describe("ThemeTokens.metrics → EngineTheme.metrics (E14-T04, BQ-02)", () => {
+  it("absent: the defaults (8, 24, 4); a field given overrides only itself", () => {
+    expect(ingestTheme(validInput()).metrics).toEqual(DEFAULT_METRICS);
+    const t = ingestTheme(validInput({ metrics: { dragThresholdPx: 6, handleTargetPx: 96 } }));
+    expect(t.metrics).toEqual({ handleGlyphPx: 8, handleTargetPx: 96, dragThresholdPx: 6 });
+    expect(Object.isFrozen(t.metrics)).toBe(true);
+  });
+
+  it.each([
+    ["handleGlyphPx", 3],
+    ["handleGlyphPx", 33],
+    ["handleTargetPx", 23], // under the 24 px target (WCAG 2.5.8)
+    ["dragThresholdPx", -1],
+    ["dragThresholdPx", Number.NaN],
+    ["handleTargetPx", Number.POSITIVE_INFINITY],
+    ["handleGlyphPx", "8"],
+  ])("%s %s is refused, naming the field; nothing installs", (field, value) => {
+    const state = new ThemeState();
+    const err = caught(() => state.apply(validInput({ metrics: { [field]: value } })));
+    expect(err).toMatchObject({ key: `metrics.${field}`, reason: "invalid" });
+    expect(state.current).toBeNull();
+  });
+
+  it("a non-object metrics is refused as a whole", () => {
+    expect(caught(() => ingestMetrics(5))).toMatchObject({ key: "metrics", reason: "invalid" });
   });
 });
 

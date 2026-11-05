@@ -1,6 +1,8 @@
 // Engine handle. Real GL/layer wiring lands in E06 (spike) and E11 (engine
 // core). No DOM globals, no React, no fetch here (C-2.16).
 
+import type { ThemeMetrics } from "../theme/ThemeIngest.js";
+
 /**
  * Theme token object handed in by the host (the engine never imports the
  * design system). `colors` maps token names (e.g. `color.buy.default`) to CSS
@@ -10,6 +12,8 @@ export interface EngineTheme {
   readonly palette: "default" | "cvd-safe";
   readonly convention: "standard" | "inverted";
   readonly colors: Readonly<Record<string, string>>;
+  /** E14-T04: the §8 `ThemeTokens.metrics` (one shape, BQ-2); resolved by `ingestMetrics`. */
+  readonly metrics?: ThemeMetrics;
 }
 
 export interface EngineOptions {

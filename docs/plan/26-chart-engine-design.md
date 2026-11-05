@@ -465,6 +465,23 @@ Contract for E14-T04 (#359 PR 1, `src/hit/`, `src/worker/protocol.ts`), additive
 | `command { k: "focusObject", drawingId \| null, handle? }`   | the keyboard press: focuses a visible drawing's body (`-1`, the default) or anchor `handle` and raises the same `selection` as a pointer press, never another event                                                                                                 |
 | worker → main `selection { id, ids, focused, handle, mode }` | posted on change only; `focused` the drawing id or `null`, `handle` `-1` for the body                                                                                                                                                                               |
 
+Contract for E14-T04 (#359 PR 2, ruling 6653052281 BQ-02), additive. Every addition of the slice is in this table. Ids are the store's local `Handle`, as in PR 1's table. Anchors are engine units (µs time, ticks); the host maps them to the store's points in E14-T02 PR-B / E14-S10, not here. The app owns history and the store: it applies `drawingsChanged` and records only `commit` (`DrawingStore.updateMany` batches the N patches of one commit as one history entry, #5481).
+
+| Addition                                                                          | Shape and rule                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `command { k: "nudgeSelection", bars, ticks }`                                    | safe integers; moves the focused handle, else the selection; one `drawingsChanged { phase: "commit" }`                                                                                                                                                                                                                                                                                                                                                                               |
+| `command { k: "deleteSelection" }`                                                | one `drawingsChanged { phase: "commit", intent: "delete" }` naming every selected drawing                                                                                                                                                                                                                                                                                                                                                                                            |
+| `command { k: "cancelDrag" }`                                                     | `Esc`: restores the pre-drag geometry and posts no `drawingsChanged`; outside a drag it leaves Select area                                                                                                                                                                                                                                                                                                                                                                           |
+| `command { k: "boundsOf", ids, reqId }`                                           | asks for bounds; hidden drawings (unregistered) are absent from the reply                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `command { k: "setTheme" }` gains `metrics?`                                      | §8 `ThemeTokens.metrics`, validated as below                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| worker → main `drawingsChanged { id, phase, intent, changes: [{ id, anchors }] }` | `phase` `update` (coalesced, at most once per frame, the live drag that drives the D02 §5.3 readout) or `commit` (exactly one per gesture, covering every drawing it changed; none on `Esc`); `intent` `move`, `resize` or `delete`; anchors flat `[time µs, tick, …]`                                                                                                                                                                                                               |
+| worker → main `refused { id, ids, reason, intent }`                               | `reason` `locked` (a locked drawing) or `read-only` (`setInteractionMode { readOnly }`); once per gesture; the app writes the hint                                                                                                                                                                                                                                                                                                                                                   |
+| worker → main `bounds { id, reqId, items: [{ id, rect, handles }] }`              | `boundsOf`'s reply: `rect` `[x0, y0, x1, y1]` and `handles` `[cx, cy, …]` in CSS px, within 1 px of what `pick` hits (E14-K01 GK-05)                                                                                                                                                                                                                                                                                                                                                 |
+| §8 `Chart` methods                                                                | `setSelection`, `selectAll`, `setInteractionMode`, `focusObject`, `nudgeSelection`, `deleteSelection`, `cancelDrag`, `getDrawingBounds` (each one command above or in PR 1's table)                                                                                                                                                                                                                                                                                                  |
+| §8 `ChartEvents`                                                                  | `selection`, `drawingsChanged` and `refused`, mapped one to one from the messages; `drawingChanged` is unchanged                                                                                                                                                                                                                                                                                                                                                                     |
+| §8 types                                                                          | `DrawingAnchor { time, price }` (µs, ticks), `DrawingChange { id, anchors }`, `DrawingBounds { id, rect, handles }` (each handle the 24 px target square), `ThemeMetrics`                                                                                                                                                                                                                                                                                                            |
+| §8 `ThemeTokens.metrics?: ThemeMetrics`                                           | optional `{ handleGlyphPx, handleTargetPx, dragThresholdPx }`, CSS px, each optional and finite within 4–32 (default 8), 24–96 (default 24, WCAG 2.5.8) and 0–32 (default 4, PROPOSED, D02 §5.3); otherwise `ENGINE_THEME_INVALID` names `metrics.<field>`. `ThemeIngest` resolves it into the internal `EngineTheme.metrics`; D08 / D09's "`EngineTheme.metrics`" is read as that internal type fed from `ThemeTokens`, and neither design file is amended. It never rides `colors` |
+
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 
 ---
@@ -525,6 +542,38 @@ export interface Chart {
   getDomMirrorRoot(): HTMLElement;
   getVisibleWindow(): VisibleWindow | null;
   getFocusedUnit(): FocusedUnit | null;
+  // E14-T04 (#359 PR 2, additive): the worker owns the drawing selection (§3.9); keyboard parity.
+  // Ids are the E14-T02 store's stable local `Handle`, never the server id.
+  setSelection(ids: readonly string[], op: "replace" | "add" | "toggle" | "clear"): void;
+  selectAll(pane?: PaneId): void; // every visible drawing on the pane (default: the first)
+  setInteractionMode(mode: "cursor" | "select-area", opts?: { readOnly?: boolean }): void;
+  focusObject(id: string | null, handle?: number): void; // the same `selection` as a press
+  nudgeSelection(bars: number, ticks: number): void; // whole bars / ticks; one `commit`
+  deleteSelection(): void; // one `commit { intent: "delete" }`
+  cancelDrag(): void; // Esc mid-drag: the pre-drag geometry; no commit and no event
+  getDrawingBounds(ids: readonly string[]): Promise<DrawingBounds[]>;
+}
+
+// E14-T04: anchors in engine units (µs, ticks; the host maps them to the store's points); bounds
+// in canvas CSS px (focus rings, surrogates).
+export interface DrawingAnchor {
+  time: number;
+  price: number; // in ticks (the price scale's integer tick), not a decimal price
+}
+export interface DrawingChange {
+  id: string;
+  anchors: readonly DrawingAnchor[];
+}
+export interface DrawingBounds {
+  id: string;
+  rect: Rect;
+  handles: readonly Rect[]; // one per anchor: the target square, centred on the anchor
+}
+// E14-T04: `ThemeTokens.metrics?`, CSS px; absent fields take the defaults; out of range throws.
+export interface ThemeMetrics {
+  handleGlyphPx?: number; // 4..32, default 8
+  handleTargetPx?: number; // 24..96, default 24 (WCAG 2.5.8)
+  dragThresholdPx?: number; // 0..32, default 4 (PROPOSED, D02 §5.3)
 }
 
 // Mounts into `container` and returns synchronously; capability detection is lazy (E11-T01).
@@ -647,6 +696,23 @@ export interface ChartEvents {
   visibleRangeNeedsData: { fromTime: number; toTime: number }; // triggers paging
   frameStats: FrameStats;
   dataState: { state: "empty" | "ready" }; // E12-S06 (BQ-9): no bar in view; no grid drawn
+  // E14-T04 (#359 PR 2, additive): edge-triggered selection; `update` at most once per frame while
+  // dragging, exactly one `commit` per gesture (the only history entry), nothing on Esc.
+  selection: {
+    ids: readonly string[];
+    focused: { id: string; handle: number } | null;
+    mode: "cursor" | "select-area";
+  };
+  drawingsChanged: {
+    changes: readonly DrawingChange[];
+    phase: "update" | "commit";
+    intent: "move" | "resize" | "delete";
+  };
+  refused: {
+    ids: readonly string[];
+    reason: "locked" | "read-only";
+    intent: "move" | "resize" | "delete";
+  };
   error: {
     code: string;
     message: string;

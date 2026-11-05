@@ -14,12 +14,36 @@ export type ThemeName = "dark" | "light" | "high-contrast";
 export type ThemePalette = "default" | "cvd-safe";
 export type ThemeConvention = "standard" | "inverted";
 
+/**
+ * §8 `ThemeTokens.metrics` (E14-T04, ruling 6653052281 BQ-02): the handle and drag numbers in CSS
+ * px. Each is optional (absent: the default) and must be finite within its range (`METRIC_RANGES`).
+ */
+export interface ThemeMetrics {
+  readonly handleGlyphPx?: number; // 4..32, default 8
+  readonly handleTargetPx?: number; // 24..96, default 24 (WCAG 2.5.8)
+  readonly dragThresholdPx?: number; // 0..32, default 4 (PROPOSED, D02 §5.3)
+}
+/** The resolved numbers `EngineTheme.metrics` carries (D08 / D09's "`EngineTheme.metrics`"). */
+export type EngineMetrics = Readonly<Required<ThemeMetrics>>;
+/** [min, max] per field, inclusive. */
+export const METRIC_RANGES: Readonly<Record<keyof ThemeMetrics, readonly [number, number]>> = {
+  handleGlyphPx: [4, 32],
+  handleTargetPx: [24, 96],
+  dragThresholdPx: [0, 32],
+};
+export const DEFAULT_METRICS: EngineMetrics = Object.freeze({
+  handleGlyphPx: 8,
+  handleTargetPx: 24,
+  dragThresholdPx: 4,
+});
+
 /** Structurally §8 `ThemeTokens` plus BQ-T04-03's optional `name` (additive; §8 must-not-break). */
 export interface ThemeIngestInput {
   readonly name?: ThemeName;
   readonly palette: ThemePalette;
   readonly convention: ThemeConvention;
   readonly colors: Readonly<Record<string, string>>;
+  readonly metrics?: ThemeMetrics;
 }
 
 /** One straight-sRGB colour, each channel in [0, 1]. Frozen. */
@@ -31,6 +55,8 @@ export interface EngineTheme {
   readonly palette: ThemePalette;
   readonly convention: ThemeConvention;
   readonly slots: Readonly<Record<ThemeSlot, Rgba>>;
+  /** E14-T04: `ThemeTokens.metrics` resolved (every field, defaults filled in). */
+  readonly metrics: EngineMetrics;
 }
 
 export type ThemeInvalidReason = "missing" | "invalid";
@@ -68,9 +94,28 @@ function field(input: Record<string, unknown>, key: string, allowed: readonly st
   return v;
 }
 
+/** `ThemeTokens.metrics` resolved; a bad field throws naming `metrics.<field>` (E14-T04, BQ-02). */
+export function ingestMetrics(input: unknown): EngineMetrics {
+  if (input === undefined) return DEFAULT_METRICS;
+  if (typeof input !== "object" || input === null) throw new ThemeIngestError("metrics", "invalid");
+  const rec = input as Record<string, unknown>;
+  const out: Record<keyof ThemeMetrics, number> = { ...DEFAULT_METRICS };
+  for (const key of Object.keys(METRIC_RANGES) as (keyof ThemeMetrics)[]) {
+    const v = rec[key];
+    if (v === undefined) continue;
+    const [min, max] = METRIC_RANGES[key];
+    if (typeof v !== "number" || !(v >= min && v <= max)) {
+      throw new ThemeIngestError(`metrics.${key}`, "invalid");
+    }
+    out[key] = v;
+  }
+  return Object.freeze(out);
+}
+
 /**
  * Validates and resolves a token object. Throws `ThemeIngestError` naming the first bad key, in
- * the order: `palette`, `convention`, `name`, `colors`, then the slots in `THEME_SLOTS` order.
+ * the order: `palette`, `convention`, `name`, `colors`, the slots in `THEME_SLOTS` order, then
+ * `metrics`.
  */
 export function ingestTheme(input: unknown): EngineTheme {
   if (typeof input !== "object" || input === null) throw new ThemeIngestError("theme", "invalid");
@@ -91,7 +136,8 @@ export function ingestTheme(input: unknown): EngineTheme {
     if (rgba === null) throw new ThemeIngestError(slot, "invalid");
     slots[slot] = rgba;
   }
-  return Object.freeze({ name, palette, convention, slots: Object.freeze(slots) });
+  const metrics = ingestMetrics(rec["metrics"]);
+  return Object.freeze({ name, palette, convention, slots: Object.freeze(slots), metrics });
 }
 
 /** Floats `packTheme` writes: one RGBA quad per slot, in `THEME_SLOTS` order. */
