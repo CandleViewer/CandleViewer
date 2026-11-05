@@ -121,7 +121,7 @@ def test_save_fractional_metric_param_creates_and_an_equal_spelling_is_no_new_ve
         f"/rules/{rid}", content=_raw({"ir": _ir()}, "0.50"), headers={**_JSON, "If-Match": "1"}
     )
     assert same.status_code == 200, same.text
-    assert same.json()["created"] is False and same.json()["version"]["ir_hash"] == h
+    assert (same.json()["version"], same.json()["ir_hash"]) == (1, h)
 
 
 @pytest.mark.parametrize("spelling", ["0.5", "3.0", "1e-7", "1E+21", "null"])
@@ -142,8 +142,7 @@ def test_metric_param_ir_returned_or_stored_rehashes_alike_and_resaves_as_no_ver
     assert ir_hash(Rule.model_validate(stored)) == version["ir_hash"]
     same = c.put(f"/rules/{rid}", json={"ir": stored}, headers={"If-Match": "1"})
     assert same.status_code == 200, same.text
-    assert same.json()["created"] is False
-    assert same.json()["version"]["ir_hash"] == version["ir_hash"]
+    assert (same.json()["version"], same.json()["ir_hash"]) == (1, version["ir_hash"])
 
 
 @pytest.mark.parametrize(("spelling", "message"), _REFUSED)

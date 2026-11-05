@@ -87,8 +87,8 @@ async def test_versions_dedupe_conflict_arm_and_delete_survive_a_reload(
     mgr = RulesManager(PostgresRuleStore(repo), default_registry())
     rid = (await mgr.create(_ir("1"), actor))["id"]
     try:
-        assert (await mgr.update(rid, _ir("2"), 1, actor))["version"]["version"] == 2
-        assert (await mgr.update(rid, _ir("2"), 2, actor))["created"] is False  # UNIQUE(rule, hash)
+        assert (await mgr.update(rid, _ir("2"), 1, actor))["version"] == 2
+        assert (await mgr.update(rid, _ir("2"), 2, actor))["version"] == 2  # UNIQUE(rule, hash)
         with pytest.raises(RuleError) as e:
             await mgr.update(rid, _ir("3"), 1, actor)
         assert e.value.status == 412  # #4674: a stale version is a failed precondition

@@ -339,9 +339,10 @@ async def _present_together(m: RulesManager, rid: str, pair: str) -> None:
 async def _save_within_budget(m: RulesManager, rid: str) -> str:
     """The Owner saves the rule again within its budget, simulated; returns the version id."""
     row = await m._row(rid)
-    saved = await m.update(rid, _ir(name=row.name, scope=dict(ON_A)), row.latest_version, OWNER)
-    await m.record_simulation(rid, saved["version"]["ir_hash"], 5, 0.0)
-    return str(saved["version"]["id"])
+    await m.update(rid, _ir(name=row.name, scope=dict(ON_A)), row.latest_version, OWNER)
+    saved = (await m.versions(rid))[0]  # the version the save wrote, newest first
+    await m.record_simulation(rid, saved["ir_hash"], 5, 0.0)
+    return str(saved["id"])
 
 
 @_PAIRS
