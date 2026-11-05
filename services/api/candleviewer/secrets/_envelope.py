@@ -12,6 +12,9 @@ concatenation is ambiguous:
   the ``cv-rc-v2`` recovery-code digest preimage (`21-database-schema.md` §3.1.5a).
 - audit export key (#889, ADR-0039): the seed's seal ``cv-export-seed-v1`` (`_export_key.py`) and
   its DEK's wrap ``cv-export-dek-v1 | environment | key_id | kek_version`` (`export_dek_aad`).
+- alert webhook (#1400 S3, ADR-0009 Amendment 9): each column's value
+  ``cv.alert.webhook.{url|secret}.v1 | environment | alert_id`` (`webhook_aad`) and its DEK's wrap
+  ``cv-webhook-dek-v1 | environment | alert_id | field | kek_version`` (`webhook_dek_aad`).
 
 SR-003 `key_version`: there is no separate key-version column — every exchange key rotation
 inserts a new `api_keys` row (`api_key_rotations` links old→new), so `credential_id` already
@@ -90,6 +93,29 @@ def export_dek_aad(env: str, key_id: str, kek_version: int) -> bytes:
     if env not in ENVIRONMENTS or type(kek_version) is not int or kek_version < 1:
         raise ValueError("unknown environment, or kek_version not a positive int")
     return aad(b"cv-export-dek-v1", env.encode(), key_id.encode(), str(kek_version).encode())
+
+
+#: The alert webhook's two sealed columns (#1400 S3, ADR-0009 Amendment 9).
+WEBHOOK_FIELDS = ("url", "secret")
+
+
+def webhook_dek_aad(env: str, alert_id: UUID, field: str, kek_version: int) -> bytes:
+    """A webhook column's DEK wrap under the KEK: ``cv-webhook-dek-v1 | environment | alert_id |
+    field | kek_version``, its own label, so no other wrap opens as one."""
+    if env not in ENVIRONMENTS or field not in WEBHOOK_FIELDS:
+        raise ValueError("unknown environment or webhook field")
+    if type(kek_version) is not int or kek_version < 1:
+        raise ValueError("kek_version must be a positive int")
+    parts = (env.encode(), alert_id.bytes, field.encode(), str(kek_version).encode())
+    return aad(b"cv-webhook-dek-v1", *parts)
+
+
+def webhook_aad(env: str, alert_id: UUID, field: str) -> bytes:
+    """A webhook column's value under its DEK: ``cv.alert.webhook.{field}.v1 | environment |
+    alert_id``. No KEK version, as in `cred_aad`: the DEK's own wrap binds it."""
+    if env not in ENVIRONMENTS or field not in WEBHOOK_FIELDS:
+        raise ValueError("unknown environment or webhook field")
+    return aad(f"cv.alert.webhook.{field}.v1".encode(), env.encode(), alert_id.bytes)
 
 
 def totp_aad(env: str, user_id: UUID) -> bytes:

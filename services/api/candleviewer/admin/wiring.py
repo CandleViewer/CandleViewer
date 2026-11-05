@@ -73,6 +73,9 @@ from candleviewer.secrets import (
     SecretsService,
     SigningKeyRotator,
     SigningKeys,
+    WebhookSealer,
+    WebhookSigner,
+    WebhookTargetOpener,
     export_secrets_metrics,
     mint_auth_keyring,
     mint_borrower,
@@ -83,6 +86,9 @@ from candleviewer.secrets import (
     mint_rotation_running,
     mint_signing_key_rotator,
     mint_signing_keys,
+    mint_webhook_opener,
+    mint_webhook_sealer,
+    mint_webhook_signer,
 )
 from candleviewer.settings import Settings
 
@@ -141,7 +147,11 @@ class SecretsBundle:
     `key_destroyer` destroys one stored key of one account (#898's delete and revoke).
     `mfa_keyring` is the environment's auth keyring as `auth`'s `MfaKeyring` (#2152): M2's
     `AuthKeyring`, its refusals mapped to `auth`'s errors. It is on once `build_secrets_service`
-    is given the keyring's store (the real backend); otherwise it refuses every call."""
+    is given the keyring's store (the real backend); otherwise it refuses every call.
+    `webhook_sealer`, `webhook_opener` and `webhook_signer` are the alert webhook's (#1400 S3,
+    ADR-0009 Amendment 9), `alerts`' `WebhookSealerPort`, `WebhookTargetOpenerPort` and
+    `WebhookSignerPort` as they are: they seal the URL and the secret, open the URL alone and sign
+    only a delivery's fixed fields; the secret never leaves M2."""
 
     lifecycle: SecretsLifecycle
     metadata: SecretsMetadata
@@ -154,6 +164,9 @@ class SecretsBundle:
     lane_signing: LaneSigningBinder
     key_destroyer: KeyDestroyer
     mfa_keyring: MfaKeyring
+    webhook_sealer: WebhookSealer
+    webhook_opener: WebhookTargetOpener
+    webhook_signer: WebhookSigner
 
 
 __all__ = [
@@ -360,6 +373,9 @@ def secrets_bundle(
         lane_signing,
         mint_key_destroyer(svc),
         _MfaKeyring(mint_auth_keyring(svc)),
+        mint_webhook_sealer(svc),
+        mint_webhook_opener(svc),
+        mint_webhook_signer(svc),
     )
 
 

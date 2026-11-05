@@ -41,6 +41,8 @@ AUTH_WRAP_PREFIX = "ak1:"
 _WRAP_RE = re.compile(r"[0-9a-f]{120}")
 #: `audit_signing_keys.dek_ref` (#889 S6, 21 §3.1.5b): the same shape under its own prefix.
 EXPORT_WRAP_PREFIX = "ek1:"
+#: A webhook column's DEK wrap (#1400 S3): raw nonce(12) || ciphertext(32) || tag(16).
+WEBHOOK_WRAP_LEN = env.NONCE_LEN + env.KEY_LEN + env.TAG_LEN
 
 
 class LoadedKek:
@@ -129,6 +131,23 @@ class LoadedKek:
             raise ValueError("unsupported export DEK wrap")
         aad = env.export_dek_aad(self.env_name, key_id, self.version)
         return env.open_(self._live_key(), bytes.fromhex(body), aad)
+
+    def wrap_webhook_dek(self, dek: bytearray, *, alert_id: UUID, field: str) -> bytes:
+        """A webhook column's DEK (#1400 S3, ADR-0009 Amendment 9): nonce(12) || ciphertext(32) ||
+        tag(16), raw, sealed under this KEK, bound to its environment, the alert, the column and
+        this version."""
+        if type(dek) is not bytearray or len(dek) != env.KEY_LEN:
+            raise ValueError("webhook DEK: a 32-byte bytearray")
+        aad = env.webhook_dek_aad(self.env_name, alert_id, field, self.version)
+        return env.seal(self._live_key(), dek, aad)
+
+    def unwrap_webhook_dek(self, wrapped: bytes, *, alert_id: UUID, field: str) -> bytearray:
+        """`InvalidTag` on wrong KEK / environment / alert / column / version; `ValueError` on
+        shape."""
+        if len(wrapped) != WEBHOOK_WRAP_LEN:
+            raise ValueError("webhook DEK wrap length")
+        aad = env.webhook_dek_aad(self.env_name, alert_id, field, self.version)
+        return env.open_(self._live_key(), wrapped, aad)
 
     def close(self) -> None:
         self._closed = True

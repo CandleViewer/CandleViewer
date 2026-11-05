@@ -1,0 +1,51 @@
+{
+  "scheme": "cv.alert.webhook.v1",
+  "algorithm": "HMAC-SHA256",
+  "note": "Synthetic vectors: each secret is a plain sentence, never a key (C-2.7). Computed with the Python stdlib alone.",
+  "vectors": [
+    {
+      "name": "min-secret",
+      "secret_utf8": "synthetic vector one, not a key.",
+      "secret_len": 32,
+      "timestamp": 1767225600,
+      "delivery_id": 1,
+      "body_utf8": "{\"alert_id\":\"00000000-0000-4000-8000-000000000001\",\"event\":\"alert.fired\"}",
+      "body_sha256_hex": "5b138181aedae21b42cfc9bff926c759bc1935a57391ae2b702751b1e974cf0b",
+      "signed_string": "cv.alert.webhook.v1:1767225600:1:5b138181aedae21b42cfc9bff926c759bc1935a57391ae2b702751b1e974cf0b",
+      "expected_hmac_hex": "0cb2a80e3c36775687d08fa9954c1920f9d244d57e6dc7a0fe4c959db8c815f5"
+    },
+    {
+      "name": "max-secret",
+      "secret_utf8": "synthetic vector two: a test-only secret of the longest allowed length, never a key, padded out to the bound with dots .........",
+      "secret_len": 128,
+      "timestamp": 1767225601,
+      "delivery_id": 9223372036854775807,
+      "body_utf8": "{\"a\":\"1\"}",
+      "body_sha256_hex": "9afeb0f2b203f254312ec8ded441d0318b7c34c57f8695ede42d2215a30c0960",
+      "signed_string": "cv.alert.webhook.v1:1767225601:9223372036854775807:9afeb0f2b203f254312ec8ded441d0318b7c34c57f8695ede42d2215a30c0960",
+      "expected_hmac_hex": "acb3c090afbe3a8105574138e610d675db4de1bce2e2198b51c89f1392a92983"
+    },
+    {
+      "name": "empty-body",
+      "secret_utf8": "synthetic vector three, not a key, test only",
+      "secret_len": 44,
+      "timestamp": 1,
+      "delivery_id": 42,
+      "body_utf8": "",
+      "body_sha256_hex": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signed_string": "cv.alert.webhook.v1:1:42:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "expected_hmac_hex": "6d4cfd1c753631e97e930afc2f02fdf30698e878f4b2ce1360ba4d173256c7ce"
+    },
+    {
+      "name": "utf8-body",
+      "secret_utf8": "synthetic vector four, not a key, test only",
+      "secret_len": 43,
+      "timestamp": 9999999999,
+      "delivery_id": 7,
+      "body_utf8": "{\"name\":\"Δ alert ✓\"}",
+      "body_sha256_hex": "66aad12629213962dbd2741068e105059a2e5ef25dcd153cdc93ff46e62424a3",
+      "signed_string": "cv.alert.webhook.v1:9999999999:7:66aad12629213962dbd2741068e105059a2e5ef25dcd153cdc93ff46e62424a3",
+      "expected_hmac_hex": "84668ef389891b5d894dc6290205815a86209659d864b906a33335228f667a51"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "capture_date": "2026-11-05",
+  "fixtures": [
+    {
+      "path": "hmac_v1_vectors.json",
+      "source": "synthetic",
+      "stream": "alert webhook signature v1 (HMAC-SHA256)",
+      "host": "none",
+      "capture_date": "2026-11-05",
+      "notable_event": "four signing vectors: the shortest and longest secret, an empty body and a UTF-8 body; secrets are plain sentences, never key-shaped (C-2.7)",
+      "consumers": ["E40-S03"]
+    }
+  ]
+}

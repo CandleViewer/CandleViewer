@@ -110,3 +110,24 @@ class AuthSealInvalid(SecretsError):
     """A seal under a held key failed authentication (moved or tampered): a wrong code (AC9)."""
 
     code = "auth_seal_invalid"
+
+
+#: A webhook capability's refusal reasons (#1400 S3, ADR-0009 Amendment 9).
+WebhookReason = Literal[
+    "webhook_request_invalid",
+    "kek_unavailable",
+    "webhook_kek_not_held",
+    "webhook_seal_invalid",
+    "webhook_unavailable",
+]
+
+
+class WebhookCapabilityRefused(SecretsError):
+    """The webhook sealer, opener or signer refused (Amendment 9): `reason` is closed, and neither
+    it nor the message carries a URL, a secret, a digest or an id (C-12.6)."""
+
+    code = "webhook_capability_refused"
+
+    def __init__(self, reason: WebhookReason) -> None:
+        super().__init__(reason)
+        self.reason: WebhookReason = reason

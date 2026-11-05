@@ -236,6 +236,16 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "open_recovery_digests",
         "RecoveryDigests",
         "AuthKeyRows",
+        # #1400 S3 (ADR-0009 Amendment 9): the alert webhook's sealer, URL opener and bounded
+        # signer, `alerts`' ports as they are, their mints pinned to admin/wiring.py by the M2
+        # guard, and their one refusal (a closed reason, never a value).
+        "WebhookSealer",
+        "WebhookTargetOpener",
+        "WebhookSigner",
+        "mint_webhook_sealer",
+        "mint_webhook_opener",
+        "mint_webhook_signer",
+        "WebhookCapabilityRefused",
     },
     # E26-T02: the replay read path's request, in-stream gap marker, storage ports, typed
     # errors and bounded read-ahead source (docs/plan/24-internal-schemas.md Sec.13.7).

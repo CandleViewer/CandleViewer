@@ -32,13 +32,15 @@ R8  Last-hop names pinned: `unwrap_dek`, `wrap_dek`, `open_`, `seal`, `cred_aad`
     `rewrap_all`, `verify_kcv`, `drop_kek`, `flush_cache`, `kek_handle`, `kek_prev_handle`,
     `kek_ack_path` (outside `settings.py`), `unwrap_export_dek` (#889); the auth keyring's
     (#2152 S4, BQ-6): `wrap_auth_key`, `unwrap_auth_key`, `akey_aad`, `totp_aad`, `rc_preimage`,
-    `load_keyring`, `generate_keyring`, `import_keyring`; str literals `/run/credentials…` or
-    `CV_KEK_…`.
+    `load_keyring`, `generate_keyring`, `import_keyring`; the alert webhook's (#1400 S3):
+    `wrap_webhook_dek`, `unwrap_webhook_dek`, `webhook_dek_aad`, `webhook_aad`; str literals
+    `/run/credentials…` or `CV_KEK_…`.
 R9  Borrow names (see R10); admin metadata (`_ADMIN_ONLY`: attribute, bare name, import or
     literal) outside `admin/`;
     `mint_borrower` / `mint_candidate_keys` / `mint_export_signer` / `mint_signing_keys` /
     `mint_signing_key_rotator` / `mint_rotation_running` / `mint_loop_signing` /
-    `mint_key_destroyer` / `mint_auth_keyring` outside `admin/wiring.py`; every M2-defined private
+    `mint_key_destroyer` / `mint_auth_keyring` / `mint_webhook_sealer` / `mint_webhook_opener` /
+    `mint_webhook_signer` outside `admin/wiring.py`; every M2-defined private
     name (harvested with
     rglob, no subtraction) plus `_key`, `_cache`, `_items`, `_broker`, on non-self receivers.
 R10 Plaintext stays in `secrets/` (C-2.7, #2339): the plaintext borrow (`with_credentials`,
@@ -67,12 +69,14 @@ MINT_SITES = {"admin/wiring.py"}
 #: audit export's signer and key directory, #889 ADR-0039 decision 3; the signing key's rotator,
 #: #889 S7, decision 5; the running rotation's read, #889 S10, the export route's own 409;
 #: the order lane's loop signing, #913 L3b; the delete's and revoke's key destroyer, #898; MFA's
-#: auth keyring, #2152 S4).
+#: auth keyring, #2152 S4; the alert webhook's sealer, opener and signer, #1400 S3, ADR-0009
+#: Amendment 9).
 MINTS = frozenset(
     {
         "mint_borrower", "mint_candidate_keys", "mint_export_signer", "mint_signing_keys",
         "mint_signing_key_rotator", "mint_rotation_running", "mint_loop_signing",
-        "mint_key_destroyer", "mint_auth_keyring",
+        "mint_key_destroyer", "mint_auth_keyring", "mint_webhook_sealer", "mint_webhook_opener",
+        "mint_webhook_signer",
     }
 )  # fmt: skip
 #: The M4 exchange adapter package (the only signing-capability holder), built from parts.
@@ -99,7 +103,8 @@ _LAST_HOP = frozenset(
         "unwrap_dek", "wrap_dek", "open_", "cred_aad", "dek_aad", "rewrap_all",
         "verify_kcv", "drop_kek", "flush_cache", "kek_handle", "kek_prev_handle", "kek_ack_path",
         "unwrap_export_dek", "wrap_auth_key", "unwrap_auth_key", "akey_aad", "totp_aad",
-        "rc_preimage", "load_keyring", "generate_keyring", "import_keyring",
+        "rc_preimage", "load_keyring", "generate_keyring", "import_keyring", "wrap_webhook_dek",
+        "unwrap_webhook_dek", "webhook_dek_aad", "webhook_aad",
     }
 )  # fmt: skip
 _SETTINGS_ONLY = frozenset({"kek_handle", "kek_prev_handle", "kek_ack_path"})
