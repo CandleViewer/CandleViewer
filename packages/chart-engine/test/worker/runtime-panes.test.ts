@@ -8,6 +8,7 @@ import { MOD } from "../../src/interaction/wheel.js";
 import {
   INPUT,
   KEY,
+  ENGINE_PANE_CAP,
   MAX_PANES,
   type FromWorker,
   type PaneScaleRow,
@@ -249,7 +250,9 @@ describe("review: removing the first key, the stub, the key target and the bound
     cmd({ k: "addPane", pane: MAX_PANES });
     frame();
     expect(layouts().at(-1)?.panes).toHaveLength(MAX_PANES);
-    expect(out.filter((m) => m.t === "error").at(-1)).toMatchObject({ recoverable: true });
+    // PR 1a m3: the cap has its own recoverable code, not the decode one.
+    const err = out.filter((m) => m.t === "error").at(-1);
+    expect(err).toMatchObject({ code: ENGINE_PANE_CAP, recoverable: true });
     for (let k = 3; k < MAX_PANES; k += 1) cmd({ k: "removePane", pane: k });
     frame();
     const nodes = rt.graph(1)?.walk().length;
