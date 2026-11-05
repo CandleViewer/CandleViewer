@@ -457,23 +457,29 @@ async def test_a_walk_a_later_sibling_caps_is_taken_again_to_an_earlier_orders_o
     ]  # fmt: skip
 
 
-async def test_a_spent_wall_budget_composes_nothing_more_and_warns_per_closing_order() -> None:
+async def test_a_spent_wall_budget_composes_nothing_more_and_leaves_each_order_unreached() -> None:
     store = book()
+    composing = composer(store, wall_s=0.0).begin(ACCOUNT_A)
     with capture_logs() as logs:
-        done = await composer(store, wall_s=0.0).begin(ACCOUNT_A).compose([CLOSE, OPEN])
+        done = await composing.compose([CLOSE, OPEN])
     assert done == () and (store.calls["walk_fills"], store.calls["compose"]) == (0, 0)
+    assert composing.unreached == (f"x-{OPEN.int}", f"x-{CLOSE.int}")  # its caller carries them
     rid = str(record_id(ACCOUNT_A, f"x-{CLOSE.int}"))  # the opening order names no record
-    assert [(e["event"], e["account_id"], e["record_id"]) for e in logs] == [
-        ("closed_pnl_compose_budget_spent", str(ACCOUNT_A), rid),
-    ]  # fmt: skip
+    assert logs == [{"event": "closed_pnl_compose_budget_spent", "log_level": "warning",
+                     "account_id": str(ACCOUNT_A), "record_id": rid}]  # fmt: skip
 
 
 async def test_a_step_takes_at_most_compose_limit_orders(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The orders named by id first, then the venue ids; the venue ids it leaves are
+    `unreached`, and an order past the limit by id is counted in the log alone."""
     monkeypatch.setattr(mod, "COMPOSE_LIMIT", 1)
+    composing = composer(book()).begin(ACCOUNT_A)
     with capture_logs() as logs:
-        done = await composer(book()).begin(ACCOUNT_A).compose([CLOSE, OPEN], ["x-99"])
+        done = await composing.compose([CLOSE, OPEN], ["x-99"])
     assert [c.row.exchange_order_id for c in done] == [f"x-{CLOSE.int}"]
-    assert [(e["event"], e["left"]) for e in logs] == [("closed_pnl_compose_limited", 2)]
+    assert composing.unreached == ("x-99",)
+    assert logs == [{"event": "closed_pnl_compose_limited", "log_level": "warning",
+                     "account_id": str(ACCOUNT_A), "left": 2}]  # fmt: skip
 
 
 async def test_the_walk_runs_on_a_worker_thread(monkeypatch: pytest.MonkeyPatch) -> None:
