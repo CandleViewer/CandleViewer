@@ -7,11 +7,19 @@ reach, `CLOSED_PNL_LOOKBACK` before the day's start up to now, since the venue f
 by a time its documents do not name. Several records under one `orderId` are kept as one
 (`merged`, logged at WARNING), and each is settled through the closed-PnL store, which replaces the
 venue's columns until the record is final and then refuses them: a read after final is logged at
-WARNING, never applied, and counted nowhere. A record is final once its closing order's row is
-terminal and its `qty` is the size the order's stored trade fills state they closed; a fill that
-states none (a REST-recovered one) keeps it open, and polled within the reach, until the
-composition's walk gives such a fill its `c`. The composition and the comparison are E29-S06's
-later slices: this one stores and keeps the records.
+WARNING, never applied, and counted nowhere.
+
+**The composition** (slice 5b, `closed_pnl_compose`, on the orchestrator's rulings of 2026-11-04,
+23:45Z). With a `composer`, a pass composes the orders the stored fills named before it reads the
+venue, so a close shows as soon as its fill is stored, a failed read or none (Q2), and after the
+records settle it composes the delta set (Q3): the records the read inserted, settled or replaced
+(every one it read, at the account's first composition), those the poll reads (row 56) and the
+named orders. Its final rule is the composition's (Q4): settled, the order's row terminal, and the
+`c` the walk gives the record's closes, each sure of its count, summing to its `qty`. Without one,
+a record is final once its order's row is terminal and its `qty` is the size the order's stored
+trade fills state they closed (row 60), a fill that states none keeping it open. A composition
+that fails is logged at WARNING by kind and keeps the poll and the named orders; the read goes
+on. The comparison is E29-S06's next slice.
 
 **The seed** (the orchestrator's ruling of 2026-11-04 15:51Z, option (a)): at an account's first
 read the sync reads the venue's positions, in the same lane, and stores each reading the venue
@@ -25,13 +33,15 @@ another account does (C-2.11), is tried again at the next read; the records are 
 **Triggers.** Startup (`start`) and a private-stream reconnect (`reconnected`) ask for a read at
 once; a stored trade fill (`stored`) asks for one within `SETTLE_POLL_S`, and a closing one (a
 stated `closed_size` above 0) within `DEBOUNCE_S`, so the fills of one close in that second are
-read once. A read is made again `SETTLE_POLL_S` after the last one started while that read failed,
-while the account holds a record within the reach that is not final and whose order has a row
-(21 Sec.13.1 row 56), or while a stored fill waits for a read that starts `SETTLE_POLL_S` after it
-and succeeds. A record with no `orderId`, or whose order has no row, keeps no poll. A read the
-account binding refuses outright (`_refused`: the account missing, deleted, another environment's
-or holding no active key) ends both the failed read's poll and the fills' wait, so the account is
-not resolved every `SETTLE_POLL_S` until a restart: its next stored fill or reconnect asks again.
+read once; with a composer, each names its order, at most `NAMED_LIMIT` an account (C-2.18), past
+which one is dropped, logged, and composed once its record is read. A read is made again
+`SETTLE_POLL_S` after the last one started while that read failed, while the account holds a
+record within the reach that is not final and whose order has a row (21 Sec.13.1 row 56), or
+while a stored fill waits for a read that starts `SETTLE_POLL_S` after it and succeeds. A record
+with no `orderId`, or whose order has no row, keeps no poll. A read the account binding refuses
+outright (`_refused`: the account missing, deleted, another environment's or holding no active
+key) ends both the failed read's poll and the fills' wait, so the account is not resolved every
+`SETTLE_POLL_S` until a restart: its next stored fill or reconnect asks again.
 
 **Placement.** One owned task (`start`, `stop`; `fault` once it ends unasked, which `on_ended` is
 told once) on the loop that makes every call, reading the due accounts one at a time: one read is
@@ -48,7 +58,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_EVEN, Context, Decimal
 from typing import Any, Final, Protocol
@@ -66,6 +76,7 @@ from candleviewer.storage.repositories.executions import NewExecution
 from candleviewer.storage.repositories.oms_reads import CLOSING_EXEC_TYPES, TERMINAL_STATES
 from candleviewer.storage.repositories.positions import MAX_FUTURE_SKEW, NewPositionSnapshot
 
+from .closed_pnl_compose import ClosedPnlComposer, ComposePass
 from .errors import AccountScopeDenied, OrderEntryRefused
 from .ports import RateReading, TradingAccounts
 
@@ -80,6 +91,9 @@ PORT_TIMEOUT_S: Final = 5.0  # an account's resolve, a store call (C-2.18)
 READ_TIMEOUT_S: Final = 30.0  # one read, all its pages, as reconciliation's fetch
 PENDING_LIMIT: Final = 200  # the records one poll reads (row 56); the rest wait for the next
 MAX_ACCOUNTS: Final = 256
+NAMED_LIMIT: Final = 256  # the orders an account's stored fills name for the composition
+#: The outcomes that put a record read in the delta set (Q3).
+_CHANGED: Final = frozenset[SettleOutcome](("inserted", "settled", "replaced"))
 FETCH_SECONDS: Final = "oms_closed_pnl_fetch_seconds"
 #: Its `result`s: a read's `ok` or `failed`, and apart from them a crossing between accounts, the
 #: resolve, a record or a seed's position reading naming another (`_OtherAccount`, C-2.11), which
@@ -236,6 +250,8 @@ class _Account:
     fills_until: float | None = None  # a read starting then or later, succeeding, ends the fills'
     keep: bool = False  # its last read failed, or left a record to poll
     seeded: bool = False  # its keys' flats were seeded (the ruling's first sight)
+    named: set[UUID] = field(default_factory=set)  # the orders its stored fills named, to compose
+    composed: bool = False  # its first composition after the settle ran
 
 
 class ClosedPnlSync:
@@ -243,16 +259,17 @@ class ClosedPnlSync:
     instant, from the one resolver the cap takes too (`risk.day_boundary`, 24 Sec.8.13), whose
     failure fails the read, so the poll keeps running; `on_ended` what is told, once, on the
     task's loop, that the task ended other than by `stop()` (the runtime's page): it must not
-    raise."""
+    raise; `composer` the composition (module docstring), None for the stored rule alone."""
 
     def __init__(
         self, *, accounts: TradingAccounts, router: ReadRouter, records: ClosedPnlRecords,
         closes: StoredCloses, snapshots: SnapshotWrites, metrics: Metrics,
         now: Callable[[], datetime], on_ended: Callable[[], None],
         day_start: Callable[[datetime], Awaitable[datetime]],
+        composer: ClosedPnlComposer | None = None,
     ) -> None:  # fmt: skip
         self._accounts, self._router, self._records = accounts, router, records
-        self._closes, self._snapshots = closes, snapshots
+        self._closes, self._snapshots, self._composer = closes, snapshots, composer
         self._now, self._day_start, self._on_ended = now, day_start, on_ended
         spec = next(spec for spec in CATALOGUE if spec.name == FETCH_SECONDS)
         self._seconds = metrics.histogram(
@@ -308,17 +325,25 @@ class ClosedPnlSync:
 
     def stored(self, execution: NewExecution) -> None:
         """A fill the store took: one of a trade type keeps the poll until a read that starts
-        `SETTLE_POLL_S` after it succeeds, and asks for a read within `DEBOUNCE_S` if it closes."""
+        `SETTLE_POLL_S` after it succeeds, asks for a read within `DEBOUNCE_S` if it closes, and
+        names its order for the composition."""
         if execution.exec_type not in CLOSING_EXEC_TYPES:
             return
-        size = execution.closed_size
+        size, account_id = execution.closed_size, AccountId(execution.exchange_account_id)
         after = DEBOUNCE_S if size is not None and size > 0 else SETTLE_POLL_S
-        state = self._ask(AccountId(execution.exchange_account_id), after)
+        state = self._ask(account_id, after)
         if state is not None and self._loop is not None:
             until = self._loop.time() + SETTLE_POLL_S
             state.fills_until = (
                 until if state.fills_until is None else max(state.fills_until, until)
             )
+        order = execution.order_id
+        if state is None or self._composer is None or order is None or order in state.named:
+            return
+        if len(state.named) < NAMED_LIMIT:
+            state.named.add(order)
+        else:  # composed once its record is read (C-2.18)
+            _log().warning("closed_pnl_named_order_dropped", account_id=str(account_id))
 
     def reconnected(self, account_id: AccountId) -> None:
         """The account's private stream came back: its records are read at once."""
@@ -378,17 +403,38 @@ class ClosedPnlSync:
         return ok
 
     async def _pass(self, account_id: AccountId, state: _Account) -> bool:
-        """The read, the records' writes and row 56's poll, then the seed, last so a slow one
-        delays none of them: whether a record is left to poll."""
+        """The named orders' composition, the read, the records' writes, row 56's poll and the
+        delta set's composition, then the seed, last so a slow one delays none of them: whether
+        a record is left to poll. The named orders are kept for the next pass unless the delta
+        set's composition ran."""
         now = self._now()
-        reach = await _bounded(self._day_start(now), PORT_TIMEOUT_S) - CLOSED_PNL_LOOKBACK
-        account, records = await self._fetch(account_id, reach, now)
-        for record in merged(records):
-            await self._settle(record)
-        pending = self._records.pending(account_id, reach, PENDING_LIMIT)
-        left = False
-        for item in await _bounded(pending, PORT_TIMEOUT_S):
-            left = not await self._finalized(account_id, item) or left
+        named, state.named, done = state.named, set(), self._composer is None
+        composing = None if self._composer is None else self._composer.begin(account_id)
+        try:
+            if composing is not None and named:  # before the day's and the venue's reads (Q2)
+                await self._composed(account_id, composing.compose(named))
+            reach = await _bounded(self._day_start(now), PORT_TIMEOUT_S) - CLOSED_PNL_LOOKBACK
+            account, records = await self._fetch(account_id, reach, now)
+            read = [(record, await self._settle(record)) for record in merged(records)]
+            pending = await _bounded(
+                self._records.pending(account_id, reach, PENDING_LIMIT), PORT_TIMEOUT_S
+            )
+            if composing is None:
+                left = False
+                for item in pending:
+                    left = not await self._finalized(account_id, item) or left
+            else:
+                changed = [
+                    r.exchange_order_id for r, outcome in read
+                    if r.exchange_order_id is not None
+                    and (outcome in _CHANGED or not state.composed)
+                ]  # fmt: skip
+                orders = [*named, *(item.order_id for item in pending)]
+                done, left = await self._settled(account_id, composing, orders, changed, pending)
+                state.composed = state.composed or done
+        finally:
+            if not done:  # composed at the next pass, before its read
+                state.named |= named
         if not state.seeded:
             try:
                 await self._seed(account)
@@ -451,18 +497,43 @@ class ClosedPnlSync:
             _log().info("closed_pnl_flat_seeded", account_id=str(account_id), symbol=p.symbol,
                         position_idx=p.position_idx)  # fmt: skip
 
-    async def _settle(self, record: ClosedPnl) -> None:
+    async def _settle(self, record: ClosedPnl) -> SettleOutcome | None:
         ids = {"account_id": str(record.account_id), "exchange_order_id": record.exchange_order_id}
         try:
             stored = venue_record(record)
         except (TypeError, ValueError) as exc:  # one the table refuses: the others are kept
             _log().error("closed_pnl_record_refused", kind=type(exc).__name__, **ids)
-            return
+            return None
         outcome = await _bounded(self._records.settle(stored), PORT_TIMEOUT_S)
         if outcome == "frozen":  # 24 Sec.8.13: never applied, counted nowhere
             _log().warning("closed_pnl_read_after_final", **ids)
         elif outcome == "replaced":
             _log().info("closed_pnl_record_replaced", **ids)
+        return outcome
+
+    async def _composed[T](self, account_id: AccountId, step: Awaitable[T]) -> T | None:
+        """A composition step, None when it failed, logged by kind: the read goes on."""
+        try:
+            return await step
+        except Exception as exc:  # a cancel propagates
+            _log().warning("closed_pnl_compose_failed", account_id=str(account_id),
+                           kind=type(exc).__name__)  # fmt: skip
+            return None
+
+    async def _settled(
+        self, account_id: AccountId, composing: ComposePass, orders: list[UUID],
+        changed: list[str], pending: Sequence[PendingRecord],
+    ) -> tuple[bool, bool]:  # fmt: skip
+        """The delta set's composition and its final rule (Q3, Q4): whether it ran, and whether a
+        record of the poll is left not final. The comparison (E29-S06's next slice) reads what
+        it composed here."""
+        composed = await self._composed(
+            account_id, composing.compose(orders, changed, finalize=True)
+        )
+        if composed is None:
+            return False, True
+        final = {c.row.id for c in composed if c.final}
+        return True, any(item.row.id not in final for item in pending)
 
     async def _finalized(self, account_id: AccountId, item: PendingRecord) -> bool:
         """Whether the record is final now: settled, its order's row terminal, and its `qty` the
