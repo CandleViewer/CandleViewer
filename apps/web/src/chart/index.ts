@@ -8,3 +8,11 @@ export {
   useCrosshair,
 } from "./Chart.js";
 export type { ChartProps, PaneProps } from "./Chart.js";
+export {
+  ChartFontError,
+  ChartFontsContext,
+  createChartFontStore,
+  designFontStore,
+  loadDesignFonts,
+} from "./fonts/designFonts.js";
+export type { ChartFont, ChartFontStore, ChartFontsState } from "./fonts/designFonts.js";

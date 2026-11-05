@@ -10,6 +10,7 @@ import { usePublishEngineFlags } from "./features/a11y-preferences/consumers";
 import { createRouteTree } from "./routes/tree";
 import { syncDocumentTitle } from "./routes/titles";
 import { APP_THEME_OPTIONS } from "./shell/bootstrap/themeStore";
+import { ChartFontsContext, designFontStore } from "./chart/fonts/designFonts";
 
 /**
  * Root application shell (E10-T01). Renders the React Router data router
@@ -30,7 +31,10 @@ export function App(): JSX.Element {
   return (
     <ThemeProvider options={APP_THEME_OPTIONS}>
       <PreferencesProvider onEngineFlags={publishFlags}>
-        <RouterProvider router={router} />
+        {/* E11-S11 PR C: every chart takes the verified design fonts, loaded on its first mount. */}
+        <ChartFontsContext.Provider value={designFontStore}>
+          <RouterProvider router={router} />
+        </ChartFontsContext.Provider>
         <WsErrorHost />
         <KeymapHost />
         <SessionLockHost />
