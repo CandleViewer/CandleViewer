@@ -112,6 +112,9 @@ docs/design/_tools/sheets/e42-d05/v4/
 # docs/design/_tools/sheets/e42-d04/v4: the packed (compact) E42-D04 sheets the boards were rendered from, kept
 # byte-identical apart from compactOf.file and the local paths in notes.sources and two provenance texts
 docs/design/_tools/sheets/e42-d04/v4/
+# docs/design/_tools/sheets/e20-d02/v4: the packed (compact) E20-D02 sheets, the rendered set with the live check
+# folded in, as the kit writes them (compactOf.file the bare raw-sheet name; e20-d02/BUILD.md rebuilds them)
+docs/design/_tools/sheets/e20-d02/v4/
 # docs/design/_tools/sheets/e42-d03/v4: the packed (compact) E42-D03 sheets the boards were rendered from, kept
 # byte-identical apart from compactOf.file
 docs/design/_tools/sheets/e42-d03/v4/
