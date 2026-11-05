@@ -3546,6 +3546,7 @@ def create_app(
                 books=lambda: (
                     ctx.ingestion.books if isinstance(ctx.ingestion.books, BookStream) else None
                 ),
+                topics=ctx.exchange_bybit.stream_for_topic,
                 metrics=metrics_facade,
             )
         )

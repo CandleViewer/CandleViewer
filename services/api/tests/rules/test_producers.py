@@ -471,9 +471,14 @@ async def test_watchdog_mark_is_overwritten_by_the_next_push() -> None:
 
 
 async def test_watchdog_ref_without_producer_is_never_marked() -> None:
-    async with Rig([_price_rule(symbols=("BTCUSDT",))]) as rig:
+    """A demanded ref whose producer is attached but has never pushed reads ``warmup``, never
+    ``source_degraded``: only a pushed ref can be lost."""
+    ticker = Producer("ticker", {"price"}, {"ticker"})
+    async with Rig([_price_rule(symbols=("BTCUSDT",))], ticker) as rig:
+        assert ticker.sink is not None and ticker.sink.wanted("price", "BTCUSDT")
         rig.clock.t += 10 * LOST_AFTER_S
         assert rig.bridge.watch() == 0
+        assert rig.bridge.feed_degraded(None, "ticker") == 0
         assert rig.source.read(ref("price", symbol="BTCUSDT")).reason == "warmup"
 
 
@@ -783,3 +788,83 @@ async def test_watchdog_warmup_counts_a_newly_listed_symbol_from_when_it_was_lis
         rig.clock.t += WARMUP_ALERT_S + 1
         rig.bridge.watch()
         assert rig.sample("rule_metrics_in_warmup") == 2
+
+
+# --- orchestrator review fold (#5745 PR 2d) ----------------------------------------------------
+
+
+async def test_bridge_detach_discards_every_key_it_wrote() -> None:
+    ticker = Producer("ticker", {"price"}, {"ticker"})
+    rig = Rig([_price_rule(symbols=("BTCUSDT",)), _price_rule(symbols=(), rid=8)], ticker)
+    async with rig:
+        await _pushed_price(rig, ticker)
+        assert ticker.sink is not None
+        (want,) = ticker.sink.wanted("price", "SOLUSDT")
+        assert ticker.sink.push(want, "SOLUSDT", Decimal(7), TS, 250)
+    for symbol in ("BTCUSDT", "SOLUSDT"):
+        assert rig.source.read(ref("price", symbol=symbol)).reason == "warmup"
+
+
+@pytest.mark.parametrize("symbol", ["*", ""])
+async def test_push_sink_any_symbol_want_with_no_symbol_to_bind_is_refused(symbol: str) -> None:
+    ticker = Producer("ticker", {"price"}, {"ticker"})
+    async with Rig([_price_rule(symbols=())], ticker) as rig:
+        assert ticker.sink is not None
+        (want,) = ticker.sink.wanted("price", symbol)
+        assert not ticker.sink.push(want, symbol, Decimal(7), TS, 250)
+        assert rig.refused("undemanded") == 1 and rig.bridge.lives == 0
+        assert rig.source.read(ref("price")).reason == "warmup"  # the symbol-less readers' key
+        assert rig.source._values == {}  # no key written at all
+
+
+@pytest.mark.parametrize(
+    ("ts_ms", "cadence_ms"),
+    [
+        (TS + producers_mod.MAX_FUTURE_SKEW_MS + 1, 250),  # past the wall clock and its skew
+        (TS * 1000, 250),  # far past the wall clock
+        (TS, 0),
+        (TS, -250),
+        (TS, producers_mod.MAX_CADENCE_MS + 1),
+        (TS, 10**12),
+    ],
+)
+async def test_push_sink_stamp_out_of_range_is_refused(ts_ms: int, cadence_ms: int) -> None:
+    ticker = Producer("ticker", {"price"}, {"ticker"})
+    async with Rig([_price_rule(symbols=("BTCUSDT",))], ticker) as rig:
+        rig.bridge.wall_ms = lambda: TS
+        assert ticker.sink is not None
+        (want,) = ticker.sink.wanted("price", "BTCUSDT")
+        assert not ticker.sink.push(want, "BTCUSDT", Decimal(1), ts_ms, cadence_ms)
+        assert rig.refused("stamp") == 1 and rig.bridge.lives == 0
+        assert rig.source.read(ref("price", symbol="BTCUSDT")).reason == "warmup"
+
+
+async def test_push_sink_stamp_at_the_skew_and_the_cadence_cap_is_written() -> None:
+    ticker = Producer("ticker", {"price"}, {"ticker"})
+    async with Rig([_price_rule(symbols=("BTCUSDT",))], ticker) as rig:
+        rig.bridge.wall_ms = lambda: TS
+        assert ticker.sink is not None
+        (want,) = ticker.sink.wanted("price", "BTCUSDT")
+        ts_ms, cadence_ms = TS + producers_mod.MAX_FUTURE_SKEW_MS, producers_mod.MAX_CADENCE_MS
+        assert ticker.sink.push(want, "BTCUSDT", Decimal(1), ts_ms, cadence_ms)
+        assert ticker.sink.push(want, "BTCUSDT", Decimal(2), ts_ms, 1)
+        assert rig.refused("stamp") == 0
+
+
+async def test_watchdog_quiet_then_lost_is_marked_one_bound_after_its_last_held_pass() -> None:
+    """A quiet ref its producer held is not marked the moment `holds` turns False: the pass that
+    found it held restarts its lost bound, so it is marked one bound after that pass."""
+    held: set[str] = {"BTCUSDT"}
+    ticker = Producer("ticker", {"price"}, {"ticker"})
+    ticker.holds = held.__contains__  # type: ignore[attr-defined]  # pushes on a change only
+    async with Rig([_price_rule(symbols=("BTCUSDT",))], ticker) as rig:
+        await _pushed_price(rig, ticker)
+        rig.clock.t += LOST_AFTER_S + 1
+        assert rig.bridge.watch() == 0  # quiet but held: the bound restarts here
+        held.clear()
+        rig.clock.t += 1
+        assert rig.bridge.watch() == 0  # no longer held, but not lost at once
+        rig.clock.t += LOST_AFTER_S - 2
+        assert rig.bridge.watch() == 0  # one second short of a bound after the held pass
+        rig.clock.t += 1
+        assert rig.bridge.watch() == 1
