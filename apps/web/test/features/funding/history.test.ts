@@ -172,7 +172,8 @@ describe("funding history read", () => {
       ),
     );
     const out = await fetchFundingHistory(req());
-    expect(apiFetch).toHaveBeenCalledTimes(MAX_PAGES);
+    expect(MAX_PAGES).toBe(10);
+    expect(apiFetch).toHaveBeenCalledTimes(10);
     expect(out).toMatchObject({ kind: "ok", truncated: true });
   });
 
