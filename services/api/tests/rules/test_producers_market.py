@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -25,6 +26,7 @@ from candleviewer.exchange.base.models import TickerEvent
 from candleviewer.exchange.bybit.ticker import parse_ticker_frame
 from candleviewer.ingestion.ticker_stream import ticker_event
 from candleviewer.rules.ir.models import Rule
+from candleviewer.rules.manager import EvaluableRule
 from candleviewer.rules.producers import LOST_AFTER_S, SOURCE_DEGRADED, MetricProducer, Want
 from candleviewer.rules.runner import PushedMetricSource
 from candleviewer.rules_producers_wiring import (
@@ -689,3 +691,80 @@ async def test_quote_producer_two_events_at_one_exchange_time_the_later_one_wins
         assert quotes.flush() == 1
         mp = rig.source.read(ref("microprice", symbol="BTCUSDT"))
         assert mp.value == microprice(Decimal("99.9"), Decimal(7), Decimal("100.1"), Decimal(3))
+
+
+# --- orchestrator review fold (#5745 PR 2d) ----------------------------------------------------
+
+
+class _FixedBook:
+    """A `BookReader` over one fixed, LIVE book for every symbol (its sides as given)."""
+
+    def __init__(self, bids: list[Any], asks: list[Any], age_ms: int = 40) -> None:
+        self.snapshot = snap(TS_US, bids, asks)
+        self.age_ms = age_ms
+
+    def view(self, symbol: str, depth: int) -> Any:
+        return SimpleNamespace(snapshot=self.snapshot, stale=False)
+
+    def applied_age_ms(self, symbol: str) -> int | None:
+        return self.age_ms
+
+    def engine(self, symbol: str) -> Any:
+        return SimpleNamespace(last_applied=SimpleNamespace(ts_event=TS_US))
+
+
+def _fixed_depth(book: _FixedBook, clock: Clock) -> BookDepthProducer:
+    return BookDepthProducer(lambda: book, BookTicks(clock), clock=clock, sleep=_never)
+
+
+async def test_book_depth_producer_staleness_is_stamped_at_the_frame_time_plus_its_age() -> None:
+    clock = Clock()
+    depth = _fixed_depth(_FixedBook([lvl(999, 2)], [lvl(1001, 3)], age_ms=250), clock)
+    async with _rig([_rule("book_staleness_ms", "on_book_update")], depth) as rig:
+        depth.poll()
+        read = rig.source.read(ref("book_staleness_ms", symbol="BTCUSDT"))
+        assert (read.value, read.ts_ms) == (250, TS_US // 1000 + 250)
+
+
+@pytest.mark.parametrize(
+    ("bids", "asks", "imbalance", "pressure"),
+    [
+        ([lvl(999, 2)], [], None, Decimal(1)),  # no ask: no ratio, a full bid pressure
+        ([], [lvl(1001, 3)], Decimal(0), Decimal(-1)),
+        ([], [], None, None),  # both empty: neither is a value
+    ],
+)
+async def test_book_depth_producer_zero_side_pushes_no_value_and_never_raises(
+    bids: list[Any], asks: list[Any], imbalance: Decimal | None, pressure: Decimal | None
+) -> None:
+    clock = Clock()
+    depth = _fixed_depth(_FixedBook(bids, asks), clock)
+    rules = [
+        _rule("dom_imbalance_ratio", "on_book_update"),
+        _rule("book_pressure", "on_book_update", rid=8),
+    ]
+    async with _rig(rules, depth) as rig:
+        depth.poll()
+        assert rig.sample("rule_metric_producer_errors_total", producer="book_depth") == 0
+        got_ratio = rig.source.read(ref("dom_imbalance_ratio", symbol="BTCUSDT"))
+        got_pressure = rig.source.read(ref("book_pressure", symbol="BTCUSDT"))
+        assert (got_ratio.value, got_pressure.value) == (imbalance, pressure)
+
+
+async def test_book_depth_producer_dropped_symbol_leaves_its_last_frame_time() -> None:
+    clock = Clock()
+    depth = _fixed_depth(_FixedBook([lvl(999, 2)], [lvl(1001, 3)]), clock)
+    both = rule(
+        {"metric": "book_staleness_ms"}, symbols=("BTCUSDT", "ETHUSDT"),
+        trigger={"type": "on_book_update"},
+    )  # fmt: skip
+    async with _rig([both], depth) as rig:
+        depth.poll()
+        assert set(depth._last_ts) == {"BTCUSDT", "ETHUSDT"}
+        rig.items = [
+            EvaluableRule(_rule("book_staleness_ms", "on_book_update"), "simulate", None, "v2", "h")
+        ]
+        await rig.bridge.refresh()
+        clock.t += 0.1
+        depth.poll()
+        assert set(depth._last_ts) == {"BTCUSDT"}
