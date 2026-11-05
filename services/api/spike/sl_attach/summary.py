@@ -17,7 +17,9 @@ late execution push, an ambiguous create that filled): the stop owed never lande
 `stop_success_rate` is the landed share of the stop writes owed.
 
 `skew_discard_share` is the share of the arm's samples discarded for clock skew: they leave
-every statistic, so the decision bounds it (`MAX_SKEW_DISCARD_SHARE`).
+every statistic, so the decision bounds it (`MAX_SKEW_DISCARD_SHARE`). A one-sided stall on the
+stop write skews it, so the discards can be exactly the slow tail: `p99_skew_inf_ms` reads the
+p99 again with each skew discard whose stop landed at +inf (E5).
 """
 
 from __future__ import annotations
@@ -62,6 +64,8 @@ def arm_table(samples: Sequence[Sample], arm: Arm) -> dict[str, object]:
     landed = sum(1 for s in mine if s.stop_landed is True)
     values: list[float] = [getattr(s, METRIC[arm]) for s in measured]
     latency = stats([*values, *[math.inf] * unbounded], digits=3)
+    skewed = sum(1 for s in dropped if s.discard_reason == "skew" and s.stop_landed is True)
+    worst = stats([*values, *[math.inf] * (unbounded + skewed)], digits=3)
     table: dict[str, object] = {
         "metric": METRIC[arm],
         "n": len(mine),
@@ -79,6 +83,7 @@ def arm_table(samples: Sequence[Sample], arm: Arm) -> dict[str, object]:
         if not landed + unbounded
         else round(landed / (landed + unbounded), 6),
         "latency_ms": latency,
+        "p99_skew_inf_ms": worst.get("p99"),
         "ret_codes": _histogram(kept),
         "requests_per_protected_position": {
             "order_class": _mean([s.requests_order_class for s in ok]),

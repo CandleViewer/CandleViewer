@@ -30,7 +30,7 @@ PARQUET: Final = "samples.parquet"
 JSONL: Final = "samples.jsonl"
 
 type Outcome = Literal["ok", "rejected", "ambiguous", "discarded"]
-type Discard = Literal["incomplete", "skew", "stopped", "no_fill"]
+type Discard = Literal["incomplete", "skew", "stopped", "no_fill", "refused"]
 type Stage = Literal["create", "trading_stop"]
 
 
@@ -59,6 +59,9 @@ class Sample(BaseModel):
     push_lag_ms: float | None = None
     react_ms: float | None = None
     stop_rtt_ms: float | None = None
+    #: the port's return after the tap's receipt of the stop's `200` (its parse); not in
+    #: `exposure_ms`, which ends at the receipt
+    port_parse_ms: float | None = None
     exposure_ms: float | None = None
     exposure_venue_ms: float | None = None
     #: arm (b): whether its `trading-stop` landed (acked and shown on the position). `False`

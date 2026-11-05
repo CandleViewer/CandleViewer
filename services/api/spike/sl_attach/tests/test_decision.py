@@ -2,7 +2,8 @@
 """The summary's tables and the decision rule agreed up front in #856 (p99 of arm (b) above
 1.5 s means attach-only), at its edge, below the floors and offline; a failed stop write as
 +inf exposure, and the stop-write success bar at its edge (D2); a filled opener whose stop
-write was never sent as a failure (E1); the skew-discard share and its bound (Nit)."""
+write was never sent as a failure (E1); the skew-discard share and its bound (Nit); arm (b)'s
+p99 read again with its skew discards at +inf (E5)."""
 
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from spike.sl_attach.results import Sample
 from spike.sl_attach.summary import summarise
 
 SYMBOLS = ("BTCUSDT", "ETHUSDT", "THINUSDT")
+ACCEPTED = "trading-stop-window-accepted"
 
 
 def _row(arm: str, i: int, value: float, **fields: object) -> Sample:
@@ -176,19 +178,45 @@ def _skewed(arm: str, i: int) -> Sample:
     return _row(arm, i, 0.0, outcome="discarded", discard_reason="skew", stop_landed=landed)
 
 
-@pytest.mark.parametrize("arm", ["a", "b"])
 @pytest.mark.parametrize(
-    ("skewed", "verdict"), [(10, "trading-stop-window-accepted"), (11, "insufficient")]
+    ("kept_a", "skewed", "verdict"),
+    [(0, 10, ACCEPTED), (9, 11, ACCEPTED), (0, 11, "insufficient"), (9, 12, "insufficient")],
 )
-def test_the_skew_discard_share_is_bounded(arm: str, skewed: int, verdict: str) -> None:
-    """Nit: 10 skew discards over 200 kept is 10/210 (under 5 %); 11 is 11/211 (over): a run
-    that discards its slow samples for skew gives no verdict, and says the share."""
-    rows = _run(100.0) + [_skewed(arm, 500 + i) for i in range(skewed)]
+def test_the_skew_discard_share_is_bounded(kept_a: int, skewed: int, verdict: str) -> None:
+    """Nit: 10 of 210 (under 5 %), 11 of 220 (exactly 5 %: X3) pass; 11 of 211 and 12 of 221
+    (over) give no verdict, and say the share. Arm (a): arm (b)'s skew discards meet E5 first."""
+    extra = [_row("a", 300 + i, 40.0) for i in range(kept_a)]
+    rows = _run(100.0) + extra + [_skewed("a", 500 + i) for i in range(skewed)]
     decision = decide(summarise(rows), offline=False)
     share = decision["skew_discard_share"]
-    assert isinstance(share, dict) and share[arm] == round(skewed / (200 + skewed), 6)
+    assert isinstance(share, dict) and share["a"] == round(skewed / (200 + kept_a + skewed), 6)
     assert decision["verdict"] == verdict
     assert decision["max_skew_discard_share"] == MAX_SKEW_DISCARD_SHARE
+
+
+@pytest.mark.parametrize(
+    ("b_p99", "skewed", "worst", "verdict"),
+    [
+        (100.0, 2, 100.0, ACCEPTED),
+        (100.0, 3, math.inf, "insufficient"),
+        (100.0, 10, math.inf, "insufficient"),
+        (1600.0, 10, math.inf, "attach-only"),
+    ],
+)
+def test_arm_b_p99_is_read_again_with_its_skew_discards_at_inf(
+    b_p99: float, skewed: int, worst: float, verdict: str
+) -> None:
+    """E5: a one-sided stall skews the stop write, so the discards can be the whole tail. 200 at
+    100 ms + 10 skew discards (under the 5 % share) is not accepted; + 2 is (nearest rank 200 of
+    202), + 3 is not (rank 201 of 203). A kept p99 over 1.5 s stays attach-only. Both p99s are
+    in the answer."""
+    rows = _run(b_p99) + [_skewed("b", 500 + i) for i in range(skewed)]
+    summary = summarise(rows)
+    arms = summary["arms"]
+    assert isinstance(arms, dict) and arms["b"]["p99_skew_inf_ms"] == worst
+    decision = decide(summary, offline=False)
+    assert decision["arm_b_p99_ms"] == b_p99 and decision["arm_b_p99_skew_inf_ms"] == worst
+    assert decision["verdict"] == verdict
 
 
 def test_an_unknown_stop_success_rate_is_attach_only() -> None:

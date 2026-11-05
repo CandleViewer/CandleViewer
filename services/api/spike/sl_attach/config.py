@@ -46,7 +46,9 @@ class ArmConfig:
     `cross_bps` puts the opener's limit through the touch (it fills whole, as a taker),
     `sl_bps` is the measured stop's distance from the reference, `backstop_pct` arm (b)'s far
     stop. `fill_wait_s` bounds the wait for the first execution push, `settle_wait_s` the wait
-    for the position to show the stop."""
+    for the position to show the stop. After an opener whose outcome is open (an ambiguous
+    create, or no fill seen), its order is looked up by `orderLinkId` at most `lookup_tries`
+    times, `lookup_every_s` apart, within `lookup_wait_s` in all (D1)."""
 
     symbol: str = BTCUSDT
     qty: Decimal = Decimal("0.002")
@@ -57,6 +59,9 @@ class ArmConfig:
     fill_wait_s: float = 5.0
     settle_wait_s: float = 5.0
     offset_every: int = 20
+    lookup_tries: int = 8
+    lookup_every_s: float = 0.25
+    lookup_wait_s: float = 2.0
 
     def __post_init__(self) -> None:
         if self.symbol not in SYMBOLS:
@@ -67,3 +72,5 @@ class ArmConfig:
             raise Refused("the measured stop sits inside the backstop: it tightens, never loosens")
         if self.qty <= 0 or self.tick <= 0 or self.cross_bps <= 0 or self.offset_every < 1:
             raise Refused("the size, the tick, the cross and the offset cadence are positive")
+        if self.lookup_tries < 1 or self.lookup_every_s <= 0 or self.lookup_wait_s <= 0:
+            raise Refused("the order lookup is bounded: a positive count, cadence and wait")

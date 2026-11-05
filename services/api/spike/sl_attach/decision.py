@@ -23,7 +23,12 @@ Clopper-Pearson upper bound on the true failure rate is 1.83 % with no failure i
 
 Skew discards leave every statistic, so a run that discarded more than
 `MAX_SKEW_DISCARD_SHARE` (5 %) of either arm's samples for skew answers `insufficient`: the
-discards could be its slow samples. Each arm's share is in the answer.
+discards could be its slow samples. Each arm's share is in the answer. A share bound cannot
+guard a p99 (n = 200 reads the top two values; 5 % admits ten), so arm (b)'s p99 is also read
+with every skew discard whose stop landed at +inf (`arm_b_p99_skew_inf_ms`, E5). When that p99
+is over 1.5 s while the kept one is not, the answer is `insufficient`, not attach-only: a skew
+discard is a clock fault, not a measured slow stop (its stop landed; only its timing is
+untrusted), so the run cannot tell the two verdicts apart and must be rerun on a fresh offset.
 """
 
 from __future__ import annotations
@@ -77,9 +82,14 @@ def _skew(table: Mapping[str, object]) -> float:
     return share if isinstance(share, float) else 0.0
 
 
+def _p99_skew_inf(table: Mapping[str, object]) -> float | None:
+    worst = table.get("p99_skew_inf_ms")
+    return worst if isinstance(worst, float) else None
+
+
 def decide(summary: Mapping[str, object], *, offline: bool) -> dict[str, object]:
     a, b = _arm(summary, "a"), _arm(summary, "b")
-    p99, rate = _p99(b), _rate(b)
+    p99, rate, worst = _p99(b), _rate(b), _p99_skew_inf(b)
     floors = all(_measured(t) >= MIN_SAMPLES_PER_ARM and _symbols(t) >= MIN_SYMBOLS for t in (a, b))
     skew_ok = all(_skew(t) <= MAX_SKEW_DISCARD_SHARE for t in (a, b))
     verdict: Verdict
@@ -87,11 +97,14 @@ def decide(summary: Mapping[str, object], *, offline: bool) -> dict[str, object]
         verdict = "insufficient"
     elif p99 > DECISION_P99_MS or rate is None or rate < MIN_STOP_SUCCESS_RATE:
         verdict = "attach-only"
+    elif worst is None or worst > DECISION_P99_MS:
+        verdict = "insufficient"  # E5: the kept p99 passes only with the skew discards left out
     else:
         verdict = "trading-stop-window-accepted"
     return {
         "verdict": verdict,
         "arm_b_p99_ms": p99,
+        "arm_b_p99_skew_inf_ms": worst,
         "arm_b_measured": _measured(b),
         "arm_b_success_rate": b.get("success_rate"),
         "arm_b_stop_success_rate": rate,
