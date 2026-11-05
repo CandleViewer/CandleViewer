@@ -87,6 +87,17 @@ def test_episodes_forget_ends_the_episode_a_result_opened_while_it_holds() -> No
     assert not episodes.first(revoked)
 
 
+def test_episodes_forget_ends_only_the_episode_of_its_own_instance() -> None:
+    """Two instances of one rule, refused for one reason at one version, hold an episode each:
+    `forget` of one ends that one, and the other's holds."""
+    episodes = DenialEpisodes()
+    at_a, at_b = _refused("grant_revoked", AT_A), _refused("grant_revoked", AT_B)
+    assert episodes.first(at_a) and episodes.first(at_b)
+    episodes.forget(at_b)  # B's record job shed
+    assert not episodes.first(at_a)  # A's episode holds
+    assert episodes.first(at_b)  # B's ended: the next evaluation opens it again
+
+
 def test_episodes_retain_ends_the_episodes_of_a_rule_off_the_work_list() -> None:
     episodes = DenialEpisodes()
     gone = _refused("grant_revoked", rule=OTHER)
