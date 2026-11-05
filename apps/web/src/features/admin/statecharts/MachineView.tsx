@@ -2,9 +2,10 @@
  * The machine view (E42-S08 §5.2; E42-D05 §11 SI-3 to SI-7): one machine, opened from the list as
  * the route's query state (`?machine=&env=`, wired with R-357 under BQ-1). Its `h2`, [Back to
  * machines], its facts as served, the acknowledge as T2 while the machine is latched (SI-7 "today",
- * BQ-5: the press sends nothing), the chart's text list with the configuration's leaves marked
- * "(current)" (SI-4; the drawing beside it waits on BQ-6), and the event timeline (SI-5). It shows
- * served values only, never a derived state, transition or latch (C-2.19 to C-2.22).
+ * BQ-5: the press sends nothing), the chart's drawing beside its text list with the configuration's
+ * leaves marked "(current)" (SI-4; the drawing a feature-local SVG under BQ-6), and the event
+ * timeline (SI-5). It shows served values only, never a derived state, transition or latch (C-2.19
+ * to C-2.22).
  */
 import {
   useCallback,
@@ -25,6 +26,8 @@ import {
   Skeleton,
 } from "@candleviewer/ui";
 import { announce, forget } from "../../app-shell/announcer";
+import { ChartDiagram } from "./ChartDiagram";
+import { layoutOf } from "./chartLayout";
 import { currentIds } from "./chartModel";
 import { ChartTextList } from "./ChartTextList";
 import { INSPECTOR_COPY as COPY } from "./copy";
@@ -178,9 +181,10 @@ function Acknowledge({ machine }: { readonly machine: string }): JSX.Element {
 const NO_IDS: readonly string[] = [];
 
 /**
- * The chart's text list, or why it is not shown. The configuration's leaves read "(current)" only
- * while the export's hash is the machine's; otherwise a redeploy raced the read, so the list shows
- * no current state and offers [Re-read] (§4.4, MUST-12).
+ * The chart's drawing beside its text list, or why it is not shown. The configuration's leaves read
+ * "(current)" only while the export's hash is the machine's; otherwise a redeploy raced the read,
+ * so neither marks a current state and [Re-read] is offered (§4.4, MUST-12). A chart over the
+ * drawing's bounds is the text list alone, with its line (§4.3).
  */
 function Chart({
   read,
@@ -193,6 +197,7 @@ function Chart({
   readonly configuration: readonly string[];
   readonly store: InspectorStore;
 }): JSX.Element {
+  const listId = useId();
   const chart = read.phase === "ok" ? read.chart : undefined;
   const same = chart?.machine_hash === machine.machine_hash;
   const current = useMemo(
@@ -223,7 +228,17 @@ function Chart({
           </Button>
         </p>
       )}
-      <ChartTextList model={chart.model} current={current} />
+      {layoutOf(chart.model) === null ? (
+        <>
+          <p style={LINE}>{COPY.chart.tooLarge}</p>
+          <ChartTextList model={chart.model} current={current} id={listId} />
+        </>
+      ) : (
+        <div className="cv-inspector-chart">
+          <ChartDiagram model={chart.model} current={current} listId={listId} />
+          <ChartTextList model={chart.model} current={current} id={listId} />
+        </div>
+      )}
     </div>
   );
 }
@@ -309,8 +324,8 @@ export interface MachineViewProps {
 /**
  * An in-page section named by its `h2`, "{machine} · {ENV}". It opens the machine in the store
  * while mounted (its detail, then its chart) and is busy until the first answer. The Tab order:
- * [Back to machines], [Acknowledge latch…] when latched, then the timeline; the text list is
- * browse-order text, not a stop.
+ * [Back to machines], [Acknowledge latch…] when latched, the diagram's region while it scrolls,
+ * then the timeline; the text list is browse-order text, not a stop.
  */
 export function MachineView({
   machine,

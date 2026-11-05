@@ -1,7 +1,7 @@
 /**
  * E42-S08 (#1137) §5.2: the machine view (SI-3 to SI-7). Its facts as served, the acknowledge as
  * T2 while the machine is latched (BQ-5: a press sends nothing and says its reason once), the
- * chart's text list with the configuration's leaves "(current)" (AC4; the drawing waits on BQ-6),
+ * chart's drawing beside its text list, the configuration's leaves "(current)" in both (AC4; BQ-6),
  * the timeline newest first, and each state of §5.2's table. Reads go through the real read layer
  * and a store of the test's own, against a stubbed `fetch` (no network, C-13.5).
  */
@@ -30,6 +30,7 @@ import {
   LATCHED_DETAIL,
   LATCHED_KEY,
   ORDER_EXPORT,
+  ORDER_HASH,
 } from "./fixtures";
 
 // axe-core is a transitive dependency of @axe-core/playwright (as in AdminArea.test.tsx).
@@ -209,6 +210,20 @@ describe(
         "triggered (current)",
         "sl_present (current)",
       ]);
+    });
+
+    it("test_machine_view_draws_the_chart_beside_its_text_list_marking_the_same_states", async () => {
+      serve(WORLD);
+      show();
+      const root = await settled();
+      const drawing = within(root).getByRole("region", { name: "State diagram: order (B1)" });
+      const image = within(drawing).getByRole("img");
+      const list = document.getElementById(image.getAttribute("aria-details") ?? "");
+      expect(list).toContainElement(within(root).getByRole("heading", { name: "States" }));
+      const marked = [...image.querySelectorAll("rect[data-current]")].map(
+        (rect) => rect.parentElement?.querySelector("text")?.textContent,
+      );
+      expect(marked).toEqual(["triggered", "sl_present"]);
     });
 
     it("test_machine_view_timeline_lists_events_newest_first_faulted_in_words", async () => {
@@ -415,6 +430,32 @@ describe("§5.2's states", { timeout: 30_000 }, () => {
     expect(requests.some((r) => r.path.includes("?limit="))).toBe(false); // no page holds a list
   });
 
+  it("test_machine_view_a_changed_chart_draws_no_current_state_either", async () => {
+    const other = frozenExport("B01.order", "order", "d".repeat(64));
+    serve({ ...WORLD, [EXPORT]: { body: other } });
+    show();
+    const root = await settled();
+    const drawing = within(root).getByRole("region", { name: "State diagram: order (B1)" });
+    expect(within(drawing).getByRole("img").querySelectorAll("[data-current]")).toHaveLength(0);
+  });
+
+  it("test_machine_view_a_chart_over_the_drawings_bounds_is_its_list_alone", async () => {
+    const states = Object.fromEntries(Array.from({ length: 41 }, (_, i) => [`s${i}`, {}]));
+    const big = {
+      machine_kind: "order",
+      machine_hash: ORDER_HASH,
+      stately: { id: "order", initial: "s0", states },
+    };
+    serve({ ...WORLD, [EXPORT]: { body: big } });
+    show();
+    const root = await settled();
+    expect(
+      within(root).getByText("This chart is too large to draw here; the list below is complete."),
+    ).toBeVisible();
+    expect(within(root).queryByRole("region", { name: /^State diagram/ })).toBeNull();
+    expect(within(root).getAllByRole("listitem").length).toBeGreaterThanOrEqual(41);
+  });
+
   it("test_machine_view_timeline_unavailable_and_empty_say_so", async () => {
     serve({ ...WORLD, [DETAIL]: { body: { ...LATCHED_DETAIL, events: { status: "error" } } } });
     show();
@@ -452,6 +493,30 @@ describe("tab order, focus and axe", { timeout: 60_000 }, () => {
     ]);
     // The heading takes focus only by script (tabindex -1); the text list is not a stop.
     expect(screen.getByRole("heading", { level: 2 })).toHaveAttribute("tabindex", "-1");
+  });
+
+  it("test_machine_view_tab_order_takes_the_diagram_then_the_timeline_while_they_scroll", async () => {
+    vi.stubGlobal("ResizeObserver", undefined); // each region measured once, on mount
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(900);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(400);
+    serve(WORLD);
+    show();
+    const root = await settled();
+    const stops = (): HTMLElement[] =>
+      [...root.querySelectorAll<HTMLElement>("button, a[href], [tabindex]")].filter(
+        (node) => node.tabIndex >= 0,
+      );
+    // Each region measures itself after its commit: the stops are read once both have.
+    await waitFor(
+      () =>
+        expect(stops()).toEqual([
+          screen.getByRole("button", { name: "Back to machines" }),
+          screen.getByRole("button", { name: /Acknowledge latch/ }),
+          screen.getByRole("region", { name: "State diagram: order (B1)" }),
+          screen.getByRole("region", { name: "Events, newest first" }),
+        ]),
+      WAIT,
+    );
   });
 
   it("test_machine_view_without_focus_on_open_leaves_focus_where_it_was", async () => {
