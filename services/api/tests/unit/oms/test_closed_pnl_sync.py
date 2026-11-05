@@ -39,13 +39,18 @@ from candleviewer.risk.day_boundary import DayBoundary
 from candleviewer.storage.repositories.closed_pnl import (
     VENUE_COLUMNS,
     ClosedPnlRecordRow,
+    ComposedRecord,
+    FillKey,
+    OrderAnchor,
     PendingRecord,
     SettleOutcome,
     VenueRecord,
+    WalkFill,
     orderless_record_id,
     record_id,
     settle_outcome,
 )  # fmt: skip
+from candleviewer.storage.repositories.closed_pnl_sqlalchemy import LOCAL, PROVISIONAL
 from candleviewer.storage.repositories.executions import NewExecution
 from candleviewer.storage.repositories.positions import NewPositionSnapshot
 from tests._corpus import frames, rest
@@ -150,7 +155,10 @@ class Venue:
 @dataclass
 class Store:
     """The closed-PnL store as slice 2's decides a read's outcome (`settle_outcome`), the order rows
-    row 56 joins, the stated closes, the confirmed flats (row 57) and the snapshots appended."""
+    row 56 joins, the stated closes, the confirmed flats (row 57) and the snapshots appended; and,
+    for the composition, each order row's key by its id (`keys`), the stored trade fills by
+    symbol, the symbols held in hedge mode and the calls made, rows 58, 61 and 62 and the upsert
+    as `closed_pnl_sqlalchemy` writes them."""
 
     rows: dict[UUID, ClosedPnlRecordRow] = field(default_factory=dict)
     orders: dict[str, tuple[UUID, Any]] = field(default_factory=dict)
@@ -158,12 +166,17 @@ class Store:
     flats: dict[tuple[str, int], tuple[datetime, ...]] = field(default_factory=dict)
     snapshots: list[NewPositionSnapshot] = field(default_factory=list)
     reaches: list[datetime] = field(default_factory=list)
+    keys: dict[UUID, tuple[str, Any, int]] = field(default_factory=dict)
+    fills: list[tuple[str, WalkFill]] = field(default_factory=list)
+    hedge: set[str] = field(default_factory=set)
+    calls: Counter[str] = field(default_factory=Counter)
 
     async def settle(self, record: VenueRecord) -> SettleOutcome:
         held = self.rows.get(record.id)
         outcome = settle_outcome(held, record)
         if outcome in ("inserted", "settled", "replaced"):
             venue = {name: getattr(record, name) for name in VENUE_COLUMNS}
+            venue |= {"settled_at": held.settled_at or T0} if held else {}
             self.rows[record.id] = replace(held, **venue) if held else ClosedPnlRecordRow(
                 id=record.id, exchange_account_id=record.exchange_account_id,
                 exchange_order_id=record.exchange_order_id, symbol=record.symbol,
@@ -194,7 +207,62 @@ class Store:
     async def walk_flats(
         self, account_id: UUID, symbol: str, position_idx: int, before: datetime, limit: int
     ) -> tuple[datetime, ...]:
-        return self.flats.get((symbol, position_idx), ())[:limit]
+        flats = sorted(set(self.flats.get((symbol, position_idx), ())))
+        start = max((at for at in flats if at < before), default=None)
+        return () if start is None else tuple(at for at in flats if at >= start)[:limit]
+
+    async def walk_fills(
+        self, account_id: UUID, symbol: str, position_idx: int, after: FillKey, limit: int
+    ) -> tuple[WalkFill, ...]:
+        self.calls["walk_fills"] += 1
+        key = (after.at, after.exec_id or "")
+        on = [
+            f for s, f in self.fills if s == symbol and f.order_position_idx in (None, position_idx)
+        ]
+        later = [f for f in on if (f.exec_ts, f.exec_id if after.exec_id else "") > key]
+        return tuple(sorted(later, key=lambda f: (f.exec_ts, f.exec_id))[:limit])
+
+    async def anchors(
+        self, account_id: UUID, orders: Any, exchange_order_ids: Any
+    ) -> tuple[OrderAnchor, ...]:
+        self.calls["anchors"] += 1
+        found = []
+        for xid, (oid, state) in self.orders.items():
+            if (oid not in orders and xid not in exchange_order_ids) or oid not in self.keys:
+                continue
+            symbol, side, idx = self.keys[oid]
+            own = [f for _, f in self.fills if f.order_id == oid]
+            times = sorted(f.exec_ts for f in own)
+            closing = [f.exec_ts for f in own if (f.closed_size or 0) > 0]
+            flats = self.flats.get((symbol, idx), ())
+            start = max((t for t in flats if times and t < times[0]), default=None)
+            found.append(OrderAnchor(
+                order_id=oid, exchange_order_id=xid, symbol=symbol, side=side, position_idx=idx,
+                state=state, first_fill=times[0] if times else None,
+                last_fill=times[-1] if times else None, last_close=max(closing, default=None),
+                start=start, held=record_id(account_id, xid) in self.rows,
+            ))  # fmt: skip
+        return tuple(sorted(found, key=lambda a: a.order_id))
+
+    async def hedged(self, account_id: UUID, symbol: str) -> bool:
+        return symbol in self.hedge
+
+    async def compose(self, record: ComposedRecord) -> ClosedPnlRecordRow:
+        """`compose_statement`'s upsert: the local figures always, the provisional columns while
+        the row is unsettled."""
+        self.calls["compose"] += 1
+        held, local = self.rows.get(record.id), {n: getattr(record, n) for n in LOCAL}
+        provisional = {n: getattr(record, n) for n in PROVISIONAL}
+        self.rows[record.id] = row = replace(
+            held, **local, **({} if held.settled_at else provisional)
+        ) if held else ClosedPnlRecordRow(
+            id=record.id, exchange_account_id=record.exchange_account_id,
+            exchange_order_id=record.exchange_order_id, symbol=record.symbol, side=record.side,
+            leverage=None, closed_pnl=None, venue_created_at=None, settled_at=None, final_at=None,
+            divergent=False, audited_local_net=None, audited_closed_pnl=None, updated_at=T0,
+            **local, **provisional,
+        )  # fmt: skip
+        return row
 
     async def closed_size(self, account_id: UUID, order_id: UUID) -> Decimal | None:
         return self.closes.get(order_id)
