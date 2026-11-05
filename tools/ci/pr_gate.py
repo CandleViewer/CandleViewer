@@ -454,10 +454,14 @@ def tool_steps(change: Change) -> list[Step]:
         argv = backend("ruff", *args, "--", *lint)  # `--`: a file name is no option
         steps += [command(gate, f"{len(lint)} file(s)", argv, api)] * bool(lint)
     contracts = {f"{API}/.importlinter", "docs/plan/module-contracts.toml"} & set(change.paths)
-    package = bool(contracts) or any(p.startswith(("candleviewer/", "cvdev/")) for p in py)
+    package = bool(contracts) or any(
+        p.startswith(("candleviewer/", "cvdev/", "cvbackup/")) for p in py
+    )
     if package or len(lint) > len(py):
-        mypy = backend("mypy", "--strict", "--platform", "linux", "candleviewer", "cvdev")
-        steps.append(command("mypy", "candleviewer cvdev", mypy + extras, api))
+        mypy = backend(
+            "mypy", "--strict", "--platform", "linux", "candleviewer", "cvdev", "cvbackup"
+        )
+        steps.append(command("mypy", "candleviewer cvdev cvbackup", mypy + extras, api))
     if package:
         steps.append(command("import-linter", "contracts", backend("lint-imports"), api))
     code = [p for p in change.present if p.endswith(CODE_SUFFIXES)]

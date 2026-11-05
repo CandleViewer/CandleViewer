@@ -255,14 +255,15 @@ jobs:
         # -c: honour [tool.bandit] (exclude_dirs=tests; assert/subprocess in tests are not
         # production findings). Production-code noqa markers are ruff-style; bandit
         # needs its own `# nosec` — the two guard sites carry both. `cvdev` is the dev-only
-        # sibling package (#2893, ADR-0036): never shipped, but it runs in a dev stack.
+        # sibling package (#2893, ADR-0036): never shipped, but it runs in a dev stack. `cvbackup`
+        # is the backup sidecar's package (#3319, ADR-0041), its own image from B1c.
         run: |
           set -euo pipefail
           rm -f bandit.gate.sarif # as in the semgrep step: only this run's gate writes it
           python -m venv "$RUNNER_TEMP/bandit-venv"
           export PATH="$RUNNER_TEMP/bandit-venv/bin:$PATH"
           pip install -r scripts/requirements-ci.txt "bandit[sarif]==1.8.6"
-          bandit -c services/api/pyproject.toml -r services/api/candleviewer services/api/cvdev -f sarif -o bandit.sarif -ll || true
+          bandit -c services/api/pyproject.toml -r services/api/candleviewer services/api/cvdev services/api/cvbackup -f sarif -o bandit.sarif -ll || true
           python tools/ci/security_gate.py --tool bandit --report bandit.sarif --sarif-out bandit.gate.sarif
 
       - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1

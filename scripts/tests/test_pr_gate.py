@@ -522,7 +522,7 @@ def test_plan_has_every_family_of_steps_and_each_tool_gets_its_argv(
     assert _argv(calls, steps["ruff-format"])[3:7] == ["ruff", "format", "--check", "--"]
     mypy = _argv(calls, steps["mypy"])
     assert mypy[3:7] == ["mypy", "--strict", "--platform", "linux"]
-    assert mypy[7:] == ["candleviewer", "cvdev", *extras]
+    assert mypy[7:] == ["candleviewer", "cvdev", "cvbackup", *extras]
     assert _argv(calls, steps["import-linter"]) == ["uv", "run", "--frozen", "lint-imports"]
     semgrep = _argv(calls, steps["semgrep"])
     assert semgrep[:2] == ["semgrep", "scan"] and "--error" in semgrep
@@ -689,6 +689,20 @@ def test_a_file_the_py_lane_checks_beyond_services_api_alone_runs_ruff_and_mypy(
     steps = {s.gate: s for s in pr_gate.plan(_change(tmp_path, [extra]))}
     assert _argv(calls, steps["ruff"])[6:] == [f"../../{extra}"]
     assert "mypy" in steps and "import-linter" not in steps  # contracts follow candleviewer only
+
+
+def test_a_backup_sidecar_change_alone_runs_mypy_and_the_contracts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#3319: `cvbackup` is gated from the PR it lands in, as CI's `py` lane gates it."""
+    calls = _fake_tools(monkeypatch)
+    sidecar = _write(tmp_path, f"{API}/cvbackup/ops.py")
+    steps = {s.gate: s for s in pr_gate.plan(_change(tmp_path, [sidecar]))}
+    assert "cvbackup" in _argv(calls, steps["mypy"]) and "import-linter" in steps
+    lane = (WORKFLOWS / "_job-py.yml").read_text("utf-8")
+    assert "mypy --strict candleviewer cvdev cvbackup " in lane
+    security = (WORKFLOWS / "_job-security.yml").read_text("utf-8")
+    assert "services/api/cvdev services/api/cvbackup -f sarif" in security
 
 
 def test_tests_follow_the_changed_files(tmp_path: Path) -> None:
