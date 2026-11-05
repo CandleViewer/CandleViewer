@@ -5,17 +5,18 @@ prints every time, and the judge reads numbers a run measured.
 
 The prints are synthetic, from recorded shapes, and every result says so (`SYNTHETIC_NOTE`): no
 recorded cascade day exists (E24-K01, BQ 2 of the #773 plan). A print takes the price, size and side
-of a template and gets a fresh timestamp. The upstream frame is Bybit's `allLiquidation.{symbol}`
-push, `{"topic", "type": "snapshot", "ts", "data": [{"T", "s", "S", "v", "p"}]}`, mapped by
+of a template and gets a fresh timestamp. The upstream frame is the exchange's
+`allLiquidation.{symbol}` push,
+`{"topic", "type": "snapshot", "ts", "data": [{"T", "s", "S", "v", "p"}]}`, mapped by
 24 section 4, line ~371 (`T` event ms, `s` symbol, `S` the order's side, `v` qty, `p` price); 23
 section 14.9 is the downstream `LiquidationBatch` and only backs the 500 ms note. Templates come
-from `packages/fixtures/bybit/<capture>/ws/allLiquidation_BTCUSDT_burst.jsonl` once #5273 merges
+from the recorded `allLiquidation_BTCUSDT_burst.jsonl` under `packages/fixtures/` once #5273 merges
 it; until then `FALLBACK_TEMPLATES` carry the same fields with prices and sizes taken from the
-recorded BTCUSDT `publicTrade` capture (2026-10-05, each a recorded price and size pair), as the
+recorded BTCUSDT public-trade capture (2026-10-05, each a recorded price and size pair), as the
 E16-Q04 generator does for a cascade.
 
-Bybit pushes at most one `allLiquidation` frame per symbol per 500 ms (23 section 14.9 note), so a
-profile's prints are grouped into `PUSH_MS` windows: 500 prints/s is about 250 per push.
+The exchange pushes at most one `allLiquidation` frame per symbol per 500 ms (23 section 14.9
+note), so a profile's prints are grouped into `PUSH_MS` windows: 500 prints/s is about 250 per push.
 """
 
 from __future__ import annotations
@@ -59,7 +60,7 @@ FRAME_MS: Final = 1000.0 / 60.0
 SELFCHECK_INJECT_MS: Final = 5.0
 
 #: (side, price, size): the fields of a print template. Values from the recorded BTCUSDT
-#: `publicTrade` capture 2026-10-05, in the `allLiquidation` frame's field shape.
+#: public-trade capture 2026-10-05, in the `allLiquidation` frame's field shape.
 Template = tuple[str, str, str]
 FALLBACK_TEMPLATES: Final[tuple[Template, ...]] = (
     ("Buy", "63120.60", "0.131"),
