@@ -44,8 +44,7 @@ import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE = "c56a10bc3"  # origin/main at the design-read fold; every cite is read here
-D03_HEAD = "77f390860"  # #5780's head, #497's text (its ruling folded), cited by section only
-D03_PR = "#5780"  # the D03 text PR the pin is conditional on
+D03_PINS = ("`c9e93a209` (#5780)", "`5bca9e264` (#5781)")  # squash commits; D03 identical at both
 CHECKLIST = "6626707818"  # the owner checklist comment on #498 (section 12)
 BQ_LIST = "6609418330"  # the BQ list on #498
 RULING = "6609843435"  # the orchestrator's ruling of record on it
@@ -456,10 +455,10 @@ def g_pins(t: L.Tree) -> list[str]:
 
 def g_version(t: L.Tree) -> list[str]:
     spec, v = t.text("spec"), sec(t, "### 13.1 Version line")
-    miss = [n for n in (BASE, D03_HEAD, D03_PR, "re-pinned", "#497", "--repin-ruled") if n not in v]
+    miss = [n for n in (BASE, *D03_PINS, "re-pinned", "#497", "--repin-ruled") if n not in v]
     if f"Base `origin/main` `{BASE}`" not in spec:
         miss.append("the Inputs line's base")
-    if f"`{D03_HEAD}`" not in spec or f"if {D03_PR} merges as is" not in spec:
+    if any(spec.count(p) < 2 for p in D03_PINS) or "D03's tree identical at both" not in spec:
         miss.append("the D03 pin")
     heading = next((ln for ln in spec.split("\n") if ln.startswith("## 12. Owner walkthrough")), "")
     if f"comment {CHECKLIST}" not in heading or f"comment {CHECKLIST}" not in bullet(spec, "BQ-1"):
@@ -909,8 +908,8 @@ _M = L.Mutation
 MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-1", "G-CITE", "a cite past the end of `26`", "spec", "`26`:801", "`26`:99999"),
     _M("M-2", "G-PINS", "a pinned cite moved off its line", "spec", "(K02:56)", "(K02:55)"),
-    _M("M-3", "G-VERSION", "the D03 pin loses its condition", "spec",
-       "if #5780 merges as is", "once #5780 merges"),
+    _M("M-3", "G-VERSION", "the D03 pin loses a squash commit", "spec",
+       "`5bca9e264` (#5781), D03", "#5781, D03"),
     _M("M-4", "G-AC", "a scenario name reworded", "spec",
        'AC "LOD switching does not flicker"', 'AC "LOD switching does not flash"'),
     _M("M-5", "G-BQ", "the heading drops the ruling", "spec",

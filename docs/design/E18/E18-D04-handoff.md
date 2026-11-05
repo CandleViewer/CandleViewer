@@ -1,10 +1,10 @@
 # E18-D04 — hand-off: copy-ready A-rows and the motion-pair lines
 
-**Ticket:** E18-D04 (#498) · **PR:** 1b, the second of two (`Refs #498`, `Partial: E18-D03 #497 is open` while it is; §14 of the spec) · **Status:** every row PROPOSED until its owner stamps it; nothing here is applied by this ticket. The spec is `docs/design/E18/E18-D04.md` (§10.3 lists these rows with their owners). The owner walks them from the checklist on #498 (comment 6626707818; spec §12).
+**Ticket:** E18-D04 (#498) · **PR:** 1b, the second of two (`Refs #498`, `Partial: E18-D03 #497 is open` while it is; §14 of the spec) · **Status:** every row PROPOSED until its owner stamps it; nothing here is applied by this ticket. The spec is `docs/design/E18/E18-D04.md` (§10.3 lists these rows with their owners). The owner walks them from the checklist on #498 (comment 6626707818; spec §12). This hand-off holds only §C and the motion-pair lines; §A, §B and §D–§G belong to E18-D05 #499, the hand-off pack ticket.
 
 ## Motion-pair lines for the `16` §11.4 checklists
 
-The checklist line each consuming component's hand-off pastes (`16`:743 item 8; D03's "motion pair N/A → E18-D04" closes here):
+The checklist line each consuming component's hand-off pastes (`16`:751 item 8; D03's "motion pair N/A → E18-D04" closes here):
 
 - [ ] CMP-109 FootprintCell — motion pair: E18-D04 §2 M-01 … M-04, M-11 (safe) / every reduce cell `instant` (reduce); the holds of §3 and §4.
 - [ ] CMP-182 FootprintSeries — motion pair: E18-D04 §2 M-05 … M-12, M-15, M-16 (safe) / every reduce cell `instant` (reduce); §5's LOD rule.
@@ -59,7 +59,7 @@ Old:
 New:
 
 ```text
-- **As built (E47-S02, #1358), the non-colour channel and the target-size exception**: `footprintCellSentence` ("64,010.5, bid 12, ask 20, delta +8, ask imbalance"; an unflagged cell says nothing about imbalance; ", estimated" for order-estimated input) and `FootprintCellContent`: the delta as `+`/`−` plus ▲/▼, an imbalance as a dashed border (`border.thick`, `color.footprint.imbalance`, `CanvasText` in forced colours), a corner glyph and the words "Bid imbalance"/"Ask imbalance" (PROPOSED, E18-D04 #498 / E47-D06 #1305). The footprint keys on the shared grid: ↑/↓ price, ←/→ bar, `PageUp`/`PageDown` by bar, `Home`/`End` the oldest loaded / latest bar at the bar level and, inside the expanded level window, the bar's first and last level (`homeEnd: "col"`, confirmed for that window only by E18-D04 §7.2; the APG row ends are not used). Target size (SC 2.5.8, `05` §3.4.7): cells below 24 CSS px at maximum zoom-out are the recorded essential exception `E47-S02-TSE-01` (`targetSize.ts`), SCR-045 the compensating alternative; the spacing and equivalent exceptions do not apply (cells abut; SCR-045 is another screen), and the default-zoom cell size is a carried pixel measure. The cells and their mount are E18-S01 / E18-S11 #741.
+- **As built (E47-S02, #1358), the non-colour channel and the target-size exception**: `footprintCellSentence` ("64,010.5, bid 12, ask 20, delta +8, ask imbalance"; an unflagged cell says nothing about imbalance; ", estimated" for order-estimated input) and `FootprintCellContent`: the delta as `+`/`−` plus ▲/▼, an imbalance as a dashed border (`border.thick`, `color.footprint.imbalance`, `CanvasText` in forced colours), a corner glyph and the words "Bid imbalance"/"Ask imbalance" (PROPOSED, E18-D04 #498 / E47-D06 #1305). The footprint keys on the shared grid: ↑/↓ price, ←/→ bar, `PageUp`/`PageDown` ten bars (the alias of `Shift+←` / `→`), `Home`/`End` the oldest loaded / latest bar at the bar level and, inside the expanded level window, the bar's first and last level (`homeEnd: "col"`, confirmed for that window only by E18-D04 §7.2; the APG row ends are not used). Target size (SC 2.5.8, `05` §3.4.7): cells below 24 CSS px at maximum zoom-out are the recorded essential exception `E47-S02-TSE-01` (`targetSize.ts`), SCR-045 the compensating alternative; the spacing and equivalent exceptions do not apply (cells abut; SCR-045 is another screen), and the default-zoom cell size is a carried pixel measure. The cells and their mount are E18-S01 / E18-S11 #741.
 ```
 
 ### A-4 · E11-D06 D14 · E11D06:232 · replace
