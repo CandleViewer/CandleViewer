@@ -1769,7 +1769,7 @@ class OrderMachines:
         follows the order to the rebuilt one (`successor`). The pushes, notices and refusals the
         old machine held pass to the new one, or, with none (a final order, or a history the
         rebuild refused), to `_orphaned`. Once the rebuild completes, with a machine or without
-        one, and before the new machine's next step, the order's account is re-snapshotted
+        one, and before the successor's held steps settle, the order's account is re-snapshotted
         (`_unpublished`, 23 Sec.6.2.3): the cut step's frames were never built."""
         o.resync, o.resynced = False, True
         self._resyncing[o.order_id] = o
@@ -1807,7 +1807,11 @@ class OrderMachines:
         try:
             self._rebuilt(o.account_id)
         except Exception as exc:  # the re-snapshot is a view's; the rebuild is the order's
-            ids = {"order_id": str(o.order_id), "order_link_id": o.view.get("order_link_id")}
+            ids = {
+                "account_id": str(o.account_id),
+                "order_id": str(o.order_id),
+                "order_link_id": o.view.get("order_link_id"),
+            }
             logger().error("oms_resync_resnapshot_failed", error=type(exc).__name__, **ids)
 
     async def _orphaned(self, o: _Order) -> None:

@@ -1462,6 +1462,7 @@ async def test_a_resnapshot_that_raises_never_undoes_the_rebuild(
             "event": "oms_resync_resnapshot_failed",
             "log_level": "error",
             "error": "RuntimeError",
+            "account_id": str(ACCOUNT),
             "order_id": str(order.id),
             "order_link_id": order.order_link_id,
         }
