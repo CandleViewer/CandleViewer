@@ -7,22 +7,24 @@ arming answer alike. The subset is closed: a catalogue schema writes only `KEYWO
 `ANNOTATIONS`, a `type` of `TYPES` and a boolean `additionalProperties`, and a unit test fails
 anything else, so no bound is published that this does not read.
 
-- A number is an `int`, a finite `float` or a finite `Decimal`, never a `bool`, compared exactly
-  (a float at its shortest repr); an integer is a number without a fraction. Decimal text counts
-  as its number (the #5963 ruling: the IR carries decimal text, and the rule handlers read it):
-  ASCII digits with an optional sign, point and exponent, nothing around them, inside the range a
-  rule can hold (`plain_decimal`, as the content hash reads a number). Other text, `NaN`, an
-  infinity and a number past that range are no number.
+- A number is one the content hash can hold, read exactly: finite and inside `plain_decimal`'s
+  range, as the content hash reads a number. It is an `int`, a `float` (at its shortest repr) or
+  a `Decimal`, never a `bool`; or decimal text, read as its number, as #5876 reads a rule
+  constant's text and as 22's `Decimal` carries a number (convention C6): ASCII digits with an
+  optional sign, point and exponent, nothing around them, at most `MAX_NUMBER_TEXT` characters.
+  `NaN`, an infinity, a number past that range in either spelling, and any other text are no
+  number. An integer is a number without a fraction. Validate and compile hash a document before
+  they validate it (#4185), so there a number no rule can hold is the content hash's refusal; a
+  save validates first, so there it is this check's.
 - `maxLength` counts a text's characters (code points).
 - A property holding `null` is absent, as the validator's `required` check has always read it.
-- A defect names its parameter and the bound it breaks, from the schema alone: never the value,
-  nor a key the schema does not declare.
+- A defect's text is `_TEXT`'s, from the schema alone: it names the parameter and the bound it
+  breaks, never the value, nor a key the schema does not declare.
 """
 
 from __future__ import annotations
 
 import decimal
-import math
 import operator
 import re
 from collections.abc import Iterator, Mapping
@@ -30,7 +32,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Final
 
-from candleviewer.domain.plain_decimal import PlainWidthError, plain_decimal
+from candleviewer.domain.plain_decimal import MAX_PLAIN_WIDTH, PlainWidthError, plain_decimal
 
 #: The validation keywords the subset reads.
 KEYWORDS: Final = frozenset(
@@ -46,14 +48,30 @@ TYPES: Final = {
     "string": "text", "number": "a number", "integer": "a whole number",
     "boolean": "true or false", "object": "an object", "array": "a list",
 }  # fmt: skip
-#: Each numeric bound: the relation a value must hold to it, in words and as a test.
+#: Each defect's text, by the keyword it breaks: `{at}` is where (`'qty'`, `each item of
+#: 'symbols'`) and `{bound}` what the schema writes there. Nothing else is ever filled in.
+_TEXT: Final = {
+    "type": "{at} must be {bound}",
+    "enum": "{at} must be one of {bound}",
+    "exclusiveMinimum": "{at} must be greater than {bound}",
+    "minimum": "{at} must be at least {bound}",
+    "exclusiveMaximum": "{at} must be less than {bound}",
+    "maximum": "{at} must be at most {bound}",
+    "maxLength": "{at} must be at most {bound} characters",
+    "required": "{at} is missing '{bound}'",
+    "additionalProperties": "{at} takes only {bound}",
+}
+#: Each numeric bound and the relation a number must hold to it.
 _BOUNDS: Final = (
-    ("exclusiveMinimum", "greater than", operator.gt),
-    ("minimum", "at least", operator.ge),
-    ("exclusiveMaximum", "less than", operator.lt),
-    ("maximum", "at most", operator.le),
+    ("exclusiveMinimum", operator.gt),
+    ("minimum", operator.ge),
+    ("exclusiveMaximum", operator.lt),
+    ("maximum", operator.le),
 )
-#: Decimal text: ASCII digits with an optional sign, point and exponent. Linear to match.
+#: The longest decimal text read as a number, the bound #5876 reads a constant's text to: twice
+#: the widest plain form a rule holds. Longer text is no number, before the pattern reads it.
+MAX_NUMBER_TEXT: Final = 2 * MAX_PLAIN_WIDTH
+#: Decimal text: ASCII digits with an optional sign, point and exponent.
 _DECIMAL_TEXT: Final = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 #: The types whose values the numeric bounds read, decimal text included.
 _NUMERIC: Final = frozenset({"number", "integer"})
@@ -71,28 +89,47 @@ class ParamDefect:
     missing: bool = False
 
 
+def _defect(
+    param: str, keyword: str, path: str, bound: object, missing: bool = False
+) -> ParamDefect:
+    """The defect of `keyword` at `path`, its text `_TEXT[keyword]`, built only once a value
+    breaks it; `bound` is what the schema writes for it."""
+    at = f"each item of '{path[:-2]}'" if path.endswith("[]") else f"'{path or 'params'}'"
+    return ParamDefect(param, keyword, _TEXT[keyword].format(at=at, bound=bound), missing)
+
+
 def _number(value: object) -> Decimal | None:
-    """A finite number as an exact `Decimal`, decimal text as its number, else `None` (module
-    docstring; a `bool` is no number here)."""
+    """`value` as an exact `Decimal` when it is a number the content hash can hold, decimal text
+    included, else `None` (module docstring)."""
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
-        return Decimal(value)
-    if isinstance(value, float):
-        return Decimal(repr(value)) if math.isfinite(value) else None
-    if isinstance(value, Decimal) and value.is_finite():
-        return value
-    if isinstance(value, str) and _DECIMAL_TEXT.fullmatch(value):
-        try:  # an exponent past the decimal module's range raises; past a rule's, plain_decimal
+        number = Decimal(value)
+    elif isinstance(value, float):
+        number = Decimal(repr(value))
+    elif isinstance(value, Decimal):
+        number = value
+    elif (
+        isinstance(value, str)
+        and len(value) <= MAX_NUMBER_TEXT
+        and _DECIMAL_TEXT.fullmatch(value) is not None
+    ):
+        try:  # an exponent past the decimal module's own range raises
             number = Decimal(value)
-            plain_decimal(number)  # the range a rule can hold, as the content hash reads it
-        except (PlainWidthError, decimal.DecimalException):
+        except decimal.DecimalException:
             return None
-        return number
-    return None
+    else:
+        return None
+    if not number.is_finite():  # NaN and the infinities: no hash holds them
+        return None
+    try:
+        plain_decimal(number)  # the range a rule can hold, as the content hash reads a number
+    except (PlainWidthError, decimal.DecimalException):
+        return None
+    return number
 
 
-def _is(kind: str, value: object) -> bool:
+def _is(kind: str, value: object, number: Decimal | None) -> bool:
     if kind == "string":
         return isinstance(value, str)
     if kind == "boolean":
@@ -101,7 +138,6 @@ def _is(kind: str, value: object) -> bool:
         return isinstance(value, Mapping)
     if kind == "array":
         return isinstance(value, list | tuple)
-    number = _number(value)
     if kind == "integer":
         return number is not None and number == number.to_integral_value()
     return kind == "number" and number is not None  # a type outside the subset holds nothing
@@ -111,26 +147,26 @@ def _same(value: object, member: object) -> bool:
     return value == member and isinstance(value, bool) == isinstance(member, bool)
 
 
-def _check(schema: Mapping[str, Any], value: Any, path: str, param: str) -> Iterator[ParamDefect]:
+def _check(
+    schema: Mapping[str, Any], value: object, path: str, param: str
+) -> Iterator[ParamDefect]:
     """`value`'s defects against `schema`; `path` is where it is (`qty`, `stop_loss.value`, or
     `symbols[]` for an item) and `param` the parameter it is in."""
-    where = f"each item of '{path[:-2]}'" if path.endswith("[]") else f"'{path or 'params'}'"
     kind = schema.get("type")
-    if kind is not None and not _is(kind, value):
-        yield ParamDefect(param, "type", f"{where} must be {TYPES.get(kind, kind)}")
+    # A number, or decimal text where the schema asks for a number: the type and bounds read it.
+    number = _number(value) if kind in _NUMERIC or not isinstance(value, str) else None
+    if kind is not None and not _is(kind, value, number):
+        yield _defect(param, "type", path, TYPES.get(kind, kind))
         return
     if "enum" in schema and not any(_same(value, m) for m in schema["enum"]):
-        choices = ", ".join(str(m) for m in schema["enum"])
-        yield ParamDefect(param, "enum", f"{where} must be one of {choices}")
-    # A number, or decimal text where the schema asks for a number: the bounds read its number.
-    number = _number(value) if not isinstance(value, str) or kind in _NUMERIC else None
-    for keyword, words, holds in _BOUNDS:
+        yield _defect(param, "enum", path, ", ".join(str(m) for m in schema["enum"]))
+    for keyword, holds in _BOUNDS:
         bound = _number(schema.get(keyword))
         if number is not None and bound is not None and not holds(number, bound):
-            yield ParamDefect(param, keyword, f"{where} must be {words} {schema[keyword]}")
+            yield _defect(param, keyword, path, schema[keyword])
     longest = schema.get("maxLength")
     if isinstance(value, str) and isinstance(longest, int) and len(value) > longest:
-        yield ParamDefect(param, "maxLength", f"{where} must be at most {longest} characters")
+        yield _defect(param, "maxLength", path, longest)
     if isinstance(value, Mapping):
         yield from _object(schema, value, path, param)
     elif isinstance(value, list | tuple) and "items" in schema:
@@ -142,13 +178,11 @@ def _check(schema: Mapping[str, Any], value: Any, path: str, param: str) -> Iter
 
 
 def _object(
-    schema: Mapping[str, Any], value: Mapping[str, Any], path: str, param: str
+    schema: Mapping[str, Any], value: Mapping[str, object], path: str, param: str
 ) -> Iterator[ParamDefect]:
-    where = f"'{path or 'params'}'"
     for name in schema.get("required", ()):
         if value.get(name) is None:
-            text = f"{where} is missing '{name}'"
-            yield ParamDefect(param or name, "required", text, missing=not path)
+            yield _defect(param or name, "required", path, name, missing=not path)
     properties: Mapping[str, Any] = schema.get("properties", {})
     for name, sub in properties.items():
         if value.get(name) is not None:
@@ -156,15 +190,13 @@ def _object(
     if schema.get("additionalProperties", True) is False and any(
         k not in properties for k in value
     ):
-        yield ParamDefect(
-            param, "additionalProperties", f"{where} takes only {', '.join(properties)}"
-        )
+        yield _defect(param, "additionalProperties", path, ", ".join(properties))
 
 
-def param_defects(schema: Mapping[str, Any], params: Mapping[str, Any]) -> list[ParamDefect]:
+def param_defects(schema: Mapping[str, object], params: Mapping[str, object]) -> list[ParamDefect]:
     """Every defect of an action's `params` against its `params_schema`: the required parameters
     first, then each declared one in the schema's order, then a key it does not declare."""
     return list(_check(schema, params, "", ""))
 
 
-__all__ = ["ANNOTATIONS", "KEYWORDS", "TYPES", "ParamDefect", "param_defects"]
+__all__ = ["ANNOTATIONS", "KEYWORDS", "MAX_NUMBER_TEXT", "TYPES", "ParamDefect", "param_defects"]

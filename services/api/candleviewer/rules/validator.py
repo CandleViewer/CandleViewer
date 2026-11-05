@@ -113,6 +113,12 @@ def _const_unit(c: Literal_) -> str:
     return "bool" if isinstance(v, bool) else _UNKNOWN  # bare numbers fit any numeric unit
 
 
+def _framed(i: int, title: str, text: str) -> str:
+    """A param defect's message, `Action <n> (<title>): <text>`; `text` is `params_check`'s, from
+    the schema alone, so no message carries the value."""
+    return f"Action {i + 1} ({title}): {text}"
+
+
 class _Validator:
     def __init__(self, rule: Rule, registry: MetricRegistry, limit_caps: bool) -> None:
         self.rule, self.registry = rule, registry
@@ -218,11 +224,11 @@ class _Validator:
             for d in param_defects(spec.params_schema, a.params):
                 at = f"{base}.params.{d.param}" if d.param else f"{base}.params"
                 if a.type == "place_order" and d.param == "stop_loss":
-                    shape = shape or f"Action {i + 1} ({spec.title}): {d.text}; every order keeps its native exchange stop-loss."  # fmt: skip
+                    shape = shape or _framed(i, spec.title, f"{d.text}; every order keeps its native exchange stop-loss.")  # fmt: skip
                 elif d.missing:
                     self.err(at, "missing_action_param", f"Action {i + 1} ({spec.title}) is missing '{d.param}'.")  # fmt: skip
                 elif not (a.type in _STOP_ACTIONS and d.param == "only_tighten"):
-                    self.err(at, "schema_error", f"Action {i + 1} ({spec.title}): {d.text}.", "syntax")  # fmt: skip
+                    self.err(at, "schema_error", _framed(i, spec.title, f"{d.text}."), "syntax")
             if a.type in _STOP_ACTIONS and a.params.get("only_tighten", True) is not True:
                 self.loosens(f"{base}.params.only_tighten", i)
             if (a.type in _STOP_ACTIONS and (a.params.get("remove") or a.params.get("cancel"))) or (
