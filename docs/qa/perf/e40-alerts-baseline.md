@@ -2,11 +2,9 @@
 
 Status: **pre-stage, no run yet. Every value is `null` and the gate is `warn-only`.** This file records where the alert
 load numbers come from and how they move. The machine-read baseline is `tests/load/k6/alerts/baseline.json`. The gate
-step of the nightly (next PR, `.github/workflows/perf-alerts-nightly.yml`) reads it (BQ-04: no new dashboard).
+step in `.github/workflows/perf-alerts-nightly.yml` reads it (BQ-04: no new dashboard).
 
 ## What runs
-
-The nightly (next PR) runs these profiles; the Where column names the runner it uses.
 
 | Profile                                      | Script                                          | Where                                    | Verdict                                                                                                                                        |
 | -------------------------------------------- | ----------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -23,7 +21,7 @@ and the database must hold no other user, no `live` or `demo` exchange account a
 
 ## Soak: report-only until the metric-producer bridge lands (#5745 (E35-T15))
 
-The soak (nightly, next PR) and `soak_check.py` report every check, but neither fails the job: the rules metric
+The soak runs nightly and `soak_check.py` computes and reports every check. A crash of the k6 soak run and a failed `alerts_armed` check fail the job in either mode; the other three checks do not fail it while the rules metric
 source (blocker #5745 (E35-T15)) has no production producer yet (E12/E18–E25 adapters push into `PushedMetricSource`), so no alert can fire on
 the stack and `alerts_fired` would fail every night. The check itself is not relaxed. One switch turns the verdict on:
 set `CV_E40_SOAK_GATE` to `"1"` in the job `env` of `.github/workflows/perf-alerts-nightly.yml` once that bridge is on
@@ -51,7 +49,7 @@ sets them and moves `mode` to `gate`, with the run id and the rationale. Baselin
 
 - BQ-03's default skipped the `/notifications` scenario until S02 S2, on the premise that its sources were not merged.
   That blocker was false: the four-source union (alert deliveries, system, rule and order events) is on `main`, so the
-  nightly (next PR) runs the scenario, gated by its p95 threshold and `notifications_p95_ms`.
+  scenario runs nightly and is gated by its p95 threshold and `notifications_p95_ms`.
 
 ## Proposed, not ruled
 

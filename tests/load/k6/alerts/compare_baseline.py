@@ -56,7 +56,11 @@ def compare(
         ]
         median = statistics.median(got) if got else None
         base, verdict = spec.get("value"), "NO-BASELINE"
-        need = int(spec.get("min_runs", MIN_RUNS))
+        need = spec.get("min_runs", MIN_RUNS)
+        if (
+            type(need) is not int or need < 1
+        ):  # 0 or a negative would disable the minimum
+            raise ValueError(f"{name}: min_runs {need!r} is not a positive int")
         if median is None:
             verdict = "MISSING"
         elif len(got) < need:  # a run that wrote no summary: never a median of fewer

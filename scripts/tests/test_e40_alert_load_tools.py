@@ -182,6 +182,15 @@ def test_only_the_single_notifications_run_lowers_the_minimum() -> None:
     assert (row["runs"], row["verdict"]) == ([1.0], "NO-BASELINE")
 
 
+@pytest.mark.parametrize("bad", [0, -1, True, 1.5, "3", None])
+@pytest.mark.parametrize("mode", ["gate", "warn-only"])
+def test_a_spec_min_runs_must_be_a_positive_int(mode: str, bad: object) -> None:
+    spec = {"metric": "alerts_ack_ms", "stat": "p(95)", "value": 100.0, "min_runs": bad}
+    base = {"mode": mode, "metrics": {"ack": spec}}
+    with pytest.raises(ValueError, match="min_runs"):
+        _module("compare_baseline").compare(_ack_runs(90.0), base)
+
+
 def test_the_gate_refuses_a_summary_that_holds_setup_data(tmp_path: Path) -> None:
     summary = tmp_path / "s.json"
     summary.write_text(json.dumps({"setup_data": {}, "metrics": {}}), encoding="utf-8")
@@ -317,7 +326,9 @@ _A = "postgresql+asyncpg://cv"
      (f"{_A}@127.0.0.1/candleviewer#x", "query string or fragment"),
      (f"{_A}:pw@127.0.0.1:5432,db.example.com:5432/candleviewer", "more than one host"),
      (f"{_A}:p@db.example.com@127.0.0.1/candleviewer", "more than one @"),
-     (f"{_A}:p@[db.example.com]@[::1]:5432/candleviewer", "more than one @"),
+     # CPython 3.12.3 refuses the first bracket group in urlsplit before the @ count
+     (f"{_A}:p@[db.example.com]@[::1]:5432/candleviewer",
+      "(more than one @|does not parse)"),
      (f"{_A}:p%40db.example.com@127.0.0.1/candleviewer", "host part is ambiguous"),
      (f"{_A}@%6c%6fcalhost/candleviewer", "host part is ambiguous"),
      (f"{_A}@127.0.0.1%2Fdb.example.com/candleviewer", "host part is ambiguous"),

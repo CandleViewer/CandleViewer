@@ -1,0 +1,253 @@
+name: perf-alerts-nightly
+# E40-Q02 (#1203, BQ-03/04/06): the alert k6 profiles on a stack this job starts. Nightly and on
+# dispatch, never on a PR, and not a required check (C-9.1 owns that list, C-9.2). Every target is
+# loopback: the API boots as perf-ingestion-nightly.yml's auth-k6 boots it (keyless testnet, real
+# storage, compose Postgres and QuestDB, CV_FEED=synthetic so no exchange client), so no exchange
+# or other outbound client is built (C-13.5, C-12.9); the runner itself has egress (k6 is downloaded here), which is not
+# what this rests on. Every credential is made here per run, masked and never echoed; no
+# repository secret is read.
+# - ws_subscribers.js: 50 `alerts` subscribers, the 250 ms cadence, no truncated or out-of-order
+#   delta (23 section 6.2.1). 3 runs, as C-13.9's gate compares a median of 3.
+# - notifications_page.js: GET /notifications p95 < 200 ms at 500 rows a page over >= 1M rows,
+#   across all four sources (E40-T04's union; the seed fills each). One run, 2 minutes.
+# - soak.js + soak_check.py: 200 armed alerts; `smoke` (10 min) nightly, `soak24h` on dispatch
+#   only, on the bench runner (GitHub-hosted jobs stop at 6 h). Memory is report-only (BQ-06).
+#   The soak is REPORT-ONLY (CV_E40_SOAK_GATE "0") until the metric-producer bridge lands (#5745 (E35-T15)): the
+#   rules metric source has no production producer yet (E12/E18-E25 adapters push into
+#   `PushedMetricSource`), so no alert can fire on this stack. Its checks still run and report;
+#   setting CV_E40_SOAK_GATE to "1" makes them fail the job.
+# - compare_baseline.py: the +5 % p95 gate against tests/load/k6/alerts/baseline.json (06 7.4),
+#   warn-only until a reviewed PR records CI-runner numbers (BQ-04); its JSON and markdown are in
+#   the artifact and the run summary.
+# A `soak24h` dispatch refuses to start while a 24 h soak, a ws-load run or another `soak24h` of
+# this workflow holds the bench runner, as perf-ws-load.yml's first step does (its header says why a shared concurrency group is not
+# used). A red run on main files under the `perf-alerts` signal (_nightly-issue.yml), and, as the
+# other nightlies, no workflow-level concurrency group (#3449).
+on:
+  schedule:
+    - cron: "07 4 * * *"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "smoke (WS x3 + 10 min soak, ubuntu-latest) or soak24h (the 24 h soak alone, bench runner)"
+        type: choice
+        options: [smoke, soak24h]
+        default: smoke
+permissions:
+  contents: read
+jobs:
+  alerts-load:
+    runs-on: ${{ inputs.profile == 'soak24h' && fromJSON('["self-hosted","Linux","X64","bench"]') || 'ubuntu-latest' }}
+    timeout-minutes: ${{ inputs.profile == 'soak24h' && 1560 || 90 }}
+    permissions:
+      actions: read # the soak24h guard lists the bench runner's other jobs
+      contents: read
+    env:
+      PROFILE: ${{ inputs.profile || 'smoke' }}
+      BASE_URL: http://127.0.0.1:8000
+      PERF_USERS: "10" # 5 connections each: the ticket's 50 subscribers
+      OUT: ${{ github.workspace }}/alerts-load
+      K6_VERSION: v2.3.0
+      # sha256 of k6-v2.3.0-linux-amd64.tar.gz, as perf-ws-load.yml pins it
+      K6_SHA256: 39c3117b6af817592dcd0ce4242105c0a7af10948c2a425306f0be8f7a8a8ab1
+      K6_NO_USAGE_REPORT: "true"
+      K6_AUTO_EXTENSION_RESOLUTION: "false"
+      # The one switch for the soak verdict: "0" reports only (the rules metric source has no
+      # production producer yet, #5745 (E35-T15)), "1" lets the soak and its checks fail the job.
+      CV_E40_SOAK_GATE: "0"
+      # Compose checks every service's variables on each command; these stores never start here.
+      GF_SECURITY_ADMIN_PASSWORD: unused-ci
+      MINIO_ROOT_PASSWORD: unused-ci
+      CV_ALERT_PAGE_WEBHOOK_URL: http://127.0.0.1:1/unused
+      CV_ALERT_TICKET_WEBHOOK_URL: http://127.0.0.1:1/unused
+      CV_ALERT_DEADMAN_URL: http://127.0.0.1:1/unused
+    steps:
+      - name: Refuse a 24 h soak while another soak or ws-load holds the bench runner
+        if: inputs.profile == 'soak24h'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          busy=""
+          for held in perf-ingestion-nightly.yml:perf-pack-full perf-bars-memdiag.yml:leg perf-ws-load.yml:ws-load perf-alerts-nightly.yml:alerts-load; do
+            wf=${held%%:*} job=${held#*:} n=0
+            # this workflow's own job holds the bench runner only as a soak24h (bench label), never this run
+            bench=""
+            [ "$wf" = perf-alerts-nightly.yml ] && bench=' and any(.labels[]; . == "bench")'
+            for status in queued in_progress; do
+              ids=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?status=${status}&per_page=50" --paginate --jq '.workflow_runs[].id')
+              for id in $ids; do
+                [ "$id" = "$GITHUB_RUN_ID" ] && continue
+                c=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/jobs?per_page=100" --jq "[.jobs[] | select(.name == \"${job}\" and (.status == \"in_progress\" or .status == \"queued\")${bench})] | length")
+                [[ "$c" =~ ^[0-9]+$ ]] || { echo "::error::refusing to start: the job count of ${wf} run ${id} is not a number" >&2; exit 1; }
+                n=$((n + c))
+              done
+            done
+            [ "$n" -eq 0 ] || busy="${busy:+$busy, }${wf} (job ${job})"
+          done
+          [ -z "$busy" ] || { echo "::error::refusing to start: the bench runner is busy: ${busy}" >&2; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: Install the pinned k6 (sha256 verified twice)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/k6"
+          mkdir -p "$dir"
+          cd "$dir"
+          tarball="k6-${K6_VERSION}-linux-amd64.tar.gz"
+          gh release download "$K6_VERSION" -R grafana/k6 -p "$tarball" -p "k6-${K6_VERSION}-checksums.txt" --clobber
+          echo "${K6_SHA256}  ${tarball}" | sha256sum -c -
+          grep " ${tarball}\$" "k6-${K6_VERSION}-checksums.txt" | sha256sum -c -
+          tar -xzf "$tarball" --strip-components=1 "k6-${K6_VERSION}-linux-amd64/k6"
+          ./k6 version | grep -F "k6 ${K6_VERSION} "
+          echo "$dir" >> "$GITHUB_PATH"
+      - name: Make this run's synthetic credentials (masked, never echoed)
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane" "$RUNNER_TEMP/cv-kek" "$OUT"
+          secret() { v=$(openssl rand -hex 32); echo "::add-mask::$v"; echo "$1=$v" >> "$GITHUB_ENV"; }
+          for name in POSTGRES_PASSWORD CV_AUTH_PEPPER CV_AUTH_TOTP_KEY_HEX \
+            CV_AUTH_RECOVERY_HMAC_KEY_HEX CV_AUTH_CSRF_KEY_HEX CV_E40_PASSWORD; do secret "$name"; done
+          (umask 277 && openssl rand -hex 32 > "$RUNNER_TEMP/cv-lane/lane.key")
+          (umask 277 && openssl rand 32 > "$RUNNER_TEMP/cv-kek/kek")
+      - name: Start Postgres and QuestDB (the compose data stores, loopback only)
+        run: docker compose -f infra/compose/docker-compose.yml --profile core up -d --wait postgres questdb
+      - name: Migrate, seed one Owner per user slot, then >= 1M notification-source rows (all four sources)
+        working-directory: services/api
+        env:
+          CV_ENVIRONMENT: testnet
+        run: |
+          set -euo pipefail
+          umask 077
+          export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
+          uv sync --frozen
+          uv run --frozen alembic upgrade head
+          suffix=$(openssl rand -hex 4)
+          for i in $(seq "$PERF_USERS"); do
+            CV_SEED_USERNAME="perf-$suffix-$i" CV_SEED_PASSWORD="$CV_E40_PASSWORD" \
+              uv run --frozen python scripts/seed_fixture_user.py --totp-secret-out "$RUNNER_TEMP/cv/perf-$i.totp"
+            echo "::add-mask::$(cat "$RUNNER_TEMP/cv/perf-$i.totp")"
+          done
+          python3 - "$RUNNER_TEMP/cv" "$suffix" "$PERF_USERS" > "$RUNNER_TEMP/cv/users.json" <<'PY'
+          import json, pathlib, sys
+          d, suffix, n = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+          print(json.dumps([{"identifier": f"perf-{suffix}-{i}",
+                             "totp_seed": (d / f"perf-{i}.totp").read_text().strip()}
+                            for i in range(1, n + 1)]))
+          PY
+          uv run --frozen python "$GITHUB_WORKSPACE/tests/load/k6/alerts/seed_alerts.py" --users-like "perf-$suffix-%"
+      - name: Start the API (testnet, real storage, loopback)
+        id: api
+        working-directory: services/api
+        env:
+          CV_ENVIRONMENT: testnet
+          CV_STORAGE_BACKEND: real
+          CV_FEED: synthetic
+          CV_KEK_SOURCE: file
+          CV_KEK_HANDLE: ${{ runner.temp }}/cv-kek/kek
+          CV_KEK_VERSION: "1"
+          CV_ALERTS_EVALUATOR_ENABLED: "true" # C-4.13 flag (E40-T03); no producer feeds it yet
+          CV_RULES_EVALUATOR_ENABLED: "true"
+          CV_QUESTDB_PG: 127.0.0.1:8812
+          CV_QUESTDB_ILP: 127.0.0.1:9009
+          CV_BIND_HOST: 127.0.0.1
+          CV_BIND_PORT: "8000"
+          CV_METRICS_BIND: 127.0.0.1:9108
+          # SR-042: an empty list refuses every WS upgrade; ws_subscribers.js sends this Origin.
+          CV_ALLOWED_ORIGINS: http://127.0.0.1:5173
+        run: |
+          set -euo pipefail
+          export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
+          export CV_AUDIT_LANE_KEY_FILE="$RUNNER_TEMP/cv-lane/lane.key"
+          export CV_AUDIT_WAL_PATH="$RUNNER_TEMP/cv/audit/audit.wal"
+          export CV_PARQUET_ROOT="$RUNNER_TEMP/cv/data/parquet" CV_BACKUP_ROOT="$RUNNER_TEMP/cv/data/backups"
+          mkdir -p -m 700 "$RUNNER_TEMP/cv/audit" "$RUNNER_TEMP/cv/data" "$CV_PARQUET_ROOT" "$CV_BACKUP_ROOT"
+          nohup uv run --frozen python -m candleviewer.server > "$RUNNER_TEMP/cv/api.log" 2>&1 &
+          api=$!
+          for _ in $(seq 60); do
+            if curl -fsS -o /dev/null "$BASE_URL/healthz"; then exit 0; fi
+            kill -0 "$api" 2>/dev/null || break
+            sleep 2
+          done
+          echo "::error title=alerts-load::the API did not answer /healthz; the last of its log follows"
+          tail -n 200 "$RUNNER_TEMP/cv/api.log"
+          exit 1
+      - name: WS profile, 50 alerts subscribers (3 runs; each run's thresholds decide it)
+        id: ws
+        if: env.PROFILE == 'smoke'
+        env:
+          CV_E40_USERS_FILE: ${{ runner.temp }}/cv/users.json
+        run: |
+          set -uo pipefail
+          set +e # every run is wanted even after a red one; the step's code is the worst
+          worst=0
+          for i in 1 2 3; do
+            mkdir -p "$OUT/run-$i"
+            CV_E40_SUMMARY="$OUT/run-$i/k6-summary-alerts-ws.json" k6 run tests/load/k6/alerts/ws_subscribers.js
+            code=$?
+            [ "$code" -gt "$worst" ] && worst=$code
+          done
+          exit "$worst"
+      - name: GET /notifications p95 at 500 a page (the four-source union; its threshold decides it)
+        id: notifications
+        if: ${{ !cancelled() && env.PROFILE == 'smoke' && steps.api.outcome == 'success' }}
+        env:
+          CV_E40_USERS_FILE: ${{ runner.temp }}/cv/users.json
+          CV_E40_SUMMARY: ${{ github.workspace }}/alerts-load/k6-summary-alerts-notifications.json
+        run: k6 run tests/load/k6/alerts/notifications_page.js
+      - name: Soak (${{ inputs.profile || 'smoke' }}), 200 armed alerts (the k6 run is hard; only the verdict below is report-only)
+        id: soak
+        if: ${{ !cancelled() && steps.api.outcome == 'success' }} # after a red WS run too
+        env:
+          CV_E40_USERS_FILE: ${{ runner.temp }}/cv/users.json
+          CV_E40_SOAK_PROFILE: ${{ inputs.profile == 'soak24h' && '24h' || 'smoke' }}
+          CV_E40_RUN_ID: ${{ github.run_id }}
+          CV_E40_SUMMARY: ${{ github.workspace }}/alerts-load/k6-summary-alerts-soak.json
+        run: k6 run tests/load/k6/alerts/soak.js
+      - name: "Soak checks (report-only until #5745 (E35-T15) gives the rules metric source a production producer)"
+        if: ${{ !cancelled() && contains(fromJSON('["success","failure"]'), steps.soak.outcome) }}
+        working-directory: services/api
+        run: |
+          set -euo pipefail # soak_check.py's code, not tee's, decides the step;
+          export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
+          uv run --frozen python "$GITHUB_WORKSPACE/tests/load/k6/alerts/soak_check.py" \
+            --summary "$OUT/k6-summary-alerts-soak.json" --out "$OUT/soak-check.json" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Regression gate (+5 % p95 on the median of 3 runs, C-13.9)
+        if: ${{ !cancelled() && contains(fromJSON('["success","failure"]'), steps.ws.outcome) }}
+        run: |
+          python3 tests/load/k6/alerts/compare_baseline.py --baseline tests/load/k6/alerts/baseline.json \
+            --out-dir "$OUT" "$OUT"/run-1/k6-summary-alerts-ws.json "$OUT"/run-2/k6-summary-alerts-ws.json \
+            "$OUT"/run-3/k6-summary-alerts-ws.json \
+            "$OUT"/k6-summary-alerts-notifications.json
+          cat "$OUT/compare.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: alerts-load-${{ inputs.profile || 'smoke' }}
+          path: alerts-load/ # summaries drop setup_data in handleSummary; compare refuses one that has it
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose -f infra/compose/docker-compose.yml --profile core down -v || true
+          rm -rf "$RUNNER_TEMP/cv-kek" "$RUNNER_TEMP/cv-lane" "$RUNNER_TEMP/cv" || true
+
+  alerts-load-issue:
+    needs: alerts-load
+    # a dispatch on a branch (an experiment) files nothing; main's runs are the signal
+    if: ${{ always() && needs.alerts-load.result == 'failure' && github.ref == 'refs/heads/main' }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_nightly-issue.yml
+    with:
+      signal: perf-alerts
+      title-prefix: "perf: alerts nightly failed"
+      labels: perf,area/rule-engine
+      body: "perf-alerts-nightly failed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Artifact: alerts-load-<profile>."
