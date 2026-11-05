@@ -13,7 +13,7 @@ sheet's `notes.copy_gaps`. Every number comes from the seeded world.
   place, §19 appended; lines 1–561 in place, so every cite drawn on a board still resolves). The boards were drawn
   from the text head (md5 `152db93fec24c5698a56091d0736a0d8`, the ruling of record folded, BQ-0 … BQ-9). No hand-off
   file.
-- `docs/design/E18/E18-D02.md` md5 `fd75a21fdc0b045c206182da712d94a8`: line 124's `delta` width floor (40 px), the
+- `docs/design/E18/E18-D02.md` md5 `c18b4d41a6d91836a193cf5991a3adbf`: line 124's `delta` width floor (40 px), the
   seed of E20-K01's collapse floor (§4.1).
 - `packages/fixtures/bybit/2026-10-05/rest/instruments_before.json` md5 `edd9dd2a060c51bd4bd1450307728ddf`: tick and
   qty step for BTCUSDT (0.10 / 0.001) and ETHUSDT (0.01 / 0.001) only.
