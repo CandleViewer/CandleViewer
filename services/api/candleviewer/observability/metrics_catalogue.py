@@ -4038,6 +4038,32 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=1,
     ),
     _s(
+        "oms_closed_pnl_divergence_total",
+        "counter",
+        "records",
+        (),
+        "Closed-PnL records found divergent (E29-S06, 24 Sec.8.13), one per "
+        "pnl.divergence_detected written, a venue figure missing at the end of the reach "
+        "included. No account label (SR-125): the record and its WARNING log name the account.",
+        "OmsClosedPnlDivergence: a sustained non-zero rate over 30m (warning)",
+        _P,
+        "E29",
+        max_series=1,
+    ),
+    _s(
+        "oms_closed_pnl_divergence_withheld_total",
+        "counter",
+        "records",
+        ("reason",),
+        "Closed-PnL divergence records not written in a pass (E29-S06, 24 Sec.8.13), by reason: "
+        "pass_cap or backpressure (owed to the next pass), pair_limit (the records one record "
+        "id may write in a process spent) or retry_dropped (the owed set full). No account label.",
+        "dashboard",
+        _P,
+        "E29",
+        max_series=4,
+    ),
+    _s(
         "oms_closed_pnl_fetch_seconds",
         "histogram",
         "seconds",
