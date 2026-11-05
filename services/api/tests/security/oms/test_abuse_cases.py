@@ -302,6 +302,31 @@ def test_ac19_a_burst_of_orders_from_one_session_meets_a_429_and_another_user_is
     assert observed(other) != "429 rate_limited"
 
 
+#: What the burst meets on `main` today, step by step of `api/orders.py`: an entry with trading off
+#: stops at step 9 (`trading.oms_enabled`), a malformed key at step 6 (`Idempotency-Key`).
+_TODAY: Final = {"entry": "403 trading_disabled", "refused_late": "400 validation_failed"}
+
+
+@pytest.mark.parametrize("shape", list(_TODAY))
+def test_ac19_the_burst_meets_today_the_step_its_pin_stands_before(
+    world: OmsWorld, shape: str
+) -> None:
+    """X02-R4's non-vacuity: the pin's burst reaches the route and is answered, each request
+    alike and audited, at the step named here and never `429`. A per-user limit added after that
+    step leaves this answer as it is and the pin XFAIL, so it changes this test first."""
+    late = {"headers": {"Idempotency-Key": "not-a-key"}} if shape == "refused_late" else {}
+    entry = _CLOSE | {"reduce_only": False, "stop_loss": {"unit": "price", "value": "58000"}}
+    seen = {
+        (observed(r), tuple(w))
+        for r, w in (
+            call(world, M, "POST", "/orders", f"ac19-today|{shape}|{n}", json=entry, **late)
+            for n in range(_BURST)
+        )
+    }
+    code = _TODAY[shape].split(" ")[1]
+    assert seen == {(_TODAY[shape], (("orders.submit", code),))}, seen
+
+
 class _Tickers:
     """The ticker stream's demand: the symbols each consumer holds, in the order taken."""
 
@@ -328,3 +353,14 @@ def test_982_row_2_one_principals_new_symbols_leave_another_principals_demand_ad
         demand.asked(symbol, priced=False)
     demand.asked(symbols[-1], priced=False)  # another principal's
     assert tickers.held[-1:] == symbols[-1:], tickers.held
+
+
+def test_982_row_2_one_principals_new_symbols_spend_the_window_today() -> None:
+    """X02-R5's non-vacuity: the pin's first principal does spend the whole window's budget
+    today, each new symbol held in turn, so the pin's last ask meets that budget, not a fault."""
+    tickers = _Tickers()
+    demand = ReferenceDemand(tickers, monotonic=lambda: 0.0)
+    symbols = [f"COLD{n}USDT" for n in range(REFERENCE_DEMAND_NEW + 1)]
+    for symbol in symbols:
+        demand.asked(symbol, priced=False)
+    assert tickers.held == symbols[:-1], tickers.held
