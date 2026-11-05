@@ -3327,13 +3327,16 @@ class OmsRuntime:
             audit = OmsAudit(writer, environment=env)
             notices = OrderNoticesRouter(self._pager)
             accounts = TradingAccountsBinding(stores.accounts, environment=env)
-            # E29-S06 #981 (24 Sec.8.13): the one day-boundary resolver, the cap's and the sync's
+            # E29-S06 #981 (24 Sec.8.13): the one day-boundary resolver, the cap's and the sync's,
+            # each handing it instants from one clock, the exchange-synced one (CG14) the position
+            # store and the consumer read too
+            wall = ExchangeWallClock(ingestion.clock_offset_snapshot_ms)
             days = DayBoundary(stores.risk_policy)
             # the size step's figures (24 Sec.9.3.6): on live, none, so every entry is refused
             # nosemgrep: cv-oms-env-branch reason=live-no-day-figures owner=@CandleViewer/security review=2027-02-04  # noqa: E501 - semgrep marker format is fixed
             figures = NoDayFigures() if env not in _NOT_LIVE else DayRiskFigures(
                 env, port_for=router.port_for, tiers=_tiers(ingestion.instruments), days=days,
-                now=self._now, monotonic=self._monotonic,
+                now=wall, monotonic=self._monotonic,
             )  # fmt: skip
             announce_interim_port("risk_figures", figures, metrics=metrics)
             clock = None if ingestion.clock is None else ServedClock(ingestion.clock, serving)
@@ -3416,7 +3419,6 @@ class OmsRuntime:
             # carries register (#914, BQ-2; the reconciliation is E29-T06's) and, for the paging
             # foreign-order lockout, until E39-T04 (the security sign-off on #848, M1): the
             # runtime fails closed, never ready.
-            wall = ExchangeWallClock(ingestion.clock_offset_snapshot_ms)
             positions = stores.positions(wall)
             stored_positions = _published(PositionRepository(positions, timer), published)
             snapshot_rows = PositionSnapshotRepository(positions, timer)
