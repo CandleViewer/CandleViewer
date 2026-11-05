@@ -46,8 +46,8 @@ dedicated transport; the run answers both.
 
 ## Decision outcome
 
-**PROVISIONAL (K01 in-process leg only, dev host, not reference: OL-1; the Electron leg is blocked, see
-`E30-K01.md` section 8): option B.** The pure `size()` + `validate()` reducer runs on the main thread, called
+**PROVISIONAL (K01 in-process and Electron legs, dev host, not reference: OL-1; see `E30-K01.md` sections 6
+and 7): option B.** The pure `size()` + `validate()` reducer runs on the main thread, called
 imperatively from the input handler into a store outside React (`useSyncExternalStore`); the submit leaves the client
 imperatively from the handler through one transport call that does not use `apiFetch`'s CSRF retry. Evidence: the
 reducer costs about 0.01 ms p95 against the 8 ms budget in the sync and store placements, and a worker adds a
