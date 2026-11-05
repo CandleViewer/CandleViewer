@@ -43,14 +43,27 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
-from bench.admin import REPO, load_harness
+from bench.admin import REPO, load, load_harness
 from bench.ws.runner import k6_binary
 
-SCRIPTS: Final = {"audit": REPO / "tests" / "load" / "k6" / "admin" / "audit_first_page.js"}
+SCRIPTS: Final = {
+    "audit": REPO / "tests" / "load" / "k6" / "admin" / "audit_first_page.js",
+    **load.SCRIPTS,  # part 4: export, verify, flood (bench/admin/load.py)
+}
 RUN_TIMEOUT_S: Final = 3600
-#: The only variables of the caller's environment k6 sees (S-03), by name: the sign-in inputs and
-#: k6's colour switch. Every other k6 option is the run's own (`k6_env`).
-CHILD_ENV: Final = ("PATH", "HOME", "TZ", "CV_ADMIN_USERS_FILE", "CV_ADMIN_PASSWORD", "K6_NO_COLOR")
+#: The only variables of the caller's environment k6 sees (S-03), by name: the sign-in inputs,
+#: part 4's manager list and probe account, and k6's colour switch. Every other k6 option is the
+#: run's own (`k6_env`).
+CHILD_ENV: Final = (
+    "PATH",
+    "HOME",
+    "TZ",
+    "CV_ADMIN_USERS_FILE",
+    "CV_ADMIN_PASSWORD",
+    "CV_ADMIN_MANAGERS_FILE",
+    "CV_ADMIN_PROBE_ACCOUNT",
+    "K6_NO_COLOR",
+)
 
 
 def k6_argv(k6: str, profile: str, run_dir: Path) -> list[str]:
@@ -108,6 +121,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as exc:  # the guard's TargetRefused is one
         print(f"admin-perf: refused: {exc}", file=sys.stderr)
         return 2
+    if args.profile in load.SCRIPTS:
+        return load.run_profile(args, base, database, mode)
     dirs = [args.out / f"run-{i}" for i in range(1, args.runs + 1)]
     if args.dry_run:
         runs = [k6_argv("$K6_BIN", args.profile, d) for d in dirs]

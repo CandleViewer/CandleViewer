@@ -19,7 +19,7 @@ Docker or k6 on the build host). The real run happens only in the dispatch-only 
 | 1    | Dataset driver, guards, the audit query profile, `perf-admin.yml`, `make admin-perf`, this plan | this PR |
 | 2    | Chaos relay, scenarios 1, 3, 4, 6 (server halves), 5 in process, `chaos-admin-nightly.yml`      | next    |
 | 3    | Browser measures, the frame-scripting parser, the UI halves of the scenarios                    | later   |
-| 4    | Export, verify and refusal-flood runs, the added-load method                                    | later   |
+| 4    | Export, verify and refusal-flood runs, the added-load method                                    | this PR |
 | 5    | The report, baselines, runbook rows                                                             | last    |
 
 ## 2. Guards (never production, audit rows are permanent) [BQ-9]
@@ -100,3 +100,55 @@ the dataset. A budget changes only by its source's owner; no row is skipped or w
   window, so a windowed filter is not measured on an empty page [BQ-2].
 - The API takes one `severity`; K01 read `error` and `critical` together [BQ-2].
 - The `action` row uses K01's `orders.submit`.
+
+## 6. Part 4: export, verify, the refusal flood, the order-path probe, the WAL [BQ-8]
+
+Built on BQ-8's recommended answer; each place a ruling could change is marked `[BQ-8]`. What ran
+at build time: the harness tests (`services/api/tests/chaos/admin/test_e42_load_*.py`), ruff,
+`mypy --strict`, `node --check` and the runner's `--dry-run`. The real runs happen only in the
+dispatch-only `perf-admin.yml` once its part 4 profiles land (part 4's second
+branch, with the added load); until then `make admin-perf PROFILE=export|verify|flood` by hand.
+
+- **Where:** the chained set (`admin_perf1m_test`, 1 M rows; a bulk set fails a verify at row 1).
+  `bench/admin/load.py` drives the runs after part 1's guards; the k6 scripts are
+  `tests/load/k6/admin/{export_under_load,verify_span,refusal_flood}.js` with their
+  shared `lib/{loadPlan,loadCalls}.js`; `tests/load/admin/load_results.py` judges.
+- **Users per run:** two Owners (the actor, the reader) and two Managers with no grant (the
+  probe, the flood), so no run carries another's hourly limits or record budget.
+- **Timeline:** the reader (the common combinations at one a second, less `severity_actor`,
+  which waits on #1710 [BQ-8]) and the probe run from the start; the load starts at 30 s. Before
+  it is the no-load figure, inside it the loaded one (the load window's edges are k6 points).
+- **Order-path probe (E29's method):** `POST /orders` as a Manager, one a second; the first 20
+  inside the window, nearest-rank p90 <= 300 ms (`06` row 4) and <= 1.2 x the last 20 before it.
+  Without a granted account under maintenance (the world database, `CV_ADMIN_PROBE_ACCOUNT`)
+  the probe is refused at the scope step (`account_scope_denied`), before any OMS work: the
+  weaker probe; the results tag every sample with the refusal code it got [BQ-8]. No probe may
+  reach the OMS (S-1216P4-01): setup sends one probe before any load, and that answer or any
+  later one that is not the 403 refusal (`trading_disabled` only, when `CV_ADMIN_PROBE_ACCOUNT` is
+  set) aborts the test. The part 4 profiles run on testnet only: the driver and `/healthz` check.
+- **Export:** a 31-day window (84,932 entries at 1 M rows) under the reads: p95 <= 400 ms and
+  <= 1.05 x the no-load p95; the job succeeds and the file holds exactly the window's entries.
+  Bounds: a second export while one runs `409`, 32 days `422`, the sixth export in an hour and
+  the 21st download in an hour `429` (small one-minute exports and their downloads fill both).
+- **Verify:** a span past the cap `422`; `POST /admin/audit/verify` with no bound walks the newest
+  1 M ids: `200 verified: true` over the cap inside 60 s; a second run in the same batch `409`; the
+  31st run in an hour `429` (one-entry runs fill it). A window shorter than 20 probes (a fast
+  verify) is held open for 20 x 1.05 s, so the probes just after it count as loaded.
+- **Refusal flood:** every executed `/admin/*` operation the rbac matrix refuses a Manager without
+  a grant, read from `matrix.yaml`, at 200 a second for 60 s. **Expected to FAIL until #2836**;
+  every flood row that fails names it, as the audit profile names #1710 and #1711. At least 95 %
+  of its answers must be 403 (`flood_refused`): a flood of 404s or 401s writes no record and
+  never passes. Any answer below 400 is an RBAC escape and aborts the test at once (S-1216P4-02).
+- **WAL:** `tests/load/admin/wal_check.py` (beside part 1's guard and results, not `bench/`)
+  reads every WAL in the directory of `CV_AUDIT_WAL_PATH` each second before, during and after a
+  run. There is no depth series on main, so it reads the files: the depth is the size less the
+  committed cursor (a full file compacts; the uncommitted bytes cannot). Fails above 80 % of 64 MiB.
+  No `audit_unavailable` answer may appear anywhere.
+
+| Budget                               | Required                | Expected today             |
+| ------------------------------------ | ----------------------- | -------------------------- |
+| Reads under export, verify and flood | p95 <= 400 ms           | PASS                       |
+| Reads under export, A/B              | <= 1.05 x no-load p95   | unknown until the dispatch |
+| Order-path probe under each load     | p90 <= 300 ms, <= 1.2 x | PASS, except the flood     |
+| WAL depth, `audit_unavailable`       | <= 80 % of 64 MiB, none | PASS, except the flood     |
+| Refusal flood, every row             | as above                | **FAIL by design**, #2836  |
