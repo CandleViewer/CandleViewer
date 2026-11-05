@@ -1,6 +1,6 @@
 // @vitest-environment node
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -84,5 +84,36 @@ describe("the admin lane's workflow", () => {
     );
     expect(scrub).toContain("id: scrub");
     expect(scrub).toContain("python3 -I security/zap/check_artefact_secrets.py");
+  });
+
+  it("seeds at least as many users of each role as the admin specs claim in a run", () => {
+    // A user is claimed once per run (`support/real/stack.ts`), so the specs' claims add up. A
+    // claim is an actor opened, or a user taken, with the role written out: `(lane, "manager"`
+    // or `lane.user("viewer")`. One in a loop would be counted once: the specs keep none.
+    const e2e = resolve(import.meta.dirname, "../e2e");
+    const all = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+        e.isDirectory() ? all(join(dir, e.name)) : [join(dir, e.name)],
+      );
+    const claims = { owner: 0, manager: 0, viewer: 0 };
+    const CLAIM = /\(lane, "(owner|manager|viewer)"|\blane\.user\("(owner|manager|viewer)"\)/gu;
+    for (const spec of all(e2e).filter((f) => f.endsWith(".stack.ts"))) {
+      for (const m of readFileSync(spec, "utf8").matchAll(CLAIM)) {
+        claims[(m[1] ?? m[2]) as keyof typeof claims] += 1;
+      }
+    }
+    const seeded = Object.fromEntries(
+      [...text.matchAll(/^ +FIXTURE_(OWNER|MANAGER|VIEWER)S: "(\d+)"$/gmu)].map((m) => [
+        (m[1] ?? "").toLowerCase(),
+        Number(m[2]),
+      ]),
+    );
+    expect(Object.keys(seeded).sort()).toEqual(["manager", "owner", "viewer"]);
+    expect(claims.owner).toBeGreaterThan(0);
+    for (const role of ["owner", "manager", "viewer"] as const) {
+      expect(claims[role], `${role}s claimed against seeded`).toBeLessThanOrEqual(
+        seeded[role] ?? 0,
+      );
+    }
   });
 });
