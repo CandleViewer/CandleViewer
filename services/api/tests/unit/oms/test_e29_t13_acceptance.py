@@ -108,7 +108,10 @@ async def published() -> AsyncIterator[Wired]:
     topics = wt.OmsTopics(
         hub.publish, hub.flush_pending, hub.resnapshot, SnapshotBody, order=PRIVATE_CAUSAL_ORDER
     )
-    rig = build_rig(on_commit=lambda step: publishers[0].committed(step))
+    rig = build_rig(
+        on_commit=lambda step: publishers[0].committed(step),
+        rebuilt=lambda account: publishers[0].resnapshot(account),  # as `oms_wiring` passes it
+    )
     world = World(rig, parsed, InMemoryStreamedAccounts(A))
     world.trading.seed(ref(A))
     wired = Wired(world, hub, topics)
@@ -149,6 +152,44 @@ def position_row(size: str, seq: int, **fields: Any) -> dict[str, Any]:
 
 def families(deltas: list[tuple[str, dict[str, Any]]]) -> list[str]:
     return [ch for ch, _ in deltas]
+
+
+#: A write whose row commits but whose answer the binding's timeout cut off (24 Sec.8.2 S7).
+CUT_OFF = TimeoutError("the commit's answer was cut off")
+
+
+def resnapshotted(frames: list[dict[str, Any]]) -> int:
+    """The index of the last of the three `upstream_desync` snaps in *frames*, which must hold
+    one of each family and no other snap."""
+    snaps = [(i, f) for i, f in enumerate(frames) if f["t"] == "snap"]
+    assert sorted((f["ch"], f["meta"]["reason"]) for _, f in snaps) == [
+        (ch, "upstream_desync") for ch in FAMILIES
+    ]
+    return snaps[-1][0]
+
+
+def exec_ids(frames: list[dict[str, Any]]) -> list[str]:
+    """The exec ids a client's blotter holds from *frames*: its last `executions` snap replaces
+    what it held, and each delta's item is keyed by its exec id, so a fill read by the snap and
+    then sent again replaces itself (Sec.15: the later frame wins)."""
+    held: dict[str, dict[str, Any]] = {}
+    for f in frames:
+        if f["ch"] != "executions":
+            continue
+        if f["t"] == "snap":
+            held = {}
+        held |= {item["exec_id"]: item for item in f["p"]["executions"]}
+    return list(held)
+
+
+def sent_ids(frames: list[dict[str, Any]]) -> list[str]:
+    """Each exec id the `executions` deltas in *frames* carry, as often as they carry it."""
+    return [
+        item["exec_id"]
+        for f in frames
+        if f["t"] == "d" and f["ch"] == "executions"
+        for item in f["p"]["executions"]
+    ]
 
 
 @virtual
@@ -222,6 +263,57 @@ async def test_edge_case_a_position_push_before_its_order_push_past_the_bound() 
         ack.set()
         await w.world.settle()
         assert families(w.deltas()[before + 1 :]) == ["orders", "executions", "orders"]
+
+
+@virtual
+async def test_an_order_rebuilt_from_its_row_resnapshots_its_accounts_three_topics() -> None:
+    """23 Sec.6.2.3, #5952 (A1): the fill e1's row commits but its answer is cut off, so its
+    frames are never built and the facade rebuilds the order from its row. Once the rebuild
+    completes, the account's three topics are re-snapshotted with `upstream_desync`, the
+    executions snap holding e1 and the orders snap the order `partially_filled`; no delta carries
+    e1. The next fill e2 is published as S5 orders it, and the client holds e1 and e2 once each."""
+    async with published() as w:
+        order = await w.world.submitted()
+        before = len(w.frames)
+        w.world.out.store.fail_next(CUT_OFF, committed=True)
+        w.world.send(FILLS, fill_row(order, "e1", "0.4", seq=1))
+        await w.world.settle()
+        cut = w.frames[before:]
+        last = resnapshotted(cut)
+        snapped = {f["ch"]: f["p"] for f in cut if f["t"] == "snap"}
+        assert [i["exec_id"] for i in snapped["executions"]["executions"]] == ["e1"]
+        assert [(i["id"], i["state"]) for i in snapped["orders"]["orders"]] == [
+            (str(order.id), "partially_filled")
+        ]
+        assert all(f["t"] == "snap" for f in cut[: last + 1])  # no delta before the snaps
+        assert sent_ids(cut) == []  # the missed step is never published item by item
+        again = len(w.frames)
+        w.world.send(FILLS, fill_row(order, "e2", "0.6", seq=2))
+        await w.world.settle()
+        assert families(w.deltas()[len(w.deltas()) - 2 :]) == ["executions", "orders"]
+        assert [f["t"] for f in w.frames[again:]].count("snap") == 0
+        assert exec_ids(w.frames[before:]) == ["e1", "e2"]
+
+
+@virtual
+async def test_a_fill_held_for_a_rebuilt_bind_is_in_the_clients_executions_once() -> None:
+    """#5952 (A2), the race: the fill e1 waits in the reorder buffer for its order's bind, and the
+    acknowledgement's write is cut off, so the order is rebuilt from its row and e1 applies on
+    the rebuilt machine. The three `upstream_desync` snaps reach the client before any of the
+    rebuilt machine's deltas, and the client holds e1 exactly once, whether by the snap or by a
+    delta."""
+    async with published() as w:
+        order, ack = await w.world.unacked()
+        w.world.send(FILLS, fill_row(order, "e1", "0.4", seq=1))
+        await w.world.settle()
+        before = len(w.frames)
+        w.world.out.store.fail_next(CUT_OFF, committed=True)
+        ack.set()
+        await w.world.settle()
+        after = w.frames[before:]
+        last = resnapshotted(after)
+        assert all(f["t"] == "snap" for f in after[: last + 1])  # the snaps lead the new steps
+        assert exec_ids(after) == ["e1"]
 
 
 @virtual
