@@ -1,0 +1,260 @@
+{
+  "id": "order",
+  "type": "parallel",
+  "states": {
+    "lifecycle": {
+      "initial": "draft",
+      "states": {
+        "draft": {
+          "on": {
+            "VALIDATE": [
+              { "target": "#order.lifecycle.validated", "guard": "passes_all_gates" },
+              { "target": "#order.lifecycle.rejected" }
+            ],
+            "DISCOVERED": { "target": "#order.lifecycle.untracked" },
+            "MATERIALISED": { "target": "#order.lifecycle.submitted" },
+            "KILL": { "target": "#order.lifecycle.killed" },
+            "CANCEL": {},
+            "AMEND": {}
+          }
+        },
+        "validated": {
+          "on": {
+            "SEND": { "target": "#order.lifecycle.submitting" },
+            "KILL": { "target": "#order.lifecycle.killed" },
+            "CANCEL": {},
+            "AMEND": {}
+          }
+        },
+        "submitting": {
+          "invoke": {
+            "id": "place",
+            "src": "place_order",
+            "onDone": [
+              { "target": "#order.lifecycle.submitted", "guard": "ret_code_ok" },
+              { "target": "#order.lifecycle.held", "guard": "is_link_id_mismatch" },
+              {
+                "target": "#order.lifecycle.submitted",
+                "guard": "is_duplicate_link_id_full_match"
+              },
+              { "target": "#order.lifecycle.unknown", "guard": "is_duplicate_link_id" },
+              { "target": "#order.lifecycle.rejected" }
+            ],
+            "onError": { "target": "#order.lifecycle.unknown" }
+          },
+          "on": { "CANCEL": {}, "AMEND": {} }
+        },
+        "submitted": {
+          "on": {
+            "EXEC": [
+              { "target": "#order.lifecycle.filled", "guard": "exec_new_and_closes" },
+              { "target": "#order.lifecycle.partially_filled", "guard": "exec_new_and_partial" },
+              {}
+            ],
+            "TRIGGERED": { "target": "#order.lifecycle.triggered" },
+            "CANCEL": { "target": "#order.lifecycle.cancel_pending" },
+            "AMEND": { "target": "#order.lifecycle.amend_pending" },
+            "EXPIRE": { "target": "#order.lifecycle.expired" },
+            "REMOTE_CANCELLED": { "target": "#order.lifecycle.cancelled" },
+            "MISMATCH": { "target": "#order.lifecycle.held" },
+            "TRANSPORT_FAULT": { "target": "#order.lifecycle.unknown" },
+            "FAULT": { "target": "#order.lifecycle.quarantined" },
+            "TERMS_CHANGED": [
+              { "target": "#order.lifecycle.submitted", "guard": "recorded_terms_changed" },
+              {}
+            ],
+            "RECON_MISS": { "target": "#order.lifecycle.unknown" },
+            "KILL": [{ "guard": "is_recorded_stop" }, { "target": "#order.lifecycle.killed" }]
+          }
+        },
+        "triggered": {
+          "on": {
+            "EXEC": [
+              { "target": "#order.lifecycle.filled", "guard": "exec_new_and_closes" },
+              { "target": "#order.lifecycle.partially_filled", "guard": "exec_new_and_partial" },
+              {}
+            ],
+            "CANCEL": { "target": "#order.lifecycle.cancel_pending" },
+            "EXPIRE": { "target": "#order.lifecycle.expired" },
+            "REMOTE_CANCELLED": { "target": "#order.lifecycle.cancelled" },
+            "TERMS_CHANGED": [
+              { "target": "#order.lifecycle.triggered", "guard": "recorded_terms_changed" },
+              {}
+            ],
+            "RECON_MISS": { "target": "#order.lifecycle.unknown" },
+            "KILL": [{ "guard": "is_recorded_stop" }, { "target": "#order.lifecycle.killed" }],
+            "AMEND": {}
+          }
+        },
+        "partially_filled": {
+          "on": {
+            "EXEC": [
+              { "target": "#order.lifecycle.filled", "guard": "exec_new_and_closes" },
+              { "target": "#order.lifecycle.partially_filled", "guard": "exec_new_and_partial" },
+              {}
+            ],
+            "CANCEL": { "target": "#order.lifecycle.cancel_pending" },
+            "AMEND": { "target": "#order.lifecycle.amend_pending" },
+            "FAULT": { "target": "#order.lifecycle.quarantined" },
+            "EXPIRE": { "target": "#order.lifecycle.expired" },
+            "REMOTE_CANCELLED": { "target": "#order.lifecycle.cancelled" },
+            "TERMS_CHANGED": [
+              { "target": "#order.lifecycle.partially_filled", "guard": "recorded_terms_changed" },
+              {}
+            ],
+            "RECON_MISS": { "target": "#order.lifecycle.unknown" },
+            "KILL": [{ "guard": "is_recorded_stop" }, { "target": "#order.lifecycle.killed" }]
+          }
+        },
+        "cancel_pending": {
+          "invoke": {
+            "id": "cancel",
+            "src": "cancel_order",
+            "onDone": [
+              { "target": "#order.lifecycle.cancelled", "guard": "ret_code_ok" },
+              { "target": "#order.lifecycle.partially_filled", "guard": "has_fills" },
+              { "target": "#order.lifecycle.submitted" }
+            ],
+            "onError": { "target": "#order.lifecycle.unknown" }
+          },
+          "on": {
+            "EXEC": [
+              { "target": "#order.lifecycle.filled", "guard": "exec_new_and_closes" },
+              { "target": "#order.lifecycle.partially_filled", "guard": "exec_new_and_partial" },
+              {}
+            ],
+            "REMOTE_CANCELLED": { "target": "#order.lifecycle.cancelled" },
+            "KILL": [{ "guard": "is_recorded_stop" }, {}],
+            "CANCEL": {},
+            "AMEND": {}
+          }
+        },
+        "amend_pending": {
+          "invoke": {
+            "id": "amend",
+            "src": "amend_order",
+            "onDone": [
+              {
+                "target": "#order.lifecycle.partially_filled",
+                "guard": "ret_code_ok_and_has_fills"
+              },
+              { "target": "#order.lifecycle.submitted", "guard": "ret_code_ok" },
+              { "target": "#order.lifecycle.partially_filled", "guard": "has_fills" },
+              { "target": "#order.lifecycle.submitted" }
+            ],
+            "onError": { "target": "#order.lifecycle.unknown" }
+          },
+          "on": {
+            "AMEND_REJECTED": [
+              { "target": "#order.lifecycle.partially_filled", "guard": "has_fills" },
+              { "target": "#order.lifecycle.submitted" }
+            ],
+            "REMOTE_CANCELLED": { "target": "#order.lifecycle.cancelled" },
+            "KILL": [{ "guard": "is_recorded_stop" }, { "target": "#order.lifecycle.killed" }],
+            "CANCEL": {},
+            "AMEND": {}
+          }
+        },
+        "unknown": {
+          "on": {
+            "RECON_FOUND_LIVE": { "target": "#order.lifecycle.submitted" },
+            "RECON_FOUND_PARTIAL": { "target": "#order.lifecycle.partially_filled" },
+            "RECON_FOUND_FILLED": { "target": "#order.lifecycle.filled" },
+            "RECON_FOUND_CANCELLED": { "target": "#order.lifecycle.cancelled" },
+            "RECON_MISS": [
+              { "target": "#order.lifecycle.rejected", "guard": "second_consecutive_miss" },
+              { "target": "#order.lifecycle.unknown" }
+            ],
+            "MISMATCH": { "target": "#order.lifecycle.held" },
+            "KILL": [{ "guard": "is_recorded_stop" }, { "target": "#order.lifecycle.killed" }],
+            "CANCEL": {},
+            "AMEND": {}
+          }
+        },
+        "quarantined": {
+          "on": {
+            "RECON_FOUND_LIVE": { "target": "#order.lifecycle.submitted" },
+            "RECON_FOUND_PARTIAL": { "target": "#order.lifecycle.partially_filled" },
+            "RECON_FOUND_FILLED": { "target": "#order.lifecycle.filled" },
+            "RECON_FOUND_CANCELLED": { "target": "#order.lifecycle.cancelled" },
+            "MISMATCH": { "target": "#order.lifecycle.held" },
+            "RECON_MISS": { "target": "#order.lifecycle.unknown" },
+            "KILL": [{ "guard": "is_recorded_stop" }, { "target": "#order.lifecycle.killed" }],
+            "CANCEL": {},
+            "AMEND": {}
+          }
+        },
+        "untracked": {
+          "on": {
+            "ADOPT": [{ "target": "#order.lifecycle.submitted", "guard": "adoption_allowed" }, {}],
+            "RECON_FOUND_LIVE": {},
+            "RECON_FOUND_PARTIAL": {},
+            "RECON_FOUND_FILLED": { "target": "#order.lifecycle.filled" },
+            "RECON_FOUND_CANCELLED": { "target": "#order.lifecycle.cancelled" },
+            "RECON_MISS": [
+              { "target": "#order.lifecycle.cancelled", "guard": "second_consecutive_miss" },
+              { "target": "#order.lifecycle.untracked" }
+            ],
+            "EXEC": [
+              { "target": "#order.lifecycle.filled", "guard": "exec_new_and_closes" },
+              { "target": "#order.lifecycle.untracked", "guard": "exec_new_and_partial" },
+              {}
+            ],
+            "KILL": {},
+            "CANCEL": {},
+            "AMEND": {},
+            "SEND": {},
+            "VALIDATE": {}
+          }
+        },
+        "held": {
+          "on": {
+            "EXEC": {},
+            "OPERATOR_RESOLVED": { "target": "#order.lifecycle.rejected" },
+            "KILL": {},
+            "CANCEL": {},
+            "AMEND": {}
+          }
+        },
+        "filled": { "type": "final", "on": { "EXEC": {}, "KILL": {} } },
+        "cancelled": { "type": "final", "on": { "EXEC": {}, "KILL": {} } },
+        "rejected": { "type": "final", "on": { "EXEC": {}, "KILL": {} } },
+        "expired": { "type": "final", "on": { "EXEC": {}, "KILL": {} } },
+        "killed": { "type": "final", "on": { "EXEC": {}, "KILL": {} } }
+      },
+      "on": {
+        "KILL": { "target": "#order.lifecycle.killed" },
+        "OPERATOR_RESOLVED": {},
+        "ADOPT": {}
+      }
+    },
+    "protection": {
+      "initial": "not_required",
+      "states": {
+        "not_required": { "on": { "FIRST_FILL": { "target": "#order.protection.sl_pending" } } },
+        "sl_pending": {
+          "invoke": {
+            "id": "attach_sl",
+            "src": "attach_native_sl",
+            "onDone": [
+              { "target": "#order.protection.sl_present", "guard": "sl_attach_ok" },
+              { "target": "#order.protection.sl_missing" }
+            ],
+            "onError": { "target": "#order.protection.sl_missing" }
+          },
+          "on": { "SL_DEADLINE": { "target": "#order.protection.sl_missing" } }
+        },
+        "sl_present": { "on": { "SL_LOST": { "target": "#order.protection.sl_missing" } } },
+        "sl_missing": {
+          "on": {
+            "SL_OBSERVED": [
+              { "target": "#order.protection.sl_present", "guard": "sl_observed_ok" },
+              {}
+            ]
+          }
+        }
+      },
+      "on": { "SL_OBSERVED": {}, "SL_LOST": {}, "FIRST_FILL": {}, "SL_DEADLINE": {}, "KILL": {} }
+    }
+  }
+}

@@ -5,7 +5,8 @@
  * dynamic imports) and asserts that main.tsx boots via `startShell`, and that
  * every `src/features/<slice>/` has at least one module reachable from the
  * entry point. A new slice nobody mounts fails, naming the slice. Intentional
- * exceptions go in ALLOW_UNMOUNTED with a reason and ticket.
+ * exceptions go in ALLOW_UNMOUNTED with a reason and ticket; a `<slice>/<dir>` key
+ * holds one directory of a mounted slice unmounted, and goes stale the same way.
  *
  * Imports are read with the TypeScript parser (never regex), so commented-out
  * imports do not count. For the route tree, each imported symbol must also be
@@ -23,6 +24,8 @@ const ENTRY = join(SRC, "main.tsx");
 const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
   "admin-connectivity":
     "E08-S12 (#5207) PR 1: SCR-147's pure core, flags off; PR 2 mounts it once #5330 and the R-id land",
+  "admin/statecharts":
+    "E42-S08 (#1137) parts 1-7: the statechart inspector, unrouted; part 8 of 8 mounts R-357",
   "chart-errors": "E11-S02 (#334): SCR-048 wraps <Chart>, which no screen mounts until SCR-030",
   "chart-price-scale":
     "E11-S05 (#386): SCR-043 is a <Chart> child; no screen mounts one until SCR-030",
@@ -156,6 +159,12 @@ describe("composition guard (web)", () => {
       offenders,
       `feature slices never imported from main.tsx/App/router: ${offenders.join(", ")}`,
     ).toEqual([]);
+    // A nested key (`<slice>/<dir>`): a directory held unmounted inside a mounted slice.
+    for (const key of Object.keys(ALLOW_UNMOUNTED).filter((k) => k.includes("/"))) {
+      const prefix =
+        join(featuresDir, ...key.split("/")) + (process.platform === "win32" ? "\\" : "/");
+      if ([...reachable].some((f) => f.startsWith(prefix))) mounted.push(key);
+    }
     const stale = mounted.filter((s) => s in ALLOW_UNMOUNTED);
     expect(stale, `allow-list entries now mounted, remove: ${stale.join(", ")}`).toEqual([]);
   });

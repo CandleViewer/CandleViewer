@@ -1,0 +1,98 @@
+{
+  "id": "oco",
+  "on": { "KILL": { "target": "#oco.failed" } },
+  "initial": "arming",
+  "states": {
+    "arming": {
+      "invoke": {
+        "id": "arm",
+        "src": "submit_both_legs",
+        "onDone": { "target": "#oco.racing" },
+        "onError": { "target": "#oco.failed" }
+      }
+    },
+    "racing": {
+      "on": {
+        "LEG_A_FILL": [
+          { "target": "#oco.overshoot", "guard": "position_overshoots" },
+          { "target": "#oco.settling_b" }
+        ],
+        "LEG_B_FILL": [
+          { "target": "#oco.overshoot", "guard": "position_overshoots" },
+          { "target": "#oco.settling_a" }
+        ],
+        "POSITION_FLAT": [
+          { "target": "#oco.cancelling_all", "guard": "cancel_on_position_flat" },
+          {}
+        ],
+        "USER_CANCEL": { "target": "#oco.cancelling_all" }
+      }
+    },
+    "settling_b": {
+      "invoke": {
+        "id": "settle_b",
+        "src": "settle_other_leg",
+        "onDone": [
+          { "target": "#oco.completing", "guard": "other_leg_terminal" },
+          { "target": "#oco.racing", "guard": "partial_settle_remaining" }
+        ],
+        "onError": [
+          { "target": "#oco.reconciling", "guard": "error_is_order_gone" },
+          { "target": "#oco.settling_b", "guard": "settle_retries_left" },
+          { "target": "#oco.failed" }
+        ]
+      },
+      "on": {}
+    },
+    "settling_a": {
+      "invoke": {
+        "id": "settle_a",
+        "src": "settle_other_leg",
+        "onDone": [
+          { "target": "#oco.completing", "guard": "other_leg_terminal" },
+          { "target": "#oco.racing", "guard": "partial_settle_remaining" }
+        ],
+        "onError": [
+          { "target": "#oco.reconciling", "guard": "error_is_order_gone" },
+          { "target": "#oco.settling_a", "guard": "settle_retries_left" },
+          { "target": "#oco.failed" }
+        ]
+      },
+      "on": {}
+    },
+    "overshoot": {
+      "invoke": {
+        "id": "flatten_excess",
+        "src": "reduce_only_market_excess",
+        "onDone": { "target": "#oco.completing" },
+        "onError": { "target": "#oco.failed" }
+      }
+    },
+    "reconciling": {
+      "invoke": {
+        "id": "rec",
+        "src": "reconcile_children",
+        "onDone": { "target": "#oco.completing" },
+        "onError": { "target": "#oco.failed" }
+      }
+    },
+    "cancelling_all": {
+      "invoke": {
+        "id": "ca",
+        "src": "cancel_all_children",
+        "onDone": { "target": "#oco.cancelled" },
+        "onError": { "target": "#oco.failed" }
+      }
+    },
+    "completing": {
+      "on": {
+        "CHILDREN_TERMINAL": { "target": "#oco.completed" },
+        "LEG_A_FILL": [{ "target": "#oco.overshoot", "guard": "position_overshoots" }, {}],
+        "LEG_B_FILL": [{ "target": "#oco.overshoot", "guard": "position_overshoots" }, {}]
+      }
+    },
+    "completed": { "type": "final" },
+    "cancelled": { "type": "final" },
+    "failed": { "type": "final" }
+  }
+}
