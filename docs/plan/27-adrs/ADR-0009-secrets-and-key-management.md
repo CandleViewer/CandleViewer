@@ -305,3 +305,41 @@ from detail. Paths are under `services/api/candleviewer/`.
 - **Dev, demo and CI** (from S5b). The process-local fallback is gone. The four CI workflows that
   run MFA on the real backend mint a 32-byte file KEK per run and keep both env keys, so their
   first boot imports them.
+
+## Amendment 9 (2026-11-05, #1400 S3; BQ-02 ruled by main-orchestrator under the owner's delegation, veto venue #2701)
+
+Adds the alert webhook's two class S columns (`alerts.webhook_url_enc`, `alerts.webhook_secret_enc`,
+`21-database-schema.md` §12) to what M2 seals, and one bounded signer, so the signing secret never
+leaves M2 (SR-E40-14 and AL-E06 in the E40 threat model, "if #5844 merges as is"). `alerts` (M22)
+keeps no edge to `secrets`.
+
+- **Three capabilities, closures only.** M2 gains a `WebhookSealer`, a `WebhookTargetOpener` and a
+  bounded `WebhookSigner`, each holding a closure only, like `CredentialBorrower` (Amendment 2). Each
+  is minted once in `admin/wiring.py`, a site the M2 AST guard pins, with a test that fails on a
+  second mint site. They reach `alerts` as the `alerts/ports.py` Protocols, which the composition root
+  binds, so the import-linter contracts do not change (C-3.2, C-3.4; Amendment 4's pattern).
+- **The seal.** Each column is its own sealed blob: a fresh 32-byte DEK, wrapped by the current KEK
+  under `cv-webhook-dek-v1 | environment | alert id | field | kek_version`, seals the value under
+  `cv.alert.webhook.{url|secret}.v1 | environment | alert id`. The alert id is in both AADs, so
+  a blob moved to another alert, or between the two columns, does not open. The URL is at most
+  2,048 bytes. The secret is 32 to 128 bytes, entered by the user, and write-only. M2 never returns
+  it, logs it, or puts it in an exception.
+- **The opener.** It opens the URL column alone, for the egress client, which holds the URL in
+  memory for one delivery and never logs or stores it (BQ-02). No capability opens the secret.
+- **The signer.** It takes a secret blob, the alert id, a delivery id, a Unix timestamp in
+  seconds and the 32-byte SHA-256 digest of the raw body. It signs only
+  `cv.alert.webhook.v1:{timestamp}:{delivery_id}:{hex digest}` with HMAC-SHA256, and builds that
+  string itself from those fields. It is no general signing oracle: a fixed prefix and a fixed field
+  set. It refuses a digest that is not exactly 32 bytes, an id or timestamp that is not a positive
+  integer in range, or a blob that does not open. The header names, the 300 s window and the
+  24 h dedupe are S1's `24` section and the runbook's (C-16.5).
+- **Use.** Every call opens the DEK under the held KEK of the blob's version and zeroes it, and any
+  opened plaintext, after the call. A refusal has a closed reason (`webhook_request_invalid`,
+  `kek_unavailable`, `webhook_kek_not_held`, `webhook_seal_invalid`) and logs the check that failed,
+  never a value (C-12.6). Signing writes no audit record of its own. The delivery row records the
+  attempt (S5), and configuring a webhook records `alert.webhook_configured` (S4), with no value in
+  either.
+- **KEK rotation.** M2 re-wraps a blob's DEK under the current KEK and leaves the sealed value as it
+  is. Each new wrap is verified before it is returned. The re-wrap runs on the alert rows once S4
+  adds the columns, at the rotation boot with the other rows (Amendments 4 and 8), and
+  `security.kek_rotated` waits for them as well.
