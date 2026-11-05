@@ -2,7 +2,7 @@
 
 - Status: **proposed** (2026-11-04). Decision deadline: ratification before E30-T01 (#984, `packages/order-ticket-core`)
   opens its first code PR. The decision is **provisional** on the in-process leg of the K01 run (dev host, not
-  reference: OL-1); the Electron leg is pending.
+  reference: OL-1); the Electron leg has since run (see "Evidence update").
 - Date: 2026-11-04
 - Deciders: Owner (`@basiltt`) through the delivery orchestrator (the delegation on #2701); the architect as
   CODEOWNER of `docs/plan/`.
@@ -12,7 +12,8 @@
 - Numbering note: the orchestrator assigned 0046 on #852 (0042 to 0045 are taken).
 - Related: #852 (E30-K01, this record is its output), #984 (E30-T01, the consumer), #1155 (E30-Q03, the perf scripts),
   #843 (E29-K01, the demo leg).
-- Evidence: `docs/plan/spikes/E30-K01.md` and `E30-K01-results.json` (in-process leg).
+- Evidence: `docs/plan/spikes/E30-K01.md`, `E30-K01-results-node.json` (in-process leg) and `E30-K01-results.json`
+  (Electron leg).
 
 ## Context and problem statement
 
@@ -57,6 +58,19 @@ confirms recompute end B and gesture to `fetch()` under both chart-engine RunMod
 worker option is reopened. The rule the acceptance criteria already fix: if recompute p95 exceeds 8 ms in option A, this
 record mandates B or C for E30-T01; if no placement meets 50 ms gesture to `fetch()`, a `32` risk entry and a scope
 question to the Architect follow instead.
+
+### Evidence update (2026-11-05, K01 Electron leg)
+
+The Electron leg ran all 12 cells (`E30-K01.md` section 6.2; Electron 45 under xvfb on the shared 8-vCPU dev host,
+no GPU, no sandbox: below-class, so a miss is INCONCLUSIVE, never FAIL). It **confirms option B**; this record stays
+Proposed. Recompute end A: sync and store 0.3 to 0.5 ms p95, the worker 3.7 to 6.2 ms p95 (p99 12.6 to 37.4 ms).
+Gesture to `fetch()`: 2.4 to 10.4 ms p95 in every cell against 50 ms. Recompute end B (to the first frame after the
+commit) reads 18.7 to 26.7 ms p95 at a p50 of one 60 Hz frame in **every** placement, so the reopen clause above
+("if end B exceeds 8 ms p95 the worker option is reopened") is met literally; but the worker placement's own end B is
+the highest (22.6 to 26.7 ms in the worker RunMode) and store's the lowest (18.7 to 19.7 ms), so a worker cannot fix
+it. The finding proposes, for the ratification, gating the 8 ms on end A or the commit and reporting end B against
+the next frame. Not covered: the inline RunMode with real GL (the page had no WebGL context), a sandboxed renderer and
+reference-class hardware.
 
 ## Consequences
 

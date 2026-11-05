@@ -81,7 +81,7 @@ markdown table on stdout.
 
 ## After the run
 
-1. Copy the electron results to `docs/plan/spikes/E30-K01-results.json` (browser: `-browser` suffix).
+1. Copy the electron results to `docs/plan/spikes/E30-K01-results.json` (browser: `-browser` suffix; the in-process leg is `E30-K01-results-node.json`).
 2. Print every number in `../E30-K01.md` section 6 from that file; type none from memory.
 3. Fill section 7 (the decision) and the "what E30-T01 needs" answers; the merging PR is
    `spike/e30-k01-finding`, which carries docs only.
