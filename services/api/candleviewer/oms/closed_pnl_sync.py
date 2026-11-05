@@ -22,8 +22,15 @@ the order's row terminal, and the `c` the walk gives the record's closes, each s
 summing to its `qty`. Without one, a record is final once its order's row is terminal and its
 `qty` is the size the order's stored trade fills state they closed (row 60), a fill that states
 none keeping it open. A composition that fails is logged at WARNING by kind and keeps the poll,
-the named orders and what it was to carry; the read goes on. The comparison is E29-S06's next
-slice.
+the named orders and what it was to carry; the read goes on.
+
+**The comparison** (slice 5c, `closed_pnl_compare`, the rulings Q2, Q3 and Q6): with a `comparer`,
+the items the delta set's step composed are compared after it, and the records not settled whose
+`closed_at` left the reach since the last pass (row 56 read from where the last pass's reach was,
+or `MISSING_SPAN` before the reach at the account's first pass, which a restart repeats) are
+recorded as a venue figure missing. What the comparison owes (a record held back or unwritten, a
+flag unwritten) is compared again at the next pass: its order composed again, ahead of the records
+the read changed, or its missing record written again; it keeps the poll.
 
 **The seed** (the orchestrator's ruling of 2026-11-04 15:51Z, option (a)): at an account's first
 read the sync reads the venue's positions, in the same lane, and stores each reading the venue
@@ -75,12 +82,18 @@ from candleviewer.exchange.base.models import AccountRef, ClosedPnl, Position, R
 from candleviewer.observability import spawn
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
-from candleviewer.storage.repositories.closed_pnl import PendingRecord, SettleOutcome, VenueRecord
+from candleviewer.storage.repositories.closed_pnl import (
+    ClosedPnlRecordRow,
+    PendingRecord,
+    SettleOutcome,
+    VenueRecord,
+)
 from candleviewer.storage.repositories.executions import NewExecution
 from candleviewer.storage.repositories.oms_reads import CLOSING_EXEC_TYPES, TERMINAL_STATES
 from candleviewer.storage.repositories.positions import MAX_FUTURE_SKEW, NewPositionSnapshot
 
-from .closed_pnl_compose import ClosedPnlComposer, ComposePass
+from .closed_pnl_compare import ClosedPnlComparer, Owed
+from .closed_pnl_compose import ClosedPnlComposer, Composed, ComposePass
 from .errors import AccountScopeDenied, OrderEntryRefused
 from .ports import RateReading, TradingAccounts
 
@@ -97,6 +110,8 @@ PENDING_LIMIT: Final = 200  # the records one poll reads (row 56); the rest wait
 MAX_ACCOUNTS: Final = 256
 NAMED_LIMIT: Final = 256  # the orders an account's stored fills name for the composition
 CARRY_LIMIT: Final = 1024  # the venue ids a composition left that an account carries to the next
+#: PROPOSED: how far before the reach an account's first pass looks for a venue figure missing.
+MISSING_SPAN: Final = timedelta(days=1)
 #: The outcomes that put a record read in the delta set (Q3).
 _CHANGED: Final = frozenset[SettleOutcome](("inserted", "settled", "replaced"))
 FETCH_SECONDS: Final = "oms_closed_pnl_fetch_seconds"
@@ -258,6 +273,8 @@ class _Account:
     named: set[UUID] = field(default_factory=set)  # the orders its stored fills named, to compose
     composed: bool = False  # its first composition after the settle ran
     carried: list[str] = field(default_factory=list)  # venue ids a composition left, oldest first
+    owed: Owed = field(default_factory=dict)  # what its comparison owes the next pass
+    missing_from: datetime | None = None  # where its next look for a venue figure missing starts
 
 
 class ClosedPnlSync:
@@ -265,17 +282,19 @@ class ClosedPnlSync:
     instant, from the one resolver the cap takes too (`risk.day_boundary`, 24 Sec.8.13), whose
     failure fails the read, so the poll keeps running; `on_ended` what is told, once, on the
     task's loop, that the task ended other than by `stop()` (the runtime's page): it must not
-    raise; `composer` the composition (module docstring), None for the stored rule alone."""
+    raise; `composer` the composition (module docstring), None for the stored rule alone;
+    `comparer` the comparison of what it composes (module docstring), None for none."""
 
     def __init__(
         self, *, accounts: TradingAccounts, router: ReadRouter, records: ClosedPnlRecords,
         closes: StoredCloses, snapshots: SnapshotWrites, metrics: Metrics,
         now: Callable[[], datetime], on_ended: Callable[[], None],
         day_start: Callable[[datetime], Awaitable[datetime]],
-        composer: ClosedPnlComposer | None = None,
+        composer: ClosedPnlComposer | None = None, comparer: ClosedPnlComparer | None = None,
     ) -> None:  # fmt: skip
         self._accounts, self._router, self._records = accounts, router, records
         self._closes, self._snapshots, self._composer = closes, snapshots, composer
+        self._comparer = comparer
         self._now, self._day_start, self._on_ended = now, day_start, on_ended
         spec = next(spec for spec in CATALOGUE if spec.name == FETCH_SECONDS)
         self._seconds = metrics.histogram(
@@ -436,7 +455,7 @@ class ClosedPnlSync:
                     and (outcome in _CHANGED or not state.composed)
                 ]  # fmt: skip
                 done, left = await self._settled(account_id, state, composing, named, changed,
-                                                 pending)  # fmt: skip
+                                                 pending, reach)  # fmt: skip
                 state.composed = state.composed or done
         finally:
             if not done:  # composed at the next pass, before its read
@@ -528,15 +547,16 @@ class ClosedPnlSync:
 
     async def _settled(
         self, account_id: AccountId, state: _Account, composing: ComposePass, named: set[UUID],
-        changed: list[str], pending: Sequence[PendingRecord],
+        changed: list[str], pending: Sequence[PendingRecord], reach: datetime,
     ) -> tuple[bool, bool]:  # fmt: skip
-        """The delta set's composition and its final rule (Q3, Q4): whether it ran, and whether a
-        record is left to poll, one of the poll's not final or a venue id carried. The named
-        orders come first, then the venue ids carried from earlier passes, then the records the
-        read changed, then the poll's page less those, so a full page starves no fresh settle;
-        what the step leaves past its bounds is carried to the next pass. The comparison
-        (E29-S06's next slice) reads what it composed here."""
-        venue = list(dict.fromkeys((*state.carried, *changed)))
+        """The delta set's composition, its final rule and its comparison (Q3, Q4): whether it
+        ran, and whether a record is left to poll, one of the poll's not final, a venue id
+        carried or a comparison owed. The named orders come first, then the venue ids carried
+        from earlier passes and those whose comparison is owed, then the records the read
+        changed, then the poll's page less those, so a full page starves no fresh settle; what
+        the step leaves past its bounds is carried to the next pass."""
+        owed = (venue for venue, row in state.owed.items() if row is None)
+        venue = list(dict.fromkeys((*state.carried, *owed, *changed)))
         first = set(venue)
         ids = (i.row.exchange_order_id for i in pending)  # row 56's each have one (its join)
         page = [x for x in ids if x is not None and x not in first]
@@ -545,10 +565,52 @@ class ClosedPnlSync:
         )
         left = venue if composed is None else composing.unreached
         self._carry(account_id, state, left, set(page))
+        compared = await self._compared(account_id, state, composed or (), reach)
         if composed is None:
             return False, True
         final = {c.row.id for c in composed if c.final}
-        return True, bool(state.carried) or any(item.row.id not in final for item in pending)
+        polled = any(item.row.id not in final for item in pending)
+        return True, bool(state.carried) or not compared or polled
+
+    async def _compared(
+        self, account_id: AccountId, state: _Account, composed: Sequence[Composed],
+        reach: datetime,
+    ) -> bool:  # fmt: skip
+        """The comparison of what the step composed and of the venue figures missing: whether
+        nothing is owed. Never raises but a cancel: a failed look for the missing is logged by
+        kind and made again at the next pass, from where it started."""
+        if self._comparer is None:
+            return True
+        missing = [row for row in state.owed.values() if row is not None]
+        looked = True
+        try:
+            missing += await self._missing(account_id, state, reach)
+        except Exception as exc:  # a cancel propagates
+            _log().warning("closed_pnl_missing_read_failed", account_id=str(account_id),
+                           kind=type(exc).__name__)  # fmt: skip
+            looked = False
+        state.owed = await self._comparer.compare(account_id, composed, missing)
+        return looked and not state.owed
+
+    async def _missing(
+        self, account_id: AccountId, state: _Account, reach: datetime
+    ) -> list[ClosedPnlRecordRow]:
+        """The records not settled whose `closed_at` left the reach since the last look (row 56
+        from there), oldest first; a full page moves the look to its last `closed_at` only."""
+        since = reach - MISSING_SPAN if state.missing_from is None else state.missing_from
+        if since >= reach:
+            return []
+        read = self._records.pending(account_id, since, PENDING_LIMIT)
+        rows = [item.row for item in await _bounded(read, PORT_TIMEOUT_S)]
+        gone = [row for row in rows if row.closed_at < reach]
+        state.missing_from = reach
+        # A full page whose rows all share one `closed_at` equal to `since` cannot split that
+        # instant, so the look moves to the reach and rows past the page at that instant are never
+        # read, so never recorded (row 56's tie at the cut; it takes 200 records closed at once).
+        if len(rows) == PENDING_LIMIT == len(gone) and gone[-1].closed_at > since:
+            state.missing_from = gone[-1].closed_at  # the rest of that time at the next look
+            gone = [row for row in gone if row.closed_at < state.missing_from]
+        return [row for row in gone if row.settled_at is None]
 
     def _carry(
         self, account_id: AccountId, state: _Account, left: Iterable[str], page: set[str]
