@@ -9,6 +9,7 @@ import type {
   RenderProfile,
 } from "../gl/capability.js";
 import type { LossDetails } from "../gl/context-loss.js";
+import type { InteractionMode, SelectionOp } from "../hit/selection.js";
 import type { AtlasDetails } from "../text/atlas.js";
 import type { ChartFont } from "../text/platform.js";
 import { INT32_TICKS } from "../viewport/transform.js";
@@ -117,9 +118,8 @@ export type PickPointer = "mouse" | "pen" | "touch";
 const PICK_POINTERS: ReadonlySet<unknown> = new Set(["mouse", "pen", "touch"]);
 
 /** E14-T04 (#359): the selection operations and the plot's two modes. */
-export type SelectionOp = "replace" | "add" | "toggle" | "clear";
+export type { InteractionMode, SelectionOp };
 const SELECTION_OPS: ReadonlySet<unknown> = new Set(["replace", "add", "toggle", "clear"]);
-export type InteractionMode = "cursor" | "select-area";
 /** Bounds on the drawing commands (an availability control, like BQ-138's ceilings). */
 export const MAX_ANCHORS = 1_024;
 export const MAX_LEVELS = 32;
