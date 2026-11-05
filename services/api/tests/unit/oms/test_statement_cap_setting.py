@@ -29,6 +29,7 @@ from tests.unit.oms import test_oms_runtime as rt
 _CAPPED = {"orders", "executions", "submissions", "anchors", "stops", "groups", "accounts", "sweep"}
 _CAPPED |= {"handovers", "reconcile"}  # E29-T06 #914: `oms_handovers` and the pass's own store
 _CAPPED |= {"closed_pnl"}  # E29-S06 #981: `closed_pnl_records`, the closed-PnL sync's
+_CAPPED |= {"risk_policy"}  # E29-S06 #981 slice 4: the day boundary's column, the resolver's
 
 
 async def test_every_capped_store_the_runtime_builds_reads_the_setting() -> None:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, cast
@@ -21,7 +22,13 @@ from structlog.testing import capture_logs
 from candleviewer.app import _oms_state
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.models import PrivateStreamStatus
-from candleviewer.oms.closed_pnl_sync import DEBOUNCE_S, PORT_TIMEOUT_S, ClosedPnlSync
+from candleviewer.oms.closed_pnl_sync import (
+    CLOSED_PNL_LOOKBACK,
+    DEBOUNCE_S,
+    PORT_TIMEOUT_S,
+    ClosedPnlSync,
+)
+from candleviewer.oms.day_figures import DayRiskFigures
 from candleviewer.oms.fakes import InMemorySubmissionStore
 from candleviewer.oms.ports import NoReconciliation
 from candleviewer.oms.reconcile_job import ReconcileJobs
@@ -29,6 +36,7 @@ from candleviewer.oms.repository import ExecutionRepository
 from candleviewer.oms.stop_gate import ResolvingStopGate
 from candleviewer.oms_stream_wiring import ExchangeWallClock
 from candleviewer.oms_wiring import ClosedPnlResyncs, OmsStores
+from candleviewer.risk.day_boundary import DayBoundary, day_containing
 from candleviewer.storage.repositories.executions import NewExecution
 from candleviewer.storage.repositories.trading_accounts import TradingAccountRow
 from tests.unit.audit.audit_waits import virtual
@@ -42,6 +50,7 @@ from tests.unit.oms.test_order_repository import _DONE, _AnyStore
 from tests.unit.test_oms_reconcile_wiring import Reads
 
 T0_US = int(T0.timestamp()) * 1_000_000
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 @dataclass
@@ -106,6 +115,27 @@ async def test_the_sync_is_built_from_the_runtimes_parts_and_starts_once_ready(
         await until(lambda: bool(_reads(world)))
     assert starts == [(True, True, [AccountId(cr.ACCOUNT)])]
     assert _reads(world) == [(cr.ACCOUNT, "poll")]
+
+
+async def test_one_resolver_over_the_stores_column_gives_the_cap_and_the_sync_their_day() -> None:
+    """24 Sec.8.13: one resolver, over the column `OmsStores.risk_policy` reads, is the order
+    path's daily-loss figure's and the sync's: at +180 the sync reaches `CLOSED_PNL_LOOKBACK`
+    before its day's start, 21:00Z of the previous UTC date, never UTC midnight's."""
+    world = keyed(Synced())
+    world.policy.offset = 180
+    async with started(world.runtime()) as runtime:
+        parts = runtime._composed()
+        sync, figures = parts.closed_pnl, parts.submission._deps.figures
+        assert sync is not None and isinstance(figures, DayRiskFigures)
+        days = figures._days
+        assert isinstance(days, DayBoundary) and days._policy is world.policy
+        assert sync._day_start == days.day_start  # bound to the one resolver
+        await until(lambda: bool(_reads(world)))
+    calls = [c for port in world.venue.ports for c in port.calls if c.method == "closed_pnl"]
+    start, end = (_EPOCH + timedelta(microseconds=us) for us in cast(Any, calls[0].request))
+    day = day_containing(end, 180)  # its local midnight is 21:00Z of the previous UTC date
+    assert day != day_containing(end, 0) and (day.day_start + timedelta(hours=3)).hour == 0
+    assert start == day.day_start - CLOSED_PNL_LOOKBACK
 
 
 async def test_the_stop_ends_the_sync_before_anything_it_reads_through_closes(
