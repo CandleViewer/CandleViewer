@@ -19,11 +19,13 @@ little behind another's.
 raises `DayBoundaryUnavailable`, never UTC midnight; so does an instant before the day before,
 which it keeps no record of.
 
-**Not across a restart.** No write path for the column exists yet (E39's), so the day in progress
-lives in this process alone: after a restart the first day is the column's as read then, which
+**Not across a restart or a recomposition of the lane.** No write path for the column exists yet
+(E39's), so the day in progress lives in this resolver alone, and each composition of the OMS lane
+builds its own (`oms_wiring.OmsRuntime._compose`, run at each start and again by `_composed_again`):
+after a restart or a recomposition of the lane the first day is the column's as read then, which
 moves the day in progress if the column changed during it, and a change made in a day nothing has
-resolved yet takes effect at that day's start. Surviving a restart needs the record E39's write
-keeps of the offset it replaces and the instant the new one takes effect (24 Sec.8.13), carried to
+resolved yet takes effect at that day's start. Surviving either needs the record E39's write keeps
+of the offset it replaces and the instant the new one takes effect (24 Sec.8.13), carried to
 E39-K01 (#880).
 """
 
