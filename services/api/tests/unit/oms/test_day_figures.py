@@ -675,3 +675,21 @@ async def test_a_read_across_its_days_next_start_answers_the_loss_unknown(crossi
         venue.release.set()
     assert read.result().account.realised_loss_today is None
     assert venue.calls.count("closed_pnl") == 1  # the kept loss was not read again
+
+
+async def test_a_kept_loss_is_never_served_before_its_days_day_start() -> None:
+    """Kept at its day's first instant, the loss is served there and stale an instant before it,
+    inside `FIGURES_TTL_S` (a wall clock stepped back): `peek` answers None and `read` sums the
+    day before again, which the resolver keeps as served."""
+    venue, clock, wall = Venue(), Clock(), [MIDNIGHT - H]
+    venue.records = [_closed("-40", MIDNIGHT - H), _closed("-30", MIDNIGHT)]
+    figures = _figures(venue, clock, now=lambda: wall[0])
+    assert (await _read(figures)).account.realised_loss_today == Decimal(40)  # the day before
+    wall[0], clock.t = MIDNIGHT, clock.t + 1
+    assert (await _read(figures)).account.realised_loss_today == Decimal(30)  # kept at day_start
+    assert _peek(figures) is not None
+    wall[0], clock.t = MIDNIGHT - US, clock.t + 1
+    assert _peek(figures) is None
+    assert (await _read(figures)).account.realised_loss_today == Decimal(40)
+    assert venue.calls.count("closed_pnl") == 3
+    assert venue.windows[-1] == (_us(MIDNIGHT - DAY - CLOSED_PNL_LOOKBACK), _us(MIDNIGHT - US))
