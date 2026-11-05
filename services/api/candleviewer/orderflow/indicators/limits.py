@@ -37,6 +37,15 @@ from typing import Final
 PERIOD_MIN: Final = 1
 PERIOD_MAX: Final = 5000
 
+#: The moving averages' `offset` (E13-S02, BQ-03): a whole number of bars the line is displaced
+#: toward the past (the value at bar `k` is the raw value at `k - offset`), so it never needs a
+#: future bar. A security bound like every one here: it sizes the ring an instance holds.
+OFFSET_MIN: Final = 0
+OFFSET_MAX: Final = 500
+
+#: The applied prices a moving average may read (24 7.4 "Applied price"); the first is the default.
+MA_SOURCES: Final = ("close", "open", "high", "low", "hl2", "hlc3", "ohlc4")
+
 #: Band and channel width multipliers (`bollinger`, `keltner`, `supertrend`).
 MULTIPLIER_MIN: Final = Decimal("0.1")
 MULTIPLIER_MAX: Final = Decimal("10")

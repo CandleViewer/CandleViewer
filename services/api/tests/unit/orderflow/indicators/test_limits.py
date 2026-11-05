@@ -102,6 +102,13 @@ def test_limits_preset_bounds_are_pinned_per_sr_e13_06_and_07() -> None:
     assert all(type(getattr(limits, name)) is int for name in PRESET_LIMITS)
 
 
+def test_limits_ma_offset_is_zero_to_500_and_the_sources_are_the_seven_applied_prices() -> None:
+    """E13-S02 (BQ-02, BQ-03): the offset sizes an instance's ring, so its bound is pinned."""
+    assert (limits.OFFSET_MIN, limits.OFFSET_MAX) == (0, 500)
+    assert type(limits.OFFSET_MIN) is int and type(limits.OFFSET_MAX) is int
+    assert limits.MA_SOURCES == ("close", "open", "high", "low", "hl2", "hlc3", "ohlc4")
+
+
 def test_limits_the_storage_copies_of_the_preset_caps_are_equal() -> None:
     """`storage` may not import `orderflow`, so the repository holds copies (as drawings do)."""
     assert (repo.MAX_LIVE_PRESETS, repo.MAX_IMPORT_PRESETS, repo.NAME_MAX) == (
@@ -113,5 +120,6 @@ def test_limits_the_storage_copies_of_the_preset_caps_are_equal() -> None:
 
 def test_limits_module_holds_exactly_the_pinned_names() -> None:
     fractional = {f"{prefix}_{part}" for prefix in FRACTIONAL for part in ("MIN", "MAX", "STEP")}
-    pinned = {"PERIOD_MIN", "PERIOD_MAX", *fractional, *CAPS, *PRESET_LIMITS}
+    ma = {"OFFSET_MIN", "OFFSET_MAX", "MA_SOURCES"}
+    pinned = {"PERIOD_MIN", "PERIOD_MAX", *ma, *fractional, *CAPS, *PRESET_LIMITS}
     assert {n for n in vars(limits) if n.isupper()} == pinned
