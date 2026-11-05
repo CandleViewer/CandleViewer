@@ -14,12 +14,16 @@ WARNING, never applied, and counted nowhere.
 venue, so a close shows as soon as its fill is stored, a failed read or none (Q2), and after the
 records settle it composes the delta set (Q3): the records the read inserted, settled or replaced
 (every one it read, at the account's first composition), those the poll reads (row 56) and the
-named orders. Its final rule is the composition's (Q4): settled, the order's row terminal, and the
-`c` the walk gives the record's closes, each sure of its count, summing to its `qty`. Without one,
-a record is final once its order's row is terminal and its `qty` is the size the order's stored
-trade fills state they closed (row 60), a fill that states none keeping it open. A composition
-that fails is logged at WARNING by kind and keeps the poll and the named orders; the read goes
-on. The comparison is E29-S06's next slice.
+named orders. That step takes the named orders first, then the venue ids an earlier step left,
+then the records the read changed, then the poll's page less those, so a full page starves no
+fresh settle; what it leaves past its bounds, but the page's, is carried to the next pass, at most
+`CARRY_LIMIT` an account, and asks for one. Its final rule is the composition's (Q4): settled,
+the order's row terminal, and the `c` the walk gives the record's closes, each sure of its count,
+summing to its `qty`. Without one, a record is final once its order's row is terminal and its
+`qty` is the size the order's stored trade fills state they closed (row 60), a fill that states
+none keeping it open. A composition that fails is logged at WARNING by kind and keeps the poll,
+the named orders and what it was to carry; the read goes on. The comparison is E29-S06's next
+slice.
 
 **The seed** (the orchestrator's ruling of 2026-11-04 15:51Z, option (a)): at an account's first
 read the sync reads the venue's positions, in the same lane, and stores each reading the venue
@@ -92,6 +96,7 @@ READ_TIMEOUT_S: Final = 30.0  # one read, all its pages, as reconciliation's fet
 PENDING_LIMIT: Final = 200  # the records one poll reads (row 56); the rest wait for the next
 MAX_ACCOUNTS: Final = 256
 NAMED_LIMIT: Final = 256  # the orders an account's stored fills name for the composition
+CARRY_LIMIT: Final = 1024  # the venue ids a composition left that an account carries to the next
 #: The outcomes that put a record read in the delta set (Q3).
 _CHANGED: Final = frozenset[SettleOutcome](("inserted", "settled", "replaced"))
 FETCH_SECONDS: Final = "oms_closed_pnl_fetch_seconds"
@@ -252,6 +257,7 @@ class _Account:
     seeded: bool = False  # its keys' flats were seeded (the ruling's first sight)
     named: set[UUID] = field(default_factory=set)  # the orders its stored fills named, to compose
     composed: bool = False  # its first composition after the settle ran
+    carried: list[str] = field(default_factory=list)  # venue ids a composition left, oldest first
 
 
 class ClosedPnlSync:
@@ -429,8 +435,8 @@ class ClosedPnlSync:
                     if r.exchange_order_id is not None
                     and (outcome in _CHANGED or not state.composed)
                 ]  # fmt: skip
-                orders = [*named, *(item.order_id for item in pending)]
-                done, left = await self._settled(account_id, composing, orders, changed, pending)
+                done, left = await self._settled(account_id, state, composing, named, changed,
+                                                 pending)  # fmt: skip
                 state.composed = state.composed or done
         finally:
             if not done:  # composed at the next pass, before its read
@@ -521,19 +527,39 @@ class ClosedPnlSync:
             return None
 
     async def _settled(
-        self, account_id: AccountId, composing: ComposePass, orders: list[UUID],
+        self, account_id: AccountId, state: _Account, composing: ComposePass, named: set[UUID],
         changed: list[str], pending: Sequence[PendingRecord],
     ) -> tuple[bool, bool]:  # fmt: skip
         """The delta set's composition and its final rule (Q3, Q4): whether it ran, and whether a
-        record of the poll is left not final. The comparison (E29-S06's next slice) reads what
-        it composed here."""
+        record is left to poll, one of the poll's not final or a venue id carried. The named
+        orders come first, then the venue ids carried from earlier passes, then the records the
+        read changed, then the poll's page less those, so a full page starves no fresh settle;
+        what the step leaves past its bounds is carried to the next pass. The comparison
+        (E29-S06's next slice) reads what it composed here."""
+        venue = list(dict.fromkeys((*state.carried, *changed)))
+        first = set(venue)
+        ids = (i.row.exchange_order_id for i in pending)  # row 56's each have one (its join)
+        page = [x for x in ids if x is not None and x not in first]
         composed = await self._composed(
-            account_id, composing.compose(orders, changed, finalize=True)
+            account_id, composing.compose(named, (*venue, *page), finalize=True)
         )
+        left = venue if composed is None else composing.unreached
+        self._carry(account_id, state, left, set(page))
         if composed is None:
             return False, True
         final = {c.row.id for c in composed if c.final}
-        return True, any(item.row.id not in final for item in pending)
+        return True, bool(state.carried) or any(item.row.id not in final for item in pending)
+
+    def _carry(
+        self, account_id: AccountId, state: _Account, left: Iterable[str], page: set[str]
+    ) -> None:
+        """Carry the venue ids a composition left, but its page's, which the poll reads again,
+        at most `CARRY_LIMIT` (C-2.18): past it the latest are dropped, logged at WARNING."""
+        kept = list(dict.fromkeys(v for v in left if v not in page))
+        if len(kept) > CARRY_LIMIT:
+            _log().warning("closed_pnl_compose_carry_dropped", account_id=str(account_id),
+                           left=len(kept) - CARRY_LIMIT)  # fmt: skip
+        state.carried = kept[:CARRY_LIMIT]
 
     async def _finalized(self, account_id: AccountId, item: PendingRecord) -> bool:
         """Whether the record is final now: settled, its order's row terminal, and its `qty` the

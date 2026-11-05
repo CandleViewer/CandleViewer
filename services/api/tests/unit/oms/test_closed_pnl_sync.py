@@ -27,6 +27,7 @@ from candleviewer.exchange.base.models import AccountRef, ClosedPnl, Position, R
 from candleviewer.exchange.bybit import private_parse as pp
 from candleviewer.exchange.bybit import trading_parse as tp
 from candleviewer.observability.metrics import Metrics
+from candleviewer.oms import closed_pnl_compose as compose_mod
 from candleviewer.oms import closed_pnl_sync as sync_mod
 from candleviewer.oms.closed_pnl_compose import ClosedPnlComposer
 from candleviewer.oms.closed_pnl_sync import (
@@ -979,3 +980,100 @@ async def test_an_accounts_named_orders_are_bounded_and_none_without_a_composer(
                      "account_id": str(ACCOUNT_A)}]  # fmt: skip
     await r.sync.stop()
     await bare.sync.stop()
+
+
+def _asked(r: Rig, monkeypatch: pytest.MonkeyPatch) -> list[tuple[list[UUID], list[str]]]:
+    """Each row-61 read the composition makes: the orders it names by id and by venue id."""
+    seen, real = list[tuple[list[UUID], list[str]]](), r.store.anchors
+
+    async def anchors(account_id: UUID, orders: Any, venue: Any) -> tuple[OrderAnchor, ...]:
+        seen.append((list(orders), list(venue)))
+        return await real(account_id, orders, venue)
+
+    monkeypatch.setattr(r.store, "anchors", anchors)
+    return seen
+
+
+@virtual
+async def test_a_first_composition_past_its_limit_carries_the_rest_to_the_next_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The S5b review's m1: the records a step leaves past `COMPOSE_LIMIT` are carried, ask for a
+    poll and are composed first at the next pass, so the first pass's "every record read" holds
+    across passes though `composed` is set."""
+    monkeypatch.setattr(compose_mod, "COMPOSE_LIMIT", 2)
+    r = rig(composed=True, records=[_record(exchange_order_id=f"x{n}") for n in (1, 2, 3)])
+    asked = _asked(r, monkeypatch)
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(1)
+    assert asked == [([], ["x1", "x2"])] and r.sync._state[ACCOUNT_A].carried == ["x3"]
+    await asyncio.sleep(60)  # the carry asks for a poll: unchanged records, the carried one
+    assert asked[1:] == [([], ["x3"])] and r.sync._state[ACCOUNT_A].carried == []
+    await asyncio.sleep(120)
+    assert len(asked) == 2 and r.times() == [0.0, 60.0]  # drained: no poll is left
+    await r.sync.stop()
+
+
+@virtual
+async def test_a_full_pending_page_starves_no_fresh_settle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The S5b review's m1: the named orders first, then the records the read changed, then the
+    poll's page less those, so a page of records that never go final cannot crowd out this pass's
+    fresh settle; what the page leaves is not carried, as the poll reads it again."""
+    monkeypatch.setattr(compose_mod, "COMPOSE_LIMIT", 3)
+    r = rig(composed=True)
+    for n in (1, 2):
+        await r.store.settle(venue_record(_record(exchange_order_id=f"p{n}")))
+        r.store.orders[f"p{n}"] = (UUID(int=0x20 + n), "filled")
+    asked = _asked(r, monkeypatch)
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(1)
+    assert asked == [([], ["p1", "p2"])]
+    r.venue.records = [_record(exchange_order_id="x1")]
+    r.sync.stored(replace(_fill(Decimal(1)), order_id=ORDER))
+    await asyncio.sleep(2)
+    assert asked[1:] == [([ORDER], []), ([ORDER], ["x1", "p1"])]
+    assert r.sync._state[ACCOUNT_A].carried == []
+    await r.sync.stop()
+
+
+@virtual
+async def test_an_order_the_budget_left_is_carried_and_composed_at_the_next_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The S5b review's m1: a named order the wall budget leaves keeps its venue id, so the next
+    pass composes it though the step that left it ran."""
+    r = rig(composed=True)
+    named, composer = _composable(r), r.sync._composer
+    assert composer is not None
+    composer.wall_s = 0.0
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(10)
+    r.sync.stored(named)
+    await asyncio.sleep(2)
+    state = r.sync._state[ACCOUNT_A]
+    assert (state.named, state.carried, r.store.rows) == (set(), [XID], {})
+    composer.wall_s = 5.0
+    await asyncio.sleep(60)
+    assert r.store.rows[record_id(ACCOUNT_A, XID)].qty == Decimal(3) and state.carried == []
+    await r.sync.stop()
+
+
+@virtual
+async def test_the_carry_is_bounded_and_what_it_drops_is_logged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C-2.18: at most `CARRY_LIMIT` venue ids an account, 1,024 as 24 Sec.8.13 states; past it
+    the latest are dropped, logged with the account and their count, never a figure."""
+    assert sync_mod.CARRY_LIMIT == 1024
+    monkeypatch.setattr(compose_mod, "COMPOSE_LIMIT", 1)
+    monkeypatch.setattr(sync_mod, "CARRY_LIMIT", 1)
+    r = rig(composed=True, records=[_record(exchange_order_id=f"x{n}") for n in (1, 2, 3)])
+    with capture_logs() as logs:
+        r.sync.start([ACCOUNT_A])
+        await asyncio.sleep(1)
+    assert r.sync._state[ACCOUNT_A].carried == ["x2"]
+    assert [e for e in logs if e["event"] == "closed_pnl_compose_carry_dropped"] == [
+        {"event": "closed_pnl_compose_carry_dropped", "log_level": "warning",
+         "account_id": str(ACCOUNT_A), "left": 1},
+    ]  # fmt: skip
+    await r.sync.stop()
