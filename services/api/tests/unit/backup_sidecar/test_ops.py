@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 import uuid
 from datetime import timedelta
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Any, cast
 
 import pytest
 
-from cvbackup import age_format, protocol, tasks
+from cvbackup import age_format, ops, protocol, tasks
 from cvbackup.ledger import FILE, Ledger, timestamp
 from cvbackup.ops import OpError
 from cvbackup.paths import LEDGER_DIR, QUARANTINE_DIR, Root
@@ -196,6 +197,56 @@ async def test_verify_one_at_a_time_is_busy(tmp_path: Path, sock: str) -> None:
     backup_id, location, _ = await sidecar.finished()
     async with sidecar.ops._verifying:
         await _refused("busy", sidecar, "verify", backup_id=backup_id, location=location)
+
+
+async def test_verify_at_the_task_bound_records_its_hash_inline_never_busy_after(
+    tmp_path: Path, sock: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    backup_id, location, digest = await sidecar.finished()
+    bound, real = len(tasks.running()), ops._sha256
+
+    def full(*hashed: Any) -> str | None:  # the bound is reached while the thread hashes
+        monkeypatch.setattr(tasks, "MAX_TASKS", bound)
+        return real(*hashed)
+
+    monkeypatch.setattr(ops, "_sha256", full)
+    result = await sidecar.handle("verify", backup_id=backup_id, location=location)
+    assert result["checksum_sha256"] == digest and _entries(sidecar)[-1]["outcome"] == "ok"
+
+
+async def test_verify_cancelled_twice_closes_the_descriptor_only_after_the_thread_ends(
+    tmp_path: Path, sock: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sidecar = await _sidecar(tmp_path, sock)
+    backup_id, location, _ = await sidecar.finished()
+    started, release, seen = threading.Event(), threading.Event(), []
+    real = ops._sha256
+
+    def held(fd: int, *args: Any) -> str | None:
+        seen.append(fd)
+        started.set()
+        release.wait(5)
+        digest = real(fd, *args)
+        os.fstat(fd)  # still open: the thread ends before anyone closes it
+        return digest
+
+    monkeypatch.setattr(ops, "_sha256", held)
+    verifying = asyncio.ensure_future(
+        sidecar.handle("verify", backup_id=backup_id, location=location)
+    )
+    await asyncio.to_thread(started.wait, 5)
+    for _ in range(2):  # the deadline, then the peer gone: both while the thread reads
+        verifying.cancel()
+        for _ in range(5):
+            await asyncio.sleep(0)
+    assert not verifying.done()
+    os.fstat(seen[0])  # not closed under the reading thread
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await verifying
+    with pytest.raises(OSError):
+        os.fstat(seen[0])  # closed once the thread ended
 
 
 async def test_plan_verify_and_remove_with_an_unreadable_record_are_ledger_unreadable(

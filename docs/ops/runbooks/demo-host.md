@@ -347,6 +347,34 @@ Expected: `"status":"ok"`. `degraded` names its failing check: `accounts`, the s
 self-check (`key-selfcheck.md`; `CV_EGRESS_IP` must be the key's whitelisted address); `secrets`,
 the KEK (`kek-custody.md`); a `storage_*` tier, step 4.
 
+## 9. The backup sidecar's run record unreadable (#3319)
+
+The sidecar keeps its own run record at `<backup volume>/.cvb/ledger.jsonl` (24 §15.8 item 11).
+A torn or tampered record fails closed: the sidecar logs `cvbackup.ledger_unreadable` at start,
+and `verify`, `remove` and new runs answer `ledger_unreadable` (the backups screen shows the store
+unavailable) until you repair it. Nothing truncates it for you. Check it with the sidecar's own
+image built from the pinned checkout (`infra/images/Dockerfile.backup`, #3319 B1c), as the
+sidecar's user, with the volume mounted read only and no network:
+
+```bash
+docker build -f infra/images/Dockerfile.backup -t candleviewer-backup:check .
+docker run --rm --network none --read-only -e CVB_BACKUP_ROOT=/backups \
+  -v <backup volume>:/backups:ro candleviewer-backup:check check-ledger
+```
+
+The image's entry point is `python -I -m cvbackup`. `-I` ignores `PYTHON*` variables and keeps
+the working directory off `sys.path`, so `cvbackup` is imported only from the image's
+`site-packages`, where the Dockerfile copies it, root-owned and read only, never from a checkout.
+
+`the run record replays, N entries` (exit 0) means the record is whole: look elsewhere (the
+sidecar's log). `does not replay from line N` (exit 1) names the first line that breaks it: a last
+line with no newline is a write the sidecar never acknowledged, and only that line may go; any
+other break is tampering until shown otherwise. Copy the file aside first, raise it as a security
+incident (`SECURITY.md`) unless the break is that torn last line, remove only what you have
+established, run the check again until it exits 0, then restart the sidecar, which replays it at
+start. The record grows by about 600 bytes per run, plus about 275 per verification and 465 per
+removal; v1 prunes nothing (ADR-0041, a plan gap on #2701).
+
 ## Stopping
 
 `$COMPOSE stop` keeps everything. `$COMPOSE down` removes the containers and keeps the volumes;

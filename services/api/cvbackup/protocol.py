@@ -48,7 +48,7 @@ MAX_DEADLINE_S: Final = 86400
 MAX_LOCATION: Final = 512
 _KIND: Final = re.compile(r"[a-z][a-z0-9_]{0,31}")
 _HEX64: Final = re.compile(r"[0-9a-f]{64}")
-_NAME: Final = re.compile(
+ARTEFACT_NAME: Final = re.compile(  # `paths.is_artefact_name` too
     r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.age"
 )
 _PATH_CHARS: Final = re.compile(r"[A-Za-z0-9._/-]+")
@@ -162,7 +162,7 @@ def is_location(value: object) -> bool:
     parts = value.split("/")[1:]
     if len(parts) < 3 or any(p == "" or p.startswith(".") for p in parts):
         return False
-    return is_kind(parts[-2]) and _NAME.fullmatch(parts[-1]) is not None
+    return is_kind(parts[-2]) and ARTEFACT_NAME.fullmatch(parts[-1]) is not None
 
 
 _FIELDS: Final = {

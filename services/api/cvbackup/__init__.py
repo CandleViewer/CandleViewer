@@ -17,6 +17,6 @@ Modules (#3319 B1b, each with the slice that adds it): `config`, `protocol` (the
 `paths` (confinement on the backup volume) and `age_format` (the recipient fingerprint and the
 header check, no decryption) in B1b-1; `ledger` (its own run record), `floor` (the rules no
 request lifts) and `ops` (plan, verify, remove; run and restore answer until B1c and B2) in B1b-2;
-`server` (the socket) in B1b-3. The run path (child processes, the age tool, the dump kinds) is
-B1c.
+`server` (the socket) and `identity` (the one place an age identity may be held) in B1b-3. The
+run path (child processes, the age tool, the dump kinds) is B1c.
 """
