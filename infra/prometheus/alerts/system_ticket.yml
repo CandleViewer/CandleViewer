@@ -320,6 +320,20 @@ groups:
         annotations:
           summary: "The closed-PnL sync met a crossing between accounts"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-omsclosedpnlaccountcrossing"
+      - alert: OmsClosedPnlDivergence
+        # E29-S06 (#981, 20 Sec.12.1; the orchestrator's ruling Q5 of 2026-11-04): closed-PnL
+        # records the composition found divergent from the venue's figures, or whose venue figure
+        # was still missing at the end of the reach (24 Sec.8.13), at a sustained non-zero rate: a
+        # record within every 15 minutes for 30 minutes. A lone record is the dashboard's. The
+        # series is unlabelled by account; the record and its WARNING log name the account.
+        expr: sum by (env) (rate(oms_closed_pnl_divergence_total[15m])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          component: oms
+        annotations:
+          summary: "Closed-PnL records keep diverging from the venue's figures"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-omsclosedpnldivergence"
       - alert: OmsRateRejects
         expr: increase(oms_rate_reject_total[10m]) > 0
         for: 0m

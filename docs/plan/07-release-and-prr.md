@@ -1320,6 +1320,27 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 2h api | grep 'bybit_row_refused' | grep '"account"' | tail -20
 ```
 
+<a id="alert-omsclosedpnldivergence"></a>
+
+### OmsClosedPnlDivergence
+
+| Element               | Detail                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | Closed-PnL records keep diverging: the composition's local figure for a settled record differs from the venue's beyond the tolerance and its floor, or a record's venue figure was still missing at the end of the reach (`oms_closed_pnl_divergence_total`, one per `pnl.divergence_detected`, `24-internal-schemas.md` §8.13), at a sustained rate: a record within every 15 minutes for 30 minutes. Ticket.                                |
+| 2. User impact        | None on trading: each item still shows the venue's figure, which is authoritative, and the local figure as "ours". The closed-positions view marks the item divergent.                                                                                                                                                                                                                                                                        |
+| 3. What is still safe | Order entry, the exits and every stop: the comparison only reads the stored fills and the venue's records, and no cap reads a composed figure (`DayRiskFigures` sums the venue's records).                                                                                                                                                                                                                                                    |
+| 5. Remediation        | Read the records (`pnl.divergence_detected`, reason `closed_pnl_divergence` or `closed_pnl_venue_missing`) for the accounts and records the WARNING logs name. Many accounts at once points to a fee, funding or rounding rule that differs from the venue's (E29-K01, #843, validates the tolerance); one account to fills missing from the store, whose reconciliation reads them again. A missing venue figure is checked at the exchange. |
+| 6. Escalation         | Owner if it holds past a day, or if `oms_closed_pnl_divergence_withheld_total` rises with `backpressure`, which means the order audit's writer is under strain.                                                                                                                                                                                                                                                                               |
+| 7. Verify recovery    | The rate is 0 for 30 minutes, and the records named have a later comparison within the bound (the item's flag cleared).                                                                                                                                                                                                                                                                                                                       |
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: rate 0, no withheld records.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=rate(oms_closed_pnl_divergence_total[15m])'
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=increase(oms_closed_pnl_divergence_withheld_total[1h])'
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 2h api | grep -E 'closed_pnl_divergence_(recorded|withheld|unwritten)' | tail -20
+```
+
 <a id="alert-omsraterejects"></a>
 
 ### OmsRateRejects
