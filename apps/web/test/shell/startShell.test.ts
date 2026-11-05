@@ -22,6 +22,7 @@ import {
 import { accessToken, REFRESH_PATH, REFRESH_WAIT_MS } from "../../src/lib/auth/accessToken.js";
 import { VIEW_AS_PATH, resetViewAs } from "../../src/lib/auth/viewAsContext.js";
 import { startShell, toConnectionState } from "../../src/shell/startShell.js";
+import { getReassurance, readReassurance } from "../../src/features/reconciliation/reassurance.js";
 import { REVISION_QUIET_MS } from "../../src/features/symbol-search/revisionReread.js";
 import {
   getSymbolSearchState,
@@ -167,6 +168,16 @@ describe("startShell", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("stop() clears the reassurance verdicts (E29-S07: the production stop path, startShell -> clearDegraded)", async () => {
+    await readReassurance(["a1000000-0000-4000-8000-00000000000a"], {
+      listPositions: async () => ({ kind: "ok", items: [], aggregates: [] }),
+    });
+    expect(getReassurance().size).toBe(1);
+    const { handle } = started();
+    handle.stop();
+    expect(getReassurance().size).toBe(0);
   });
 
   it("maps the client's connection onto the shell's, and says it again on each transition", () => {

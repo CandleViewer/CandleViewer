@@ -17,6 +17,8 @@ import {
   forget,
 } from "./announcer";
 import { RecoveredRegionSlot } from "../reconciliation/RecoveredRegion";
+import { streamReady } from "../reconciliation/reassurance";
+import { stopsConfirmedNow, useStopsConfirmed } from "../reconciliation/stopsConfirmed";
 import { ConnectionRegion } from "./ConnectionRegion";
 
 /**
@@ -56,12 +58,19 @@ export function ConnectionRegionSlot(): JSX.Element {
   const viewing = useShellSelector((s) => s.viewAs.kind === "held");
   const [, tick] = useReducer((n: number) => n + 1, 0);
   // Read at render: a transition renders with the clock of that moment, never the last tick's.
-  const region = connectionRegion(ws, Date.now(), { privateFeedDown });
+  // E29-S07 (#1028): the stops clause only while the reassurance gate holds (BQ-7 ruled)
+  // With the link up the claim also needs the stream live and the private snapshots in: the watch
+  // that drops a verdict at a delta runs only then, so the claim is never read off a stale verdict.
+  const stopsConfirmed =
+    useStopsConfirmed() && (ws.link.kind !== "up" || streamReady(ws, privateFeedDown));
+  const region = connectionRegion(ws, Date.now(), { privateFeedDown, stopsConfirmed });
   // A viewer disabled while viewing gets a 4403 too (`bye user_disabled`): muted here, it is
   // surfaced by the view-as source, whose re-read on that close the server answers 401, and the
   // token holder routes to sign-in (`accessToken.ts`). Only that re-read failing on the network
   // leaves the chip alone to show the loss.
-  const view = viewing && region?.reason === "session" ? null : region;
+  const muted = (r: ConnectionRegionView | null): ConnectionRegionView | null =>
+    viewing && r?.reason === "session" ? null : r;
+  const view = muted(region);
   const last = useRef<ConnectionRegionView | null>(null);
 
   useEffect(() => {
@@ -78,7 +87,17 @@ export function ConnectionRegionSlot(): JSX.Element {
     if (prev !== null && EPISODE.has(prev.reason) && (view === null || !EPISODE.has(view.reason))) {
       clearAnnouncements(CONNECTION_PREFIX);
     }
-    const said = regionAnnouncement(prev, view);
+    // E29-S07 (#1028, review of #5759): what is spoken is judged when it is spoken, not at the render. The
+    // watch's stop (the cleanup of RecoveredRegion's effect) applies the frames still buffered at the link drop
+    // before this effect runs, and a verdict it drops there must not be read out as a stops claim. Only the
+    // store half of the gate can have moved since the render (`ws` and the hand-over are the render's own).
+    // The recomputed region takes the same view-as mute as the shown one (E42-S03 V-8).
+    const claimDropped = stopsConfirmed && !stopsConfirmedNow();
+    const spoken =
+      claimDropped && view !== null
+        ? muted(connectionRegion(ws, Date.now(), { privateFeedDown, stopsConfirmed: false }))
+        : view;
+    const said = regionAnnouncement(prev, spoken);
     if (said !== null && view !== null) announce(said.politeness, said.text, keyOf(view.reason));
   });
 

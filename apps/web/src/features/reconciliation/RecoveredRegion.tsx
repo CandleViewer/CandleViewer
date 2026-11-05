@@ -3,9 +3,20 @@ import { Link, useInRouterContext } from "react-router";
 import { Icon, IconButton } from "@candleviewer/ui";
 import { announce } from "../app-shell/announcer";
 import type { WsState } from "../../lib/ws/state/types";
-import { shellAccountSignals } from "../../shell/accountState";
+import type { PositionsApi } from "../positions/api";
+import { positionsApi } from "../positions/api";
+import { shellAccountSignals, useShellAccountSignals } from "../../shell/accountState";
 import { useShellSelector } from "../../shell/useShellSelector.js";
+import { getActiveClient } from "../../lib/ws/client/activeClient";
 import { reconciliationReads, type ReconciliationDigest, type ReconciliationReads } from "./digest";
+import { MAX_WATCHED, watchPositionDeltas } from "./positionsWatch";
+import {
+  clearReassurance,
+  dropReassurance,
+  readReassurance,
+  streamReady,
+  touchReassurance,
+} from "./reassurance";
 import {
   buildSummary,
   type RecoveredSummary,
@@ -162,8 +173,28 @@ export interface RecoveredRegionSlotProps {
   /** Whether the region may show: the slot holds no other CMP-077 state. */
   readonly visible: boolean;
   readonly reads?: ReconciliationReads;
+  /** The reassurance gate's read (`listPositions`), injectable for tests. */
+  readonly positions?: Pick<PositionsApi, "listPositions">;
+  /** The reassurance drop's watch of the `positions` topic, injectable for tests. */
+  readonly watch?: (
+    ids: readonly string[],
+    onMoved: (id: string) => void,
+    onTouched: (id: string) => void,
+  ) => () => void;
   readonly now?: () => number;
 }
+
+/** The live client's `positions` deltas; nothing to watch without a client. */
+const watchLive = (
+  ids: readonly string[],
+  onMoved: (id: string) => void,
+  onTouched: (id: string) => void,
+): (() => void) => {
+  const client = getActiveClient();
+  return client === null
+    ? () => undefined
+    : watchPositionDeltas(client, ids, onMoved, undefined, onTouched);
+};
 
 interface Episode {
   readonly fromMs: number;
@@ -174,13 +205,17 @@ interface Episode {
  * begin, then, once the link is up and the `system` stream and the private snapshots are in
  * (E17-D01:226), reads each account's digest and the window's fills, builds the summary and says
  * SR-03 ("Reconnected. …", assertive) once per episode exit. A new outage drops the summary.
- * It also follows the client's kill switch into the shell's account states (E29-D03 §4.1).
+ * It also follows the client's kill switch into the shell's account states (E29-D03 §4.1), and
+ * runs the reassurance gate's REST read (`reassurance.ts`) at each connect and reconnect, the last
+ * verdicts dropped first, and for an account when its lock begins.
  */
 export function RecoveredRegionSlot({
   ws,
   privateFeedDown,
   visible,
   reads = reconciliationReads,
+  positions = positionsApi,
+  watch = watchLive,
   now = Date.now,
 }: RecoveredRegionSlotProps): JSX.Element | null {
   const accounts = useShellSelector((s) => s.me?.accounts);
@@ -193,8 +228,55 @@ export function RecoveredRegionSlot({
     shellAccountSignals.setKillSwitch(ws.killSwitch, null);
   }, [ws.killSwitch]);
 
-  const ready =
-    ws.link.kind === "up" && ws.outage === null && ws.systemStream === "live" && !privateFeedDown;
+  const ready = streamReady(ws, privateFeedDown);
+  const linkUp = ws.link.kind === "up";
+
+  // The reassurance gate (BQ-7 ruled, BQ-11): the last verdicts are dropped at each connect, and
+  // each positions delta drops its account's verdict until the next read (review fold M1). The
+  // watch runs for as long as the link is up, not only while `ready`: a resync or a stale baseline
+  // that makes `ready` false must not leave verdicts no delta can drop. It stops with the link:
+  // the verdicts then stand as the last read (nothing arrives to move them), and the stop applies
+  // the frames still buffered first. Only the accounts one consumer can watch are read: past
+  // `MAX_WATCHED` they stay unread.
+  const scopeKey = (accounts ?? [])
+    .slice(0, MAX_WATCHED)
+    .map((a) => a.exchange_account_id.toLowerCase())
+    .join(",");
+  useEffect(() => {
+    if (!linkUp) return undefined;
+    clearReassurance();
+    if (scopeKey === "") return undefined;
+    return watch(scopeKey.split(","), dropReassurance, touchReassurance);
+  }, [linkUp, scopeKey, watch]);
+  // Nothing watches after unmount: a verdict held then could never be dropped.
+  useEffect(() => clearReassurance, []);
+  // The read at each connect and reconnect, once the stream is ready (the watch is already up).
+  useEffect(() => {
+    if (!ready || scopeKey === "") return undefined;
+    const abort = new AbortController();
+    void readReassurance(scopeKey.split(","), positions, abort.signal);
+    return () => abort.abort();
+  }, [ready, scopeKey, positions]);
+
+  // A lock's start re-reads its account (BQ-11 (a)), once per episode: only an account the watch
+  // covers, and only while it runs, so a verdict read here can always be dropped by a delta.
+  const lockEpisodes = useShellAccountSignals((s) => s.accounts);
+  const readLocks = useRef(new Set<number>());
+  useEffect(() => {
+    const watched = new Set(scopeKey === "" ? [] : scopeKey.split(","));
+    const fresh: string[] = [];
+    const held = new Set<number>();
+    for (const [id, signal] of lockEpisodes) {
+      const oms = signal.oms;
+      if (oms?.state !== "stale") continue;
+      held.add(oms.episode);
+      if (readLocks.current.has(oms.episode)) continue;
+      if (linkUp && watched.has(id)) fresh.push(id);
+    }
+    readLocks.current = held; // bounded by the store's accounts (L5)
+    // Not aborted on a later change: an episode is read once, and its verdict lands in the store.
+    if (fresh.length > 0) void readReassurance(fresh, positions);
+  }, [lockEpisodes, positions, linkUp, scopeKey]);
 
   useEffect(() => {
     if (ws.outage === null) return;
