@@ -143,6 +143,29 @@
       "expect_fail": "budget6.cv_ws_fanout_seconds.p95"
     }
   },
+  "cascade": {
+    "title": "E24-Q03 liquidation cascade: synthetic prints from recorded allLiquidation shapes",
+    "seed": 773,
+    "symbol": "BTCUSDT",
+    "template_file_note": "placeholder path until #5273 merges the recorded file; absent means the inline fallback, and the result says so (template_source)",
+    "template_file": "packages/fixtures/bybit/2026-10-05/ws/allLiquidation_BTCUSDT_burst.jsonl",
+    "profiles": {
+      "ramp": { "shape": "ramp", "rate_per_s": 500, "duration_s": 10 },
+      "sustained": { "shape": "sustained", "rate_per_s": 500, "duration_s": 10 },
+      "burst": { "shape": "burst", "rate_per_s": 1000, "duration_s": 2 }
+    },
+    "thresholds": {
+      "script_p95_ms": 2,
+      "dropped_frames": 0,
+      "tick_p95_ms": 100,
+      "tick_p99_ms": 250,
+      "fanout_p95_ms": 20,
+      "rest_p95_ms": 150,
+      "summaries": 2,
+      "emphasis_per_s": 1
+    },
+    "selfcheck": { "inject_ms": 5, "expect_fail": "scr054.script_ms.p95" }
+  },
   "w5": {
     "base": "W5",
     "phases": [
