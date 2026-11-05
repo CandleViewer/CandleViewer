@@ -16,7 +16,8 @@ records settle, the pass's delta set (Q3), whose final rule it completes (Q4).
   last fill: a confirmed flat drops all a walk holds, so the key's walk taken in pieces between
   its confirmed flats gives each close what one walk across them would, and walks no fill twice.
   A walk is kept for the pass, so the settled step reuses the first step's unless it needs a
-  fill past that walk's end.
+  fill past that walk's end, and a walk capped by a later sibling's fills is taken again for each
+  earlier order, to that order's last fill.
 - **Figures.** From the closes the walk gives an order's fills, exact, each quantized once,
   `ROUND_HALF_UP` to 8 dp: `gross_pnl` the closed PnL they hold, `fee_pnl` minus their closing
   fees and the opening fees they take, `funding_pnl` 0 when no settlement of the symbol falls in
@@ -24,7 +25,8 @@ records settle, the pass's delta set (Q3), whose final rule it completes (Q4).
   never estimated: all with no walk start or past its cap, or where a close holds no closed PnL
   or disagrees; `fee_pnl` and `funding_pnl` while a close is unreadable; `funding_pnl` while a
   settlement falls in the window (until #843) or the interval is unknown; `local_net` unless all
-  three are present.
+  three are present. A later pass that cannot walk a held record (no start, as after the 90-day
+  prune, or past the cap) does not write it, so it keeps the figures an earlier walk composed.
 - **The item.** Written for an order whose stored fill closes (a stated `closedSize` above 0, or a
   `c` the walk gives) or whose record is stored: `qty` the closes' `c`, `avg_exit_price` their
   size-weighted price and `avg_entry_price` the entry value they take over their `c`, both to the
@@ -237,13 +239,17 @@ class ComposePass:
         out: list[Composed] = []
         for (symbol, idx, start), group in sorted(keys.items(), key=_newest, reverse=True):
             walked: Walk | None = None
+            top = max(cast(datetime, a.last_fill) for a in group)
             for a in group:
                 if self._spent + took() >= self._c.wall_s:  # its figures wait for a later pass
                     self._warn("closed_pnl_compose_budget_spent", a)
                     continue
                 if walked is None and start is not None:
                     walked = await self._walk((symbol, idx, start), group)
-                if (composed := await self._one(a, walked, finalize)) is not None:
+                own = walked  # one a later sibling's fills capped is taken again to its own end
+                if own is not None and start is not None and own.capped and a.last_fill != top:
+                    own = await self._walk((symbol, idx, start), (a,))
+                if (composed := await self._one(a, own, finalize)) is not None:
                     out.append(composed)
         return tuple(out)
 
@@ -280,6 +286,8 @@ class ComposePass:
             return None  # no stored fill of it closes: it waits for its record
         if w is not None and w.capped:
             self._warn("closed_pnl_walk_capped", a)
+        if a.held and (w is None or w.capped):  # no start, as when pruned, or past its cap: a
+            return None  # held record is not written, keeping what an earlier walk composed
         f = await self._figures(a.symbol, closes)
         record = ComposedRecord(
             exchange_account_id=self._account, exchange_order_id=cast(str, a.exchange_order_id),
