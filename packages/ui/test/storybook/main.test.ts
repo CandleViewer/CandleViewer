@@ -10,13 +10,14 @@ async function mainConfig(fixtures?: string) {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("Storybook main config", () => {
-  it("builds the band stories, docs pages and the CMP-086 story, never the a11y gate fixtures", async () => {
+  it("builds the band stories, docs pages and the apps/web CMP-086 and CMP-186 stories, never the fixtures", async () => {
     for (const unset of [undefined, "", "0"]) {
       const { stories } = await mainConfig(unset);
       expect(stories).toEqual([
         "../src/**/*.mdx",
         "../src/**/*.stories.@(ts|tsx)",
         "../../../apps/web/src/features/settings/SettingsNav.stories.tsx",
+        "../../../apps/web/src/features/funding/ui/*.stories.tsx",
       ]);
     }
   });
