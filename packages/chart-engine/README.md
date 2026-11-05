@@ -1036,3 +1036,21 @@ not-runnable scenario fails with or without a like-for-like baseline ("NOT RUN (
 engine report needs five reps. Without `--enforce` all of these are recorded only. The page has not
 yet run in CI: no workflow invokes `--page engine` in PR-1, and `--enforce` stays off for it until
 one recorded run exists. Wiring it into `_job-engine-bench.yml` is E11-T06 PR-2.
+
+## Candle LOD marks (E12-S09 PR 1a of 3, #421; pre-stage on E12-S06 / S07)
+
+The renderer side of the candle tiers (BQ-01), first slice: the L1 mark and the tier plumbing.
+E11-S12 (#418) owns the selector, the ±15 % hysteresis, the decimator, `barsPerColumn` and
+`viewport.lod`; nothing of those is here (AC3 is S12's). The tier rides `u_geom[1].w`
+(`GEOM.tier`, BQ-04), free until now.
+
+- **L1** (D06 §5.3): every wick is one hairline (weight is no channel); a down body is solid, an
+  up body outline-only from 2 device px, else `dash.1-1` (`FILL.dash`: the fragment discards odd
+  window rows by `gl_FragCoord.y`, so a pan never crawls). Hollow and OHLC draw the candle mark
+  from L1 (D06 §5.5).
+- **Dormant**: `CandleSeries.frame` takes `tier` as its last parameter and it defaults to 0, so
+  nothing changes at L0. Nothing passes a tier until PR 2 (the runtime wiring); the L2 parts 7 /
+  8 and the column entries (PR 1b) stay dormant until then too.
+
+PR 1b adds the L2 column marks, the forming split and `lodDisclosure`; PR 2 (after S12's code
+PR, #533, #5412 and #5307) wires the runtime, the picks, the chip and E11-S13's mirror.

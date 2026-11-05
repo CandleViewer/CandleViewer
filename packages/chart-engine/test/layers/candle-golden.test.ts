@@ -3,6 +3,7 @@
 // rows as letters) and pins it as text; every real golden case is an `it.todo` that becomes a row
 // on #391 (the G-16 precedent): candles and OHLC × spacings × dark / light × doji / zero-range / gap.
 // E12-S07: hollow candles (the four marks of D06 §4.2) and Heikin-Ashi rows, the same way.
+// E12-S09: the L1 mark (rows on #391).
 import { describe, expect, it } from "vitest";
 import { Canvas2DBackend } from "../../src/canvas2d/backend.js";
 import { BarSeries, CandleRing, CandleSeries, PALETTE } from "../../src/layers/index.js";
@@ -80,8 +81,14 @@ function raster(shape: "candles" | "bars" | "hollow", rows = MIXED, ha = false):
     return { nodeId, program: PROGRAM.candle, texture: 0, first: 0, count, layer: 0, seq: i };
   });
   be.submit(list as RetainedBatch[], 3, W, H);
-  // A cell is the palette row it was filled with, later paths on top: U up, D down, t the up
-  // tint, | neutral (wick, doji, zero-range, seam), . nothing.
+  return gridOf(ctx, c.palette);
+}
+
+/**
+ * The painted paths as text. A cell is the palette row it was filled with, later paths on top: U
+ * up, D down, t the up tint, | neutral (wick, doji, zero-range, seam), . nothing.
+ */
+function gridOf(ctx: FakeCtx2D, p: Float32Array): string[] {
   const letter = (style: string): string => {
     const rows: Record<number, string> = {
       [PALETTE.up]: "U",
@@ -90,7 +97,6 @@ function raster(shape: "candles" | "bars" | "hollow", rows = MIXED, ha = false):
       [PALETTE.upTint]: "t",
     };
     for (const [row, ch] of Object.entries(rows)) {
-      const p = c.palette;
       const b = (i: number): number => Math.round((p[Number(row) * 4 + i] ?? 0) * 255);
       if (style === `rgba(${b(0)}, ${b(1)}, ${b(2)}, ${b(3) / 255})`) return ch;
     }
@@ -178,7 +184,70 @@ describe("CPU stand-in raster, E12-S07: hollow candles and Heikin-Ashi", () => {
   });
 });
 
+/** E12-S09: the candle series at L1 (2 px a bar), painted by the 2D backend. */
+function rasterL1(rows: readonly (readonly number[])[]): string[] {
+  const store = new BarStore({ initialCapacity: 64 });
+  const ring = new CandleRing();
+  const c = new CandleSeries(ring);
+  const col = (k: number): Int32Array => Int32Array.from(rows, (r) => r[k] ?? 0);
+  ring.sync(
+    store,
+    store.append({
+      time: Float64Array.from(rows, (_, i) => i * 60e6),
+      open: col(0),
+      high: col(1),
+      low: col(2),
+      close: col(3),
+      volume: new Float32Array(rows.length).fill(1),
+      priceOrigin: 0,
+      tickSize: 1,
+    }),
+  );
+  const vp = new ChartViewport(store);
+  vp.setSize(W, H, 1);
+  vp.setPanePlot(0, 0, H);
+  vp.setPriceInfo(0, 0, 1);
+  vp.setPriceRange(0, 0, H);
+  vp.setTimeRange(0, (W / 2 - 1) * 60e6);
+  const block = createPaneUniforms();
+  writePaneUniforms(vp, 0, block);
+  block.floats[4] = W;
+  block.floats[5] = H;
+  c.setTheme(THEME);
+  c.frame(vp.barSpacing, 1, 0, rows.length - 1, 0, 0, 1);
+  const ctx = new FakeCtx2D();
+  const be = new Canvas2DBackend(ctx);
+  const ids = ["a", "b"];
+  ids.forEach((id) => be.attach(id, ring));
+  be.setPaneUniforms(() => block);
+  be.setBatchUniforms((b) => c.blocks[ids.indexOf(b.nodeId)] ?? null);
+  const list = ids.map((nodeId, i) => {
+    return { nodeId, program: PROGRAM.candle, texture: 0, first: 0, count: 64, layer: 0, seq: i };
+  });
+  be.submit(list as RetainedBatch[], 2, W, H);
+  return gridOf(ctx, c.palette);
+}
+
+/** 20 bars, 2 px apart: up, down and doji, rising then falling. */
+const L1_ROWS = Array.from({ length: 20 }, (_, i) => {
+  const m = 6 + (i < 10 ? i : 19 - i);
+  const dir = i % 3; // 0 up, 1 down, 2 doji
+  return [m, m + 3, m - 3, dir === 0 ? m + 2 : dir === 1 ? m - 2 : m];
+});
+describe("CPU stand-in raster, E12-S09: the L1 mark", () => {
+  it("L1: hairline wicks, down bodies solid, 1 px up bodies dash.1-1, dojis neutral", () => {
+    expect(rasterL1(L1_ROWS)).toEqual(L1);
+  });
+});
+
 describe("goldens on the SwiftShader harness (E11-T08 #391 rows; BQ-5)", () => {
+  for (const mark of ["L1 hairline mark"]) {
+    for (const dpr of [1, 1.5, 2]) {
+      for (const theme of ["dark", "light"]) {
+        it.todo(`E12-S09 ${mark} at dpr ${dpr}, ${theme} theme (golden, ≤ 0.1 % pixel diff)`);
+      }
+    }
+  }
   for (const kind of ["hollow candles", "Heikin-Ashi candles", "Heikin-Ashi hollow"]) {
     for (const spacing of [2, 3, 12, 48]) {
       for (const theme of ["dark", "light"]) {
@@ -242,6 +311,30 @@ const HA = [
   ".....|...................||.............",
   ".....|...................||.............",
   ".........................||.............",
+  "........................................",
+  "........................................",
+  "........................................",
+];
+const L1 = [
+  "........................................",
+  "........................................",
+  "........................................",
+  "........................................",
+  "..................|..|..................",
+  "................|.U..|.|................",
+  "..............|.|.|..|.|.|..............",
+  "............|.|.|.|..D.|.U.|............",
+  "..........|.|.|.|.|..D.|.|.|.|..........",
+  "........|.|.U.D.|.|..|.|.|.|.|.|........",
+  "......|.|.|.|.D.|......|.|.D.|.|.|......",
+  "....|.U.|.|.|.|..........|.D.|.U.|.|....",
+  "..|.|.|.D.|.|..............|.|.|.|.|.|..",
+  "|.|.|.|.D.|..................|.|.D.|.U..",
+  "|.|.|.|.|......................|.D.|.|..",
+  "U.D.|.|..........................|.|.|..",
+  "|.D.|..............................|.|..",
+  "|.|..................................|..",
+  "|.......................................",
   "........................................",
   "........................................",
   "........................................",
