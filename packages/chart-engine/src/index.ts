@@ -38,6 +38,8 @@ export type {
   LineStyle,
   LodLevels,
   LodState,
+  SyncId,
+  SyncModes,
   LutId,
   Modifiers,
   OrderLine,
