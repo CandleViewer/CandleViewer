@@ -305,6 +305,8 @@ export interface ChartHostOptions {
   readonly bench: boolean;
   /** §8's `ChartOptions.timeZone`, for the axis labels (E11-S06, BQ-203). */
   readonly timeZone?: string;
+  /** `ChartOptions.memory.sampleIntervalMs`, validated by `createChart` (E11-S15); absent: 5000. */
+  readonly sampleIntervalMs?: number;
   /** The app's resolved motion mode at mount (E11-S04 BQ-104); `setMotion` updates it. */
   readonly reducedMotion?: boolean;
   /** The design fonts (E11-S11 BQ-258); every `init` carries them, a restart's included. */
@@ -425,7 +427,12 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
   const init = (): void => {
     const canvas = o.canvas();
     const dpr = size?.dpr ?? o.dpr;
-    const config = { bench: o.bench, syncGroup: o.syncGroup, timeZone: o.timeZone ?? "UTC" };
+    const config = {
+      bench: o.bench,
+      syncGroup: o.syncGroup,
+      timeZone: o.timeZone ?? "UTC",
+      ...(o.sampleIntervalMs !== undefined && { sampleIntervalMs: o.sampleIntervalMs }),
+    };
     const extra = {
       ...(forced && { profile: "degraded-2d" as const }),
       ...(reduce && { reducedMotion: true }),

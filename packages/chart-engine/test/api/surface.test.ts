@@ -96,6 +96,7 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "Chart",
       "ChartEvents",
       "ChartOptions",
+      "DEFAULT_LOOKBACK_DAYS",
       "Density",
       "Drawing",
       "FocusedUnit",
@@ -110,9 +111,14 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "IndicatorPlugin",
       "LineOptions",
       "LineStyle",
+      "LoadEstimate",
+      "LoadEstimateParams",
       "LodLevels",
       "LodState",
       "LutId",
+      "MAX_BARS_CEILING",
+      "MEMORY_BUDGET_CEILING_MB",
+      "MEMORY_BUDGET_FLOOR_MB",
       "Modifiers",
       "OrderLine",
       "OutputBuffers",
@@ -146,6 +152,7 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "Viewport",
       "VisibleWindow",
       "createChart",
+      "estimateLoad",
       "toTicks", // E12-S06 BQ-10: ruled additive
     ]);
   });
@@ -162,11 +169,22 @@ describe("Scenario: The package builds and exports the designed surface", () => 
     expect(outside).toEqual(RULED_ADDITIONS);
   });
 
-  it("has two runtime exports: createChart with the §8 signature, and toTicks (BQ-10)", () => {
-    expect(Object.keys(root).sort()).toEqual(["createChart", "toTicks"]);
+  it("has the §8 runtime exports: createChart, estimateLoad, the E11-S15 constants and toTicks", () => {
+    expect(Object.keys(root).sort()).toEqual([
+      "DEFAULT_LOOKBACK_DAYS",
+      "MAX_BARS_CEILING",
+      "MEMORY_BUDGET_CEILING_MB",
+      "MEMORY_BUDGET_FLOOR_MB",
+      "createChart",
+      "estimateLoad",
+      "toTicks",
+    ]);
     expect(surface.print("createChart")).toBe("(opts: ChartOptions) => Chart");
     expect(surface.print("toTicks")).toBe(
       "(price: number, priceOrigin: number, tickSize: number) => number",
+    );
+    expect(surface.print("estimateLoad")).toBe(
+      "(params: LoadEstimateParams, budgetMb: number) => LoadEstimate",
     );
   });
 

@@ -16,8 +16,11 @@ export interface ChartOptions {
   timeZone?: "UTC" | string; // default 'UTC'
   density?: "comfortable" | "compact" | "dense";
   syncGroup?: string;
-  maxBars?: number; // default 200_000
-  memoryBudgetMb?: number; // default 600
+  maxBars?: number; // default 200_000; integer in [1, MAX_BARS_CEILING] (E11-S15, F-08)
+  memoryBudgetMb?: number; // default 600 (MiB); integer in [MEMORY_BUDGET_FLOOR_MB, MEMORY_BUDGET_CEILING_MB]
+  // E11-S15 (26 §7/§8): how often the governor samples memory (ms, default 5000, a positive safe
+  // integer); the eviction window in visible spans (default 3, the governor's, E11-S15 PR-2).
+  memory?: { sampleIntervalMs?: number; viewportWindowMultiplier?: number };
   // Design delta BQ-258 (E11-S11): the design fonts' bytes for the SDF atlas (C-2.16: the
   // engine fetches nothing). Copied per chart; absent means no atlas is built.
   fonts?: readonly { family: string; weight: number; bytes: ArrayBuffer; version?: string }[];

@@ -34,7 +34,9 @@ violating file.
 
 ## Public API (`src/index.ts`)
 
-The package root exports `createChart`, `toTicks` (E12-S06 BQ-10: its two runtime exports) and
+The package root exports `createChart`, `toTicks` (E12-S06 BQ-10), `estimateLoad` and the E11-S15
+constants (`MAX_BARS_CEILING`, `MEMORY_BUDGET_CEILING_MB`, `MEMORY_BUDGET_FLOOR_MB`,
+`DEFAULT_LOOKBACK_DAYS`; 26 §8) as its runtime exports, and
 every type the §8 sketch names, and nothing else the sketch does not name (BQ-6); `test/api/surface.test.ts` holds the frozen
 name list and both directions of that rule, so a widening shows up in review. The
 facade lives in `src/api/` (`chart.ts`, `pane.ts`, `scales.ts`, `types.ts`). Today

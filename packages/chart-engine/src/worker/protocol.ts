@@ -77,6 +77,8 @@ export interface ChartConfig {
   readonly syncGroup: string | null;
   /** §8's `ChartOptions.timeZone` for the axis labels (E11-S06, BQ-203, additive); UTC when absent. */
   readonly timeZone?: string;
+  /** `ChartOptions.memory.sampleIntervalMs` (E11-S15, 26 §7); absent means 5000. */
+  readonly sampleIntervalMs?: number;
 }
 
 /** One column of a columnar buffer: `count` elements of `bytes` each from `offset`. */
@@ -391,6 +393,9 @@ const BYTES: ReadonlySet<number> = new Set([1, 2, 4, 8]);
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+/** `config.sampleIntervalMs`: absent, or a positive safe integer (what `MemorySampler` accepts). */
+const sampleInterval = (v: unknown): boolean =>
+  v === undefined || (typeof v === "number" && Number.isSafeInteger(v) && v >= 1);
 const chartId = (v: unknown): v is ChartId => Number.isSafeInteger(v) && (v as number) >= 0;
 /** An OffscreenCanvas (worker) or an HTMLCanvasElement (inline), reached structurally. */
 const canvasLike = (v: unknown): boolean =>
@@ -543,6 +548,7 @@ export function rejectReason(msg: unknown): string | null {
         isObj(msg["theme"]) &&
         isObj(msg["config"]) &&
         optional(msg["config"]["timeZone"], (v) => typeof v === "string") &&
+        sampleInterval(msg["config"]["sampleIntervalMs"]) &&
         (msg["profile"] === undefined || msg["profile"] === "degraded-2d") &&
         (msg["reducedMotion"] === undefined || typeof msg["reducedMotion"] === "boolean")
         ? null
