@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type FocusEvent, type JSX } from "react";
+import { useId, useLayoutEffect, useRef, useState, type FocusEvent, type JSX } from "react";
 import { CalendarGrid } from "./internal/CalendarGrid.js";
 import { ReasonText } from "./internal/disabledReason.js";
 import { EntryWell } from "./internal/EntryWell.js";
@@ -24,6 +24,12 @@ export interface DatePickerProps {
   readonly value: string | null;
   /** A pick, or typed text that parsed and is within `min`-`max`, or an emptied field (null). Never an invalid entry. */
   readonly onChange: (value: string | null) => void;
+  /**
+   * The typed error as it changes (the date's, else the time's with `withTime`): its sentence once text that does not
+   * parse, or a day outside `min`-`max`, is committed; null once the text is valid again, emptied or dropped. For a
+   * host whose own rules wait on a valid day, as `onChange` keeps the last valid one meanwhile. Nothing is drawn for it.
+   */
+  readonly onInvalidChange?: (error: string | null) => void;
   /** Outside a field only: inside a CMP-040 FormField the field's id wins. */
   readonly id?: string;
   readonly name?: string;
@@ -73,6 +79,7 @@ export interface DatePickerProps {
 export function DatePicker({
   value,
   onChange,
+  onInvalidChange,
   id,
   name,
   "aria-label": ariaLabel,
@@ -115,6 +122,18 @@ export function DatePicker({
   const rangeError = caption ?? parseError;
 
   const typedError = dateError ?? (withTime ? timeError : null);
+  // The host hears the typed error as it changes, never at mount (there is none); the latest callback is kept outside
+  // render and declared first, so it is the one the report below calls.
+  const invalidSink = useRef(onInvalidChange);
+  useLayoutEffect(() => {
+    invalidSink.current = onInvalidChange;
+  });
+  const reported = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (typedError === reported.current) return;
+    reported.current = typedError;
+    invalidSink.current?.(typedError);
+  }, [typedError]);
   const control = useFieldControl(
     disabled,
     disabledReason,

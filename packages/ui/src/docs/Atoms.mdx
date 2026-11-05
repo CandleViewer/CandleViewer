@@ -20,6 +20,7 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Enter, Space                 | Activates (`onClick`).                                                                                              |
 | Enter, Space (loading)       | No action while `aria-busy`; focus stays.                                                                           |
 | Enter, Space (with a reason) | No action; the button stays focusable and its reason is the accessible description.                                 |
+| Enter, Space (validity look) | No action; with `unavailableReasonId` it stays focusable and `aria-disabled`, the host's reason its description.    |
 | A held Enter (with a reason) | No action; its repeats are swallowed, so the reason is said once per press, not once per repeat (E09-D09 §9.3).     |
 | Esc (reason echo)            | Hides the reason echo (CMP-016, `aria-hidden`); focus stays and the key stops there. A second Esc reaches the host. |
 
@@ -445,6 +446,7 @@ it sits on `color.surface.app` (3.45:1), as the ThemeLight story does.
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Tab / Shift+Tab        | Moves through `retry`, then each of `actions`, then the dismiss button. A callout with none of them is not in the Tab order. |
 | Enter, Space           | Activates the focused button.                                                                                                |
+| Enter, Space (busy)    | Nothing while an action is `loading` (CMP-001's busy state: focusable, `aria-busy`); focus stays.                            |
 | Enter, Space (dismiss) | Fires `onDismiss`. The callout never moves focus: the host removes it and moves focus to its own next stop, never `<body>`.  |
 | Esc                    | Not handled: Esc never dismisses a lockout, freeze, disconnect or protection banner.                                         |
 

@@ -1,11 +1,10 @@
 /**
  * SCR-140's chrome parts (E16-D02 §1, §3, §8, §9.3, §10.2; E16-D06 RG-07, RG-08, RG-10, RG-11, SR-01, SR-05 to
  * SR-09, SR-15, BG-01, BG-05): the banner slot (at most one, by priority: disk level 3, an incident, a purge
- * running), the disk card on CMP-050 and CMP-023, the summary line with its one polite region, the page's one
- * assertive region (RG-11's `alert`), and the gap table. Each draws what the model computed; none decides a write
- * (C-12.4).
+ * running), the disk card on CMP-050 and CMP-023, the summary line, and the gap table. Each draws what the model
+ * computed; none decides a write (C-12.4). None holds a live region: the page speaks through the shell's (#484 PR 3).
  */
-import { useEffect, useRef, useState, type JSX, type ReactNode, type RefObject } from "react";
+import { useRef, type JSX, type ReactNode, type RefObject } from "react";
 import {
   Button,
   Callout,
@@ -15,8 +14,10 @@ import {
   Table,
   Text,
   useFocusRing,
+  type TableColumn,
 } from "@candleviewer/ui";
 import { TEXT, fill } from "./copy";
+import { PurgeView, type PurgeViewState } from "./PurgeView";
 import { formatClock, formatDate, formatDuration, updatedLine, type DiskCard } from "./model";
 import { GAP_REASONS, PAGE_TEXT, UNKNOWN_GAP } from "./pageCopy";
 import type { Gap } from "./useRecorderData";
@@ -31,11 +32,12 @@ function split(sentence: string): readonly [string, string] {
 const RING = ["cv-focus-ring", "cv-focus-ring--inset"] as const;
 
 /**
- * Moves focus to an element that is no Tab stop, as the shell's route focus does (`tabindex="-1"`, kept until blur),
- * with CMP-039's inset ring while it holds focus (D-5309-10: the UA's own ring is all but invisible in dark).
+ * Readies an element that is no Tab stop to take focus, as the shell's route focus does (`tabindex="-1"`, kept until
+ * blur), with CMP-039's inset ring while it holds focus (D-5309-10: the UA's own ring is all but invisible in dark);
+ * a dialog's fallback focus target too (A-5347-03).
  */
-export function focusLanding(element: HTMLElement | null | undefined): void {
-  if (element == null) return;
+export function asLanding(element: HTMLElement | null | undefined): HTMLElement | null {
+  if (element == null) return null;
   if (!element.hasAttribute("tabindex")) {
     element.setAttribute("tabindex", "-1");
     element.addEventListener("blur", () => element.removeAttribute("tabindex"), { once: true });
@@ -45,7 +47,21 @@ export function focusLanding(element: HTMLElement | null | undefined): void {
     element.classList.add(...added);
     element.addEventListener("blur", () => element.classList.remove(...added), { once: true });
   }
-  element.focus();
+  return element;
+}
+
+/** Moves focus to an element that is no Tab stop (`asLanding`). */
+export function focusLanding(element: HTMLElement | null | undefined): void {
+  asLanding(element)?.focus();
+}
+
+/** The row detail's panel id (CMP-046 `id`): one row detail on the page. */
+export const DETAIL_ID = "cv-recorder-detail";
+
+/** The open row detail's heading (CMP-046's title, a focus target), or null while it is closed (A-5347-03). */
+export function detailHeading(): HTMLElement | null {
+  const title = document.getElementById(DETAIL_ID)?.getAttribute("aria-labelledby") ?? null;
+  return title === null ? null : document.getElementById(title);
 }
 
 export interface IncidentBanner {
@@ -56,21 +72,19 @@ export interface IncidentBanner {
   readonly toMs: number | null;
 }
 
-/** A purge this client started (#484 PR 3 drives it). */
-export interface PurgeBanner {
-  readonly symbol: string;
-  readonly beforeMs: number;
-  readonly pct: number;
-}
-
 export interface BannerSlotProps {
   /** The level-3 banner's sentence (the model's `levelThreeBanner`), or null below level 3. */
   readonly levelThree: string | null;
   readonly incident: IncidentBanner | null;
-  readonly purge: PurgeBanner | null;
+  /** A purge this client started (`usePurge`): its running line or its outcome (`PurgeView`). */
+  readonly purge: PurgeViewState | null;
   readonly onViewGaps: () => void;
   /** "Retention policy", once SCR-141 is registered (BQ-11). */
   readonly onRetentionPolicy?: (() => void) | undefined;
+  /** The level-3 banner's "Purge data…", busy while this client's purge runs (D02 §3, §6.5). */
+  readonly onPurge?: { readonly busy: boolean; readonly open: () => void } | undefined;
+  /** A failed purge's "Open {symbol}": the symbol's row detail (D02 §3.2), given while the symbol has a row. */
+  readonly onOpenSymbol?: ((symbol: string) => void) | undefined;
 }
 
 /** "1 204": D02 §3's grouping of a count. */
@@ -90,13 +104,19 @@ export function BannerSlot({
   purge,
   onViewGaps,
   onRetentionPolicy,
+  onPurge,
+  onOpenSymbol,
 }: BannerSlotProps): JSX.Element | null {
   if (levelThree !== null) {
     const [title, body] = split(levelThree);
-    const actions =
-      onRetentionPolicy === undefined
+    const actions = [
+      ...(onPurge === undefined
         ? []
-        : [{ label: PAGE_TEXT.retentionPolicy, onClick: onRetentionPolicy }];
+        : [{ label: TEXT.levelThreeActions[0], onClick: onPurge.open, loading: onPurge.busy }]),
+      ...(onRetentionPolicy === undefined
+        ? []
+        : [{ label: PAGE_TEXT.retentionPolicy, onClick: onRetentionPolicy }]),
+    ];
     return (
       <Callout key="level-3" tone="danger" live="off" title={title} actions={actions}>
         {body}
@@ -115,31 +135,14 @@ export function BannerSlot({
     );
   }
   if (purge !== null) {
-    const pct = Math.round(purge.pct);
-    const line = fill(TEXT.purgeRunning, {
-      "{symbol}": purge.symbol,
-      "{date}": formatDate(purge.beforeMs),
-      "{pct}": pct,
-    });
-    const [title, body] = split(line);
+    // Its words are said once by `usePurge`, through the shell's announcer (A-5347-04).
     return (
-      <div key={`purge-${purge.symbol}`}>
-        <Callout tone="info" live="off" title={title}>
-          {body}
-        </Callout>
-        <ProgressBar
-          label={fill(PAGE_TEXT.purgeBar, { "{symbol}": purge.symbol })}
-          value={pct}
-          valueText={`${pct} %`}
-        />
-        {/* Said once, as the line arrives (G-02: no start string; the line itself, BG-02). */}
-        <SaidOnce
-          text={fill(TEXT.purgeRunning, {
-            "{symbol}": purge.symbol,
-            "{date}": formatDate(purge.beforeMs),
-          }).replace(": {pct} %", "")}
-        />
-      </div>
+      <PurgeView
+        key={`purge-${purge.symbol}`}
+        state={purge}
+        placement="banner"
+        onOpen={onOpenSymbol}
+      />
     );
   }
   return null;
@@ -157,40 +160,6 @@ export function incidentSentence(incident: IncidentBanner): string {
       });
 }
 
-/**
- * A `role="status"` line in the DOM empty at mount, its text set once after it (05 §6.2, R-5: a region announces what
- * arrives in it, so a region mounted with its text may say nothing); later texts for the same mount are not said.
- */
-function SaidOnce({ text }: { readonly text: string }): JSX.Element {
-  const [shown, setShown] = useState<string | null>(null);
-  useEffect(() => setShown((prev) => prev ?? text), [text]);
-  return (
-    <span className="cv-visually-hidden" role="status">
-      {shown}
-    </span>
-  );
-}
-
-/** What the page's assertive region says: re-keyed per write, so the same words after a release are said again. */
-export interface Said {
-  readonly text: string;
-  readonly n: number;
-}
-
-/**
- * The page's one assertive region (RG-11's `alert`; E16-D06 BG-05): pre-rendered empty at load, written once per
- * condition by the batch announcer (`alert`, after a pending batch, BG-06), emptied when no condition holds. Like the
- * shell's own regions it stays in the accessibility tree under a modal (`data-cv-inert-exempt`, E05-D02 H23), so a
- * condition that begins while a dialog is open is still read out (A-5309-d02).
- */
-export function AlertRegion({ said }: { readonly said: Said }): JSX.Element {
-  return (
-    <div className="cv-visually-hidden" role="alert" aria-atomic="true" data-cv-inert-exempt="">
-      {said.n === 0 || said.text === "" ? null : <span key={said.n}>{said.text}</span>}
-    </div>
-  );
-}
-
 const TONES = { primary: "default", warning: "warning", danger: "danger" } as const;
 
 export interface DiskCardPanelProps {
@@ -201,6 +170,8 @@ export interface DiskCardPanelProps {
   readonly onSuggested: (action: string) => void;
   /** The card's entry points and Compact now (D02 §1). */
   readonly actions: ReactNode;
+  /** A purge's line while level 3 or an incident holds the banner slot, or its result (D02 §3, §3.2). */
+  readonly purgeLine?: ReactNode;
 }
 
 /** The disk card (D02 §3, §8.3): the state-first headline, the bar with its words, the scale, the formula. */
@@ -209,6 +180,7 @@ export function DiskCardPanel({
   loading,
   onSuggested,
   actions,
+  purgeLine = null,
 }: DiskCardPanelProps): JSX.Element | null {
   if (loading) {
     return (
@@ -242,6 +214,7 @@ export function DiskCardPanel({
             {line}
           </Text>
         ))}
+        {purgeLine}
         {card.suggested.length === 0 ? null : (
           <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-inset-xs)" }}>
             {card.suggested.map((action) => (
@@ -273,24 +246,16 @@ export interface SummaryLineProps {
   readonly updatedAtMs: number | null;
   /** The summary's "{m} auto-recorded" applies the Reason: Auto chip (§5.2). */
   readonly onAutoReview: () => void;
-  /** The region's newest batch (SR-01): re-keyed per batch, so the same words twice are said twice. */
-  readonly said: { readonly text: string; readonly n: number };
 }
 
 const AUTO = /^(\d+) auto-recorded$/;
 
 /**
  * The summary line (D02 §1, §5.2, §9.3): the counts and the recorder's state word, "{m} auto-recorded" a link that
- * applies the chip, "updated hh:mm:ss UTC" beside it; and RG-10, the one polite region, pre-rendered empty, which
- * says the 10 s batch of state changes (never a ticking number, BG-01, BG-04); it too stays exposed under a modal
- * (`data-cv-inert-exempt`, A-5309-d02).
+ * applies the chip, "updated hh:mm:ss UTC" beside it. RG-10's 10 s batch of state changes (never a ticking number,
+ * BG-01, BG-04) is said through the shell's polite region, which a modal leaves exposed (#484 PR 3).
  */
-export function SummaryLine({
-  line,
-  updatedAtMs,
-  onAutoReview,
-  said,
-}: SummaryLineProps): JSX.Element {
+export function SummaryLine({ line, updatedAtMs, onAutoReview }: SummaryLineProps): JSX.Element {
   const ring = useFocusRing();
   const parts = line.split(" · ");
   return (
@@ -334,19 +299,11 @@ export function SummaryLine({
           {updatedLine(updatedAtMs)}
         </span>
       )}
-      <div
-        className="cv-visually-hidden"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        data-cv-inert-exempt=""
-      >
-        {said.n === 0 ? null : <span key={said.n}>{said.text}</span>}
-      </div>
     </div>
   );
 }
 
+/** The gap table's columns (D02 §10.2). */
 const GAP_COLUMNS = [
   {
     id: "start",
@@ -385,19 +342,23 @@ export interface GapTableProps {
 const dayTime = (ms: number, nowMs: number): string =>
   formatDate(ms) === formatDate(nowMs) ? formatClock(ms) : `${formatDate(ms)} ${formatClock(ms)}`;
 
-/** The gaps of the last 24 h (D02 §1, §10.2; RG-08): a static CMP-049 table under the list, with no Tab stop. */
-export function GapTable({ gaps, nowMs, hostRef }: GapTableProps): JSX.Element | null {
-  if (gaps.length === 0) return null;
-  const columns = [
+/** The gap table's columns on the page's clock: the page's table and the row detail's (D02 §6.7) alike. */
+export function gapColumns(nowMs: number): readonly TableColumn<Gap>[] {
+  return [
     { ...GAP_COLUMNS[0], cell: (g: Gap) => dayTime(g.fromMs, nowMs) },
     { ...GAP_COLUMNS[1], cell: (g: Gap) => dayTime(g.toMs, nowMs) },
     GAP_COLUMNS[2],
     GAP_COLUMNS[3],
   ];
+}
+
+/** The gaps of the last 24 h (D02 §1, §10.2; RG-08): a static CMP-049 table under the list, with no Tab stop. */
+export function GapTable({ gaps, nowMs, hostRef }: GapTableProps): JSX.Element | null {
+  if (gaps.length === 0) return null;
   return (
     <div ref={hostRef}>
       <Table
-        columns={columns}
+        columns={gapColumns(nowMs)}
         rows={gaps}
         rowKey={(g) => `${g.symbol}|${g.fromMs}|${g.toMs}|${g.reason ?? ""}`}
         caption={TEXT.gapsCaption}

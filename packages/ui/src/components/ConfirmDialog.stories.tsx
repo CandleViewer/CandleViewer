@@ -169,6 +169,44 @@ export const TypedMatch: Story = {
   },
 };
 
+/**
+ * Variant=typed with its validity look (`typedReason`; E16-D06 KB-07, T2-10): Confirm stays a Tab stop,
+ * `aria-disabled` and dimmed, the reason under the footer its description; a match lifts it. The host's lines
+ * after the field (`notes`): the step-up sentence and the audit marker (E16-D02 §6.4).
+ */
+export const TypedValidityLook: Story = {
+  render: () => (
+    <Demo
+      opener="Keep BTCUSDT data forever"
+      title="Keep BTCUSDT data forever?"
+      message="Retention is removed and nothing is deleted automatically. Type BTCUSDT to confirm."
+      restatement={undefined}
+      confirmLabel="Keep BTCUSDT data forever"
+      confirmVariant="primary"
+      variant="typed"
+      typedConfirmValue="BTCUSDT"
+      typedReason="Type BTCUSDT exactly to confirm."
+      notes={
+        <>
+          <p style={{ margin: 0 }}>{"You'll confirm with your password and a code."}</p>
+          <p style={{ margin: 0 }}>This action is audited.</p>
+        </>
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await opened(canvasElement, "Keep BTCUSDT data forever");
+    // The opener carries the effect's name too: the Confirm is the dialog's.
+    const dialog = page.getByRole("alertdialog", { name: "Keep BTCUSDT data forever?" });
+    const confirm = within(dialog).getByRole("button", { name: "Keep BTCUSDT data forever" });
+    await expect(confirm).toBeEnabled();
+    await expect(confirm).toHaveAttribute("aria-disabled", "true");
+    await expect(confirm).toHaveAccessibleDescription("Type BTCUSDT exactly to confirm.");
+    await userEvent.type(page.getByRole("textbox", { name: "Type BTCUSDT to confirm" }), "BTCUSDT");
+    await expect(confirm).not.toHaveAttribute("aria-disabled");
+  },
+};
+
 /** State=busy: after Confirm, CMP-001 loading, the field read-only, aria-busy on the card. */
 export const Busy: Story = {
   render: () => (

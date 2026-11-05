@@ -29,6 +29,13 @@ export interface ButtonProps extends Omit<
    * echo of its own, and its lock leads the label, named "Not available" (E09-D09 §10 `glyph.name`).
    */
   disabledReasonId?: string;
+  /**
+   * Form validity, the validity look (E09-D09 §9.1: the host decides; E16-D04 §1.3): the button stays a Tab stop
+   * with `aria-disabled`, its fill and label at `opacity.disabled` and no lock, described by the host's reason node
+   * with this id (the reason at full opacity under or beside it). A press does nothing and says nothing here: the
+   * host answers it. Never T2: a `disabledReason`, or native `disabled`, wins.
+   */
+  unavailableReasonId?: string;
   fullWidth?: boolean;
   /** Emits `data-density` so `theme.css` re-points the control height; absent = inherit. */
   density?: "comfortable" | "compact";
@@ -43,6 +50,7 @@ export function Button({
   disabled,
   disabledReason,
   disabledReasonId,
+  unavailableReasonId,
   fullWidth = false,
   density,
   iconLeft,
@@ -57,6 +65,9 @@ export function Button({
   const announceGated = useGatedAnnounce();
   // 2a with the host's reason node: the lock leads the label, named; no copy and no echo here.
   const inline = reason.external;
+  // The validity look: only when neither T2 nor native disabled applies.
+  const unavailableId = unavailableReasonId?.trim() || undefined;
+  const unavailable = unavailableId !== undefined && !reason.gated && !reason.disabled;
   const ring = useFocusRing();
   const side = variant === "buy" || variant === "sell";
   const leading =
@@ -64,8 +75,8 @@ export function Button({
   // Buy and sell keep the label visible while busy, so their spinner sits in the trailing slot (D1).
   const inlineSpinner = loading && side;
   const handleClick = (event: MouseEvent<HTMLButtonElement>): void => {
-    // Enter and Space reach here as clicks: a gated or busy button stays focusable but does nothing.
-    if (reason.gated || loading) {
+    // Enter and Space reach here as clicks: a gated, busy or unavailable button stays focusable but does nothing.
+    if (reason.gated || loading || unavailable) {
       event.preventDefault();
       if (reason.gated) announceGated(reason.reason);
       return;
@@ -76,7 +87,8 @@ export function Button({
   // its reason is said once per press (E09-D09 §9.3), never once per repeat. The caller's handler sees every key.
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
     onKeyDown?.(event);
-    if (reason.gated && event.key === "Enter" && event.repeat) event.preventDefault();
+    if ((reason.gated || unavailable) && event.key === "Enter" && event.repeat)
+      event.preventDefault();
   };
   return (
     <>
@@ -92,10 +104,13 @@ export function Button({
           data-side={side ? "" : undefined}
           data-full-width={fullWidth ? "" : undefined}
           data-gated={reason.gated ? "" : undefined}
+          data-unavailable={unavailable ? "" : undefined}
           disabled={reason.disabled}
-          aria-disabled={reason.ariaDisabled}
+          aria-disabled={reason.ariaDisabled ?? (unavailable ? true : undefined)}
           aria-busy={loading ? true : undefined}
-          aria-describedby={cx(describedBy, reason.ariaDescribedBy) || undefined}
+          aria-describedby={
+            cx(describedBy, reason.ariaDescribedBy, unavailable && unavailableId) || undefined
+          }
           onClick={handleClick}
           onKeyDown={handleKeyDown}
         >

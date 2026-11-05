@@ -74,6 +74,11 @@ export interface WsHarness {
   closeWith(
     close: Readonly<{ code: number; reason: string; bye?: Readonly<Record<string, unknown>> }>,
   ): void;
+  /**
+   * The next frame `p` of a data topic, as a `snap` then `d`s (3.3): a whole-frame topic such as `recorder`
+   * (6.2.2, 15.8), whose every frame is the whole status.
+   */
+  sendData(ch: string, p: unknown): void;
 }
 
 /** The client frames whose replies `hold` can keep back. */
@@ -409,6 +414,13 @@ export async function startWsHarness(
       const [t, meta] =
         last === undefined ? (["snap", { reason: "initial" }] as const) : (["d"] as const);
       data(current, t, ch, { tickers: [row] }, (last ?? 0) + 1, meta);
+    },
+    sendData(ch, p) {
+      if (!current) throw new Error("sendData: no live connection");
+      const last = current.seq.get(ch);
+      const [t, meta] =
+        last === undefined ? (["snap", { reason: "initial" }] as const) : (["d"] as const);
+      data(current, t, ch, p, (last ?? 0) + 1, meta);
     },
   };
   return harness;

@@ -12,6 +12,7 @@ const { apiFetch } = vi.hoisted(() => ({
 }));
 vi.mock("../../../src/lib/http/csrfFetch", () => ({ apiFetch }));
 
+import { ShellAnnouncer, clearAnnouncements } from "../../../src/features/app-shell/announcer";
 import { CompactNow } from "../../../src/features/recorder/CompactNow";
 import {
   registerRecorderExtensions,
@@ -33,12 +34,19 @@ const INCIDENT = {
   fromMs: Date.parse("2026-09-14T10:14:03Z"),
   toMs: Date.parse("2026-09-14T10:14:41Z"),
 };
-const PURGE = { symbol: "ADAUSDT", beforeMs: Date.parse("2026-10-01T00:00:00Z"), pct: 42 };
+const PURGE = {
+  phase: "running",
+  symbol: "ADAUSDT",
+  beforeMs: Date.parse("2026-10-01T00:00:00Z"),
+  pct: 42,
+  pollRefused: null,
+} as const;
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"], now: NOW });
 });
 afterEach(() => {
+  act(() => clearAnnouncements());
   apiFetch.mockReset();
   vi.useRealTimers();
 });
@@ -100,32 +108,22 @@ describe("the banner slot (D02 §3: level 3, then an incident, then a purge)", (
     expect(open).toHaveBeenCalledTimes(1);
   });
 
-  it("a purge running: info, its bar, its line said once and its percentage never (SR-09, BG-02)", async () => {
-    const host = document.body.appendChild(document.createElement("div"));
-    const records: MutationRecord[] = [];
-    const watch = new MutationObserver((list) => records.push(...list));
-    watch.observe(host, { childList: true, subtree: true, characterData: true });
-    const { rerender, container } = render(slot({ purge: PURGE }), { container: host });
+  it("a purge running: info, its bar named for the purge, no region of its own (SR-09, BG-02; D-5309-11)", () => {
+    // The line is said once through the shell's announcer (`usePurge`, A-5347-04), never by a node that mounts
+    // with its words; the percentage is never spoken.
+    const { rerender, container } = render(slot({ purge: PURGE }));
     expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
     expect(container).toHaveTextContent("Purging ADAUSDT data recorded before 2026-10-01: 42 %.");
-    // D-5309-11: the bar is named for what it measures (PROPOSED).
     expect(screen.getByRole("progressbar", { name: "Purge of ADAUSDT" })).toHaveAttribute(
       "aria-valuenow",
       "42",
     );
-    // The line's node is in the DOM empty first, then filled once, so its arrival is said (05 §6.2, R-5): its text
-    // came in a later mutation of the node itself.
-    const line = screen.getByRole("status");
-    await flush();
-    watch.disconnect();
-    const filled = records.filter((r) => r.target === line && r.addedNodes.length > 0);
-    expect(filled).toHaveLength(1);
-    const said = line.textContent;
-    expect(said).toBe(
-      "Purging ADAUSDT data recorded before 2026-10-01. Recording continues. Deleted data cannot be restored.",
-    );
     rerender(slot({ purge: { ...PURGE, pct: 43 } }));
-    expect(screen.getByRole("status").textContent).toBe(said);
+    expect(screen.getByRole("progressbar", { name: "Purge of ADAUSDT" })).toHaveAttribute(
+      "aria-valuenow",
+      "43",
+    );
   });
 });
 
@@ -209,6 +207,11 @@ describe("the gap table (D02 §1, §2, §10.2; RG-08)", () => {
 });
 
 describe("Compact now's terminal lines (D02 §3.2; SR-13)", () => {
+  /** The line drawn under the button: its description (the shell's region says it, C-5347-d07). */
+  const lineOf = (): HTMLElement => {
+    const button = screen.getByRole("button", { name: /^(Compact now|Compacting)/ });
+    return document.getElementById(button.getAttribute("aria-describedby") ?? "") as HTMLElement;
+  };
   const run = async (answer: () => Response) => {
     apiFetch.mockImplementation(async (url) =>
       url.endsWith("/admin/recorder/compact") ? json(202, { job_id: JOB }) : answer(),
@@ -217,7 +220,7 @@ describe("Compact now's terminal lines (D02 §3.2; SR-13)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Compact now" }));
     await flush();
     await act(async () => void (await vi.advanceTimersByTimeAsync(JOB_POLL_MS)));
-    return screen.getByRole("status");
+    return lineOf();
   };
 
   it("a failed job names its code; nothing was deleted", async () => {
@@ -285,7 +288,7 @@ describe("Compact now's terminal lines (D02 §3.2; SR-13)", () => {
     answer = () =>
       json(503, { code: "audit_unavailable", status: 503, title: "x", type: "about:blank" });
     await act(async () => void (await vi.advanceTimersByTimeAsync(JOB_POLL_MS)));
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(lineOf()).toHaveTextContent(
       "Status not updated: the server refused it. (audit_unavailable)",
     );
     expect(busy).toHaveAccessibleName(/Compacting · 42 %/); // the last line kept, still busy
@@ -294,8 +297,48 @@ describe("Compact now's terminal lines (D02 §3.2; SR-13)", () => {
     expect(apiFetch.mock.calls.length).toBe(calls + 1); // it polls on
     answer = () => json(200, { id: JOB, status: "running", progress_pct: 50 });
     await act(async () => void (await vi.advanceTimersByTimeAsync(JOB_POLL_MS)));
-    expect(screen.getByRole("status")).toHaveTextContent(/^$/); // an answer clears it
+    expect(lineOf()).toHaveTextContent(/^$/); // an answer clears it
     expect(busy).toHaveAccessibleName(/Compacting · 50 %/);
+  });
+
+  it("each line is said once through the shell's polite region, never a live region of its own (C-5347-d07)", async () => {
+    let refuse = false;
+    apiFetch.mockImplementation(async (url) => {
+      if (!url.endsWith("/admin/recorder/compact"))
+        return json(200, { id: JOB, status: "cancelled" });
+      return refuse
+        ? json(409, { code: "job_running", status: 409, title: "x", type: "about:blank" })
+        : json(202, { job_id: JOB });
+    });
+    render(
+      <>
+        <CompactNow />
+        <ShellAnnouncer />
+      </>,
+    );
+    const region = document.querySelector(
+      '[data-cv-inert-exempt][aria-live="polite"]',
+    ) as HTMLElement;
+    const said: string[] = [];
+    new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) said.push(node.textContent ?? "");
+      }
+    }).observe(region, { childList: true });
+    fireEvent.click(screen.getByRole("button", { name: "Compact now" }));
+    await flush();
+    await act(async () => void (await vi.advanceTimersByTimeAsync(JOB_POLL_MS * 3)));
+    const CANCELLED = "Compaction cancelled; nothing was deleted.";
+    expect(lineOf()).toHaveTextContent(CANCELLED);
+    // Under the row detail's modal a region in the page is inert: the line has none (the A-5347-04 class).
+    expect(lineOf().closest('[role="status"], [aria-live]')).toBeNull();
+    expect(said).toEqual([CANCELLED]);
+    refuse = true;
+    fireEvent.click(screen.getByRole("button", { name: "Compact now" }));
+    await flush();
+    const REFUSED = "A compaction is already running. (job_running)";
+    expect(lineOf()).toHaveTextContent(REFUSED);
+    expect(said).toEqual([CANCELLED, REFUSED]);
   });
 
   it("an unmount mid-job stops the poll: no request after it (C-5309-09)", async () => {

@@ -4,8 +4,10 @@
  * spoken as one batch so none is lost. The assertive set (the level-3 and incident banners and a
  * failed purge, BG-05) is said once per key while its condition holds; coalescing never swallows
  * one, and one that arrives while a batch is waiting is spoken right after that batch (BG-06), those
- * waiting together as one write, and not at all once its condition has ended. Ticking numbers never
- * come here (BG-04). The page owns the regions and passes `say`.
+ * waiting together as one write, and not at all once its condition has ended. Those that arrive in
+ * one turn with no batch waiting are one write too, at the turn's end (the page's region commits a
+ * tick's last write only), said ahead of a batch that turn brings. Ticking numbers never come here
+ * (BG-04). The page owns the regions and passes `say`.
  */
 export const BATCH_WINDOW_MS = 10_000;
 
@@ -44,9 +46,20 @@ export function createBatchAnnouncer(
   const said = new Set<string>();
   let lastBatchAt = Number.NEGATIVE_INFINITY;
   let timer: Timer | null = null;
+  /** The assertive rows of this turn (no batch was waiting), said together once the turn ends. */
+  const turn = new Map<string, string>();
+  let turnTimer: Timer | null = null;
+
+  const sayTurn = (): void => {
+    if (turnTimer !== null) clock.clearTimer(turnTimer);
+    turnTimer = null;
+    if (turn.size > 0) say("assertive", [...turn.values()].join(" "));
+    turn.clear();
+  };
 
   const flush = (): void => {
     timer = null;
+    sayTurn(); // the turn's alerts came before this batch was due: they are said ahead of it
     if (pending.length > 0) {
       say("polite", pending.join("; "));
       lastBatchAt = clock.now();
@@ -68,18 +81,27 @@ export function createBatchAnnouncer(
     alert(key, text) {
       if (said.has(key)) return;
       said.add(key);
-      if (timer === null) say("assertive", text);
-      else held.set(key, text);
+      if (timer !== null) {
+        held.set(key, text);
+        return;
+      }
+      // Two alerts in one turn are one write (#5309's re-check (b)): two `say`s in a tick commit only the last.
+      turn.set(key, text);
+      turnTimer ??= clock.setTimer(sayTurn, 0);
     },
     release(key) {
       said.delete(key);
       held.delete(key); // its condition ended while it waited: nothing is left to say
+      turn.delete(key);
     },
     dispose() {
       if (timer !== null) clock.clearTimer(timer);
+      if (turnTimer !== null) clock.clearTimer(turnTimer);
       timer = null;
+      turnTimer = null;
       pending = [];
       held.clear();
+      turn.clear();
     },
   };
 }
