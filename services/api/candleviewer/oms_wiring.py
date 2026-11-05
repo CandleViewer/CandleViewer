@@ -2546,6 +2546,10 @@ class OmsRuntime:
         #: once it started the consumer, False once it failed; `readyz` reads all but True as not
         #: started.
         self._streaming: bool | None = None
+        #: E29-S06 #981: the closed-PnL sync whose start the lane did not confirm (it failed, or
+        #: the bound cut its answer off), which `readyz` reads as that sync's fault; each start
+        #: composes its own sync, so none is carried over to the next.
+        self._unconfirmed_sync: ClosedPnlSync | None = None
         #: The process's one effective-profile cache (finding 6), `profiles_wiring`'s, which its
         #: owner closes: the pipeline reads it, and E28-T02's writes invalidate the same one.
         self.profiles = profiles
@@ -2623,16 +2627,18 @@ class OmsRuntime:
         or a position reading has been owed to protection for `OWED_DEGRADED_S` or more; failing
         closed, so the check reads `ok` only once the lane has confirmed the start. Never
         `readiness` itself, which `placeOrder` reads (the orchestrator's Q3): one unprotected
-        position never refuses every entry. `degraded` too once the closed-PnL sync's task has
-        ended unasked (E29-S06, the orchestrator's ruling of 2026-11-04), as it never restarts
-        itself; its end is paged once (the sync's `on_ended`). Read from a worker thread; the
-        detail names no account."""
+        position never refuses every entry. `degraded` too once the closed-PnL sync has faulted
+        (its task ended unasked, or a start the lane did not confirm), as neither is tried again
+        (E29-S06, the orchestrator's ruling of 2026-11-04 and its review of 2026-11-05); each is
+        paged once, the end by the sync's `on_ended`. Read from a worker thread; the detail names
+        no account."""
         state, parts = self.readiness, self._parts
         if state != "ok" or parts is None:
             return state
         if self._streaming is not True or parts.stream.readiness.degraded() is not None:
             return "degraded"
-        if parts.closed_pnl is not None and parts.closed_pnl.fault is not None:
+        sync = parts.closed_pnl
+        if sync is not None and (sync is self._unconfirmed_sync or sync.fault is not None):
             return "degraded"
         return state
 
@@ -3060,8 +3066,9 @@ class OmsRuntime:
         joins at its first stored fill or `resyncing`. Bounded as the jobs' start is. A start the
         lane does not confirm, one that fails or one whose answer the bound cuts off (it may
         still have run, as nothing suspends between the accounts' read and the start), is logged
-        CRITICAL and paged as unconfirmed, and `ready` stands: order entry never waits for the
-        sync."""
+        CRITICAL and paged as unconfirmed, and is the sync's fault, so `readyz` reads `degraded`
+        (the orchestrator's review of 2026-11-05); `ready` stands: order entry never waits for
+        the sync."""
         sync, tradable = parts.closed_pnl, parts.tradable
         if sync is None or tradable is None:
             return
@@ -3075,6 +3082,7 @@ class OmsRuntime:
         except Exception as exc:
             if self._stopping:  # the stop's own lane: nothing to start
                 raise asyncio.CancelledError from exc
+            self._unconfirmed_sync = sync  # `readyz` reads its fault from here on
             _log().critical("oms_closed_pnl_sync_start_unconfirmed", error=type(exc).__name__)
             _page(self._pager, "oms_closed_pnl_sync_start_unconfirmed")
 

@@ -451,28 +451,37 @@ async def test_stop_ends_the_task_and_a_later_request_reads_nothing() -> None:
     assert r.times() == [0] and r.sync.fault is None and not r.sync.start([ACCOUNT_A])
 
 
-@pytest.mark.parametrize("end", ["raises", "returns"])
+@pytest.mark.parametrize("end", ["raises", "returns", "cancelled"])
 @virtual
 async def test_a_task_that_ends_unasked_is_logged_and_told_once(
     end: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An end other than by `stop()`, an error or a return its loop never makes, is logged at
-    ERROR by its kind and told to `on_ended` once (the runtime's page); a later stop adds none."""
+    """Any end other than by `stop()`, an error or a return its loop never makes, or a cancel no
+    stop made (as the order lane's death makes one), is a fault, logged at ERROR by its kind and
+    told to `on_ended` once (the runtime's page); a second start and the later stop add none."""
 
     async def ended(self: ClosedPnlSync) -> None:
         if end == "raises":
             raise RuntimeError("the sync's task")
+        if end == "cancelled":
+            await asyncio.Event().wait()
 
     monkeypatch.setattr(ClosedPnlSync, "_run", ended)
     r = rig()
     with capture_logs() as logs:
         assert r.sync.start([ACCOUNT_A])
         await asyncio.sleep(1)
-        assert r.sync.fault is not None
+        if end == "cancelled":
+            task = r.sync._task
+            assert task is not None and (r.sync.fault, r.told) == (None, [])
+            task.cancel()  # not through its stop
+            await asyncio.sleep(1)
+        assert r.sync.fault is not None and r.told == ["ended"]
+        assert not r.sync.start([ACCOUNT_A])
         await r.sync.stop()
+    kind = {"raises": "RuntimeError", "returns": "returned", "cancelled": "CancelledError"}[end]
     kinds = [(e["kind"], e["log_level"]) for e in logs if e["event"] == "closed_pnl_sync_ended"]
-    assert kinds == [("RuntimeError" if end == "raises" else "returned", "error")]
-    assert r.told == ["ended"]
+    assert (kinds, r.told) == ([(kind, "error")], ["ended"])
 
 
 @pytest.mark.parametrize("on_cancel", ["ends", "raises"])

@@ -1,8 +1,9 @@
 """E29-S06 #981 slice 3b: the closed-PnL sync (24 Sec.8.13) in the OMS runtime (20 Sec.6.2), on
 the runtime's own rig (`test_oms_runtime`): built from the runtime's parts, started once `ready`
 is set, stopped before what it reads through closes; its two seams, which only enqueue; a sync
-that fails, which holds neither `ready` nor a fill; and its task's end, paged once unless its stop
-asked for it. The venue is the fake port: no network, no sleeps."""
+that fails, which holds neither `ready` nor a fill; and its faults, a start the lane does not
+confirm and an end of its task no stop asked for, a cancel included, each paged once and read by
+`/readyz` alone. The venue is the fake port: no network, no sleeps."""
 
 from __future__ import annotations
 
@@ -224,11 +225,13 @@ async def test_without_reconciliation_the_stand_in_stays_bare_and_without_its_st
     assert bool(_reads(world)) is synced
 
 
-async def test_a_sync_start_the_lane_does_not_confirm_is_paged_and_ready_stands(
+async def test_a_sync_start_the_lane_does_not_confirm_is_paged_once_and_degrades_readyz_alone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Paged as unconfirmed, not as unstarted: a start whose answer the bound cut off may have
-    run. `ready` stands and `/readyz` reads `ok`."""
+    run. It is the sync's fault (the orchestrator's review of 2026-11-05), though no task of it
+    ended: `/readyz`'s `oms` check reads `degraded`, paged once however often it is read, while
+    `ready` stands and what `placeOrder` and the exits read stays `ok`."""
 
     def refused(self: ClosedPnlSync, accounts: Iterable[AccountId]) -> bool:
         raise RuntimeError("the sync's start")
@@ -238,7 +241,12 @@ async def test_a_sync_start_the_lane_does_not_confirm_is_paged_and_ready_stands(
     with capture_logs() as logs:
         async with started(world.runtime()) as runtime:
             await until(lambda: bool(_sync_pages(world)))
-            assert (runtime.state, runtime.readiness, runtime.readyz) == ("ok", "ok", "ok")
+            sync = runtime._composed().closed_pnl
+            assert sync is not None and sync.fault is None
+            for _ in range(2):
+                assert (runtime.state, runtime.readiness, _oms_state(runtime)) == (
+                    "ok", "ok", "degraded"
+                )  # fmt: skip
     assert _sync_pages(world) == ["oms_closed_pnl_sync_start_unconfirmed"]
     unconfirmed = [(e["error"], e["log_level"]) for e in logs
                    if e["event"] == "oms_closed_pnl_sync_start_unconfirmed"]  # fmt: skip
@@ -270,24 +278,40 @@ async def test_an_account_a_start_skips_is_logged_under_its_callers_own_event(
     ]
 
 
+@pytest.mark.parametrize("end", ["raises", "returns", "cancelled"])
 async def test_a_sync_whose_task_ended_unasked_is_paged_once_and_degrades_readyz_alone(
-    monkeypatch: pytest.MonkeyPatch,
+    end: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Its task never restarts itself, so once it has ended unasked (`fault`) it is paged once and
-    `/readyz`'s `oms` check reads `degraded` (24 Sec.8.12 "Readiness", the orchestrator's ruling of
-    2026-11-04); what `placeOrder` and the exits read stays `ok`, and the stop pages no more."""
+    """Its task never restarts itself, so once it has ended unasked (`fault`), by an error, a
+    return or a cancel no stop made, it is paged once and `/readyz`'s `oms` check reads `degraded`
+    however often it is read (24 Sec.8.12 "Readiness", the orchestrator's ruling of 2026-11-04
+    and its review of 2026-11-05); what `placeOrder` and the exits read stays `ok`, and the stop
+    pages no more."""
 
     async def ended(self: ClosedPnlSync) -> None:
-        raise RuntimeError("the sync's task")
+        if end == "raises":
+            raise RuntimeError("the sync's task")
+        if end == "cancelled":
+            await asyncio.Event().wait()
 
     monkeypatch.setattr(ClosedPnlSync, "_run", ended)
     world = keyed(Synced())
     async with started(world.runtime()) as runtime:
         sync = runtime._composed().closed_pnl
         assert sync is not None
+        await until(lambda: sync._task is not None)
+        if end == "cancelled":
+            await settle()
+            assert (_sync_pages(world), _oms_state(runtime)) == ([], "ok")
+            task = sync._task
+            assert task is not None
+            task.cancel()  # not through its stop: as the order lane's death cancels it
         await until(lambda: "oms_closed_pnl_sync_ended" in world.pager.calls)
         assert sync.fault is not None
-        assert (runtime.state, runtime.readiness, _oms_state(runtime)) == ("ok", "ok", "degraded")
+        for _ in range(2):
+            assert (runtime.state, runtime.readiness, _oms_state(runtime)) == (
+                "ok", "ok", "degraded"
+            )  # fmt: skip
     assert _sync_pages(world) == ["oms_closed_pnl_sync_ended"]
 
 
