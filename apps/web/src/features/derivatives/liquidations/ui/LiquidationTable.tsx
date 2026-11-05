@@ -2,12 +2,11 @@
 // alternative is the primary structure"). CMP-049 in grid mode (the APG grid: ↑ / ↓ move rows), at most 40 rows
 // drawn whatever the print rate, newest on top. The side cell is the word with its ▲ / ▼ glyph, so colour is
 // never the only signal; each number keeps its unit in its accessible name.
-// TODO(#780): the D02 §6 bucket rows ("600 prints · avg …") and the Prints column (BQ 5, ruled 6612481277: display
-// aggregates of served prints) follow outside PR 1's line budget.
-// TODO(slice 3, #780): `Enter` on a row moves the crosshair (`liquidation.print_clicked`).
-import type { JSX } from "react";
+// Rows are D02 §6's 250 ms buckets per side (BQ 5, ruled 6612481277): a bucket of many prints shows the count, the
+// total size, "avg" and the average bankruptcy price, and the total notional (`buckets.ts`).
+import { useEffect, useId, useRef, type JSX } from "react";
 import { Table, type TableColumn } from "@candleviewer/ui";
-import type { HeldPrint } from "../ring";
+import type { FeedRow } from "../buckets";
 import { SIDE_GLYPHS, SIDE_WORDS } from "../side";
 import * as copy from "./copy";
 import { feedTimeIn, groupedDecimal, notional2 } from "./format";
@@ -24,8 +23,10 @@ export interface LiquidationTableProps {
   readonly symbol: string;
   readonly baseUnit: string;
   /** Newest first; the caller bounds them. */
-  readonly rows: readonly HeldPrint[];
+  readonly rows: readonly FeedRow[];
   readonly emptyState: JSX.Element;
+  /** Rows activate (the crosshair): the grid is described by the hint that says so. */
+  readonly activatable?: boolean;
 }
 
 export function LiquidationTable({
@@ -33,10 +34,26 @@ export function LiquidationTable({
   baseUnit,
   rows,
   emptyState,
+  activatable = false,
 }: LiquidationTableProps): JSX.Element {
+  const hintId = useId();
+  const box = useRef<HTMLDivElement>(null);
+  // CMP-049 takes no grid-level description, so the hint is attached to its grid element after each commit
+  useEffect(() => {
+    const grid = box.current?.querySelector('[role="grid"]');
+    if (grid === null || grid === undefined) return;
+    if (activatable) grid.setAttribute("aria-describedby", hintId);
+    else grid.removeAttribute("aria-describedby");
+  });
   const ref = rows[0]?.tsMs ?? 0; // a row from another UTC day than the newest carries its date (PROPOSED)
-  const columns: TableColumn<HeldPrint>[] = [
-    { id: "time", header: copy.COL_TIME, minWidthEm: 6, cell: (r) => feedTimeIn(r.tsMs, ref) },
+  const columns: TableColumn<FeedRow>[] = [
+    {
+      id: "time",
+      header: copy.COL_TIME,
+      minWidthEm: 6,
+      // `data-cv-seq` names the row's print for the pane's activation handler (the grid has no row callback)
+      cell: (r) => <span data-cv-seq={r.seq}>{feedTimeIn(r.tsMs, ref)}</span>,
+    },
     {
       id: "side",
       header: copy.COL_SIDE,
@@ -51,6 +68,13 @@ export function LiquidationTable({
       ),
     },
     {
+      id: "prints",
+      header: copy.COL_PRINTS,
+      align: "end",
+      minWidthEm: 4,
+      cell: (r) => groupedDecimal(String(r.prints)),
+    },
+    {
       id: "size",
       header: copy.colSize(baseUnit),
       align: "end",
@@ -62,7 +86,12 @@ export function LiquidationTable({
       header: copy.COL_PRICE,
       align: "end",
       minWidthEm: 9,
-      cell: (r) => withUnit(groupedDecimal(r.price), "USDT"),
+      cell: (r) =>
+        r.prints === 1
+          ? withUnit(groupedDecimal(r.price), "USDT")
+          : r.avgServed
+            ? withUnit(`${copy.AVG} ${groupedDecimal(r.price)}`, "USDT")
+            : copy.NO_NOTIONAL, // no average without every member's served notional (PROPOSED)
     },
     {
       id: "notional",
@@ -82,14 +111,21 @@ export function LiquidationTable({
     },
   ];
   return (
-    <Table
-      grid
-      columns={columns}
-      rows={rows}
-      rowKey={(r) => String(r.seq)}
-      caption={copy.tableCaption(symbol)}
-      density="compact"
-      emptyState={emptyState}
-    />
+    <div ref={box}>
+      {activatable ? (
+        <p id={hintId} className="cv-visually-hidden">
+          {copy.ACTIVATE_HINT}
+        </p>
+      ) : null}
+      <Table
+        grid
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => String(r.seq)}
+        caption={copy.tableCaption(symbol)}
+        density="compact"
+        emptyState={emptyState}
+      />
+    </div>
   );
 }

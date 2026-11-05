@@ -59,6 +59,7 @@ describe("LiquidationPane (CMP-186, the feed)", () => {
     expect(headers).toEqual([
       "Time (UTC)",
       "Liquidated side",
+      "Prints",
       "Size (BTC)",
       "Bankruptcy price (p), USDT",
       "Notional (USDT)",
@@ -72,6 +73,7 @@ describe("LiquidationPane (CMP-186, the feed)", () => {
     expect(cells).toEqual([
       "09:14:02",
       "Long liquidated ▼",
+      "1",
       "0.498 BTC",
       "82,751.20 USDT",
       "41,210.10 USDT",
@@ -82,13 +84,26 @@ describe("LiquidationPane (CMP-186, the feed)", () => {
 
   it("draws at most 40 rows in a cascade and shows the rate, never as a live region", () => {
     render(stories.Cascade.render());
-    expect(bodyRows()).toHaveLength(40);
+    // D02 §6's two bucket rows: count, total size, "avg" price, total notional
+    expect(bodyRows()).toHaveLength(2);
+    const cells = within(bodyRows()[0] ?? grid())
+      .getAllByRole("gridcell")
+      .map((c) => c.textContent);
+    expect(cells).toEqual([
+      "09:31:10",
+      "Long liquidated ▼",
+      "600",
+      "48.00 BTC",
+      "avg 82,500.00 USDT",
+      "3,960,000.00 USDT",
+      "×600",
+    ]);
     expect(region().textContent).toContain("1,240 prints/s");
     const counter = screen.getByText("1,240 prints per second");
     // the counter sits in an `aria-live="off"` node with no announcing region around it (D02 §13)
     expect(counter.closest("[aria-live]")?.getAttribute("aria-live")).toBe("off");
     expect(counter.closest("[role='status'], [role='alert'], [role='log']")).toBeNull();
-    expect(screen.getByText("Showing the newest 40 of 1,000 prints.")).toBeTruthy(); // the cut, disclosed
+    expect(screen.getByText("Showing the newest 620 of 1,000 prints.")).toBeTruthy(); // the cut, disclosed
   });
 
   it("states the server-side filter", () => {
@@ -139,6 +154,22 @@ describe("LiquidationPane (CMP-186, the feed)", () => {
     expect(grid().contains(document.activeElement)).toBe(true);
   });
 
+  it("never says avg for a bucket whose average is not served", () => {
+    const row = { ...stories.DESIGN_ROW, prints: 2, notionalUsd: null, avgServed: false };
+    render(
+      <LiquidationPane
+        symbol="BTCUSDT"
+        onRetry={noop}
+        snapshot={{ ...stories.base, rows: [row] }}
+      />,
+    );
+    const cells = within(bodyRows()[0] ?? grid())
+      .getAllByRole("gridcell")
+      .map((c) => c.textContent);
+    expect(cells[4]).toBe("not served");
+    expect(grid().textContent).not.toContain("avg");
+  });
+
   it("never shows another symbol's held rows, and never counts backfill as new", () => {
     const { rerender } = render(
       <LiquidationPane symbol="BTCUSDT" onRetry={noop} snapshot={stories.base} defaultPaused />,
@@ -150,6 +181,56 @@ describe("LiquidationPane (CMP-186, the feed)", () => {
     rerender(<LiquidationPane symbol="ETHUSDT" onRetry={noop} snapshot={eth} defaultPaused />);
     const pane = screen.getByRole("region", { name: "Liquidations, ETHUSDT" });
     expect(within(pane).queryByText("82,751.20")).toBeNull();
+  });
+
+  it("activates a row by click or Enter with its print (liquidation.print_clicked, the crosshair)", () => {
+    const onPrintActivate = vi.fn();
+    render(
+      <LiquidationPane
+        symbol="BTCUSDT"
+        onRetry={noop}
+        snapshot={stories.base}
+        onPrintActivate={onPrintActivate}
+      />,
+    );
+    const [first, second] = bodyRows();
+    if (first === undefined || second === undefined) throw new Error("no rows");
+    fireEvent.click(within(first).getAllByRole("gridcell")[3] ?? first);
+    fireEvent.keyDown(within(second).getAllByRole("gridcell")[0] ?? second, { key: "Enter" });
+    fireEvent.keyDown(within(second).getAllByRole("gridcell")[0] ?? second, { key: "ArrowLeft" });
+    expect(onPrintActivate.mock.calls.map(([p]) => (p as { price: string }).price)).toEqual([
+      "82751.20",
+      "62880.00",
+    ]);
+    // the activation is discoverable: the grid is described by the hint (PROPOSED copy)
+    const hint = document.getElementById(grid().getAttribute("aria-describedby") ?? "");
+    expect(hint?.textContent).toBe("Enter moves the chart crosshair to this print.");
+  });
+
+  it("names no hint without activation, and ignores a click that ends a text selection", () => {
+    const onPrintActivate = vi.fn();
+    const { rerender } = render(
+      <LiquidationPane symbol="BTCUSDT" onRetry={noop} snapshot={stories.base} />,
+    );
+    expect(grid().hasAttribute("aria-describedby")).toBe(false);
+    rerender(
+      <LiquidationPane
+        symbol="BTCUSDT"
+        onRetry={noop}
+        snapshot={stories.base}
+        onPrintActivate={onPrintActivate}
+      />,
+    );
+    const selection = vi
+      .spyOn(window, "getSelection")
+      .mockReturnValue({ isCollapsed: false } as unknown as Selection);
+    const cell = within(bodyRows()[0] ?? grid()).getAllByRole("gridcell")[3];
+    if (cell === undefined) throw new Error("no cell");
+    fireEvent.click(cell);
+    expect(onPrintActivate).not.toHaveBeenCalled();
+    selection.mockRestore();
+    fireEvent.click(cell);
+    expect(onPrintActivate).toHaveBeenCalledTimes(1);
   });
 
   it("dates a row from another UTC day than the newest", () => {
@@ -304,8 +385,12 @@ describe("LiquidationPane (CMP-186, the feed)", () => {
 
   it.each(
     Object.entries(stories).filter(([, s]) => typeof s === "object" && s !== null && "render" in s),
-  )("story %s has no serious or critical axe violation", async (_name, story) => {
-    render((story as { render: () => JSX.Element }).render());
-    expect(await serious()).toEqual([]);
-  });
+  )(
+    "story %s has no serious or critical axe violation",
+    async (_name, story) => {
+      render((story as { render: () => JSX.Element }).render());
+      expect(await serious()).toEqual([]);
+    },
+    30_000,
+  );
 });

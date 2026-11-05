@@ -19,8 +19,8 @@ export const bucketOf = (nowMs: number): number => Math.floor(nowMs / BUCKET_MS)
 export class LiquidationCoalescer {
   private pending: LiquidationPrint[] = [];
   private pendingBucket: number | null = null;
-  /** Live prints' `ts_ms` inside the newest push window. */
-  private times: number[] = [];
+  /** Live prints inside the newest push window (their times, and their sides for AN-4's split). */
+  private times: LiquidationPrint[] = [];
   private newestLiveTs = -Infinity;
   private lastLiveArrival: number | null = null;
   /** Buckets flushed so far (a client metric, the ticket's Observability). */
@@ -35,10 +35,12 @@ export class LiquidationCoalescer {
     this.lastLiveArrival = nowMs;
     for (const print of prints) {
       if (print.tsMs > this.newestLiveTs) this.newestLiveTs = print.tsMs;
-      this.times.push(print.tsMs);
+      this.times.push(print);
     }
     const floor = this.newestLiveTs - RATE_WINDOW_MS;
-    if ((this.times[0] ?? Infinity) <= floor) this.times = this.times.filter((t) => t > floor);
+    if ((this.times[0]?.tsMs ?? Infinity) <= floor) {
+      this.times = this.times.filter((p) => p.tsMs > floor);
+    }
   }
 
   /** The prints whose bucket has closed by `nowMs`, oldest first, or `null` while it is open. */
@@ -60,8 +62,25 @@ export class LiquidationCoalescer {
     if (this.lastLiveArrival === null || nowMs - this.lastLiveArrival > RATE_HOLD_MS) return 0;
     const floor = this.newestLiveTs - RATE_WINDOW_MS;
     let n = 0;
-    for (const t of this.times) if (t > floor) n += 1;
+    for (const p of this.times) if (p.tsMs > floor) n += 1;
     return Math.round((n * 1000) / RATE_WINDOW_MS);
+  }
+
+  /**
+   * The long side's share of the push window's served notional, for AN-4's "mostly longs" (D04 §9.3): a display
+   * ratio of served values, never a trading value (BQ 5, ruled 6612481277). `null` without a served notional.
+   */
+  longShare(): number | null {
+    const floor = this.newestLiveTs - RATE_WINDOW_MS;
+    let long = 0;
+    let all = 0;
+    for (const p of this.times) {
+      const n = p.notionalUsd === null ? NaN : Number(p.notionalUsd);
+      if (p.tsMs <= floor || !Number.isFinite(n)) continue;
+      all += n;
+      if (p.side === "long") long += n;
+    }
+    return all > 0 ? long / all : null;
   }
 
   clear(): void {

@@ -2,8 +2,8 @@
 // per D02 §9, first match wins: disconnected > stale > the retry band > the loading band; the partial chip and the
 // coverage sentences keep their own slot, and no state hides them. An empty list is never drawn where the window is
 // outside coverage: the no-coverage state says why it is empty (the ticket's sc. 4; memo F18).
-// TODO(#780, E12-D03 C-36): the `Recording settings for {symbol}…` route and its T2 sentence form (S54-45 / S54-46)
-// need the `recording:write` grant on the session; they land with the SCR-054 mount (slice 3).
+// TODO(#487, E16-S05; E12-D03 C-36): the `Recording settings for {symbol}…` route and its T2 sentence form
+// (S54-45 / S54-46) are E16-S05's `recording:write`-gated recording CTA on recorder-dependent empty and partial states.
 import type { JSX } from "react";
 import { Button, EmptyState, FreshnessMarker, Skeleton, Tag } from "@candleviewer/ui";
 import type { LiqSnapshot } from "../liquidationFeed";

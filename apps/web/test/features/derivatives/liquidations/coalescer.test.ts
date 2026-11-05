@@ -86,4 +86,20 @@ describe("LiquidationCoalescer", () => {
     expect(c.drain(1_000)).toBeNull();
     expect(c.rateLowerBound(0)).toBe(0);
   });
+
+  it("splits the push window's served notional by side for AN-4", () => {
+    const c = new LiquidationCoalescer();
+    expect(c.longShare()).toBeNull();
+    const longs = prints(2, 10_000); // 6600.00 each
+    const short: LiquidationPrint = {
+      tsMs: 10_400,
+      side: "short",
+      price: "82500.00",
+      size: "0.080",
+      notionalUsd: "6600.00",
+      clusterSize: 1,
+    };
+    c.add([...longs, short, { ...short, notionalUsd: null }], 0, true);
+    expect(c.longShare()).toBeCloseTo(2 / 3);
+  });
 });

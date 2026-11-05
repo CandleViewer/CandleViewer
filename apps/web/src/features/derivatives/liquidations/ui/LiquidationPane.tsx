@@ -5,13 +5,13 @@
 // counts what arrived meanwhile; the `N new` control sits inside that region, so reaching it never thaws the view.
 // Nothing here is a live region (D02 §13: the counter is `aria-live="off"`); AN-4's cascade summary is the connected
 // pane's, through the shell announcer (PR 4).
-// TODO(#780): the `Liq 1 h · long … · short …` readout (BQ 4, ruled 6612481277: a client sum of the served 1 h
-// buckets, labelled "served buckets") follows outside PR 1's line budget; the counter stands alone until then.
+// TODO(#723, G-row 6618391299): the `Liq 1 h · long … · short …` readout (BQ 4, ruled 6612481277: a client sum of
+// the served 1 h buckets, labelled "served buckets") waits on a served `liquidation_notional`; the counter stands alone.
 // TODO(#778): `Pause` is component state; any `liq` display setting joins #778's `deriv` block, never local storage.
 import { useEffect, useRef, useState, type FocusEvent, type JSX } from "react";
 import { Button, EmptyState } from "@candleviewer/ui";
 import type { LiqSnapshot } from "../liquidationFeed";
-import type { HeldPrint } from "../ring";
+import type { FeedRow } from "../buckets";
 import * as copy from "./copy";
 import { baseUnit, rateSpoken, rateText } from "./format";
 import { coverageView, FeedStatusChip, HistoryBand } from "./LiquidationStates";
@@ -24,12 +24,17 @@ export interface LiquidationPaneProps {
   /** The retry band's action. */
   readonly onRetry: () => void;
   readonly defaultPaused?: boolean;
+  /**
+   * A row activated (`Enter` or a click): the host moves the crosshair to its time (D02 §6). A bucket row's `tsMs`
+   * is its 250 ms bucket's start; a lone print's is the print's own time.
+   */
+  readonly onPrintActivate?: ((print: FeedRow) => void) | undefined;
 }
 
 interface Held {
   /** The feed the rows came from: a symbol or filter change never shows them (review A M1). */
   readonly identity: string;
-  readonly rows: readonly HeldPrint[];
+  readonly rows: readonly FeedRow[];
   readonly seq: number;
 }
 
@@ -38,6 +43,7 @@ export function LiquidationPane({
   snapshot,
   onRetry,
   defaultPaused = false,
+  onPrintActivate,
 }: LiquidationPaneProps): JSX.Element {
   const [paused, setPaused] = useState(defaultPaused);
   const [pointer, setPointer] = useState(false);
@@ -71,6 +77,28 @@ export function LiquidationPane({
       setFocusIn(false);
     }
   };
+  // a row's activation (a click, or `Enter` on its cell): delegated from the feed region, since CMP-049's grid
+  // has no row callback; the time cell's `data-cv-seq` names the print
+  const shown = view.rows;
+  useEffect(() => {
+    const region = feedRef.current;
+    if (region === null) return undefined;
+    const activate = (e: Event): void => {
+      if (e instanceof KeyboardEvent && e.key !== "Enter") return;
+      // a click that ends a text-selection drag selects, it does not activate
+      if (e.type === "click" && window.getSelection()?.isCollapsed === false) return;
+      const row = e.target instanceof Element ? e.target.closest("tr, [role='row']") : null;
+      const seq = Number(row?.querySelector("[data-cv-seq]")?.getAttribute("data-cv-seq"));
+      const print = shown.find((r) => r.seq === seq);
+      if (print !== undefined) onPrintActivate?.(print);
+    };
+    region.addEventListener("click", activate);
+    region.addEventListener("keydown", activate);
+    return () => {
+      region.removeEventListener("click", activate);
+      region.removeEventListener("keydown", activate);
+    };
+  });
   const heading = useRef<HTMLHeadingElement>(null);
   const retry = (): void => {
     onRetry();
@@ -79,7 +107,8 @@ export function LiquidationPane({
   const base = baseUnit(symbol);
   const empty = view.rows.length === 0;
   const coverage = coverageView(symbol, snapshot);
-  const cut = snapshot.held > view.rows.length && view.rows.length > 0;
+  const printsShown = view.rows.reduce((n, r) => n + r.prints, 0);
+  const cut = snapshot.held > printsShown && printsShown > 0;
 
   return (
     <section className="cv-liq-pane" aria-label={copy.regionName(symbol)} data-cmp="CMP-186">
@@ -137,7 +166,7 @@ export function LiquidationPane({
               ) : null}
               {cut ? (
                 <span className="cv-liq-pane__caption">
-                  {copy.newestOf(view.rows.length, snapshot.held)}
+                  {copy.newestOf(printsShown, snapshot.held)}
                 </span>
               ) : null}
             </div>
@@ -146,6 +175,7 @@ export function LiquidationPane({
             symbol={symbol}
             baseUnit={base}
             rows={view.rows}
+            activatable={onPrintActivate !== undefined}
             emptyState={<EmptyState title={coverage.emptyTitle ?? copy.WAITING} headingLevel={4} />}
           />
         </div>
