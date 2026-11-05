@@ -191,7 +191,7 @@ async def test_update_owner_limits_between_default_and_cap_are_accepted_and_audi
     m, audits = _mgr()
     rid = (await m.create(_limited(HOUR, LIMIT_DEFAULTS[HOUR]), OWNER))["id"]
     out = await m.update(rid, _limited(HOUR, LIMIT_DEFAULTS[HOUR] + 1), 1, OWNER)
-    assert out["created"] is True and audits[-1][0] == "rule.updated"
+    assert out["version"] == 2 and audits[-1][0] == "rule.updated"
     assert audits[-1][1]["limits_above_default"] == {
         HOUR: {"default": LIMIT_DEFAULTS[HOUR], "value": LIMIT_DEFAULTS[HOUR] + 1}
     }

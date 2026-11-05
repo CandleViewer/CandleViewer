@@ -179,14 +179,14 @@ def test_update_creates_version_and_a_conflict_carries_the_version_and_time() ->
     e = _Env()
     rid = e.create()
     r = e.c.put(f"/rules/{rid}", json={"ir": _ir("2")}, headers={"If-Match": '"1"'})
-    assert r.status_code == 200 and r.json()["version"]["version"] == 2
+    assert r.status_code == 200 and r.json()["version"] == 2
     stale = e.c.put(f"/rules/{rid}", json={"ir": _ir("3")}, headers={"If-Match": "1"})
     assert stale.status_code == 412
     body = stale.json()
     assert body["code"] == "version_conflict" and body["version"] == 2
     assert set(body) == {"type", "title", "status", "code", "detail", "version", "updated_at"}
     same = e.c.put(f"/rules/{rid}", json={"ir": _ir("2")}, headers={"If-Match": "2"})
-    assert same.json()["created"] is False
+    assert same.json()["version"] == 2  # a document version 2 holds: nothing is written
     assert e.c.put(f"/rules/{rid}", json={"ir": _ir("4")}).status_code == 400
 
 

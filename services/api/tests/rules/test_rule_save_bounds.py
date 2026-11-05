@@ -229,7 +229,7 @@ async def test_save_document_at_the_bounds_is_stored(kind: str) -> None:
     m, _, _ = _mgr()
     rid = (await m.create(_at(kind), OWNER))["id"]
     renamed = {**_at(kind), "name": "renamed"}
-    assert (await m.update(rid, renamed, 1, OWNER))["version"]["version"] == 2
+    assert (await m.update(rid, renamed, 1, OWNER))["version"] == 2
 
 
 def test_check_bounds_wide_container_over_the_bound_is_refused_before_it_is_walked() -> None:

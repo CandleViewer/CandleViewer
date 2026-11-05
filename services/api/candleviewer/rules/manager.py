@@ -452,6 +452,37 @@ def _saved_at(ir: Any) -> str | None:
     return at.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+#: 22 `RuleIr`'s members: the executable core a rule's detail answers as `ir` (22 `RuleDetail`).
+#: A stored version also holds the rule's identity, mode, editor, layout and authorship, which
+#: are the rule's own members, never the IR's.
+RULE_IR_MEMBERS: Final = (
+    "ir_version",
+    "trigger",
+    "conditions",
+    "actions",
+    "scope",
+    "limits",
+    "variables",
+)
+
+
+def _without_null(value: Any, member: str = "") -> Any:
+    """`value` without the members that hold null, at any depth, a `params` kept whole: 22's IR
+    lets each such member be absent, and `right` and `right2` never null."""
+    if isinstance(value, dict) and member != "params":
+        return {k: _without_null(v, k) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_without_null(v) for v in value]
+    return value
+
+
+def _rule_ir(stored: Any) -> dict[str, Any]:
+    """The IR the engine reads from a stored version (its model's dump, every default included),
+    as 22's `RuleIr` (closed) holds it: its members, without null."""
+    ir = Rule.model_validate(stored).model_dump(mode="json")
+    return {k: _without_null(ir[k], k) for k in RULE_IR_MEMBERS if k in ir}
+
+
 _DRAFT_TO_ARMED = (
     "A rule cannot be armed straight from disabled. Move it to simulate first, then arm it."
 )
@@ -822,11 +853,25 @@ class RulesManager:
                 )
         return out
 
-    async def _present(self, row: RuleRow) -> dict[str, Any]:
-        """`_view`, after a forced disarm of an armed rule the engine must not run."""
+    def _detail(self, row: RuleRow) -> dict[str, Any]:
+        """22 `RuleDetail`: the view, `version` (the newest version, the one a save's `If-Match`
+        names), and the active version's `ir_hash` and IR as 22's `RuleIr` holds it, left out
+        while that version is quarantined: its view carries only the export form (G-15). A save
+        keeps no layout of its own yet (22 `RuleInput`), so `graph_layout` is null."""
+        out = {**self._view(row), "version": row.latest_version, "graph_layout": None}
+        active = next((v for v in row.versions if v.id == row.active_version_id), None)
+        if active is not None:
+            out["ir_hash"] = active.ir_hash
+            if "quarantined" not in out:
+                out["ir"] = _rule_ir(active.ir)
+        return out
+
+    async def _present(self, row: RuleRow, *, detail: bool = False) -> dict[str, Any]:
+        """`_view` (`_detail` with `detail`), after a forced disarm of an armed rule the engine
+        must not run."""
         if _disarm_cause(row):
             row = await self._force_disarm(row)
-        return self._view(row)
+        return self._detail(row) if detail else self._view(row)
 
     async def _force_disarm(self, row: RuleRow) -> RuleRow:
         """B9 `DISARM`, audited as `rule.disarmed` with its cause (no actor: the server does it);
@@ -1027,7 +1072,8 @@ class RulesManager:
         }
 
     async def get(self, rule_id: str, actor: Actor) -> dict[str, Any]:
-        return await self._present(await self._visible_row(rule_id, actor))
+        """22 `getRule`: the rule's detail, presented as every read presents a rule."""
+        return await self._present(await self._visible_row(rule_id, actor), detail=True)
 
     async def visible_rule_ids(self, actor: Actor) -> frozenset[str]:
         """The rules *actor* may read, exactly as `list_rules` lists them, for a read model that
@@ -1045,6 +1091,9 @@ class RulesManager:
         actor: Actor,
         notes: str = "",
     ) -> dict[str, Any]:
+        """22 `updateRule`: a new version of the rule, answered with the rule's detail (22
+        `RuleDetail`) at the version written; a document a stored version already holds writes
+        nothing and answers the rule as it stands."""
         check_text_bound("note", notes)
         row = await self._visible_row(rule_id, actor, "update")
         await self._guard_system(row, actor, "update")
@@ -1068,9 +1117,8 @@ class RulesManager:
         await self._require_owner_for_raised_limits(rule, actor, "update", rule_id)
         if rule.name != row.name:
             await self._check_rename(row, rule.name, actor)
-        existing = next((v for v in row.versions if v.ir_hash == h), None)
-        if existing is not None:
-            return {"created": False, "version": self._version_view(existing)}
+        if any(v.ir_hash == h for v in row.versions):
+            return self._detail(row)
         v = self._new_version(row, rule, h, notes, actor)
         row.name = rule.name
         updated = {"rule_id": rule_id, "version": v.version, "ir_hash": h, "actor": actor.user_id}
@@ -1079,7 +1127,7 @@ class RulesManager:
         if row.mode == "disabled":
             row.active_version_id = v.id
         await self._s.put(row)
-        return {"created": True, "version": self._version_view(v)}
+        return self._detail(row)
 
     async def _check_rename(self, row: RuleRow, name: str, actor: Actor) -> None:
         """No rename into the reserved `sys.` namespace, and no rename of a `sys.*` rule."""

@@ -258,7 +258,7 @@ async def test_a_name_only_another_users_unreadable_rule_holds_is_no_conflict() 
     await m.create(_ir(name="Gamma"), a)
     beta = (await m.create(_ir(name="Beta"), b))["id"]
     assert (await m.create(_ir(name="Alpha"), b))["name"] == "Alpha"
-    assert (await m.update(beta, _ir("2", name="Gamma"), 1, b))["created"] is True
+    assert (await m.update(beta, _ir("2", name="Gamma"), 1, b))["version"] == 2
     assert sorted(r["name"] for r in (await m.list_rules(b))["items"]) == ["Alpha", "Gamma"]
 
 
@@ -396,7 +396,8 @@ async def test_no_known_account_id_reaches_an_export_or_an_export_json_property(
     scope: list[str], metric: str | None, params: dict[str, Any], quarantined: bool
 ) -> None:
     """Whatever account references a rule holds, in its scope, a metric or its action params at
-    any depth, no account id the fixture knows is in its export or, quarantined, its view."""
+    any depth, no account id the fixture knows is in its export or, quarantined, its view; a rule
+    that reads answers its IR, accounts included, as 22's `RuleDetail.ir` and nowhere else."""
     m, _ = _mgr()
     ir = _ir(name="p", scope={"level": "account", "account_ids": scope})
     ir["conditions"]["left"]["account_id"] = metric
@@ -408,7 +409,9 @@ async def test_no_known_account_id_reaches_an_export_or_an_export_json_property(
         row.versions[0].ir["zzz"] = {"account_ids": list(KNOWN)}
     views = [await m.get(rid, OWNER), *(await m.list_rules(OWNER))["items"]]
     assert all(("export_json" in v) is quarantined for v in views)
-    blob = json.dumps([await m.export_rule(rid, OWNER), views])
+    assert ("ir" in views[0]) is not quarantined  # a quarantined rule's detail holds no IR (G-15)
+    shown = [{k: v for k, v in view.items() if k != "ir"} for view in views]
+    blob = json.dumps([await m.export_rule(rid, OWNER), shown])
     assert not [a for a in KNOWN if a in blob]
 
 

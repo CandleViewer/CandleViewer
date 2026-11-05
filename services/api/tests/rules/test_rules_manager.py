@@ -71,10 +71,10 @@ async def test_every_save_is_a_new_immutable_version() -> None:
     m, _, _ = _mgr()
     rid = (await m.create(_ir(), OWNER))["id"]
     for i, n in enumerate(("1", "2", "3"), start=2):
-        assert (await m.update(rid, _ir(n), i - 1, OWNER))["version"]["version"] == i
+        assert (await m.update(rid, _ir(n), i - 1, OWNER))["version"] == i
     v3 = (await m.versions(rid))[1]
     assert v3["version"] == 3 and v3["compiler_version"]
-    assert (await m.update(rid, _ir("9"), 4, OWNER))["version"]["version"] == 5
+    assert (await m.update(rid, _ir("9"), 4, OWNER))["version"] == 5
     assert (await m.versions(rid))[2]["ir_hash"] == v3["ir_hash"]
 
 
@@ -155,7 +155,7 @@ async def test_unchanged_save_creates_nothing() -> None:
     m, _, _ = _mgr()
     rid = (await m.create(_ir(), OWNER))["id"]
     r = await m.update(rid, _ir(), 1, OWNER)
-    assert r["created"] is False and r["version"]["version"] == 1
+    assert r["version"] == 1
     assert len(await m.versions(rid)) == 1
 
 

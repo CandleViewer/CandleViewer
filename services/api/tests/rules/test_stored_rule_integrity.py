@@ -92,7 +92,7 @@ async def test_a_save_stores_the_acting_user_and_the_server_time_never_the_bodys
     rid = e.create(**CLAIMED)
     assert _authored(await _latest(e.mgr, rid)) == (USER_A, NOW, NOW, USER_A)
     saved = _save(e, "update", rid, {"ir": _ir("2", **CLAIMED)})
-    assert saved.status_code == 200 and saved.json()["version"]["author"] == USER_A
+    assert saved.status_code == 200 and saved.json()["version"] == 2
     assert _authored(await _latest(e.mgr, rid)) == (USER_A, NOW, NOW, USER_A)
 
 
