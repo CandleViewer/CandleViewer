@@ -432,6 +432,18 @@ pending (queued on #2701). Sharing is a deferred surface; the ticket's R13 "Shar
 register's R13 is Team & knowledge). Status Approved (2026-10-20; independent reviews on #2564 and the Architect review
 in the model's review log; the Fable security pass on the close-out PR).
 
+**E15 workspaces, layout persistence and exchange** (`docs/security/threat-models/e15-layouts-workspaces.md`, ticket
+E15-X01, Draft, sign-off pending) models the shipped `/workspaces*` backend (owner-scoped SQL, composite same-owner
+keys, the same 404 for missing, deleted and foreign ids, closed bounded models) and the planned dock boundary, local
+autosave, export, import, floating windows and the shipped view-as read path (#3085). Of 49 rows (LY-S01..LY-E05),
+12 are inherent High and none Critical. Its export allow-list and denial rule (§5) and its import order with the
+newer-version refusal (§6) are the requirements E15-S07 implements; SR-E15-01..20 go to E15-X02, E15-X03 and the owning
+stories. Open findings: control absent, a per-user write rate limit (F-01, SR-E15-04, High); control absent, a per-user
+bound on retained soft-deleted rows (F-02, SR-E15-05, High); control absent, an audit record for workspace delete (F-03,
+SR-E15-17); and `WorkspaceBundle` not closed, with a free-string `schema_version`, no root `kind` and no operation that
+takes a bundle (F-04, High). The sharing half maps to R6 (the register's R13 is Team & knowledge); register entries
+are made at approval.
+
 **E13 indicator framework, presets & metric exposure** (`docs/security/threat-models/E13-indicators.md`, ticket
 E13-X01) is integrity-first where indicators become safety-relevant: ATR feeding `sl_offset_unit="atr"` stop
 sizing (IR-12 and IR-45 fail-closed, Critical: a display-only worker value must never be the source) and provisional Zig Zag swings
@@ -788,6 +800,10 @@ model, and outside the counts above, as the E28 rows are not. HM1 and HM2 are op
 for R2 under the rule at the head of this paragraph (RR-30 in §16.1, RSK-092, refining RSK-063; owner sign-off pending),
 and unreachable on `main` until E21-T02 (the producer) and E21-T03 (the route) land. HM3 to HM6 (HM-D02, HM-D07, HM-T03,
 HM-R01) are Medium residuals, and AR-1 (HM-I05) and AR-2 (HM-R02) proposed accepted risks, all awaiting Owner acceptance (RR-31).
+The E15 rows (E15-X01, LY-S01..LY-E05, 49 rows) are Draft until the Security engineer and the Architect sign the model, and
+outside the counts above. Its open Highs (LY-D03, LY-D04, with no shipped control) and the planned Highs owned by open E15
+stories block E15 epic Done until their controls ship or the Owner accepts them with a review date; at approval they go
+to §16.1 and `32-risk-register.md` (`docs/security/threat-models/e15-layouts-workspaces.md` §11.2).
 
 ---
 
