@@ -63,8 +63,8 @@ Gates (each FAIL led by its name):
                pack or the hand-off names is a deck row; §5.3's state keys are the deck's E18 ones.
   G-SIGNOFF    §9 has a row per item of `14`'s five checklists (SCR-045: E18's one) and no tick.
   G-HANDOFF    §G: a block only for CMP-197, CMP-046 and CMP-227, each with `16` §11.4's lines in
-               order, `[x]` with evidence or `[ ]` with PENDING or N/A; every linked checklist
-               cite is that component's block.
+               order, `[x]` with evidence (never N/A) or `[ ]` with PENDING or N/A; every linked
+               checklist cite is that component's block.
   G-AROW       each §C row's Old stands on its cited line; a pointer row sits after the last
                pointer line of its `14` entry.
   G-CITE       every cite of the pack and the hand-off resolves at its pin on a non-blank line,
@@ -76,7 +76,10 @@ Usage (from the repo root):
   python3 -I docs/design/_tools/e18_d05_handoff_audit.py --stage deck --check
   python3 -I docs/design/_tools/e18_d05_handoff_audit.py --stage deck --self-test
   python3 -I docs/design/_tools/e18_d05_handoff_audit.py --stage full --check
+  python3 -I docs/design/_tools/e18_d05_handoff_audit.py --stage full --self-test
   python3 -I docs/design/_tools/e18_d05_handoff_audit.py --stage full --repin-ruled
+Every mode needs `--stage`. On slice 1b's branch only `--stage full` passes: the deck stage's
+G-SCOPE admits slice 1a's files alone.
 Exit 0 = no FAIL; 1 = at least one FAIL; 2 = a usage error.
 """
 
@@ -688,7 +691,7 @@ def g_handoff(t: L.Tree) -> list[str]:
         if [g.group(1) if g else "" for g in got] != names:
             bad.append(f"{part[:7]}: the lines are not `16` §11.4's, in order")
         for ln in lines:
-            ok = re.match(r"- \[x\] \*\*.+?\*\* — (?!PENDING)\S", ln) or re.match(
+            ok = re.match(r"- \[x\] \*\*.+?\*\* — (?!PENDING|N/A)\S", ln) or re.match(
                 r"- \[ \] \*\*.+?\*\* — (PENDING|N/A) — \S", ln
             )
             if not ok:
@@ -885,6 +888,8 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-41", "G-HYGIENE", "a placeholder in the pack", "pack",
        "**Status:** Draft v0.1.", "**Status:** Draft v0.1, T" + "BD."),
     _M("M-42", "G-SCOPE", "the pins file missing", fn=drop_present(PINS_REL)),
+    _M("M-43", "G-HANDOFF", "an N/A line ticked", "handoff",
+       "- [ ] **Motion pair** — N/A — none", "- [x] **Motion pair** — N/A — none"),
 )
 # fmt: on
 
@@ -920,7 +925,7 @@ def repin_ruled(stage: str) -> int:
 def main(argv: list[str]) -> int:
     args = list(argv)
     if "--stage" not in args or args.index("--stage") + 1 >= len(args):
-        print("--stage deck or --stage full is required", file=sys.stderr)
+        print("--stage deck or --stage full is required, with every mode", file=sys.stderr)
         return 2
     i = args.index("--stage")
     stage = args.pop(i + 1)

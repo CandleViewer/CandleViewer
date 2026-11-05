@@ -63,7 +63,7 @@ The lists of the four footprint components are D03H §D (`D03H`:34). These scree
 
 ## §F References and the deck as data
 
-**Motion:** D04 §2 and the motion-pair lines (`D04H`:9–11). **Accessibility:** D04 §7.1–§7.5 (`D04`:160–237). **Tokens and encodings:** D03 §2, §3. **The deck as data:** one header line (the pack, the slice, the base, the D03 head, the statuses `merged`, `PROPOSED` and `RULED`, the `frozen` flag, the counts), then one row per string with `id`, `text`, `screen`, `kind`, `where`, `status`, `owner`, `source`, `ref`, `consumer` and `frozen`, and `key`, `narrowed` or `live` where they apply.
+**Motion:** D04 §2 and the motion-pair lines (`D04H`:9–11). **Accessibility:** D04 §7.1–§7.5 (`D04`:160–237). **Tokens and encodings:** D03 §2, §3. **The deck as data:** one header line (the pack, the slice, the base, the D03 head, the statuses `merged`, `PROPOSED` and `RULED`, the `frozen` flag, the counts; it names slice 1a, which froze the deck, and stays so), then one row per string with `id`, `text`, `screen`, `kind`, `where`, `status`, `owner`, `source`, `ref`, `consumer` and `frozen`, and `key`, `narrowed` or `live` where they apply.
 
 ## §G Handoff checklists (`16` §11.4, `16`:577)
 
@@ -73,15 +73,15 @@ Linked, never restated: CMP-109 (`D03H`:55), CMP-132 (`D03H`:117 and `E25H`:62, 
 
 - [ ] **Final Penpot link** — PENDING — D03 PR 2 (D03 board 01)
 - [x] **Variants × States matrix** — one, two and three rows; forming (D03 A-11; §D)
-- [x] **Keyboard table** — N/A — the tooltip is not focusable; the mirror carries the values (D04 §7.1)
+- [ ] **Keyboard table** — N/A — the tooltip is not focusable; the mirror carries the values (D04 §7.1)
 - [x] **Accessible name / role table** — hidden from AT; the mirror's composition W-3 (`D03`:372)
 - [x] **Live data** — none: the rows follow the crosshair, never announced (D04 §7.3)
-- [x] **Motion pair** — N/A — none animated
+- [ ] **Motion pair** — N/A — none animated
 - [x] **Density notes** — D03 §5.2
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — PENDING — D03 §2.1's names land with D03 PR 2
 - [x] **Data contract confirmed** — the cell's fields (`24`:819); no field invented
-- [ ] **Contrast and CVD** — PENDING — D03 §2.3 with its boards
+- [ ] **Contrast and CVD** — PENDING — D03 §2.3 with its boards; forced colours by D03 §2.6 and D04 R-11 (`D04`:73)
 - [ ] **Design QA checklist (16 §12)** — PENDING — D03 PR 2
 - [ ] **Sign-off** — PENDING — owner `approved` on #499
 
@@ -97,7 +97,7 @@ Linked, never restated: CMP-109 (`D03H`:55), CMP-132 (`D03H`:117 and `E25H`:62, 
 - [x] **Essential-exceptions log** — none
 - [ ] **Tokens used** — PENDING — D03 §2.1's names land with D03 PR 2
 - [x] **Data contract confirmed** — the cell's fields (`24`:819); GAP-10 for the counts (`D02`:905)
-- [ ] **Contrast and CVD** — PENDING — D03 §2.3 with its boards
+- [ ] **Contrast and CVD** — PENDING — D03 §2.3 with its boards; forced colours by D03 §2.6 and D04 R-11 (`D04`:73)
 - [ ] **Design QA checklist (16 §12)** — PENDING — D03 PR 2
 - [ ] **Sign-off** — PENDING — owner `approved` on #499
 
@@ -107,7 +107,7 @@ Linked, never restated: CMP-109 (`D03H`:55), CMP-132 (`D03H`:117 and `E25H`:62, 
 - [x] **Variants × States matrix** — the chip before the row's status, stamped "no v1 source sets it" (D02 §7.4)
 - [x] **Keyboard table** — `E25H`:12: `Tab`, `Enter` / `Space` opens SCR-058, `Esc`
 - [x] **Accessible name / role table** — `E25H`:13
-- [x] **Live data** — N/A — the chip binds no streaming value (`E25H`:14)
+- [ ] **Live data** — N/A — the chip binds no streaming value (`E25H`:14)
 - [x] **Motion pair** — none animated (`E25H`:15)
 - [x] **Density notes** — `E25H`:16
 - [x] **Essential-exceptions log** — none
