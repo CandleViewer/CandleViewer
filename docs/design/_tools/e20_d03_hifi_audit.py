@@ -15,11 +15,11 @@ G-CONTRAST, G-CVD, G-REDLINE, G-GLYPH, G-FORMAT, G-T2, G-ENV, G-AROWS, G-NOCLOSE
 G-UNTOUCHED and G-MUTLIST (section 13.3 equals this tool's list).
 Pins (G-RULED): each BQ bullet's sha256[:16] in BQ_PINS below, no separate pins file;
 `--repin` is the only writer, and it also prints where each pinned E20-D02 line now stands. The
-BQ list is comment 6649847483 on #575; its ruling is pending (RULING is None until it lands).
+BQ list is comment 6649847483 on #575, ruled in comment 6652595516 (RULING; VERDICTS as recorded).
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e20_d03_hifi_audit.py --check | --self-test | --repin
-  python3 -I docs/design/_tools/e20_d03_hifi_audit.py --fill   (writes 2.2, 2.3, 6.1, 4.2, 13.3)
+  python3 -I docs/design/_tools/e20_d03_hifi_audit.py --fill (writes 2.2, 2.3, 4.2, 6.1, 6.4, 13.3)
 Exit 0 = no FAIL; 1 = at least one FAIL.
 """
 
@@ -43,10 +43,13 @@ sys.path.insert(0, str(_LIB.parent))
 import spec_audit_lib as L  # noqa: E402 - imported only after its content pin holds
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "9a5ed9846a996ca2bfb953438ca03036190fd000"  # origin/main; every cite is read here
+BASE = "e7cc2dd2a1f8d70de462e0644a1e7e5aa02108a8"  # origin/main; every cite is read here
 D02_HEAD = "a2023e217966e362942c779233647adbcdeb3e68"  # E20-D02's boards PR head; re-pin at merge
 BQ_LIST = "6649847483"  # the BQ list on #575
-RULING: str | None = None  # the ruling of record, once it lands
+RULING: str | None = "6652595516"  # the ruling of record
+# G-BQ: each BQ's verdict as the ruling records it, BQ-0 first.
+_AG, _AR, _AM = "AGREE", "AGREE +rider", "AMEND"
+VERDICTS = (_AR, _AG, _AR, _AM, _AR, _AG, _AG, _AG, _AM, _AR)
 BQ_COUNT = 10
 TICKET = "E20-D03"
 
@@ -155,6 +158,9 @@ DENSITIES = ("compact", "comfortable")
 ROW_SETS = (("Default", 5), ("AllRows", 12))
 MONO_ADVANCE = 0.6  # JetBrains Mono's advance, 600 of 1,000 units/em (`16`:98 locks the family)
 VALUE_CLASS = "type.num.sm"
+# Section 6.4: the in-app text scales and their `--cv-text-scale` factors (`16`:167).
+SCALES = (("100 %", 1.0), ("112 %", 1.12), ("125 %", 1.25), ("150 %", 1.5))
+LINE_HEIGHT = 1.2  # the value class's line height (section 3.2)
 # Section 4.2: the widest Total Notional strings at the PROPOSED ten-digit design bound (OQ-1).
 WIDEST = (
     ("full, breached", "■ 9,999,999,999"),
@@ -189,16 +195,16 @@ PROPOSED_VERBS = frozenset({"export market data"})
 PINS_OPEN = 'BQ_PINS = """\n'
 PINS_CLOSE = '"""  # end of the BQ pins'
 BQ_PINS = """
-BQ-0 a15b4e45fe009776
-BQ-1 fa8a379855a42285
-BQ-2 ccaa9b8b9f784603
-BQ-3 f7f097c2ad2552ea
-BQ-4 ad357cbcb0e3bbab
-BQ-5 1499291c58a26d60
-BQ-6 9c43a1092e7236cf
-BQ-7 a520c09653aa6cbf
-BQ-8 ad1c65ae472431fd
-BQ-9 28b658b5dc2344de
+BQ-0 b2069dac47d43d2d
+BQ-1 2c70c197cb0e14bc
+BQ-2 f456bce9b9f118ae
+BQ-3 6b336b17b6ea199d
+BQ-4 a6469f795a9cc4cc
+BQ-5 397d04e0f972934a
+BQ-6 87b6f6b331114278
+BQ-7 ab3d95f17de52d01
+BQ-8 d98fcc3f6c658a3d
+BQ-9 622ef2e78afb6d20
 """  # end of the BQ pins
 # The E20-D02 lines this pack builds on: D02 at the base, D02H at the boards PR head.
 KEY_CITES = (
@@ -341,6 +347,23 @@ def width_rows() -> list[list[str]]:
     return out
 
 
+def scale_rows() -> list[list[str]]:
+    """Section 6.4: each row's `min-height` x `--cv-text-scale` (or its line box plus two
+    `space.1`, if larger), the AllRows strip, and the widest Total Notional cells per scale."""
+    n = numbers()
+    allrows = ROW_SETS[1][1] + 1
+    out = []
+    for label, k in SCALES:
+        h = {d: max(n[d] * k, n["font"] * LINE_HEIGHT * k + 2 * n["space.1"]) for d in DENSITIES}
+        cells = [
+            f"{math.ceil(len(w) * MONO_ADVANCE * n['font'] * k + 2 * n['space.1'])}"
+            for _, w in (WIDEST[1], WIDEST[0])
+        ]
+        row = [label, f"{k:g}", *(f"{round(h[d], 2):g}" for d in DENSITIES)]
+        out.append(row + [f"{round(allrows * h[d], 2):g}" for d in DENSITIES] + cells)
+    return out
+
+
 # ---------- spec helpers ------------------------------------------------------------------------
 def rows(block: str) -> list[list[str]]:
     return L.table_rows(block)
@@ -398,7 +421,8 @@ def g_quote(t: L.Tree) -> list[str]:
 
 def g_version(t: L.Tree) -> list[str]:
     v, spec = sec(t, "### 13.1 Version line"), t.text("spec")
-    miss = [n for n in (BASE[:9], D02_HEAD[:9], "#5903", "re-pin", BQ_LIST) if n not in v]
+    need = (BASE[:9], D02_HEAD[:9], "#5903", "re-pin", BQ_LIST, RULING or "")
+    miss = [n for n in need if n not in v]
     if f"Base `origin/main` `{BASE[:9]}`" not in spec:
         miss.append("Inputs pinned base")
     return [f"missing: {', '.join(miss)}"] if miss else []
@@ -423,18 +447,18 @@ def g_bq(t: L.Tree) -> list[str]:
         verdict, forbid = "**ORCH-default.**", ("RULED",)
     else:
         head = f"## The questions BQ-0 … BQ-9 — RULED (comment {RULING}, on the BQ list {BQ_LIST})"
-        verdict, forbid = "**RULED", ("ORCH-default.",)
+        verdict, forbid = "", ("ORCH-default.",)
     bad = L.check_ruling(
         spec,
         heading_line=head,
         list_ref=f"comment {BQ_LIST} on #575",
         count=BQ_COUNT,
-        verdict=lambda n: verdict,
+        verdict=lambda n: verdict or f"**RULED: {VERDICTS[n]}.**",
         need=("Built as:",),
         forbid=forbid,
     )
     walk = sec(t, "## 12. Owner walkthrough")
-    if f"comment {BQ_LIST}" not in walk:
+    if any(f"comment {c}" not in walk for c in (BQ_LIST, RULING) if c):
         bad.append("the walkthrough's BQ item")
     return bad
 
@@ -444,10 +468,15 @@ def g_ruled(t: L.Tree) -> list[str]:
 
 
 def g_boards(t: L.Tree) -> list[str]:
-    got = rows(sec(t, "## 0. Status"))
+    boards, _, undrawn = sec(t, "## 0. Status").partition("**Not drawn")
+    got = rows(boards)
     bad = L.board_cap(got, TICKET, t.text("spec"))
     hc = sum(1 for r in got if len(r) > 3 and r[3] == "high-contrast")
-    return bad + ([] if hc == 1 else [f"{hc} high-contrast boards"])
+    bad += [] if hc == 1 else [f"{hc} high-contrast boards"]
+    cells = rows(undrawn)
+    if len(cells) < 8:
+        bad.append(f"{len(cells)} undrawn cells named")
+    return bad + [f"undrawn {r[0]}: no binding section" for r in cells if "§" not in r[-1]]
 
 
 def g_penpot(t: L.Tree) -> list[str]:
@@ -500,6 +529,8 @@ def g_redline(t: L.Tree) -> list[str]:
     for r in redline_rows():
         if not float(r[3]).is_integer():
             bad.append(f"{r[0]} row is not a whole number of space.1")
+    if rows(sec(t, "### 6.4 Text resize")) != scale_rows():
+        bad.append("6.4 differs from the measurement (--fill)")
     if rows(sec(t, "### 4.2 Abbreviation")) != width_rows():
         bad.append("4.2's widths differ from the measurement (--fill)")
     return bad
@@ -615,8 +646,8 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        "E20-D02's boards PR #5903", "E20-D02's boards PR"),
     _M("M-5", "G-AC", "a scenario name reworded", "spec",
        'AC "Threshold encoding survives desaturation"', 'AC "Threshold encoding survives grey"'),
-    _M("M-6", "G-BQ", "the heading claims a ruling", "spec",
-       "— defaults built; ruling pending (comment", "— RULED; ruling pending (comment"),
+    _M("M-6", "G-BQ", "the heading reverts to pending", "spec",
+       "— RULED (comment 6652595516,", "— defaults built; ruling pending (comment 6652595516,"),
     _M("M-7", "G-RULED", "a BQ bullet edited without a re-pin", "spec",
        "ten boards, dark-first", "nine boards, dark-first"),
     _M("M-8", "G-BOARDS", "an eleventh board", "spec",
@@ -666,6 +697,12 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-29", "G-MUTLIST", "the list drifts", "spec", "| M-1  | G-CITE ", "| M-1  | G-AC   "),
     _M("M-30", "G-QUOTE", "D02's second sentence reworded", "spec",
        '{row}: enter a value from 0 to 100 %."', '{row}: enter a value of 0 to 100 %."'),
+    _M("M-31", "G-BQ", "the walkthrough drops the ruling id", "spec",
+       "(comment 6652595516 on the BQ list", "(comment pending on the BQ list"),
+    _M("M-32", "G-REDLINE", "a scaled row drifts", "spec",
+       r"(\| 125 % +\| 1\.25 +\| )30", r"\g<1>24", regex=True),
+    _M("M-33", "G-BOARDS", "an undrawn cell without its binding text", "spec",
+       r"(\| motion \(E20-D04 #601\)[^\n]*\| )§5", r"\1E20-D04", regex=True),
 )
 # fmt: on
 
@@ -741,9 +778,13 @@ def fill() -> int:
     spec = replace_table(spec, "### 2.3 Colour vision", t23)
     spec = replace_table(spec, "### 6.1 Rows and the strip", table(h61, redline_rows()))
     spec = replace_table(spec, "### 4.2 Abbreviation", t42)
+    h64 = ["Text scale", "`--cv-text-scale`", "Compact row px", "Comfortable row px"]
+    h64 += ["AllRows + header, compact", "AllRows + header, comfortable"]
+    h64 += ["Notional cell px, full", "Notional cell px, full breached"]
+    spec = replace_table(spec, "### 6.4 Text resize", table(h64, scale_rows()))
     spec = replace_table(spec, "### 13.3", L.mutation_table(MUTATIONS))
     p.write_text(spec, encoding="utf-8", newline="\n")
-    print("sections 2.2, 2.3, 4.2, 6.1 and 13.3 written")
+    print("sections 2.2, 2.3, 4.2, 6.1, 6.4 and 13.3 written")
     return 0
 
 
