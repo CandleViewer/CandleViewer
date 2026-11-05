@@ -24,7 +24,7 @@ from candleviewer.exchange.bybit.trading import BybitTradingPort
 from spike.oms_demo_path.harness import Links
 from spike.oms_demo_path.ledger import IntentLedger
 from spike.oms_demo_path.measure import ClockOffset
-from spike.oms_demo_path.offline import Corpus, CorpusVenue, default_corpus, patched
+from spike.oms_demo_path.offline import Corpus, CorpusVenue, VenueOrder, default_corpus, patched
 from spike.oms_demo_path.safety import QtyLimits, digest
 from spike.oms_demo_path.scrub import Scrubber
 from spike.sl_attach.arms import ArmRunner, Clock, SlGuardedPort, Tap, Watch
@@ -41,8 +41,11 @@ class StopVenue(CorpusVenue):
     """The corpus venue with `POST /v5/position/trading-stop`: the position's stop becomes the
     written one and a position push follows; `stop_answers` scripts refusals (corpus error
     shapes, values patched), served first, one per write. `create_answers` answers a create
-    before the venue acts on it, `create_after` after it has (an open outcome that filled);
-    `close_answers` answers a reduce-only close unacted, `close_unfilled` acks one unfilled."""
+    before the venue acts on it, `create_after` after it has (an open outcome that filled),
+    `create_late` before it acts, which it then does `Rig.late_s` later (`held_back`: a late
+    fill; with `Rig.rest_s`, the order rests `New` that long before it fills);
+    `close_answers` answers a reduce-only close unacted, `close_unfilled` acks one unfilled;
+    `position_answers` answers position reads first, one per read (`None`: as the venue)."""
 
     def __init__(self, corpus: Corpus, **options: Any) -> None:
         super().__init__(corpus, **options)
@@ -52,6 +55,10 @@ class StopVenue(CorpusVenue):
         self.create_after: list[dict[str, Any]] = []
         self.close_answers: list[dict[str, Any]] = []
         self.close_unfilled = False
+        self.create_late: list[dict[str, Any]] = []
+        self.held_back: list[dict[str, Any]] = []
+        self.position_answers: list[dict[str, Any] | None] = []
+        self.resting = False
 
     def _skewed(self, request: httpx.Request) -> httpx.Response | None:
         """Not judged here: the REST client signs on the real wall clock, the venue runs on the
@@ -64,12 +71,27 @@ class StopVenue(CorpusVenue):
         if answers:
             self.creates.append(body)
             return answers.pop(0)
+        if self.create_late and not closing:
+            self.held_back.append(body)  # recorded in `creates` when the venue acts on it
+            return self.create_late.pop(0)
         if closing and self.close_unfilled:
             self.creates.append(body)
             link = str(body["orderLinkId"])
             return self._ok("trading-create-reply", orderId=str(uuid4()), orderLinkId=link)
         reply = super()._order_create(body, params)
         return self.create_after.pop(0) if self.create_after and not closing else reply
+
+    def _match(self, order: VenueOrder) -> None:
+        if not self.resting:
+            super()._match(order)
+
+    def act(self, body: dict[str, Any]) -> None:
+        """The venue acts on a held-back create now (it matches and pushes as any create)."""
+        super()._order_create(body, {})
+
+    def _position_list(self, body: dict[str, Any], params: dict[str, str]) -> dict[str, Any]:
+        answer = self.position_answers.pop(0) if self.position_answers else None
+        return super()._position_list(body, params) if answer is None else answer
 
     def _position_trading_stop(
         self, body: dict[str, Any], _params: dict[str, str]
@@ -110,6 +132,8 @@ class Rig:
         self.venue_skew_ms = 0
         self.create_delay_s, self.stop_delay_s = create_delay_s, stop_delay_s
         self.ack_delay_s = 0.0
+        self.late_s = self.rest_s = 0.0
+        self._late: set[asyncio.Task[None]] = set()
         self.venue = StopVenue(CORPUS, now_ms=lambda: self.wall_ms() + self.venue_skew_ms)
         self.tap = Tap(httpx.MockTransport(self._handle), wall_ms=lambda: float(self.wall_ms()))
         self.offset = ClockOffset()
@@ -178,11 +202,25 @@ class Rig:
         if half:  # the venue acts (and stamps its `time`) halfway through the round trip
             await self.clock.sleep(half)
         response = await self.venue.handle(request)
+        while self.venue.held_back:
+            task = asyncio.ensure_future(self._act_late(self.venue.held_back.pop(0)))
+            self._late.add(task)
+            task.add_done_callback(self._late.discard)
         if half:
             await self.clock.sleep(half)
         if self.ack_delay_s and request.url.path == "/v5/order/create":
             await self.clock.sleep(self.ack_delay_s)  # filled at once, answered late
         return response
+
+    async def _act_late(self, body: dict[str, Any]) -> None:
+        await self.clock.sleep(self.late_s)
+        self.venue.resting = self.rest_s > 0
+        self.venue.act(body)
+        self.venue.resting = False
+        if self.rest_s:
+            await self.clock.sleep(self.rest_s)
+            [order] = [o for o in self.venue.orders.values() if o.link == body["orderLinkId"]]
+            self.venue._match(order)
 
     async def up(self) -> None:
         await self.watch.open(self.port, self.account)

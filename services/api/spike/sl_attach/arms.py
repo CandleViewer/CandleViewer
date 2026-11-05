@@ -15,7 +15,13 @@ sample is discarded `incomplete` (the ticket's self-check). Every sample that se
 ends flat (`_flatten`, its cost not counted): it reads the position, closes whatever is held,
 reduce-only, and reads it again. A close the venue refuses, or a position still held after it,
 halts the run (`RunHalted`, the sample recorded `stopped`): the next opener would otherwise add
-to that position, and its far attached backstop would replace the tightened stop.
+to that position, and its far attached backstop would replace the tightened stop. So does a
+position read that raises. An opener whose outcome is open (an ambiguous create: 10016, a
+timeout, a 5xx; or no fill seen) is first looked up by its `orderLinkId`, realtime then
+history (24 §8.6), until its order is final; the lookups are bounded in count and in total wait
+on the injected clock, and an order still not final at the bound halts the run the same way: a
+late fill could otherwise land after the flat read. A stop write the guard refuses ends the
+sample `refused` (its stop never landed), flattened as any other.
 
 `Tap` sits on the port's transport and keeps every exchange: the host's wall clock at send and
 reply, the envelope `time`, the code and the rate headers, from which come the offset, each
@@ -48,6 +54,7 @@ from candleviewer.exchange.base.models import (
     TradingStopRequest,
 )
 from candleviewer.observability.context import spawn
+from spike.oms_demo_path.cycles import TERMINAL
 from spike.oms_demo_path.safety import GuardedPort, Refused, check_symbol
 from spike.sl_attach import taxonomy
 from spike.sl_attach.config import OFFSET_SAMPLES, Arm, ArmConfig
@@ -72,6 +79,8 @@ _HEADERS: Final = {
     "timenow_ms": "timenow",
 }
 _TRANSFER: Final = frozenset({"content-encoding", "content-length", "transfer-encoding"})
+#: A stop write the harness's own guard refused: no venue code, nothing sent.
+GUARD: Final = taxonomy.Reading(None, "guard", None, None, None, divergent=False)
 
 
 def _int(value: object) -> int | None:
@@ -403,13 +412,46 @@ class ArmRunner:
         )
 
     async def _protected(self, stop: Decimal) -> bool:
-        """The REST position read shows `stop` on the open position (the self-check)."""
-        rows = await self.port.positions(self.account)
+        """The REST position read shows `stop` on the open position (the self-check); a read
+        that raises shows nothing (the sample is `incomplete`)."""
+        try:
+            rows = await self.port.positions(self.account)
+        except ExchangeError:
+            return False
         return any(p.symbol == self.cfg.symbol and p.qty > 0 and p.stop_loss == stop for p in rows)
 
     async def _held(self) -> Position | None:
-        rows = await self.port.positions(self.account)
+        try:
+            rows = await self.port.positions(self.account)
+        except ExchangeError as exc:
+            raise NotFlat(f"the position read raised {type(exc).__name__}") from exc
         return next((p for p in rows if p.symbol == self.cfg.symbol and p.qty > 0), None)
+
+    async def _final(self, link: str) -> bool:
+        """The order of `link` is final: realtime first, then history (a read that raises, or
+        no row, is not final)."""
+        try:
+            rows = await self.port.open_orders(self.account, self.cfg.symbol, order_link_id=link)
+            if not any(o.order_link_id == link for o in rows):
+                rows = await self.port.order_history(self.account, order_link_id=link)
+        except ExchangeError:
+            return False
+        order = next((o for o in rows if o.order_link_id == link), None)
+        return order is not None and order.state in TERMINAL
+
+    async def _settle(self, link: str) -> None:
+        """Look the opener's order up until it is final: at most `lookup_tries` reads,
+        `lookup_every_s` apart, within `lookup_wait_s` on the injected clock; else `NotFlat`."""
+        deadline = self.clock.monotonic() + self.cfg.lookup_wait_s
+        for n in range(self.cfg.lookup_tries):
+            if n:
+                left = deadline - self.clock.monotonic()
+                if left <= 0:
+                    break
+                await self.clock.sleep(min(self.cfg.lookup_every_s, left))
+            if await self._final(link):
+                return
+        raise NotFlat("the opener's order is not final at the lookup bound")
 
     async def _flatten(self) -> None:
         """Read the position; close what is held, reduce-only; read it flat, then release the
@@ -444,9 +486,14 @@ class ArmRunner:
         reading: taxonomy.Reading | None,
         stage: Stage,
         discard: Discard | None = None,
+        *,
+        settle: str | None = None,
     ) -> Sample:
-        """The sample's end: flat first (`_flatten`), else the run halts with it `stopped`."""
+        """The sample's end: flat first (`_flatten`), else the run halts with it `stopped`.
+        With `settle` (an opener's link whose outcome is open), its order is final first."""
         try:
+            if settle is not None:
+                await self._settle(settle)
             await self._flatten()
         except NotFlat as exc:
             stopped = self._finish(fields, outcome, reading, stage, "stopped")
@@ -490,7 +537,9 @@ class ArmRunner:
             log = self.tap.log[mark:]
             fields |= _costs(log) | {"attempts": sum(1 for e in log if e.path == CREATE)}
             reading = _failure(exc, log, CREATE, create=True)
-            return await self._end(fields, _open_outcome(exc), reading, "create")
+            outcome = _open_outcome(exc)
+            settle = link if outcome == "ambiguous" else None
+            return await self._end(fields, outcome, reading, "create", settle=settle)
         t_ack = self.clock.monotonic()
         log = self.tap.log[mark:]
         create = next((e for e in reversed(log) if e.path == CREATE), None)
@@ -507,7 +556,7 @@ class ArmRunner:
         if not ack.ok:
             return await self._end(fields, "rejected", _refusal(ack, create=True), "create")
         if not await self.watch.wait(lambda: link in self.watch.first, self.cfg.fill_wait_s):
-            return await self._end(fields, "ok", taxonomy.OK, "create", "no_fill")
+            return await self._end(fields, "ok", taxonomy.OK, "create", "no_fill", settle=link)
         fill = self.watch.first[link]
         exec_ms = fill.ts_exec // 1000
 
@@ -543,13 +592,15 @@ class ArmRunner:
             log = self.tap.log[mark:]
             fields |= _costs(log)
             reading = _failure(exc, log, CREATE, create=True)
-            return await self._end(fields, _open_outcome(exc), reading, "create")
+            outcome = _open_outcome(exc)
+            settle = link if outcome == "ambiguous" else None
+            return await self._end(fields, outcome, reading, "create", settle=settle)
         fields |= _costs(self.tap.log[mark:])
         if not ack.ok:
             return await self._end(fields, "rejected", _refusal(ack, create=True), "create")
         if await self.watch.wait(lambda: link in self.watch.first, self.cfg.fill_wait_s):
             return await self._tighten(fields, link, stop, create, mark)
-        return await self._end(fields, "ok", taxonomy.OK, "create", "no_fill")
+        return await self._end(fields, "ok", taxonomy.OK, "create", "no_fill", settle=link)
 
     async def _tighten(
         self,
@@ -581,6 +632,10 @@ class ArmRunner:
             failure: ExchangeError | None = None
         except ExchangeError as exc:
             ack, failure = None, exc
+        except Refused:
+            await asyncio.gather(create, return_exceptions=True)
+            fields |= _costs(self.tap.log[mark:]) | {"stop_landed": False}
+            return await self._end(fields, "rejected", GUARD, "trading_stop", "refused")
         t1, t1_port_wall = self.clock.monotonic(), self.clock.wall_ms()
         await asyncio.gather(create, return_exceptions=True)
         log = self.tap.log[mark:]
@@ -589,6 +644,7 @@ class ArmRunner:
             "attempts": sum(1 for e in log if e.path == TRADING_STOP),
             "exec_time_ms": exec_ms,
             "ingest_us": fill.ts_ingest,
+            "stop_landed": False,
         }
         if failure is not None:
             reading = _failure(failure, log, TRADING_STOP, create=False)
@@ -618,4 +674,5 @@ class ArmRunner:
             "port_parse_ms": round(t1_port_wall - t1_wall, 3),
         }
         discard: Discard | None = None if await self._protected(stop) else "incomplete"
+        fields["stop_landed"] = discard is None
         return await self._end(fields, "ok", taxonomy.OK, "trading_stop", discard)

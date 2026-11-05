@@ -22,8 +22,10 @@ from candleviewer.exchange.base.models import (
 from candleviewer.exchange.bybit.config import EndpointClass
 from spike.oms_demo_path.safety import QtyLimits, Refused
 from spike.oms_demo_path.scrub import Scrubber
+from spike.sl_attach import arms
 from spike.sl_attach.arms import HeldFloor, RunHalted, SlGuardedPort, _costs, prices
 from spike.sl_attach.config import ArmConfig
+from spike.sl_attach.results import Sample
 from spike.sl_attach.tests._rig import MemoryLedger, Rig, error
 from spike.sl_attach.timing import Exchanged
 from tests._signing import CREDENTIAL_ID
@@ -120,15 +122,64 @@ async def test_a_trading_stop_10016_is_retried_and_its_attempts_counted(tmp_path
     assert sample.requests_position_class == 2 and len(rig.venue.stop_writes) == 2
 
 
-async def test_a_create_10016_is_ambiguous_and_never_resent(tmp_path: Path) -> None:
-    rig = Rig(tmp_path)
+def _lookups(rig: Rig) -> list[float]:
+    return [e.sent_wall_ms for e in rig.tap.log if e.path == "/v5/order/realtime"]
+
+
+async def test_a_create_10016_never_final_halts_at_the_lookup_count(tmp_path: Path) -> None:
+    """D1: an ambiguous create the venue never shows is looked up `lookup_tries` times, then the
+    run halts with the floor kept; the sample is `stopped`, never `ok`, and never resent."""
+    cfg = ArmConfig(lookup_tries=3, lookup_every_s=0.25, lookup_wait_s=10.0)
+    rig = Rig(tmp_path, cfg=cfg)
     rig.venue.create_answers = [error(10016, "Internal server error")]
     await rig.up()
-    [sample] = await rig.drive(lambda: rig.runner.run("a", 1))
-    assert sample.outcome == "ambiguous" and sample.attempts == 1 and sample.stage == "create"
+    with pytest.raises(RunHalted, match="not final"):
+        await rig.drive(lambda: rig.runner.run("a", 1))
+    [sample] = rig.runner.samples
+    assert sample.outcome == "discarded" and sample.discard_reason == "stopped"
+    assert sample.attempts == 1 and sample.stage == "create"
     assert sample.ret_code == 10016 and sample.adapter_error_code == "TRANSPORT_ERROR"
     assert sample.s86_code == "TRANSPORT_ERROR" and sample.taxonomy_divergent is False
-    assert len(rig.venue.creates) == 1
+    assert len(rig.venue.creates) == 1 and ("BTCUSDT", 0) in rig.port.protected
+    sent = _lookups(rig)
+    assert len(sent) == 3 and sent[-1] - sent[0] == pytest.approx(500.0)
+
+
+async def test_the_lookups_stop_at_their_total_wait(tmp_path: Path) -> None:
+    cfg = ArmConfig(lookup_tries=100, lookup_every_s=0.25, lookup_wait_s=1.0)
+    rig = Rig(tmp_path, cfg=cfg)
+    rig.venue.create_answers = [error(10016, "Internal server error")]
+    await rig.up()
+    with pytest.raises(RunHalted, match="not final"):
+        await rig.drive(lambda: rig.runner.run("b", 1))
+    sent = _lookups(rig)
+    assert len(sent) == 5 and sent[-1] - sent[0] == pytest.approx(1000.0)
+    assert rig.runner.samples[0].discard_reason == "stopped" and rig.port.protected != {}
+
+
+@pytest.mark.parametrize("rest_s", [0.0, 0.3])
+async def test_an_ambiguous_create_then_a_late_fill_is_closed_before_the_next_opener(
+    tmp_path: Path, rest_s: float
+) -> None:
+    """D1's reproduction: the create answers 10016 before the venue acts, the venue fills it
+    100 ms later (on r1, inside arm (b)'s next sample, which then closed 0.004); the run now
+    closes that fill before arm (b)'s next opener is sent. With `rest_s`, the order is seen
+    `New` (not final) before it fills."""
+    rig = Rig(tmp_path)
+    rig.venue.create_late = [error(10016, "Internal server error")]
+    rig.late_s, rig.rest_s = 0.1, rest_s
+    await rig.up()
+
+    async def both() -> list[Sample]:
+        return [*await rig.runner.run("a", 1), *await rig.runner.run("b", 1)]
+
+    [first, second] = await rig.drive(both)
+    assert first.outcome == "ambiguous" and first.stage == "create" and first.ret_code == 10016
+    creates = rig.venue.creates
+    assert [c["reduceOnly"] for c in creates] == [False, True, False, True]
+    assert [c["qty"] for c in creates] == ["0.002"] * 4
+    assert second.outcome == "ok" and second.stage == "trading_stop" and second.stop_landed
+    assert rig.venue.size == 0 and rig.port.protected == {}
 
 
 async def test_a_refused_trading_stop_is_recorded_and_the_position_closed(tmp_path: Path) -> None:
@@ -344,6 +395,59 @@ async def test_an_ambiguous_create_that_filled_is_closed(tmp_path: Path) -> None
     assert rig.venue.size == 0 and rig.port.protected == {}
 
 
+async def test_a_raised_position_read_in_the_flatten_halts_with_the_floor(tmp_path: Path) -> None:
+    """D3: the self-check reads, then the flatten's read raises: `stopped`, the floor held."""
+    rig = Rig(tmp_path)
+    rig.venue.position_answers = [None, error(10001, "params error")]
+    await rig.up()
+    with pytest.raises(RunHalted, match="position read raised"):
+        await rig.drive(lambda: rig.runner.run("b", 2))
+    [sample] = rig.runner.samples
+    assert sample.discard_reason == "stopped" and sample.stop_landed is True
+    assert rig.venue.size > 0 and ("BTCUSDT", 0) in rig.port.protected
+    assert [c["reduceOnly"] for c in rig.venue.creates] == [False]  # no close, no next opener
+
+
+async def test_a_raised_self_check_read_is_incomplete(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.venue.position_answers = [error(10001, "params error")]
+    await rig.up()
+    [sample] = await rig.drive(lambda: rig.runner.run("b", 1))
+    assert sample.discard_reason == "incomplete" and sample.stop_landed is False
+    assert rig.venue.size == 0 and rig.port.protected == {}
+
+
+async def test_a_guard_refused_stop_write_is_a_recorded_discard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D3: a measured stop the guard refuses (here one that would loosen the backstop) ends
+    the sample `refused` (never landed), the position flattened before the floor is freed."""
+
+    def loose(cfg: ArmConfig, ref: Decimal, side: Side) -> tuple[Decimal, Decimal, Decimal]:
+        price, _, backstop = prices(cfg, ref, side)
+        return price, backstop - Decimal(10) if side == "buy" else backstop + 10, backstop
+
+    monkeypatch.setattr(arms, "prices", loose)
+    rig = Rig(tmp_path)
+    await rig.up()
+    [sample] = await rig.drive(lambda: rig.runner.run("b", 1))
+    assert sample.outcome == "discarded" and sample.discard_reason == "refused"
+    assert sample.stage == "trading_stop" and sample.ret_msg_class == "guard"
+    assert sample.stop_landed is False and rig.venue.stop_writes == []
+    assert rig.venue.size == 0 and rig.port.protected == {}
+
+
+async def test_the_close_takes_the_held_qty_not_the_configured_one(tmp_path: Path) -> None:
+    """N1: a leftover of two fills (0.001 held, then the opener's 0.002) closes as 0.003."""
+    rig = Rig(tmp_path)
+    rig.venue.hold_foreign_position(Decimal("0.001"))
+    await rig.up()
+    await rig.drive(lambda: rig.runner.run("a", 1))
+    [_, close] = rig.venue.creates
+    assert close["reduceOnly"] is True and close["qty"] == "0.003"
+    assert rig.venue.size == 0 and rig.port.protected == {}
+
+
 def test_the_backstop_must_sit_five_to_ten_percent_away() -> None:
     for pct in ("4.99", "10.01"):
         with pytest.raises(Refused, match="5 to 10"):
@@ -352,3 +456,6 @@ def test_the_backstop_must_sit_five_to_ten_percent_away() -> None:
         ArmConfig(symbol="SOLUSDT")
     with pytest.raises(Refused, match="tightens"):
         ArmConfig(sl_bps=Decimal(800), backstop_pct=Decimal(5))
+    for bad in ({"lookup_tries": 0}, {"lookup_every_s": 0.0}, {"lookup_wait_s": 0.0}):
+        with pytest.raises(Refused, match="bounded"):
+            ArmConfig(**bad)
