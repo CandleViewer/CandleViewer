@@ -32,6 +32,7 @@ import { SessionsSection } from "../features/session/SessionsSection";
 import { getMeClaims, refreshMeClaims } from "../lib/auth/meCache";
 import { ShellLayout } from "../features/app-shell/ShellLayout";
 import { ScreenRoot } from "../features/app-shell/ScreenRoot";
+import { TerminalEntry, WorkspaceEntry } from "../features/workspace/routes/entry";
 
 const SETTINGS_ROUTES = new Set(["R-201", "R-202", "R-203", "R-204", "R-205"]);
 
@@ -71,16 +72,22 @@ function innerElementFor(routeId: string, owner: string | null): RouteObject["el
   if (routeId === "R-101") {
     // First sign-in lands on /terminal/last -> here; the card is server-gated (401 => renders nothing).
     return (
-      <>
-        <PanelErrorBoundary id="setup-checklist">
-          <SetupChecklistCard />
-        </PanelErrorBoundary>
-        <StubRoute routeId={routeId} owner={owner ?? "E15"} />
-      </>
+      <TerminalEntry
+        off={
+          <>
+            <PanelErrorBoundary id="setup-checklist">
+              <SetupChecklistCard />
+            </PanelErrorBoundary>
+            <StubRoute routeId={routeId} owner={owner ?? "E15"} />
+          </>
+        }
+      />
     );
   }
-  if (owner === null) return <PlaceholderRoute />;
-  return <StubRoute routeId={routeId} owner={owner} />;
+  const stub =
+    owner === null ? <PlaceholderRoute /> : <StubRoute routeId={routeId} owner={owner} />;
+  // E15-S03 (#476): with `ui.workspace_dock` on, R-101 resolves to R-102, SCR-020.
+  return routeId === "R-102" ? <WorkspaceEntry off={stub} /> : stub;
 }
 
 function buildRoutes(): RouteObject[] {

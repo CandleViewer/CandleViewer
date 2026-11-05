@@ -56,11 +56,23 @@ export async function failureOf(res: Response): Promise<ApiFailure> {
   return { kind: "http", status: res.status };
 }
 
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+const isPage = (v: unknown): v is { items: Workspace[] } =>
+  isRecord(v) &&
+  Array.isArray(v["items"]) &&
+  v["items"].every((w) => isRecord(w) && typeof w["id"] === "string");
+const isDetail = (v: unknown): v is WorkspaceDetail =>
+  isRecord(v) && typeof v["id"] === "string" && Array.isArray(v["layouts"]);
+
 /** A read with no answer by then is given up, as one with no answer at all (`recorderApi`'s bound). */
 export const READ_TIMEOUT_MS = 10_000;
 
 /** One bounded `GET`: the caller's `signal` or the deadline, whichever comes first, ends it. */
-async function read<T>(path: string, signal?: AbortSignal): Promise<ApiResult<T>> {
+async function read<T>(
+  path: string,
+  fits: (body: unknown) => body is T,
+  signal?: AbortSignal,
+): Promise<ApiResult<T>> {
   const bound = new AbortController();
   const stop = (): void => bound.abort();
   const timer = setTimeout(stop, READ_TIMEOUT_MS);
@@ -69,7 +81,9 @@ async function read<T>(path: string, signal?: AbortSignal): Promise<ApiResult<T>
   try {
     const res = await apiFetch(path, { credentials: "same-origin", signal: bound.signal });
     if (!res.ok) return { ok: false, failure: await failureOf(res) };
-    return { ok: true, value: (await res.json()) as T, etag: res.headers.get("ETag") };
+    const body: unknown = await res.json();
+    if (!fits(body)) return { ok: false, failure: { kind: "network" } }; // a 200 of the wrong shape
+    return { ok: true, value: body, etag: res.headers.get("ETag") };
   } catch {
     return { ok: false, failure: { kind: "network" } }; // unanswered, timed out or unreadable
   } finally {
@@ -80,7 +94,7 @@ async function read<T>(path: string, signal?: AbortSignal): Promise<ApiResult<T>
 
 /** The caller's workspaces by `sort_order`, then `id`: at most 32, so one default page. */
 export async function listWorkspaces(signal?: AbortSignal): Promise<ApiResult<Workspace[]>> {
-  const page = await read<{ items: Workspace[] }>(BASE, signal);
+  const page = await read(BASE, isPage, signal);
   return page.ok ? { ...page, value: page.value.items } : page;
 }
 
@@ -91,5 +105,5 @@ export async function getWorkspace(
 ): Promise<ApiResult<WorkspaceDetail>> {
   // A UUID only, so a route parameter never shapes a URL.
   if (!UUID.test(workspaceId)) return { ok: false, failure: { kind: "not_found" } };
-  return read<WorkspaceDetail>(`${BASE}/${workspaceId}`, signal);
+  return read(`${BASE}/${workspaceId}`, isDetail, signal);
 }

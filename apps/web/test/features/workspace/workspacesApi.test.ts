@@ -56,6 +56,18 @@ describe("workspacesApi", () => {
     expect(await api.getWorkspace(WS)).toEqual({ ok: false, failure: { kind: "network" } });
   });
 
+  it("test_a_200_of_the_wrong_shape_is_the_network_failure", async () => {
+    const net = { ok: false, failure: { kind: "network" } };
+    for (const body of [{}, { id: WS }, { id: 7, layouts: [] }, [], null]) {
+      apiFetch.mockResolvedValueOnce(res(200, body));
+      expect(await api.getWorkspace(WS)).toEqual(net);
+    }
+    for (const body of [{}, { items: "x" }, { items: [{}] }, null]) {
+      apiFetch.mockResolvedValueOnce(res(200, body));
+      expect(await api.listWorkspaces()).toEqual(net);
+    }
+  });
+
   it("test_a_read_with_no_answer_is_given_up_after_the_deadline_or_the_callers_abort", async () => {
     vi.useFakeTimers();
     // A hung server: the request ends only when its signal aborts.
