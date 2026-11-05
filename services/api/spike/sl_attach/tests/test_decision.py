@@ -1,7 +1,8 @@
 # ruff: noqa: S101  (pytest asserts: the project's tests/** ignore does not reach spike/)
 """The summary's tables and the decision rule agreed up front in #856 (p99 of arm (b) above
 1.5 s means attach-only), at its edge, below the floors and offline; a failed stop write as
-+inf exposure, and the stop-write success bar at its edge (D2)."""
++inf exposure, and the stop-write success bar at its edge (D2); a filled opener whose stop
+write was never sent as a failure (E1); the skew-discard share and its bound (Nit)."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ import math
 
 import pytest
 
-from spike.sl_attach.config import MIN_STOP_SUCCESS_RATE
+from spike.sl_attach.config import MAX_SKEW_DISCARD_SHARE, MIN_STOP_SUCCESS_RATE
 from spike.sl_attach.decision import decide
 from spike.sl_attach.results import Sample
 from spike.sl_attach.summary import summarise
@@ -142,6 +143,54 @@ def test_the_stop_success_bar_at_its_edge(failed: int, verdict: str) -> None:
     assert decision["min_stop_success_rate"] == MIN_STOP_SUCCESS_RATE
 
 
+def _unsent(i: int) -> Sample:
+    """E1: an arm (b) opener that filled, its execution push lost: no stop write was sent."""
+    return _row(
+        "b",
+        i,
+        0.0,
+        outcome="discarded",
+        discard_reason="no_fill",
+        exposure_ms=None,
+        stage="create",
+        ret_code=0,
+        stop_landed=False,
+    )
+
+
+def test_a_filled_opener_without_its_stop_write_is_a_failure() -> None:
+    """E1: 200 successes and 100 filled openers whose stop write was never sent: attach-only."""
+    a = [_row("a", i, 40.0) for i in range(200)]
+    b = [_row("b", i, 150.0) for i in range(200)] + [_unsent(200 + i) for i in range(100)]
+    summary = summarise(a + b)
+    arms = summary["arms"]
+    assert isinstance(arms, dict) and arms["b"]["unbounded"] == 100
+    assert arms["b"]["measured"] == 200 and arms["b"]["latency_ms"]["n"] == 300
+    decision = decide(summary, offline=False)
+    assert decision["verdict"] == "attach-only" and decision["arm_b_p99_ms"] == math.inf
+    assert decision["arm_b_stop_success_rate"] == round(200 / 300, 6)
+
+
+def _skewed(arm: str, i: int) -> Sample:
+    landed = True if arm == "b" else None  # a skewed arm (b) sample's stop did land
+    return _row(arm, i, 0.0, outcome="discarded", discard_reason="skew", stop_landed=landed)
+
+
+@pytest.mark.parametrize("arm", ["a", "b"])
+@pytest.mark.parametrize(
+    ("skewed", "verdict"), [(10, "trading-stop-window-accepted"), (11, "insufficient")]
+)
+def test_the_skew_discard_share_is_bounded(arm: str, skewed: int, verdict: str) -> None:
+    """Nit: 10 skew discards over 200 kept is 10/210 (under 5 %); 11 is 11/211 (over): a run
+    that discards its slow samples for skew gives no verdict, and says the share."""
+    rows = _run(100.0) + [_skewed(arm, 500 + i) for i in range(skewed)]
+    decision = decide(summarise(rows), offline=False)
+    share = decision["skew_discard_share"]
+    assert isinstance(share, dict) and share[arm] == round(skewed / (200 + skewed), 6)
+    assert decision["verdict"] == verdict
+    assert decision["max_skew_discard_share"] == MAX_SKEW_DISCARD_SHARE
+
+
 def test_an_unknown_stop_success_rate_is_attach_only() -> None:
     """Above the floors but no stop write recorded as landed: no proof, so attach-only."""
     rows = [s.model_copy(update={"stop_landed": None}) for s in _run(100.0)]
@@ -174,6 +223,7 @@ def test_the_tables() -> None:
     b = arms["b"]
     assert b["n"] == 203 and b["kept"] == 201
     assert b["discarded"] == {"incomplete": 1, "skew": 1}
+    assert b["skew_discard_share"] == round(1 / 203, 6) and arms["a"]["skew_discard_share"] == 0.0
     assert b["outcomes"] == {"ok": 200, "rejected": 1}
     assert b["success_rate"] == round(200 / 201, 4)
     assert b["measured"] == 200 and b["measured_symbols"] == sorted(SYMBOLS)

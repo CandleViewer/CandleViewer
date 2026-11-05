@@ -12,7 +12,12 @@ decision's floors read: a rejected or ambiguous sample never counts towards a pe
 A sample whose stop write failed or never landed (`stop_landed` false, kept or discarded) left
 its position on the backstop alone: it enters the metric's distribution as +inf (`unbounded`),
 so the percentiles carry the failure rate (24 §8.8 rule 2: a stop that never lands is the worst
-exposure). `stop_success_rate` is the landed share of the stop writes sent.
+exposure). That includes an arm (b) opener that filled but never got its stop write (a lost or
+late execution push, an ambiguous create that filled): the stop owed never landed.
+`stop_success_rate` is the landed share of the stop writes owed.
+
+`skew_discard_share` is the share of the arm's samples discarded for clock skew: they leave
+every statistic, so the decision bounds it (`MAX_SKEW_DISCARD_SHARE`).
 """
 
 from __future__ import annotations
@@ -62,6 +67,9 @@ def arm_table(samples: Sequence[Sample], arm: Arm) -> dict[str, object]:
         "n": len(mine),
         "kept": len(kept),
         "discarded": dict(sorted(Counter(str(s.discard_reason) for s in dropped).items())),
+        "skew_discard_share": None
+        if not mine
+        else round(sum(1 for s in dropped if s.discard_reason == "skew") / len(mine), 6),
         "outcomes": dict(sorted(Counter(s.outcome for s in kept).items())),
         "success_rate": None if not kept else round(len(ok) / len(kept), 4),
         "measured": len(values),
