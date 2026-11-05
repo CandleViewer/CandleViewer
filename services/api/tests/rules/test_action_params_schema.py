@@ -3,27 +3,38 @@
 `validate_rule` checks each action's `params` against its catalogue `params_schema`
 (`rules.vocabulary.params_check`, the closed subset the catalogue writes), so validate, compile, a
 save and arming answer alike: `schema_error` at `actions[i].params.<name>`, naming the parameter and
-its bound, never the value. A number parameter reads decimal text as its number (the #5963
-ruling). `place_order`'s `stop_loss` is the native stop (C-2.6) and mirrors 22's `Offset`: one off
-that shape, or whose value is not above zero, is refused as `native_stop_violation`, as an empty
-one is.
+its bound, never the value. A number parameter takes a number the content hash can hold, or decimal
+text read as its number, as #5876 reads a rule constant's text and as 22's `Decimal` carries one.
+`place_order`'s `stop_loss` is the native stop (C-2.6) and mirrors 22's `Offset`: one off that
+shape, or whose value is not a number above zero, is refused as `native_stop_violation`, as an
+empty one is. Validate and compile hash a document before they validate it (#4185), so a stop
+value no rule can hold is the content hash's refusal there, and `native_stop_violation` at a save.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Iterator, Mapping
-from typing import Any
+from decimal import Decimal
+from typing import Any, Final
 
 import pytest
 import yaml
+from httpx import Response
 
 from candleviewer.rules.ir import Rule
+from candleviewer.rules.ir.canonical import NOT_FINITE, OUT_OF_RANGE
 from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleError, RulesManager
 from candleviewer.rules.validator import validate_rule
 from candleviewer.rules.vocabulary import default_registry
 from candleviewer.rules.vocabulary.catalogue import ACTIONS
-from candleviewer.rules.vocabulary.params_check import ANNOTATIONS, KEYWORDS, TYPES, param_defects
+from candleviewer.rules.vocabulary.params_check import (
+    ANNOTATIONS,
+    KEYWORDS,
+    MAX_NUMBER_TEXT,
+    TYPES,
+    param_defects,
+)
 from tests.rules.test_rule_never_loosens_a_stop import _compile_body, _refused
 from tests.rules.test_rules_routes import _Env, _ir
 from tests.rules.test_scope import C
@@ -32,13 +43,24 @@ from tests.rules.test_validator_endpoints import RULE_ID
 from tests.rules.test_vocabulary import _P, SPEC, _client
 
 REG = default_registry()
+SPECS = {a.type: a for a in ACTIONS}
 TITLES = {a.type: a.title for a in ACTIONS}
-PLACE_ORDER = next(a for a in ACTIONS if a.type == "place_order")
+PLACE_ORDER = SPECS["place_order"]
 OWNER = Actor("u1", "s1", frozenset({"rules:arm_live"}), is_owner=True, step_up_fresh=True)
 NOW = 1_762_300_800_000_000  # the injected clock: no test reads the wall clock
 SENTINEL = -987654.321
 STOP = {"unit": "atr", "value": 1.5}
 ATR = {"unit": "atr", "value": "2"}
+#: JSON numbers no rule can hold (the content hash's range, `plain_decimal`), by name: each
+#: number, and the reason the content hash refuses it with.
+NO_RULE_HOLDS: Final = {
+    "nan": (float("nan"), NOT_FINITE),
+    "infinity": (float("inf"), NOT_FINITE),
+    "minus_infinity": (float("-inf"), NOT_FINITE),
+    "over_range": (1e70, OUT_OF_RANGE),
+    "under_range": (1e-70, OUT_OF_RANGE),
+    "wide_integer": (10**64, OUT_OF_RANGE),
+}
 #: A test schema: the subset's keywords the catalogue does not write yet, and a closed object.
 SCHEMA = {
     "type": "object",
@@ -151,11 +173,13 @@ def test_param_defects_text_longer_than_its_bound_is_refused() -> None:
     )
 
 
-# ----- decimal text: a number param reads it as its number (the #5963 ruling) -----------------
+# ----- decimal text: a number param reads it as its number, as #5876 reads a constant's -------
 
 
 @pytest.mark.parametrize(
-    "held", ["0.5", "1E-7", "+2", 0.5, 2], ids=["text", "exponent", "sign", "float", "int"]
+    "held",
+    ["0.5", "1E-7", "+2", "0" * (MAX_NUMBER_TEXT - 1) + "1", 0.5, 2, Decimal("1.25")],
+    ids=["text", "exponent", "sign", "longest_text", "float", "int", "decimal"],
 )
 def test_validator_number_param_takes_decimal_text_or_a_number(held: Any) -> None:
     assert _errors(_order(qty=held)) == []
@@ -178,13 +202,22 @@ def test_validator_integer_param_takes_integral_decimal_text_only() -> None:
 @pytest.mark.parametrize(
     "held",
     ["abc", "NaN", "Infinity", "-inf", "1e999", "1e-999", "1e99999999999999999999", "0x10",
-     " 0.5", "1_000", "\u0663", "", "."],
+     " 0.5", "1_000", "\u0663", "", ".", "0" * MAX_NUMBER_TEXT + "1"],
     ids=["text", "nan", "infinity", "inf", "overflow", "underflow", "module_overflow", "hex",
-         "space", "grouped", "other_digits", "empty", "point"],
+         "space", "grouped", "other_digits", "empty", "point", "too_long"],
 )  # fmt: skip
 def test_validator_text_that_is_no_decimal_in_range_is_not_a_number(held: str) -> None:
     message = "Action 1 (Place order): 'qty' must be a number."
     assert _errors(_order(qty=held)) == [_issue("actions[0].params.qty", message)]
+
+
+@pytest.mark.parametrize("held", sorted(NO_RULE_HOLDS))
+def test_validator_json_number_no_rule_can_hold_is_not_a_number(held: str) -> None:
+    """A JSON number is held to the content hash's range (`plain_decimal`), as decimal text is."""
+    refused = [_issue("actions[0].params.qty", "Action 1 (Place order): 'qty' must be a number.")]
+    number, _reason = NO_RULE_HOLDS[held]
+    assert _errors(_order(qty=number)) == refused
+    assert _errors(_order(qty=Decimal(repr(number)))) == refused
 
 
 # ----- the native stop (C-2.6) and the stop moves ---------------------------------------------
@@ -208,6 +241,7 @@ def test_validator_text_that_is_no_decimal_in_range_is_not_a_number(held: str) -
         "atr",
         {},
         None,
+        *({"unit": "price", "value": number} for number, _ in NO_RULE_HOLDS.values()),
     ],
     ids=[
         "zero",
@@ -225,6 +259,7 @@ def test_validator_text_that_is_no_decimal_in_range_is_not_a_number(held: str) -
         "text",
         "empty",
         "null",
+        *NO_RULE_HOLDS,
     ],
 )
 def test_validator_stop_off_22_offset_or_not_above_zero_is_native_stop_violation(
@@ -323,37 +358,101 @@ def test_validator_refusal_never_echoes_the_refused_value(params: dict[str, Any]
 
 # ----- one answer from validate, compile and the saves ----------------------------------------
 
+_JSON: Final = {"content-type": "application/json"}
+_STOP_VALUE: Final = "actions[0].params.stop_loss.value"
+CHECKER = _P("rules:read", "orders:write")
+#: Refused params a rule can hold: the action, and where the validator names its one issue.
 REFUSED = {
     "bound": (_order(qty=0), "actions[0].params.qty"),
     "stop": (_order(stop_loss={}), "actions[0]"),
 }
+#: A stop whose value no rule can hold, sent as its JSON number token, by `NO_RULE_HOLDS` key.
+NO_HOLD_STOPS = {
+    k: _order(stop_loss={"unit": "price", "value": n}) for k, (n, _) in NO_RULE_HOLDS.items()
+}
+#: What a save refuses as the validator does: `REFUSED`, and each `NO_HOLD_STOPS` stop.
+SAVE_REFUSED = {**REFUSED, **{k: (a, "actions[0]") for k, a in NO_HOLD_STOPS.items()}}
+
+
+def _raw(body: dict[str, Any]) -> bytes:
+    """`body` as JSON text, keeping a `NaN` or `Infinity` token (httpx's `json=` writes none)."""
+    return json.dumps(body).encode()
+
+
+def _validator_issue(action: dict[str, Any], path: str) -> dict[str, Any]:
+    (issue,) = _errors(action)
+    assert issue["path"] == path
+    return issue
+
+
+def _validate(ir: dict[str, Any]) -> Any:
+    r = _client(CHECKER).post("/rules/validate", content=_raw({"ir": ir}), headers=_JSON)
+    assert r.status_code == 200 and r.json()["valid"] is False, r.text
+    return r.json()
+
+
+def _compile(ir: dict[str, Any]) -> Response:
+    body = _raw(_compile_body(ir))
+    compiled: Response = _client(CHECKER).post(
+        f"/rules/{RULE_ID}/compile", content=body, headers=_JSON
+    )
+    return compiled
 
 
 @pytest.mark.parametrize("case", sorted(REFUSED))
-@pytest.mark.parametrize("route", ["validate", "compile", "create", "update"])
-def test_routes_refused_param_answer_alike(route: str, case: str) -> None:
+def test_validate_answers_a_refused_param_as_the_validator_does(case: str) -> None:
     action, path = REFUSED[case]
-    ir = _ir(actions=[action])
-    (issue,) = _errors(action)
-    assert issue["path"] == path
-    checker = _client(_P("rules:read", "orders:write"))
-    if route == "validate":
-        body = checker.post("/rules/validate", json={"ir": ir}).json()
-        assert body["valid"] is False and body["errors"] == [issue] and body["blocks_arming"]
-    elif route == "compile":
-        compiled = checker.post(f"/rules/{RULE_ID}/compile", json=_compile_body(ir))
-        assert compiled.status_code == 200 and compiled.json()["blocks_arming"] is True
-        assert [i for i in compiled.json()["issues"] if i["severity"] == "error"] == [issue]
-    else:
-        e = _Env()
-        if route == "create":
-            saved = e.c.post("/rules", json={"ir": ir})
-        else:
-            rid = e.create()
-            saved = e.c.put(f"/rules/{rid}", json={"ir": ir}, headers={"If-Match": "1"})
-        assert saved.status_code == 422 and saved.json()["code"] == "rule_ir_invalid"
-        assert saved.json()["errors"] == [_refused(issue)]
-        assert [a for a, _ in e.audits] == ([] if route == "create" else ["rule.created"])
+    body = _validate(_ir(actions=[action]))
+    assert body["errors"] == [_validator_issue(action, path)] and body["blocks_arming"] is True
+
+
+@pytest.mark.parametrize("case", sorted(REFUSED))
+def test_compile_answers_a_refused_param_as_the_validator_does(case: str) -> None:
+    action, path = REFUSED[case]
+    compiled = _compile(_ir(actions=[action]))
+    assert compiled.status_code == 200 and compiled.json()["blocks_arming"] is True
+    errors = [i for i in compiled.json()["issues"] if i["severity"] == "error"]
+    assert errors == [_validator_issue(action, path)]
+
+
+@pytest.mark.parametrize("case", sorted(SAVE_REFUSED))
+def test_create_refuses_a_refused_param_as_the_validator_does_and_stores_nothing(case: str) -> None:
+    action, path = SAVE_REFUSED[case]
+    e = _Env()
+    saved = e.c.post("/rules", content=_raw({"ir": _ir(actions=[action])}), headers=_JSON)
+    assert (saved.status_code, saved.json()["code"]) == (422, "rule_ir_invalid"), saved.text
+    assert saved.json()["errors"] == [_refused(_validator_issue(action, path))]
+    assert e.audits == [] and e.c.get("/rules").json()["items"] == []
+
+
+@pytest.mark.parametrize("case", sorted(SAVE_REFUSED))
+def test_update_refuses_a_refused_param_as_the_validator_does_and_adds_no_version(
+    case: str,
+) -> None:
+    action, path = SAVE_REFUSED[case]
+    e = _Env()
+    rid, body = e.create(), _raw({"ir": _ir(actions=[action])})
+    saved = e.c.put(f"/rules/{rid}", content=body, headers={**_JSON, "If-Match": "1"})
+    assert (saved.status_code, saved.json()["code"]) == (422, "rule_ir_invalid"), saved.text
+    assert saved.json()["errors"] == [_refused(_validator_issue(action, path))]
+    assert [a for a, _ in e.audits] == ["rule.created"]
+    assert e.c.get(f"/rules/{rid}").json()["latest_version"] == 1
+
+
+@pytest.mark.parametrize("held", sorted(NO_RULE_HOLDS))
+def test_validate_answers_a_stop_value_no_rule_can_hold_as_the_content_hash(held: str) -> None:
+    """Validate hashes the document before it validates it (#4185)."""
+    body = _validate(_ir(actions=[NO_HOLD_STOPS[held]]))
+    assert body["errors"] == [_issue(_STOP_VALUE, NO_RULE_HOLDS[held][1])]
+
+
+@pytest.mark.parametrize("held", sorted(NO_RULE_HOLDS))
+def test_compile_refuses_a_stop_value_no_rule_can_hold_as_the_content_hash(held: str) -> None:
+    """Compile hashes the rule before it validates it."""
+    compiled = _compile(_ir(actions=[NO_HOLD_STOPS[held]]))
+    assert (compiled.status_code, compiled.json()["code"]) == (422, "rule_ir_invalid")
+    refusal = {"rule": "schema_error", "message": NO_RULE_HOLDS[held][1], "node_ids": []}
+    assert compiled.json()["errors"] == [{"field": _STOP_VALUE, **refusal}]
 
 
 def test_routes_keep_their_forbidden_role_and_cross_account_refusals() -> None:
@@ -395,22 +494,111 @@ def test_catalogue_action_example_params_pass(spec: Any, full: bool) -> None:
     assert _errors(_action(spec.type, **params)) == []
 
 
-def _walk(schema: Mapping[str, Any]) -> Iterator[tuple[str, Any]]:
-    for key, value in schema.items():
-        yield key, value
-        if key == "properties":
-            for sub in value.values():
-                yield from _walk(sub)
-        elif key == "items":
-            yield from _walk(value)
+#: A value of another type than each `type` reads.
+_ANOTHER_TYPE: Final = {
+    "string": 1, "number": "x", "integer": 1.5, "boolean": "x", "object": "x", "array": "x",
+}  # fmt: skip
+#: Each numeric bound, and the step from its value that crosses it.
+_CROSSING: Final = {"exclusiveMinimum": 0, "minimum": -1, "exclusiveMaximum": 0, "maximum": 1}
+
+
+def _past(schema: Mapping[str, Any]) -> Iterator[tuple[str, Any]]:
+    """One value past each bound `schema` writes, named by the bound: another type, text outside
+    its `enum`, each numeric bound crossed, text a character over `maxLength`, a list whose item
+    is past its `items`; an object missing a required member, holding an undeclared one, or with
+    one member past its own bound."""
+    if "type" in schema:
+        yield "type", _ANOTHER_TYPE[schema["type"]]
+    if "enum" in schema:
+        yield "enum", "zz"
+    for keyword, step in _CROSSING.items():
+        if keyword in schema:
+            yield keyword, schema[keyword] + step
+    if "maxLength" in schema:
+        yield "maxLength", "p" * (schema["maxLength"] + 1)
+    if "items" in schema:
+        yield from ((f"items.{k}", [v]) for k, v in _past(schema["items"]))
+    if schema.get("type") == "object":
+        example = _example(schema)
+        for name in schema.get("required", ()):
+            yield f"required.{name}", {k: v for k, v in example.items() if k != name}
+        if schema.get("additionalProperties") is False:
+            yield "additionalProperties", {**example, "zz": 1}
+        for name, sub in schema.get("properties", {}).items():
+            yield from ((f"{name}.{k}", {**example, name: v}) for k, v in _past(sub))
+
+
+#: Each declared param of each action, and one value past each of its bounds (`_past`).
+PAST = [
+    pytest.param(spec.type, name, value, id=f"{spec.type}-{name}.{bound}")
+    for spec in ACTIONS
+    for name, sub in spec.params_schema["properties"].items()
+    for bound, value in _past(sub)
+]
+#: Where a param past its bound is answered other than `schema_error` at the param: the native
+#: stop (C-2.6), and `only_tighten` on a stop action, which the loosening check answers.
+ELSEWHERE: Final = {
+    ("place_order", "stop_loss"): ("actions[0]", "native_stop_violation"),
+    ("modify_stop_loss", "only_tighten"): ("actions[0].params.only_tighten", "stop_loosening"),
+    ("tighten_stop", "only_tighten"): ("actions[0].params.only_tighten", "stop_loosening"),
+}
+
+
+@pytest.mark.parametrize(("kind", "name", "value"), PAST)
+def test_catalogue_action_param_past_a_published_bound_is_refused_at_that_param(
+    kind: str, name: str, value: Any
+) -> None:
+    """The negative twin of `test_catalogue_action_example_params_pass`, read from each schema."""
+    schema = SPECS[kind].params_schema
+    params = {**{n: _example(s) for n, s in schema["properties"].items()}, name: value}
+    answer = ELSEWHERE.get((kind, name), (f"actions[0].params.{name}", "schema_error"))
+    assert [(i["path"], i["code"]) for i in _errors(_action(kind, **params))] == [answer]
+
+
+@pytest.mark.parametrize(
+    "spec", [s for s in ACTIONS if s.params_schema["required"]], ids=lambda s: s.type
+)
+def test_validator_empty_params_miss_each_required_param(spec: Any) -> None:
+    missing = [
+        _issue(f"actions[0].params.{n}", f"Action 1 ({spec.title}) is missing '{n}'.",
+               "missing_action_param", "semantics")
+        for n in spec.params_schema["required"]
+    ]  # fmt: skip
+    assert _errors(_action(spec.type)) == missing
+
+
+def _schemas(schema: Mapping[str, Any]) -> Iterator[Mapping[str, Any]]:
+    """`schema`, then each schema inside it, through `properties` and `items`."""
+    yield schema
+    for sub in schema.get("properties", {}).values():
+        yield from _schemas(sub)
+    if "items" in schema:
+        yield from _schemas(schema["items"])
+
+
+def _numeric_bound(value: object) -> bool:
+    return isinstance(value, int | Decimal) and not isinstance(value, bool)
 
 
 @pytest.mark.parametrize("spec", ACTIONS, ids=lambda s: s.type)
 def test_catalogue_schema_writes_only_the_closed_subset(spec: Any) -> None:
-    for key, value in _walk(spec.params_schema):
-        assert key in KEYWORDS | ANNOTATIONS, key
-        assert key != "type" or value in TYPES, value
-        assert key != "additionalProperties" or isinstance(value, bool), value
+    """Each keyword in the subset, with a value the reader reads as the bound it is: a numeric
+    bound an `int` or `Decimal`, never a `bool`; `maxLength` a whole number from 0; `required`
+    declared names; `enum` a non-empty list; `properties` and `items` schemas."""
+    for s in _schemas(spec.params_schema):
+        assert set(s) <= KEYWORDS | ANNOTATIONS, set(s) - (KEYWORDS | ANNOTATIONS)
+        assert s.get("type", "string") in TYPES, s["type"]
+        assert isinstance(s.get("additionalProperties", True), bool), s
+        for bound in _CROSSING:
+            assert bound not in s or _numeric_bound(s[bound]), (bound, s[bound])
+        assert "maxLength" not in s or (type(s["maxLength"]) is int and s["maxLength"] >= 0), s
+        properties = s.get("properties", {})
+        assert isinstance(properties, Mapping), s
+        assert all(isinstance(p, Mapping) for p in properties.values()), s
+        assert isinstance(s.get("required", []), list), s
+        assert set(s.get("required", [])) <= set(properties), s
+        assert "enum" not in s or (isinstance(s["enum"], list) and len(s["enum"]) > 0), s
+        assert isinstance(s.get("items", {}), Mapping), s
 
 
 # ----- arming re-reads the stored version (D4) ------------------------------------------------
@@ -426,7 +614,8 @@ async def test_arming_stored_version_with_a_refused_param_is_refused_until_it_is
         await m.record_simulation(rid, made["version"]["ir_hash"], 5, 0.0)
         row = await m._s.get(rid)
         assert row is not None
-        row.versions[0].ir["actions"][0]["params"]["stop_loss"]["value"] = 0  # stored before #5963
+        stored = row.versions[0].ir["actions"][0]["params"]["stop_loss"]
+        stored["value"] = 0  # a stored version off its schema
         with pytest.raises(RuleError) as refused:
             await m.set_mode(rid, "armed", OWNER, "k-arm")
         assert (refused.value.status, refused.value.code) == (422, "rule_invalid")
@@ -434,7 +623,8 @@ async def test_arming_stored_version_with_a_refused_param_is_refused_until_it_is
         fixed = _ir(
             actions=[_order(stop_loss={"unit": "atr", "value": 2})], limits={"cooldown_ms": 5000}
         )
-        resaved = (await m.update(rid, fixed, 1, OWNER))["version"]
+        await m.update(rid, fixed, 1, OWNER)
+        resaved = (await m.versions(rid))[0]  # newest first: the version the save wrote
         await m.set_active_version(rid, resaved["id"], "re-saved", OWNER)
         await m.record_simulation(rid, resaved["ir_hash"], 5, 0.0)
         assert (await m.set_mode(rid, "armed", OWNER, "k-arm-2"))["mode"] == "armed"
