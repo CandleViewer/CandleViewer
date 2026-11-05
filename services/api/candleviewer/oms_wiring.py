@@ -84,6 +84,7 @@ from candleviewer.oms.cancel_all import (
 from candleviewer.oms.cancel_all_coalescer import CancelAllCoalescer
 from candleviewer.oms.cancel_all_fold import CancelAllSpacer
 from candleviewer.oms.clock_halt import ClockHalt
+from candleviewer.oms.closed_pnl_compare import ClosedPnlComparer, Tolerance
 from candleviewer.oms.closed_pnl_compose import ClosedPnlComposer
 from candleviewer.oms.closed_pnl_sync import ClosedPnlSync, StoredCloses
 from candleviewer.oms.commands import NEVER_SENT_ALERT, OmsCommandPort
@@ -201,6 +202,7 @@ from candleviewer.oms.ws_topics import (
     TopicReads,
     View,
 )
+from candleviewer.oms_closed_pnl_wiring import DivergenceAudit
 from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, Lane, LaneStopped, OrderLane, Serving
 from candleviewer.oms_reconcile_wiring import (
     DigestKeep,
@@ -3461,6 +3463,8 @@ class OmsRuntime:
             # degrades `readyz` (24 Sec.8.12 "Readiness"); it never restarts itself. Its
             # composition (slice 5b) walks the same store's fills, the funding interval read from
             # the catalogue in place; no cap reads what it composes (`DayRiskFigures`: the venue).
+            # Its comparison (slice 5c) records each divergence through this lane's own writer,
+            # nothing while that writer is strained, so the order audit keeps its priority.
             sync: ClosedPnlSync | None = None
             requests: ReconciliationRequests | None = None if reconcile is None else reconcile.jobs
             if stores.closed_pnl is not None:
@@ -3468,10 +3472,18 @@ class OmsRuntime:
                 composer = ClosedPnlComposer(
                     store=stores.closed_pnl, instruments=InstrumentsBinding(ingestion.instruments)
                 )
+                tolerance = Tolerance(
+                    settings.oms_closed_pnl_tolerance_rel, settings.oms_closed_pnl_tolerance_abs
+                )
+                comparer = ClosedPnlComparer(
+                    marks=stores.closed_pnl, metrics=metrics, tolerance=tolerance,
+                    writer=DivergenceAudit(writer, environment=settings.environment.value),
+                )  # fmt: skip
                 sync = ClosedPnlSync(
                     accounts=accounts, router=router, records=stores.closed_pnl,
                     closes=stores.executions, snapshots=snapshot_rows, metrics=metrics, now=wall,
                     on_ended=ended, day_start=days.day_start, composer=composer,
+                    comparer=comparer,
                 )  # fmt: skip
                 fills.bind_stored(sync.stored)
                 if requests is not None:
