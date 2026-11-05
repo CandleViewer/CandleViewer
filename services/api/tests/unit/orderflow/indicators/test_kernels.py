@@ -58,7 +58,7 @@ def test_an_indicator_without_a_server_kernel_is_refused() -> None:
 def test_an_undeclared_parameter_is_refused_without_echoing_its_key() -> None:
     """IR-24: a refusal never names a key the kernel does not declare."""
     with pytest.raises(IndicatorParamError) as err:
-        build_kernel("sma", {"n": 20, "qqq_zz": 1}, source="close")
+        build_kernel("sma", {**VALID["sma"][0], "qqq_zz": 1}, source="close")
     assert str(err.value) == "sma was given an undeclared parameter."
     assert "qqq_zz" not in str(err.value)
 
@@ -81,16 +81,17 @@ BAD_PERIODS += (Decimal("NaN"), Decimal("sNaN"), Decimal("2.5"), Decimal("Infini
 @pytest.mark.parametrize("n", BAD_PERIODS)
 def test_a_period_must_be_a_whole_number_of_at_least_one(n: object) -> None:
     with pytest.raises(IndicatorParamError) as err:
-        build_kernel("ema", {"n": cast(Any, n)}, source="close")
+        build_kernel("ema", {**VALID["ema"][0], "n": cast(Any, n)}, source="close")
     assert str(err.value).startswith("n must be ")
     assert repr(n) not in str(err.value)
 
 
 def test_integral_float_and_decimal_periods_equal_the_int() -> None:
     bars = [bar(i, 100.0 + i % 7) for i in range(40)]
-    want = compute("sma", bars, {"n": 21}, source="close")
-    assert compute("sma", bars, {"n": 21.0}, source="close") == want
-    assert compute("sma", bars, {"n": Decimal("21.00")}, source="close") == want
+    base = VALID["sma"][0]
+    want = compute("sma", bars, {**base, "n": 21}, source="close")
+    assert compute("sma", bars, {**base, "n": 21.0}, source="close") == want
+    assert compute("sma", bars, {**base, "n": Decimal("21.00")}, source="close") == want
 
 
 def test_a_decimal_deviation_reads_as_its_binary64_value() -> None:
@@ -135,7 +136,9 @@ def test_run_and_compute_are_the_same_fold_as_update(name: str) -> None:
 
 def test_sma_of_one_bar_is_the_close() -> None:
     bars = [bar(i, 100.0 + i * 0.1) for i in range(10)]
-    assert compute("sma", bars, {"n": 1}, source="close") == [(b.close,) for b in bars]
+    assert compute("sma", bars, {**VALID["sma"][0], "n": 1}, source="close") == [
+        (b.close,) for b in bars
+    ]
 
 
 def test_rsi_is_none_on_a_flat_series_and_100_on_a_rising_one() -> None:

@@ -65,18 +65,119 @@ def _wilder[T: (Fraction, Decimal)](xs: Sequence[T], n: int) -> list[T | None]:
     return _seeded(xs, n, lambda v, x: v + (x - v) / n)
 
 
-def sma(bars: Sequence[BarInput], n: int) -> list[Row]:
-    c = [Fraction(b.close) for b in bars]
-    out: list[Row] = []
-    for i in range(len(c)):
-        out.append((sum(c[i - n + 1 : i + 1], Fraction(0)) / n,) if i >= n - 1 else (None,))
+def _applied(b: BarInput, source: str) -> Fraction:
+    """The exact applied price of the binary64 bar (24 7.4 "Applied price")."""
+    o, h, lo, c = (Fraction(x) for x in (b.open, b.high, b.low, b.close))
+    return {
+        "close": c, "open": o, "high": h, "low": lo, "hl2": (h + lo) / 2,
+        "hlc3": (h + lo + c) / 3, "ohlc4": (o + h + lo + c) / 4,
+    }[source]  # fmt: skip
+
+
+def _offset(line: Sequence[Fraction | None], offset: int) -> list[Fraction | None]:
+    """The line displaced `offset` bars toward the past: bar `k` shows bar `k - offset`."""
+    return ([None] * offset + list(line))[: len(line)]
+
+
+def _rows(line: Sequence[Fraction | None]) -> list[Row]:
+    return [(v,) for v in line]
+
+
+def _sma_line(p: Sequence[Fraction], n: int) -> list[Fraction | None]:
+    return [
+        sum(p[i - n + 1 : i + 1], Fraction(0)) / n if i >= n - 1 else None for i in range(len(p))
+    ]
+
+
+def _ema_line(p: Sequence[Fraction], n: int) -> list[Fraction | None]:
+    alpha = Fraction(2, n + 1)
+    return list(_seeded(p, n, lambda v, x: v + alpha * (x - v)))
+
+
+def _wma_line(p: Sequence[Fraction], n: int) -> list[Fraction | None]:
+    den = Fraction(n * (n + 1), 2)
+    out: list[Fraction | None] = []
+    for i in range(len(p)):
+        window = p[i - n + 1 : i + 1]
+        out.append(
+            sum((w * x for w, x in enumerate(window, 1)), Fraction(0)) / den if i >= n - 1 else None
+        )
     return out
 
 
-def ema(bars: Sequence[BarInput], n: int) -> list[Row]:
-    alpha = Fraction(2, n + 1)
-    c = [Fraction(b.close) for b in bars]
-    return [(v,) for v in _seeded(c, n, lambda v, x: v + alpha * (x - v))]
+def _vwma_line(p: Sequence[Fraction], v: Sequence[Fraction], n: int) -> list[Fraction | None]:
+    out: list[Fraction | None] = []
+    for i in range(len(p)):
+        vol = sum(v[i - n + 1 : i + 1], Fraction(0))
+        if i < n - 1 or vol == 0:
+            out.append(None)
+        else:
+            out.append(
+                sum(
+                    (
+                        x * w
+                        for x, w in zip(p[i - n + 1 : i + 1], v[i - n + 1 : i + 1], strict=True)
+                    ),
+                    Fraction(0),
+                )
+                / vol
+            )
+    return out
+
+
+def _chained_ema(line: Sequence[Fraction | None], n: int) -> list[Fraction | None]:
+    """The EMA of a line that starts late: seeded on its first `n` defined values."""
+    start = next((i for i, x in enumerate(line) if x is not None), len(line))
+    tail = [x for x in line[start:] if x is not None]
+    return [None] * start + _ema_line(tail, n)
+
+
+def _ma_line(
+    ma: str, p: Sequence[Fraction], v: Sequence[Fraction], n: int
+) -> list[Fraction | None]:
+    """One moving average of the applied prices `p` (volumes `v`), exactly."""
+    match ma:
+        case "sma":
+            return _sma_line(p, n)
+        case "ema":
+            return _ema_line(p, n)
+        case "wma":
+            return _wma_line(p, n)
+        case "vwma":
+            return _vwma_line(p, v, n)
+        case "smma":
+            return list(_wilder(p, n))
+        case "dema" | "tema":
+            e1 = _ema_line(p, n)
+            e2 = _chained_ema(e1, n)
+            if ma == "dema":
+                return [
+                    None if b is None or a is None else 2 * a - b
+                    for a, b in zip(e1, e2, strict=True)
+                ]
+            e3 = _chained_ema(e2, n)
+            return [
+                None if c is None or a is None or b is None else 3 * a - 3 * b + c
+                for a, b, c in zip(e1, e2, e3, strict=True)
+            ]
+    raise KeyError(ma)
+
+
+def moving_average(bars: Sequence[BarInput], ma: str, params: Mapping[str, object]) -> list[Row]:
+    """`sma`, `ema` and the client-worker averages of E13-S02 (`wma`, `vwma`, `smma`, `dema`,
+    `tema`): the applied price `source`, the period `n`, then the `offset` displacement."""
+    p = [_applied(b, str(params["source"])) for b in bars]
+    v = [Fraction(b.volume) for b in bars]
+    line = _ma_line(ma, p, v, int(str(params["n"])))
+    return _rows(_offset(line, int(str(params["offset"]))))
+
+
+def ma_ribbon(bars: Sequence[BarInput], params: Mapping[str, object]) -> list[Row]:
+    """The five lines of `ma_ribbon`: `ma` at the periods `n1`..`n5` of one applied price."""
+    p = [_applied(b, str(params["source"])) for b in bars]
+    v = [Fraction(b.volume) for b in bars]
+    lines = [_ma_line(str(params["ma"]), p, v, int(str(params[f"n{i}"]))) for i in range(1, 6)]
+    return [tuple(line[k] for line in lines) for k in range(len(bars))]
 
 
 def rsi(bars: Sequence[BarInput], n: int) -> list[Row]:
@@ -218,8 +319,12 @@ def reference(
 ) -> list[Row]:
     """The reference series of a server indicator, one row per bar."""
     match indicator:
-        case "sma" | "ema" | "rsi" | "atr" | "adx":
-            fn = {"sma": sma, "ema": ema, "rsi": rsi, "atr": atr, "adx": adx}[indicator]
+        case "sma" | "ema" | "wma" | "vwma" | "smma" | "dema" | "tema":
+            return moving_average(bars, indicator, params)
+        case "ma_ribbon":
+            return ma_ribbon(bars, params)
+        case "rsi" | "atr" | "adx":
+            fn = {"rsi": rsi, "atr": atr, "adx": adx}[indicator]
             return fn(bars, int(str(params["n"])))
         case "vwap":
             return vwap(bars, context)

@@ -275,7 +275,11 @@ def test_h_indicators_is_served_live_only_and_echoes_every_param_and_key(
         return
     assert result["ok"] is True
     (echo,) = result["effective"]["instances"]
-    assert (echo["indicator"], echo["params"], len(echo["key"])) == ("ema", {"n": 21}, 64)
+    assert (echo["indicator"], echo["params"], len(echo["key"])) == (
+        "ema",
+        {"n": 21, "source": "close", "offset": 0},
+        64,
+    )
     assert result["effective"]["history"] == 500
 
 

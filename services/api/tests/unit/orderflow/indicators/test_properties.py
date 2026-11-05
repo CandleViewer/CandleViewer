@@ -30,7 +30,7 @@ from candleviewer.orderflow.indicators import (
     compute,
 )
 from candleviewer.orderflow.indicators.types import ParamValue
-from tests.unit.orderflow.indicators._bars import MINUTE, T0, bits
+from tests.unit.orderflow.indicators._bars import MINUTE, T0, VALID, bits
 from tests.unit.orderflow.indicators.reference import reference
 
 SEED = 20261019
@@ -66,7 +66,7 @@ def cases(draw: st.DrawFn) -> Case:
     name = draw(st.sampled_from(sorted(KERNELS)))
     params: dict[str, ParamValue]
     if name in ("sma", "ema", "rsi", "atr", "adx"):
-        params = {"n": draw(st.integers(1, 20))}
+        params = {**VALID[name][0], "n": draw(st.integers(1, 20))}
     elif name == "vwap":
         params = {"anchor": "session"}
     elif name == "cvd":

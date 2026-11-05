@@ -785,7 +785,10 @@ class IndicatorEngine:
 
     @staticmethod
     def _kernel(r: Requested, context: KernelContext) -> Kernel:
-        return build_kernel(r.definition.id, r.params, source=r.kernel.sources[0], context=context)
+        # A moving average's applied price is a parameter; only a kernel that declares one reads it.
+        chosen = r.params.get("source") if "source" in r.kernel.param_names else None
+        source = chosen if isinstance(chosen, str) else r.kernel.sources[0]
+        return build_kernel(r.definition.id, r.params, source=source, context=context)
 
     # -- priming and full recomputes ------------------------------------------------------------
 

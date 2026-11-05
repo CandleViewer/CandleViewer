@@ -20,6 +20,9 @@ Parity contract (ADR-0034 rule 3). The TS worker mirror follows it operation for
   beside its `build_version` in `tests/unit/orderflow/indicators/test_golden_vectors.py`. The
   pin fails on any changed output, so the bump is a reviewed diff (IR-20).
 
+Applied price and offset (E13-S02): `applied_price` is the price a moving average reads
+(`source`), `OffsetLine` shifts its line toward the past (`offset`); both are parameters.
+
 Shared recurrences:
 
 - Wilder smoothing (`WilderAverage`; ATR, RSI, ADX): seed `acc / n`, where `acc` sums the
@@ -135,6 +138,65 @@ def as_state(raw: object) -> State:
     return raw
 
 
+def applied_price(bar: BarInput, source: str) -> float:
+    """The price a moving average reads from `bar` (24 7.4 "Applied price"): `close`, `open`,
+    `high` and `low` as they are; the composites summed left to right, then divided."""
+    match source:
+        case "close":
+            return bar.close
+        case "open":
+            return bar.open
+        case "high":
+            return bar.high
+        case "low":
+            return bar.low
+        case "hl2":
+            return (bar.high + bar.low) / 2
+        case "hlc3":
+            return (bar.high + bar.low + bar.close) / 3
+        case "ohlc4":
+            return (bar.open + bar.high + bar.low + bar.close) / 4
+    raise IndicatorParamError("source is not an applied price.")
+
+
+class OffsetLine:
+    """A line displaced `offset` bars toward the past (24 7.4 "Offset"): `push(raw)` takes the
+    raw value of the newest bar and returns the one of `offset` bars before it, `None` until
+    that bar exists. O(1) a bar, over a ring of `offset` raw values."""
+
+    __slots__ = ("_k", "_offset", "_ring")
+
+    def __init__(self, offset: int) -> None:
+        self._offset = offset
+        self._k = 0
+        self._ring: list[float | None] = []
+
+    def push(self, raw: float | None) -> float | None:
+        if self._offset == 0:
+            return raw
+        j = self._k % self._offset
+        if self._k < self._offset:
+            self._ring.append(raw)
+            out = None
+        else:
+            out = self._ring[j]
+            self._ring[j] = raw
+        self._k += 1
+        return out
+
+    def dump(self) -> list[object]:
+        return [self._k, list(self._ring)]
+
+    def load(self, raw: object) -> None:
+        """Replace the state with `raw` (a fresh instance's job: parse, then assign)."""
+        if not isinstance(raw, list) or len(raw) != 2 or not isinstance(raw[1], list):
+            raise TypeError("expected [k, ring]")
+        k, ring = as_count(raw[0]), [as_optional_float(x) for x in raw[1]]
+        if len(ring) != min(k, self._offset):
+            raise ValueError("ring length does not match the bar count")
+        self._k, self._ring = k, ring
+
+
 class _SeededAverage(ABC):
     """Shared seed: the mean of the first `n` inputs, summed left to right from `0.0`."""
 
@@ -203,7 +265,9 @@ class Kernel(ABC):
     param_names: ClassVar[tuple[str, ...]]
     #: The price the kernel reads (`close`, `hlc3`), or `None` for fixed bar fields; `sources[0]`
     #: is the default. A check on the caller, never part of the identity: `spec_hash` hashes the
-    #: bar source `tape` (`identity.BAR_SOURCE`, 24 §7.4).
+    #: bar source `tape` (`identity.BAR_SOURCE`, 24 §7.4). The one exception is a moving
+    #: average's applied price (E13-S02), which is also the `source` param, so it is in the
+    #: identity as a param and the caller's `source` must equal it.
     sources: ClassVar[tuple[str | None, ...]]
     nullable_when: ClassVar[str]
 

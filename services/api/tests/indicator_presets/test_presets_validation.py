@@ -41,7 +41,10 @@ def test_n_zero_and_10000_are_422_naming_params_n(code: str, n: int, rule: str) 
     assert r.json()["errors"] == [{"field": "params.n", "rule": rule, "message": _BOUND}]
     _no_write(env)
     made = env.create(indicator_code=code, params={"n": 5000})
-    assert made["params"] == {"n": 5000}
+    assert made["params"] == {
+        "n": 5000,
+        **({} if code == "atr" else {"source": "close", "offset": 0}),
+    }
 
 
 @pytest.mark.parametrize(

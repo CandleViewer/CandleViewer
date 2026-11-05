@@ -181,7 +181,11 @@ def _number(value: Decimal | int) -> int | float:
 def test_property_a_period_is_stored_exactly_when_in_bounds(n: int) -> None:
     data = _parse(body(indicator_code="ema", params={"n": n}))
     if limits.PERIOD_MIN <= n <= limits.PERIOD_MAX:
-        assert preset_fields(data, CATALOGUE).params == {"n": n}  # never clamped
+        assert preset_fields(data, CATALOGUE).params == {  # never clamped
+            "n": n,
+            "source": "close",
+            "offset": 0,
+        }
     else:
         with pytest.raises(PresetInvalidError):
             preset_fields(data, CATALOGUE)

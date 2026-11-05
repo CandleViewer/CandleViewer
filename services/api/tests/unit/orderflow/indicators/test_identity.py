@@ -62,7 +62,8 @@ def test_ema_21_vector_is_the_sha256_of_the_24_7_4_canonical_form() -> None:
     """The form written out by hand from 24 §7.4 (every number a JSON string of its plain
     decimal digits, `source` the bar source `tape`) gives the committed ema(21) vector."""
     by_hand = (
-        f'{{"bar_spec_hash":"{BAR}","indicator":"ema","params":{{"n":"21"}},"source":"tape","v":1}}'
+        f'{{"bar_spec_hash":"{BAR}","indicator":"ema",'
+        '"params":{"n":"21","offset":"0","source":"close"},"source":"tape","v":1}'
     )
     doc = json.loads((GOLDEN / "spec_hash_vectors.json").read_text(encoding="utf-8"))
     vector = next(v for v in doc["vectors"] if v["note"] == "ema(21) on 1m")

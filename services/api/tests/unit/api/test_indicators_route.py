@@ -86,7 +86,7 @@ def _items(client: TestClient, **params: str) -> list[dict[str, Any]]:
 def test_indicators_route_serves_every_v1_indicator_in_catalogue_order() -> None:
     items = _items(_client())
     assert [i["id"] for i in items] == [d.id for d in default_catalogue()]
-    assert len(items) == 28 and sum(i["compute"] == "server" for i in items) == 9
+    assert len(items) == 29 and sum(i["compute"] == "server" for i in items) == 9
 
 
 #: The indicators whose outputs differ in unit: `vwap`'s z-score `band_sigma`, `supertrend`'s
@@ -139,8 +139,14 @@ def _served_params(kind: str) -> list[tuple[str, str, dict[str, Any]]]:
 
 
 def test_indicators_route_every_integer_parameter_is_a_period_of_1_to_5000() -> None:
-    periods = _served_params("integer")
-    assert len(periods) == 31  # every period-like parameter of the 28 indicators
+    served = _served_params("integer")
+    offsets = [p for p in served if p[1] == "offset"]
+    periods = [p for p in served if p[1] != "offset"]
+    assert len(periods) == 36  # every period-like parameter of the 29 indicators
+    assert [i for i, _, _ in offsets] == ["sma", "ema", "wma", "vwma", "smma", "dema", "tema"]
+    for indicator, name, prop in offsets:
+        bounds = (prop["minimum"], prop["maximum"], "multipleOf" in prop)
+        assert bounds == (limits.OFFSET_MIN, limits.OFFSET_MAX, False), (indicator, name)
     for indicator, name, prop in periods:
         bounds = (prop["minimum"], prop["maximum"], "multipleOf" in prop)
         assert bounds == (limits.PERIOD_MIN, limits.PERIOD_MAX, False), (indicator, name)
@@ -188,7 +194,7 @@ def test_indicators_route_compute_is_derived_never_requested() -> None:
 def test_indicators_route_a_newly_registered_indicator_appears_with_no_frontend_change() -> None:
     catalogue = default_catalogue()
     client = _client(catalogue)
-    assert len(_items(client)) == 28
+    assert len(_items(client)) == 29
     catalogue.register(
         IndicatorDef(
             "hull_ma",
@@ -203,7 +209,7 @@ def test_indicators_route_a_newly_registered_indicator_appears_with_no_frontend_
         )
     )
     items = _items(client)
-    assert [i["id"] for i in items][-1] == "hull_ma" and len(items) == 29
+    assert [i["id"] for i in items][-1] == "hull_ma" and len(items) == 30
     hull = items[-1]
     assert (hull["compute"], hull["defaults"], hull["warmup_bars"]) == (
         "client_worker",
@@ -236,5 +242,5 @@ def test_indicators_route_without_a_resolver_fails_closed_with_501() -> None:
 
 def test_indicators_route_accepts_an_async_resolver() -> None:
     allowed = _client(resolver=_AsyncResolver(_Principal("marketdata:read")))
-    assert len(_items(allowed)) == 28
+    assert len(_items(allowed)) == 29
     assert _client(resolver=_AsyncResolver(None)).get("/indicators").status_code == 401

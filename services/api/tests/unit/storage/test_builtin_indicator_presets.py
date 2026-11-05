@@ -42,6 +42,12 @@ PENDING: dict[str, str] = {
     "market_regime(default)": "no descriptor yet (an R2 indicator)",
 }
 _PANE = {"price": "overlay", "sub": "subpane"}
+#: Parameters a descriptor gained after revision 0040 froze the rows (C-5.4: a merged revision is
+#: never edited): an absent one takes its default (`validate_params`), so the stored `ema(n)`
+#: rows stay valid and mean what they did. E13-S02 added `source` and `offset` to `ema`; a new
+#: revision completing the four rows is carried, and #424's PR proposes E13-S01 (#423), which
+#: applies the 21 Sec.10.5 built-ins, as its carrier (no new issue under the filing freeze).
+LATER_DEFAULTS: dict[str, dict[str, int | str]] = {"ema": {"source": "close", "offset": 0}}
 
 
 def _section_10_5_labels() -> list[str]:
@@ -88,7 +94,8 @@ def test_every_row_the_catalogue_defines_is_complete_canonical_and_on_its_pane(p
     indicator's complete canonical parameters and draws where the descriptor's `pane` says."""
     definition = default_catalogue().get(preset.indicator_code)
     assert definition is not None
-    assert validate_params(definition, dict(preset.params)) == dict(preset.params)
+    later = LATER_DEFAULTS.get(preset.indicator_code, {})
+    assert validate_params(definition, dict(preset.params)) == {**preset.params, **later}
     assert _PANE[definition.pane] == preset.pane_target
 
 

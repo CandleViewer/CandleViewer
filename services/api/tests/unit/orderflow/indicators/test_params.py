@@ -30,6 +30,7 @@ EMA, BOLLINGER, CVD, ZIGZAG, PSAR = (
     BY_ID[n] for n in ("ema", "bollinger", "cvd", "zigzag", "psar")
 )
 BAR_SPEC = "0" * 64
+MA_DEFAULTS = {"source": "close", "offset": 0}
 SEED = 20261019
 
 
@@ -54,7 +55,7 @@ def test_params_result_is_complete_and_in_its_kernel_domain(definition: Indicato
 
 def test_params_whole_float_is_the_integer_so_ema_21_and_21_0_are_one_instance() -> None:
     whole, floating, decimal = (validate_params(EMA, {"n": n}) for n in (21, 21.0, Decimal("21")))
-    assert whole == floating == decimal == {"n": 21}
+    assert whole == floating == decimal == {"n": 21, **MA_DEFAULTS}
     assert all(type(p["n"]) is int for p in (whole, floating, decimal))
     specs = [IndicatorSpec.of("ema", p, bar_spec_hash=BAR_SPEC) for p in (whole, floating)]
     assert specs[0].spec_hash == specs[1].spec_hash
@@ -71,7 +72,7 @@ def test_params_period_out_of_bounds_is_refused_never_clamped(value: int, rule: 
 
 @pytest.mark.parametrize("value", [PERIOD_MIN, 2, 4999, PERIOD_MAX])
 def test_params_period_bounds_are_inclusive(value: int) -> None:
-    assert validate_params(EMA, {"n": value}) == {"n": value}
+    assert validate_params(EMA, {"n": value}) == {"n": value, **MA_DEFAULTS}
 
 
 @pytest.mark.parametrize(
@@ -134,7 +135,7 @@ def test_params_enum_accepts_only_its_values() -> None:
 def test_params_an_undeclared_key_is_refused_without_naming_it() -> None:
     error = _refusal(EMA, {"n": 21, "compute": "server"})
     assert (error.pointer, error.rule) == ("", "additionalProperties")
-    assert str(error) == "ema takes only these parameters: n."
+    assert str(error) == "ema takes only these parameters: n, source, offset."
     assert "compute" not in str(error)
     assert _refusal(EMA, {1: 21}).rule == "additionalProperties"
     assert str(_refusal(BY_ID["obv"], {"n": 3})) == "obv takes no parameters."
@@ -155,7 +156,7 @@ def test_params_refusal_is_a_typed_indicator_param_error() -> None:
 @settings(max_examples=100, deadline=None)
 @given(st.integers(PERIOD_MIN, PERIOD_MAX))
 def test_params_property_every_period_inside_the_bounds_is_accepted(value: int) -> None:
-    assert validate_params(EMA, {"n": value}) == {"n": value}
+    assert validate_params(EMA, {"n": value}) == {"n": value, **MA_DEFAULTS}
 
 
 @seed(SEED)
