@@ -8,15 +8,21 @@ connector the exchange adapter keeps. They refuse every request, as a closed por
 nothing builds the pair unguarded. Then, before any module starts, it builds the pair behind them
 once a process (`guards.BUILD_ONCE`): one fixture clock, `KeyStates` and `RequestLog`, one
 `FixtureTransport` on the process's guard latch (`guards.LATCH`) and read-only gate, and one
-`FixtureSockets` on that transport. A second or failed build refuses boot with a fixed message that
-names no path; so does a switched-on boot whose guard is handed no handle, since the adapter would
-then keep its real transport and socket. The fixture clock goes to the stub alone; the adapter
-keeps signing on real time. Nothing here imports `candleviewer.secrets` or `candleviewer.audit`.
+`FixtureSockets` on that transport. #977: with `order_lane.json` in the fixture's dir, also the
+order lane's pack mode (`order_lane.OrderLane`), whose ack board the sockets read; each lane
+transport serves through it once built, and refuses as before without it. A second or failed build
+refuses boot with a fixed message that names no path; so does a switched-on boot whose guard is
+handed no handle, since the adapter would then keep its real transport and socket. The fixture
+clock goes to the stub alone; the adapter keeps signing on real time. The pair may be called from
+the order lane's thread, so a trip there latches the process gate on the serving loop that armed
+it, never on the lane's (`_ServingGate`). Nothing here imports `candleviewer.secrets` or
+`candleviewer.audit`.
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -30,6 +36,7 @@ from candleviewer.settings import Settings
 from cvdev.account_fixture import boot, guards
 from cvdev.account_fixture import pack as account_pack
 from cvdev.account_fixture.control import FixtureClock, KeyStates
+from cvdev.account_fixture.order_lane import OrderLane, read_config, read_corpus
 from cvdev.account_fixture.pack import Pack, fixture_key_ids
 from cvdev.account_fixture.private_ws import FixtureSockets
 from cvdev.account_fixture.requestlog import RequestLog
@@ -63,6 +70,8 @@ class Armed:
 
     transport: FixtureTransport
     sockets: FixtureSockets
+    #: The order lane's pack mode (#977), None unless `order_lane.json` names it.
+    lane: OrderLane | None = None
 
 
 class _DoorTransport(RefusingTransport):
@@ -76,6 +85,58 @@ class _DoorTransport(RefusingTransport):
         if armed is None:
             return await super().handle_async_request(request)
         return await armed.transport.handle_async_request(request)
+
+
+class _LaneTransport(RefusingTransport):
+    """An order lane's REST transport (#913 L1d, #977): refusing unless the door's pair is built
+    with the lane's pack mode, then that mode's (`OrderLane.serve`). It holds no loop's state, and
+    its close leaves the pair, which lives for the process, open."""
+
+    def __init__(self, door: FixtureDoor) -> None:
+        self._door = door
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        armed = self._door.armed
+        if armed is None or armed.lane is None:
+            return await super().handle_async_request(request)
+        return await armed.lane.serve(request)
+
+
+class _ServingGate:
+    """The process read-only gate as the pair sees it: read in place from any thread (the gate is
+    thread-safe), latched on the serving loop that armed the pair. From another thread (the order
+    lane's) the latch is handed to that loop, which latches unless a latch is held by then, so
+    the gate's listeners run on the loop they were built for; the guard latch already refuses."""
+
+    def __init__(self, gate: ReadOnlyLatch, loop: asyncio.AbstractEventLoop) -> None:
+        self._gate, self._loop = gate, loop
+
+    @property
+    def gate(self) -> ReadOnlyLatch:
+        """The process gate itself."""
+        return self._gate
+
+    @property
+    def latched_reason_code(self) -> str | None:
+        return self._gate.latched_reason_code
+
+    def latch(self, *, reason_code: str, reason_text: str) -> None:
+        try:
+            running: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is self._loop or self._loop.is_closed():
+            self._gate.latch(reason_code=reason_code, reason_text=reason_text)
+            return
+        unless_held = functools.partial(self._latch_unless_held, reason_code, reason_text)
+        try:
+            self._loop.call_soon_threadsafe(unless_held)
+        except RuntimeError:  # closed meanwhile: latch here rather than not at all
+            self._gate.latch(reason_code=reason_code, reason_text=reason_text)
+
+    def _latch_unless_held(self, reason_code: str, reason_text: str) -> None:
+        if self._gate.latched_reason_code is None:
+            self._gate.latch(reason_code=reason_code, reason_text=reason_text)
 
 
 class _Handoff:
@@ -116,8 +177,9 @@ class FixtureDoor:
         self.private_ws_connect: Final[Callable[[str], Awaitable[PrivateSocket]]] = self._dial
 
     def lane_rest_transport(self) -> httpx.AsyncBaseTransport:
-        """A new refusing transport for the order lane's loop at each call (#913 L1d)."""
-        return RefusingTransport()
+        """A new transport for the order lane's loop at each call (#913 L1d): refusing unless the
+        pair is built with the lane's pack mode (#977)."""
+        return _LaneTransport(self)
 
     @property
     def armed(self) -> Armed | None:
@@ -140,9 +202,9 @@ class FixtureDoor:
         refusal = self._settings.account_fixture_refusal()
         if refusal is not None:
             raise AccountFixtureRefused(refusal)
-        handoff = _Handoff()
+        handoff, serving = _Handoff(), _ServingGate(gate, asyncio.get_running_loop())
         try:
-            armed = await asyncio.to_thread(_built, self._settings, gate, pack, handoff)
+            armed = await asyncio.to_thread(_built, self._settings, serving, pack, handoff)
         except BaseException:
             handoff.abandon()
             raise
@@ -169,7 +231,10 @@ def _built(settings: Settings, gate: ReadOnlyLatch, pack: Pack, handoff: _Handof
             transport = FixtureTransport(
                 pack, log=log, gate=gate, clock=clock, default=default, keys=keys, latch=LATCH
             )
-            armed = Armed(transport, FixtureSockets(transport))
+            config = read_config(directory)
+            lane = None if config is None else OrderLane(transport, config, read_corpus(pack))
+            sockets = FixtureSockets(transport, acks=None if lane is None else lane.board)
+            armed = Armed(transport, sockets, lane)
         except BaseException:
             log.close()
             raise
