@@ -38,11 +38,13 @@ def _answer(method: str) -> str:
     return f"/paths/~1rules~1{{ruleId}}/{method}/responses/200/content/application~1json/schema"
 
 
-def _rebuilt(stored: dict[str, Any], ir: dict[str, Any]) -> dict[str, Any]:
-    """What the server's model reads from an answered `ir` and the stored version's members
-    outside `RuleIr`: what it reads from the stored version when the answer drops nothing."""
-    envelope = {k: v for k, v in stored.items() if k not in RULE_IR}
-    return Rule.model_validate({**envelope, **ir}).model_dump(mode="json")
+def _rebuilt(stored: dict[str, Any], detail: dict[str, Any]) -> dict[str, Any]:
+    """What the server's model reads from an answered detail's `ir` and `graph_layout` and the
+    stored version's other members: what it reads from the stored version when the answer drops
+    nothing."""
+    envelope = {k: v for k, v in stored.items() if k not in RULE_IR | {"graph_layout"}}
+    answered = {**envelope, **detail["ir"], "graph_layout": detail["graph_layout"]}
+    return Rule.model_validate(answered).model_dump(mode="json")
 
 
 def test_get_rule_answers_the_rule_detail_22_declares() -> None:
@@ -73,9 +75,10 @@ def test_update_rule_answers_the_rule_detail_of_the_version_it_wrote() -> None:
 
 @pytest.mark.parametrize("shape", list(_CORPUS))
 async def test_every_stored_ir_shape_reads_as_22s_rule_ir_and_loses_nothing(shape: str) -> None:
-    """A stored version of each shape the IR corpus holds (each trigger, node and operand form),
-    as its writer wrote it, reads back as 22's `RuleDetail`, its `ir` as `RuleIr` holds it, from
-    which the server's own model reads exactly what it reads from the stored version."""
+    """A stored version of each shape the IR corpus holds (each trigger, node and operand form,
+    each with its layout), as its writer wrote it, reads back as 22's `RuleDetail`, its `ir` as
+    `RuleIr` holds it: from its `ir` and `graph_layout` the server's own model reads exactly what
+    it reads from the stored version."""
     m = RulesManager(InMemoryRuleStore(), default_registry())
     rid = (await m.create({**rule_ir(level="global"), "name": "shape"}, OWNER))["id"]
     stored = copy.deepcopy(_CORPUS[shape])
@@ -84,4 +87,4 @@ async def test_every_stored_ir_shape_reads_as_22s_rule_ir_and_loses_nothing(shap
     row.versions[0].ir = stored  # the store holds the shape as its writer wrote it
     detail = await m.get(rid, OWNER)
     validate_example(_answer("get"), detail)
-    assert _rebuilt(stored, detail["ir"]) == Rule.model_validate(stored).model_dump(mode="json")
+    assert _rebuilt(stored, detail) == Rule.model_validate(stored).model_dump(mode="json")

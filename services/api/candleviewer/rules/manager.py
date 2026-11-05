@@ -476,11 +476,12 @@ def _without_null(value: Any, member: str = "") -> Any:
     return value
 
 
-def _rule_ir(stored: Any) -> dict[str, Any]:
-    """The IR the engine reads from a stored version (its model's dump, every default included),
-    as 22's `RuleIr` (closed) holds it: its members, without null."""
-    ir = Rule.model_validate(stored).model_dump(mode="json")
-    return {k: _without_null(ir[k], k) for k in RULE_IR_MEMBERS if k in ir}
+def _ir_and_layout(stored: Any) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """A stored version as the engine reads it (its model's dump, every default included): its IR
+    as 22's `RuleIr` (closed) holds it, its members without null, and the `graph_layout` it holds
+    (null when it holds none)."""
+    doc = Rule.model_validate(stored).model_dump(mode="json")
+    return {k: _without_null(doc[k], k) for k in RULE_IR_MEMBERS if k in doc}, doc["graph_layout"]
 
 
 _DRAFT_TO_ARMED = (
@@ -855,15 +856,15 @@ class RulesManager:
 
     def _detail(self, row: RuleRow) -> dict[str, Any]:
         """22 `RuleDetail`: the view, `version` (the newest version, the one a save's `If-Match`
-        names), and the active version's `ir_hash` and IR as 22's `RuleIr` holds it, left out
-        while that version is quarantined: its view carries only the export form (G-15). A save
-        keeps no layout of its own yet (22 `RuleInput`), so `graph_layout` is null."""
+        names), and the active version's `ir_hash`, its IR as 22's `RuleIr` holds it and the
+        `graph_layout` its document holds (null when it holds none). While that version is
+        quarantined its view carries only the export form (G-15): no IR, and a null layout."""
         out = {**self._view(row), "version": row.latest_version, "graph_layout": None}
         active = next((v for v in row.versions if v.id == row.active_version_id), None)
         if active is not None:
             out["ir_hash"] = active.ir_hash
             if "quarantined" not in out:
-                out["ir"] = _rule_ir(active.ir)
+                out["ir"], out["graph_layout"] = _ir_and_layout(active.ir)
         return out
 
     async def _present(self, row: RuleRow, *, detail: bool = False) -> dict[str, Any]:
