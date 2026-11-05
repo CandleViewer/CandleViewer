@@ -21,6 +21,7 @@ export {
 
 export { useShellState } from "./useShellState.js";
 export { useShellSelector } from "./useShellSelector.js";
+export { readFlag, useFlag } from "./flags/useFlag.js";
 export { startShell, type StartShellOptions } from "./startShell.js";
 export {
   getShellState,
