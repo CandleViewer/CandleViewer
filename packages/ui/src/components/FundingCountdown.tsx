@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type JSX } from "react";
 import { Icon } from "../icons/Icon.js";
 import { cx } from "./internal/cx.js";
+import { systemSecondTick, type SecondTick } from "./secondTick.js";
 import { MonoText } from "./Typography.js";
 
 /** The §7 states of E08-D06, one at a time. */
@@ -8,6 +9,21 @@ export type FundingCountdownState =
   "ahead" | "settling" | "elapsed" | "unknown" | "not-trading" | "clock-alarm";
 
 export type FundingRateSign = "positive" | "negative" | "zero";
+
+/**
+ * One server-computed charge line (E24-S03 #778, BQ 4; D02 §5.2): `Position.funding_estimate`, formatted by the
+ * host and never computed here. One line per account; never summed across environments (C-2.11).
+ */
+export interface FundingCharge {
+  /** The account's label, e.g. "Demo 1". */
+  readonly accountLabel: string;
+  readonly env: "DEMO" | "LIVE";
+  readonly direction: "pay" | "receive";
+  /** The amount as the host formatted it, in USDT, unsigned: "12.40". */
+  readonly amountUsdt: string;
+  /** The CMP-239 marker text when the estimate is stale ("Stale 7s · last 15:55:41"); absent when fresh. */
+  readonly staleNote?: string | undefined;
+}
 
 export interface FundingCountdownProps {
   /** The symbol, spoken in the 5 min and 1 min announcements and in the not-trading sentence. */
@@ -28,8 +44,24 @@ export interface FundingCountdownProps {
   clockAlarm?: boolean | undefined;
   /** The measured skew in ms; absent with `clockAlarm`, the offset is unknown and the time stands alone. */
   clockSkewMs?: number | undefined;
-  /** The clock, epoch ms (`Date.now` by default); injectable for tests and frozen stories. */
-  now?: () => number;
+  /**
+   * The shared 1 Hz tick (BQ 2): one timer for every countdown on it, and its clock is the countdown's clock.
+   * The app passes its exchange-synced tick; absent, the local-clock `systemSecondTick`.
+   */
+  tick?: SecondTick | undefined;
+  /** Reads the clock, epoch ms; the tick's clock by default. Injectable for frozen stories. */
+  now?: (() => number) | undefined;
+  /**
+   * The charge lines shown under 5 minutes (D02 §5.2), server-computed. Absent or empty: no charge line, never
+   * a zero (BQ 4).
+   */
+  charges?: readonly FundingCharge[] | undefined;
+  /**
+   * Whether this instance speaks the 5 min and 1 min lines (default true). Where one countdown is shown twice
+   * (the symbol header and the funding sub-pane), only one speaks: the other passes `false` and renders no
+   * status region, so AN-1 / AN-2 are said once (E24-D03 §13).
+   */
+  announce?: boolean | undefined;
   className?: string;
 }
 
@@ -101,6 +133,27 @@ export function fundingCountdownState(
   return secondsTo(nextFundingTimeMs, at) < 5 * MINUTE ? "settling" : "ahead";
 }
 
+/** D02 §5.2 "you pay ≈ 12.40 USDT on Demo 1 · DEMO": the written clause after the count. */
+const chargeText = (c: FundingCharge): string =>
+  `— you ${c.direction} ≈ ${c.amountUsdt} USDT on ${c.accountLabel} · ${c.env}`;
+/** D03 AN-1 / AN-2's spoken clause: "about" for "≈", a comma for "·". */
+const chargeSpoken = (c: FundingCharge): string =>
+  `you ${c.direction} about ${c.amountUsdt} USDT on ${c.accountLabel}, ${c.env}`;
+
+/**
+ * E08-D06's sentence, with D03 AN-1 / AN-2's charge clauses appended where a position exists (PROPOSED: the two
+ * specs joined; AN-3 with no position is E08-D06's sentence unchanged).
+ */
+const announcement = (
+  symbol: string,
+  seconds: number,
+  charges: readonly FundingCharge[] | undefined,
+): string => {
+  const lead = `${symbol} funding settles in ${plural(seconds / MINUTE, "minute")}`;
+  const clauses = (charges ?? []).map(chargeSpoken);
+  return clauses.length === 0 ? `${lead}.` : `${lead} — ${clauses.join("; ")}.`;
+};
+
 /** D06 §7, verbatim. */
 const ELAPSED = "Settlement time passed — waiting for an update";
 
@@ -117,14 +170,18 @@ export function FundingCountdown({
   notTrading = false,
   clockAlarm = false,
   clockSkewMs,
-  now = Date.now,
+  tick = systemSecondTick,
+  now,
+  charges,
+  announce = true,
   className,
 }: FundingCountdownProps): JSX.Element {
-  const [at, setAt] = useState(() => now());
+  const read = now ?? tick.now;
+  const [at, setAt] = useState(() => read());
   const [message, setMessage] = useState("");
-  const latest = useRef({ now, symbol, clockSkewMs, clockAlarm });
+  const latest = useRef({ read, symbol, clockSkewMs, clockAlarm, charges });
   useEffect(() => {
-    latest.current = { now, symbol, clockSkewMs, clockAlarm };
+    latest.current = { read, symbol, clockSkewMs, clockAlarm, charges };
   });
   const running = !notTrading && nextFundingTimeMs !== undefined;
 
@@ -133,35 +190,39 @@ export function FundingCountdown({
     setMessage("");
     if (!running || nextFundingTimeMs === undefined) return undefined;
     const target = nextFundingTimeMs;
-    const start = secondsTo(target, latest.current.now());
+    const start = secondsTo(target, latest.current.read());
     // Thresholds already passed at mount (or at a new deadline) were never crossed here: none speaks.
     const spoken = new Set(ANNOUNCE_AT.filter((t) => t >= start));
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const tick = (): void => {
-      const read = latest.current.now();
-      const left = secondsTo(target, read);
-      setAt(read);
+    let unsubscribe: (() => void) | undefined;
+    let done = false;
+    const step = (): void => {
+      if (done) return;
+      const reading = latest.current.read();
+      const left = secondsTo(target, reading);
+      setAt(reading);
       const crossed = ANNOUNCE_AT.filter((t) => left <= t && !spoken.has(t));
-      if (crossed.length > 0 && target > read) {
+      if (crossed.length > 0 && target > reading) {
         crossed.forEach((t) => spoken.add(t));
         // Several at once (a tab back from the background): the latest, the smallest, speaks alone.
         // While the clock alarm is on the count is not shown, so the thresholds are marked but never spoken.
         const t = Math.min(...crossed);
         if (!latest.current.clockAlarm)
-          setMessage(
-            `${latest.current.symbol} funding settles in ${plural(t / MINUTE, "minute")}.`,
-          );
+          setMessage(announcement(latest.current.symbol, t, latest.current.charges));
       }
-      if (target <= read) {
+      if (target <= reading) {
         setMessage(ELAPSED);
-        return;
+        done = true;
+        unsubscribe?.();
       }
-      // The floor changes 1 ms past a whole second of the deadline: the next tick lands there.
-      timer = setTimeout(tick, ((target - read) % 1000) + 1);
     };
-    tick();
-    return () => clearTimeout(timer);
-  }, [running, nextFundingTimeMs]);
+    step();
+    // One shared tick for every countdown (BQ 2); none per instance.
+    if (!done) unsubscribe = tick.subscribe(step);
+    return () => {
+      done = true;
+      unsubscribe?.();
+    };
+  }, [running, nextFundingTimeMs, tick]);
 
   // The clock alarm is announced once on entry, with the skew when it is known.
   useEffect(() => {
@@ -191,7 +252,7 @@ export function FundingCountdown({
       <span className="cv-funding__count" aria-live="off">
         {state === "settling" ? (
           <span className="cv-funding__warn">
-            <Icon name="warning" size="sm" />
+            <Icon name="pending" size="sm" />
           </span>
         ) : null}
         <MonoText size="base" className="cv-funding__digits" aria-hidden="true">
@@ -202,6 +263,21 @@ export function FundingCountdown({
         <span className="cv-visually-hidden">
           {`Next funding in ${spokenFundingCount(left)}, at ${utcClock(target)} UTC`}
         </span>
+        {state === "settling"
+          ? (charges ?? []).map((c) => (
+              <span
+                key={`${c.accountLabel}:${c.env}`}
+                className="cv-funding__charge"
+                data-stale={c.staleNote === undefined ? undefined : "true"}
+              >
+                <span aria-hidden="true">{chargeText(c)}</span>
+                <span className="cv-visually-hidden">{chargeSpoken(c)}</span>
+                {c.staleNote === undefined ? null : (
+                  <span className="cv-funding__note">{c.staleNote}</span>
+                )}
+              </span>
+            ))
+          : null}
       </span>
     );
   } else if (state === "clock-alarm") {
@@ -236,9 +312,11 @@ export function FundingCountdown({
         </MonoText>
       )}
       {body}
-      <span className="cv-visually-hidden" role="status" aria-live="polite" aria-atomic="true">
-        {message}
-      </span>
+      {announce ? (
+        <span className="cv-visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+          {message}
+        </span>
+      ) : null}
     </span>
   );
 }

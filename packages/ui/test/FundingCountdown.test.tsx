@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import { expect, within } from "storybook/test";
 import {
+  createSecondTick,
   FundingCountdown,
   formatFundingCount,
   fundingCountdownState,
@@ -208,7 +209,7 @@ describe("FundingCountdown (CMP-126)", () => {
     expect(host.textContent).not.toMatch(/Clock skew/);
   });
 
-  it("the rate's sign is in its text, and colour only repeats it", async () => {
+  it("the rate's sign is in its text, never a side hue", async () => {
     const host = await mount(ui({ rate: "0.0100%" }));
     expect(host.querySelector(".cv-funding__rate")).toHaveTextContent("+0.0100%");
     expect(host.querySelector(".cv-funding__rate")).toHaveAttribute("data-sign", "positive");
@@ -223,19 +224,147 @@ describe("FundingCountdown (CMP-126)", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("under 5 minutes it shows each server charge as its own line, and none without a position", async () => {
+    const pay = {
+      accountLabel: "Demo 1",
+      env: "DEMO",
+      direction: "pay",
+      amountUsdt: "12.40",
+    } as const;
+    const live = { ...pay, accountLabel: "Sub-1", env: "LIVE" } as const;
+    const host = await mount(ui({ nextFundingTimeMs: T0 + 252_000, charges: [pay, live] }));
+    expect(root(host)).toHaveAttribute("data-state", "settling");
+    expect(within(host).getByText("— you pay ≈ 12.40 USDT on Demo 1 · DEMO")).toBeTruthy();
+    expect(within(host).getByText("— you pay ≈ 12.40 USDT on Sub-1 · LIVE")).toBeTruthy();
+    expect(within(host).getByText("you pay about 12.40 USDT on Demo 1, DEMO")).toBeTruthy();
+    const none = await mount(ui({ nextFundingTimeMs: T0 + 252_000, charges: [] }));
+    expect(none.querySelector(".cv-funding__charge")).toBeNull();
+    expect(none.textContent).not.toMatch(/USDT/);
+    const ahead = await mount(ui({ charges: [pay] }));
+    expect(ahead.querySelector(".cv-funding__charge")).toBeNull();
+  });
+
+  it("speaks the charge with the 5 minute and 1 minute lines only (D03 AN-1, AN-2)", async () => {
+    const pay = {
+      accountLabel: "Demo 1",
+      env: "DEMO",
+      direction: "receive",
+      amountUsdt: "12.40",
+    } as const;
+    const host = await mount(ui({ nextFundingTimeMs: T0 + 301_000, charges: [pay] }));
+    await advance(2_000);
+    expect(status(host)).toHaveTextContent(
+      "BTCUSDT funding settles in 5 minutes — you receive about 12.40 USDT on Demo 1, DEMO.",
+    );
+    await advance(240_000);
+    expect(status(host)).toHaveTextContent(
+      "BTCUSDT funding settles in 1 minute — you receive about 12.40 USDT on Demo 1, DEMO.",
+    );
+  });
+
+  it("a stale estimate keeps its line and carries the marker text", async () => {
+    const stale = {
+      accountLabel: "Demo 1",
+      env: "DEMO",
+      direction: "pay",
+      amountUsdt: "12.40",
+      staleNote: "Stale 7s · last 15:55:41",
+    } as const;
+    const host = await mount(ui({ nextFundingTimeMs: T0 + 252_000, charges: [stale] }));
+    expect(host.querySelector(".cv-funding__charge")).toHaveAttribute("data-stale", "true");
+    expect(within(host).getByText("Stale 7s · last 15:55:41")).toBeTruthy();
+  });
+
+  it("of two instances of one countdown only the one that announces speaks (D03 §13)", async () => {
+    const host = await mount(
+      <>
+        {ui({ nextFundingTimeMs: T0 + 301_000 })}
+        {ui({ nextFundingTimeMs: T0 + 301_000, announce: false })}
+      </>,
+    );
+    expect(within(host).getAllByRole("status")).toHaveLength(1);
+    await advance(2_000);
+    expect(host.querySelectorAll("[data-state='settling']")).toHaveLength(2);
+    expect(within(host).getByRole("status")).toHaveTextContent(
+      "BTCUSDT funding settles in 5 minutes.",
+    );
+    expect(host.textContent?.match(/funding settles in 5 minutes/g)).toHaveLength(1);
+  });
+
+  it("every countdown on one tick shares its single timer and shows one value", async () => {
+    const tick = createSecondTick();
+    const host = await mount(
+      <>
+        {ui({ tick, now: undefined })}
+        {ui({ tick, now: undefined })}
+      </>,
+    );
+    expect(vi.getTimerCount()).toBe(1);
+    await advance(5_000);
+    const [a, b] = [...host.querySelectorAll(".cv-funding__digits")].map((n) => n.textContent);
+    expect(a).toBe("next in 01:24:08 · 08:00 UTC");
+    expect(b).toBe(a);
+  });
+
+  it("under a 3 s clock skew it reaches zero within one second of the true settlement", async () => {
+    // the local clock runs 3 s ahead of the exchange: the synced clock is local − 3 000 ms
+    const tick = createSecondTick({ now: () => Date.now() - 3_000 });
+    // a settlement on a whole exchange second, about ten seconds out
+    const target = Math.ceil((Date.now() - 3_000) / 1000) * 1000 + 10_000;
+    const host = await mount(ui({ tick, now: undefined, nextFundingTimeMs: target }));
+    const exchangeNow = (): number => Date.now() - 3_000;
+    let zeroAt: number | null = null;
+    for (let i = 0; i < 12_000 && zeroAt === null; i += 50) {
+      await advance(50);
+      if (root(host).getAttribute("data-state") === "elapsed") zeroAt = exchangeNow();
+    }
+    expect(zeroAt).not.toBeNull();
+    expect(Math.abs((zeroAt ?? 0) - target)).toBeLessThan(1_000);
+    // a second before the settlement it still counted, never ended early
+    expect(zeroAt ?? 0).toBeGreaterThanOrEqual(target);
+  });
+
+  it("restarts from the advanced next time across a settlement, never from an interval", async () => {
+    const host = document.body.appendChild(document.createElement("div"));
+    const tree = createRoot(host);
+    const first = T0 + 2_000;
+    await act(async () => tree.render(ui({ nextFundingTimeMs: first })));
+    await advance(3_000);
+    expect(root(host)).toHaveAttribute("data-state", "elapsed");
+    const next = first + 4 * 3_600_000; // the ticker's advanced time, a 4 h symbol
+    await act(async () => tree.render(ui({ nextFundingTimeMs: next })));
+    expect(digits(host)).toBe(`next in 03:59:59 · ${utcHm(next)} UTC`);
+    await act(async () => tree.unmount());
+  });
+
   it.each([
     ["ahead", {}],
     ["settling", { nextFundingTimeMs: T0 + 100_000 }],
     ["unknown", { nextFundingTimeMs: undefined }],
     ["not trading", { notTrading: true }],
     ["clock alarm", { clockAlarm: true, clockSkewMs: 612 }],
-  ])("axe: %s has no serious or critical violation", async (_name, props) => {
-    const host = await mount(ui(props));
-    vi.useRealTimers();
-    const { violations } = await axe.run(
-      { include: [host] },
-      { rules: { "color-contrast": { enabled: false } } },
-    );
-    expect(violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual([]);
-  });
+    [
+      "settling with charges",
+      {
+        nextFundingTimeMs: T0 + 100_000,
+        charges: [
+          { accountLabel: "Demo 1", env: "DEMO", direction: "pay", amountUsdt: "1.00" } as const,
+        ],
+      },
+    ],
+  ])(
+    "axe: %s has no serious or critical violation",
+    async (_name, props) => {
+      const host = await mount(ui(props));
+      vi.useRealTimers();
+      const { violations } = await axe.run(
+        { include: [host] },
+        { rules: { "color-contrast": { enabled: false } } },
+      );
+      expect(violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual(
+        [],
+      );
+    },
+    30_000,
+  );
 });
