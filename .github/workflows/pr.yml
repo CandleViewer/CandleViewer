@@ -262,6 +262,7 @@ jobs:
               - 'docs/plan/backlog/_tools/published.json'
               - 'docs/plan/module-contracts.toml'
               - 'docs/plan/notes/e16-storage-measurement-raw/storage_measure.json'
+              - 'docs/plan/security/ci-gates-e29.md'
               - 'docs/plan/spikes/e27-kek.md'
               - 'docs/plan/ws-schema.json'
             engine:
