@@ -12,7 +12,8 @@ requires left out. The test first checks that 22 refuses the request (and, for a
 value at it), then asks the route on the fakes of its unit tests (`_e29_oms_world`): the sample is
 accepted (a `2xx` 22 lists), a broken one is refused with `400` or `422`, as 22 lists for the
 operation, a code of `x-error-codes` with a status 22 gives that code, and the `Problem` body its
-response declares.
+response declares. A member of a body is one of the body or of an object in it
+(`stop_loss.atr_period`); an object the sample lacks is 22's sample of it.
 
 `validation_failed` is `400` when the request is malformed (an unparseable body, a bad query
 parameter) and `422` when a well-formed body fails semantic validation, and an operation's
@@ -31,7 +32,8 @@ a demo account never needs one, a live one answers `403 session_not_armed`); an 
 member of a list (the router ignores it, as every list does, and 22 declares no refusal); the three
 reads by id (a path, whose `400` `test_oms_read_routes_contract` has, and `getOrder`'s
 `include_events`, unit-tested in `test_oms_reads_route`); `setPositionTpSl` (no router serves it:
-`test_e29_oms_schemathesis_contract` pins that). 22's lookup members of `listOrders`
+`test_e29_oms_schemathesis_contract` pins that); an unknown member of an object in a body (22 closes
+each, but the unknown-member case adds one to the body alone). 22's lookup members of `listOrders`
 (`idempotency_key`, `order_link_id`) are read by no route yet, so their cases (the wrong type and
 the `maxItems` of 20) are `xfail` (strict): #5552 implements the lookup, and its change deletes
 the marker.
@@ -134,6 +136,37 @@ def body_required(operation_id: str) -> bool:
     return bool(operation(operation_id)[2].get("requestBody", {}).get("required"))
 
 
+def _object(node: Any) -> Any:
+    """The object a member of a body holds, or None: itself, an array's items, or the option of its
+    `oneOf` that is not `null` (an amend's stops)."""
+    node = node.get("items", node)
+    return next((o for o in node.get("oneOf", [node]) if o.get("type") == "object"), None)
+
+
+def _paths(schema: Any, *, required: bool, prefix: str = "") -> list[str]:
+    """The dotted path of each member of an object `schema` that the sweep breaks (all of them, or
+    the `required` ones) and, below each that holds an object, those of its members in turn."""
+    found: list[str] = []
+    for name, node in schema.get("properties", {}).items():
+        if not required or name in schema.get("required", []):
+            found.append(prefix + name)
+        if (inner := _object(node)) is not None:
+            found += _paths(inner, required=required, prefix=f"{prefix}{name}.")
+    return found
+
+
+def _set(body: dict[str, Any], schema: Any, path: list[str], value: Any) -> dict[str, Any]:
+    """`body` with the member at `path` set to `value` (out when that is `_ABSENT`). An object on
+    the way that `body` lacks is 22's sample of it, and an array's is its first item."""
+    name, *inner = path
+    if inner:
+        node = schema["properties"][name]
+        held = body.get(name) or sample(node)
+        done = _set(held[0] if isinstance(held, list) else held, _object(node), inner, value)
+        value = [done, *held[1:]] if isinstance(held, list) else done
+    return {k: v for k, v in {**body, name: value}.items() if v is not _ABSENT}
+
+
 @dataclass(frozen=True)
 class Request:
     """One request as 22 splits it: path values, query, headers and the JSON body."""
@@ -146,8 +179,14 @@ class Request:
 
     def with_member(self, place: str, name: str, value: Any) -> Request:
         """A copy with member `name` of `place` (`path`, `query`, `header` or `body`) set to
-        `value`, or taken out when that is `_ABSENT`."""
-        attr = {"path": "path_values", "query": "query", "header": "headers", "body": "body"}[place]
+        `value`, or taken out when that is `_ABSENT`; in a body `name` is dotted for a member of an
+        object in it (`stop_loss.atr_period`)."""
+        if place == "body":
+            found = body_of(self.operation)
+            return replace(
+                self, body=_set(self.body, found[0] if found else {}, name.split("."), value)
+            )
+        attr = {"path": "path_values", "query": "query", "header": "headers"}[place]
         held = {**getattr(self, attr), name: value}
         changes: dict[str, Any] = {attr: {k: v for k, v in held.items() if v is not _ABSENT}}
         return replace(self, **changes)
@@ -240,8 +279,9 @@ def _code(place: str, name: str) -> str:
 
 def _members(*, required: bool) -> list[Any]:
     """`(operation, place, name)` of each member the sweep breaks, each a `pytest.param`: for a
-    wrong type every member of a body, each path or query parameter and the key; for a missing
-    one each required member of a body and the key (never `X-CSRF-Token`, module docstring)."""
+    wrong type every member of a body (of each object in it too, by its dotted path), each path or
+    query parameter and the key; for a missing one each required member of a body (the objects'
+    too) and the key (never `X-CSRF-Token`, module docstring)."""
     unread = pytest.mark.xfail(
         strict=True,
         raises=AssertionError,
@@ -250,7 +290,7 @@ def _members(*, required: bool) -> list[Any]:
     found: list[tuple[str, str, str]] = []
     for operation_id in (*_WRITES, *_LISTS):
         body = body_of(operation_id)
-        names = body[0].get("required" if required else "properties", []) if body else []
+        names = _paths(body[0], required=required) if body else []
         found += [(operation_id, "body", name) for name in names]
         for param in parameters(operation_id):
             keyed = param["in"] == "header" and param["name"] == "Idempotency-Key"
@@ -267,7 +307,10 @@ def _schema_of(operation_id: str, place: str, name: str) -> Any:
     found = body_of(operation_id)
     if place == "body":
         assert found is not None
-        return found[0]["properties"][name]
+        node = found[0]
+        for part in name.split("."):
+            node = _object(node)["properties"][part]
+        return node
     params = parameters(operation_id)
     return next(p["schema"] for p in params if (p["in"], p["name"]) == (place, name))
 
@@ -291,12 +334,15 @@ _SHAPES: Final = ("00000000-0000-4000-8000-{:012d}", "ext-{:032x}")
 
 
 def _items(schema: Any, count: int) -> list[Any]:
-    """`count` distinct items of the array `schema`, of the first of `_SHAPES` its items take; one
-    of another kind is a `LookupError`, which the `xfail` of a lookup member does not absorb."""
+    """`count` distinct items of the array `schema`, of the first of `_SHAPES` its items take, else
+    objects (every member of one is optional); one of another kind is a `LookupError`, which the
+    `xfail` of a lookup member does not absorb."""
     for shape in _SHAPES:
         made = [shape.format(n) for n in range(1, count + 1)]
         if accepts(schema, made[0]):
             return made
+    if accepts(schema, {}):
+        return [{} for _ in range(count)]
     raise LookupError(f"extend _SHAPES: 22's items are {schema['items']}")
 
 
