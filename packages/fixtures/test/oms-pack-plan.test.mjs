@@ -44,6 +44,7 @@ describe("section 9 of the plan", () => {
     ["a row of four cells", table("| `ws_x` | S4 | E29-TC-202 | derived |"), "four cells"],
     ["a rule that does not exist", table(ROW.replace("S4", "S12")), 'Rules cell holds "S12"'],
     ["a case range", table(ROW.replace("202", "202–205")), 'Cases cell holds "E29-TC-202–205"'],
+    ["a malformed consumer", table(ROW.replace("E29-Q02", "Q02")), 'Consumers cell holds "Q02"'],
     ["a repeated id", table(ROW.replace("S4", "S4, S4")), "Rules cell repeats an id"],
     ["a class of no kind", table(ROW.replace("derived", "copied")), 'Evidence cell holds "copied"'],
     ["a repeated name", table(ROW, ROW), "ws_x has two rows"],
@@ -104,6 +105,7 @@ describe("the pack against the plan", () => {
       "cases differ from the plan's section 9 row (lacks E29-TC-001; adds E29-TC-810)",
     ],
     ["evidence", "docs-transcribed", 'evidence "derived" is not the plan\'s "docs-transcribed"'],
+    ["consumers", "E29-Q02", "consumers differ from the plan's section 9 row (adds E29-Q04)"],
   ])("fails a row whose %s cell disagrees with its folder", (cell, value, problem) => {
     copyPack();
     expect(ROWS[4].name).toBe("ws_partial_fill");

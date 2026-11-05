@@ -1,4 +1,4 @@
-"""The OMS scenario pack replayed through the adapter's own parsers (E29-Q01, #844, BQ-6).
+"""The OMS scenario pack replayed through the adapter's parsers and port (E29-Q01, #844, BQ-6).
 
 The ticket's determinism criterion at the parse level: every private frame a scenario delivers and
 every REST body it stubs is read by the adapter's parsers from two separate loads, and the two reads
@@ -24,6 +24,7 @@ from candleviewer.exchange.bybit import private_parse as pp
 from candleviewer.exchange.bybit import trading_parse as tp
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from tests._oms_fixtures import RestReply, load, scenario_names
+from tests.unit.exchange.bybit._trading import Venue, link, make_port
 
 #: The account the pack's `OUR_ID` links name: the fixture ids of `tests/unit/oms/stream_world.py`.
 ACCOUNT_ID = AccountId(UUID("a1000000-0000-4000-8000-000000000001"))
@@ -116,3 +117,22 @@ def test_a_rendered_template_read_through_the_adapter_twice_reads_the_same() -> 
 
     assert digest("seed-one") == digest("seed-one")
     assert digest("seed-one") != digest("seed-two")  # the seed does reach what the adapter reads
+
+
+@pytest.mark.parametrize("name", scenario_names())
+def test_a_derived_read_page_leaves_no_cursor_for_the_port_to_follow(name: str) -> None:
+    """A stub answers every call alike: a cursor left in a derived page would repeat in the walk."""
+    own = {c: r.body for c, r in load(name).replies.items() if c in PAGES and "/" not in r.payload}
+    assert [c for c, body in own.items() if body.get("result", {}).get("nextPageCursor")] == []
+
+
+async def test_the_squatted_id_lookups_end_in_one_request_each_and_find_the_foreign_order() -> None:
+    """Served as the README says, the AC-11 stubs end the port's paged reads on their first page."""
+    venue = Venue()
+    for call, reply in load("squatted_link_id").replies.items():
+        venue.on(call.split(" ")[1], reply.body, status=reply.status)
+    port, child = make_port(venue), link(ACCOUNT_ID, seq=6)
+    [found] = await port.order_history(ACCOUNT, order_link_id=child)
+    assert (found.order_link_id, found.side, found.state) == (child, "sell", "filled")
+    assert await port.open_orders(ACCOUNT, order_link_id=child) == []
+    assert venue.paths() == ["/v5/order/history", "/v5/order/realtime"]

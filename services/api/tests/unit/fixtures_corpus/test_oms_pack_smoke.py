@@ -13,6 +13,7 @@ rules are driven on planted scenarios in a temporary pack.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import re
 import shutil
@@ -438,8 +439,9 @@ def test_a_template_s_slots_are_the_placeholders_of_its_files_and_draw_their_sha
     texts = [path_of(TEMPLATE, f).read_text(encoding="utf-8") for f in scenario.manifest["files"]]
     assert {m for text in texts for m in pack.PLACEHOLDER.findall(text)} == set(slots)
     for name, slot in slots.items():
-        value = pack.generate("s", name, slot["shape"], slot["length"])
-        assert len(value) == slot["length"] and re.fullmatch(SHAPES[slot["shape"]], value), name
+        for seed in range(60):  # a leading zero or a missing digit shows for some seeds only
+            value = pack.generate(f"s{seed}", name, slot["shape"], slot["length"])
+            assert len(value) == slot["length"] and re.fullmatch(SHAPES[slot["shape"]], value), name
 
 
 def test_a_short_alnum_value_still_holds_a_letter_and_a_digit() -> None:
@@ -450,8 +452,12 @@ def test_a_short_alnum_value_still_holds_a_letter_and_a_digit() -> None:
 def test_a_rendered_template_is_fixed_by_its_seed_and_leaks_no_value() -> None:
     scenario = load(TEMPLATE)
     one, again, other = (scenario.render(s) for s in ("seed-one", "seed-one", "seed-two"))
-    assert (one.frames, one.replies, one.values) == (again.frames, again.replies, again.values)
-    assert one.values.keys() == other.values.keys() and one.values != other.values
+    parts = ((r.frames, r.replies, r.values) for r in (one, again, other))
+    d_one, d_again, d_other = (hashlib.sha256(repr(p).encode()).digest() for p in parts)
+    assert d_one == d_again and d_one != d_other  # hashes: a failing run prints no value
+    assert one.values.keys() == other.values.keys()
+    distinct, slots = len(set(one.values.values())), len(one.values)
+    assert distinct == slots  # the slot's name is in the draw: no two slots share a value
     text = "".join(one.frames) + json.dumps([r.body for r in one.replies.values()])
     assert "{{" not in text and "}}" not in text  # every placeholder is filled
     assert all(isinstance(json.loads(frame), dict) for frame in one.frames)
