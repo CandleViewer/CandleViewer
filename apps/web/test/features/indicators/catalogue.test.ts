@@ -10,7 +10,7 @@ import {
   normaliseCatalogue,
   normaliseDescriptor,
 } from "../../../src/features/indicators/model/catalogue";
-import { BOLLINGER, CATALOGUE, EMA } from "./fixtures";
+import { BOLLINGER, CATALOGUE, EMA, SMA_5933 } from "./fixtures";
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -29,6 +29,49 @@ describe("normaliseDescriptor", () => {
       outputs: [{ id: "ema", name: "EMA" }],
       schema: { ok: true },
     });
+  });
+
+  it("reads #5933's sma (source and offset; if #5933 merges as is)", () => {
+    const entry = normaliseDescriptor(SMA_5933);
+    expect(entry?.schema).toEqual({
+      ok: true,
+      fields: [
+        {
+          kind: "integer",
+          name: "n",
+          title: "Period",
+          minimum: 1,
+          maximum: 5000,
+          step: 1,
+          default: 20,
+        },
+        {
+          kind: "enum",
+          name: "source",
+          title: "Source",
+          options: ["close", "open", "high", "low", "hl2", "hlc3", "ohlc4"],
+          default: "close",
+        },
+        {
+          kind: "integer",
+          name: "offset",
+          title: "Offset",
+          minimum: 0,
+          maximum: 500,
+          step: 1,
+          default: 0,
+        },
+      ],
+    });
+  });
+
+  it("treats an absent outputs as none by design (22 does not require it)", () => {
+    expect(normaliseDescriptor({ ...EMA, outputs: undefined })?.outputs).toEqual([]);
+  });
+
+  it("accepts a 1,024-character name and refuses one past the sanity bound", () => {
+    expect(normaliseDescriptor({ ...EMA, name: "x".repeat(1024) })?.name).toHaveLength(1024);
+    expect(normaliseDescriptor({ ...EMA, name: "x".repeat(1025) })).toBeNull();
   });
 
   it("tolerates an unknown unit or category and absent optional fields", () => {
@@ -55,6 +98,13 @@ describe("normaliseDescriptor", () => {
     ["an empty name", { ...EMA, name: "" }],
     ["an output without a name", { ...EMA, outputs: [{ id: "ema" }] }],
     ["outputs that are not a list", { ...EMA, outputs: {} }],
+    ["an empty outputs (22 minItems 1)", { ...EMA, outputs: [] }],
+    ["an output id off 22's pattern", { ...EMA, outputs: [{ id: "EMA", name: "EMA" }] }],
+    ["an output id with a leading digit", { ...EMA, outputs: [{ id: "1ema", name: "EMA" }] }],
+    [
+      "an output id past 32 characters",
+      { ...EMA, outputs: [{ id: `e${"a".repeat(32)}`, name: "E" }] },
+    ],
     ["an output that is not an object", { ...EMA, outputs: ["ema"] }],
     ["an array", [EMA]],
   ])("refuses %s", (_label, raw) => {
@@ -75,7 +125,11 @@ describe("normaliseCatalogue", () => {
     expect(normaliseCatalogue({ items: [EMA, EMA] })).toBeNull();
     expect(normaliseCatalogue({ items: "ema" })).toBeNull();
     expect(normaliseCatalogue(null)).toBeNull();
-    expect(normaliseCatalogue({ items: Array.from({ length: 257 }, () => EMA) })).toBeNull();
+  });
+
+  it("refuses no catalogue for its size: 22 owns no maxItems, the library pages the render", () => {
+    const items = Array.from({ length: 300 }, (_, i) => ({ ...EMA, id: `ind_${i}` }));
+    expect(normaliseCatalogue({ items })).toHaveLength(300);
   });
 
   it("finds an entry by id", () => {

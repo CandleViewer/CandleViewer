@@ -134,4 +134,33 @@ export const ZIGZAG = {
   unit: "price",
 } satisfies IndicatorDescriptor;
 
+/**
+ * `sma` in #5933's shape, **if #5933 merges as is** (E13-S02, `24` §7.4 "Parameters" and
+ * `limits.py` `OFFSET_MIN` 0, `OFFSET_MAX` 500, `MA_SOURCES`): `source` an enum of the seven
+ * applied prices (default `close`) and `offset` a whole number 0..500 (default 0). The titles are
+ * this fixture's; #5933 names none. A changed bound in #5933 shows up here as a failing pin.
+ */
+export const SMA_5933 = {
+  id: "sma",
+  name: "Simple moving average",
+  category: "trend",
+  pane: "price",
+  compute: "server",
+  estimated: false,
+  params_schema: schema({
+    n: period(20),
+    source: {
+      type: "string",
+      title: "Source",
+      enum: ["close", "open", "high", "low", "hl2", "hlc3", "ohlc4"],
+      default: "close",
+    },
+    offset: { type: "integer", title: "Offset", minimum: 0, maximum: 500, default: 0 },
+  }),
+  defaults: { n: 20, source: "close", offset: 0 },
+  outputs: [{ id: "sma", name: "SMA" }],
+  unit: "price",
+  warmup_bars: 20,
+} satisfies IndicatorDescriptor;
+
 export const CATALOGUE: readonly IndicatorDescriptor[] = [EMA, ZIGZAG, BOLLINGER, RSI, VOLUME, CVD];
