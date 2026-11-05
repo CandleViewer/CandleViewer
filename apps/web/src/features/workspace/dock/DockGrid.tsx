@@ -85,7 +85,7 @@ function shownPane(node: DockNode): string | null {
 }
 
 /** The pane that takes `paneId`'s space when it closes: its next sibling's, else its previous. */
-function heirOf(node: DockNode | null, paneId: string): string | null {
+export function heirOf(node: DockNode | null, paneId: string): string | null {
   if (node === null || node.type === "leaf") return null;
   const index = node.children.findIndex((c) => c.type === "leaf" && c.paneId === paneId);
   if (index !== -1) {

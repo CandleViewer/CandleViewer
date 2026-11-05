@@ -32,14 +32,15 @@ TypeScript and Python test suites (CONSTITUTION.md C-13.5, `.claude/rules/40-tes
 the support both E2E suites share: `apps/desktop` imports them and never `apps/web` (C-3.5). Test-only,
 never bundled into an app; stubs only, no secret, no live backend, no exchange (C-13.5).
 
-| Module    | What it gives                                                                                                  |
-| --------- | -------------------------------------------------------------------------------------------------------------- |
-| `stubs`   | API stubs (`stubSession`, `stubNoViewAs`, `json`, a leak guard); `apps/web/e2e/support/api.ts` re-exports them |
-| `routes`  | `ROUTE_EXPECTATIONS`: the declared outcome of every route id × role, and the landing classifier                |
-| `outcome` | `expectSettledOutcome`: a landing classified the same three reads in a row, no fixed sleep                     |
-| `csp`     | `sr112Findings`: a policy compared with SR-112 directive by directive, plus SR-119's exchange-host ban         |
-| `egress`  | The egress guard for a browser context and for the Electron main process (loopback only)                       |
-| `capture` | Capture conventions for the screenshot corpus: frozen clock, no motion, fixed viewports, capture twice         |
+| Module      | What it gives                                                                                                  |
+| ----------- | -------------------------------------------------------------------------------------------------------------- |
+| `stubs`     | API stubs (`stubSession`, `stubNoViewAs`, `json`, a leak guard); `apps/web/e2e/support/api.ts` re-exports them |
+| `routes`    | `ROUTE_EXPECTATIONS`: the declared outcome of every route id × role, and the landing classifier                |
+| `outcome`   | `expectSettledOutcome`: a landing classified the same three reads in a row, no fixed sleep                     |
+| `csp`       | `sr112Findings`: a policy compared with SR-112 directive by directive, plus SR-119's exchange-host ban         |
+| `egress`    | The egress guard for a browser context and for the Electron main process (loopback only)                       |
+| `capture`   | Capture conventions for the screenshot corpus: frozen clock, no motion, fixed viewports, capture twice         |
+| `workspace` | The seeded workspace (E15-S03): `22`'s `Workspace` and one `Layout` with a `chart` pane, documented shape      |
 
 `bin/flaky-summary.mjs` writes a Playwright JSON report's counts to the CI job summary. The unit
 tests of the pure helpers are `test/e2e/`; the test plan is `docs/qa/e10-shell-test-plan.md`.

@@ -1,0 +1,15 @@
+/* E15-S03 (#476): the page fills the shell's main; each pane's host fills its slot (#5411). */
+.cv-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+}
+.cv-workspace .cv-dock-host,
+.cv-workspace .cv-dock-host > .cv-dockpanel {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
