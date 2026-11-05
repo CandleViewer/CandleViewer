@@ -22,6 +22,7 @@ import {
   DAY_SHORT,
   HOUR,
 } from "../../../../../src/features/derivatives/liquidations/bars/samples";
+import { NOT_COMPUTED_DETAIL } from "../../../../../src/features/derivatives/liquidations/bars/copy";
 import { CONTRACT, metricsBody, wirePoints } from "./barsFrames";
 
 const json = (status: number, body: unknown): Response =>
@@ -54,6 +55,8 @@ describe("the contract the client relies on (#5341, pinned by content)", () => {
     expect(CONTRACT.paramsSentence).toContain("`long` or `short`");
     expect(METRIC).toBe("liquidation_notional");
     expect(METRIC).not.toBe(CONTRACT.alias);
+    // router-only: the pane's key for "not computed yet" is the router's sentence, pinned here like the others
+    expect(NOT_COMPUTED_DETAIL).toBe(CONTRACT.notComputedDetail);
   });
 
   it("keeps the threshold off the wire until the server takes it (BQ-1)", () => {
