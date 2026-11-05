@@ -1,5 +1,5 @@
 """Backup verifications (E42-T05 #966 BK-9): `verifyBackup`, digest first. The engine executes and
-this records (#966 Q1): its `ScratchVerifier` restores into scratch; all else is here.
+this records (#966 Q1): its `ScratchVerifier` checks at the depth it names; all else is here.
 
 `start`, in the plan's order: unwired, `OpsNotWired` (501); unknown, `None` (404); `running`,
 deleted or `encrypted: false`, `VerifyNotUsable` (409 `backup_not_usable`); `VERIFIES_PER_HOUR`
@@ -13,7 +13,8 @@ The job checks within its deadline less `OUTCOME_MARGIN_S` (past it, `internal_e
 `backup.run` record is `checksum_unbound`; with a digest on the row or in the record, the file is
 resolved in the backup root within `VERIFY_RESOLVE_BUDGET_S` (`artefact_missing`), hashed and
 compared in constant time with both (`checksum_mismatch`); only then the engine verifies that same
-open file, or the location of a directory or a repository (Q8): its every failure but the
+open file, given the digest the service computed, or the location of a directory or a repository
+(Q8), given none: its every failure but the
 environment's is `verify_failed` (SR-CD2-02). An unreadable store or trail is `store_unavailable`,
 any other failure of this module's own steps `internal_error`. Every path closes the artefact.
 
@@ -217,17 +218,22 @@ class BackupVerifications:
             # `&`, not `and`: both comparisons always run (constant time, whichever differs)
             if not _same(digest, row.checksum_sha256) & _same(digest, bound.digest):
                 return _CHECKED, "checksum_mismatch"  # the verifier never sees it
-            return await self._scratch(row, verifier, artefact, p)
+            return await self._scratch(row, verifier, artefact, p, digest.decode())
         except Exception as exc:
             return _failed("digest", exc)
         finally:
             artefact.close()  # every path, a cancel included; once is enough
 
     async def _scratch(
-        self, row: port.BackupRow, verifier: ScratchVerifier, f: OpenArtefact | None, p: Progress
+        self,
+        row: port.BackupRow,
+        verifier: ScratchVerifier,
+        f: OpenArtefact | None,
+        p: Progress,
+        digest: str | None = None,
     ) -> Outcome:
         try:
-            method = await verifier.verify(row.id, row.target_path, f, p)
+            method = await verifier.verify(row.id, row.target_path, f, p, digest=digest)
         except Exception as exc:  # SR-CD2-02: a content failure, unless the environment's
             unread = _failed("verify", exc)[1] == "store_unavailable"  # logged by class
             if unread or (isinstance(exc, BackupJobError) and exc.code == "store_unavailable"):

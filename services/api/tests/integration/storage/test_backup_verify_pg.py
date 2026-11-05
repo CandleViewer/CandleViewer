@@ -78,8 +78,8 @@ class Engine:
     def close(self) -> None:
         self.closes += 1
 
-    async def verify(self, *call: Any) -> Any:
-        self.verified.append(call)
+    async def verify(self, *call: Any, digest: Any = None) -> Any:
+        self.verified.append((*call, digest))
         return "restore_smoke"
 
 

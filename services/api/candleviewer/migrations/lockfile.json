@@ -311,6 +311,11 @@
       "path": "services/api/candleviewer/migrations/versions/0064_orders_origin.py",
       "sha256": "1de769f3e21c2d1277e88339602dacff4e28bc696500cd8c01b289669918f2de",
       "down_revision": "0063_rule_version_account_refs"
+    },
+    "0066_backup_role_grants": {
+      "path": "services/api/candleviewer/migrations/versions/0066_backup_role_grants.py",
+      "sha256": "403064d861605d7a833c4dc492ef9a9b70f857ee1c6cf6c405cc9eedafe96f94",
+      "down_revision": "0064_orders_origin"
     }
   }
 }

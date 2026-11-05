@@ -29,8 +29,12 @@ from candleviewer.settings import Environment, Settings
 from candleviewer.storage import real_tiers
 from candleviewer.storage.errors import GuardedPrivilegesHeld
 from candleviewer.storage.guarded_privileges import (
+    BUILTIN_DATA_ROLES,
     GUARDED_PAIRS,
     GUARDED_PRIVILEGES,
+    PRIVILEGED_ROLES,
+    REFUSED_ATTRIBUTES,
+    REFUSED_ROLES,
     HeldPrivilege,
     PrivilegeReport,
     check_guarded_privileges,
@@ -62,6 +66,23 @@ _PARTIAL = PrivilegeReport(False, (), ("api_keys", "audit_log"))
 #: A superuser on an empty database: nothing held, every pinned table missing.
 _EMPTY = PrivilegeReport(True, (), _TABLES)
 _ALL = len(GUARDED_PAIRS)
+#: ADR-0041: a runtime login made a member of the backup sidecar's dump role.
+_MEMBER = PrivilegeReport(False, (), (), ("cv_backup",))
+#: A superuser is a member of every role.
+_SUPER_MEMBER = PrivilegeReport(True, _SUPERUSER.held, (), REFUSED_ROLES)
+#: A runtime login made a member of the built-in read-all and write-all roles.
+_DATA_MEMBER = PrivilegeReport(False, (), (), BUILTIN_DATA_ROLES)
+#: A runtime login given one role attribute or all four, and one made a member of each
+#: server-file or server-program built-in role.
+_REPLICATION = PrivilegeReport(False, (), (), (), ("replication",))
+_ATTRIBUTES = PrivilegeReport(False, (), (), (), REFUSED_ATTRIBUTES)
+_FILE_MEMBER = PrivilegeReport(
+    False, (), (), ("pg_execute_server_program", "pg_read_server_files", "pg_write_server_files")
+)
+#: A superuser (so a member of every role) that also carries every attribute.
+_SUPER_ATTRIBUTES = PrivilegeReport(True, (), (), (), REFUSED_ATTRIBUTES)
+#: A superuser that holds nothing pinned (no table owned yet): refused in `live` all the same.
+_BARE_SUPERUSER = PrivilegeReport(True, (), ())
 #: A bound no test reaches: a read that never answers is cancelled first.
 _LONG_S = 3600.0
 
@@ -113,6 +134,9 @@ _CHECKED = ("storage_guarded_privileges_checked", "info")
 _HELD = ("storage_guarded_privileges_held", "error")
 _MISSING = ("storage_guarded_privileges_tables_missing", "error")
 _PRIVILEGED = ("storage_guarded_privileges_privileged_role", "warning")
+_MEMBER_OF = ("storage_guarded_privileges_member", "error")
+_SUPER = ("storage_guarded_privileges_superuser", "error")
+_ATTRS = ("storage_guarded_privileges_role_attributes", "error")
 
 
 @pytest.mark.parametrize(
@@ -123,13 +147,31 @@ _PRIVILEGED = ("storage_guarded_privileges_privileged_role", "warning")
         pytest.param(_RUNTIME, False, 1, [_HELD], id="runtime-holds-demo"),
         pytest.param(_RUNTIME, True, 1, [_HELD], id="runtime-holds-live"),
         pytest.param(_SUPERUSER, False, 0, [_PRIVILEGED], id="superuser-demo"),
-        pytest.param(_SUPERUSER, True, _ALL, [_HELD], id="superuser-live"),
+        pytest.param(_SUPERUSER, True, _ALL + 1, [_SUPER, _HELD], id="superuser-live"),
         pytest.param(_OWNER, False, 0, [_PRIVILEGED], id="owner-demo"),
         pytest.param(_MIXED, False, 1, [_PRIVILEGED, _HELD], id="owner-and-grant-demo"),
         pytest.param(_PARTIAL, False, 4, [_MISSING], id="tables-missing-demo"),
         pytest.param(_PARTIAL, True, 4, [_MISSING], id="tables-missing-live"),
         pytest.param(_EMPTY, False, _ALL, [_PRIVILEGED, _MISSING], id="empty-superuser-demo"),
-        pytest.param(_EMPTY, True, _ALL, [_MISSING], id="empty-superuser-live"),
+        pytest.param(_EMPTY, True, _ALL + 1, [_SUPER, _MISSING], id="empty-superuser-live"),
+        pytest.param(_MEMBER, False, 1, [_MEMBER_OF], id="member-demo"),
+        pytest.param(_MEMBER, True, 1, [_MEMBER_OF], id="member-live"),
+        pytest.param(_SUPER_MEMBER, False, 0, [_PRIVILEGED], id="superuser-member-demo"),
+        pytest.param(
+            _SUPER_MEMBER, True, _ALL + 9, [_SUPER, _HELD, _MEMBER_OF], id="superuser-member-live"
+        ),
+        pytest.param(_DATA_MEMBER, False, 5, [_MEMBER_OF], id="read-write-all-member-demo"),
+        pytest.param(_DATA_MEMBER, True, 5, [_MEMBER_OF], id="read-write-all-member-live"),
+        pytest.param(_REPLICATION, False, 1, [_ATTRS], id="replication-demo"),
+        pytest.param(_REPLICATION, True, 1, [_ATTRS], id="replication-live"),
+        pytest.param(_ATTRIBUTES, False, 4, [_ATTRS], id="all-attributes-demo"),
+        pytest.param(_ATTRIBUTES, True, 4, [_ATTRS], id="all-attributes-live"),
+        pytest.param(_SUPER_ATTRIBUTES, False, 0, [_PRIVILEGED], id="superuser-attributes-demo"),
+        pytest.param(_SUPER_ATTRIBUTES, True, 5, [_SUPER, _ATTRS], id="superuser-attributes-live"),
+        pytest.param(_FILE_MEMBER, False, 3, [_MEMBER_OF], id="server-file-member-demo"),
+        pytest.param(_FILE_MEMBER, True, 3, [_MEMBER_OF], id="server-file-member-live"),
+        pytest.param(_BARE_SUPERUSER, False, 0, [_PRIVILEGED], id="bare-superuser-demo"),
+        pytest.param(_BARE_SUPERUSER, True, 1, [_SUPER], id="bare-superuser-live"),
     ],
 )
 async def test_check_refuses_only_in_live_and_never_counts_ownership_outside_it(
@@ -156,10 +198,88 @@ async def test_held_line_names_each_table_and_privilege_and_the_login_kind_only(
         "refused": False,
     }
     _, logs, refused = await _check(_SUPERUSER, live=True)
-    (line,) = logs
+    superuser_line, line = logs
+    assert superuser_line == {
+        "event": "storage_guarded_privileges_superuser",
+        "log_level": "error",
+        "login_kind": "superuser",
+        "refused": True,
+    }
     assert line["login_kind"] == "superuser" and len(line["held"]) == _ALL and line["refused"]
-    assert str(refused) == "the runtime role holds guarded privileges: " + ", ".join(line["held"])
+    assert str(refused) == (
+        "the runtime role is a superuser; the runtime role holds guarded privileges: "
+        + ", ".join(line["held"])
+    )
     assert "role" not in line and redact_structure(line) == line  # `role` is C-12.6's actor
+
+
+async def test_a_privileged_membership_is_named_by_role_and_refused_in_live() -> None:
+    """ADR-0041 section 1: the API's login is a member of no backup role, not of the owner and
+    not of the built-in read-all or write-all role."""
+    assert PRIVILEGED_ROLES == ("cv_backup", "cv_owner", "cv_restore")
+    assert BUILTIN_DATA_ROLES == (
+        "pg_execute_server_program",
+        "pg_read_all_data",
+        "pg_read_server_files",
+        "pg_write_all_data",
+        "pg_write_server_files",
+    )
+    assert REFUSED_ROLES == tuple(sorted(PRIVILEGED_ROLES + BUILTIN_DATA_ROLES))
+    _, logs, refused = await _check(_MEMBER, live=True)
+    assert logs == [
+        {
+            "event": "storage_guarded_privileges_member",
+            "log_level": "error",
+            "memberships": ["cv_backup"],
+            "login_kind": "runtime",
+            "refused": True,
+        }
+    ]
+    assert str(refused) == "the runtime role is a member of: cv_backup"
+    assert redact_structure(logs[0]) == logs[0]
+    _, logs, refused = await _check(_SUPER_MEMBER, live=True)
+    members = "; the runtime role is a member of: " + ", ".join(REFUSED_ROLES)
+    assert str(refused).endswith(members)
+    counted = await check_guarded_privileges(
+        _reader(_MEMBER), live=False, gauge=None, timeout_s=_LONG_S
+    )
+    assert counted == GuardedPrivilegesHealth(held=1, missing=0)
+    _, logs, refused = await _check(_DATA_MEMBER, live=True)
+    assert logs[0]["memberships"] == list(BUILTIN_DATA_ROLES)
+    assert str(refused) == "the runtime role is a member of: " + ", ".join(BUILTIN_DATA_ROLES)
+    _, logs, refused = await _check(_FILE_MEMBER, live=True)
+    assert logs[0]["memberships"] == [
+        "pg_execute_server_program",
+        "pg_read_server_files",
+        "pg_write_server_files",
+    ]
+
+
+async def test_a_role_attribute_is_named_by_attribute_only_and_refused_in_live() -> None:
+    """The login holds none of REPLICATION, BYPASSRLS, CREATEROLE or CREATEDB (C-12.6: no login)."""
+    assert REFUSED_ATTRIBUTES == ("bypassrls", "createdb", "createrole", "replication")
+    gauge, logs, refused = await _check(_REPLICATION, live=True)
+    assert logs == [
+        {
+            "event": "storage_guarded_privileges_role_attributes",
+            "log_level": "error",
+            "attributes": ["replication"],
+            "login_kind": "runtime",
+            "refused": True,
+        }
+    ]
+    assert (
+        gauge == [1] and str(refused) == "the runtime role holds the role attributes: replication"
+    )
+    assert redact_structure(logs[0]) == logs[0]
+    _, _, refused = await _check(_ATTRIBUTES, live=True)
+    assert str(refused) == "the runtime role holds the role attributes: " + ", ".join(
+        REFUSED_ATTRIBUTES
+    )
+    counted = await check_guarded_privileges(
+        _reader(_REPLICATION), live=False, gauge=None, timeout_s=_LONG_S
+    )
+    assert counted == GuardedPrivilegesHealth(held=1, missing=0)
 
 
 async def test_a_missing_table_is_named_with_the_count_present_and_refused_in_live() -> None:
@@ -263,8 +383,12 @@ class _Rel:
 
 def test_statement_is_one_bound_has_table_privilege_query_on_current_user() -> None:
     text = sql_mod._HELD.text
-    assert set(sql_mod._HELD.compile().params) == {"tables", "privileges"}
+    assert set(sql_mod._HELD.compile().params) == {"tables", "privileges", "roles"}
     assert "has_table_privilege(current_user, c.oid, g.priv)" in text
+    assert "m.rolname = ANY(CAST(:roles AS text[]))" in text
+    assert "pg_has_role(current_user, m.oid, 'MEMBER')" in text
+    for column in ("rolbypassrls", "rolcreatedb", "rolcreaterole", "rolreplication"):
+        assert f"r.{column}" in text
     assert "unnest(CAST(:tables AS text[]), CAST(:privileges AS text[]))" in text
     assert ";" not in text and "session_user" not in text
     # each table by name in `public`, never through the login's `search_path` (`to_regclass`)
@@ -275,7 +399,10 @@ def test_statement_is_one_bound_has_table_privilege_query_on_current_user() -> N
 
 def _row(table: str, privilege: str, **flags: bool) -> dict[str, Any]:
     """One pinned pair's row as the statement returns it: present, nothing held, by default."""
-    defaults = {"present": True, "held": False, "via_owner": False, "superuser": False}
+    defaults = {
+        "present": True, "held": False, "via_owner": False, "superuser": False, "member_of": [],
+        "attributes": [],
+    }  # fmt: skip
     return {"table_name": table, "privilege": privilege, **defaults, **flags}
 
 
@@ -285,15 +412,21 @@ async def test_read_sends_every_pinned_pair_once_and_maps_held_and_missing_rows(
         for t, p in GUARDED_PAIRS
         if t not in ("backups", "risk_policy")  # risk_policy has no row: missing all the same
     ] + [_row("backups", "DELETE", held=True, via_owner=True, superuser=True)]
+    for each in rows:  # the same on every row
+        each["member_of"] = ["cv_owner", "cv_backup"]
+        each["attributes"] = ["replication", "bypassrls"]
     rel = _Rel(rows)
     report = await sql_mod.SqlAlchemyGuardedPrivileges(cast(Any, rel)).held()
     ((text, params),) = rel.calls
     assert text == sql_mod._HELD.text
     assert list(zip(params["tables"], params["privileges"], strict=True)) == list(GUARDED_PAIRS)
+    assert params["roles"] == list(REFUSED_ROLES)
     assert report == PrivilegeReport(
         True,
         (HeldPrivilege("api_keys", "DELETE", False), HeldPrivilege("backups", "DELETE", True)),
         ("audit_log", "risk_policy"),
+        ("cv_backup", "cv_owner"),
+        ("bypassrls", "replication"),
     )
     assert report.tables_present == len(_TABLES) - 2
     nothing = await sql_mod.SqlAlchemyGuardedPrivileges(cast(Any, _Rel([]))).held()

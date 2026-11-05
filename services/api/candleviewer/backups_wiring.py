@@ -278,8 +278,10 @@ def build_backup_verifications(
     freshness: BackupFreshness | None,
 ) -> BackupVerifications:
     """`verifyBackup`'s service through the app's one `gate`, with no verifier or artefact reader
-    yet (#3319 wires both, the reader once SEC-FU-L1 holds), the run evidence over `trail`, and
-    BK-5's `freshness`: a pass moves it, a conclusive failure reloads it (BK-12's `recompute`)."""
+    yet (#3319 wires both: the reader hashes the artefact over the API's read-only mount of the
+    backup volume for the digest pass, ADR-0041 section 1; only downloads wait for SEC-FU-L1),
+    the run evidence over `trail`, and BK-5's `freshness`: a pass moves it, a conclusive failure
+    reloads it (BK-12's `recompute`)."""
     store = _catalogue(settings, system_settings)
     limit = AuditVerifyLimiter(rate_per_hour=VERIFIES_PER_HOUR)
     return BackupVerifications(

@@ -39,15 +39,54 @@ HEADER = """\
 # `cvdev` (#2893, ADR-0036) is the dev-only sibling package, never packaged
 # and not an M-module, so it has no manifest entry. It is a root only so that
 # the protected-secrets and protected-audit contracts below see its imports.
+#
+# `cvbackup` (#3319, ADR-0041 section 1) is the backup sidecar: a separate
+# process in its own image, not an M-module and not in the API wheel or image,
+# so it has no manifest entry. It is a root so that the independence contract
+# below holds both directions between it and `candleviewer`, and the forbidden
+# contract keeps the API's third-party packages out of the sidecar image.
 
 [importlinter]
 root_packages =
     candleviewer
+    cvbackup
     cvdev
 include_external_packages = True
 exclude_type_checking_imports = True
 
 """
+
+
+#: The third-party top-level packages the API imports (`services/api/uv.lock`), none of which the
+#: backup sidecar may import (ADR-0041 section 1). Each must be imported somewhere in
+#: `candleviewer`, so import-linter finds it in the graph.
+SIDECAR_FORBIDDEN_PACKAGES = (
+    "alembic",
+    "argon2",
+    "asyncpg",
+    "cryptography",
+    "duckdb",
+    "fastapi",
+    "httpx",
+    "jsonschema",
+    "msgpack",
+    "numpy",
+    "opentelemetry",
+    "orjson",
+    "prometheus_client",
+    "psutil",
+    "pyarrow",
+    "pydantic",
+    "pydantic_core",
+    "pydantic_settings",
+    "sqlalchemy",
+    "starlette",
+    "structlog",
+    "uvicorn",
+    "websockets",
+    "xstate_statemachine",
+    "yaml",
+)
 
 
 def load_manifest() -> dict:
@@ -214,6 +253,21 @@ def render(manifest: dict) -> str:
     lines.append("type = forbidden")
     lines.append("source_modules =\n    " + "\n    ".join(adapter["source_modules"]))
     lines.append("forbidden_modules =\n    " + "\n    ".join(adapter["forbidden_modules"]))
+    lines.append("")
+
+    # ADR-0041 section 1 (#3319): the backup sidecar imports no `candleviewer` module and
+    # `candleviewer` imports none of it; and the sidecar imports none of the API's third-party
+    # packages, so its image carries the standard library and its own tools only.
+    lines.append("[importlinter:contract:independence-backup-sidecar]")
+    lines.append("name = ADR-0041 the backup sidecar and candleviewer import nothing of each other")
+    lines.append("type = independence")
+    lines.append("modules =\n    candleviewer\n    cvbackup")
+    lines.append("")
+    lines.append("[importlinter:contract:forbidden-cvbackup-thirdparty]")
+    lines.append("name = ADR-0041 the backup sidecar imports none of the API's third-party packages")
+    lines.append("type = forbidden")
+    lines.append("source_modules =\n    cvbackup")
+    lines.append("forbidden_modules =\n    " + "\n    ".join(SIDECAR_FORBIDDEN_PACKAGES))
     lines.append("")
 
     return "\n".join(lines) + "\n"

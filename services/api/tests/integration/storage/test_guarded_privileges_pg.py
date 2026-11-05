@@ -7,9 +7,14 @@ and refuses in `live`; the test revokes it again. `cv_owner` holds every pinned 
 tables' owner and the container's superuser as a superuser: each is reported, and is no violation
 outside `live`. On an empty database every pinned table is missing from `public`, so nothing can
 be checked and `live` refuses; a `search_path` set on the `cv_app` login hides no table, since
-each is looked up in `public`. A database migrated to head before the roles exist (the guards'
-no-op branch) keeps every relation's ACL at its default. `testcontainers` in CI only; the unit
-tests are `tests/unit/storage/test_guarded_privileges.py`.
+each is looked up in `public`. ADR-0041: `cv_app` is a member of no privileged role at head;
+`GRANT cv_backup TO cv_app` is named and refused in `live`, and the test revokes it again, as is
+`GRANT pg_read_all_data, pg_write_all_data TO cv_app` (the write-all role also hands over pinned
+pairs); the bootstrap, run with no backup passwords, leaves both backup roles `NOLOGIN`, and
+`cv_app` still starts in `live` beside them (a `NOLOGIN` backup role is safe). The container's
+superuser is refused in `live` as a superuser. A database migrated to head before the roles exist
+(the guards' no-op branch) keeps every relation's ACL at its default. `testcontainers` in CI only;
+the unit tests are `tests/unit/storage/test_guarded_privileges.py`.
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ from candleviewer.storage.errors import GuardedPrivilegesHeld
 from candleviewer.storage.guarded_privileges import (
     GUARDED_PAIRS,
     GUARDED_PRIVILEGES,
+    REFUSED_ROLES,
     HeldPrivilege,
     PrivilegeReport,
     check_guarded_privileges,
@@ -137,6 +143,97 @@ async def test_a_delete_granted_back_is_named_and_refused_in_live(pg_dsn: str) -
         assert (await reader.held()).held == ()
 
 
+async def test_a_backup_role_granted_to_cv_app_is_named_and_refused_in_live(pg_dsn: str) -> None:
+    with _conn(pg_dsn) as superuser:
+        superuser.execute("GRANT cv_backup TO cv_app")
+        try:
+            async with _read_as(_login(pg_dsn, "cv_app")) as reader:
+                assert await reader.held() == PrivilegeReport(False, (), (), ("cv_backup",))
+                with pytest.raises(GuardedPrivilegesHeld, match=r"member of: cv_backup$"):
+                    await check_guarded_privileges(
+                        reader.held, live=True, gauge=None, timeout_s=10.0
+                    )
+        finally:
+            superuser.execute("REVOKE cv_backup FROM cv_app")
+    async with _read_as(_login(pg_dsn, "cv_app")) as reader:
+        assert (await reader.held()).member_of == ()
+
+
+async def test_the_builtin_read_all_and_write_all_roles_are_named_and_refused_in_live(
+    pg_dsn: str,
+) -> None:
+    with _conn(pg_dsn) as superuser:
+        superuser.execute("GRANT pg_read_all_data, pg_write_all_data TO cv_app")
+        try:
+            async with _read_as(_login(pg_dsn, "cv_app")) as reader:
+                report = await reader.held()
+                assert report.member_of == ("pg_read_all_data", "pg_write_all_data")
+                # the write-all role also hands over INSERT, UPDATE and DELETE (never TRUNCATE)
+                assert report.held and not any(h.via_owner for h in report.held)
+                assert {h.privilege for h in report.held} == {"DELETE", "INSERT", "UPDATE"}
+                with pytest.raises(
+                    GuardedPrivilegesHeld, match=r"member of: pg_read_all_data, pg_write_all_data$"
+                ):
+                    await check_guarded_privileges(
+                        reader.held, live=True, gauge=None, timeout_s=10.0
+                    )
+        finally:
+            superuser.execute("REVOKE pg_read_all_data, pg_write_all_data FROM cv_app")
+    async with _read_as(_login(pg_dsn, "cv_app")) as reader:
+        assert (await reader.held()).member_of == ()
+
+
+async def test_a_replication_login_is_named_and_refused_in_live(pg_dsn: str) -> None:
+    with _conn(pg_dsn) as superuser:
+        superuser.execute("ALTER ROLE cv_app REPLICATION")
+        try:
+            async with _read_as(_login(pg_dsn, "cv_app")) as reader:
+                assert (await reader.held()).attributes == ("replication",)
+                with pytest.raises(GuardedPrivilegesHeld, match=r"role attributes: replication$"):
+                    await check_guarded_privileges(
+                        reader.held, live=True, gauge=None, timeout_s=10.0
+                    )
+        finally:
+            superuser.execute("ALTER ROLE cv_app NOREPLICATION")
+    async with _read_as(_login(pg_dsn, "cv_app")) as reader:
+        assert (await reader.held()).attributes == ()
+
+
+async def test_a_server_files_membership_is_named_and_refused_in_live(pg_dsn: str) -> None:
+    with _conn(pg_dsn) as superuser:
+        superuser.execute("GRANT pg_read_server_files TO cv_app")
+        try:
+            async with _read_as(_login(pg_dsn, "cv_app")) as reader:
+                assert (await reader.held()).member_of == ("pg_read_server_files",)
+                with pytest.raises(
+                    GuardedPrivilegesHeld, match=r"member of: pg_read_server_files$"
+                ):
+                    await check_guarded_privileges(
+                        reader.held, live=True, gauge=None, timeout_s=10.0
+                    )
+        finally:
+            superuser.execute("REVOKE pg_read_server_files FROM cv_app")
+    async with _read_as(_login(pg_dsn, "cv_app")) as reader:
+        assert (await reader.held()).member_of == ()
+
+
+def test_the_bootstrap_without_backup_passwords_leaves_both_backup_roles_nologin(
+    pg_dsn: str,
+) -> None:
+    with _conn(pg_dsn) as c:
+        roles = c.execute(
+            "SELECT rolname, rolcanlogin, rolpassword IS NULL, rolsuper, rolcreaterole, "
+            "rolcreatedb, rolbypassrls FROM pg_authid "
+            "WHERE rolname IN ('cv_backup', 'cv_restore') ORDER BY 1"
+        ).fetchall()
+        owner = c.execute("SELECT pg_has_role('cv_restore', 'cv_owner', 'MEMBER')").fetchone()
+    assert roles == [
+        ("cv_backup", False, True, False, False, False, False),
+        ("cv_restore", False, True, False, False, False, False),
+    ]
+    assert owner == (True,)
+
+
 @pytest.mark.parametrize("superuser", [False, True], ids=["cv_owner", "container-superuser"])
 async def test_an_owner_or_superuser_holds_every_pair_and_is_refused_only_in_live(
     pg_dsn: str, superuser: bool
@@ -144,11 +241,13 @@ async def test_an_owner_or_superuser_holds_every_pair_and_is_refused_only_in_liv
     async with _read_as(pg_dsn if superuser else _login(pg_dsn, "cv_owner")) as reader:
         report = await reader.held()
         assert report.superuser is superuser and report.missing == ()
+        assert report.member_of == (REFUSED_ROLES if superuser else ("cv_owner",))
         assert sorted((h.table, h.privilege, h.via_owner) for h in report.held) == [
             (table, privilege, True) for table, privilege in GUARDED_PAIRS
         ]
         await check_guarded_privileges(reader.held, live=False, gauge=None, timeout_s=10.0)
-        with pytest.raises(GuardedPrivilegesHeld):
+        refusal = r"^the runtime role " + ("is a superuser; " if superuser else "holds ")
+        with pytest.raises(GuardedPrivilegesHeld, match=refusal):
             await check_guarded_privileges(reader.held, live=True, gauge=None, timeout_s=10.0)
 
 

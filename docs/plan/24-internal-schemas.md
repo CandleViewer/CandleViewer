@@ -5572,6 +5572,69 @@ That is `7258e4839c214d468e05682582186d1a02cd65c513e992f6a8080e7b79461ab2`, the 
 
 **Chain cross-check (the Owner).** Offline verification alone does not detect a file signed with a stolen seed (`docs/security/threat-models/e42-admin.md` AD-T14). The Owner also runs `queryAuditLog` with `action` `security.audit_export_signed` and `q` set to the manifest's `sha256`: M2 writes that record, with `object_kind` `audit_signing_key`, before every signature, naming the file's digest as `sha256` and the key as `key_id` and `fingerprint_sha256`, beside the job's `job_id` and the Owner's `actor_user_id` (#889 S6b-1), names the audit redactor keeps, so `q` finds it and a signature with no record is a forgery. Until #1238 anchors the chain off-box, whoever can also rewrite the chain can add that record, or a rotation or generation record (AD-T02); the residual stays Medium until then.
 
+### 15.8 Backup sidecar socket protocol (ADR-0041)
+
+Binding with ADR-0041 section 1 (#3319). The API (`cv-api`) asks the backup sidecar to `plan`, `run`, `verify`, `remove` or `restore` an artefact; the sidecar executes and records nothing in Postgres, and the E42-T05 services in `candleviewer/admin/backups/` record every step, as the engine ports require (`ports.py`). Both ends ship in #3319 B1 (B1b): `services/api/cvbackup/protocol.py`, the server's codec, and `candleviewer/admin/backups/sidecar_wire.py`, the client's. Neither imports the other (the `independence-backup-sidecar` contract), so each validates by hand against the closed shapes below, and the golden frames in `services/api/tests/fixtures/backup_sidecar/frames_v1.jsonl` keep the two equal.
+
+**Transport.** A Unix stream socket at `CV_BACKUP_SOCKET` (the sidecar's `CVB_SOCKET`, §16.1) on a volume shared by the two containers only, never the backup volume. The sidecar creates it, mode 0660, in a 0750 directory whose group only the API's user belongs to. Before it reads a byte it reads the peer's credentials (`SO_PEERCRED`) and closes a peer whose uid is not the configured API uid (`CVB_API_UID`). The API checks the sidecar server's peer uid too (ADR-0041 / AD-SC09). The sidecar has no TCP or UDP listener. One request per connection.
+
+**Frame.** `<len>\n<body>\n`: `len` is the decimal byte length of `body` (1 to 5 digits, no sign, no leading zero); `body` is canonical JSON: members sorted by name, `,` and `:` with no whitespace, ASCII only, no duplicate member, no floating-point number except `pct`; and `body` is at most `MAX_FRAME = 16384` bytes. A frame that breaks any of this ends the connection with `error` `bad_frame`, when that can still be written, and nothing runs.
+
+**Exchange.** The client writes exactly one request frame. The server answers zero or more `progress` frames, then exactly one terminal frame, `ok` or `error`, then closes. The client closing its side before the terminal frame is a cancel: the sidecar ends the job's process group and removes its temporary file, so an API that restarts leaves no job running. The sidecar bounds every job at `min(deadline_s, its own maximum for the op)`.
+
+```python
+class Request(Struct, extra="forbid"):        # envelope v1
+    v: Literal[1]                            # any other value: error `unsupported_version`
+    id: UUID                                 # request id, echoed in every answer frame
+    op: Literal["plan", "run", "verify", "remove", "restore"]
+    deadline_s: int                          # 1..86400
+    args: PlanArgs | RunArgs | VerifyArgs | RemoveArgs | RestoreArgs   # the one `op` names
+
+class PlanArgs:    kind: str                 # v1 runs "pg_dump" and "config_bundle"
+class RunArgs:     backup_id: UUID; kind: str; location: Location
+class VerifyArgs:  backup_id: UUID; location: Location
+class RemoveArgs:  backup_id: UUID; location: Location
+class RestoreArgs: job_id: UUID; backup_id: UUID; location: Location; digest: Sha256Hex  # B2
+
+Location  = str   # <= 512 bytes: absolute and canonical, `<backup root>/<kind>/<uuid4>.age`;
+                  # no `..`, `//`, `://` or `@`
+Sha256Hex = str   # 64 lower-case hex digits
+UtcTs     = str   # RFC 3339 in UTC, microseconds and `Z`
+
+class Progress: v: Literal[1]; id: UUID; t: Literal["progress"]; pct: float  # 0..100, non-decreasing
+class Ok:       v: Literal[1]; id: UUID; t: Literal["ok"];    result: PlanResult | RunResult | VerifyResult | RemoveResult
+class Error:    v: Literal[1]; id: UUID; t: Literal["error"]; code: ErrorCode
+
+class PlanResult:   location: Location; encrypted: Literal[True]; encryption_ref: str  # "age-x25519-sha256:<64 hex>"
+class RunResult:    size_bytes: int; checksum_sha256: Sha256Hex; covers_from: UtcTs; covers_to: UtcTs
+class VerifyResult: method: Literal["checksum"]; checksum_sha256: Sha256Hex
+class RemoveResult: state: Literal["quarantined", "already_removed"]; purge_after: UtcTs
+
+ErrorCode = Literal[
+    "bad_frame", "unsupported_version", "bad_request",           # the request itself
+    "kind_not_supported", "recipient_mismatch",                  # plan / run
+    "runs_capped", "busy",                                       # the floor's run cap; one run and one verify at a time
+    "unknown_backup", "location_mismatch",                       # not in the sidecar's record / not its location
+    "newest_artefact",                                           # the floor: never the newest finished one of a kind
+    "artefact_missing", "header_malformed", "digest_mismatch",   # verify
+    "volume_unavailable", "database_unavailable", "tool_failed",
+    "ledger_unreadable", "deadline", "restore_not_available", "internal_error",
+]
+```
+
+(`Struct` is notation: neither end imports pydantic or msgspec.)
+
+1. **No secret on the wire.** No request or answer carries a credential, a DSN, a password, an age identity or other key material, a child process's stderr or an exception's text. `encryption_ref` is the fingerprint of the public recipient (ADR-0041 section 2), a public value that keeps class S (21 §12).
+2. **The client never chooses a location.** `plan` mints it; `run` accepts only a well-formed name for its `kind` that does not exist yet (created `O_EXCL`); `verify` and `remove` accept only the location the sidecar's own record holds for `backup_id`, else `unknown_backup` or `location_mismatch`. The client also refuses, before it connects, a location that is not absolute or not under `CV_BACKUP_ROOT`; the sidecar is the authority.
+3. **`run`** answers `ok` only once the file is `fsync`ed and renamed into place and its `finished` entry is in the sidecar's record. For `pg_dump`, `covers_to` is the server's `clock_timestamp()` read before `pg_dump` starts, so before its snapshot, and `covers_from` equals it; for `config_bundle` both are the sidecar's clock at the start.
+4. **`verify`** hashes and header-checks one descriptor (an age v1 header of at most 4 KiB with exactly one X25519 stanza) and records the outcome in its own record. `checksum_sha256` is the digest of the bytes it checked; the client compares it, in constant time, with the digest the service computed over its read-only mount (the `digest` of `ScratchVerifier.verify`), and a difference is `verify_failed`.
+5. **`remove`** renames the file into the quarantine at once and answers; the purge follows the grace period. An entry already quarantined or purged answers `already_removed`. `newest_artefact` is the floor's refusal: the API answers it as `409 conflict`, rule `engine_retains_backup` (22 `deleteBackup`, §19.88).
+6. **`restore`** is validated from B1 on and answered `restore_not_available` until B2 serves it with the executor and the restore halt latch.
+7. **Mapping at the API.** In `plan`, `recipient_mismatch` is a plan with no `encryption_ref`, so the service refuses the run as `503 backup_engine_invalid`; `kind_not_supported` never reaches the sidecar, since the service answers `409 kind_not_supported` before any record (22 `createBackup`). `volume_unavailable`, `database_unavailable`, `busy`, `ledger_unreadable`, a timeout or a closed socket are `store_unavailable`; in `verify`, `artefact_missing`, `header_malformed`, `digest_mismatch`, `unknown_backup` and `location_mismatch` are `verify_failed` (conclusive); every other code is `internal_error`.
+8. **Bounds.** The sidecar's maximum per op: `plan` 2 s, `remove` 10 s, `verify` 12 h, `run` 24 h (the backups jobs' own deadline). A request header not read within 2 s closes the connection. `pct` is sent at most once per second.
+9. **Logging.** Each request is logged with `id`, `op`, `backup_id`, the outcome code and the duration, never a location, other arguments or anything a child process wrote.
+10. **Versioning.** A new member or code is a new `v`; a v1 server refuses `v: 2` with `unsupported_version`, and a v1 client refuses an answer of any other `v` as `internal_error`.
+
 ---
 
 ## 16. Configuration and feature flags
@@ -5599,6 +5662,7 @@ class AppConfig(BaseSettings):
     paper: "PaperConfig"
     auth: "AuthConfig"
     audit: "AuditConfig"
+    backup: "BackupConfig"
     observability: "ObservabilityConfig"
     flags: "FlagConfig"
 
@@ -5713,6 +5777,12 @@ class AuthConfig(BaseModel):
 class AuditConfig(BaseModel):             # ADR-0037 decision 6; §15.6 Frame owns the file rules
     lane_key_file: str = "/run/secrets/cv_audit_lane_key"  # CV_AUDIT_LANE_KEY_FILE
     lane_previous_key_file: str | None = None  # CV_AUDIT_LANE_PREVIOUS_KEY_FILE: verify-only
+
+class BackupConfig(BaseModel):            # E42-T05, ADR-0041; the sidecar's own settings are `CVB_*`
+    root: str = ""                        # CV_BACKUP_ROOT: absolute; the API mounts it read-only
+    socket: str = ""                      # CV_BACKUP_SOCKET (#3319 B1b): the sidecar's socket (§15.8);
+                                          # absolute, no `..`, not a symlink, never under `root`;
+                                          # empty: no engine is wired and the backups routes stay 501
 
 class ObservabilityConfig(BaseModel):
     log_level: Literal["debug","info","warning","error"] = "info"
@@ -6826,7 +6896,7 @@ The orchestrator assigned this number on 2026-11-02, after §19.87 (the numbers 
 - The orchestrator's rulings of record on #3319 (the BQ list, ADR-0041), contract first (C-6.1), in the first of the ticket's changes; the engine itself follows in B1 and B2.
 - 22 `createBackup`: a `kind` the wired backup engine does not run (v1 runs `pg_dump` and `config_bundle`) is `409 conflict` with rule `kind_not_supported`, answered after the `501` and before the hourly limit, with no record and nothing started.
 - 22 `createBackup`: a chained verification that is refused (a restore running, or the lock wait spent) writes one `backup.verified` record with `stage: refused`, `outcome: failure` and the refusing rule as `reason`, and leaves the run's outcome unchanged.
-- 22 `deleteBackup`: a removal the backup engine refuses under its own floor is `409 conflict` with rule `engine_retains_backup`, recorded as a second `backup.deleted` failure record with that `reason`; the row is unchanged.
+- 22 `deleteBackup`: a removal the backup engine refuses under its own floor is `409 conflict` with rule `engine_retains_backup`, recorded as a second `backup.deleted` failure record with that `reason`; the row is unchanged, the grant stays spent, and a record that cannot be written is `503 audit_unavailable`. Only the engine's typed floor refusal is this `409`; any other or unreadable answer from the engine is `503 store_unavailable`.
 - 22 `verifyBackup` and the chained verification run at `verify_method: checksum` and need no key: the artefact's SHA-256 against the catalogue and the digest bound in `backup.run`, then a well-formed age v1 header with exactly one X25519 stanza, which names no recipient. The restorability proof is the restore drill, `verify_method: restore_smoke` (21 §8.4).
 - 22's key alias, for an age artefact, is the recipient's fingerprint. 21 §3.10.3 and §12: `encryption_ref` is that fingerprint, a public value that keeps class S, and §8.1's secrets row names the offline backup identity and its escrow copy. ADR-0041 adds the sidecar's floor, the identity's custody and rotation, the fingerprint's encoding (`age-x25519-sha256:<64 lower-case hex digits>`) and `cv_restore` `NOLOGIN` outside a restore job; the E42 threat model gains §6a, the sidecar boundary.
 - No new `x-error-codes` entry, schema member, enum value or operation, and no WS, chart or `machine_hash` change.
@@ -6838,6 +6908,14 @@ The orchestrator assigned this number on 2026-11-02 (ruling of record on #5331, 
 - §15.5 names `admin.area_entered` (already in the code registry): the first allowed `GET`/`HEAD` of each window is recorded and later reads are counted; the count rides the next opening row (`after_state.prior_window`) or one `coalesced_summary` row, every row an INSERT (C-5.7). Denials and mutations stay one row per request; a request with no session is never coalesced.
 - Two settings are PROPOSED to this document's owner: `admin_area_coalesce_seconds` (300 s default, 0 = record every request, max 3600) and the 4096-key bound on open windows (the oldest window's summary is written on eviction; a full map records every request).
 - No `22` change, no migration, no new action.
+
+### 19.95 2026-11-02 — §15.8, §16.1: the backup sidecar's socket protocol and settings, and the backup roles (ADR-0041, #3319 B1a)
+
+- §15.8 is new: the socket protocol between the API and the backup sidecar (ADR-0041 section 1), contract first (C-6.1), ahead of both ends in #3319 B1b: transport, frame, exchange, the closed request, answer and error sets, and how the API maps each code. No request or answer carries a credential, a DSN or key material.
+- §16.1: `BackupConfig` names `CV_BACKUP_ROOT` (E42-T05, as built) and `CV_BACKUP_SOCKET`, which B1b adds; empty, no engine is wired and the backups routes answer `501` as before.
+- The engine port `ScratchVerifier.verify` gains the keyword `digest`, the SHA-256 the service computed over the artefact (`None` for a directory or a repository), and its docstring no longer assumes a restore into scratch: it checks at the depth the `verify_method` it returns names (ADR-0041 section 3).
+- 21 §1.1: the backup roles `cv_backup` and `cv_restore` are created by `infra/scripts/pg_bootstrap.sql` (`cv_restore` `NOLOGIN`, a member of `cv_owner`), and revision `0066_backup_role_grants` holds `cv_backup`'s read-only grants and default privileges; the API's start refuses in `live` while its login is a superuser or a member of `cv_backup`, `cv_restore`, `cv_owner` or the built-in `pg_read_all_data` or `pg_write_all_data` (§9.1); a `NOLOGIN` backup role is no violation.
+- No REST operation, `x-error-codes` entry, schema member or enum value changes, and no WS, chart or `machine_hash` change.
 
 ### 19.98 2026-11-02 — §3.2, §3.5, 23 §6.1: builders materialise a bar only on open, close and amend; the forming bar on demand (E12, #2022, #2015)
 

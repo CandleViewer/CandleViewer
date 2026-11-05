@@ -106,8 +106,10 @@ class Engine:
         await self.faults.at("resolve")
         return self.file
 
-    async def verify(self, backup_id: UUID, location: str, artefact: Any, progress: Any) -> Any:
-        self.verified.append((backup_id, location, artefact))
+    async def verify(
+        self, backup_id: UUID, location: str, artefact: Any, progress: Any, *, digest: Any = None
+    ) -> Any:
+        self.verified.append((backup_id, location, artefact, digest))
         progress(50.0)
         await self.go.wait()
         await self.faults.at("verify")
@@ -282,7 +284,8 @@ async def test_matching_digest_reaches_the_verifier_and_sets_verified_at(
     job = await w.ended()
     result = {"backup_id": str(ROW.id), "verify_method": "restore_smoke"}
     assert (job_id, job.status, job.result) == (JOB, "succeeded", result)
-    assert w.engine.verified == [(ROW.id, ROW.target_path, w.engine.file)]  # the file it hashed
+    # the file it hashed, and the digest it computed over it (ADR-0041: the engine compares)
+    assert w.engine.verified == [(ROW.id, ROW.target_path, w.engine.file, SUM)]
     marked = w.store.rows[ROW.id]
     assert (marked.status, marked.verified_at, marked.error_message) == ("verified", NOW, None)
     finished = verified("finished", error=None, verify_method="restore_smoke")
@@ -360,7 +363,7 @@ async def test_a_directory_or_repository_is_verified_where_it_lies() -> None:
     w = World(checksum_sha256=None)
     w.engine.record = RunRecord(None)  # the run bound no digest (Q8)
     assert (await w.run()).status == "succeeded"
-    assert (w.engine.resolved, w.engine.verified) == ([], [(ROW.id, ROW.target_path, None)])
+    assert (w.engine.resolved, w.engine.verified) == ([], [(ROW.id, ROW.target_path, None, None)])
 
 
 _CONCLUSIVE = [  # (step, fault, the verifier's method, code)
