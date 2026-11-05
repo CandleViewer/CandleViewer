@@ -74,7 +74,7 @@ EXCEPTION = (
     "(CG-28) is an accepted residual until E44-T04 lands, as ruled on 2026-11-03. While it stands, "
     "a live order also needs the process setting `CV_TRADING_LIVE_ENABLED`, which is off by "
     "default, so the flag alone admits none. No E42 test completes a real `live_enablement` "
-    "step-up; unit tests use an in-memory fake."
+    "step-up; tests use an in-memory fake."
 )
 _SPRINT = re.compile(r"Sprint (\d{1,2})")
 _TITLE = re.compile(r"\[(E\d{2}(?:-[A-Z]\d{2})?)\]")
@@ -265,7 +265,7 @@ def _issues(backlog: Path) -> dict[str, str]:
 def rows(tickets: Mapping[str, Ticket], issues: Mapping[str, str]) -> list[Row]:
     """The record's table: one row per owner ticket, in DEFERRED's order."""
     table: list[Row] = []
-    for story, epic, keys in ((d.story, d.epic, d.tickets) for d in DEFERRED):
+    for story, keys in ((d.story, d.tickets) for d in DEFERRED):
         for key in keys:
             ticket = tickets.get(key, {})
             notes: list[str] = []
@@ -279,7 +279,9 @@ def rows(tickets: Mapping[str, Ticket], issues: Mapping[str, str]) -> list[Row]:
             cells = (issues.get(key, "none"), _text(ticket, "kind") or "none", short)
             milestone, names = _text(ticket, "milestone"), _names(_text(ticket, "body"), story)
             notes_cell = "; ".join(notes) or "none"
-            table.append(Row(story, epic, key, *cells, milestone or "none", names, notes_cell))
+            table.append(
+                Row(story, key.split("-")[0], key, *cells, milestone or "none", names, notes_cell)
+            )
     return table
 
 
@@ -304,8 +306,10 @@ def _wrap(text: str, width: int = 100) -> list[str]:
 
 
 SCOPE = (
-    "The static checks cover code that spells the key or the setting; beyond that, C7's second "
-    "key is the guarantee."
+    "The static checks are the `cv-admin-no-live-enable` Semgrep rules "
+    "(`.semgrep/cv-admin-no-live-enable.yml`) and the live-gate AST guard "
+    "(`services/api/tests/unit/admin/test_live_gate_guard.py`). They cover code that spells the "
+    "key or the setting; beyond that, C7's second key is the guarantee."
 )
 
 
@@ -315,12 +319,13 @@ def render_record(
     """The verification record: deterministic, so the same inputs give the same bytes."""
     window = f"Sprint {WINDOW[0]} to Sprint {WINDOW[1]}"
     stories = ", ".join(sorted({d.stand_in for d in DEFERRED}))
+    named = "; ".join(f"{d.stand_in}: {', '.join(d.stated)}" for d in DEFERRED)
     checked = [
         f"- Each owner ticket is in its epic's backlog file, carries no `retired` label, names its "
-        f"story, has the milestone `{MILESTONE}` and a sprint from {window}; a design ticket lands "
-        f"at least {DESIGN_AHEAD} sprints before the story it serves.",
+        f"story, has the milestone `{MILESTONE}` and a sprint from {window}, except a design "
+        f"ticket, which instead lands at least {DESIGN_AHEAD} sprints before the story it serves.",
         f"- {', '.join(SCREEN_TICKETS)} name {SCREEN}.",
-        f"- {stories} state the deferral and name the owners; "
+        f"- {stories} state the deferral, each naming the words it was checked for ({named}); "
         f"{' and '.join(sorted({d.epic for d in DEFERRED}))} are blocked by {DEFERRING_EPIC}.",
         "- `docs/plan/18-traceability-matrix.md` traces each story to screens, components and "
         "flows, not to an epic, so the story-to-epic link is read from the backlog.",
@@ -334,9 +339,10 @@ def render_record(
         "",
         *_wrap(
             "E42 defers two Must stories by design (E42-Q06): US-ADMIN-010 to E43 and US-ADMIN-012 "
-            "to E44. This record is dated evidence that their owners still hold them, read "
-            "offline from the backlog. It says when the claim was last true; the run at epic "
-            "close is the one of record, and its reviewer is the E42 QA sign-off's."
+            "to E44. This record is dated evidence that the owner tickets name them and carry the "
+            "R4 milestone and sprints, read offline from the backlog. It says when the claim was "
+            "last true; the run at epic close is the one of record, and its reviewer is the "
+            "E42 QA sign-off's."
         ),
         "",
         f"- **Date:** {date}",
