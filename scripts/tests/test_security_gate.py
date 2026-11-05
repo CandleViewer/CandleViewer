@@ -2296,3 +2296,46 @@ def test_real_codeql_gate_mfa_token_entry_on_its_expiry_blocks(
     assert rc == 1, out
     assert "security_gate[codeql]: BLOCKED (CI-SEC-004)" in out
     assert f"CI-SEC-004: accepted risk expired for {_MFA_TOKEN_ENTRY}" in out
+
+
+# --------------------------------------------------------------------------
+# #5628: dev_only_exceptions in the committed allowlist
+# --------------------------------------------------------------------------
+
+_REPO_ALLOWLIST = Path(__file__).resolve().parents[2] / "tools" / "ci" / "licenses-allowlist.json"
+
+
+@pytest.mark.parametrize(
+    ("package", "version", "licence"),
+    [
+        ("caniuse-lite", "1.0.30001812", "CC-BY-4.0"),
+        ("truncate-utf8-bytes", "1.0.2", "WTFPL"),
+        ("@napi-rs/lzma-linux-x64-gnu", "1.5.1", "Unknown"),
+    ],
+)
+def test_committed_dev_only_exception_is_honoured_for_its_exact_version(
+    package: str, version: str, licence: str
+) -> None:
+    allowlist = load_license_allowlist(_REPO_ALLOWLIST)
+    run = date(2026, 11, 3)
+    ok = evaluate_licenses([LicenseFinding(package, version, licence)], allowlist, [], run_date=run)
+    assert not ok.blocked
+    # Not a blanket licence pass: another version, or another package under the same
+    # licence, still fails.
+    bumped = evaluate_licenses(
+        [LicenseFinding(package, "0.0.1", licence)], allowlist, [], run_date=run
+    )
+    other = evaluate_licenses(
+        [LicenseFinding("some-other-pkg", "1.0.0", licence)], allowlist, [], run_date=run
+    )
+    assert bumped.blocked and bumped.code == "CI-SEC-002"
+    assert other.blocked and other.code == "CI-SEC-002"
+
+
+# The name starts with test_repo_register so the register-pins step in _job-security.yml
+# (pytest -k test_repo_register) runs it on every PR.
+def test_repo_register_dev_only_exception_expiry_canary() -> None:
+    assert date.today() < date(2027, 3, 25), (
+        "dev_only exception @napi-rs/lzma-linux-x64-gnu@1.5.1 expired at the GA cut (#5628): "
+        "remove or re-justify"
+    )

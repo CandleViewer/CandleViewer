@@ -50,8 +50,12 @@
     ]
   },
   "dev_only_exceptions": {
-    "$comment": "Packages that carry a prohibited licence but are dev-only tooling, never distributed with shipped code (SR-136 dev-only carve-out). Each entry requires a package name (ecosystem-qualified) and a reason; still fails for any dependency reachable from a production build target.",
-    "packages": []
+    "$comment": "Packages that carry a prohibited licence but are dev-only tooling, never distributed with shipped code (SR-136 dev-only carve-out). The gate matches each entry as the exact string '<name>@<version>' (npm), so a version bump needs a new entry. Reasons: caniuse-lite (CC-BY-4.0) is browser-support data read by browserslist at build time, never distributed; truncate-utf8-bytes (WTFPL) is a dev-only transitive of the desktop packaging toolchain, never distributed; @napi-rs/lzma-linux-x64-gnu@1.5.1 is MIT per the npm registry (license: MIT) and the upstream repo github.com/Brooooooklyn/lzma, reported Unknown because rollup's platform binary is not installed on the scanning host (expires at the GA cut, 2027-03-25: remove or re-justify by then; a canary test, test_repo_register_dev_only_exception_expiry_canary, fails the build after that date, because the schema has no per-entry expiry or reason field). The gate cannot check that a package is dev-only: that is established by `pnpm why -r` at review time, and only the production licence collection (checked with these exceptions disabled) restores a check. The match key is not ecosystem-qualified, so an entry would also exempt a PyPI distribution of the same name@version. Tracked by #5628.",
+    "packages": [
+      "@napi-rs/lzma-linux-x64-gnu@1.5.1",
+      "caniuse-lite@1.0.30001812",
+      "truncate-utf8-bytes@1.0.2"
+    ]
   },
   "unknown_license_policy": "fail"
 }
