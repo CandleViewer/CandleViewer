@@ -139,14 +139,19 @@ test("E09-TC-C06 at challenge_expires_at the held invite is dropped: warned 30 s
   const wire = await inviteWithChallenge(page, GRANTED);
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toBeVisible();
+  // #5973: page.clock.install lets time flow in real time, so the setup above has already moved the
+  // clock past T0 by however long it took; stop it at a fixed point the boundaries are measured from
+  await page.clock.pauseAt(T0.getTime() + MIN);
   // A11Y-F-0010 (WCAG 2.2.1): a warning 30 s before the limit, with a fresh challenge on offer
-  await page.clock.runFor(5 * MIN - 31_000);
+  await page.clock.runFor(4 * MIN - 31_000);
   await expect(dialog.getByRole("alert")).toHaveCount(0);
   await page.clock.runFor(1_000);
   await expect(dialog.getByRole("alert")).toHaveText(
     "This confirmation expires in less than 30 seconds. Nothing is sent if it expires.",
   );
   await expect(dialog.getByRole("button", { name: "Request a new confirmation" })).toBeVisible();
+  // axe schedules timers; from here on only lateness is possible, and expiry is the next step
+  await page.clock.resume();
   expect(await seriousAxe(page)).toEqual([]);
   await page.clock.runFor(30_000);
   await expect(page.getByRole("alert").filter({ hasText: EXPIRED })).toBeVisible();
