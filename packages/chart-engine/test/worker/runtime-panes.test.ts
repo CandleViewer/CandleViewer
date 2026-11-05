@@ -346,3 +346,94 @@ describe("review r2: one viewport a frame, gated blocks, refusals aloud (M1, m1)
     expect(layouts()).toEqual([]); // no state change: the layout never recomputed
   });
 });
+
+describe("E11-S09 PR 1b: the splitters through the runtime (D02 §8)", () => {
+  const heights = (): unknown[] =>
+    (layouts().at(-1)?.panes ?? []).map((p) => (p.collapsed ? "stub" : p.height));
+  const { down, move, up } = INPUT;
+
+  it("a pointer-down in the 24 px band drags the boundary; only its two panes change", () => {
+    input("pointer", [down, 500, 210, 1, 0, 0], [move, 500, 260, 1, 0, 8]); // 10 px under it
+    frame();
+    expect(heights()).toEqual([250, 150, 200]);
+    input("pointer", [move, 500, 380, 1, 0, 8], [up, 500, 380, 0, 0, 8]); // pane 1 under 48 px
+    frame();
+    expect(heights()).toEqual([379, "stub", 189]); // folded into pane 0; pane 2's share kept
+    expect(layouts().at(-1)?.panes[2]?.share).toBeCloseTo(1 / 3, 12);
+  });
+
+  it("hover, and a drag that starts outside the band, never move a splitter", () => {
+    const posted = layouts().length;
+    input("pointer", [move, 500, 200, 0, 0, 8], [move, 500, 405, 0, 0, 8]); // hover passes
+    input("pointer", [down, 500, 150, 1, 0, 0], [move, 500, 190, 1, 0, 8], [up, 500, 190, 0, 0, 8]);
+    frame();
+    expect([layouts().length, heights()]).toEqual([posted, [200, 200, 200]]);
+  });
+
+  it("moveSplitter: 2 % steps, clamped at the minimum, and a layout after every key", () => {
+    cmd({ k: "moveSplitter", pane: 0, by: -0.02 });
+    frame();
+    expect(
+      layouts()
+        .at(-1)
+        ?.panes.map((p) => p.share),
+    ).toEqual([1 / 3 - 0.02, 1 / 3 + 0.02, 1 / 3].map((x) => expect.closeTo(x, 12)));
+    cmd({ k: "moveSplitter", pane: 0, by: -1 }); // End's opposite: pane 0 at its 48 px minimum
+    frame();
+    expect(heights()).toEqual([48, 352, 200]);
+    const posted = layouts().length;
+    cmd({ k: "moveSplitter", pane: 0, by: -0.02 }); // at the limit: unchanged, still posted
+    frame();
+    expect([layouts().length, heights()]).toEqual([posted + 1, [48, 352, 200]]);
+    cmd({ k: "moveSplitter", pane: 9, by: 0.02, seq: 20 }); // an unknown key: nothing
+    frame();
+    expect(layouts()).toHaveLength(posted + 1);
+    cmd({ k: "setPaneShares", shares: [[0, 0.5]] }); // the next layout carries no ack of 20
+    frame();
+    expect(layouts().map((l) => l.ack)).not.toContain(20);
+  });
+
+  it("a key's seq comes back once as the next layout's ack; a keyed share change's even unmoved", () => {
+    cmd({ k: "moveSplitter", pane: 0, by: -0.02, seq: 7 });
+    frame();
+    expect(layouts().at(-1)?.ack).toBe(7);
+    cmd({ k: "setPaneShares", shares: [[0, 0.5]] }); // no seq: no ack
+    frame();
+    expect(layouts().at(-1)?.ack).toBeUndefined();
+    const posted = layouts().length;
+    const equal = [0, 1, 2].map((k) => [k, 1 / 3]);
+    cmd({ k: "setPaneShares", shares: equal, seq: 8 });
+    frame();
+    cmd({ k: "setPaneShares", shares: equal, seq: 9 }); // already equal: still answered
+    frame();
+    expect(
+      layouts()
+        .slice(posted)
+        .map((l) => l.ack),
+    ).toEqual([8, 9]);
+    cmd({ k: "setPaneShares", shares: [[9, 1]], seq: 10 }); // refused: never acked
+    frame();
+    cmd({ k: "setPaneShares", shares: [[0, 0.5]] });
+    frame();
+    expect(layouts().at(-1)?.ack).toBeUndefined();
+  });
+
+  it("removePane's seq is acked on the layout that announces the re-key, every slot keyed (R58)", () => {
+    const posted = layouts().length;
+    cmd({ k: "removePane", pane: 0, seq: 11 }); // slot 0 takes key 1, slot 1 key 2
+    frame();
+    const acked = layouts().slice(posted);
+    expect(acked.map((l) => [l.ack, l.panes.map((p) => p.pane)])).toEqual([[11, [1, 2]]]);
+    cmd({ k: "removePane", pane: 0, seq: 12 }); // a dead key removes nothing: never acked
+    frame();
+    expect(layouts().slice(posted)).toHaveLength(1);
+    cmd({ k: "removePane", pane: 2, seq: 13 });
+    cmd({ k: "removePane", pane: 1, seq: 14 }); // the sole pane: keyless, and still announced
+    frame();
+    expect(
+      layouts()
+        .slice(posted + 1)
+        .map((l) => [l.ack, l.panes.map((p) => p.pane)]),
+    ).toEqual([[14, [-1]]]);
+  });
+});

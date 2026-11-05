@@ -455,6 +455,8 @@ Shipped by E11-S06 PR 1 (package README BQ-194, BQ-199, BQ-203), additive: `KEY`
 
 Shipped by E11-S09 PR 1a (package README "Pane stack", BQ-1 to BQ-5), additive: a pane on the wire is the facade's stable key (0 the first, never reused), not an index; `command { k: "addPane", pane, share? }`, `{ k: "removePane", pane }`, `{ k: "setPaneShares", shares: [pane, share][] }` and `{ k: "setPaneCollapsed", pane, collapsed }`; worker → main `layout { id, panes: [{ pane, top, height, share, collapsed }], timeAxis: [top, height], plotWidth }`, posted when the layout recomputes (≤ 1/frame); `viewport` stays one message a frame, its top level slot 0's row (the keyless sole pane reports `pane: -1`), plus `panes?: [{ pane, priceLow, priceHigh, mode, requestedMode, inverted, autoScale, logAvailable, logReason, anchorTick }]` for slots 1.. in order. An unknown key, or folding the last open pane, is a recoverable `error`.
 
+Shipped by E11-S09 PR 1b (package README "Pane splitters and chrome"), additive: `command { k: "moveSplitter", pane, by }` moves the boundary under pane `pane` by `by` share units (finite, |by| ≤ 1; + grows that pane), clamped at the minimums, changing only that pane and the one below; the worker posts a `layout` after every one, so the host announces each key once. `moveSplitter`, `setPaneShares` and `removePane` take an optional `seq` (a non-negative integer), which the worker echoes once as the next `layout`'s optional `ack`; a `setPaneShares` with a `seq` always gets a `layout`, and a command is answered only by the `layout` that acks it. A removal re-keys the remaining slots in order, and that re-key is announced on the acked `layout`, which lists every slot's key (ruling R58 on BQ-11a), so the main thread never points at a dead slot.
+
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 
 ---
@@ -716,6 +718,8 @@ export interface IndicatorPlugin {
 ```
 
 _E11-S09 PR 1a (additive note, C-15.2; ruling 6623589909 on BQ-11): `Pane.heightRatio` reads the worker's normalised share, and the open panes' shares sum to exactly 1. `addPane` without `heightRatio` gives the new pane an equal share, 1 / (open panes + 1); with one, it takes that share. Either way, and on `setHeightRatio(r)`, the other open panes rescale proportionally into 1 − r. A pane pushed below max(48 px, 3 × the axis label box) collapses to a 24 px stub (32 comfortable), and restoring gives it max(last share, minimum). Pixels: the stubs' px come out first, and the open panes tile the rest exactly, with the rounding remainder going to the last pane._
+
+_E11-S09 PR 1b (additive, C-15.2): `PaneOptions.label?: string` names the pane in its region, collapsed stub, splitters and announcements; the default is "Price pane" for the first pane and "Pane N" after it. The label is trimmed, its whitespace collapsed and capped at 64 characters; a blank label takes the default. A splitter move, by drag or by key, changes only the two panes beside it. `setHeightRatio` still rescales all the others._
 
 The shipped surface (`packages/chart-engine/src/api/types.ts`, E11-T01) keeps every name and member
 above. It defines the supporting types this sketch names but leaves open (`ThemeTokens`, `PaneId`,
