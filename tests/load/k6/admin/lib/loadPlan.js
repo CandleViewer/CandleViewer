@@ -129,3 +129,33 @@ export function exportEntries(text) {
   if (text.length && !text.endsWith("\n")) lines += 1;
   return lines - 1;
 }
+
+// SCR-143's added load (plan 5.2) [BQ-8]: A/A windows first (the noise floor), then three
+// alternating A/B pairs, each window ADDED_WINDOW_S long; in a B window ADDED_SESSIONS Owner
+// sessions mount SCR-143 (its four reads, D05) with a `system` socket and re-read every REREAD_S.
+export const ADDED_WINDOW_S = 600;
+export const ADDED_WINDOWS = ["aa_1", "aa_2", "a_1", "b_1", "a_2", "b_2", "a_3", "b_3"];
+export const ADDED_SESSIONS = 5;
+export const REREAD_S = 10; // worse than a human
+export const SCRAPE_S = 5;
+export const ADDED_LIMIT = 0.01; // SCR-143: at most 1 % added load
+export const NOISE_LIMIT = 0.003; // above it the delta cannot judge 1 %
+export const MOUNT_READS = [
+  "/admin/health",
+  "/admin/incidents?status=open",
+  "/admin/incidents?status=acknowledged",
+  "/admin/statecharts?kind=position_protection",
+];
+
+export function windowAt(elapsedS, windowS = ADDED_WINDOW_S) {
+  const i = Math.floor(elapsedS / windowS);
+  return i >= 0 && i < ADDED_WINDOWS.length ? ADDED_WINDOWS[i] : null;
+}
+
+// The `process_cpu_seconds_total` of a Prometheus text body (every sample summed), or null.
+export function cpuSeconds(body) {
+  const re = /^process_cpu_seconds_total(?:\{[^}]*\})? ([0-9.e+-]+)$/gm;
+  let sum = null;
+  for (let m = re.exec(body); m !== null; m = re.exec(body)) sum = (sum || 0) + Number(m[1]);
+  return sum;
+}

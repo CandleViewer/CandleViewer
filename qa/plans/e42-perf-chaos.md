@@ -106,12 +106,11 @@ the dataset. A budget changes only by its source's owner; no row is skipped or w
 Built on BQ-8's recommended answer; each place a ruling could change is marked `[BQ-8]`. What ran
 at build time: the harness tests (`services/api/tests/chaos/admin/test_e42_load_*.py`), ruff,
 `mypy --strict`, `node --check` and the runner's `--dry-run`. The real runs happen only in the
-dispatch-only `perf-admin.yml` once its part 4 profiles land (part 4's second
-branch, with the added load); until then `make admin-perf PROFILE=export|verify|flood` by hand.
+dispatch-only `perf-admin.yml` (`profile: export|verify|flood|added`, `dataset: chained`).
 
 - **Where:** the chained set (`admin_perf1m_test`, 1 M rows; a bulk set fails a verify at row 1).
   `bench/admin/load.py` drives the runs after part 1's guards; the k6 scripts are
-  `tests/load/k6/admin/{export_under_load,verify_span,refusal_flood}.js` with their
+  `tests/load/k6/admin/{export_under_load,verify_span,refusal_flood,added_load}.js` with their
   shared `lib/{loadPlan,loadCalls}.js`; `tests/load/admin/load_results.py` judges.
 - **Users per run:** two Owners (the actor, the reader) and two Managers with no grant (the
   probe, the flood), so no run carries another's hourly limits or record budget.
@@ -144,6 +143,12 @@ branch, with the added load); until then `make admin-perf PROFILE=export|verify|
   run. There is no depth series on main, so it reads the files: the depth is the size less the
   committed cursor (a full file compacts; the uncommitted bytes cannot). Fails above 80 % of 64 MiB.
   No `audit_unavailable` answer may appear anywhere.
+- **Added load (SCR-143, <= 1 %):** `added`, one run: windows of 10 minutes, A/A first, then three
+  A/B pairs; in a B window five Owner sessions mount SCR-143's four reads with a `system` socket and
+  re-read every 10 s. The figure is the median of the three B-minus-A `process_cpu_seconds_total`
+  rate deltas as a share of A, judged only when the A/A noise is at most 0.3 %; the CPU per read
+  set is recorded. The expected mount rate the fallback needs is not ruled, so with a noisy floor
+  the row reads NOT JUDGED and the per-set cost is the evidence [BQ-8].
 
 | Budget                               | Required                | Expected today             |
 | ------------------------------------ | ----------------------- | -------------------------- |
@@ -152,3 +157,4 @@ branch, with the added load); until then `make admin-perf PROFILE=export|verify|
 | Order-path probe under each load     | p90 <= 300 ms, <= 1.2 x | PASS, except the flood     |
 | WAL depth, `audit_unavailable`       | <= 80 % of 64 MiB, none | PASS, except the flood     |
 | Refusal flood, every row             | as above                | **FAIL by design**, #2836  |
+| SCR-143 added load                   | <= 1 % of A             | unknown until the dispatch |
