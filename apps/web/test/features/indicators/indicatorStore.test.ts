@@ -71,7 +71,11 @@ const ops = (): string[] => engine.calls.map((c) => c.op);
 beforeEach(() => {
   let k = 0;
   events = [];
-  store = createIndicatorStore({ mint: () => `id${(k += 1)}`, report: (e) => events.push(e) });
+  store = createIndicatorStore({
+    mint: () => `id${(k += 1)}`,
+    report: (e) => events.push(e),
+    hasPlugin: () => true,
+  });
   engine = createFakeEngine();
   unbind = store.bind(CHART, engine);
 });
@@ -539,6 +543,162 @@ describe("indicator store binding and teardown", () => {
       "tier",
       "visible",
     ]);
+  });
+});
+
+describe("the S2 read's folds (record 6654987828)", () => {
+  it("test_the_lock_stops_an_undo_that_would_remove_a_locked_instance", () => {
+    const a = idOf(store.add(CHART, addInput()));
+    store.setLocked(CHART, a, true);
+    const doc = store.getChart(CHART);
+    const calls = engine.calls.length;
+    expect(store.undo(CHART)).toBe("locked");
+    expect(store.getChart(CHART)).toBe(doc);
+    expect(store.selectHistory(CHART)).toEqual({ canUndo: true, canRedo: false });
+    expect(engine.calls.length).toBe(calls);
+    store.setLocked(CHART, a, false);
+    expect(store.undo(CHART)).toBe("done");
+    expect(store.selectInstances(CHART)).toEqual([]);
+  });
+
+  it("test_the_lock_stops_an_undo_or_redo_that_would_move_a_locked_instance", () => {
+    const a = idOf(store.add(CHART, addInput()));
+    const b = idOf(store.add(CHART, addInput({ params: { n: 50 } })));
+    store.reorder(CHART, b, 0);
+    store.setLocked(CHART, b, true);
+    expect(store.undo(CHART)).toBe("locked");
+    expect(engine.order("price")).toEqual([key(b), key(a)]);
+    store.setLocked(CHART, b, false);
+    expect(store.undo(CHART)).toBe("done");
+    store.setLocked(CHART, b, true);
+    expect(store.redo(CHART)).toBe("locked");
+    expect(engine.order("price")).toEqual([key(a), key(b)]);
+  });
+
+  it("test_the_lock_stops_a_redo_that_would_remove_a_locked_instance", () => {
+    const a = idOf(store.add(CHART, addInput()));
+    store.remove(CHART, a);
+    expect(store.undo(CHART)).toBe("done");
+    const back = store.selectInstances(CHART)[0]?.id as InstanceId;
+    store.setLocked(CHART, back, true);
+    expect(store.redo(CHART)).toBe("locked");
+    expect(store.selectInstances(CHART).map((i) => i.id)).toEqual([back]);
+  });
+
+  it("test_a_keyless_instance_refuses_set_params_as_unbound_instance", () => {
+    idOf(store.add(CHART, addInput({ params: { n: 50 } })));
+    const a = idOf(store.add(CHART, addInput()));
+    unbind();
+    const next = createFakeEngine();
+    next.capacity = 1;
+    store.bind(CHART, next);
+    expect(store.keyOf(CHART, a)).toBeNull();
+    const doc = store.getChart(CHART);
+    events.length = 0;
+    expect(store.configure(CHART, a, ema, { n: 9 })).toEqual({
+      ok: false,
+      reason: "unbound_instance",
+    });
+    expect(store.getChart(CHART)).toBe(doc);
+    expect(next.calls.some((c) => c.op === "setParams")).toBe(false);
+    expect(events).toEqual([]);
+  });
+
+  it("test_an_undo_of_a_configure_on_a_keyless_instance_is_refused_and_kept", () => {
+    idOf(store.add(CHART, addInput({ params: { n: 50 } })));
+    const a = idOf(store.add(CHART, addInput()));
+    store.configure(CHART, a, ema, { n: 9 });
+    unbind();
+    const next = createFakeEngine();
+    next.capacity = 1;
+    store.bind(CHART, next);
+    expect(store.keyOf(CHART, a)).toBeNull();
+    const doc = store.getChart(CHART);
+    expect(store.undo(CHART)).toBe("refused");
+    expect(store.getChart(CHART)).toBe(doc);
+  });
+
+  it("test_bind_rolls_back_its_adds_and_keeps_the_old_binding_when_the_port_throws", () => {
+    const a = idOf(store.add(CHART, addInput()));
+    idOf(store.add(CHART, addInput({ params: { n: 50 } })));
+    const before = key(a);
+    const inner = createFakeEngine();
+    let adds = 0;
+    const throwing = {
+      ...inner,
+      add: (spec: Parameters<FakeEngine["add"]>[0]) => {
+        adds += 1;
+        if (adds === 2) throw new Error("engine down");
+        return inner.add(spec);
+      },
+    };
+    expect(() => store.bind(CHART, throwing)).toThrow("engine down");
+    expect(inner.live.size).toBe(0);
+    expect(store.keyOf(CHART, a)).toBe(before);
+    expect(engine.live.size).toBe(2);
+    idOf(store.add(CHART, addInput({ params: { n: 70 } })));
+    expect(engine.live.size).toBe(3);
+    expect(inner.calls.filter((c) => c.op === "add")).toHaveLength(1);
+  });
+
+  it("test_a_second_bind_removes_the_first_ports_instances", () => {
+    idOf(store.add(CHART, addInput()));
+    idOf(store.add(CHART, addInput({ entry: bb, params: {} })));
+    expect(engine.live.size).toBe(2);
+    const next = createFakeEngine();
+    store.bind(CHART, next);
+    expect(engine.live.size).toBe(0);
+    expect(next.live.size).toBe(2);
+  });
+
+  it("test_add_consults_availability_and_refuses_a_worker_entry_with_no_plugin", () => {
+    const bare = createIndicatorStore({ mint: () => "x", report: (e) => events.push(e) });
+    const port = createFakeEngine();
+    bare.bind(CHART, port);
+    events.length = 0;
+    expect(bare.add(CHART, addInput({ entry: bb, params: {} }))).toEqual({
+      ok: false,
+      reason: "no_path",
+    });
+    expect(port.calls).toEqual([]);
+    expect(events).toEqual([]);
+    // A server entry is read from the stream, never a plugin: it still adds.
+    expect(bare.add(CHART, addInput()).ok).toBe(true);
+  });
+
+  it("test_reorder_reports_no_move_that_did_not_happen", () => {
+    const a = idOf(store.add(CHART, addInput()));
+    const b = idOf(store.add(CHART, addInput({ params: { n: 50 } })));
+    const doc = store.getChart(CHART);
+    const throwing = {
+      ...createFakeEngine(),
+      setOrder: () => {
+        throw new Error("order");
+      },
+    };
+    unbind();
+    store.bind(CHART, throwing);
+    events.length = 0;
+    expect(() => store.reorder(CHART, b, 0)).toThrow("order");
+    expect(store.selectInstances(CHART).map((i) => i.id)).toEqual([a, b]);
+    expect(store.getChart(CHART).undo).toBe(doc.undo);
+    expect(events).toEqual([]);
+  });
+
+  it("test_remove_returns_no_success_for_a_removal_the_port_threw_on", () => {
+    const a = idOf(store.add(CHART, addInput()));
+    const throwing = {
+      ...createFakeEngine(),
+      remove: () => {
+        throw new Error("remove");
+      },
+    };
+    unbind();
+    store.bind(CHART, throwing);
+    expect(store.keyOf(CHART, a)).not.toBeNull();
+    const doc = store.getChart(CHART);
+    expect(() => store.remove(CHART, a)).toThrow("remove");
+    expect(store.getChart(CHART)).toBe(doc);
   });
 });
 
