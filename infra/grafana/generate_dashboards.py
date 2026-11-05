@@ -955,8 +955,105 @@ def rules() -> Board:
         0.0001,
         0.001,
     )
+    _alert_evaluator(b)
     b.flush()
     return b
+
+
+def _alert_evaluator(b: Board) -> None:
+    """#1868 (E40-T03): the alert evaluator's series. Labels are the catalogue's own."""
+    b.row("Alert evaluator")
+    b.ts(
+        "Alert fires/s by trigger mode",
+        rate("cv_alert_fires_total", "trigger_mode"),
+        "ops",
+        legend="{{trigger_mode}}",
+    )
+    b.ts(
+        "Alert suppressed/s by reason",
+        rate("cv_alert_suppressed_total", "reason"),
+        "ops",
+        legend="{{reason}}",
+    )
+    _describe(
+        b,
+        "Gated firings: storm, snoozed, muted, expired, cooldown. "
+        "Catalogue alert: storm rate > 0 for 10m.",
+    )
+    b.ts(
+        "Alert auto-disarms/s by reason",
+        rate("cv_alert_autodisarmed_total", "reason"),
+        "ops",
+        legend="{{reason}}",
+    )
+    _describe(b, "Alerts auto-disarmed on source loss. Catalogue alert: any.")
+    b.ts(
+        "Alert eval latency p95, tick to firing recorded (budget 1 s)",
+        q("cv_alert_eval_latency_seconds"),
+        "s",
+        1,
+    )
+    _threshold_lines(b)
+    _describe(
+        b,
+        "From tick processing start (after dequeue) to the firing row recorded. Queue wait is not "
+        "included: the queue depth and dropped panels cover it. Budget: E40-T03 records a firing "
+        "within 1 s of the condition being met (docs/plan/backlog/E40.json); "
+        "20-architecture.md 12.1: p95 <= 1 s.",
+    )
+    b.stat("Armed alerts", f"max(cv_alerts_armed{{{E}}})", "short")
+    _describe(b, "Armed alerts in the evaluator. Dashboard only (metrics catalogue).")
+    b.stat("Condition subscriptions", f"max(cv_alert_subscriptions{{{E}}})", "short")
+    _describe(
+        b,
+        "Distinct condition_hash subscriptions. Subscriptions above armed alerts means "
+        "evaluation sharing is lost (metrics catalogue).",
+    )
+    b.stat(
+        "Eval queue depth (warn 512, bound 1024)",
+        f"max(cv_alert_eval_queue_depth{{{E}}})",
+        "short",
+        512,
+        1024,
+    )
+    _describe(
+        b,
+        "Catalogue alert: depth > 512 for 1m. 1024 is QUEUE_BOUND in alerts/evaluator.py.",
+    )
+    b.stat(
+        "Ticks dropped since the evaluator started",
+        f"max(cv_alert_eval_dropped_total{{{E}}})",
+        "short",
+        1,
+    )
+    _describe(
+        b,
+        "Ticks shed by the bounded queue (drop-oldest). Catalogue alert: any. The counter's "
+        "value, not an increase(): its series starts at the first drop, so increase() would "
+        "read that first burst as 0.",
+    )
+    b.ts(
+        "Owner-skipped/s by stage and reason",
+        rate("cv_alert_owner_skipped_total", "stage, reason"),
+        "ops",
+        legend="{{stage}} {{reason}}",
+    )
+    _describe(b, "Owner inactive or unreadable (#3349). Unreadable > 0 is an identity-store fault.")
+    b.ts(
+        "Alert compile p95",
+        q("cv_alert_compile_seconds"),
+        "s",
+        0.3,
+    )
+    _threshold_lines(b)
+    _describe(b, "Compile + validate time. Catalogue alert: p95 > 0.3 s.")
+    b.ts(
+        "Alert compiles rejected/s by reason",
+        rate("cv_alert_compile_rejected_total", "reason"),
+        "ops",
+        legend="{{reason}}",
+    )
+    _describe(b, "Catalogue: reason action_node > 0 is a security signal.")
 
 
 def storage() -> Board:
