@@ -3,3 +3,4 @@ export * from "./counters.js";
 export * from "./geometry.js";
 export * from "./ObjectIndex.js";
 export * from "./StructuralIndex.js";
+export * from "./drawings.js";

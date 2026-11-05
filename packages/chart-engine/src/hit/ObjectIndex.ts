@@ -85,6 +85,27 @@ export const MAX_CELLS = 4_096;
 export const CELL_PX = 64;
 /** The most buckets a query reads before it rebuilds even mid-gesture. */
 export const RING_MAX = 1_024;
+/**
+ * E14-T04 (BQ-04, ticket Security notes): the work one pick may do, in units of one cheap precise
+ * test. A candidate costs one unit per handle (min 1): a 1 024-anchor brush projects and measures
+ * every anchor (~0.3 µs each), so it costs 1 024. Past the budget the pick answers the best hit so
+ * far and counts `capped`; the trading layer is never budgeted, and every object stays
+ * reachable through the tree and the surrogates. Candidates are visited in a fixed order (cells,
+ * bands, then the unbounded list, each in insertion order), so a capped pick is deterministic.
+ * Measured 2026-11-05 on an Intel Core
+ * Ultra 7 366H laptop (WSL2, Node, loaded): 10 000 cheap tests in one bucket take p99 ~3.4 ms,
+ * 2 048 ~0.6 ms and 1 024 ~0.2 ms, so 1 024 keeps a 5x margin under 1 ms on a loaded runner; no
+ * R5 scene reads more than ~75.
+ */
+export const PICK_BUDGET = 1_024;
+/**
+ * E14-T04 (E14-K01 GK-05, ticket AC 6): half the default 24 px handle target (WCAG 2.5.8). A
+ * pointer inside a handle's target square reaches it, so the bounds published for a handle are
+ * what a pick hits; a wider tolerance (touch) still reaches past it.
+ */
+export const HANDLE_HALF_PX = 12;
+/** D02 §5.1 (trading layer first): these kinds outrank drawings and bubbles at any zIndex. */
+const TRADING: ReadonlySet<PickKind> = new Set(["order-line", "position-line", "alert-line"]);
 const TABLE = 4_096; // buckets per table, a power of two (a spatial hash: collisions add candidates)
 const MASK = TABLE - 1;
 const [SEGMENT, RAY, RECT, HLINE, VLINE, POINT] = [0, 1, 2, 3, 4, 5];
@@ -101,6 +122,8 @@ interface Entry {
   readonly id: string;
   readonly kind: PickKind;
   readonly z: number;
+  /** 1 for the trading layer, 0 otherwise: compared before `z`. */
+  readonly tier: number;
   readonly seq: number;
   readonly width: number;
   readonly hitTest: Pickable["hitTest"];
@@ -147,6 +170,14 @@ export class ObjectIndex {
   private best = -1;
   private bestDist = Infinity;
   private bestHandle = -1;
+  /** This pick's work budget (`PICK_BUDGET`, Infinity for the linear oracle). */
+  private limit = Infinity;
+  private work = 0;
+  private capped = false;
+  /** Registered trading-layer objects: a capped scan reads on only while there are any. */
+  private traders = 0;
+  /** Half a handle's target square in CSS px (`ThemeMetrics.handleTargetPx` / 2). */
+  handleHalfPx = HANDLE_HALF_PX;
   /** The y mapping the grid was placed under: log, and its price origin and tick size. */
   private log = false;
   private origin = 0;
@@ -161,6 +192,11 @@ export class ObjectIndex {
 
   get size(): number {
     return this.live;
+  }
+
+  /** The transform it places and projects under (E14-T04: the drawings adapter reads it). */
+  get viewport(): ViewportState {
+    return this.vp;
   }
 
   /** The degraded-2d re-init's new viewport (G-28): every registration kept, one rebuild. */
@@ -188,6 +224,7 @@ export class ObjectIndex {
       id: p.id,
       kind: p.kind,
       z: p.zIndex,
+      tier: TRADING.has(p.kind) ? 1 : 0,
       seq: (this.seq += 1),
       width: p.widthPx,
       hitTest: p.hitTest,
@@ -214,6 +251,7 @@ export class ObjectIndex {
       this.stamps = next;
     }
     this.live += 1;
+    this.traders += e.tier;
     this.counters.registered[p.kind] += 1;
     this.place(slot);
   }
@@ -237,6 +275,7 @@ export class ObjectIndex {
     this.byId.delete(id);
     this.free.push(slot);
     this.live -= 1;
+    this.traders -= e.tier;
     this.counters.registered[e.kind] -= 1;
     return true;
   }
@@ -270,7 +309,8 @@ export class ObjectIndex {
   }
 
   /**
-   * The front-most object within tolerance of (x, y) (BQ-131): zIndex desc, then a handle before
+   * The front-most object within tolerance of (x, y) (BQ-131): the trading layer first (E14-T04,
+   * D02 §5.1), zIndex desc, then a handle before
    * the body within one object, distance asc, the later registration. x is the transform's plot
    * x, y the canvas y, in CSS px. Reads the ring's buckets, the bands and the unbounded list only.
    */
@@ -279,6 +319,7 @@ export class ObjectIndex {
     const tol = toleranceFor(pointer);
     this.begin();
     if (this.live > 0 && this.ready()) {
+      this.limit = PICK_BUDGET;
       if ((this.pending && !this.gesture) || this.remapped()) this.rebuild();
       if (!this.scan(x, y, tol, false)) {
         this.rebuild();
@@ -366,7 +407,7 @@ export class ObjectIndex {
    * MAX_OBJECTS, that a linear y does not reach.
    */
   private scan(x: number, y: number, tol: number, forced: boolean): boolean {
-    const r = tol + this.maxPad;
+    const r = Math.max(tol, this.handleHalfPx) + this.maxPad;
     const fa = indexAt(this.vp.map, screenToTime(this.vp, x - r)) - this.shift;
     const fb = indexAt(this.vp.map, screenToTime(this.vp, x + r)) - this.shift;
     const pa = screenToPrice(this.vp, this.pane, y + r);
@@ -406,13 +447,17 @@ export class ObjectIndex {
 
   private testAll(slots: readonly number[] | undefined, x: number, y: number, tol: number): void {
     if (slots === undefined) return;
-    for (let i = 0; i < slots.length; i += 1) this.test(slots[i] as number, x, y, tol);
+    for (let i = 0; i < slots.length && !(this.capped && this.traders === 0); i += 1)
+      this.test(slots[i] as number, x, y, tol);
   }
 
   private begin(): void {
     this.best = -1;
     this.bestDist = Infinity;
     this.bestHandle = -1;
+    this.capped = false;
+    this.limit = Infinity;
+    this.work = 0;
     this.counters.lastCandidates = 0;
     this.epoch = (this.epoch + 1) >>> 0;
     if (this.epoch === 0) {
@@ -429,6 +474,7 @@ export class ObjectIndex {
     out.handle = this.bestHandle;
     out.distancePx = this.bestDist;
     this.counters.candidatesTested += this.counters.lastCandidates;
+    if (this.capped) this.counters.capped += 1;
     return e !== undefined;
   }
 
@@ -436,8 +482,15 @@ export class ObjectIndex {
   private test(s: number, x: number, y: number, tol: number): void {
     const e = this.entries[s];
     if (e === undefined || this.stamps[s] === this.epoch) return;
+    // D02 §5.1: the trading layer is never budgeted, so no pile of drawings at the point can use
+    // the budget up before an order line's band is read (a capped scan only skips, cheaply).
+    if (e.tier === 0 && this.work >= this.limit) {
+      this.capped = true;
+      return;
+    }
     this.stamps[s] = this.epoch;
     this.counters.lastCandidates += 1;
+    this.work += Math.max(1, e.handles.length >> 1); // a unit per handle: each anchor is measured
     const thr = e.width / 2 + tol;
     let d: number;
     if (e.hitTest !== undefined) d = e.hitTest(x, y, tol);
@@ -453,23 +506,31 @@ export class ObjectIndex {
       else if (e.type === RAY) d = distToRay(x, y, ax, ay, bx, by);
       else d = distToRect(x, y, ax, ay, bx, by);
     }
-    if (!(d <= thr)) return;
+    // A handle is reached anywhere in its target square, as drawn, even when the anchor lies off
+    // the body (an ellipse's box corner). The body alone is reached only within tolerance.
+    const half = this.handleHalfPx;
+    if (!(d <= thr || e.handles.length > 0)) return;
     let handle = -1;
+    let near = Infinity;
     for (let i = 0; i < e.handles.length; i += 2) {
-      const dh = Math.hypot(
-        x - this.x(e.handles[i] as number),
-        y - this.y(e.handles[i + 1] as number),
-      );
-      if (dh <= thr && (handle < 0 || dh < d)) {
+      const dx = x - this.x(e.handles[i] as number);
+      const dy = y - this.y(e.handles[i + 1] as number);
+      const dh = Math.hypot(dx, dy);
+      // Within tolerance, or inside the handle's target square (GK-05); the nearest, earlier on a tie.
+      if ((dh <= thr || (Math.abs(dx) <= half && Math.abs(dy) <= half)) && dh < near) {
         handle = i / 2;
-        d = dh;
+        near = dh;
       }
     }
+    if (handle >= 0) d = near;
+    else if (!(d <= thr)) return;
     const b = this.best >= 0 ? this.entries[this.best] : undefined;
     const wins =
       b === undefined ||
-      e.z > b.z ||
-      (e.z === b.z && (d < this.bestDist || (d === this.bestDist && e.seq > b.seq)));
+      e.tier > b.tier ||
+      (e.tier === b.tier &&
+        (e.z > b.z ||
+          (e.z === b.z && (d < this.bestDist || (d === this.bestDist && e.seq > b.seq)))));
     if (!wins) return;
     this.best = s;
     this.bestDist = d;
