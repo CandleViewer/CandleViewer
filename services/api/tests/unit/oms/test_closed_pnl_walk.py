@@ -383,6 +383,7 @@ def test_the_worked_example_composed_from_the_walk_is_the_records_closed_pnl() -
         ("1", "1180.5", "0.7083", "-14.47516667"),
         ("1", "1180.6", "0.70836", "-14.37516667"),
         ("0.5", "1180.69", "0.354207", "-7.142583335"),
+        # shaped so the four sum to -43.1305; real execPnl sums can be 1e-8 off cumExit-cumEntry
         ("0.5", "1180.7", "0.35421", "-7.137583325"),
     )  # fmt: skip
     closes = run(*opens, *(fill(4 + n, "Sell", q, p, fee=f, closed=q, pnl=g, order=B)
