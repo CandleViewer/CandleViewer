@@ -524,12 +524,24 @@ async def test_a_pass_walks_a_key_once_for_both_steps_and_again_for_a_later_fill
 
 def test_no_cap_path_reads_a_composed_figure() -> None:
     """The cap sums the venue's settled records alone (S4, `DayRiskFigures`): neither its module
-    nor `risk/` names the composition, the closed-PnL store or a local figure."""
+    nor `risk/` names the composition, the closed-PnL store or what it serves, `net_pnl` included,
+    or a local figure, and nothing there imports a closed-PnL module but the sync's one reach,
+    `CLOSED_PNL_LOOKBACK`, which the cap and the view share (24 Sec.8.13)."""
     root = Path(mod.__file__).resolve().parents[1]
     local = {"ClosedPnlComposer", "ComposePass", "ClosedPnlStore", "SqlAlchemyClosedPnlStore",
-             "gross_pnl", "fee_pnl", "funding_pnl", "local_net", "closed_pnl_records"}  # fmt: skip
+             "gross_pnl", "fee_pnl", "funding_pnl", "local_net", "closed_pnl_records", "net_pnl",
+             "ListedClosedPnl", "ClosedPnlTotals", "ClosedPnlQuery", "page", "totals"}  # fmt: skip
     for path in (root / "oms" / "day_figures.py", *sorted((root / "risk").rglob("*.py"))):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         named = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
         named |= {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
         assert not named & local, path
+        imported = [
+            ((n.module or "") if isinstance(n, ast.ImportFrom) else a.name, a.name)
+            for n in ast.walk(tree) if isinstance(n, ast.Import | ast.ImportFrom) for a in n.names
+        ]  # fmt: skip
+        shared = ("closed_pnl_sync", "CLOSED_PNL_LOOKBACK")
+        assert all(
+            (module.rsplit(".", 1)[-1], name) == shared
+            for module, name in imported if "closed_pnl" in f"{module}.{name}"
+        ), path  # fmt: skip
