@@ -72,4 +72,36 @@ describe("createSecondTick", () => {
     off();
     expect(clear).toHaveBeenCalledWith(2);
   });
+
+  it("contains a throwing listener: the others still run in that tick and the next tick still fires", () => {
+    const rethrown: Array<() => void> = [];
+    const spy = vi.spyOn(globalThis, "queueMicrotask").mockImplementation((run) => {
+      rethrown.push(run);
+    });
+    try {
+      const tick = createSecondTick();
+      const boom = new Error("listener fault");
+      const before = vi.fn();
+      const after = vi.fn();
+      const off = [
+        tick.subscribe(before),
+        tick.subscribe(() => {
+          throw boom;
+        }),
+        tick.subscribe(after),
+      ];
+      vi.advanceTimersByTime(1_000);
+      expect(before).toHaveBeenCalledTimes(1);
+      expect(after).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(1);
+      vi.advanceTimersByTime(1_000);
+      expect(before).toHaveBeenCalledTimes(2);
+      expect(after).toHaveBeenCalledTimes(2);
+      expect(rethrown).toHaveLength(2);
+      expect(() => rethrown[0]?.()).toThrow(boom);
+      for (const o of off) o();
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

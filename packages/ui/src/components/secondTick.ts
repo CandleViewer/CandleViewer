@@ -39,8 +39,21 @@ export function createSecondTick(clock: SecondTickClock = {}): SecondTick {
   };
   function fire(): void {
     armed = false;
-    for (const listener of [...listeners]) listener();
-    if (listeners.size > 0 && !armed) arm();
+    try {
+      for (const listener of [...listeners]) {
+        try {
+          listener();
+        } catch (error) {
+          // one listener's fault must not stop the others of this tick; surface it outside the tick
+          queueMicrotask(() => {
+            throw error;
+          });
+        }
+      }
+    } finally {
+      // the single timer chain must survive whatever a listener did
+      if (listeners.size > 0 && !armed) arm();
+    }
   }
 
   return {
