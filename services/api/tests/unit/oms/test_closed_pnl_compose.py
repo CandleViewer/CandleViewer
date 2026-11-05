@@ -9,7 +9,7 @@ import ast
 import threading
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, Inexact
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -192,6 +192,18 @@ async def test_the_fee_is_negated_exactly_so_it_is_rounded_once() -> None:
     assert figures(await compose(store, CLOSE)) == (
         N(1), N("-0.12345678"), N(0), N("0.87654322"),
     )  # fmt: skip
+
+
+async def test_the_composition_raises_rather_than_round_a_sum_past_its_400_digits() -> None:
+    """Every sum is exact, and the composer enforces it as the walk does (#5909 n1): an opening
+    fee and a closing fee 401 places apart, each exact in the walk, do not fit in `fee_pnl`'s."""
+    store = Store(flats={("ETHUSDT", 0): (START,)})
+    order(store, OPEN, "Buy")
+    order(store, CLOSE, "Sell")
+    fill(store, 1, OPEN, "Buy", "1", "100", fee="1e200", closed="0")
+    fill(store, 2, CLOSE, "Sell", "1", "101", fee="1e-201", closed="1", pnl="1")
+    with pytest.raises(Inexact):
+        await compose(store, CLOSE)
 
 
 async def test_a_reversal_composes_the_size_it_closes_never_the_fills_exec_qty() -> None:
