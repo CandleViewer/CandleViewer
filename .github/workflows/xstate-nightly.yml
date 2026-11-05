@@ -29,6 +29,9 @@ permissions:
 env:
   PYTHONIOENCODING: utf-8
   UPSTREAM_REPO: basiltt/xstate-statemachine
+  # Tag v0.9.1 (annotated, tag object 45bb7f3) dereferences to this commit
+  # (ADR-0016 Amendment 14). tools/ci/check_pin.py keeps this value in step.
+  UPSTREAM_SHA: 801eacdeef5bda2ba24b75f537ae04cc3527747e
   BASELINE: docs/research/xstate/gate/result-v0.9.1.json
 
 jobs:
@@ -61,13 +64,26 @@ jobs:
         working-directory: services/api
         run: uv sync --frozen --all-groups
 
-      - name: Checkout upstream tag v0.9.1 (BENCH-6 scenario source)
+      - name: Checkout upstream pinned commit (BENCH-6 scenario source, tag v0.9.1)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.UPSTREAM_REPO }}
-          ref: v0.9.1
+          ref: ${{ env.UPSTREAM_SHA }}
           path: _upstream
           persist-credentials: false
+
+      - name: Verify the upstream commit and that tag v0.9.1 was not moved
+        run: |
+          head="$(git -C _upstream rev-parse HEAD)"
+          if [ "$head" != "$UPSTREAM_SHA" ]; then
+            echo "::error title=xstate upstream pin::_upstream HEAD $head != pinned $UPSTREAM_SHA"
+            exit 1
+          fi
+          tag="$(git ls-remote "https://github.com/$UPSTREAM_REPO" 'refs/tags/v0.9.1^{}' | cut -f1)"
+          if [ "$tag" != "$UPSTREAM_SHA" ]; then
+            echo "::error title=xstate upstream tag moved::tag v0.9.1 now dereferences to '${tag:-<missing>}', pinned $UPSTREAM_SHA"
+            exit 1
+          fi
 
       - name: Upstream dev venvs for the env rows (pinned wheel, hash-locked)
         # #579: 13 rows need _upstream/.venv-main (pytest + upstream's own suite) or

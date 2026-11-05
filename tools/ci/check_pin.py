@@ -5,10 +5,11 @@
 MUST-09 orders the pin first: every other E50 ticket imports the library,
 so a loose specifier (``~=``/``>=``/``*``/no pin) or a drifted lock hash
 would let CI resolve a different wheel than the one ADR-0016 accepted
-(tag v0.9.1 = 45bb7f3, wheel sha256
+(tag v0.9.1 = tag object 45bb7f3, which dereferences to commit
+801eacdeef5bda2ba24b75f537ae04cc3527747e; wheel sha256
 d832d4d9a17b7b8003f61fa0714a8e57eaff316bcd5dd699d81d410362687162).
 
-Two checks, both required:
+Three checks, all required:
   1. ``services/api/pyproject.toml`` declares the dependency as exactly
      ``xstate-statemachine==0.9.1`` (a PEP 508 requirement string in the
      ``[project.dependencies]`` array). Any other specifier operator
@@ -17,6 +18,12 @@ Two checks, both required:
   2. ``services/api/uv.lock`` records the pinned wheel's sha256 exactly as
      ``d832d4d9a17b7b8003f61fa0714a8e57eaff316bcd5dd699d81d410362687162``
      for the ``xstate-statemachine`` package's wheel entry.
+  3. ``.github/workflows/xstate-nightly.yml`` sets ``UPSTREAM_SHA`` to the
+     full commit ``801eacdeef5bda2ba24b75f537ae04cc3527747e`` (the commit the
+     annotated tag v0.9.1 dereferences to, not the tag object), so the
+     nightly's upstream checkout cannot follow a moved tag. The
+     ``actions/checkout`` step with ``path: _upstream`` must also use
+     ``ref: ${{ env.UPSTREAM_SHA }}``, so the value is bound to its use.
 
 Exit codes: 0 clean, 1 violation found, 2 internal error (bad path / repo
 files missing).
@@ -39,6 +46,21 @@ PACKAGE_NAME = "xstate-statemachine"
 PINNED_VERSION = "0.9.1"
 PINNED_REQUIREMENT = f"{PACKAGE_NAME}=={PINNED_VERSION}"
 PINNED_WHEEL_SHA256 = "d832d4d9a17b7b8003f61fa0714a8e57eaff316bcd5dd699d81d410362687162"
+PINNED_UPSTREAM_SHA = "801eacdeef5bda2ba24b75f537ae04cc3527747e"
+NIGHTLY_WORKFLOW = Path(".github") / "workflows" / "xstate-nightly.yml"
+
+# Matches the workflow's `UPSTREAM_SHA: <value>` env line (YAML kept stdlib-only).
+UPSTREAM_SHA_RE = re.compile(
+    r"^\s*UPSTREAM_SHA:\s*[\"']?(?P<sha>[^\s\"'#]*)[\"']?\s*(?:#.*)?$", re.MULTILINE
+)
+
+EXPECTED_UPSTREAM_REF = "${{ env.UPSTREAM_SHA }}"
+# A workflow step starts at a list item opening with one of these keys.
+STEP_START_RE = re.compile(r"^(?=\s*-\s+(?:name|uses|id|if|run|with):)", re.MULTILINE)
+UPSTREAM_PATH_RE = re.compile(
+    r"^\s*path:\s*[\"']?_upstream[\"']?\s*(?:#.*)?$", re.MULTILINE
+)
+STEP_REF_RE = re.compile(r"^\s*ref:\s*(?P<ref>.*?)\s*(?:#.*)?$", re.MULTILINE)
 
 # Matches a PEP 508 requirement string naming the package, capturing the
 # specifier that follows the name.
@@ -169,6 +191,57 @@ def check_lock(uv_lock: Path) -> list[Violation]:
     return violations
 
 
+def check_workflow(workflow: Path) -> list[Violation]:
+    if not workflow.exists():
+        return [Violation(workflow, "file does not exist")]
+    matches = UPSTREAM_SHA_RE.findall(workflow.read_text(encoding="utf-8"))
+    if not matches:
+        return [
+            Violation(
+                workflow,
+                "no 'UPSTREAM_SHA:' line found; expected "
+                f"'UPSTREAM_SHA: {PINNED_UPSTREAM_SHA}'",
+            )
+        ]
+    if len(matches) > 1 or matches[0] != PINNED_UPSTREAM_SHA:
+        return [
+            Violation(
+                workflow,
+                f"UPSTREAM_SHA must be exactly '{PINNED_UPSTREAM_SHA}' "
+                f"(tag v0.9.1's commit); found {matches}",
+            )
+        ]
+    return _check_upstream_ref(workflow)
+
+
+def _check_upstream_ref(workflow: Path) -> list[Violation]:
+    """The `actions/checkout` step with `path: _upstream` must use the pin."""
+    steps = [
+        step
+        for step in STEP_START_RE.split(workflow.read_text(encoding="utf-8"))
+        if re.search(r"^\s*(?:-\s+)?uses:\s*actions/checkout@", step, re.MULTILINE)
+        and UPSTREAM_PATH_RE.search(step)
+    ]
+    if len(steps) != 1:
+        return [
+            Violation(
+                workflow,
+                "expected exactly one 'actions/checkout' step with 'path: _upstream'; "
+                f"found {len(steps)}",
+            )
+        ]
+    refs = [m.group("ref") for m in STEP_REF_RE.finditer(steps[0])]
+    if refs != [EXPECTED_UPSTREAM_REF]:
+        return [
+            Violation(
+                workflow,
+                f"the '_upstream' checkout step must use 'ref: {EXPECTED_UPSTREAM_REF}'; "
+                f"found {refs or '(no ref)'}",
+            )
+        ]
+    return []
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -183,9 +256,12 @@ def main(argv: list[str] | None = None) -> int:
     pyproject = root / "services" / "api" / "pyproject.toml"
     uv_lock = root / "services" / "api" / "uv.lock"
 
+    workflow = root / NIGHTLY_WORKFLOW
+
     violations: list[Violation] = []
     violations.extend(check_pyproject(pyproject))
     violations.extend(check_lock(uv_lock))
+    violations.extend(check_workflow(workflow))
 
     if violations:
         print(
@@ -197,7 +273,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         f"check_pin.py: OK — '{PINNED_REQUIREMENT}' pinned in pyproject.toml, "
-        f"wheel hash sha256:{PINNED_WHEEL_SHA256} present in uv.lock."
+        f"wheel hash sha256:{PINNED_WHEEL_SHA256} present in uv.lock, "
+        f"UPSTREAM_SHA {PINNED_UPSTREAM_SHA} in the nightly workflow."
     )
     return 0
 
