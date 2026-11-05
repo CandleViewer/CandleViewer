@@ -40,13 +40,18 @@ CORPUS = Corpus(default_corpus())
 class StopVenue(CorpusVenue):
     """The corpus venue with `POST /v5/position/trading-stop`: the position's stop becomes the
     written one and a position push follows; `stop_answers` scripts refusals (corpus error
-    shapes, values patched), served first, one per write."""
+    shapes, values patched), served first, one per write. `create_answers` answers a create
+    before the venue acts on it, `create_after` after it has (an open outcome that filled);
+    `close_answers` answers a reduce-only close unacted, `close_unfilled` acks one unfilled."""
 
     def __init__(self, corpus: Corpus, **options: Any) -> None:
         super().__init__(corpus, **options)
         self.stop_writes: list[dict[str, Any]] = []
         self.stop_answers: list[dict[str, Any]] = []
         self.create_answers: list[dict[str, Any]] = []
+        self.create_after: list[dict[str, Any]] = []
+        self.close_answers: list[dict[str, Any]] = []
+        self.close_unfilled = False
 
     def _skewed(self, request: httpx.Request) -> httpx.Response | None:
         """Not judged here: the REST client signs on the real wall clock, the venue runs on the
@@ -54,10 +59,17 @@ class StopVenue(CorpusVenue):
         return None
 
     def _order_create(self, body: dict[str, Any], params: dict[str, str]) -> dict[str, Any]:
-        if self.create_answers:
+        closing = bool(body["reduceOnly"])
+        answers = self.close_answers if closing else self.create_answers
+        if answers:
             self.creates.append(body)
-            return self.create_answers.pop(0)
-        return super()._order_create(body, params)
+            return answers.pop(0)
+        if closing and self.close_unfilled:
+            self.creates.append(body)
+            link = str(body["orderLinkId"])
+            return self._ok("trading-create-reply", orderId=str(uuid4()), orderLinkId=link)
+        reply = super()._order_create(body, params)
+        return self.create_after.pop(0) if self.create_after and not closing else reply
 
     def _position_trading_stop(
         self, body: dict[str, Any], _params: dict[str, str]
