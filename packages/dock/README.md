@@ -30,8 +30,11 @@ leaf object across every operation, so the app keys a pane by `paneId` and never
   it, else `insertBefore` with focus restored); the pane's canvas and its context stay alive;
 - only adding a pane creates its context, and only closing it releases it.
 
-The app's churn guard (E15-T02 GL-churn tests, landing in slice 2) will assert zero context creations and zero unmounts
-across move, tabify and split-out, with a negative control. This covers context churn, not the
+The guarantee is tested at three levels, each with a negative control: the 1,000-operation property
+here (every surviving leaf is the same object), the app's jsdom churn test, and a real-Chromium e2e
+that counts `transferControlToOffscreen` and context losses. The two app tests run move, tabify,
+split-out, a preset, maximise and restore, a tab switch and a resize, and assert zero context
+creations and zero unmounts. This covers context churn, not the
 browser's live-context cap: more than four chart panes per worker stays unsafe until the
 shared-context-per-worker engine change lands, which rides the held `26` §16 row, is confirmed on
 runtimes by E11-Q07 and in Electron by owner leg OL-2.
@@ -43,6 +46,11 @@ back as **minimised**: floating is client-only state, so a reload restores float
 minimised. A named grid keeps only its cells; panes beyond them come back minimised. E15-S02 must
 not assume floating persists. A `grid_preset` that is neither `custom` nor a named preset is
 refused (`unknown_preset`).
+
+A layout with no pane stores as the default `1x1` with no panes. A layout whose panes are all
+floating or minimised has no stored form, and `toLayoutInput` refuses it (`empty_dock`): `float` of
+the last docked pane yields such a tree, so the app keeps one pane docked or handles `empty_dock`
+before it stores. `fromLayout` and every operation share the dock's one minter.
 
 Ids come from an injected minter (`counterMinter`); one minter per dock keeps node and pane ids
 apart. `pnpm --filter @candleviewer/dock test:cov` runs the suite, the 1000-operation property

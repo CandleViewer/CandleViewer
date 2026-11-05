@@ -38,6 +38,7 @@ const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
   "confirm-policy":
     "E47-S08 (#1322): resolver and hook for the confirm surfaces (SCR-029/072/076/129), unbuilt (BQ-8)",
   derivatives: "E24-S05 (#780): the liquidation feed and its states; slice 3 mounts it on SCR-054",
+  workspace: "E15-T02 (#403): DockGrid mounts on no route; E15-S01 / E15-S02 mount the workspace",
 };
 
 interface ParsedImports {
