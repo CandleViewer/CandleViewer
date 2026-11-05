@@ -10,8 +10,13 @@ import {
   type A11yUpdate,
 } from "../a11y/window.js";
 import { mountSurface, probeRenderProfile } from "../host/mount.js";
-import { type AxisStops, createAxisStops } from "../host/axis-stop.js";
-import { createPaneChrome, type PaneChrome, paneLabel } from "../host/pane-chrome.js";
+import { type AxisStops, createAnnouncer, createAxisStops } from "../host/axis-stop.js";
+import {
+  createPaneChrome,
+  PANE_ANNOUNCE_KEY,
+  type PaneChrome,
+  paneLabel,
+} from "../host/pane-chrome.js";
 import { createScaleBadge } from "../host/scale-badge.js";
 import { readReducedMotion, watchMotion } from "../host/motion.js";
 import { watchSize } from "../host/resize.js";
@@ -33,7 +38,20 @@ import {
   MAX_PANES,
   type RunMode,
 } from "../worker/protocol.js";
-import { checkSyncModes, DEFAULT_SYNC_MODES, type SyncModes } from "../sync/SyncGroup.js";
+import {
+  checkSyncModes,
+  DEFAULT_SYNC_MODES,
+  ENGINE_SYNC_REFUSED,
+  type SyncModes,
+} from "../sync/SyncGroup.js";
+
+const wireModes = (m: SyncModes) => ({ time: m.time, crosshair: m.crosshair, levels: m.levels });
+/** The `setSync`s kept awaiting a refusal (BQ-21r, C-2.18); an older one is taken as applied. */
+const SYNC_IN_FLIGHT = 64;
+interface SyncState {
+  readonly group: string | null;
+  readonly modes: SyncModes;
+}
 import { createPane, type PaneInternal } from "./pane.js";
 import { checkScaleOptions, createTimeScale } from "./scales.js";
 import type {
@@ -132,6 +150,22 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
   let syncModes: SyncModes =
     opts.syncModes === undefined ? DEFAULT_SYNC_MODES : checkSyncModes(opts.syncModes);
   if (opts.syncGroup !== undefined) groupId(opts.syncGroup);
+  let syncGroup = opts.syncGroup ?? null;
+  /** The worker's group and modes as of the newest `setSync` known applied (`init`: defaults). */
+  let syncBase: SyncState = { group: syncGroup, modes: DEFAULT_SYNC_MODES };
+  /** The `setSync`s sent and not yet settled, oldest first, with the state each asks for. */
+  const syncSent: { readonly req: number; readonly state: SyncState }[] = [];
+  let syncReq = 0;
+  /** Assigned once the container's realm is known; declared first so no path meets a TDZ. */
+  let say: ReturnType<typeof createAnnouncer> | null = null;
+  // E11-S09 PR 2b (BQ-21): the page's registry relays across workers and announces the group's
+  // state; it refuses past its caps before anything mounts. `host` is read only after mount.
+  const reg = opts.syncRegistry?.attach({
+    workerId: () => host.workerId,
+    post: (m) => host.sync(m),
+    announce: (text) => say?.(text),
+  });
+  reg?.set(syncGroup, wireModes(syncModes));
 
   const surface = mountSurface(opts.container);
   const doc = opts.container.ownerDocument;
@@ -272,7 +306,11 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
       case "dataState":
         emit("dataState", { state: msg.state }); // BQ-9: SCR-047 is the app's
         return;
+      case "sync":
+        reg?.relay(msg); // BQ-21: a publication for the other workers in the group
+        return;
       case "error":
+        if (msg.code === ENGINE_SYNC_REFUSED) syncRefused(msg.reqId);
         emit("error", {
           code: msg.code,
           message: msg.message,
@@ -359,12 +397,53 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
     host.command({ k: "setViewport", timeStart: r.from, timeEnd: r.to });
   });
 
-  // BQ-17: `init` carries the group; modes other than the default ride one `setSync` after it.
-  if (opts.syncModes !== undefined) {
-    const { time, crosshair, levels } = syncModes;
-    const modes = { time, crosshair, levels };
-    host.command({ k: "setSync", groupId: opts.syncGroup ?? null, modes, relay: false });
+  say =
+    reg === undefined
+      ? null
+      : createAnnouncer(
+          opts.container,
+          { now: () => env.now(), setTimer: (cb, ms) => env.setTimer(cb, ms) },
+          PANE_ANNOUNCE_KEY,
+        );
+
+  /** Sends the group and modes; the registry refuses past its caps before anything changes. */
+  function applySync(id: string | null, next: SyncModes, mount: boolean): void {
+    const modes = wireModes(next);
+    if (!mount) reg?.set(id, modes);
+    [syncGroup, syncModes] = [id, next];
+    syncReq += 1;
+    syncSent.push({ req: syncReq, state: { group: id, modes: next } });
+    const old = syncSent.length > SYNC_IN_FLIGHT ? syncSent.shift() : undefined;
+    if (old !== undefined) syncBase = old.state;
+    host.command({ k: "setSync", groupId: id, modes, relay: reg !== undefined, req: syncReq });
   }
+
+  /**
+   * BQ-21r: the worker applies `setSync`s in order and refuses one by keeping its state, so every
+   * request sent before the refused one was applied. The facade rolls back only when the refused
+   * request is its newest; a newer one supersedes it and reports its own refusal.
+   */
+  function syncRefused(req: number | undefined): void {
+    if (req === undefined) {
+      syncBase = { group: null, modes: syncBase.modes }; // the `init` join was refused
+    } else {
+      const i = syncSent.findIndex((s) => s.req === req);
+      if (i < 0) return; // already settled
+      const settled = syncSent.splice(0, i + 1);
+      const applied = settled[i - 1];
+      if (applied !== undefined) syncBase = applied.state;
+    }
+    if (syncSent.length > 0) return;
+    ({ group: syncGroup, modes: syncModes } = syncBase);
+    try {
+      reg?.set(syncGroup, wireModes(syncModes));
+    } catch {
+      reg?.set(null, wireModes(syncModes)); // its old group filled up meanwhile
+    }
+  }
+
+  // BQ-17: `init` carries the group; other modes or a registry's relay ride one `setSync` after.
+  if (opts.syncModes !== undefined || reg !== undefined) applySync(syncGroup, syncModes, true);
 
   const chart: ChartInternal = {
     get panes(): readonly Pane[] {
@@ -425,10 +504,7 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
       assertLive();
       if (id !== null) groupId(id);
       const next = modes === undefined ? syncModes : checkSyncModes({ ...syncModes, ...modes });
-      syncModes = next;
-      // `relay` is the main-thread relay's switch (E11-S09 PR 2b); one worker needs none.
-      const wire = { time: next.time, crosshair: next.crosshair, levels: next.levels };
-      host.command({ k: "setSync", groupId: id, modes: wire, relay: false });
+      applySync(id, next, false);
     },
     removePane(id: PaneId): void {
       panes.find((p) => p.id === id)?.remove();
@@ -504,6 +580,8 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
       badge.dispose();
       stops?.dispose();
       chrome?.dispose();
+      reg?.detach();
+      say?.cancel();
       host.dispose();
       surface.unmount();
     },

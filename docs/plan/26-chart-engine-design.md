@@ -459,6 +459,8 @@ Shipped by E11-S09 PR 1b (package README "Pane splitters and chrome"), additive:
 
 Shipped by E11-S09 PR 2a (package README "Sync groups"), additive (C-6.3): `sync` gains `origin? { worker, chart, seq }` and its `timeRange` and `crosshair` become optional; it applies to every local member of `groupId` except when `origin.worker` is this worker, and a `seq` at or below the last one applied from the same origin `(worker, chart)` is dropped, the group remembering its 64 most recently seen origins (BQ-7). `init.config.workerId?` names the worker (host-assigned). A group id and a worker id are 1–128 characters of `[A-Za-z0-9._:-]` wherever they cross the wire (`init.config`, `setSync`, `sync`), and a `sync` `timeRange` has `to > from`; anything else is rejected at the boundary. `command { k: "setSync", groupId: string | null, modes: { time, crosshair, levels }, relay }` is retained and replaces `init.config.syncGroup`, which stays the default at mount (BQ-9); `scale` is never on the wire (BQ-24) and a `level?` field is reserved, not shipped (BQ-18). Worker → main gains `sync { id, groupId, timeRange?, crosshair?, origin }`, posted per publication when `relay` is set, for the main-thread relay (BQ-8; the relay is PR 2b). The one `viewport` message a frame gains, at its top level, `frameId?` (the worker frame it describes; the facade applies every row, then emits `viewportChanged` once for it) and `origin?` (the sync applied that frame, BQ-26). A join past 32 groups or 16 members per group is a recoverable `ENGINE_SYNC_REFUSED`; an `addPane` past 64 panes is a recoverable `ENGINE_PANE_CAP` (was the decode code), and the facade refuses both that and minting a pane key past `0xffff` before sending. A worker tick prepares every due chart, publishes local moves, flushes each group once, prepares the members it woke (again, for one it had prepared before a later peer published) and then finishes every chart, so a peer's move renders on the same frame whatever the creation order (BQ-12, §3.5).
 
+Shipped by E11-S09 PR 2b (package README "Sync groups"), additive: the host assigns `init.config.workerId` when it spawns a runtime (`w<n>` for a worker, a fresh one per respawn, `i<n>` inline), and retains `setSync` so a restarted worker rejoins its group. The main-thread sync registry (§8 `createSyncRegistry`) takes each worker `sync` and posts it as a `sync` with the same `origin` to every other worker holding a member of the group, once per worker, never to the origin's worker; the host coalesces relayed syncs to one message per group per frame (a later message's fields win; an earlier field it lacks is kept). A `setSync` carries a `req` that an `ENGINE_SYNC_REFUSED` echoes as `reqId`, so the facade rolls back only a refusal of its newest request.
+
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 
 ---
@@ -498,6 +500,7 @@ export interface ChartOptions {
   density?: "comfortable" | "compact" | "dense";
   syncGroup?: string;
   syncModes?: Partial<SyncModes>; // E11-S09 PR 2a (BQ-17): default { time, crosshair } on
+  syncRegistry?: SyncRegistry; // E11-S09 PR 2b (BQ-21): relays across workers, announces once
   maxBars?: number; // default 200_000
   memoryBudgetMb?: number; // default 600
   fonts?: readonly { family: string; weight: number; bytes: ArrayBuffer; version?: string }[]; // SDF atlas (E11-S11 BQ-258)
@@ -545,6 +548,19 @@ export interface SyncId {
   chart: number;
   seq: number;
 }
+
+// E11-S09 PR 2b (BQ-21, BQ-22): one per page (main thread). It relays each `sync` publication to
+// the other workers holding the group, origin kept, and announces a group's state once per change
+// ("Panes linked: time, crosshair, levels", only the modes on; "Panes unlinked").
+export interface SyncRegistry {
+  readonly groupCount: number;
+  dispose(): void;
+}
+export interface SyncRegistryOptions {
+  maxGroups?: number; // default 32
+  maxMembers?: number; // default 16 per group
+}
+export function createSyncRegistry(opts?: SyncRegistryOptions): SyncRegistry;
 
 // Mounts into `container` and returns synchronously; capability detection is lazy (E11-T01).
 export function createChart(opts: ChartOptions): Chart;
@@ -750,6 +766,8 @@ _E11-S09 PR 1a (additive note, C-15.2; ruling 6623589909 on BQ-11): `Pane.height
 _E11-S09 PR 1b (additive, C-15.2): `PaneOptions.label?: string` names the pane in its region, collapsed stub, splitters and announcements; the default is "Price pane" for the first pane and "Pane N" after it. The label is trimmed, its whitespace collapsed and capped at 64 characters; a blank label takes the default. A splitter move, by drag or by key, changes only the two panes beside it. `setHeightRatio` still rescales all the others._
 
 _E11-S09 PR 2a (additive, C-15.2): `ChartOptions.syncModes?`, `Chart.setSyncGroup(groupId, modes?)`, `SyncModes` and `SyncId` as sketched above; `viewportChanged` is emitted once per chart per frame with `frameId`, and `syncId` (BQ-7's origin token, no per-frame string) when a peer's sync moved it. `addPane` past 64 panes throws in the facade, so it never keeps a pane the worker refused._
+
+_E11-S09 PR 2b (additive, C-15.2): `ChartOptions.syncRegistry?`, `createSyncRegistry(opts?)`, `SyncRegistry` and `SyncRegistryOptions` as sketched above. With a registry the chart's `setSync` carries `relay: true`; the registry refuses a group past `maxGroups` or a member past `maxMembers` with `SyncRefused` before anything changes, and empties a group's entry when its last chart leaves or is disposed. A worker's recoverable `ENGINE_SYNC_REFUSED` rolls the facade's group and modes back to the ones the worker kept. The announcement goes out once per state change, on `candleviewer:announce` under `chart:pane`; it never repeats for an unchanged state and is never per frame._
 
 The shipped surface (`packages/chart-engine/src/api/types.ts`, E11-T01) keeps every name and member
 above. It defines the supporting types this sketch names but leaves open (`ThemeTokens`, `PaneId`,

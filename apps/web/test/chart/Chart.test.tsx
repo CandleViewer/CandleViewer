@@ -271,3 +271,51 @@ describe("<Pane> and useCrosshair", () => {
     expect(pane.heightRatio).toBe(1);
   });
 });
+
+describe("E11-S09 PR 2b rider: <Pane label> and <Chart syncModes>", () => {
+  it("passes a <Pane label> to the engine, which names the pane's region with it", () => {
+    render(
+      <Chart options={{ theme }} label="Price chart">
+        <Pane />
+        <Pane label="Volume pane" heightRatio={0.3} />
+      </Chart>,
+    );
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    const chart = engine.created[0];
+    expect(chart?.panes).toHaveLength(2);
+    expect(screen.getByRole("region", { name: /Volume pane/ })).toBeInTheDocument();
+  });
+
+  it("applies syncModes in place through setSyncGroup, never recreating the chart", () => {
+    const { rerender } = render(
+      <Chart
+        options={{ theme, syncGroup: "main" }}
+        label="Price chart"
+        syncModes={{ levels: true }}
+      />,
+    );
+    const chart = engine.created[0];
+    if (chart === undefined) throw new Error("no chart");
+    const setSyncGroup = vi.spyOn(chart, "setSyncGroup");
+    rerender(
+      <Chart
+        options={{ theme, syncGroup: "main" }}
+        label="Price chart"
+        syncModes={{ levels: true }}
+      />,
+    );
+    expect(setSyncGroup).not.toHaveBeenCalled(); // the same modes: nothing re-applied
+    rerender(
+      <Chart
+        options={{ theme, syncGroup: "main" }}
+        label="Price chart"
+        syncModes={{ time: false }}
+      />,
+    );
+    expect(setSyncGroup).toHaveBeenCalledTimes(1);
+    expect(setSyncGroup).toHaveBeenCalledWith("main", { time: false });
+    expect(engine.created).toHaveLength(1);
+  });
+});

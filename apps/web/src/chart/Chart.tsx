@@ -16,6 +16,7 @@ import {
   type Chart as ChartApi,
   type ChartEvents,
   type ChartOptions,
+  type SyncModes,
 } from "@candleviewer/chart-engine";
 
 /** The options a `<Chart>` takes: everything but the container, which the binding renders. */
@@ -26,6 +27,8 @@ export type ChartProps = {
   readonly onFrameStats?: (stats: ChartEvents["frameStats"]) => void;
   /** Every engine `error` (SCR-048 reads `code` and `details`, never `message`). */
   readonly onError?: (error: ChartEvents["error"]) => void;
+  /** E11-S09 (BQ-17): what the sync group shares; a change applies in place, never recreates. */
+  readonly syncModes?: Partial<SyncModes>;
   readonly children?: ReactNode;
 };
 
@@ -60,7 +63,14 @@ export function useChartContainer(): HTMLElement | null {
   return useContext(ContainerContext);
 }
 
-export function Chart({ options, label, onFrameStats, onError, children }: ChartProps): ReactNode {
+export function Chart({
+  options,
+  label,
+  onFrameStats,
+  onError,
+  syncModes,
+  children,
+}: ChartProps): ReactNode {
   const containerRef = useRef<HTMLDivElement>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
@@ -111,6 +121,15 @@ export function Chart({ options, label, onFrameStats, onError, children }: Chart
     chart.setDensity(density);
   }, [chart, options.density]);
 
+  const modesRef = useRef(syncModes);
+  modesRef.current = syncModes;
+  const modesKey = syncModes === undefined ? null : JSON.stringify(syncModes);
+  useEffect(() => {
+    const modes = modesRef.current;
+    if (chart === null || modes === undefined) return;
+    chart.setSyncGroup(optionsRef.current.syncGroup ?? null, modes);
+  }, [chart, modesKey]);
+
   // `figure` + name is the stub's semantics: no live region yet. The real chart semantics
   // (E11-S13, CMP-180) revisit the role once the DOM mirror root carries content. `tabIndex={-1}`
   // (not a Tab stop, which E11-S13's plot stop adds): a press focuses it, so the engine's keys and
@@ -135,20 +154,28 @@ export function Chart({ options, label, onFrameStats, onError, children }: Chart
 export type PaneProps = {
   /** Share of the chart height, in (0, 1]. Changing it resizes the pane in place. */
   readonly heightRatio?: number;
+  /** E11-S09 (BQ-15): the pane's name in its region, stub and announcements; read at mount. */
+  readonly label?: string;
   readonly children?: ReactNode;
 };
 
 /** Adds one pane to the enclosing `<Chart>` for its lifetime; renders no DOM of its own. */
-export function Pane({ heightRatio, children }: PaneProps): ReactNode {
+export function Pane({ heightRatio, label, children }: PaneProps): ReactNode {
   const chart = useChartApi();
   const [pane, setPane] = useState<ReturnType<ChartApi["addPane"]> | null>(null);
   const ratioRef = useRef(heightRatio);
   ratioRef.current = heightRatio;
+  const labelRef = useRef(label);
+  labelRef.current = label;
 
   useEffect(() => {
     if (chart === null) return undefined;
     const ratio = ratioRef.current;
-    const created = chart.addPane(ratio === undefined ? {} : { heightRatio: ratio });
+    const name = labelRef.current;
+    const created = chart.addPane({
+      ...(ratio !== undefined && { heightRatio: ratio }),
+      ...(name !== undefined && { label: name }),
+    });
     setPane(created);
     return () => {
       created.remove();

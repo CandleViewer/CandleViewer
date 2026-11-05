@@ -11,6 +11,7 @@ Except `candle-ring.ts` and `candle-series.ts`: E12-S06 production bench code ov
 Except `lut-gen.ts`: E11-T04 production bench code over `src/theme`, driven by Vitest (BQ-T04-09).
 Except `resize-drag.ts`: E11-S10 production bench code over `src/worker`, driven by Vitest (BQ-154).
 Except `axis-ticks.ts`: E11-S06 production bench code over `src/axes`, driven by Vitest (BQ-204).
+Except `b6-sync4.ts`: E11-S09 production bench code over `src/sync` and `src/worker`, driven by Vitest (B6).
 Except `a11y-window.ts`: E11-S13 production bench code over `src/a11y` and the render runtime, driven by Vitest (BQ-S13-01).
 
 This directory is **throwaway prototype code** for the M0 spike ticket E06-K02
