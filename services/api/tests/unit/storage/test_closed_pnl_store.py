@@ -226,6 +226,58 @@ def test_each_statement_names_its_account_and_keeps_its_writers_and_readers_apar
     assert fills[1]["exec_type_1"] == ["Trade", "AdlTrade", "BustTrade"]
 
 
+def test_the_compositions_reads_name_the_account_and_scope_the_leg_to_the_fills_own() -> None:
+    """C-12.4 on rows 58, 61 and 62 (E29-S06 slice 5b): every table each reads is filtered on the
+    account, and row 58's leg on the fill's own account in the join, so another account's leg
+    names no group and drops no fill. Row 61 names its orders by id, venue id or both, each once
+    (a `UNION` of an arm per key), reads each order's fill times in `ix_exec_order`'s order,
+    correlated to that order alone, and writes the partial indexes' predicates as literals
+    (`ux_orders_exch_id`, `ix_psnap_flat`, `ux_cpr_order`)."""
+    fills = _sql(mod.walk_fills_statement(_A, "SOLUSDT", 1, FillKey(_T), 5))[0]
+    assert (
+        "trade_group_legs.trade_group_id AS order_group_id FROM executions LEFT OUTER JOIN orders "
+        "ON orders.id = executions.order_id LEFT OUTER JOIN trade_group_legs ON "
+        "trade_group_legs.id = orders.trade_group_leg_id AND trade_group_legs.exchange_account_id "
+        "= executions.exchange_account_id WHERE executions.exchange_account_id = $1::UUID"
+    ) in fills
+    both, ids, venue = (
+        _sql(mod.anchors_statement(_A, *named))
+        for named in (([_G], ["o-1"]), ([_G, _G], []), ([], ["o-1", "o-1"]))
+    )
+    for sql, params in (both, ids, venue):
+        for table in ("orders", "executions", "position_snapshots", "closed_pnl_records"):
+            assert f"{table}.exchange_account_id = $" in sql, table
+        assert {v for k, v in params.items() if k.startswith("exchange_account_id")} == {_A}
+        assert (
+            "position_snapshots.size = 0 AND position_snapshots.exchange_updated_ts IS NOT " in sql
+        )
+        assert "closed_pnl_records.exchange_order_id IS NOT NULL AND " in sql
+        assert "position_snapshots.exchange_updated_ts < times.first_fill" in sql
+        assert sql.count("executions.order_id = named.id") == 3 and "executions, (" not in sql
+        assert sql.endswith(") AS times ON true ORDER BY named.id")
+    by_id, by_venue = (
+        "FROM orders WHERE orders.exchange_account_id = $3::UUID AND orders.id IN ($",
+        "orders.exchange_order_id IS NOT NULL AND orders.exchange_order_id IN ($",
+    )
+    assert by_id in both[0] and " UNION SELECT orders.id AS id, " in both[0]
+    assert by_venue in both[0] and both[0].index(by_id) < both[0].index(by_venue)
+    assert by_id in ids[0] and " UNION " not in ids[0] and by_venue not in ids[0]
+    assert by_venue in venue[0] and " UNION " not in venue[0] and "orders.id IN" not in venue[0]
+    assert (ids[1]["id_1"], venue[1]["exchange_order_id_1"]) == ([_G], ["o-1"])  # each once
+    for order in (
+        "ORDER BY executions.exec_ts LIMIT $",
+        "ORDER BY executions.exec_ts DESC LIMIT",
+        "AND executions.closed_size > $10::INTEGER ORDER BY executions.exec_ts DESC",
+    ):
+        assert order in both[0], order  # fmt: skip
+    assert _sql(mod.hedge_statement(_A, "SOLUSDT")) == (
+        "SELECT EXISTS (SELECT * FROM positions WHERE positions.exchange_account_id = $1::UUID AND "
+        "positions.symbol = $2::VARCHAR AND positions.position_idx IN ($3::SMALLINT, "
+        "$4::SMALLINT)) AS hedged",
+        {"exchange_account_id_1": _A, "param_1": "SOLUSDT", "position_idx_1": [1, 2]},
+    )
+
+
 class _NoStatement:
     """A relational repository that a refusal never reaches: any unit of work fails the test."""
 
@@ -281,6 +333,10 @@ async def test_a_read_from_a_naive_time_is_refused_before_any_statement(
     checked here, as `oms_reads_sqlalchemy.py`'s is not (#4997)."""
     with pytest.raises(ValueError, match=f"^{column} must be a timezone-aware datetime$"):
         await _READS[read](_store(_NoStatement()), 5, _T.replace(tzinfo=None))
+
+
+async def test_the_anchors_of_no_order_run_no_statement() -> None:
+    assert await _store(_NoStatement()).anchors(_A, [], []) == ()
 
 
 @pytest.mark.parametrize("read", list(_READS))
