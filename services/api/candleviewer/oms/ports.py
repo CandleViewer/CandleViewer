@@ -655,11 +655,20 @@ class CredentialRejections(Protocol):
     signature, a missing permission). The OMS passes the code and the exchange's return code on as
     they came (the orchestrator's Q-I ruling); slice 3's binding maps the return code through the
     adapter's public key-verdict table (a code outside it, or none, is `unknown_key`), flips the
-    account's key standing in memory and pages the Owner (ruling Q10; the durable reaction is
-    #4243), so `oms` holds no exchange code (C-2.2)."""
+    account's key standing in memory and pages the Owner (ruling Q10), then hands a venue's
+    verdict to the stored-key self-check for the durable reaction (#4243), so `oms` holds no
+    exchange code (C-2.2). `verdict`, which every caller names: True for a venue's refusal, False
+    for a key this process could not use (a private stream's `key_unusable`, a local secrets fault
+    the venue never judged): the in-memory hold and the page only, never the durable reaction. A
+    venue code outside the verdict table (`10004`) is never durable either."""
 
     async def refused(
-        self, account_id: AccountId, *, error_code: str, exchange_ret_code: int | None
+        self,
+        account_id: AccountId,
+        *,
+        error_code: str,
+        exchange_ret_code: int | None,
+        verdict: bool,
     ) -> None: ...
 
 

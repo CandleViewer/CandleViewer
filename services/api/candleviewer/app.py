@@ -2777,6 +2777,7 @@ def create_app(
         topics=ws_oms,  # E29-T13 (#4207): its WS topics, published from its lane
         trade_groups=ws_trade_groups,
         kill_switch=kill_switch_port,  # #2904: the halt's port, shared (G-79)
+        marks=selfcheck,  # #4243: a refused credential's durable reaction, through the self-check
     )
     # #913 slice 3F (24 Sec.8.4): `placeOrder` over that runtime, mounted whatever
     # `trading.oms_enabled` says (it gates admission). The principal is the session's with its

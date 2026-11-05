@@ -850,7 +850,7 @@ class ApiKey(BaseModel):
     status: Annotated[
         Literal["pending", "active", "rotating", "revoked", "expired", "invalid"],
         Field(
-            description="Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the exchange rejected the key's credential (exchange refusal codes `10003` or `10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not signable.\n"
+            description='Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the stored-key self-check\'s own failed verdict on the key; it is not signable. A credential the exchange refused on a signed call is never marked `invalid` (`24-internal-schemas.md` §8.6): refusal codes `10003` and `33004` are held in memory, paged and disarmed through the self-check (§8.4 "A refused credential"), and `10004` is held in memory and paged only.\n'
         ),
     ]
     read_only: StrictBool | None = None
@@ -7211,7 +7211,7 @@ class Key(BaseModel):
     status: Annotated[
         Literal["pending", "active", "rotating", "revoked", "expired", "invalid"] | None,
         Field(
-            description="Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the exchange rejected the key's credential (exchange refusal codes `10003` or `10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it is not signable.\n"
+            description='Only `active` and `rotating` keys are signable (`21-database-schema.md` §3.2.3a). `invalid`: the stored-key self-check\'s own failed verdict on the key; it is not signable. A credential the exchange refused on a signed call is never marked `invalid` (`24-internal-schemas.md` §8.6): refusal codes `10003` and `33004` are held in memory, paged and disarmed through the self-check (§8.4 "A refused credential"), and `10004` is held in memory and paged only.\n'
         ),
     ] = None
     age_days: JsonInt | None = None

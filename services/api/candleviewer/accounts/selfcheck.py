@@ -68,12 +68,12 @@ too, leaves the account armed until the window ends. The verified columns and a 
 (`trading_enabled` false, with its rule code and time) persist too. A disarm whose record
 is not marked written is owed in the store, so the boot pass, like every pass, sends it before it
 checks a key (decision 5 on #836). The audit sink cannot dedup it (`AuditWriter.emit` mints a fresh
-`record_id`), so it can be written twice, never zero times, in three windows: a crash between the
-record and its mark, an emit cut by its bound once the writer has started the append (the writer
-keeps that append; the job counts the emit refused, so the record stays owed), and a test's disarm
-that a pass reads as owed while the test sends its record (a test runs outside the pass's lock). A
-record sent but not yet marked is kept in memory, so a failed mark is retried alone; when a test
-and a pass both mark one disarm, the second finds it marked, and neither fails.
+`record_id`), so it can be written twice, never zero times, in two windows: a crash between the
+record and its mark, and an emit cut by its bound once the writer has started the append (the
+writer keeps that append; the job counts the emit refused, so the record stays owed). One account's
+record has one sender at a time (`_settle`): a pass that reads as owed a disarm a test or a
+refused-credential reaction is sending skips it (#4243). A record sent but not yet marked is kept
+in memory, so a failed mark is retried alone.
 
 On demand (`testApiKey`, decision 11 on #836): `test()` runs one stored key's pipeline as a pass
 does and hands its verdict to the same outcome handling, with the acting Owner on `account.tested`,
@@ -81,6 +81,16 @@ so a failure found on demand latches and force-disables at once and a pass refre
 pass. A test with no verdict raises and changes nothing. With no egress IP configured it signs and
 judges nothing, as a pass does: it latches `UNAVAILABLE` and raises `NoEgressIp`. Its WebSocket
 half is not here.
+
+A refused credential (24 §8.4, #4243): `credential_rejected`, called on the serving loop once the
+key standing holds the in-memory reaction to a venue's verdict, first disarms the account with the
+refusal as its code, then marks its usable keys not already failed by the rule a key-info call's
+same refusal fails (a write-ahead `account.tested`, then that code in `last_error_*`, the standing
+failure above), and publishes the failing-key gauges. It latches nothing system-wide and moves no
+key's status: the report names no key, so a pass clears the mark; only the Owner re-arms. One
+reaction per account runs at a time, at most `MAX_REJECTIONS`, its marking within one key check's
+deadline; others wait in a pending slot per account. A pass or an error whose check began before
+the mark neither clears nor replaces it (`record_pass`, `record_error`; `_passed`).
 
 Freshness (SR-E27-18): `is_fresh` is the one window rule, here and at order admission (#837 W3).
 `watch()` is the watchdog. The accounts row-gauge loop, a task this job does not own, runs it each
@@ -96,6 +106,7 @@ the real backend.
 from __future__ import annotations
 
 import asyncio
+import functools
 import math
 import re
 import time
@@ -112,11 +123,13 @@ from candleviewer.accounts.models import ExchangeAccount
 from candleviewer.accounts.verification import (
     KeyFacts,
     ProbeFacts,
+    Refusal,
     Rule,
     VerificationFailure,
     VerificationInconclusive,
     VerificationPolicy,
     VerificationResult,
+    refusal_rule,
     verify,
 )
 from candleviewer.observability import spawn
@@ -182,6 +195,13 @@ _CODE: Final = re.compile(r"[a-z0-9_]{1,40}")
 #: here and in the order-entry gate's key standing (`accounts.key_standing`, #837 W3).
 STANDING_FAILURE_CODES: Final = frozenset(rule.value for rule in Rule)
 POLICY_VIOLATION: Final = "security.key_policy_violation"
+#: 24 §8.4 "A refused credential" (#4243): the durable reactions in flight at once, and the
+#: accounts whose report waits for one (C-2.18).
+MAX_REJECTIONS: Final = 32
+MAX_PENDING: Final = 256
+REJECTION_TASK: Final = "key-selfcheck-rejection"
+#: A disarm's bounded steps (`_disarm`): the conditional update, its record and the record's mark.
+_DISARM_STEPS: Final = 3
 #: A disarm's code when a rule code would not fit `ea_disarm_code_fmt` (`_CODE`), so that CHECK
 #: never refuses a force-disable (C-2.8).
 _DISARM_FALLBACK: Final = "key_policy_violation"
@@ -362,11 +382,20 @@ class KeySelfCheck:
         self._booted = False
         #: Disarms whose record was written but not marked, by account: only the mark is retried.
         self._unmarked: dict[UUID, datetime] = {}
+        #: Accounts whose disarm record is being sent now (`_settle`): no second sender.
+        self._settling: set[UUID] = set()
         #: The standing result of each key in the last key list read, and of each `invalid` key.
         self.results: dict[UUID, KeyCheck] = {}
         #: Keys a failed check set `invalid`, or the boot pass found so: they leave the key list,
         #: and their failed results stay on display until a restart finds them revoked (#5281).
         self._invalid: dict[UUID, KeyCheck] = {}
+        #: The refused-credential reactions in flight, one per account, with the refusal each
+        #: reacts to (`credential_rejected`); none is begun once `stop()` has been called.
+        self._rejecting: dict[UUID, tuple[asyncio.Task[None], Refusal]] = {}
+        self._stopped = False
+        #: Each account's report waiting for a slot: the latest refusal, its venue code and the
+        #: time it arrived, which its disarm and its marks are stamped with.
+        self._pending: dict[UUID, tuple[Refusal, int | None, datetime]] = {}
 
     @property
     def failing(self) -> int:
@@ -438,10 +467,150 @@ class KeySelfCheck:
             self._task.add_done_callback(self._loop_ended)
 
     async def stop(self) -> None:
+        self._stopped = True  # no refused-credential reaction begins from here on
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        if self._pending:
+            logger().critical("key_selfcheck_rejections_unbegun", accounts=len(self._pending))
+            self._pending.clear()
+        if rejecting := tuple(task for task, _ in self._rejecting.values()):
+            # the disarm runs first and its steps are bounded: past their bounds only marking is
+            # cut, and a disarm that committed is owed its record in the store
+            _, late = await asyncio.wait(rejecting, timeout=_DISARM_STEPS * self._timeout_s)
+            for left in late:
+                left.cancel()
+            await asyncio.gather(*late, return_exceptions=True)
+
+    def credential_rejected(
+        self, account_id: UUID, refusal: Refusal, *, exchange_ret_code: int | None
+    ) -> None:
+        """24 §8.4 "A refused credential" (#4243): the durable reaction to a venue's verdict, run
+        on the serving loop and never awaited (module docstring). A report for an account whose
+        reaction is in flight, or past `MAX_REJECTIONS`, waits in that account's one pending slot
+        (the latest report kept, at most `MAX_PENDING` accounts) and begins when a reaction ends;
+        one in flight with another refusal is logged with both codes. One after `stop()`, past the
+        pending bound or with no running loop is logged critical and dropped, the key standing's
+        in-memory refusal holding for the process. A report is stamped when it arrives, so one
+        that waited is dated before any check begun meanwhile."""
+        fields = {"account_id": str(account_id), "refusal": refusal.value}
+        at = self._clock()
+        if self._stopped:
+            logger().critical("key_selfcheck_rejection_dropped", stopped=True, **fields)
+            return
+        if (flight := self._rejecting.get(account_id)) is not None:
+            log = logger().warning if flight[1] is refusal else logger().error
+            log("key_selfcheck_rejection_in_flight", in_flight=flight[1].value, **fields)
+            self._queue(account_id, refusal, exchange_ret_code, at)
+        elif len(self._rejecting) >= MAX_REJECTIONS:
+            logger().warning("key_selfcheck_rejection_queued", **fields)
+            self._queue(account_id, refusal, exchange_ret_code, at)
+        else:
+            self._begin(account_id, refusal, exchange_ret_code, at)
+
+    def _queue(
+        self, account_id: UUID, refusal: Refusal, ret_code: int | None, at: datetime
+    ) -> None:
+        if account_id not in self._pending and len(self._pending) >= MAX_PENDING:
+            logger().critical(
+                "key_selfcheck_rejection_dropped", account_id=str(account_id), refusal=refusal.value
+            )
+            return
+        self._pending[account_id] = (refusal, ret_code, at)
+
+    def _begin(
+        self, account_id: UUID, refusal: Refusal, ret_code: int | None, at: datetime
+    ) -> None:
+        reaction = self._rejected(account_id, refusal, ret_code, at)
+        try:
+            task = spawn(reaction, name=REJECTION_TASK)
+        except RuntimeError:  # no running loop: nothing can write
+            reaction.close()
+            logger().critical(
+                "key_selfcheck_rejection_dropped", account_id=str(account_id), refusal=refusal.value
+            )
+            return
+        self._rejecting[account_id] = (task, refusal)
+        task.add_done_callback(functools.partial(self._rejection_ended, account_id))
+
+    def _rejection_ended(self, account_id: UUID, task: asyncio.Task[None]) -> None:
+        """Log a reaction that failed (its class only: a store error's text can carry a row),
+        then begin the pending ones, this account's first, while slots are free."""
+        self._rejecting.pop(account_id, None)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            error = type(exc).__name__
+            logger().critical(
+                "key_selfcheck_rejection_failed", account_id=str(account_id), error=error
+            )
+        if self._stopped:
+            return
+        waiting = sorted(self._pending, key=lambda pending: pending != account_id)
+        for pending in waiting:
+            if len(self._rejecting) >= MAX_REJECTIONS:
+                return
+            if pending not in self._rejecting:
+                self._begin(pending, *self._pending.pop(pending))
+
+    async def _rejected(
+        self, account_id: UUID, refusal: Refusal, ret_code: int | None, now: datetime
+    ) -> None:
+        """Disarm the account first (C-2.8 enforcement first, as `_disarm` runs it: the
+        conditional update, then its owed `account.disabled_by_policy`, each step its own bound),
+        so no marking delays or withholds it; then mark its keys within one key check's deadline,
+        then publish the gauges, each stamped `now`, when the report arrived."""
+        rule = refusal_rule(refusal).value
+        source = "signed_call" if ret_code is not None else "stream_status"
+        detail = {"refusal": refusal.value, "exchange_ret_code": ret_code, "source": source}
+        await self._disarm(PolicyDisarm(account_id, refusal.value, now))
+        try:
+            async with asyncio.timeout(self._deadline_s):
+                try:
+                    async with asyncio.timeout(self._timeout_s):
+                        rows = await self._store.targets()
+                except Exception as exc:  # TimeoutError included; cancellation propagates
+                    error = type(exc).__name__
+                    logger().critical(
+                        "key_selfcheck_rejection_unread", account_id=str(account_id), error=error
+                    )
+                    rows = ()
+                for row in rows:
+                    if row.account.id == account_id:
+                        await self._mark(row, account_id, rule, now, detail)
+        finally:
+            self._failing()  # a key held failed is published, whatever cut the rest
+
+    async def _mark(
+        self, row: SelfCheckTargetRow, account_id: UUID, rule: str, now: datetime,
+        detail: Mapping[str, object],
+    ) -> None:  # fmt: skip
+        """One key held failed by `rule`, then its write-ahead `account.tested` and its code. A
+        key already failed, here or in the store, is left as it stands: one mark an episode."""
+        key, prior, egress = row.key_id, self.results.get(row.key_id), self._policy.egress_ip
+        if prior is not None and prior.outcome == "failed":
+            return
+        if prior is None and row.last_error_code in STANDING_FAILURE_CODES:
+            code, last_pass = row.last_error_code, row.verified_at
+            self.results[key] = KeyCheck(
+                key, account_id, now, "failed", code, None, last_pass, egress
+            )
+            return
+        last_pass = row.verified_at if prior is None else prior.last_pass_at
+        self.results[key] = KeyCheck(key, account_id, now, "failed", rule, None, last_pass, egress)
+        logger().critical("key_selfcheck_failed", key_id=str(key), rules=[rule], **detail)
+        tested = {
+            "outcome": "failure",
+            "severity": "critical",
+            "reason": detail["refusal"],
+            "after_state": {"failures": [rule], **detail},
+        }
+        marked = await self._write(
+            key,
+            lambda: self._emit("account.tested", "api_key", key, **tested),
+            lambda: self._store.record_error(key, code=rule, at=now),
+        )
+        if not marked:
+            logger().critical("key_selfcheck_rejection_unmarked", key_id=str(key))
 
     async def _loop(self) -> None:
         while True:
@@ -654,6 +823,12 @@ class KeySelfCheck:
             lambda: self._emit("account.tested", "api_key", key, actor, after_state=summary),
             lambda: self._store.record_pass(key, verified),
         )
+        held = self.results.get(key)
+        if held is not None and held.outcome == "failed" and held.checked_at > now:
+            # a failure held after this check began (a refused credential, #4243) outlives it,
+            # as the store keeps that error's code (`record_pass`)
+            logger().warning("key_selfcheck_pass_overtaken", key_id=str(key))
+            return
         last_pass, egress = now if recorded else target.verified_at, self._policy.egress_ip
         self.results[key] = KeyCheck(
             key, account_id, now, "passed", None, verdict, last_pass, egress
@@ -769,6 +944,19 @@ class KeySelfCheck:
             await self._settle(disarm)
 
     async def _settle(self, disarm: PolicyDisarm) -> None:
+        """One account's record at a time: a pass's `_settle_owed` reading a disarm owed while a
+        refused-credential reaction or a test is sending its record skips it (#4243), so one
+        disarm writes one record; one skipped stays owed for the next pass."""
+        account_id = disarm.account_id
+        if account_id in self._settling:
+            return
+        self._settling.add(account_id)
+        try:
+            await self._settle_once(disarm)
+        finally:
+            self._settling.discard(account_id)
+
+    async def _settle_once(self, disarm: PolicyDisarm) -> None:
         """Send one disarm's `account.disabled_by_policy`, then mark it written. A refused record
         stays owed (logged critical); a written one whose mark failed is not sent again."""
         account_id = disarm.account_id

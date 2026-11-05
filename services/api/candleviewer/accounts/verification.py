@@ -348,6 +348,12 @@ _REFUSAL_RULES: Final = {
 }
 
 
+def refusal_rule(reason: Refusal) -> Rule:
+    """The rule a key-info call's `reason` fails: the self-check's mark for the same refusal met
+    by a signed call (24 §8.4 "A refused credential", #4243)."""
+    return _REFUSAL_RULES[reason][0]
+
+
 def _refusal_failure(reason: Refusal, egress: str | None) -> VerificationFailure:
     """A key-info refusal. An IP refusal names the egress IP, for copying into the whitelist."""
     rule, text = _REFUSAL_RULES[reason]

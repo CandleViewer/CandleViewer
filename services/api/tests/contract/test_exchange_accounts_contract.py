@@ -1175,22 +1175,32 @@ def test_key_status_invalid_is_a_rejected_credential_and_not_signable() -> None:
     status = _fold(_SCHEMAS["KeyStatus"]["description"])
     assert "Only `active` and `rotating` keys are signable" in status
     assert (
-        "`invalid`: the exchange rejected the key's credential (exchange refusal codes `10003` or "
-        "`10004`), which `24-internal-schemas.md` §8.6 answers by marking the key `invalid`; it "
-        "is not signable"
+        "`invalid`: the stored-key self-check's own failed verdict on the key; it is not signable. "
+        "A credential the exchange refused on a signed call is never marked `invalid` "
+        "(`24-internal-schemas.md` §8.6): refusal codes `10003` and `33004` are held in memory, "
+        'paged and disarmed through the self-check (§8.4 "A refused credential"), and `10004` is '
+        "held in memory and paged only"
     ) in status
     # The descriptions that reach openapi_models.py avoid the Bybit wire name (see the next test).
     assert "retCode" not in status
     assert "invalid" in _SCHEMAS["KeyStatus"]["enum"]
     assert "invalid" not in _SIGNABLE_STATUSES
-    # §8.6 marks a key `invalid` on the two credential refusals that the probe calls `auth_error`.
+    # §8.6 (#4243): the credential refusals the probe calls `auth_error` never mark a key
+    # `invalid`; `10003` and `33004` disarm through the self-check, `10004` is held and paged only.
     doc = _INTERNAL_SCHEMAS.read_text(encoding="utf-8")
     table = doc[doc.index("| Bybit retCode") :]
     rows = {code: _fold(row) for code, row in re.findall(r"^\| `(\d+)` *\|(.*)$", table, re.M)}
-    assert "`AUTH_ERROR`" in rows["10003"]
-    assert "Mark key `invalid`" in rows["10003"]
-    assert "`AUTH_ERROR`" in rows["10004"]
-    assert rows["10004"].endswith("| Same |")
+    assert all("`AUTH_ERROR`" in rows[code] for code in ("10003", "10004", "33004"))
+    assert (
+        'Per §8.4 "A refused credential": held in memory, paged, then disarmed through the '
+        "self-check, each usable key given its stored failure rule, never `invalid`"
+    ) in rows["10003"]
+    assert (
+        "Per §8.4: outside the key-verdict table, so `unknown_key` held in memory and paged only, "
+        "never marked or disarmed"
+    ) in rows["10004"]
+    assert "Same as `10003` (§8.4)" in rows["33004"]
+    assert all("Mark key `invalid`" not in rows[code] for code in ("10003", "10004", "33004"))
     probe = _fold(_SCHEMAS["KeyProbeError"]["description"])
     assert "`auth_error`: key or signature refused (`10003`, `10004`)" in probe
 

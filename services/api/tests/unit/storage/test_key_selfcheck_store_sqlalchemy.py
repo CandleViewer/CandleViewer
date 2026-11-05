@@ -143,7 +143,15 @@ def test_statements_write_only_the_verification_columns() -> None:
         "ip_whitelist", "ip_whitelist_verified_at", "expires_at", "updated_at",
         "last_error_code", "last_error_at",
     }  # fmt: skip
-    assert "last_error_code = NULL, last_error_at = NULL" in mod._PASS.text  # a pass clears it
+    # a pass clears the code, unless an error was stored after its check began (#4243)
+    assert "last_error_code = CASE WHEN k.last_error_at > :at THEN k.last_error_code END" in (
+        mod._PASS.text
+    )
+    assert "last_error_at = CASE WHEN k.last_error_at > :at THEN k.last_error_at END" in (
+        mod._PASS.text
+    )
+    # an error never overwrites one stored after its check began (#4243)
+    assert mod._ERROR.text.endswith("AND (k.last_error_at IS NULL OR k.last_error_at <= :at)")
     assert error.targets == {"last_error_code", "last_error_at", "updated_at"}
     [disable] = writes_to(mod._DISABLE.text, "exchange_accounts")
     assert disable.targets == {

@@ -169,7 +169,12 @@ class World:
         return True
 
     async def refused(
-        self, account_id: UUID, *, error_code: str, exchange_ret_code: int | None
+        self,
+        account_id: UUID,
+        *,
+        error_code: str,
+        exchange_ret_code: int | None,
+        verdict: bool,
     ) -> None:
         self._hit("refused")
         self.reported.append((account_id, error_code))
@@ -628,7 +633,9 @@ async def test_wrappers_raise_nothing_but_cancelled_error() -> None:
         w.consumer._health.wallet_pushed(A, cast(Any, object()))
         w.consumer._notices.publish(A, reason=RESYNCING)
         w.consumer._notices.publish(A, reason=cast(Any, "oms.account_synced"))  # no row
-        await w.consumer._credentials.refused(A, error_code="AUTH_ERROR", exchange_ret_code=None)
+        await w.consumer._credentials.refused(
+            A, error_code="AUTH_ERROR", exchange_ret_code=None, verdict=True
+        )
         w.metrics.push.count(cast(Any, "not-an-outcome"))
     events = [log["event"] for log in logs]
     assert events.count("stream_evidence_hop_failed") == 3
@@ -645,13 +652,13 @@ async def test_wrappers_raise_nothing_but_cancelled_error() -> None:
 
     guarded = world.build(credentials=Cancelling()).consumer._credentials
     with pytest.raises(asyncio.CancelledError):  # a cancel is never swallowed
-        await guarded.refused(A, error_code="AUTH_ERROR", exchange_ret_code=None)
+        await guarded.refused(A, error_code="AUTH_ERROR", exchange_ret_code=None, verdict=True)
 
 
 async def test_credential_report_reaches_the_runtimes_binding() -> None:
     world = World()
     await world.build().consumer._credentials.refused(
-        A, error_code="AUTH_ERROR", exchange_ret_code=None
+        A, error_code="AUTH_ERROR", exchange_ret_code=None, verdict=True
     )
     assert world.reported == [(A, "AUTH_ERROR")] and world.pages == []
 

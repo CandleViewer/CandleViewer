@@ -103,6 +103,7 @@ class Rig:
     hang: set[str] = field(default_factory=set)  # a port call that never answers, by name
     resync_error: Exception | None = None
     log: list[Any] = field(default_factory=list)
+    verdicts: list[bool] = field(default_factory=list)  # each credential report's `verdict`
     closes: list[UUID] = field(default_factory=list)
     counts: list[str] = field(default_factory=list)
     pages: list[str] = field(default_factory=list)
@@ -196,9 +197,15 @@ class Rig:
         self.log.append(("notice", reason))
 
     async def refused(
-        self, account_id: UUID, *, error_code: str, exchange_ret_code: int | None
+        self,
+        account_id: UUID,
+        *,
+        error_code: str,
+        exchange_ret_code: int | None,
+        verdict: bool,
     ) -> None:
         self.log.append(("refused", error_code, exchange_ret_code))
+        self.verdicts.append(verdict)
         await self._stall("refused")
 
     async def take(self, account_id: UUID, position: Position, route: Any) -> None:
@@ -411,6 +418,8 @@ async def test_consumer_closed_on_a_key_fault_reports_the_credential_without_a_c
     await rig.until(lambda: rig.closes == [A])
     assert entries(rig, "refused") == [("refused", "AUTH_ERROR", None)]
     assert ("drop", A) in rig.log and c.accounts() == set()
+    # #4243: only the venue's refusal is a verdict on the key; an unusable key is a local fault
+    assert rig.verdicts == [reason == "auth_refused"]
 
 
 @pytest.mark.parametrize("reason", ["key_revoked", "shutdown"])

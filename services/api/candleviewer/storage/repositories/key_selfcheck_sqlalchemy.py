@@ -60,19 +60,26 @@ _TARGETS = sa.text(
     "WHERE ea.env::text = :env AND ea.deleted_at IS NULL AND k.revoked_at IS NULL "
     "AND k.status IN ('active', 'rotating') ORDER BY k.id LIMIT :cap"
 )
+#: A pass or an error is stamped with its check's start (`:at`): an error stored after that start
+#: (a refused credential's mark, 24 §8.4, #4243) outlives it, so a check that began before the
+#: refusal neither clears its code nor overwrites it. An equal stamp is deliberately the check's:
+#: a pass clears (`>` keeps only a strictly later error) and an error writes (`<=`), as before.
 _PASS = sa.text(
     "UPDATE api_keys AS k SET "
     "permission_snapshot = k.permission_snapshot || CAST(:snapshot AS jsonb), "
     "permission_snapshot_at = :at, can_trade = :can_trade, read_only = :read_only, "
     "ip_whitelist = CAST(:ips AS cidr[]), ip_whitelist_verified_at = :at, "
-    "expires_at = :expires_at, last_error_code = NULL, last_error_at = NULL, updated_at = now() "
+    "expires_at = :expires_at, "
+    "last_error_code = CASE WHEN k.last_error_at > :at THEN k.last_error_code END, "
+    "last_error_at = CASE WHEN k.last_error_at > :at THEN k.last_error_at END, updated_at = now() "
     "FROM exchange_accounts ea WHERE k.id = CAST(:id AS uuid) "
     "AND ea.id = k.exchange_account_id AND ea.env::text = :env AND k.revoked_at IS NULL"
 )
 _ERROR = sa.text(
     "UPDATE api_keys AS k SET last_error_code = :code, last_error_at = :at, updated_at = now() "
     "FROM exchange_accounts ea WHERE k.id = CAST(:id AS uuid) "
-    "AND ea.id = k.exchange_account_id AND ea.env::text = :env AND k.revoked_at IS NULL"
+    "AND ea.id = k.exchange_account_id AND ea.env::text = :env AND k.revoked_at IS NULL "
+    "AND (k.last_error_at IS NULL OR k.last_error_at <= :at)"
 )
 _RETIRE = sa.text(
     "UPDATE api_keys AS k SET status = CAST(:status AS key_status), updated_at = now() "
