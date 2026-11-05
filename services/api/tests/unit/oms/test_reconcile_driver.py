@@ -32,7 +32,7 @@ from candleviewer.oms.reconcile_job import (
     RetryHop,
     leaf_of,
 )
-from candleviewer.oms.reconcile_report import STALE_NOTICE
+from candleviewer.oms.reconcile_report import STALE_NOTICE, Trigger
 from candleviewer.oms.reconcile_standing import STALE_AFTER_S, STALE_DETAIL
 from candleviewer.statechart import build as build_chart
 from candleviewer.statechart.bindings import b19_reconciliation as b19
@@ -887,6 +887,58 @@ async def test_a_starts_premark_refuses_each_unopened_account_and_calls_no_liste
         assert (heard, job.standing.stale_accounts()) == ([], frozenset())
         job.standing.mark_stale(ACCOUNT)  # a real lock: heard exactly once
         assert heard == [ACCOUNT]
+    finally:
+        await driver.stop()
+
+
+async def test_a_start_that_fails_before_its_open_locks_the_account_heard_once_and_replayed(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#5233's verify (Major, Minor 2): an account whose start fails before its job opens is held
+    refused for long, so its pre-mark becomes the lock (24 Sec.8.5: refused with `account_stale`
+    until a trigger opens its job), and a refusal never comes without its notice (23 Sec.15.9):
+    the pre-mark is heard by no listener while the start runs, the failure is heard exactly once,
+    and the replay lists the account. The other account's start, which opened, is heard by none."""
+    heard: list[AccountId] = []
+    job.standing.listen(heard.append)
+    at_failure: list[list[AccountId]] = []
+    driver = _driver(job, timers)
+    trigger = driver.trigger
+
+    async def failing(account: AccountId, sent: Trigger) -> Any:
+        if account == ACCOUNT:  # before any open: no job, nothing restored
+            at_failure.append(list(heard))
+            raise ConnectionError("the snapshot store is down")
+        return await trigger(account, sent)
+
+    monkeypatch.setattr(driver, "trigger", failing)
+    await driver.start([ACCOUNT, OTHER])
+    try:
+        stale = OrderEntryRefusal("account_stale", STALE_DETAIL)
+        assert at_failure == [[]]  # the pre-mark, before the failure: unheard
+        assert ACCOUNT not in driver._jobs and OTHER in driver._jobs
+        assert (heard, job.standing.stale_accounts()) == ([ACCOUNT], frozenset({ACCOUNT}))
+        assert (job.standing.refusal(ACCOUNT), job.standing.refusal(OTHER)) == (stale, None)
+        assert job.standing.stale_count == 1
+    finally:
+        await driver.stop()
+
+
+async def test_a_start_send_that_fails_after_an_idle_open_is_heard_exactly_once(
+    job: Job, timers: Timers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#5233's verify (Major): an account whose job opened as `idle` (its pre-mark lifted) and
+    whose `startup` send then failed is locked and heard exactly once, and replayed; the other
+    account's start is heard by none."""
+    heard: list[AccountId] = []
+    job.standing.listen(heard.append)
+    driver = _driver(job, timers)
+    _failing(driver, monkeypatch, "STARTUP", ACCOUNT)
+    await driver.start([ACCOUNT, OTHER])
+    try:
+        assert set(driver._jobs) == {ACCOUNT, OTHER} and await _resting(driver) == "idle"
+        assert (heard, job.standing.stale_accounts()) == ([ACCOUNT], frozenset({ACCOUNT}))
+        assert job.standing.refusal(OTHER) is None
     finally:
         await driver.stop()
 

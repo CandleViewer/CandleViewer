@@ -2986,7 +2986,7 @@ class OmsRuntime:
         first trigger, and one whose read failed is held refused until then (`tradable`). The
         start is bounded as the seed is (`_bounded`), so it delays `ready` by at most 17 s, and
         one that overruns has failed, its task on the lane cancelled: an account it did not open
-        keeps the stale mark `ReconcileJobs.start` sets on each before its loop, which only the
+        keeps the pre-mark `ReconcileJobs.start` sets on each before its loop, which only the
         account's open clears. A start that fails also holds the whole environment's order entry
         (the standing refuses every account, `account_stale`), as one that fails before the jobs'
         start marks no account (INV-B19-a, C-2.21): the first is logged CRITICAL and paged, a

@@ -27,7 +27,9 @@ records; this enforces:
   is to open before its first open, and only that open clears the mark (`restored`). The mark is
   no lock, so the listener never hears it and the replay never reads it (`stale_accounts`): a
   socket open during the start sees no transient `oms.account_stale`. It refuses entry as a lock
-  does, and a lock gained over it (a restored `stale_lockout`, a refused snapshot) is heard.
+  does, and a lock gained over it (a restored `stale_lockout`, a refused snapshot, the account's
+  start failing) is heard and replayed: `mark_stale` promotes the pre-mark to the lock, the lock
+  held before the pre-mark lifts, so the account is never in neither set (C-2.21).
 
 It is neither account health nor B20's risk lockout, and protective paths (a stop attach, restore
 or tightening, a cancel, a close) never consult it (C-2.6): only the order-entry gate does.
@@ -117,10 +119,14 @@ class ReconcileStanding:
         return frozenset(self._stale)
 
     def mark_stale(self, account_id: AccountId) -> None:
-        """Before B19 is told (C-2.21); idempotent, so the listener hears a gain only."""
+        """Before B19 is told (C-2.21); idempotent, so the listener hears a gain only. A pre-mark
+        it meets becomes the lock: lifted only once the lock holds (never in neither set), and
+        heard as a gain, as the replay now reads it (23 Sec.15.9)."""
         if account_id in self._stale:
+            self._premarked.discard(account_id)
             return
         self._stale.add(account_id)
+        self._premarked.discard(account_id)  # after the add: refused throughout (C-2.21)
         if self._gained is not None:
             try:
                 self._gained(account_id)
@@ -143,12 +149,14 @@ class ReconcileStanding:
 
     def restored(self, account_id: AccountId, state: str) -> None:
         """Start-up: the account's restored B19 leaf state decides, as no entry action re-ran;
-        it lifts the start's pre-mark, and a restored lock is heard as a gain."""
-        self._premarked.discard(account_id)
+        it lifts the start's pre-mark, and a restored lock is heard as a gain. A restored lock
+        holds before the pre-mark lifts (`mark_stale`), so a read on the serving loop never finds
+        the account in neither set (C-2.21)."""
         if state == STALE_STATE:
             self.mark_stale(account_id)
         else:
             self._stale.discard(account_id)
+            self._premarked.discard(account_id)
 
     def hold(self) -> None:
         """Every account refused until `release`: the jobs could not start, so no account's

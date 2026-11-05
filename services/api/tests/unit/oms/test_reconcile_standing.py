@@ -182,6 +182,43 @@ def test_a_restored_lock_over_a_premark_is_heard_once() -> None:
     assert heard == [ACCOUNT] and standing.stale_accounts() == frozenset({ACCOUNT})
 
 
+class _Probed(set[AccountId]):
+    """A standing's set that records `refusal(ACCOUNT)` after each of its writes."""
+
+    def __init__(self, standing: ReconcileStanding, seen: list[OrderEntryRefusal | None]) -> None:
+        super().__init__()
+        self._standing, self._seen = standing, seen
+
+    def add(self, account: AccountId) -> None:
+        super().add(account)
+        self._seen.append(self._standing.refusal(ACCOUNT))
+
+    def discard(self, account: object) -> None:
+        super().discard(account)
+        self._seen.append(self._standing.refusal(ACCOUNT))
+
+
+@pytest.mark.parametrize("promote", ["restored", "mark_stale"])
+def test_a_lock_over_a_premark_refuses_entry_at_every_write(promote: str) -> None:
+    """C-2.21 (#5233's verify, Minor 1): a lock gained over the start's pre-mark (a restored
+    `stale_lockout`, or `mark_stale`) holds before the pre-mark lifts, so a read on the serving
+    loop never finds the account in neither set: `refusal` refuses after every write."""
+    standing = ReconcileStanding()
+    seen: list[OrderEntryRefusal | None] = []
+    heard: list[OrderEntryRefusal | None] = []
+    standing.listen(lambda account: heard.append(standing.refusal(account)))
+    standing._stale = _Probed(standing, seen)
+    standing._premarked = _Probed(standing, seen)
+    standing.premark(ACCOUNT)
+    if promote == "restored":
+        standing.restored(ACCOUNT, "stale_lockout")
+    else:
+        standing.mark_stale(ACCOUNT)
+    stale = OrderEntryRefusal("account_stale", STALE_DETAIL)
+    assert len(seen) == 3 and seen == [stale] * 3  # premark, the lock's add, the pre-mark's lift
+    assert heard == [stale] and standing.stale_accounts() == frozenset({ACCOUNT})
+
+
 def test_protective_paths_never_consult_the_standing() -> None:
     """C-2.6, BQ-5: only the order-entry gate reads the standing; the stop writers, the cancel
     and close paths and the exits never name it. Its writers are the pass's own modules (the

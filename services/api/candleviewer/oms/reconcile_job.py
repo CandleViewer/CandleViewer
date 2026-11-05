@@ -271,13 +271,14 @@ class ReconcileJobs:
     async def start(self, accounts: Iterable[AccountId]) -> None:
         """Wires B19's port, then opens each account's job (restored, or built afresh) and sends
         it `startup` (BQ-14: the caller reports ready after it, never after the pass). Each
-        account with no job yet is marked stale before the loop begins, and only its job's open
-        clears the mark (`_open`, its standing rebuilt from its state), so a start its caller's
-        bound cuts short, its task cancelled, leaves every account it did not open refused (the
-        delta look's m-a on the wiring, INV-B19-a). One account whose start fails, whatever the
-        failure (its job not opened, or a send that did not answer), is logged, paged and refused
-        order entry (its standing set, fail closed) until a later trigger opens its job or
-        reaches it (`_reached`); the others start. A stop that overtakes the start ends it,
+        account with no job yet is pre-marked before the loop begins (`premark`, unheard), and
+        only its job's open clears the pre-mark (`_open`, its standing rebuilt from its state), so
+        a start its caller's bound cuts short, its task cancelled, leaves every account it did not
+        open refused (the delta look's m-a on the wiring, INV-B19-a). One account whose start
+        fails, whatever the failure (its job not opened, or a send that did not answer), is
+        logged, paged and locked (`mark_stale`, fail closed: a pre-mark becomes the lock, heard
+        and replayed, 23 Sec.15.9) until a later trigger opens its job or reaches it
+        (`_reached`); the others start. A stop that overtakes the start ends it,
         raised: the open it meets registers nothing (`_unless_stopped`), and no account is held or
         paged once the stop has begun (the orchestrator's read of the wiring, L1)."""
         remediate = self._remediates(self._env)
@@ -299,8 +300,8 @@ class ReconcileJobs:
             except Exception as exc:  # any failure holds this account; the others still start
                 if self._life != life:  # a stop overtook the start: it holds and pages nothing
                     raise
-                if not self._standing.is_stale(account):  # unknown: refused until a trigger
-                    self._standing.mark_stale(account)  # reaches it; a pre-mark still holds
+                self._standing.mark_stale(account)  # unknown: locked, heard and replayed,
+                # until a trigger reaches it; a pre-mark becomes the lock (24 Sec.8.5, 23 Sec.15.9)
                 self._unstarted.add(account)
                 _log().critical("reconcile_job_unopened", account_id=str(account),
                                 failure=type(exc).__name__, cv_page=True)  # fmt: skip
