@@ -426,9 +426,10 @@ from candleviewer.retention_wiring import (
 )
 from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
-from candleviewer.rules.manager import REFUSED_CAPS, Actor
+from candleviewer.rules.manager import REFUSED_CAPS, Actor, EvaluableRule
 from candleviewer.rules.service import RulesService
 from candleviewer.rules_oms_wiring import RuleAlerts, rule_action_records, rule_metrics
+from candleviewer.rules_producers_wiring import BarFieldProducer, build_bridge
 from candleviewer.rules_store_pg import PostgresRuleStore
 from candleviewer.settings import (
     STOP_SLACK_S,
@@ -1716,6 +1717,17 @@ def create_app(
     # #2787 D2-H1, 23 §7.4: a repairing read reaches the subscribers through the store's hook
     # alone, never a task that diffs `latest()` across an await (it can miss a repair).
     bars_series.on_repair(_repair_hooks(publisher.history_repair, indicators.history_repair))
+    # E35-T15 (#5745): the rules' bar fields after the engine, before the writer; composed only
+    # with the evaluator (C-4.13) and pushing nothing until the bridge attaches at rules start.
+    rule_bars = (
+        BarFieldProducer(
+            lambda: getattr(getattr(app.state, "bars_runtime", None), "builder_set", None),
+            lambda sym: _catalogue_qty_step(ctx, sym),
+            now_us=bars_clock,
+        )
+        if resolved.rules_evaluator_enabled
+        else None
+    )
     app.state.bars_runtime = wire_bars(
         ctx,
         inner_sink=bars_sink,
@@ -1728,6 +1740,7 @@ def create_app(
         publisher=publisher,
         indicators=indicators,
         precedence=kline_bars.health,
+        extra_sinks=(rule_bars,) if rule_bars is not None else (),
     )
     kline_bars.bind(
         app.state.bars_runtime.writer,
@@ -3514,6 +3527,26 @@ def create_app(
         audit=_rules_audit,
         broadcast=_rules_broadcast,
     )
+    if resolved.rules_evaluator_enabled:
+        # E35-T15 (#5745): the metric producers, attached when the evaluator starts; the live
+        # `env` only, so a replay session never feeds the source (C-2.11). Off: none is built.
+
+        async def _evaluable_rules() -> list[EvaluableRule]:
+            manager = ctx.rules.manager()
+            return [] if manager is None else await manager.evaluable_rules()
+
+        ctx.rules.bind(
+            producers=build_bridge(
+                ctx.bus.bus,
+                resolved.environment.value,
+                _evaluable_rules,
+                bars=rule_bars,
+                books=lambda: (
+                    ctx.ingestion.books if isinstance(ctx.ingestion.books, BookStream) else None
+                ),
+                metrics=metrics_facade,
+            )
+        )
     # E35-T09: the action executor's records written ahead (the run row and its events, and
     # `rules.fired` / `rules.blocked`), its alerts and its metrics (24 §11.5). No handler and no OMS
     # sink: every armed action ends blocked until its slice binds its handler (BQ-17).

@@ -12,10 +12,11 @@ Only the composition root sees the bus, the storage tier and the bars module tog
   writer, which is then drained.
 * Emit path (E12-T06, #399): the WS series store (a swap's re-snapshot reads the new generation),
   the WS publisher, the indicator engine (E13-T02, #426: it re-primes from the store, which holds
-  the close already), then the writer. No sink before the writer awaits, so the store's generation
-  reset, the publisher's baseline check and the engine's update are atomic: an `await` in any of
-  them is a protocol change (§7.4). The runtime stops the engine's recompute tasks after the heal
-  driver and before the set.
+  the close already), then the `extra_sinks` (E35-T15, #5745: the rules' `BarFieldProducer`, with
+  the evaluator on), then the writer. No sink before the writer awaits, so the store's generation
+  reset, the publisher's baseline check, the engine's update and the rules' pushes are atomic: an
+  `await` in any of them is a protocol change (§7.4). The runtime stops the engine's recompute
+  tasks after the heal driver and before the set.
 * `GuardedRowSink` fails closed with `StorageTierUnavailable` when no QuestDB ILP sink is
   composed (fake storage backend). With `storage_backend="real"` the composition root passes a
   `QuestDbRowSink` (#2037) as `inner_sink`. Shutdown: set -> writer -> sink (ILP drain,
@@ -319,12 +320,14 @@ def wire_bars(
     publisher: BarSink | None = None,
     indicators: IndicatorSink | None = None,
     precedence: PrecedenceHealth | None = None,
+    extra_sinks: Sequence[BarSink] = (),
 ) -> BarsRuntime:
     """Build the set + writer, attach the set to `ctx.bars`, return the lifecycle owner. `series`,
-    `publisher` (the WS sinks) and `indicators` (the engine) are emitted to before the writer, in
-    that order (module docstring); `reader_stop` closes the series store's own reader connection
-    after `sink_stop`; the runtime owns a heal driver over `series` and stops `indicators`.
-    `precedence` is the kline sink's health (`KlineBarsSink.health`), reported by the probe."""
+    `publisher` (the WS sinks), `indicators` (the engine) and `extra_sinks` (never awaiting) are
+    emitted to before the writer, in that order (module docstring); `reader_stop` closes the
+    series store's own reader connection after `sink_stop`; the runtime owns a heal driver over
+    `series` and stops `indicators`. `precedence` is the kline sink's health
+    (`KlineBarsSink.health`), reported by the probe."""
     if inner_sink is None:
         logger().warning(
             "bars_rows_not_persisted",
@@ -339,6 +342,7 @@ def wire_bars(
         EmitRouter(
             [
                 *(s for s in (series, publisher, indicators) if s is not None),
+                *extra_sinks,
                 WriterSink(writer, holes=holes),
             ]
         ),
