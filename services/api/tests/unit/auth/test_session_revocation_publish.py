@@ -1,6 +1,6 @@
 """#2272: every session revoke path publishes each revoked session id to the injected
-revocation sink, after the row update (23-ws-protocol.md §9.5). A refresh-token rotation
-publishes nothing: the client re-`auth`s its socket in place (§4.1).
+revocation sink, after the row update (23-ws-protocol.md §9.5). A refresh-token rotation, and a
+step-up's (#2101), publish nothing: the client re-`auth`s its socket in place (§4.1).
 
 The call-site scan finds every revoking `SessionRepository` call in production code by its
 `now=` keyword (and the owner TOTP reset store's, #2593, which revokes in its own unit of work),
@@ -43,7 +43,7 @@ from candleviewer.auth.session_service import (
     MAX_UNLOCK_ATTEMPTS,
     SessionService,
 )
-from candleviewer.auth.step_up import GRACE_WINDOW, StepUpService
+from candleviewer.auth.step_up import GRACE_WINDOW, StepUpService, carried_grants
 from tests.unit.auth.auth_fakes import InMemoryOwnerReset, no_wait
 from tests.unit.auth.mfa_fakes import FakeMfaKeyring
 
@@ -146,6 +146,28 @@ async def _refresh_rotation(w: _World) -> Calls:
     return set()  # AC: rotation never closes the socket (§4.1 in-place re-auth)
 
 
+async def _step_up_rotation(w: _World) -> Calls:
+    minted = await w.sessions.mint(w.user)
+    sid, successor = str(minted.session_id), uuid.uuid4()
+    await w.sessions.rotate(sid, successor_id=successor, carry_grants=carried_grants)
+    return set()  # SR-013 (#2101): a step-up's rotation is a refresh's: re-`auth` in place
+
+
+async def _unlinked_rotation(w: _World) -> Calls:
+    """#2101: a step-up rotation whose family link fails revokes its successor, which was never
+    handed over: no socket runs on it, so nothing is published."""
+    sid, successor = await w.mint(), uuid.uuid4()
+
+    async def down(*, prev_session_id: str, next_session_id: str) -> None:
+        raise OSError("the store is unreachable")
+
+    w.repo.link_rotation = down  # type: ignore[method-assign]  # the link's unit of work fails
+    with pytest.raises(OSError):
+        await w.sessions.rotate(sid, successor_id=successor, carry_grants=carried_grants)
+    assert w.repo.sessions[str(successor)].revoked_reason == "rotation_unlinked"
+    return set()  # its tokens were never returned
+
+
 async def _require_active_expired(w: _World) -> Calls:
     sid = await w.mint()
     w.clock.now += ABSOLUTE_LIFETIME
@@ -243,6 +265,8 @@ _PATHS: dict[tuple[str, str], Callable[[_World], Awaitable[Calls]]] = {
     ("SessionService.refresh", "rotation_reuse"): _refresh_reuse,
     ("SessionService.refresh", "expired"): _refresh_expired,
     ("SessionService.refresh", "rotated"): _refresh_rotation,
+    ("SessionService.rotate", "rotated"): _step_up_rotation,
+    ("SessionService._end_unlinked", "rotation_unlinked"): _unlinked_rotation,
     ("SessionService.require_active", "expired"): _require_active_expired,
     ("SessionService._revoke_stray_session", "user_disabled"): _stray_session,
     ("SessionService.unlock", "unlock_attempts_exceeded"): _unlock_attempts_exceeded,

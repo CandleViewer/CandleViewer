@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer.api.step_up import request_elevation
 from candleviewer.api.step_up_challenge import ChallengeText
-from tests.unit.api.test_step_up_router import _H, _PW, _build, _code
+from tests.unit.api.test_step_up_router import _H, _PW, _build, _code, _hold
 
 
 def _stand_in(c: TestClient, method: str, path: str, *, gated: bool = False) -> list[str]:
@@ -48,6 +48,7 @@ async def test_retention_change_needs_recorder_step_up_then_gets_a_grace_window(
         "/auth/step-up", headers=_H, json=answer | {"challenge_id": denied.json()["challenge_id"]}
     )
     assert ok.status_code == 200 and ok.json()["action_class"] == "recorder"
+    _hold(c, ok)  # SR-013 (#2101): `_H` names the rotated session from now on
     assert ok.json()["single_use"] is False
     for _ in range(2):  # a grace class: the window covers the next change too
         assert c.put(path, headers=_H).status_code == 200

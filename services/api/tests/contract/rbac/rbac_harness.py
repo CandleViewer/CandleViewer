@@ -253,6 +253,14 @@ class _Sessions:
     async def revoke(self, session_id: str, *, reason: str) -> None:
         return None
 
+    async def live_sessions(self, user_id: str) -> tuple[Any, ...]:
+        """SR-013 (#2101): a role change ends its target's live sessions. The pack's sessions are
+        token fixtures, not rows, so a change finds none (its own tests end real ones)."""
+        return ()
+
+    async def revoke_all(self, user_id: str, **_: Any) -> tuple[Any, ...]:
+        return ()
+
     async def peek_access_token(self, token: str) -> Any:  # SR-041 sid binding (#2090)
         try:
             return await self.authenticate_access_token(token)

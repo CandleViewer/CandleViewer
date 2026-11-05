@@ -9,7 +9,9 @@ the statechart records and this synchronous code enforces: the check in
 migration 0009) - the brief's "stored on the session row keyed by action
 class with its own expiry". Never a token claim, so a client cannot forge or
 replay it on another session; it survives a process restart and dies with
-the session (revoked rows are never updated and carry no elevation).
+the session (revoked rows are never updated and carry no elevation), but for
+the step-up's own rotation (SR-013, #2101): the successor session carries the
+live grants (`carried_grants`), and the rotated-out row is revoked.
 
 After each enforcement decision is persisted, the matching B16 event is sent
 to the session's chart (`SessionChart`); the chart's audit actions write the
@@ -78,11 +80,12 @@ from candleviewer.auth.mfa_keyring import MfaKeyring, require_available, zero_se
 from candleviewer.auth.mfa_repository import MfaRepository
 from candleviewer.auth.models import MfaMethodRecord, SessionRecord, UserRecord
 from candleviewer.auth.repository import UserRepository
-from candleviewer.auth.session_chart import SessionChart, to_us
+from candleviewer.auth.session_chart import SessionChart, SessionChartError, to_us
 from candleviewer.auth.session_repository import SessionRepository, StepUpChange, StepUpState
 from candleviewer.auth.session_service import RevocationSink, publish_revoked
 from candleviewer.auth.totp import verify_code
 from candleviewer.auth.totp_skew import TotpSkewReporter
+from candleviewer.statechart.gateway import GatewayError
 
 #: Ticket: "a 5-minute grace per action class".
 GRACE_WINDOW = timedelta(minutes=5)
@@ -208,6 +211,16 @@ class StepUpGrant:
     #: #2304: the challenge the step-up answered, and (no-grace) the request it binds.
     challenge_id: uuid.UUID | None = None
     fingerprint: str | None = None
+
+
+class StepUpUnrecorded(SessionChartError):
+    """#2101 (C-7): B16 could not record `auth.step_up_granted` (the chart failed or the gateway
+    refused the send) after `step_up()` stored *grant*; the caller ends it (`end_grant`), so the
+    step-up leaves nothing elevated. The chart's error is the cause."""
+
+    def __init__(self, grant: StepUpGrant) -> None:
+        super().__init__("B16 STEP_UP_OK: not recorded")
+        self.grant = grant
 
 
 @dataclass(frozen=True)
@@ -361,6 +374,31 @@ def _lift(now: datetime) -> StepUpChange:
         if readonly_until is None or now < readonly_until:
             return state
         return elevations, 0, None
+
+    return change
+
+
+def carried_grants(elevations: dict[str, datetime], now: datetime) -> dict[str, datetime]:
+    """SR-013 (#2101, C-5): the step-up state a step-up's session rotation carries to the
+    successor (`SessionService.rotate`): every unexpired grace window and bound one-shot grant,
+    the one the rotating step-up just made included, its binding kept. Never a pending challenge,
+    which that step-up used, nor a key that binds nothing (`StepUpChallenge.parse`)."""
+    return {
+        key: until
+        for key, until in elevations.items()
+        if until > now
+        and (key in ACTION_CLASSES or StepUpChallenge.parse(key, until, _ONCE) is not None)
+    }
+
+
+def _end(key: str, until: datetime) -> StepUpChange:
+    """#2101 (C-7): drop the grant stored under `key` while it still holds `until`, the grant
+    this change ends; a newer grant under the key, and the rest of the row, are kept."""
+
+    def change(state: StepUpState) -> StepUpState:
+        elevations, failures, readonly_until = state
+        kept = {k: v for k, v in elevations.items() if not (k == key and v == until)}
+        return kept, failures, readonly_until
 
     return change
 
@@ -538,7 +576,9 @@ class StepUpService:
         `SessionRevoked` when the session is revoked during the check. A session already revoked
         or read-only when the call begins is refused at once, before any factor is checked. A
         grant is never held. #2152: `MfaKeyringUnavailable` once the challenge is answered and
-        before either factor, unheld and with nothing recorded (22 `AuthUnavailable`)."""
+        before either factor, unheld and with nothing recorded (22 `AuthUnavailable`). A grant
+        stored whose `auth.step_up_granted` B16 cannot record is `StepUpUnrecorded`, carrying the
+        grant for the caller to end (#2101)."""
         started = self._failure_hold.start()
         if action_class is not None and action_class not in ACTION_CLASSES:
             raise UnknownActionClass(action_class)
@@ -575,23 +615,41 @@ class StepUpService:
                 raise SessionReadOnly(saved.readonly_until)
             fingerprint = challenge.fingerprint if single_use and challenge is not None else None
             cid = None if challenge is None else challenge.challenge_id
-            await self._record(
-                record,
-                now,
-                "STEP_UP_OK",
-                action_class=action_class,
-                elevated_until_us=to_us(until),
-                **({} if cid is None else {"challenge_id": str(cid)}),
-                **({} if fingerprint is None else {"request_sha256": fingerprint}),
-            )
-            auth_step_up_total.labels(action_class=action_class).inc()
-            return StepUpGrant(
+            grant = StepUpGrant(
                 action_class, until, single_use, challenge_id=cid, fingerprint=fingerprint
             )
+            try:
+                await self._record(
+                    record,
+                    now,
+                    "STEP_UP_OK",
+                    action_class=action_class,
+                    elevated_until_us=to_us(until),
+                    **({} if cid is None else {"challenge_id": str(cid)}),
+                    **({} if fingerprint is None else {"request_sha256": fingerprint}),
+                )
+            except (SessionChartError, GatewayError) as exc:  # #2101: the grant is stored
+                raise StepUpUnrecorded(grant) from exc
+            auth_step_up_total.labels(action_class=action_class).inc()
+            return grant
         except (StepUpCodeInvalid, SessionReadOnly, SessionRevoked):
             # A cancellation during the wait propagates (nothing here catches it).
             await self._failure_hold.hold(started)
             raise
+
+    async def end_grant(self, session_id: str, grant: StepUpGrant) -> None:
+        """#2101 (C-7): end *grant*, which `step_up()` stored on *session_id*'s row, when the
+        session's rotation cannot be recorded, so the refused step-up leaves nothing elevated. One
+        change to the row under its lock (#2304); a row revoked meanwhile holds nothing to end.
+        The chart is not told: the caller drops it (`SessionChart.forget`), and it is rebuilt
+        from the row on its next use."""
+        challenge = None
+        if grant.challenge_id is not None:
+            challenge = StepUpChallenge(
+                grant.challenge_id, grant.action_class, grant.elevated_until, grant.fingerprint
+            )
+        key = _grant_key(grant.action_class, challenge)
+        await self._sessions.update_step_up_state(session_id, _end(key, grant.elevated_until))
 
     async def record_pending(
         self, session_id: str, action_class: str, *, fingerprint: str | None = None

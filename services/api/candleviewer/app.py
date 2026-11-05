@@ -2123,7 +2123,8 @@ def create_app(
     )
     app.state.feature_flags = feature_flags
     app.state.flag_metrics = export_flag_metrics(ctx.metrics, env=resolved.environment.value)
-    # E09-S04: step-up, owner TOTP reset and the read-only write guard.
+    # E09-S04: step-up, owner TOTP reset and the read-only write guard. A step-up rotates its
+    # session (SR-013, #2101): the codec issues the new session's SR-041 token.
     app.include_router(
         make_step_up_router(
             ctx.auth,
@@ -2132,6 +2133,7 @@ def create_app(
             positions=_NoPositionStore(),
             users=user_role_store,
             audit_ready=_audit_ready(ctx.audit),
+            csrf=csrf_codec,
         )
     )
     # B16 audit actions write through the M19 emitter (PR #1674 finding 3).

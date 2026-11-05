@@ -1773,7 +1773,6 @@ boot's `previous_kid` is gone, and destroy the old secret file.
 | Scheduled audit-chain verifier                                            | #2111          |
 | Disable-user drill on staging (SR-029)                                    | #2298          |
 | No B16 record of a lost disable commit's sessions if not read back        | #2710, #3445   |
-| Session rotation on role change and step-up                               | #2101          |
 | No alert rule reads the session, invite, probe or step-up failure series  | #2746          |
 | No alert rule reads the enrolment-only refusal series (section 7)         | #2746          |
 | `cv_ws_errors_total{code}` not served (label `code` is not allow-listed)  | #2747          |

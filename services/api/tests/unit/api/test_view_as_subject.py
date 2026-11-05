@@ -477,6 +477,7 @@ async def test_a_viewer_asking_for_an_owner_only_preview_is_refused_403_not_401(
             positions=step_up_rig._Positions(),
             users=step_up_rig._Users(),
             audit_ready=lambda: True,
+            csrf=step_up_rig.CSRF,
         )
     )
     app.middleware("http")(_stamping(_stamp()))

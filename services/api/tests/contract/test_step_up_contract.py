@@ -2,10 +2,12 @@
 
 Pins the `POST /auth/step-up` `200`: the body carries `tokens`, the `TokenBundle` that
 `POST /auth/mfa/verify` returns, and the response sets the rotated `cv_refresh` and
-`__Host-cv_csrf` cookies exactly as `POST /auth/refresh` does. Also pins the rotation rules the
+`__Host-cv_csrf` cookies and declares the desktop `X-CSRF-Token` header exactly as
+`POST /auth/refresh` does (ADR-0038 F5). Also pins the rotation rules the
 operation description states (the replacement keeps the absolute expiry and idle timeout, carries
 the live grants over and drops the pending challenge; the old session is revoked as `rotated`
-inside the session family), step-up's place among the CSRF rotation points, its
+inside the session family; its sockets re-authenticate in place; the audit order and the `503` and
+`401` refusals of #2101), step-up's place among the CSRF rotation points, its
 `x-idempotency`, and the provider check that the router's `200` validates against the schema.
 """
 
@@ -84,14 +86,15 @@ def test_step_up_ok_requires_the_token_bundle_that_mfa_verify_returns(
     assert set(body["required"]) == {"elevated_until", "action_class", "single_use", "tokens"}
 
 
-def test_step_up_ok_sets_the_rotated_cookies_exactly_as_refresh(spec: dict[str, Any]) -> None:
+def test_step_up_ok_sets_the_rotated_cookies_and_token_header_exactly_as_refresh(
+    spec: dict[str, Any],
+) -> None:
+    """ADR-0038 F5 (#2101): step-up issues the CSRF token for the new session, so its `200`
+    declares the desktop token header as refresh's does: the eighth issuing operation."""
     headers = _ok(spec, "/auth/step-up")["headers"]
-    assert set(headers) == {"Set-Cookie"}
-    # ADR-0038: refresh also declares the desktop token header, since it issues the token in
-    # code; step-up does not yet, and gains the header in the PR that makes it issue one.
-    refresh = dict(_ok(spec, "/auth/refresh")["headers"])
-    assert refresh.pop("X-CSRF-Token") == {"$ref": "#/components/headers/CsrfTokenIssued"}
-    assert headers == refresh
+    assert set(headers) == {"Set-Cookie", "X-CSRF-Token"}
+    assert headers["X-CSRF-Token"] == {"$ref": "#/components/headers/CsrfTokenIssued"}
+    assert headers == _ok(spec, "/auth/refresh")["headers"]
 
 
 def test_step_up_ok_body_with_rotated_tokens_conforms(spec: dict[str, Any]) -> None:
@@ -104,14 +107,9 @@ def test_step_up_ok_body_without_tokens_no_longer_conforms(spec: dict[str, Any])
         _validator(spec).validate(pre_rotation)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ValidationError,
-    reason="#2101: the route does not rotate the session yet, so its 200 has no `tokens`; "
-    "remove this marker when the step-up rotation lands",
-)
 async def test_step_up_route_ok_body_validates_against_the_contract(spec: dict[str, Any]) -> None:
-    """Provider side (C-6.2): the step-up router's `200` against the contract schema."""
+    """Provider side (C-6.2): the step-up router's `200`, with the rotated session's `tokens`
+    (#2101), against the contract schema."""
     client, _emitter, seed, clock, _user = await _build()
     ok = client.post(
         "/auth/step-up",
@@ -119,12 +117,8 @@ async def test_step_up_route_ok_body_validates_against_the_contract(spec: dict[s
         json={"code": _code(seed, clock), "password": _PW, "action_class": "users"},
     )
     assert ok.status_code == 200
-    validator = _validator(spec)
-    # Any mismatch other than the missing `tokens` is a real failure, never the expected xfail.
-    assert {e.message for e in validator.iter_errors(ok.json())} <= {
-        "'tokens' is a required property"
-    }
-    validator.validate(ok.json())
+    _validator(spec).validate(ok.json())
+    assert ok.json()["tokens"]["refresh_token"] is None  # the refresh token is in the cookie
 
 
 @pytest.mark.parametrize(
@@ -135,14 +129,73 @@ async def test_step_up_route_ok_body_validates_against_the_contract(spec: dict[s
         "carries over the live step-up grants, including the one just granted",
         "drops the pending challenge",
         "revoked as `rotated` and linked into the session family",
-        "its access and refresh tokens stop working at once",
+        "its access and refresh tokens stop working at once for REST calls and for a new socket "
+        "`auth` frame",
         "replaying that refresh token at `POST /auth/refresh` revokes the whole family",
         "the refresh token travels only in the cookie, so `refresh_token` is null",
         "A client that loses the `200` keeps only the old tokens: its next `POST /auth/refresh` "
         "trips reuse detection, so the user must sign in again",
+        # C-5 (#2101): the carry list refresh's successor gets, on top of the grants.
+        "it also keeps the old session's idle clock, lock, read-only downgrade and view-as context",
+        # C-3 (#2101): the step-up's sockets re-authenticate in place, nothing is published.
+        "A socket already authenticated on the old session stays open: the rotation is no "
+        "revocation, so nothing is published, and the client re-`auth`s the socket in place "
+        "with the new access token, as after a refresh (23-ws-protocol.md section 4.1)",
+        # C-4 (#2101): the new session's CSRF token, under the desktop flag, never cached.
+        "with the new token in the `X-CSRF-Token` response header for a listed `Origin` while "
+        "the `desktop.backend_connection` flag is on",
+        "it is `Cache-Control: no-store`",
     ],
 )
 def test_step_up_description_states_the_approved_rotation_rule(
+    spec: dict[str, Any], rule: str
+) -> None:
+    assert rule in _flat(spec["paths"]["/auth/step-up"]["post"]["description"])
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        # C-7 (#2101): the readiness check comes before any factor.
+        "The audit writer's readiness is checked before any factor is verified: a writer that is "
+        "not ready answers `503 audit_unavailable`, with nothing checked, counted or elevated.",
+        # C-7: the order, each record ahead of the change it records.
+        "After `auth.step_up_granted`, each rotation record is written ahead of the change it "
+        "records (C-2.9): `auth.session_revoked` (reason `rotated`, the old session) ahead of the "
+        "old session's revocation, then `auth.session_created` (the new session, naming the old "
+        "one in `rotated_from`) ahead of the mint.",
+        "When either record cannot be written, the grant just made is ended and the answer is "
+        "`503 audit_unavailable`: nothing is elevated, nothing is rotated and the old tokens keep "
+        "working.",
+        # C-7: a refused grant record ends the grant too; what stands of a refused rotation is
+        # voided, and a lost void is counted (C-2.9).
+        "The same holds for a step-up whose `auth.step_up_granted` cannot be recorded once its "
+        "grant is stored.",
+        "A refused `auth.session_created` comes after the rotation's `auth.session_revoked`, which "
+        "then stands: an `auth.step_up_failed` row (reason `unrotated`) voids it and names the "
+        "ended grant; when `auth.step_up_granted` is all that stands, the row's reason is "
+        "`grant_ended`.",
+        "A row the audit writer refuses too is lost, counted and alerted (`AuthAuditOutcomeLost`).",
+        # A grant that cannot be ended either stays for its window; the grant is on the old
+        # session until the claim; the `200`'s echo is advisory.
+        "When the grant cannot be ended either (the session store refuses that too), it stays on "
+        "the old session, which is not rotated, for the rest of its window",
+        "The grant is stored on the old session first and moves to the new one at that "
+        "revocation (the claim)",
+        "until the claim, a request with the old access token is elevated for a grace class, "
+        "while a no-grace grant serves only the request it is bound to",
+        "echo the grant as it was made and are advisory: the server reads the session's row on "
+        "every elevated request",
+        # C-8: the conditional claim, no grace for the old token.
+        "of a step-up and a `POST /auth/refresh` of the same session exactly one rotates it, and "
+        "the old token gets no grace period",
+        "the answer is `401 unauthenticated`, a record voids the `auth.session_created` that "
+        "announced the new session, and the user signs in again",
+        "The client holds its refresh lock across the step-up call",
+        "the rotation's `auth.session_revoked` and `auth.session_created`",
+    ],
+)
+def test_step_up_description_states_the_rotation_audit_and_refusals(
     spec: dict[str, Any], rule: str
 ) -> None:
     assert rule in _flat(spec["paths"]["/auth/step-up"]["post"]["description"])

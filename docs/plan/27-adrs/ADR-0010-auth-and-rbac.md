@@ -100,13 +100,43 @@ decision_ are not settled here. Paths are under `services/api/candleviewer/`.
   the same transaction (`update_step_up_state`), so none writes a spent code back; B16 records no
   spend: #2799); 3 wrong password/code attempts make the session read-only for 5 min.
 - **Rotation points that exist**: refresh (new session row, old marked `rotated`, reuse revokes the
-  whole family), and the session minted on MFA completion. **Not present**: rotation on role change
-  and on step-up (#2101), and on password change (route missing, #2110). The decision text says
-  "rotation on any privilege change"; that is not yet true.
+  whole family), the session minted on MFA completion, and step-up (#2101, SR-013): a successful
+  step-up mints a successor that keeps the absolute expiry, idle timeout and live grants, and the
+  old session is revoked `rotated` inside the family (its sockets re-`auth` in place, as after a
+  refresh). The grant is written to the presented session and carried to the successor at the
+  claim, which follows `auth.step_up_granted` and the rotation's two write-ahead records: until the
+  claim, the old access token is elevated for a grace class, while a no-grace grant stays bound to
+  the challenged request's fingerprint. When a rotation record is refused and ending the grant is
+  refused too, the grant stays on the unrotated session for its window, recorded only by the error
+  log line `auth.step_up.grant_not_ended`. The `200`'s `elevated_until` echoes the grant as made;
+  every elevated request re-reads the session row. A role change, on `setUserRoles` or `updateUser`
+  with `roles`, revokes every live session of the target, never the actor's (#2101): each
+  `auth.session_revoked` (reason `role_changed`) is written ahead with the change, and the target
+  signs in again under the new roles. Those records are written within the change's write-ahead
+  bound, so a target with many live sessions, or a slow audit writer, makes the change answer
+  `503 audit_unavailable` until its sessions are revoked first (one
+  `DELETE /users/{userId}/sessions/{sessionId}` each). A change that rolls back after writing some
+  of its records (a refused record, the bound or a failed commit) leaves them standing, the
+  `auth.session_revoked` rows included: write-ahead records over-report, never under-report. The
+  `before` of the user's next `roles.grant` or `roles.revoke`, or the user's current roles, shows
+  whether a change committed. A refresh or a
+  step-up rotation of the target in flight across that revocation can still mint a successor that
+  survives it: its claim and mint are two transactions, and unlike a disable (#2911, whose mint
+  refuses the user and whose `require_active` ends a survivor on its next use) a role change
+  changes nothing the mint or the request path re-reads. The survivor carries the new role set,
+  since roles are read on every request; a refresh's survivor holds no step-up grant, and a
+  rotation's only the grants it carried, which authorise nothing the new roles do not. A password
+  change (`PUT /auth/password`, #2110) revokes every session of the user as `password_change`, the
+  caller's included, and mints the caller a replacement that keeps the absolute expiry and idle
+  timeout but no step-up grant. "Rotation on any privilege change" in the decision text means
+  SR-013's list (login, MFA completion, role change, step-up, password change): an account-grant
+  change rotates nothing, since a narrowed grant already applies on every call and on live sockets
+  (`23-ws-protocol.md` §9.5).
 - **Session cache**: the decision text mentions a short-lived in-process cache with explicit
   invalidation. The review found no such cache in `auth/`; every request reads the session
   (`authenticate_access_token`). Revocation reaches live sockets through `ws/revocation.py`.
-  Role changes push a `permission_change` to sockets (`api/users.py`); the frame is documented in `23-ws-protocol.md` §9.5 and §13.4.
+  Role changes end the target's sessions and sockets first (#2101), then push a `permission_change`
+  to the sockets that remain, those viewing the target (`api/users.py`); the frame is documented in `23-ws-protocol.md` §9.5 and §13.4.
   2026-10-27 (#2848): with no cache, the E09-Q05 k6 profile (`tests/load/k6/auth.js`) has no
   cache-off control and no warm/cold split; `GET /auth/session` is measured as served. Its
   step-up p95 budget (400 ms, SCR-006) is judged on the reference host (#2105) only: on a hosted

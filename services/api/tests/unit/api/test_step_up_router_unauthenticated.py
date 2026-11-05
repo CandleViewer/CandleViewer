@@ -15,7 +15,7 @@ from candleviewer.api.step_up import make_step_up_router
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from tests.unit.api.test_step_up_challenge_router import _assert_unauthenticated, _world
-from tests.unit.api.test_step_up_router import _PW, _build, _Positions, _Resolver, _Users
+from tests.unit.api.test_step_up_router import _PW, CSRF, _build, _Positions, _Resolver, _Users
 
 
 @pytest.mark.parametrize(
@@ -54,6 +54,7 @@ async def test_reset_route_whose_principal_is_not_the_session_subject_is_401_una
             positions=_Positions(),
             users=_Users(),
             audit_ready=lambda: True,
+            csrf=CSRF,
         )
     )
     r = TestClient(app).request(method, f"/users/{uuid.uuid4()}/mfa/{suffix}", headers=w.h())
