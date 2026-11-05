@@ -27,6 +27,7 @@ const ok = (settled: typeof SETTLED): FundingHistoryResult => ({
   kind: "ok",
   settled,
   intervalMinutes: 480,
+  predicted: null,
   coverage: null,
   truncated: false,
 });

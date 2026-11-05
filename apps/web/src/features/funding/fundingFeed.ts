@@ -8,6 +8,7 @@ import type {
   FundingHistoryRequest,
   FundingHistoryResult,
 } from "./history";
+import { samePredicted } from "./predicted";
 import { buildFundingSeries, EMPTY_SERIES, mergeSettled, type FundingSeriesModel } from "./series";
 
 /** BQ 6: what an empty window means, from `meta.coverage`; `unknown` while it is not served. */
@@ -135,7 +136,9 @@ export function startFundingFeed(options: FundingFeedOptions): FundingFeedHandle
   /** Appends a newer read's settlements; `true` once the one at `deadlineMs` is stored. */
   const append = (r: FundingHistoryOk, deadlineMs: number): boolean => {
     const { points, added } = mergeSettled(snapshot.series.settled, r.settled);
-    if (added) {
+    // BQ-4: every ok read refreshes the accruing rate, even one that settles nothing new, so a rate that
+    // is no longer published goes to n/a instead of being carried over
+    if (added || !samePredicted(snapshot.series.predicted, r.predicted)) {
       const was = snapshot.history;
       const minutes =
         snapshot.series.intervalMs === null ? null : snapshot.series.intervalMs / 60_000;
@@ -143,6 +146,7 @@ export function startFundingFeed(options: FundingFeedOptions): FundingFeedHandle
         settled: points,
         intervalMinutes: r.intervalMinutes ?? minutes,
         coverage: null,
+        predicted: r.predicted, // a fresh read's: the old accruing rate is never carried over (BQ-4)
       });
       publish({
         // a failed or unavailable window keeps its band: the poll is not the full read the retry makes

@@ -187,6 +187,8 @@ describe("funding history read", () => {
       gaps: [{ fromMs: Date.parse(from), toMs: Date.parse(to) }],
     });
     expect(parseCoverage({ coverage: coverage({ gaps: [{ from: "x", to: "y" }] }) })).toBeNull();
-    expect(parseItem({ predicted: true, funding_rate: "0.0001" })).toBe("predicted");
+    expect(parseItem({ predicted: true, funding_rate: "0.0001" })).toEqual({
+      predicted: { tMs: null, rate: "0.0001", annualisedPct: null },
+    });
   });
 });

@@ -43,3 +43,26 @@ export function utcTime(ms: number): string {
 export function settlementTime(ms: number): string {
   return new Date(ms).toISOString().slice(0, 16).replace("T", " ");
 }
+
+/**
+ * The server's annualised percent (`annualised_pct`, a decimal string such as "10.95") shown with two decimals,
+ * rounded half-up on its own digits, the sign as text. A display transform only: the value is never computed
+ * here. "10.95" → "+10.95 % p.a.".
+ */
+export function annualisedPercent(pct: string): { readonly text: string; readonly spoken: string } {
+  const negative = pct.startsWith("-");
+  const [int = "0", frac = ""] = (negative ? pct.slice(1) : pct).split(".");
+  const digits = `${frac}000`;
+  const scaled = BigInt(`${int}${digits.slice(0, 2)}`) + (Number(digits[2]) >= 5 ? 1n : 0n);
+  const body = `${String(scaled / 100n)}.${String(scaled % 100n).padStart(2, "0")}`;
+  if (scaled === 0n) return { text: `${body} % p.a.`, spoken: `${body} percent per year` };
+  return negative
+    ? { text: `${MINUS}${body} % p.a.`, spoken: `minus ${body} percent per year` }
+    : { text: `+${body} % p.a.`, spoken: `plus ${body} percent per year` };
+}
+
+/** D02 §5.1's tooltip, with this symbol's own factor: "0.0100 % × (525600 / 480) = 10.95 % p.a.". */
+export function annualisedFormula(rate: string, intervalMinutes: number, pct: string): string {
+  const unsigned = (text: string): string => text.replace(/^\+/, "");
+  return `${unsigned(ratePercent(rate).text)} × (525600 / ${String(intervalMinutes)}) = ${unsigned(annualisedPercent(pct).text)}`;
+}

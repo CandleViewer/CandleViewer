@@ -3,6 +3,7 @@
 // `funding_interval_minutes` (BQ 8); an absent member is unknown, never 8 h and never "covered".
 import type { generated } from "@candleviewer/protocol";
 import { apiFetch } from "../../lib/http/csrfFetch";
+import { isAccruing, type PredictedRate } from "./predicted";
 
 type FundingOk =
   generated.rest.operations["getFundingHistory"]["responses"][200]["content"]["application/json"];
@@ -16,6 +17,8 @@ type Problem = generated.rest.components["schemas"]["Problem"];
 export interface SettledPoint {
   readonly tMs: number;
   readonly rate: string;
+  /** The server's annualised % (§19.110) when served; never computed here. */
+  readonly annualisedPct?: string;
 }
 
 /** `meta.coverage`'s members the pane reads (BQ 6); the edges stay the server's. */
@@ -28,6 +31,8 @@ export interface FundingCoverage {
 export interface FundingHistoryOk {
   readonly kind: "ok";
   readonly settled: readonly SettledPoint[];
+  /** E24-S04: the item flagged predicted (BQ-2), `null` when this read has none; never carried over. */
+  readonly predicted: PredictedRate | null;
   /** `null`: not served; the pane states no interval and draws no step. */
   readonly intervalMinutes: number | null;
   /** `null`: not served (contract first); read as unknown, never as covered. */
@@ -85,15 +90,31 @@ export const timeOf = (v: unknown): number | null => {
   return Number.isFinite(ms) ? ms : null;
 };
 
+/** The server's annualised % as sent (`annualised_pct`, §19.110); `null` when absent or malformed. */
+const annualisedOf = (item: unknown): string | null => {
+  const v = get(item, "annualised_pct" satisfies keyof FundingItem);
+  return isDecimal(v) ? v : null;
+};
+
 /**
- * A served settled item, `"predicted"` for the accruing rate (its display is E24-S04's, out of scope here; it
- * is never a step of the settled line, D03 §5.3), or `null` when malformed.
+ * A served settled point, the predicted rate (never a step of the settled line, D03 §5.3) or `null` when
+ * malformed. Fail closed: only `predicted: false` without `estimated: true` is settled (BQ-2).
  */
-export function parseItem(item: unknown): SettledPoint | "predicted" | null {
-  if (get(item, "predicted" satisfies keyof FundingItem) === true) return "predicted";
+export function parseItem(
+  item: unknown,
+): { readonly settled: SettledPoint } | { readonly predicted: PredictedRate } | null {
   const rate = get(item, "funding_rate" satisfies keyof FundingItem);
+  if (!isDecimal(rate)) return null;
   const tMs = timeOf(get(item, "t" satisfies keyof FundingItem));
-  return isDecimal(rate) && tMs !== null ? { tMs, rate } : null;
+  const annualisedPct = annualisedOf(item);
+  const flags = {
+    predicted: get(item, "predicted" satisfies keyof FundingItem),
+    estimated: get(item, "estimated" satisfies keyof FundingItem),
+  };
+  if (isAccruing(flags)) return { predicted: { tMs, rate, annualisedPct } };
+  return tMs === null
+    ? null
+    : { settled: { tMs, rate, ...(annualisedPct === null ? {} : { annualisedPct }) } };
 }
 
 export function parseInterval(body: unknown): number | null {
@@ -159,6 +180,7 @@ export async function fetchFundingHistory(
 ): Promise<FundingHistoryResult> {
   const clock = req.clock ?? SYSTEM;
   const byTime = new Map<number, SettledPoint>();
+  let predicted: PredictedRate | null = null;
   let out: Omit<FundingHistoryOk, "settled"> | null = null;
   let cursor: string | null = null;
   for (let page = 0; page < (req.maxPages ?? MAX_PAGES); page += 1) {
@@ -180,12 +202,15 @@ export async function fetchFundingHistory(
     out ??= {
       kind: "ok",
       intervalMinutes: parseInterval(answer.body),
+      predicted: null,
       coverage: parseCoverage(meta),
       truncated: true,
     };
     for (const item of items) {
       const parsed = parseItem(item);
-      if (parsed !== null && parsed !== "predicted") byTime.set(parsed.tMs, parsed);
+      if (parsed === null) continue;
+      if ("predicted" in parsed) predicted = parsed.predicted;
+      else byTime.set(parsed.settled.tMs, parsed.settled);
     }
     const next = get(meta, "next_cursor" satisfies keyof FundingMeta);
     const more = get(meta, "has_more" satisfies keyof FundingMeta) === true;
@@ -195,5 +220,5 @@ export async function fetchFundingHistory(
     cursor = next;
   }
   if (out === null) return { kind: "failed", status: null, code: null };
-  return { ...out, settled: [...byTime.values()].sort((a, b) => a.tMs - b.tMs) };
+  return { ...out, predicted, settled: [...byTime.values()].sort((a, b) => a.tMs - b.tMs) };
 }
