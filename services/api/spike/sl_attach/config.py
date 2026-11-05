@@ -22,6 +22,10 @@ SKEW_LIMIT_MS: Final = 500.0
 DECISION_P99_MS: Final = 1500.0
 #: 24 §8.8 rule 2: a position-level stop lands within 2 s of the first fill.
 DEADLINE_MS: Final = 2000.0
+#: The decision's success bar: arm (b)'s stop writes that landed over those that were sent
+#: (`stop_success_rate`). Under it the verdict is attach-only, whatever the p99 says: at most
+#: one stop write in 200 may fail to land. Each one that does also enters the p99 as +inf.
+MIN_STOP_SUCCESS_RATE: Final = 0.995
 #: Q5 (main-orchestrator, 2026-11-05): every arm (b) opener carries an attached backstop stop
 #: 5 to 10 % from the entry; the measured `trading-stop` tightens it.
 BACKSTOP_MIN_PCT: Final = Decimal(5)

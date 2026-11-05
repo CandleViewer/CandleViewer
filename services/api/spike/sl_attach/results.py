@@ -61,6 +61,9 @@ class Sample(BaseModel):
     stop_rtt_ms: float | None = None
     exposure_ms: float | None = None
     exposure_venue_ms: float | None = None
+    #: arm (b): whether its `trading-stop` landed (acked and shown on the position); `None`
+    #: when no stop write was sent. A `False` is unbounded exposure in the summary.
+    stop_landed: bool | None = None
     protected_lag_ms: float | None = None
     # the clocks and the venue's rate headers on the measured call
     offset_ms: float | None = None

@@ -8,10 +8,16 @@ A discarded sample is outside every statistic but its count; the success rate is
 kept samples; the cost counts only samples that protected a position (`ok`). The percentiles
 read the `ok` samples only, so `measured` (their count) and `measured_symbols` are what the
 decision's floors read: a rejected or ambiguous sample never counts towards a percentile's `n`.
+
+A sample whose stop write failed or never landed (`stop_landed` false, kept or discarded) left
+its position on the backstop alone: it enters the metric's distribution as +inf (`unbounded`),
+so the percentiles carry the failure rate (24 §8.8 rule 2: a stop that never lands is the worst
+exposure). `stop_success_rate` is the landed share of the stop writes sent.
 """
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from collections.abc import Sequence
 from typing import Final
@@ -47,8 +53,10 @@ def arm_table(samples: Sequence[Sample], arm: Arm) -> dict[str, object]:
     dropped = [s for s in mine if s.outcome == "discarded"]
     ok = [s for s in kept if s.outcome == "ok"]
     measured = [s for s in ok if getattr(s, METRIC[arm]) is not None]
+    unbounded = sum(1 for s in mine if s.stop_landed is False)
+    landed = sum(1 for s in mine if s.stop_landed is True)
     values: list[float] = [getattr(s, METRIC[arm]) for s in measured]
-    latency = stats(values, digits=3)
+    latency = stats([*values, *[math.inf] * unbounded], digits=3)
     table: dict[str, object] = {
         "metric": METRIC[arm],
         "n": len(mine),
@@ -58,6 +66,10 @@ def arm_table(samples: Sequence[Sample], arm: Arm) -> dict[str, object]:
         "success_rate": None if not kept else round(len(ok) / len(kept), 4),
         "measured": len(values),
         "measured_symbols": sorted({s.symbol for s in measured}),
+        "unbounded": unbounded,
+        "stop_success_rate": None
+        if not landed + unbounded
+        else round(landed / (landed + unbounded), 6),
         "latency_ms": latency,
         "ret_codes": _histogram(kept),
         "requests_per_protected_position": {

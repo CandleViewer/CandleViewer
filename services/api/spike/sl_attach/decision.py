@@ -8,6 +8,11 @@ three symbols), never the kept total: a run of 190 refused stop writes and 10 su
 p99 worth a verdict. An offline run's answer carries `evidence: false`: the corpus is
 docs-transcribed, so it proves the wiring, never the venue. Arm (b) is measured as a
 backstop-then-tighten modify (Q5), which the answer says.
+
+A failed stop write is unbounded exposure, never a sample left out: each arm (b) sample whose
+`trading-stop` failed or never landed is +inf in the p99 (`summary`), and the verdict is
+attach-only when arm (b)'s `stop_success_rate` is under `MIN_STOP_SUCCESS_RATE` (0.995) or
+unknown. Both apply above the floors: 200 successes and 1,800 refused writes answer attach-only.
 """
 
 from __future__ import annotations
@@ -15,7 +20,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Final, Literal
 
-from spike.sl_attach.config import DEADLINE_MS, DECISION_P99_MS, MIN_SAMPLES_PER_ARM, MIN_SYMBOLS
+from spike.sl_attach.config import (
+    DEADLINE_MS,
+    DECISION_P99_MS,
+    MIN_SAMPLES_PER_ARM,
+    MIN_STOP_SUCCESS_RATE,
+    MIN_SYMBOLS,
+)
 
 type Verdict = Literal["insufficient", "attach-only", "trading-stop-window-accepted"]
 MEASURED: Final = "arm (b) times a trading-stop modify after an attached-backstop open (Q5)"
@@ -44,14 +55,19 @@ def _symbols(table: Mapping[str, object]) -> int:
     return len(symbols) if isinstance(symbols, list) else 0
 
 
+def _rate(table: Mapping[str, object]) -> float | None:
+    rate = table["stop_success_rate"]
+    return rate if isinstance(rate, float) else None
+
+
 def decide(summary: Mapping[str, object], *, offline: bool) -> dict[str, object]:
     a, b = _arm(summary, "a"), _arm(summary, "b")
-    p99 = _p99(b)
+    p99, rate = _p99(b), _rate(b)
     floors = all(_measured(t) >= MIN_SAMPLES_PER_ARM and _symbols(t) >= MIN_SYMBOLS for t in (a, b))
     verdict: Verdict
     if not floors or p99 is None:
         verdict = "insufficient"
-    elif p99 > DECISION_P99_MS:
+    elif p99 > DECISION_P99_MS or rate is None or rate < MIN_STOP_SUCCESS_RATE:
         verdict = "attach-only"
     else:
         verdict = "trading-stop-window-accepted"
@@ -60,6 +76,9 @@ def decide(summary: Mapping[str, object], *, offline: bool) -> dict[str, object]
         "arm_b_p99_ms": p99,
         "arm_b_measured": _measured(b),
         "arm_b_success_rate": b.get("success_rate"),
+        "arm_b_stop_success_rate": rate,
+        "arm_b_unbounded": b.get("unbounded"),
+        "min_stop_success_rate": MIN_STOP_SUCCESS_RATE,
         "threshold_ms": DECISION_P99_MS,
         "deadline_ms": DEADLINE_MS,
         "deadline_met": None if p99 is None else p99 <= DEADLINE_MS,
