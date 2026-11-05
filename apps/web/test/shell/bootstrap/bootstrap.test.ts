@@ -100,6 +100,7 @@ describe("runBootstrap", () => {
         return Promise.resolve(jsonResponse({}));
       });
       await runBootstrap({ fetchImpl });
+      await refreshMeClaims(); // the page's first navigation: the boot's answer stands for it (#5904)
       body = {
         ...ME_BODY,
         role: "viewer",
@@ -112,6 +113,35 @@ describe("runBootstrap", () => {
       expect(getMeClaims()).toMatchObject({ authenticated: true, role: "viewer" });
       expect(getShellState().me).toMatchObject({ role: "viewer" });
       expect(getShellState().environment).toBe("live");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // #5904: the boot reads `/me` once (E09-TC-C01). The page's first navigation guards on that
+  // answer however long the App chunk took to load, and so do its redirects; a later navigation
+  // past the bound still re-reads (#5405).
+  it("reads /me once per boot: the first navigation and its redirects guard on the boot's answer", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-02T00:00:00Z"));
+      const fetchImpl = vi.fn().mockImplementation((path: string) => {
+        if (path === VIEW_AS_PATH) return Promise.resolve(noViewAs());
+        if (path === "/api/v1/me") return Promise.resolve(jsonResponse(ME_BODY));
+        return Promise.resolve(jsonResponse({}));
+      });
+      const meReads = (): number => fetchImpl.mock.calls.filter(([p]) => p === "/api/v1/me").length;
+      await runBootstrap({ fetchImpl });
+      expect(meReads()).toBe(1);
+      vi.setSystemTime(Date.now() + 5 * CLAIMS_MAX_AGE_MS); // a slow App chunk before the router
+      await refreshMeClaims(); // `/`'s loader
+      await refreshMeClaims(); // its redirect's
+      await refreshMeClaims(); // and the page's
+      expect(meReads()).toBe(1);
+      expect(getMeClaims()).toMatchObject({ authenticated: true, role: "owner" });
+      vi.setSystemTime(Date.now() + CLAIMS_MAX_AGE_MS); // a later client-side navigation
+      await refreshMeClaims();
+      expect(meReads()).toBe(2);
     } finally {
       vi.useRealTimers();
     }
@@ -171,6 +201,7 @@ describe("runBootstrap", () => {
           return Promise.resolve(revoked ? jsonResponse({ code }, 401) : jsonResponse(ME_BODY));
         });
         await runBootstrap({ fetchImpl });
+        await refreshMeClaims(); // the page's first navigation guards on the boot's answer (#5904)
         accessToken.set({ access_token: "probe-held-x", token_type: "Bearer", expires_in: 600 });
         revoked = true;
         vi.setSystemTime(Date.now() + CLAIMS_MAX_AGE_MS);
