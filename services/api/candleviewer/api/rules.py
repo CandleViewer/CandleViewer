@@ -8,9 +8,12 @@ document, never an empty catalogue (SCR-081 engine-offline state).
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from typing import Any, Final, Protocol
 from uuid import UUID
 
@@ -21,20 +24,22 @@ from candleviewer.api.preview_limiter import PreviewLimiter
 from candleviewer.api.rule_body import read_object
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.domain.text import escape_unpaired
+from candleviewer.observability.context import executor_future
 from candleviewer.rules.compiler import compile_form, compile_graph
 from candleviewer.rules.compiler.common import (
     ConditionNodeBoundError,
     build_rule,
     check_bounds,
+    holds_more_values,
     value_issues,
 )
 from candleviewer.rules.errors import ScopeForbiddenError
-from candleviewer.rules.ir import canonicalize, ir_hash
+from candleviewer.rules.ir import Rule, canonicalize, ir_hash
 from candleviewer.rules.ir.canonical import IrValueError
 from candleviewer.rules.ir.schema import to_json_schema
-from candleviewer.rules.issues import RuleCompileError
+from candleviewer.rules.issues import MAX_RETURNED_ISSUES, RuleCompileError
 from candleviewer.rules.scope import ScopeResolver
-from candleviewer.rules.validator import validate_rule
+from candleviewer.rules.validator import RuleValidationResult, validate_rule
 from candleviewer.rules.vocabulary import (
     MetricRegistry,
     VocabularyUnavailableError,
@@ -57,20 +62,32 @@ CHECK_BURST_FACTOR: Final = 2
 CHECK_ROUTES: Final = ("validate", "compile")
 #: The one bucket of every principal that carries no user id.
 _NO_USER: Final = UUID(int=0)
+#: A check whose body holds more values than this, counted as `check_bounds` counts a document's,
+#: parses, compiles and validates on the check worker; one with no more runs in place. Why this
+#: many: per value, the costliest bodies are the widest valid content (each condition checked as a
+#: rule's) and the deepest failing content (refused field by field, every list stopping at its
+#: first refused entry); at this count either stays a fraction of C-2.17's 50 ms on the loop (the
+#: perf test pins both), while a rule the editors validate, a few hundred values, stays in place.
+OFF_LOOP_VALUES: Final = 512
+#: Checks the worker admits at once, running or waiting; past it a check that would run there is
+#: `429 rate_limited` (22 "Bounded answer"), so the worker's queue is bounded (C-2.18).
+MAX_CHECKS_IN_FLIGHT: Final = 4
+_Compiler = Callable[[dict[str, Any], Any], Rule]
 
 
-def _diff(a: Any, b: Any, path: str = "") -> list[dict[str, Any]]:
-    """Structured diff of two canonical documents (``model`` vs ``counterpart``)."""
+def _diff(a: Any, b: Any, out: list[dict[str, Any]], path: str = "") -> int:
+    """The leaves where two canonical documents differ (``model`` vs ``counterpart``), counted;
+    `out` gets the first `MAX_RETURNED_ISSUES` of them, in document order."""
     if isinstance(a, dict) and isinstance(b, dict):
-        out: list[dict[str, Any]] = []
-        for k in sorted(set(a) | set(b)):
-            out += _diff(a.get(k), b.get(k), f"{path}/{k}")
-        return out
+        return sum(_diff(a.get(k), b.get(k), out, f"{path}/{k}") for k in sorted(set(a) | set(b)))
     if isinstance(a, list) and isinstance(b, list) and len(a) == len(b):
-        return [
-            d for i, (x, y) in enumerate(zip(a, b, strict=True)) for d in _diff(x, y, f"{path}/{i}")
-        ]
-    return [] if a == b else [{"path": path or "/", "model": a, "counterpart": b}]
+        pairs = enumerate(zip(a, b, strict=True))
+        return sum(_diff(x, y, out, f"{path}/{i}") for i, (x, y) in pairs)
+    if a == b:
+        return 0
+    if len(out) < MAX_RETURNED_ISSUES:
+        out.append({"path": path or "/", "model": a, "counterpart": b})
+    return 1
 
 
 def _compile_error(exc: RuleCompileError | IrValueError) -> RuleCompileError:
@@ -78,8 +95,80 @@ def _compile_error(exc: RuleCompileError | IrValueError) -> RuleCompileError:
     return exc if isinstance(exc, RuleCompileError) else RuleCompileError(value_issues(exc))
 
 
+def _parsed(ir: dict[str, Any]) -> Rule:
+    """`validateRule`'s document as a rule: its bounds, its schema, then what compile hashes, so
+    a value the hash cannot hold is not valid."""
+    check_bounds(ir, "rule")
+    rule = build_rule(ir)
+    canonicalize(rule)
+    return rule
+
+
+def _validated(rule: Rule, registry: MetricRegistry) -> RuleValidationResult:
+    return validate_rule(rule, registry, limit_caps=True)
+
+
+def _compiled(compile_fn: _Compiler, model: dict[str, Any], rule_id: UUID) -> tuple[Rule, str]:
+    rule = compile_fn(model, rule_id)
+    return rule, ir_hash(rule)
+
+
+def _round_trip(
+    rule: Rule, other_fn: _Compiler, other: dict[str, Any], rule_id: UUID
+) -> tuple[list[dict[str, Any]], int]:
+    """The counterpart model compiled, then the diff of the two canonical documents: its first
+    entries and the count of all."""
+    other_view = json.loads(canonicalize(other_fn(other, rule_id)))
+    diff: list[dict[str, Any]] = []
+    return diff, _diff(json.loads(canonicalize(rule)), other_view, diff)
+
+
+async def _in_place[T](fn: Callable[..., T], /, *args: Any) -> T:
+    return fn(*args)
+
+
+class CheckWorker:
+    """The one thread the large checks run on, their own and never the loop's default executor
+    (which the audit write-ahead shares), and the checks admitted to it: at most `limit`."""
+
+    def __init__(self, limit: int = MAX_CHECKS_IN_FLIGHT) -> None:
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cv-rule-check")
+        self._limit = limit
+        self.admitted = 0
+
+    def admit(self) -> bool:
+        """A slot for one check, else False: `limit` checks hold one."""
+        if self.admitted >= self._limit:
+            return False
+        self.admitted += 1
+        return True
+
+    def release(self) -> None:
+        self.admitted -= 1
+
+    async def run[T](self, fn: Callable[..., T], /, *args: Any) -> T:
+        """`fn(*args)` on the worker. A cancelled caller waits for it to return before the
+        cancellation goes on, so a check holds its slot while the thread works for it."""
+        job = executor_future(self._pool, fn, *args)
+        cancel: asyncio.CancelledError | None = None
+        while not job.done():
+            try:
+                await asyncio.wait([job])  # never cancels the job
+            except asyncio.CancelledError as exc:
+                cancel = cancel or exc
+        if cancel is not None:
+            raise cancel
+        return job.result()
+
+
 class _Principal(Protocol):
     def has(self, permission: str) -> bool: ...
+
+
+class _Run(Protocol):
+    """How a check runs each step: in place, or on the check worker."""
+
+    def __call__[T](self, fn: Callable[..., T], /, *args: Any) -> Awaitable[T]: ...
 
 
 class _Resolver(Protocol):
@@ -143,8 +232,10 @@ def make_rules_router(
     check_limiter: PreviewLimiter,
     on_rate_limited: _Counter = lambda route: None,
     on_cap_refused: _Counter = lambda cap: None,
+    check_worker: CheckWorker | None = None,
 ) -> APIRouter:
     router = APIRouter(tags=["rules"])
+    worker = CheckWorker() if check_worker is None else check_worker
 
     async def _authorize(request: Request) -> tuple[_Principal | None, JSONResponse | None]:
         if principal_resolver is None:
@@ -262,7 +353,9 @@ def make_rules_router(
         return _compile_error(exc)
 
     def _invalid(exc: RuleCompileError) -> JSONResponse:
-        n = len(exc.issues)
+        """`422 rule_ir_invalid`: the first `MAX_RETURNED_ISSUES` errors, and every one found
+        counted in `detail` and in `issues_total`."""
+        n = exc.total
         return JSONResponse(
             status_code=422,
             media_type="application/problem+json",
@@ -276,10 +369,25 @@ def make_rules_router(
                     {"field": escape_unpaired(i.path), "rule": i.code,
                      "message": escape_unpaired(i.message),
                      "node_ids": [escape_unpaired(nid) for nid in i.node_ids]}
-                    for i in exc.issues
+                    for i in exc.issues[:MAX_RETURNED_ISSUES]
                 ],
+                "issues_total": n,
             },
         )  # fmt: skip
+
+    async def _checked(
+        body: dict[str, Any], check: Callable[[_Run], Awaitable[Response]]
+    ) -> Response:
+        """`check(run)`, `run` taking each step in place, or on the check worker for a body of more
+        than `OFF_LOOP_VALUES` values: `429 rate_limited` while it holds its limit of checks."""
+        if not holds_more_values(body, OFF_LOOP_VALUES):
+            return await check(_in_place)
+        if not worker.admit():
+            return _rate_limited(1)
+        try:
+            return await check(worker.run)
+        finally:
+            worker.release()
 
     @router.post("/rules/validate")
     async def post_validate(request: Request) -> Response:
@@ -296,20 +404,25 @@ def make_rules_router(
             return body
         if body is None or not isinstance(body.get("ir"), dict) or set(body) - {"ir", "scope"}:
             return _problem(400, "Bad request", "body must be an object with an 'ir' object")
+        return await _checked(body, partial(_validate, principal, registry, body["ir"]))
+
+    async def _validate(
+        principal: _Principal, registry: MetricRegistry, ir: dict[str, Any], run: _Run
+    ) -> Response:
         try:
-            check_bounds(body["ir"], "rule")
-            rule = build_rule(body["ir"])
-            canonicalize(rule)  # what compile hashes: a value the hash cannot hold is not valid
+            rule = await run(_parsed, ir)
         except (RuleCompileError, IrValueError) as exc:  # still a 200 with valid=false
-            errs = [i.to_dict() for i in _counted(exc).issues]
+            err = _counted(exc)
+            errs = [i.to_dict() for i in err.issues[:MAX_RETURNED_ISSUES]]
             return JSONResponse(
-                {"valid": False, "errors": errs, "warnings": [], "referenced_variables": [],
-                 "referenced_actions": [], "estimated_evaluations_per_minute": 0}
+                {"valid": False, "errors": errs, "warnings": [], "issues_total": err.total,
+                 "referenced_variables": [], "referenced_actions": [],
+                 "estimated_evaluations_per_minute": 0}
             )  # fmt: skip
         forbidden = await _authorize_scope(principal, rule)
         if forbidden is not None:
             return forbidden
-        result = validate_rule(rule, registry, limit_caps=True)
+        result = await run(_validated, rule, registry)
         return JSONResponse(result.to_dict())
 
     @router.post("/rules/{ruleId}/compile")
@@ -329,23 +442,35 @@ def make_rules_router(
         model = body.get("model") if body else None
         if body is None or editor not in ("form", "graph") or not isinstance(model, dict):
             return _problem(400, "Bad request", "body needs 'editor' (form|graph) and 'model'")
+        check = partial(_compile, principal, registry, body, editor, model, ruleId)
+        return await _checked(body, check)
+
+    async def _compile(
+        principal: _Principal,
+        registry: MetricRegistry,
+        body: dict[str, Any],
+        editor: str,
+        model: dict[str, Any],
+        ruleId: UUID,
+        run: _Run,
+    ) -> Response:
         compile_fn = compile_form if editor == "form" else compile_graph
         try:
-            rule = compile_fn(model, ruleId)
-            rule_hash = ir_hash(rule)
+            rule, rule_hash = await run(_compiled, compile_fn, model, ruleId)
         except (RuleCompileError, IrValueError) as exc:
             on_compile(editor, "invalid")
             return _invalid(_counted(exc))
         forbidden = await _authorize_scope(principal, rule)
         if forbidden is not None:
             return forbidden
-        result = validate_rule(rule, registry, limit_caps=True)
+        result = await run(_validated, rule, registry)
         on_compile(editor, "ok" if result.valid else "issues")
         issues = [*result.errors, *result.warnings]
         payload: dict[str, Any] = {
             "ir": json.loads(rule.model_dump_json()),
             "ir_hash": rule_hash,
-            "issues": [i.to_dict() for i in issues],
+            "issues": [i.to_dict() for i in issues[:MAX_RETURNED_ISSUES]],
+            "issues_total": len(issues),
             "blocks_arming": result.blocks_arming,
         }
         other = body.get("counterpart_model")
@@ -354,15 +479,14 @@ def make_rules_router(
                 return _problem(400, "Bad request", "'counterpart_model' must be an object")
             other_fn = compile_graph if editor == "form" else compile_form
             try:
-                other_view = json.loads(canonicalize(other_fn(other, ruleId)))
+                diff, differ = await run(_round_trip, rule, other_fn, other, ruleId)
             except (RuleCompileError, IrValueError) as exc:
                 err = _counted(exc)
-                await _notify_divergence(editor, len(err.issues))
+                await _notify_divergence(editor, err.total)
                 return _invalid(err)
-            diff = _diff(json.loads(canonicalize(rule)), other_view)
-            if diff:  # never auto-reconcile: report only, the caller aborts the switch
-                await _notify_divergence(editor, len(diff))
-            payload["round_trip"] = {"match": not diff, "diff": diff}
+            if differ:  # never auto-reconcile: report only, the caller aborts the switch
+                await _notify_divergence(editor, differ)
+            payload["round_trip"] = {"match": not differ, "diff": diff, "diff_total": differ}
         return JSONResponse(payload)
 
     @router.get("/schemas/rule-ir.json")
@@ -375,4 +499,4 @@ def make_rules_router(
     return router
 
 
-__all__ = ["make_rules_router"]
+__all__ = ["CheckWorker", "make_rules_router"]

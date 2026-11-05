@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from candleviewer.rules.ir.canonical import IrValueError
 from candleviewer.rules.ir.models import Rule
-from candleviewer.rules.issues import Issue, RuleCompileError
+from candleviewer.rules.issues import MAX_RETURNED_ISSUES, Issue, RuleCompileError
 
 MAX_ITEMS = 20_000  # total dict/list/scalar values in one editor document
 MAX_DEPTH = 64  # nesting of the condition tree / document
@@ -73,6 +73,23 @@ def count_values(doc: Any) -> int:
     return count
 
 
+def holds_more_values(doc: Any, limit: int) -> bool:
+    """`doc` holds more than `limit` values, counted as `check_bounds` counts them; like it, the
+    walk stops once the values seen and still to be counted pass `limit`, reading no more."""
+    stack, count = [doc], 0
+    while stack:
+        cur = stack.pop()
+        count += 1
+        wide = len(cur) if isinstance(cur, (dict, list, tuple)) else 0
+        if count + len(stack) + wide > limit:
+            return True
+        if isinstance(cur, dict):
+            stack.extend(cur.values())
+        elif isinstance(cur, (list, tuple)):
+            stack.extend(cur)
+    return False
+
+
 def check_bounds(doc: Any, what: str) -> None:
     """Reject over-sized or over-deep documents before walking them. Every value stacked and every
     child of the one at hand is still to be counted, so a container is refused by its length
@@ -106,9 +123,12 @@ def _loc(loc: tuple[Any, ...]) -> str:
 
 
 def schema_issues(exc: ValidationError) -> list[Issue]:
+    """The model's first `MAX_RETURNED_ISSUES` errors as issues, in its order: no answer lists
+    more, and `exc.error_count()` counts them all."""
+    errors = exc.errors(include_url=False, include_input=False, include_context=False)
     return [
         Issue(_loc(e["loc"]), "schema_error", str(e["msg"]), klass="syntax")
-        for e in exc.errors(include_url=False, include_input=False, include_context=False)
+        for e in errors[:MAX_RETURNED_ISSUES]
     ]
 
 
@@ -121,4 +141,4 @@ def build_rule(doc: dict[str, Any]) -> Rule:
     try:
         return Rule.model_validate(doc)
     except ValidationError as exc:
-        raise RuleCompileError(schema_issues(exc)) from exc
+        raise RuleCompileError(schema_issues(exc), exc.error_count()) from exc

@@ -14,7 +14,19 @@ from typing import Any
 
 import pytest
 
+from candleviewer.rules.issues import MAX_RETURNED_ISSUES
 from tests.contract._admin_support import ROOT, SPEC, text, validate_example
+from tests.rules.test_rule_validation_answer_bound import (
+    COMPILE,
+    UNKNOWN,
+    _any_of,
+    _at_the_bounds,
+    _differing,
+    _form,
+    _ir,
+    _with_conditions,
+)
+from tests.rules.test_validator_endpoints import _client
 
 _SCHEMAS: dict[str, Any] = SPEC["components"]["schemas"]
 _VALIDATE: dict[str, Any] = SPEC["paths"]["/rules/validate"]["post"]
@@ -24,6 +36,8 @@ _RESULT: dict[str, Any] = _SCHEMAS["RuleValidationResult"]
 _COMPILED: dict[str, Any] = _COMPILE["responses"]["200"]["content"][_JSON]["schema"]
 _ROUND_TRIP: dict[str, Any] = _COMPILED["properties"]["round_trip"]
 _ISSUE = {"$ref": "#/components/schemas/RuleValidationIssue"}
+_COMPILE_PATH = "~1rules~1{ruleId}~1compile"
+_JSON_PART = "application~1json/schema"
 _RAW_24 = (ROOT / "docs/plan/24-internal-schemas.md").read_text(encoding="utf-8")
 #: The bound 22 states on `RuleValidationResult.errors`; every other statement of it must agree.
 BOUND: int = _RESULT["properties"]["errors"]["maxItems"]
@@ -118,3 +132,34 @@ def test_24_logs_the_bound_under_its_assigned_number() -> None:
     assert "The condition-node bound is unchanged: it counts objects, and the first" in entry
     threshold = "more values than a fixed threshold, counted as `check_bounds` counts a document's"
     assert f"{threshold} and never by its bytes, runs on the server's one check worker" in entry
+
+
+def test_the_server_lists_no_more_issues_than_22_states() -> None:
+    assert MAX_RETURNED_ISSUES == BOUND
+
+
+def test_validate_answers_past_the_bound_as_22_states() -> None:
+    unknown = _with_conditions(_any_of("u", UNKNOWN, 30), _any_of("v", UNKNOWN, 30))
+    for doc in (_at_the_bounds(_ir()), unknown):
+        body = _client().post("/rules/validate", json={"ir": doc}).json()
+        validate_example("/components/schemas/RuleValidationResult", body)
+        assert body["issues_total"] > len(body["errors"]) + len(body["warnings"]) == BOUND
+
+
+def test_compile_answers_past_the_bound_as_22_states() -> None:
+    unknown = _form(_with_conditions(_any_of("u", UNKNOWN, 30), _any_of("v", UNKNOWN, 30)))
+    compiled = _client().post(COMPILE, json={"editor": "form", "model": unknown}).json()
+    issues = {name: value for name, value in compiled.items() if name != "ir"}
+    validate_example(f"/paths/{_COMPILE_PATH}/post/responses/200/content/{_JSON_PART}", issues)
+    assert compiled["issues_total"] > len(compiled["issues"]) == BOUND
+    at_bounds = {"editor": "form", "model": _at_the_bounds(_form(_ir()))}
+    refused = _client().post(COMPILE, json=at_bounds).json()
+    validate_example("/components/schemas/Problem", refused)
+    assert refused["issues_total"] > len(refused["errors"]) == BOUND
+
+
+def test_a_round_trip_answers_past_the_bound_as_22_states() -> None:
+    trip = _client().post(COMPILE, json=_differing(60)).json()["round_trip"]
+    pointer = f"/paths/{_COMPILE_PATH}/post/responses/200/content/{_JSON_PART}"
+    validate_example(pointer, {"round_trip": trip})
+    assert trip["diff_total"] > len(trip["diff"]) == BOUND
