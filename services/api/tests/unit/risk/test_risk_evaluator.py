@@ -37,6 +37,23 @@ _TABLE: dict[str, tuple[str, int, str, tuple[int, int, int], bool]] = {
 }
 
 
+# cap: the refusal's reported figure at "over", and the projected one its message names.
+_REPORTED: dict[str, tuple[str, str | None]] = {
+    "max_orders_per_minute": ("5", "6"),
+    "max_concurrent_orders": ("5", "6"),
+    "max_open_positions": ("5", "6"),
+    "max_position_notional_usd": ("20000", "30000"),
+    "max_total_notional_usd": ("50000", "60000"),
+    "max_position_pct_equity": ("15", "25"),
+    "per_symbol_concentration_pct": ("1.5", "2.5"),
+    "max_leverage": ("1.95", "2.05"),
+    "max_daily_loss_usd": ("1500", None),
+    "max_daily_loss_pct": ("1.5", None),
+    "max_drawdown_pct": ("1.5", None),
+    "max_consecutive_losses": ("4", None),
+}
+
+
 def _row(figure: str, value: int) -> dict[str, Any]:
     if figure in ("BTC", "ETH"):
         return {"symbol_notional": {f"{figure}USDT": D(value)}}
@@ -60,6 +77,11 @@ def test_evaluate_decision_table(cap: str, state: int, reduce_only: bool) -> Non
         return
     assert decision.code is RiskRefusal.RISK_LIMIT_BREACHED
     assert (decision.cap, decision.limit) == (cap, D(limit))
+    if state == 2:
+        actual, after = _REPORTED[cap]
+        assert decision.actual == D(actual)
+        assert (f"after this order {after})" in decision.message) is (after is not None)
+        assert after is not None or "after this order" not in decision.message
 
 
 def test_evaluate_position_cap_names_cap_limit_and_current_value() -> None:  # Gherkin 1
@@ -264,6 +286,11 @@ def test_evaluate_zero_aggregate_cap_refuses_before_concentration() -> None:
     assert decision.cap == "max_total_notional_usd"
 
 
+def test_evaluate_zero_aggregate_cap_admits_an_order_adding_no_exposure() -> None:
+    o = order(notional=D(0), opens_exposure=False)  # not reduce-only, so judged: no 0 / 0 share
+    assert run(o, c=caps(pol={"max_total_notional_usd": D(0)})).decision.allowed
+
+
 def test_evaluate_message_falls_back_for_a_figure_too_wide_for_plain_form() -> None:
     decision = run(f=figures(daily_figure=D("-1E+70"))).decision
     assert decision.cap == "max_daily_loss_usd" and "1E+70" in decision.message
@@ -370,6 +397,10 @@ _MALFORMED: tuple[tuple[str, dict[str, Any]], ...] = (
     ("o", {"notional": D("9E+999998")}),
     ("f", {"daily_figure": D("-1E+101")}),
     ("c", {"max_position_notional_usd": D("1E-101")}),
+    # Priced: positive, notional never above qty at the price, positive when opening exposure.
+    ("o", {"notional": D(0)}),
+    ("o", {"qty": D(0), "notional": D(0), "reference_price": D(0), "opens_exposure": False}),
+    ("o", {"qty": D("0.1"), "notional": D("10000.000000000000000001")}),
 )
 
 

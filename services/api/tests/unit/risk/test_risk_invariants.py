@@ -19,6 +19,7 @@ from candleviewer.risk.caps import ManagerCaps
 from tests.unit.risk._risk_builders import D, caps, close_order, figures, order, run
 
 _money = st.decimals(min_value=0, max_value=10**7, places=8)
+_opening = st.decimals(min_value=D("1E-8"), max_value=10**7, places=8)  # opens: above 0
 _pct = st.decimals(min_value=D("0.01"), max_value=100, places=4)
 _count = st.integers(min_value=0, max_value=60)
 _POLICY_CAPS = (
@@ -78,7 +79,7 @@ def test_more_loss_never_turns_a_refusal_into_an_admission(
         assert not run(f=figures(**worse), c=c).decision.allowed
 
 
-@given(_scenario(), _money, _money)
+@given(_scenario(), _opening, _money)
 def test_more_exposure_never_turns_a_refusal_into_an_admission(
     s: tuple[dict[str, Any], dict[str, Any], dict[str, Any]], notional: Decimal, extra: Decimal
 ) -> None:
@@ -149,7 +150,7 @@ def test_an_exempt_close_is_never_refused(
 def test_a_notional_boundary_is_exact_to_the_last_place(
     limit: Decimal, data: st.DataObject
 ) -> None:
-    held = data.draw(st.decimals(min_value=0, max_value=limit, places=18))
+    held = data.draw(st.decimals(min_value=0, max_value=limit - D("1E-18"), places=18))
     c = caps(prof={"max_position_notional_usd": limit})
     f = figures(symbol_notional={"BTCUSDT": held})
     assert run(order(notional=limit - held), f, c).decision.allowed

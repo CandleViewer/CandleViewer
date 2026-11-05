@@ -59,6 +59,9 @@ def figures(**fields: Any) -> RiskFigures:
 
 
 def order(**fields: Any) -> RiskOrder:
+    """A notional given alone is priced at 1, so it stays `qty` at the reference price."""
+    if "notional" in fields and not {"qty", "reference_price"} & fields.keys():
+        fields = {"qty": fields["notional"], "reference_price": D(1), **fields}
     base = RiskOrder(
         account_id=AccountId(UUID(int=1)),
         environment="demo",

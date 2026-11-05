@@ -2472,7 +2472,7 @@ blocking `max_total_notional_usd` only, never a policy warn total; a blocking co
 aggregate cap refuses closed, `risk_limit_breached` on `per_symbol_concentration_pct`, and a warn-only one is skipped), leverage, daily loss in USD, daily
 loss in percent, drawdown, consecutive losses. A projected figure may land on its limit; a measured loss is refused at
 it. Comparisons run at 80 significant digits, exact for `numeric(38,18)` operands. `evaluate` never raises on malformed
-inputs: a non-finite figure, a negative quantity, price, notional, held notional, counter or cap limit, a figure or limit whose decimal exponent is beyond ±100 (so no ratio overflows), or a tz-naive
+inputs: a non-finite figure, a negative quantity, price, notional, held notional, counter or cap limit, a figure or limit whose decimal exponent is beyond ±100 (so no ratio overflows), an order priced at or below 0, whose notional exceeds its quantity at its reference price, or that opens exposure with a notional at or below 0 (every exposure cap measures the held notional plus the order's), or a tz-naive
 `as_of` refuses `risk_state_unavailable` before any other check; only a tz-naive `now` (a programmer error) raises.
 `as_of` and `now` come from the same injected clock. An order that is reduce-only and opens neither exposure nor a
 position skips every check, these refusals included (SR-E39-02).

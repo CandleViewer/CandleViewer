@@ -8,10 +8,12 @@ threshold never disables a blocking limit (`caps.py`).
 
 Malformed figures never raise and never admit: a non-finite `Decimal` (NaN, an infinity), a negative
 quantity, price, notional, held notional or counter, a negative or non-finite cap limit, a figure or
-limit whose decimal exponent (`adjusted()`) is beyond +/-100, so no ratio can overflow, or a
-tz-naive `as_of` refuses `risk_state_unavailable`. An exception out of `evaluate` is a programmer
-error only (a tz-naive `now`), never a verdict. `figures.as_of` and `now` must come from the same
-injected clock, or freshness is judged across two clocks.
+limit whose decimal exponent (`adjusted()`) is beyond +/-100, so no ratio can overflow, a
+tz-naive `as_of`, or an order priced at or below 0, whose notional exceeds `qty` at its reference
+price, or that opens exposure with a notional at or below 0, refuses `risk_state_unavailable`. An
+exception out of `evaluate` is a programmer error only (a tz-naive `now`), never a verdict.
+`figures.as_of` and `now` must come from the same injected clock, or freshness is judged across
+two clocks.
 
 Comparisons are exact: a ratio cap is compared by cross-multiplying, never by dividing, and every
 comparison runs in a `Decimal` context of `_PRECISION` digits, wide enough for the exact product of
@@ -127,6 +129,17 @@ def _well_formed(order: RiskOrder, figures: RiskFigures, caps: ResolvedCaps) -> 
         and all(_in_range(v) for v in signed)
         and all(_in_range(v) and v >= _ZERO for v in unsigned)
         and min(counters) >= 0
+        and _priced(order)
+    )
+
+
+def _priced(order: RiskOrder) -> bool:
+    """A positive reference price; a notional never above `qty` at it, and positive when the
+    order opens exposure, since every exposure cap measures the held notional plus this one."""
+    return (
+        order.reference_price > _ZERO
+        and order.notional <= order.qty * order.reference_price
+        and (order.notional > _ZERO or not order.opens_exposure)
     )
 
 
@@ -286,7 +299,7 @@ def _concentration(
 
     The base is the blocking `max_total_notional_usd` only; a policy warn total is never a base.
     A blocking concentration cap with no blocking base cannot be measured and refuses closed; a
-    warn-only one is skipped. A zero base breaches for any positive symbol notional.
+    warn-only one is skipped. A zero base has nothing to share: the zero total cap refused first.
     """
     name = "per_symbol_concentration_pct"
     total = caps.get("max_total_notional_usd")
@@ -299,10 +312,11 @@ def _concentration(
             )
         return
     base = total.limit
-    # A zero base is a warn threshold of 0: any positive symbol notional breaches it.
+    if base == _ZERO:  # the zero total cap has refused any positive notional: nothing to share
+        return
     check(
         name,
         lambda limit: held_after * _HUNDRED > limit * base,
-        _ratio(held * _HUNDRED, base) if base > _ZERO else _ZERO,
-        _ratio(held_after * _HUNDRED, base) if base > _ZERO else _ZERO,
+        _ratio(held * _HUNDRED, base),
+        _ratio(held_after * _HUNDRED, base),
     )
