@@ -132,7 +132,7 @@ PAIRS: tuple[tuple[str, str, str, float], ...] = (
     ("T2 reason, SCR-045", SECONDARY, RAISED, 4.5),
     ("hint chip", SECONDARY, "color.surface.selected", 4.5),
     ("validation message", TEXT, OVERLAY, 4.5),
-    ("invalid field boundary", "color.status.danger.default", "color.surface.app", 3.0),
+    ("invalid field boundary", "color.status.danger.default", "color.surface.overlay", 3.0),
     ("buy sign glyph", "color.buy.default", CANVAS, 3.0),
     ("sell sign glyph", "color.sell.default", CANVAS, 3.0),
     ("buy sign glyph on its shade", "color.buy.default", BUY_SHADE, 3.0),
@@ -153,7 +153,7 @@ PAIRS: tuple[tuple[str, str, str, float], ...] = (
 # ---------- section 6: redlines (BQ-3, BQ-6) ---------------------------------------------------
 DENSITIES = ("compact", "comfortable")
 ROW_SETS = (("Default", 5), ("AllRows", 12))
-MONO_ADVANCE = 0.6  # JetBrains Mono's fixed advance in em (`16`:98 locks the family)
+MONO_ADVANCE = 0.6  # JetBrains Mono's advance, 600 of 1,000 units/em (`16`:98 locks the family)
 VALUE_CLASS = "type.num.sm"
 # Section 4.2: the widest Total Notional strings at the PROPOSED ten-digit design bound (OQ-1).
 WIDEST = (
@@ -194,9 +194,9 @@ BQ-1 fa8a379855a42285
 BQ-2 ccaa9b8b9f784603
 BQ-3 f7f097c2ad2552ea
 BQ-4 ad357cbcb0e3bbab
-BQ-5 e770a8e51e988377
+BQ-5 1499291c58a26d60
 BQ-6 9c43a1092e7236cf
-BQ-7 d88d37bede6cc3d7
+BQ-7 a520c09653aa6cbf
 BQ-8 ad1c65ae472431fd
 BQ-9 28b658b5dc2344de
 """  # end of the BQ pins
@@ -355,11 +355,11 @@ def squash(s: str) -> str:
     return " ".join(s.split())
 
 
-def cited_text(cell: str) -> str:
+def cited_text(cell: str, i: int = 0) -> str:
     c = L.extract_cites(cell, CITE_RE)
-    if not c:
+    if len(c) <= i:
         return ""
-    return squash(" ".join(line_of(c[0].doc, k) for k in range(c[0].lo, c[0].hi + 1)))
+    return squash(" ".join(line_of(c[i].doc, k) for k in range(c[i].lo, c[i].hi + 1)))
 
 
 def copy_deck(spec: str) -> list[list[str]]:
@@ -385,7 +385,10 @@ def g_quote(t: L.Tree) -> list[str]:
             continue
         s = squash(L.unquote(r[2]))
         if r[4].startswith("lead verbatim"):
-            s = s.split(". ")[0] + "."
+            s, _, rest = s.partition(". ")
+            s += "."
+            if not rest or rest not in cited_text(r[3], 1):
+                bad.append(r[0] + " (second sentence)")
         elif not r[4].startswith("verbatim"):
             continue
         if s not in cited_text(r[3]):
@@ -661,6 +664,8 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-28", "G-UNTOUCHED", "an owner document edited", "@changed",
        "", "docs/plan/15-component-catalogue.md"),
     _M("M-29", "G-MUTLIST", "the list drifts", "spec", "| M-1  | G-CITE ", "| M-1  | G-AC   "),
+    _M("M-30", "G-QUOTE", "D02's second sentence reworded", "spec",
+       '{row}: enter a value from 0 to 100 %."', '{row}: enter a value of 0 to 100 %."'),
 )
 # fmt: on
 
