@@ -3,8 +3,8 @@
 The bar tables have one production writer: `BarWriter` (`bars/writer.py`), which stamps every row
 with its `source`, `generation`, `index` and `row_checksum` (`bars/rows.py`). The reader withholds
 a row whose provenance does not verify, so a second path that writes rows without it would turn
-valid bars into integrity failures, or, before the provenance cutover, into rows trusted on
-nothing. So no code under `candleviewer/` may write a `bars_*` row but through `BarWriter`.
+valid bars into integrity failures. So no code under `candleviewer/` may write a `bars_*` row
+but through `BarWriter`.
 
 The scan reads the parsed code (`ast`), not raw text. It flags:
 - a SQL statement that writes to a `bars_*` table (`INSERT INTO`, `UPDATE`, `COPY`,
