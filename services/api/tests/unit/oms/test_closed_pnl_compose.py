@@ -30,7 +30,7 @@ from tests.unit.oms.submit_rig import Instruments, instrument
 from tests.unit.oms.test_closed_pnl_sync import Store, _record
 
 START = datetime(2026, 11, 4, 10, 0, tzinfo=UTC)  # the key's confirmed flat
-OPEN, CLOSE, OTHER = UUID(int=0xA), UUID(int=0xB), UUID(int=0xC)  # order rows
+OPEN, CLOSE, OTHER, CLOSE2 = (UUID(int=n) for n in (0xA, 0xB, 0xC, 0xD))  # order rows
 G1, G2 = UUID(int=0x61), UUID(int=0x62)  # trade groups
 N = Decimal
 
@@ -278,13 +278,15 @@ async def test_a_settled_records_venue_columns_survive_a_recompose_and_the_walk_
     ("case", "final"),
     [("as built", True), ("unsettled", False), ("already final", False), ("order open", False),
      ("no walk", False), ("no start", False), ("capped", False), ("no close", False),
-     ("size in doubt", False), ("short of its qty", False), ("walk not clean", True)],
+     ("size in doubt", False), ("short of its qty", False), ("walk not clean", True),
+     ("closes above its qty", False), ("one close sure, one in doubt", False)],
 )  # fmt: skip
 async def test_the_final_rule_reads_the_records_own_closes_never_the_walks_clean(
     case: str, final: bool
 ) -> None:
     """Q4 option 3: terminal, settled, a start, not capped, each close `sizes_sure` and their `c`
-    the record's `qty`; a walk whose span after the record's closes is unreadable is not clean."""
+    the record's `qty`, exactly; a walk whose span after the record's closes is unreadable is not
+    clean."""
     store = book()
     await store.settle(venue_record(_record(exchange_order_id=f"x-{CLOSE.int}", qty=N(2))))
     row = store.rows[record_id(ACCOUNT_A, f"x-{CLOSE.int}")]
@@ -311,9 +313,12 @@ async def test_the_final_rule_reads_the_records_own_closes_never_the_walks_clean
                       "walk not clean": Walk(start=START, closes=closes)}[case]  # fmt: skip
         case "no close":
             closes = ()
-        case "size in doubt" | "short of its qty":
-            closes = (replace(close, **({"sizes_sure": False} if case == "size in doubt"
-                                        else {"closed": N("1.5")})),)  # fmt: skip
+        case "size in doubt":
+            closes = (replace(close, sizes_sure=False),)
+        case "short of its qty" | "closes above its qty":
+            closes = (replace(close, closed=N("1.5" if case == "short of its qty" else "2.5")),)
+        case "one close sure, one in doubt":
+            closes = (replace(close, closed=N(1)), replace(close, closed=N(1), sizes_sure=False))
     assert is_final(row, state, walked, closes) is final
 
 
@@ -338,6 +343,58 @@ async def test_the_walks_c_completes_the_final_rule_only_where_it_is_sure_of_its
     stamped = store.rows[c.row.id].final_at is not None
     assert (c.final, stamped, c.closed, c.row.fee_pnl) == (final, final, N(2), None)
     assert c.row.gross_pnl == (6 if qty == "3" else None)
+
+
+@pytest.mark.parametrize("case", ["one close in doubt", "closes above the venue's qty"])
+async def test_a_record_whose_closes_sum_to_its_qty_stays_open_unless_each_is_sure(
+    case: str,
+) -> None:
+    """Through the composer: REST recovers two sells of the closing order, 1 then 3 against the 1
+    left open, neither stating a size, so `c` 1 sure and 1 in doubt sum to the venue's `qty` 2;
+    and stored closes of 2 read against a venue `qty` of 1.5. Both stay open, never stamped."""
+    store, qty = book(), N(2)
+    if case == "one close in doubt":
+        store.fills.pop()
+        fill(store, 2, CLOSE, "Sell", "1", "103", closed=None, pnl=None)
+        fill(store, 3, CLOSE, "Sell", "3", "103", closed=None, pnl=None)
+    else:
+        qty = N("1.5")
+    await store.settle(venue_record(_record(exchange_order_id=f"x-{CLOSE.int}", qty=qty)))
+    c = await compose(store, CLOSE, finalize=True)
+    assert (c.closed, c.final, store.rows[c.row.id].final_at) == (N(2), False, None)
+
+
+async def test_two_closing_orders_on_one_position_each_compose_their_own_close() -> None:
+    """A long of 2 closed by two orders of 1 on one walk: each record takes its own order's close
+    and half the opening fees, never its sibling's, with the opener's group."""
+    store = Store(flats={("ETHUSDT", 0): (START,)})
+    for oid, side in ((OPEN, "Buy"), (CLOSE, "Sell"), (CLOSE2, "Sell")):
+        order(store, oid, side)
+    fill(store, 1, OPEN, "Buy", "2", "100", fee="0.12", closed="0", group=G1)
+    fill(store, 2, CLOSE, "Sell", "1", "103", fee="0.0618", closed="1", pnl="3")
+    fill(store, 3, CLOSE2, "Sell", "1", "105", fee="0.063", closed="1", pnl="5")
+    done = await composer(store).begin(ACCOUNT_A).compose([CLOSE, CLOSE2])
+    assert [(c.row.qty, figures(c), c.row.trade_group_id) for c in done] == [
+        (N(1), (N(3), N("-0.1218"), N(0), N("2.8782")), G1),
+        (N(1), (N(5), N("-0.123"), N(0), N("4.877")), G1),
+    ]  # fmt: skip
+    assert store.calls["walk_fills"] == 1
+
+
+async def test_a_record_closing_two_episodes_takes_funding_from_the_first_opening() -> None:
+    """A closing order whose fills close two episodes of the position, the walk flat between
+    them: its window opens at the first episode's opening, so the 16:00 settlement between the
+    episodes leaves funding absent."""
+    store = Store(flats={("ETHUSDT", 0): (START,)})
+    for oid, side in ((OPEN, "Buy"), (CLOSE, "Sell"), (OTHER, "Buy")):
+        order(store, oid, side)
+    fill(store, 1, OPEN, "Buy", "1", "100", closed="0")
+    fill(store, 2, CLOSE, "Sell", "1", "101", closed="1", pnl="1")
+    fill(store, 21601, OTHER, "Buy", "1", "100", closed="0")  # 16:00:01 UTC
+    fill(store, 21602, CLOSE, "Sell", "1", "102", closed="1", pnl="2")
+    c = await compose(store, CLOSE)
+    assert (c.closed, c.row.opened_at, c.row.closed_at) == (N(2), at(1), at(21602))
+    assert figures(c) == (N(3), N(0), None, None)
 
 
 async def test_a_capped_walk_composes_no_figure_is_never_final_and_warns_with_ids_alone() -> None:
