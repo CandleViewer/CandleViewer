@@ -158,18 +158,20 @@ named.
 ## Accepted risks and sign-off
 
 BQ-5 as ruled: a case `main` does not meet is pinned only with this record and a sign-off naming
-its owner ticket. Each pin's `reason` names its record and that ticket. Ratings use the model's
-matrix (`E29-oms.md` section 1.3); H\* raises a cell one band. The Owner's acceptance for the R3
-gate is owed on #2701.
+its owner ticket. Each pin's `reason` names its record and that ticket. Each record is accepted
+until its owner ticket closes, and no longer: its control landing turns the record's strict xfail
+XPASS, which fails the suite, and that ticket's PR removes the xfail and this row. Ratings use the
+model's matrix (`E29-oms.md` section 1.3); H\* raises a cell one band. The Owner's acceptance for
+the programme R3 release gate is owed on #2701.
 
 <!-- prettier-ignore -->
-| Record | Pinned | Unmet requirement | STRIDE, risk | Owner ticket | Sign-off |
-| --- | --- | --- | --- | --- | --- |
-| X02-R1 | AC-17, G3 | A stop placement acquires its `critical` token within the lane's wait while entries and polls fill the UID's budget (SR-E29-14, SR-071) | D, M x H\*, Critical (OM-D02; F-04 High) | #859 | main-orchestrator under the Owner's delegation, ruling of 2026-11-03 on #982; the Owner's veto window is the digest |
-| X02-R2 | AC-18 | A stop attach holds a slice of `critical` that cancels cannot spend, and cancels are limited per user (SR-E29-14) | D, L x H\*, High (OM-D06; F-04 High) | #859 | main-orchestrator under the Owner's delegation, ruling of 2026-11-03 on #982; the Owner's veto window is the digest |
-| X02-R3 | AC-30 | The process's IP bucket serves another UID's stop ahead of queued work, which no lane outside `critical` can spend or pass (SR-044c, SR-E29-14) | D, M x H\*, Critical (OM-D08; F-04 High) | #859 | main-orchestrator under the Owner's delegation, ruling of 2026-11-03 on #982; the Owner's veto window is the digest |
-| X02-R4 | AC-19, #982 rows of 2026-10-23 and 2026-10-24 | The order routes keep a per-user limit, answered `429 rate_limited` with `Retry-After`, which another user's orders never meet (OM-D01, SR-044d) | D, M x H, High (OM-D01) | #1152 (E29-X03), named by main-orchestrator on 2026-11-05 (BQ-5) | main-orchestrator under the Owner's delegation, ruling of 2026-11-03 on #982; the Owner's veto window is the digest |
-| X02-R5 | #982 row of 2026-10-23 (the reference price) | The reference price's budget of new symbols is kept per principal (CR-S3E4-02) | D, L x M, Low (no model row) | #1152 (E29-X03), named by main-orchestrator on 2026-11-05 (BQ-5) | main-orchestrator under the Owner's delegation, ruling of 2026-11-03 on #982; the Owner's veto window is the digest |
+| Record | Pinned | Pin (test) | Unmet requirement | STRIDE, risk | Owner ticket | Sign-off |
+| --- | --- | --- | --- | --- | --- | --- |
+| X02-R1 | AC-17, G3 | `tests/security/oms/test_protective_reserve.py::test_g3_a_stop_acquires_its_token_within_its_wait_while_the_budget_is_full` (`ac17`) | A stop placement acquires its `critical` token within the lane's wait while entries and polls fill the UID's budget (SR-E29-14, SR-071) | D, M x H\*, Critical (OM-D02; F-04 High) | #859 | main-orchestrator under the Owner's delegation, ruling of 2026-11-03 on #982, for #859; the Owner's veto window is the digest |
+| X02-R2 | AC-18 | `tests/security/oms/test_protective_reserve.py::test_g3_a_stop_acquires_its_token_within_its_wait_while_the_budget_is_full` (`ac18`) | A stop attach holds a slice of `critical` that cancels cannot spend, and cancels are limited per user (SR-E29-14) | D, L x H\*, High (OM-D06; F-04 High) | #859 | main-orchestrator under the Owner's delegation, ruling of 2026-11-03 on #982, for #859; the Owner's veto window is the digest |
+| X02-R3 | AC-30 | `tests/security/oms/test_protective_reserve.py::test_g3_a_stop_acquires_its_token_within_its_wait_while_the_budget_is_full` (`ac30`) | The process's IP bucket serves another UID's stop ahead of queued work, which no lane outside `critical` can spend or pass (SR-044c, SR-E29-14) | D, M x H\*, Critical (OM-D08; F-04 High) | #859 | main-orchestrator under the Owner's delegation, ruling of 2026-11-03 on #982, for #859; the Owner's veto window is the digest |
+| X02-R4 | AC-19, #982 rows of 2026-10-23 and 2026-10-24 | `tests/security/oms/test_abuse_cases.py::test_ac19_a_burst_of_orders_from_one_session_meets_a_429_and_another_user_is_admitted` (`entry`, `refused_late`) | The order routes keep a per-user limit, answered `429 rate_limited` with `Retry-After`, which another user's orders never meet (OM-D01, SR-044d) | D, M x H, High (OM-D01) | #1152 (E29-X03), named by main-orchestrator on 2026-11-05 (BQ-5) | main-orchestrator under the Owner's delegation, ruling of 2026-11-03 on #982, for #1152; the Owner's veto window is the digest |
+| X02-R5 | #982 row of 2026-10-23 (the reference price) | `tests/security/oms/test_abuse_cases.py::test_982_row_2_one_principals_new_symbols_leave_another_principals_demand_admitted` | The reference price's budget of new symbols is kept per principal (CR-S3E4-02) | D, L x M, Low (no model row) | #1152 (E29-X03), named by main-orchestrator on 2026-11-05 (BQ-5) | main-orchestrator under the Owner's delegation, ruling of 2026-11-03 on #982, for #1152; the Owner's veto window is the digest |
 
 The native stop attached at create (C-2.6) stays the floor of every open position throughout.
 `32-risk-register.md` is E29-T09's to update (BQ-9 as ruled); these records are this suite's rows
