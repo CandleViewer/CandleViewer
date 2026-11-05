@@ -22,16 +22,21 @@ Gates (each FAIL led by its name):
                that is an E18 story; `frozen` null for an E18-owned string, else its reason.
   G-SOURCE     each row's text stands on its cited line or wrapped line range (table pipes, box
                edges and runs of blanks folded) as a whole span, never a cut word; a `merged` row
-               cites a merged file (D02, D04, D09); a D03 row (PR #5881, open) is PROPOSED.
+               cites a merged file (D02, D04, D09); a D03 row (PR #5881, open) is PROPOSED; a
+               `t2` row citing E09-D09 is its §3.1 template filled, so its §3.2 verb stands on
+               the cited verb-table line as a whole span.
   G-WDECK      D03 §11's W-1 ... W-25, read at the pinned head, each have exactly one deck row
-               carrying that `ref` with the same string; each verbatim W row's string stands on
-               the D02 line D03 cites.
+               carrying that `ref` with the same string, except a W row the ruling of record
+               re-words (RULED_W: W-11 by BQ-7), whose row carries the ruled string while D03
+               still carries its own (a ruled override goes stale once D03 takes it); each
+               verbatim W row's string stands on the D02 line D03 cites.
   G-LR         D04 §7.3's announced rows LR-2 ... LR-5 each have a deck row, and every LR row's
                text stands in that LR row's Text cell; every `announce` row, and no other, carries
                `live: polite`, the one polite `role="status"` region D04 §7.3 rules (never
                `assertive`), read in that section.
   G-T2         every `t2` row has a `key`: an E09-D09 §3.1 key whose template the text fills
-               with a §3.2 verb (or a verb narrowed by a named authority), or `state`, PROPOSED
+               with a §3.2 verb (or a verb narrowed by a named authority; D02 A-29's "rebuild
+               footprint cells" is none, by BQ-7), or `state`, PROPOSED
                and owned by E18-D05 or E17-D01; every reason is one sentence, at most 60
                characters, with no figure (G-T2.4).
   G-SUPERSEDED the ticket's two settled-away strings (`T` Scope, read in the E18 backlog) are no
@@ -63,7 +68,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import spec_audit_lib as L  # the shared helper sits beside this file (main's blob 15793f79cf92)
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "e34297637f97a256046d469e7cf8d80dcd05ef7a"  # origin/main; D02, D04 and E09-D09 merged here
+BASE = "e7cc2dd2a1f8d70de462e0644a1e7e5aa02108a8"  # origin/main; D02, D04 and E09-D09 merged here
 D03_HEAD = "67a2907b444265bc280b0ace9c86a2b12738e2ae"  # PR #5881 head (E18-D03 slice 1c), open
 
 DECK_REL = "docs/design/E18/E18-D05-copy-deck.jsonl"
@@ -135,8 +140,10 @@ T2_TEMPLATES = {
     "rbac.owner_only": "Only the owner can {verb}.",
 }
 NARROWINGS = {  # a verb narrower than E09-D09 §3.2's, and the authority that narrows it
-    "A-29": frozenset({"rebuild footprint cells"}),  # D02 §13 A-29 (PROPOSED to E09-D09's owner)
     "E09-D09 §3.2": frozenset({"start recording"}),  # §3.2's recording row: a CTA may narrow it
+}
+RULED_W = {  # W rows the ruling of record (comment 6652596258) re-words, and the ruling
+    "W-11": ("Only the owner can change recording.", "BQ-7"),
 }
 STATE_OWNERS = ("E18-D05", "E17-D01")  # D02:937 hands the footprint's state keys to E18-D05
 
@@ -255,6 +262,17 @@ def g_deck(t: L.Tree) -> list[str]:
     return bad
 
 
+def t2_verb(r: Row) -> str:
+    """The verb a `t2` row fills its §3.1 template with ("" if the text does not fill it)."""
+    tpl = T2_TEMPLATES.get(s(r, "key"), "")
+    if "{verb}" not in tpl:
+        return ""
+    lead, tail = tpl.split("{verb}")
+    text = s(r, "text")
+    ok = text.startswith(lead) and text.endswith(tail) and len(text) > len(lead + tail)
+    return text[len(lead) : -len(tail)] if ok else ""
+
+
 def g_source(t: L.Tree) -> list[str]:
     _, rows = deck(t)
     bad: list[str] = []
@@ -266,10 +284,15 @@ def g_source(t: L.Tree) -> list[str]:
             continue
         key, lo = m.group(1), int(m.group(2))
         hi = int(m.group(3) or lo)
-        if not whole_span(span(key, lo, hi), s(r, "text")):
+        if key != "D09" and not whole_span(span(key, lo, hi), s(r, "text")):
             bad.append(f"{rid}: its text is not a whole span on {src}")
         if r.get("status") == "merged" and key not in MERGED_KEYS:
             bad.append(f"{rid}: `merged` but cites {key}, which is not merged")
+        verb = t2_verb(r) if key == "D09" and r.get("kind") == "t2" else None
+        if key == "D09" and r.get("kind") == "t2":
+            if not verb or not whole_span(span(key, lo, hi), verb):
+                bad.append(f"{rid}: its §3.2 verb {verb!r} is not a whole span on {src}")
+            continue
     return bad
 
 
@@ -289,10 +312,13 @@ def g_wdeck(t: L.Tree) -> list[str]:
     bad: list[str] = []
     for w, (text, src, status) in w_rows().items():
         mine = [r for r in rows if r.get("ref") == w]
+        want, why = RULED_W.get(w, (text, ""))
+        if why and want == text:
+            bad.append(f"{w}: D03 now carries the {why} string; drop the ruled override")
         if len(mine) != 1:
             bad.append(f"{w}: {len(mine)} deck rows, want 1")
-        elif s(mine[0], "text") != text:
-            bad.append(f"{w}: the deck's string differs from D03's")
+        elif s(mine[0], "text") != want:
+            bad.append(f"{w}: the deck's string differs from {why or 'D03'}'s")
         m = D02_CITE.search(src)
         if status == "verbatim" and m is not None:
             lo = int(m.group(1))
@@ -351,8 +377,7 @@ def g_t2(t: L.Tree) -> list[str]:
         if tpl is None or keys.get(key) != tpl:
             bad.append(f"{rid}: {key!r} is not an E09-D09 §3.1 key this deck fills")
             continue
-        lead, tail = tpl.split("{verb}")
-        verb = text[len(lead) : -len(tail)] if text.startswith(lead) and text.endswith(tail) else ""
+        verb = t2_verb(r)
         narrowed = NARROWINGS.get(s(r, "narrowed"), frozenset())
         if not verb or (verb not in verbs and verb not in narrowed):
             bad.append(f"{rid}: {verb!r} is not a §3.2 verb nor narrowed by its authority")
@@ -441,7 +466,14 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-10", "G-T2", "a permission reason under the account key",
        fn=deck_edit("footprint.t2.save", key="rbac.account")),
     _M("M-11", "G-T2", "a narrowed verb without its authority",
-       fn=deck_edit("footprint.t2.rebuild_owner_only", narrowed=_DROP)),
+       fn=deck_edit("footprint.t2.start_recording", narrowed=_DROP)),
+    _M("M-20", "G-T2", "the A-29 verb restored (BQ-7)",
+       fn=deck_edit("footprint.t2.rebuild_permission", source="D02:621", narrowed="A-29",
+                    text="Your role can't rebuild footprint cells.")),
+    _M("M-21", "G-WDECK", "the ruled W-11 row detached from W-11",
+       fn=deck_edit("footprint.t2.rebuild_owner_only", ref=None)),
+    _M("M-22", "G-SOURCE", "a composed reason off its verb-table line",
+       fn=deck_edit("footprint.t2.rebuild_permission", source="D09:107")),
     _M("M-12", "G-T2", "a state reason owned outside its vocabulary",
        fn=deck_edit("footprint.t2.no_imbalance", owner="E18-D02")),
     _M("M-13", "G-SUPERSEDED", "the 150 % ratio row renamed away",
