@@ -1,5 +1,5 @@
 // E14-T04 (#359) contract: the drawing and selection commands are validated at the worker boundary
-// before the runtime reads them (bounded ids, anchors in pairs, whole-number handles).
+// before the runtime reads them (bounded ids, anchors in pairs, whole-number handles and nudges).
 import { describe, expect, it } from "vitest";
 import { MAX_ANCHORS, MAX_SELECTION, rejectReason } from "../../src/worker/protocol.js";
 
@@ -28,6 +28,11 @@ describe("E14-T04 commands at the worker boundary", () => {
     { k: "setInteractionMode", mode: "cursor", readOnly: true },
     { k: "focusObject", drawingId: null },
     { k: "focusObject", drawingId: "d", handle: 1 },
+    { k: "nudgeSelection", bars: -10, ticks: 1 },
+    { k: "deleteSelection" },
+    { k: "cancelDrag" },
+    { k: "boundsOf", ids: ["d"], reqId: 4 },
+    { k: "setTheme", theme: {}, metrics: { handleGlyphPx: 8, dragThresholdPx: 4 } },
   ])("accepts $k", (c) => {
     expect(rejectReason(cmd(c))).toBeNull();
   });
@@ -59,6 +64,10 @@ describe("E14-T04 commands at the worker boundary", () => {
     ["an unknown mode", { k: "setInteractionMode", mode: "lasso" }],
     ["a fractional handle", { k: "focusObject", drawingId: "d", handle: 0.5 }],
     ["a handle under -1", { k: "focusObject", drawingId: "d", handle: -2 }],
+    ["a fractional nudge", { k: "nudgeSelection", bars: 0.5, ticks: 0 }],
+    ["a bounds request without reqId", { k: "boundsOf", ids: [] }],
+    ["a huge metric", { k: "setTheme", theme: {}, metrics: { handleTargetPx: 1e6 } }],
+    ["a target under 24 px", { k: "setTheme", theme: {}, metrics: { handleTargetPx: 12 } }],
     ["a removeDrawing without id", { k: "removeDrawing" }],
   ])("rejects %s", (_name, c) => {
     expect(rejectReason(cmd(c))).toBe("malformed command");

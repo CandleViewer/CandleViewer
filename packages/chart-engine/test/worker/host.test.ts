@@ -556,13 +556,14 @@ describe("Scenario: Worker death is recovered", () => {
     chart.dispose();
   });
 
-  it("replays the retained LOD and series options and counts the batches a restart discards", () => {
+  it("replays the retained LOD, series options and theme and counts the batches a restart drops", () => {
     const host = hostOn(workerDoc());
     settle();
     host.command({ k: "setLod", candles: 1, footprint: 2 });
     host.command({ k: "setSeriesOptions", series: 0, options: { a: 1 } });
     host.command({ k: "setSeriesOptions", series: 0, options: { a: 2 } });
     host.command({ k: "addDrawing", drawingId: "d1", kind: "trend" });
+    host.command({ k: "setTheme", theme: {}, metrics: { dragThresholdPx: 6 } }); // E14-T04
     host.command({ k: "pickAt", x: 1, y: 1 }); // transient: never replayed
     for (const op of ["append", "patch", "append"] as const)
       host.data("bars", op, one().layout, one().buffer);
@@ -577,6 +578,7 @@ describe("Scenario: Worker death is recovered", () => {
       { k: "setLod", candles: 1, footprint: 2 },
       { k: "setSeriesOptions", series: 0, options: { a: 2 } },
       { k: "addDrawing", drawingId: "d1", kind: "trend" },
+      { k: "setTheme", theme: {}, metrics: { dragThresholdPx: 6 } }, // `init` has no metrics
     ]);
     host.dispose();
   });
