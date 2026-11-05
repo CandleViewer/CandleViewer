@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRequire } from "node:module";
 import { describe, it, vi } from "vitest";
-import { expect, fireEvent, within } from "storybook/test";
+import { expect, fireEvent, userEvent, within } from "storybook/test";
 import {
   EstimatedBadge,
   EstimatedBadgeOutsideProviderError,
@@ -43,6 +43,20 @@ describe("CMP-227 EstimatedBadge", () => {
     const button = within(host).getByRole("button");
     fireEvent.click(button); // no focus(): a mouse click may leave `body` focused
     expect(open).toHaveBeenCalledWith("funding", button);
+  });
+
+  it("opens the methodology on Enter and on Space, and is a non-submitting native button", async () => {
+    open.mockClear();
+    const host = await mount(badge());
+    const button = within(host).getByRole("button", { name: "Estimated, Funding rate" });
+    expect(button).toHaveAttribute("type", "button");
+    await userEvent.tab();
+    expect(button).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    expect(open).toHaveBeenCalledTimes(1);
+    await userEvent.keyboard(" ");
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(open).toHaveBeenLastCalledWith("funding", button);
   });
 
   it("describes itself with its tooltip's text", async () => {

@@ -52,7 +52,11 @@ const button = (canvasElement: HTMLElement): HTMLElement =>
 export const Hover: Story = {
   play: async ({ canvasElement }) => {
     await userEvent.hover(button(canvasElement));
-    await expect(button(canvasElement)).toBeVisible();
+    await expect(button(canvasElement).matches(":hover")).toBe(true);
+    // the tooltip shows after its hover delay and carries the provenance sentence
+    await waitFor(() =>
+      expect(within(document.body).getByRole("tooltip")).toHaveTextContent(SENTENCE),
+    );
   },
 };
 
@@ -67,7 +71,7 @@ export const FocusVisible: Story = {
 export const Active: Story = {
   play: async ({ canvasElement }) => {
     await userEvent.pointer({ keys: "[MouseLeft>]", target: button(canvasElement) });
-    await expect(button(canvasElement)).toBeVisible();
+    await expect(button(canvasElement).matches(":active")).toBe(true);
   },
 };
 
