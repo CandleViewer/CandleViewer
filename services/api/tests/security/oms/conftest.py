@@ -8,7 +8,11 @@ variable, never a value.
 The budget is the ticket's performance note: the suite stays under 5 minutes on the PR path. Each
 of its items is timed from its setup to its teardown (its module's world included) in CPU seconds
 of the process, which a loaded runner's queueing does not move; a session whose items spent more
-than `BUDGET_S` fails at its end, naming the total.
+than `BUDGET_S` fails at its end, naming the total. CPU seconds exclude waiting: a test that slept
+or blocked would spend wall time the budget never sees. That is sound only because the suite may
+not wait: its sleep ban, `test_suite_meta.py::
+test_the_suite_keeps_the_pr_path_budget_on_injected_clocks_and_bounded_runs`, refuses every real
+sleep and every governor on a real clock.
 """
 
 from __future__ import annotations
