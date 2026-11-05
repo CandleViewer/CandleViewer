@@ -32,6 +32,12 @@
       "artifact": "coverage-unit-engine",
       "report_format": "lcov"
     },
+    "packages/rule-editor-core": {
+      "floor": 90.0,
+      "baseline": 90.0,
+      "artifact": "coverage-unit-frontend",
+      "report_format": "lcov"
+    },
     "packages/ui": {
       "floor": 80.0,
       "baseline": 80.0,

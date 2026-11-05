@@ -85,6 +85,8 @@ jobs:
         run: pnpm --filter @candleviewer/protocol test:perf
       - name: Rule-graph adapter budgets, 200 nodes (E37-T01, no coverage)
         run: pnpm --filter @candleviewer/rule-graph test:perf
+      - name: Rule-editor-core adapter budgets, 100 nodes (E36-T01, no coverage)
+        run: pnpm --filter @candleviewer/rule-editor-core test:perf
       # A GPU host ships its browser and system libraries (its image is the owner's); the hosted
       # fallback installs the lockfile's Chromium as perf-engine-matrix.yml does.
       - name: Install the lockfile's Playwright Chromium (hosted fallback only)

@@ -165,6 +165,7 @@ jobs:
               - 'packages/protocol/**'
               - 'packages/rule-graph/**'
               - 'packages/dock/**'
+              - 'packages/rule-editor-core/**'
               - 'tools/contrast/**'
               - 'packages/config/**'
               - 'packages/fixtures/**'
@@ -267,6 +268,7 @@ jobs:
             engine:
               - 'packages/chart-engine/**'
               - 'packages/rule-graph/**'
+              - 'packages/rule-editor-core/**'
               # The engine-bench job, its Node version, install script, allow-list (#3182) and route script (E03-T14).
               - '.github/workflows/_job-engine-bench.yml'
               - '.nvmrc'

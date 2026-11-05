@@ -331,7 +331,10 @@ def test_unit_frontend_selects_the_ui_tests_by_their_inputs() -> None:
     # changed file against ui's `inputs` only. turbo hashes ui's turbo.json and package.json too,
     # but they are not in `inputs`, so the tag misses a change there, as it misses a changed
     # dependency, and web and desktop carry no tag.
-    names = [f"'@candleviewer/{name}...[origin/main]'" for name in ("desktop", "ui", "web")]
+    names = [
+        f"'@candleviewer/{name}...[origin/main]'"
+        for name in ("desktop", "rule-editor-core", "ui", "web")
+    ]
     assert turbo == [*names, f"'tag:{TAG}[origin/main]'"]
 
 

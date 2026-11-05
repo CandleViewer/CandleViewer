@@ -128,6 +128,31 @@ module.exports = {
       },
     },
     {
+      name: "no-deep-imports-rule-editor-core",
+      severity: "error",
+      comment:
+        "§9 #18 deep-import ban: only `@candleviewer/rule-editor-core`'s declared entry points " +
+        "may be imported, never `packages/rule-editor-core/src/**` directly from outside it.",
+      from: { pathNot: "^packages/rule-editor-core" },
+      to: { path: "^packages/rule-editor-core/src" },
+    },
+    {
+      name: "rule-editor-core-framework-free",
+      severity: "error",
+      comment:
+        "E36-T01 (the C-2.16 shape): packages/rule-editor-core may not import React, the chart " +
+        "engine, the design system, a workspace package but the protocol and rule-graph's entry " +
+        "point (its built index only, #1063 A-1), or an app, so the form model and IR adapter " +
+        "stay testable with no DOM or network.",
+      from: { path: "^packages/rule-editor-core/src" },
+      to: {
+        path:
+          "(^|node_modules/)(react|react-dom)($|/)|" +
+          "^packages/(?!protocol/|rule-graph/(dist/index\\.(js|d\\.ts)$|package\\.json$)|" +
+          "rule-editor-core/)|^apps/",
+      },
+    },
+    {
       name: "chart-engine-no-react",
       severity: "error",
       comment:

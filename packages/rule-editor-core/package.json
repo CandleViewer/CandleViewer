@@ -1,0 +1,43 @@
+{
+  "name": "@candleviewer/rule-editor-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Framework-free rule form editor core (E36-T01): the form model, the IR adapter, the vocabulary cache and diagnostics anchoring. No React, no DOM, no global fetch.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --project unit",
+    "test:perf": "vitest run --project perf --passWithNoTests",
+    "test:cov": "vitest run --project unit --coverage",
+    "build": "tsup",
+    "size": "echo \"@candleviewer/rule-editor-core: no bundle budget (library; the rule editor route carries it)\""
+  },
+  "dependencies": {
+    "@candleviewer/protocol": "workspace:*",
+    "@candleviewer/rule-graph": "workspace:*"
+  },
+  "devDependencies": {
+    "@candleviewer/config": "workspace:*",
+    "@types/node": "^22.20.5",
+    "@vitest/coverage-v8": "^4.1.12",
+    "eslint": "^9.17.0",
+    "fast-check": "^4.10.2",
+    "globals": "^15.14.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^4.1.12"
+  }
+}

@@ -130,7 +130,15 @@ gate(4, "unit-engine", () =>
   ]),
 );
 gate(5, "unit-frontend", () =>
-  run("pnpm", ["--filter", "@candleviewer/web", "--filter", "@candleviewer/ui", "test:cov"]),
+  run("pnpm", [
+    "--filter",
+    "@candleviewer/web",
+    "--filter",
+    "@candleviewer/ui",
+    "--filter",
+    "@candleviewer/rule-editor-core",
+    "test:cov",
+  ]),
 );
 gate(6, "contract", () => {
   const backend = run(
