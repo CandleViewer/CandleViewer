@@ -88,6 +88,7 @@ async def test_the_sync_keeps_records_until_final_and_seeds_a_key_once(pg_dsn: s
         return ClosedPnlSync(
             accounts=Accounts(), router=venue, records=store, closes=SqlAlchemyExecutionStore(rel),
             snapshots=SqlAlchemyPositionStore(rel), metrics=Metrics("demo"), now=lambda: T0,
+            on_ended=lambda: None,
         )  # fmt: skip
 
     first, second = (record_id(a, x) for x in ("o-1", "o-2"))
