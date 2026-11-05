@@ -180,6 +180,20 @@ async def test_each_figure_is_quantized_once_half_up_to_8_dp_and_local_net_sums_
     )  # fmt: skip
 
 
+async def test_the_fee_is_negated_exactly_so_it_is_rounded_once() -> None:
+    """A fee whose digits past the 8th place are a 4 and a run of 9s, as a share's 80-digit
+    quotient can be, rounds down to 8 dp; negating it in a 28-digit context first rounds it up."""
+    store = Store(flats={("ETHUSDT", 0): (START,)})
+    order(store, OPEN, "Buy")
+    order(store, CLOSE, "Sell")
+    fill(store, 1, OPEN, "Buy", "1", "100", closed="0")
+    fee = "0.123456784999999999999999999995"
+    fill(store, 2, CLOSE, "Sell", "1", "101", fee=fee, closed="1", pnl="1")
+    assert figures(await compose(store, CLOSE)) == (
+        N(1), N("-0.12345678"), N(0), N("0.87654322"),
+    )  # fmt: skip
+
+
 async def test_a_reversal_composes_the_size_it_closes_never_the_fills_exec_qty() -> None:
     """24 Sec.8.13 "Provisional": a sell of 3 against a long of 2 closes `c` = 2, takes 2/3 of its
     fee as its closing share and opens a short of 1 with the rest, which its record never holds."""
