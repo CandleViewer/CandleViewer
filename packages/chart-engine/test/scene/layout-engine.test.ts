@@ -52,7 +52,7 @@ describe("LayoutEngine: pane rects, gutters and height ratios", () => {
     expect([layout.computes, layout.panes[0]?.rect[2]]).toEqual([2, 936]);
   });
 
-  it("normalises the ratios over the panes, which tile the plot exactly above the time axis", () => {
+  it("an explicit share rescales the others into the rest; the panes tile the plot exactly", () => {
     const { layout, frame } = chart(3);
     for (const [p, r] of [
       [0, 1],
@@ -62,19 +62,140 @@ describe("LayoutEngine: pane rects, gutters and height ratios", () => {
       layout.addPane(`p${p}`, r);
     layout.setSize(864, 724);
     frame();
+    expect(layout.panes.map((p) => p.share)).toEqual([0.375, 0.375, 0.25]);
     expect(layout.panes.map((p) => [...p.rect, ...p.priceAxis])).toEqual([
-      [0, 0, 800, 400, 800, 0, 64, 400],
-      [0, 400, 800, 200, 800, 400, 64, 200],
-      [0, 600, 800, 100, 800, 600, 64, 100],
+      [0, 0, 800, 263, 800, 0, 64, 263],
+      [0, 263, 800, 262, 800, 263, 64, 262],
+      [0, 525, 800, 175, 800, 525, 64, 175],
     ]);
     expect(layout.timeAxis).toEqual([0, 700, 800, 24]);
-    layout.setHeightRatio("p2", 1);
-    frame();
-    expect(layout.panes.map((p) => p.rect[3])).toEqual([280, 140, 280]); // sums to 700
     expect(() => layout.addPane("nope")).toThrow(RangeError);
     expect(() => layout.addPane("p0", 0)).toThrow(RangeError);
     expect(() => layout.setHeightRatio("p0", 1.5)).toThrow(RangeError);
     expect(() => layout.setHeightRatio("p9", 1)).toThrow(RangeError);
+  });
+});
+
+/** Sums in index order: the order the layout engine and every consumer add them in. */
+const sum = (xs: readonly number[]): number => xs.reduce((a, b) => a + b, 0);
+
+describe("LayoutEngine: shares, minimum height and collapse (E11-S09, BQ-11)", () => {
+  it("addPane without a share gives equal shares; setHeightRatio rescales the others", () => {
+    const { layout, frame } = chart(3);
+    for (let p = 0; p < 3; p += 1) layout.addPane(`p${p}`);
+    const shares = (): number[] => layout.panes.map((p) => p.share);
+    expect(shares()).toEqual([1, 1, 1].map(() => expect.closeTo(1 / 3, 12)));
+    layout.setHeightRatio("p0", 0.6);
+    expect([shares(), sum(shares())]).toEqual([
+      [0.6, 0.2, 0.2].map((x) => expect.closeTo(x, 12)),
+      1,
+    ]);
+    layout.setSize(864, 524);
+    frame();
+    expect(layout.panes.map((p) => p.rect[3])).toEqual([300, 100, 100]);
+  });
+
+  it("a share below the minimum collapses to the stub, whose px come out first", () => {
+    const { graph, layout, frame } = chart(3);
+    for (let p = 0; p < 3; p += 1) layout.addPane(`p${p}`);
+    layout.setSize(864, 424); // plot 400 px
+    layout.setHeightRatio("p1", 0.1); // 40 px < 48: folds
+    frame();
+    expect(layout.panes.map((p) => p.collapsed)).toEqual([false, true, false]);
+    expect(layout.panes.map((p) => p.share)).toEqual(
+      [0.5, 0, 0.5].map((x) => expect.closeTo(x, 12)),
+    );
+    expect(layout.panes.map((p) => p.rect[3])).toEqual([184, 32, 184]); // (400 - 32) / 2
+    expect(graph.get("p1")?.visible).toBe(false); // no draws; the rings stay attached
+    layout.setChrome(24, 13); // compact: a 24 px stub, the minimum still 48 (D02:96)
+    frame();
+    expect([layout.minPx, layout.panes.map((p) => p.rect[3])]).toEqual([48, [188, 24, 188]]);
+  });
+
+  it("restores to max(last share, minimum) and never folds the last open pane", () => {
+    const { graph, layout, frame } = chart(2);
+    layout.addPane("p0");
+    layout.addPane("p1");
+    layout.setSize(864, 424);
+    frame();
+    expect(layout.setCollapsed("p1", true)).toBe(true);
+    expect(layout.setCollapsed("p0", true)).toBe(false); // the only open pane
+    frame();
+    expect(layout.panes.map((p) => p.rect[3])).toEqual([368, 32]);
+    expect(layout.setCollapsed("p1", false)).toBe(true);
+    frame();
+    expect([layout.panes[1]?.share, graph.get("p1")?.visible]).toEqual([0.5, true]);
+    layout.setHeightRatio("p1", 0.05); // 20 px: folds, remembering 0.05
+    frame();
+    expect(layout.panes[1]?.collapsed).toBe(true);
+    layout.setCollapsed("p1", false); // back to the minimum, 48 of 400 px, not 0.05
+    frame();
+    expect([layout.panes[1]?.share, layout.panes[1]?.rect[3]]).toEqual([48 / 400, 48]);
+  });
+
+  it("property: shares sum to exactly 1 and pane px plus stub px tile the plot (seeded)", () => {
+    const rng = mulberry32(20261104);
+    const int = (n: number): number => Math.floor(rng() * n);
+    for (let c = 0; c < 500; c += 1) {
+      const n = 1 + int(6);
+      const { layout, frame } = chart(n);
+      for (let p = 0; p < n; p += 1)
+        layout.addPane(`p${p}`, int(2) === 0 ? undefined : Math.min(1, 0.01 + rng()));
+      for (let op = int(8); op > 0; op -= 1) {
+        const id = `p${int(n)}`;
+        if (int(3) === 0) layout.setCollapsed(id, int(2) === 0);
+        else layout.setHeightRatio(id, Math.min(1, 0.001 + rng()));
+        if (int(2) === 0) layout.setSize(200 + int(1600), int(1200));
+        if (int(2) === 0) layout.setChrome(int(2) === 0 ? 24 : 32, int(2) === 0 ? 13 : 16);
+        frame();
+      }
+      const ps = layout.panes;
+      let y = 0;
+      let tiled = true;
+      for (const p of ps) {
+        tiled &&= p.rect[1] === y && Number.isInteger(p.rect[3]) && p.rect[3] >= 0;
+        y += p.rect[3];
+      }
+      const got = [sum(ps.map((p) => p.share)), y, ps.some((p) => !p.collapsed), tiled];
+      expect(got, `case ${c}`).toEqual([1, Math.max(0, layout.height - 24), true, true]);
+    }
+  });
+
+  it("property: a partial setShares rescales only proportionally; the unlisted fill 1 - listed (BQ-3a)", () => {
+    // Ruling R58 (BQ-3a): the listed panes take their shares; each unlisted open pane is scaled by
+    // the one factor (1 - listed) / (its old sum), so the unlisted keep their mutual ratios.
+    const rng = mulberry32(20261105);
+    const int = (n: number): number => Math.floor(rng() * n);
+    const near = (x: number): unknown => expect.closeTo(x, 12);
+    for (let c = 0; c < 500; c += 1) {
+      const n = 2 + int(6);
+      const { layout } = chart(n);
+      for (let p = 0; p < n; p += 1) layout.addPane(`p${p}`, 0.05 + 0.95 * rng());
+      const fold = n > 2 && int(2) === 0 ? `p${int(n)}` : null; // an unlisted stub stays at 0
+      if (fold !== null) layout.setCollapsed(fold, true);
+      const ids = layout.panes.map((p) => p.id).filter((id) => id !== fold);
+      const k = 1 + int(ids.length - 1); // at least one open pane stays unlisted
+      const listed = ids.sort(() => rng() - 0.5).slice(0, k);
+      const entries = listed.map((id) => [id, 0.001 + (0.95 / k) * rng()] as const);
+      const before = new Map(layout.panes.map((p) => [p.id, p.share]));
+      layout.setShares(entries);
+      const after = new Map(layout.panes.map((p) => [p.id, p.share]));
+      const taken = sum(entries.map(([, r]) => r));
+      const free = ids.filter((id) => !listed.includes(id));
+      const factor = (1 - taken) / sum(free.map((id) => before.get(id) ?? 0));
+      const got = {
+        listed: entries.map(([id]) => after.get(id)),
+        unlisted: free.map((id) => after.get(id)),
+        fill: sum(free.map((id) => after.get(id) ?? 0)),
+        stub: fold === null ? 0 : after.get(fold),
+      };
+      expect(got, `case ${c}`).toEqual({
+        listed: entries.map(([, r]) => near(r)),
+        unlisted: free.map((id) => near((before.get(id) ?? 0) * factor)),
+        fill: near(1 - taken),
+        stub: 0,
+      });
+    }
   });
 });
 

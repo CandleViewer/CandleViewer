@@ -15,6 +15,8 @@ import type {
 } from "./types.js";
 
 export interface PaneHost {
+  /** E11-S09 (BQ-1): the wire key the facade minted (-1 when absent). */
+  readonly key?: number;
   /** Called once when the pane is removed (by `Pane.remove` or `Chart.removePane`). */
   onRemoved(id: PaneId): void;
   /** Throws once the owning chart is disposed. */
@@ -23,6 +25,8 @@ export interface PaneHost {
   data(store: StoreId, op: DataOp, layout: BufferLayout, buffer: ArrayBuffer): void;
   /** Forwards this pane's price-scale fields (E11-S05, a `setPriceScale` command). */
   scale?(id: PaneId, fields: ScaleFields): void;
+  /** E11-S09 (BQ-3): forwards `setHeightRatio`; the worker rescales the others and normalises. */
+  ratio?(id: PaneId, r: number): void;
 }
 
 /** A series handle plus the state the stub records (read by tests; no renderer yet). */
@@ -37,6 +41,21 @@ export interface PaneInternal extends Pane {
   readonly heightRatio: number;
   readonly seriesCount: number;
   readonly removed: boolean;
+  /** E11-S09 (BQ-4): true while the worker shows this pane as a collapsed stub. */
+  readonly collapsed: boolean;
+  /**
+   * E11-S09 (BQ-4): the worker's `layout` row. `heightRatio` mirrors an open pane's normalised
+   * share and keeps the last open share while collapsed, so it stays in (0, 1].
+   */
+  observeShare(share: number, collapsed: boolean): void;
+  /** E11-S09 (BQ-1): the wire key the facade minted for this pane (never reused). */
+  readonly key: number;
+  /**
+   * E11-S09 (BQ-11a rider, R58): this pane's slot in the last `layout`, or -1 when that layout
+   * does not list its key (not laid out yet, or removed). Re-mapped from every `layout`.
+   */
+  readonly slot: number;
+  observeSlot(slot: number): void;
 }
 
 function checkRatio(r: number): number {
@@ -49,6 +68,8 @@ function checkRatio(r: number): number {
 export function createPane(id: PaneId, opts: PaneOptions, host: PaneHost): PaneInternal {
   let heightRatio = checkRatio(opts.heightRatio ?? 1);
   let removed = false;
+  let slot = -1;
+  let collapsed = false;
   const series = new Set<object>();
   const priceScale = createPriceScale((fields) => {
     live();
@@ -71,6 +92,20 @@ export function createPane(id: PaneId, opts: PaneOptions, host: PaneHost): PaneI
     },
     get removed(): boolean {
       return removed;
+    },
+    get collapsed(): boolean {
+      return collapsed;
+    },
+    observeShare(share: number, folded: boolean): void {
+      collapsed = folded;
+      if (!folded && share > 0) heightRatio = share;
+    },
+    key: host.key ?? -1,
+    get slot(): number {
+      return removed ? -1 : slot;
+    },
+    observeSlot(s: number): void {
+      slot = s;
     },
     addSeries<T extends SeriesType>(type: T, opts: SeriesOptionsMap[T]): SeriesInternal<T> {
       live();
@@ -124,6 +159,7 @@ export function createPane(id: PaneId, opts: PaneOptions, host: PaneHost): PaneI
     setHeightRatio(r: number): void {
       live();
       heightRatio = checkRatio(r);
+      host.ratio?.(id, r);
     },
     remove(): void {
       if (removed) return;

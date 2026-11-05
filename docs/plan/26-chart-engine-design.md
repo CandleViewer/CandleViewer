@@ -451,6 +451,8 @@ Shipped by E11-S10 PR 2 (package README BQ-149), additive: `resize` gains option
 
 Shipped by E11-S06 PR 1 (package README BQ-194, BQ-199, BQ-203), additive: `KEY` codes `up` 9, `down` 10, `pageUp` 11 and `pageDown` 12, and a `key` row's `y` slot names its target (0 the plot, 1 the time axis, 2 the price axis; anything else is rejected); `init.config.timeZone?` (a string, UTC by default); worker → main `axes { id, price, time, priceName, timeName, priceGutter, timeZone, say? }`, the retained axis labels in value order, the axis stops' names, the measured price gutter and an axis key's announcement, posted when one of them changes, never on a still frame.
 
+Shipped by E11-S09 PR 1a (package README "Pane stack", BQ-1 to BQ-5), additive: a pane on the wire is the facade's stable key (0 the first, never reused), not an index; `command { k: "addPane", pane, share? }`, `{ k: "removePane", pane }`, `{ k: "setPaneShares", shares: [pane, share][] }` and `{ k: "setPaneCollapsed", pane, collapsed }`; worker → main `layout { id, panes: [{ pane, top, height, share, collapsed }], timeAxis: [top, height], plotWidth }`, posted when the layout recomputes (≤ 1/frame); `viewport` is posted once per pane, keyed.
+
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 
 ---
@@ -704,6 +706,8 @@ export interface IndicatorPlugin {
   update(bars: BarView, params: Params, out: OutputBuffers, from: number): void; // incremental
 }
 ```
+
+_E11-S09 PR 1a (additive note, C-15.2; ruling 6623589909 on BQ-11): `Pane.heightRatio` reads the worker's normalised share, and the open panes' shares sum to exactly 1. `addPane` without `heightRatio` gives the new pane an equal share, 1 / (open panes + 1); with one, it takes that share. Either way, and on `setHeightRatio(r)`, the other open panes rescale proportionally into 1 − r. A pane pushed below max(48 px, 3 × the axis label box) collapses to a 24 px stub (32 comfortable), and restoring gives it max(last share, minimum). Pixels: the stubs' px come out first, and the open panes tile the rest exactly, with the rounding remainder going to the last pane._
 
 The shipped surface (`packages/chart-engine/src/api/types.ts`, E11-T01) keeps every name and member
 above. It defines the supporting types this sketch names but leaves open (`ThemeTokens`, `PaneId`,

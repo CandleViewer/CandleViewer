@@ -372,6 +372,9 @@ function retainKey(cmd: Command): string | null {
       return `series:${cmd.series}`;
     case "addDrawing":
       return `drawing:${cmd.drawingId}`;
+    case "addPane":
+    case "removePane":
+      return `pane:${cmd.pane}`; // a removal replaces its add, replayed in order (E11-S09 BQ-2)
     default:
       return null;
   }

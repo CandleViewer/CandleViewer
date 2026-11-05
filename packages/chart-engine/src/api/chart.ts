@@ -105,6 +105,11 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
   let density: Density = opts.density ?? CHART_DEFAULTS.density;
   let disposed = false;
   let paneSeq = 0;
+  /** E11-S09 (BQ-1): each pane's stable wire key, minted here (0 the first, never reused). */
+  const keys = new Map<PaneId, number>();
+  const byKey = (key: number): PaneInternal | undefined =>
+    panes.find((p) => keys.get(p.id) === key);
+  const firstKey = (): number => keys.get(panes[0]?.id as PaneId) ?? 0;
   let renderProfile: FrameStats["renderProfile"] | null = null;
   let lastStats: FrameStats | null = null;
   let lastRange = { from: 0, to: 1 };
@@ -161,15 +166,14 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
         };
         emit("frameStats", lastStats);
         return;
-      case "viewport":
-        lastRange = { from: msg.timeStart, to: msg.timeEnd };
-        timeScale.observe(lastRange);
-        // The runtime lays out one pane (BQ-45): its window is the first pane's, in ticks.
-        panes[0]?.priceScale.observe(
+      case "viewport": {
+        // E11-S09 (BQ-5): one message per pane, keyed; the time range is the chart's.
+        const pane = byKey(msg.pane);
+        pane?.priceScale.observe(
           msg.priceHigh > msg.priceLow ? { low: msg.priceLow, high: msg.priceHigh } : null,
         );
         // E11-S05 (BQ-124): the scale state; `viewportChanged` also tells of a lock (C-35).
-        panes[msg.pane]?.priceScale.observeState({
+        pane?.priceScale.observeState({
           mode: msg.mode,
           requestedMode: msg.requestedMode,
           inverted: msg.inverted,
@@ -178,12 +182,30 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
           logReason: msg.logReason,
           anchorTick: msg.anchorTick,
         });
-        if (msg.pane === 0) badge.set(!msg.autoScale);
+        // One row speaks for the chart, once per frame (BQ-5): the facade's first pane's, or with
+        // no pane the worker's sole slot (key 0 before any add, -1 once every key was removed).
+        if (panes.length === 0 ? msg.pane > 0 : msg.pane !== firstKey()) return;
+        lastRange = { from: msg.timeStart, to: msg.timeEnd };
+        timeScale.observe(lastRange);
+        badge.set(!msg.autoScale);
         emit("viewportChanged", {
           timeStart: msg.timeStart,
           timeEnd: msg.timeEnd,
           barSpacing: msg.barSpacing,
         });
+        return;
+      }
+      case "layout":
+        // BQ-11a rider (R58): the slots are re-mapped from this layout alone. A removal's re-key
+        // (slot 0 taking the next pane's key) arrives on the layout that follows it, so no
+        // handle keeps a slot the worker no longer has; a handle it does not list holds none.
+        for (const p of panes) p.observeSlot(-1);
+        for (let i = 0; i < msg.panes.length; i += 1) {
+          const row = msg.panes[i] as (typeof msg.panes)[number];
+          const pane = byKey(row.pane);
+          pane?.observeShare(row.share, row.collapsed);
+          pane?.observeSlot(i);
+        }
         return;
       case "dataState":
         emit("dataState", { state: msg.state }); // BQ-9: SCR-047 is the app's
@@ -213,7 +235,7 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
   const badge = createScaleBadge(
     opts.container,
     opts.theme.colors,
-    () => host.command({ k: "setPriceScale", pane: 0, auto: true }),
+    () => host.command({ k: "setPriceScale", pane: firstKey(), auto: true }),
     () => stops?.price ?? opts.container,
   );
   const env = (envOverride ?? defaultHostEnv)(doc);
@@ -284,19 +306,24 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
       const scale = paneOpts.priceScale;
       if (scale !== undefined) checkScaleOptions(scale);
       paneSeq += 1;
+      const key = paneSeq - 1;
       const pane = createPane(`pane-${paneSeq}` as PaneId, paneOpts, {
+        key,
         assertLive,
         data: (store, op, layout, buffer) => host.data(store, op, layout, buffer),
-        scale(id, fields): void {
-          const i = panes.findIndex((p) => p.id === id);
-          if (i >= 0) host.command({ k: "setPriceScale", pane: i, ...fields });
-        },
+        scale: (_id, fields) => host.command({ k: "setPriceScale", pane: key, ...fields }),
+        ratio: (_id, share) => host.command({ k: "setPaneShares", shares: [[key, share]] }),
         onRemoved(id: PaneId): void {
           const i = panes.findIndex((p) => p.id === id);
           if (i >= 0) panes.splice(i, 1);
+          keys.delete(id);
+          if (!disposed) host.command({ k: "removePane", pane: key });
         },
       });
       panes.push(pane);
+      keys.set(pane.id, key);
+      const share = paneOpts.heightRatio;
+      host.command({ k: "addPane", pane: key, ...(share !== undefined && { share }) });
       if (scale !== undefined) {
         // BQ-121: the persisted scale (mode and invert survive; the lock never does).
         const { mode, inverted, ...rest } = scale;
