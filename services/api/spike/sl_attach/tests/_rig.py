@@ -1,8 +1,6 @@
-"""The offline rig: the real `BybitTradingPort` and private stream over #843's corpus venue, on a
-virtual clock, behind the harness's `Tap` and `SlGuardedPort`. No network (the session guard in
-`conftest.py`). The venue is #843's `CorpusVenue` plus the one route S1 needs, `trading-stop`,
-answered in the corpus's `trading-trading-stop-reply` shape (S2 moves it into the harness).
-"""
+"""The offline rig: the real port and private stream over #843's corpus venue (plus `trading-stop`
+in the corpus's reply shape; S2 moves it), on a virtual clock, behind `Tap` and `SlGuardedPort`.
+No network (the session guard in `conftest.py`)."""
 
 from __future__ import annotations
 
@@ -47,7 +45,8 @@ class StopVenue(CorpusVenue):
     fill; with `Rig.rest_s`, the order rests `New` that long before it fills);
     `close_answers` answers a reduce-only close unacted, `close_unfilled` acks one unfilled;
     `position_answers` answers position reads first, one per read (`None`: as the venue).
-    `Rig.fill_late_s`: an opener acked `ok` rests, then fills (or `late_cancel`) that late."""
+    `Rig.fill_late_s`: an opener acked `ok` rests, then `Rig.late` (fill, cancel, or partial:
+    one step filled, the rest cancelled) that late."""
 
     def __init__(self, corpus: Corpus, **options: Any) -> None:
         super().__init__(corpus, **options)
@@ -135,7 +134,7 @@ class Rig:
         self.create_delay_s, self.stop_delay_s = create_delay_s, stop_delay_s
         self.ack_delay_s = 0.0
         self.late_s = self.rest_s = self.fill_late_s = 0.0
-        self.late_cancel = False
+        self.late = "fill"
         self._late: set[asyncio.Task[None]] = set()
         self.venue = StopVenue(CORPUS, now_ms=lambda: self.wall_ms() + self.venue_skew_ms)
         self.tap = Tap(httpx.MockTransport(self._handle), wall_ms=lambda: float(self.wall_ms()))
@@ -227,7 +226,9 @@ class Rig:
     async def _fill_late(self, link: str) -> None:
         await self.clock.sleep(self.fill_late_s)
         [order] = [o for o in self.venue.orders.values() if o.link == link]
-        (self.venue._cancel if self.late_cancel else self.venue._match)(order)
+        if self.late == "partial":
+            self.venue._fill(order, self.venue.step, order.price, maker=True)
+        (self.venue._match if self.late == "fill" else self.venue._cancel)(order)
 
     async def _act_late(self, body: dict[str, Any]) -> None:
         await self.clock.sleep(self.late_s)

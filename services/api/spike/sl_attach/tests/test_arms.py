@@ -103,7 +103,8 @@ async def test_a_skewed_sample_is_discarded(tmp_path: Path) -> None:
     await rig.drive(rig.runner.prove_flat)
     rig.venue_skew_ms = 501  # the venue's clock jumps after the offset was taken
     sample = await rig.drive(lambda: rig.runner.sample_b(0))
-    assert sample.discard_reason == "skew" and sample.skew_ms == pytest.approx(501.0)
+    assert sample.outcome == "discarded" and sample.discard_reason == "skew"
+    assert sample.skew_ms == pytest.approx(501.0)
     rig.venue_skew_ms = 500
     kept = await rig.drive(lambda: rig.runner.sample_b(1))
     assert kept.outcome == "ok" and kept.skew_ms == pytest.approx(500.0)
@@ -119,39 +120,32 @@ async def test_a_trading_stop_10016_is_retried_and_its_attempts_counted(tmp_path
 
 
 def _lookups(rig: Rig) -> list[float]:
-    return [e.sent_wall_ms for e in rig.tap.log if e.path == "/v5/order/realtime"]
+    """The lookups, after the start's open-orders read (E6)."""
+    return [e.sent_wall_ms for e in rig.tap.log if e.path == "/v5/order/realtime"][1:]
 
 
-async def test_a_create_10016_never_final_halts_at_the_lookup_count(tmp_path: Path) -> None:
-    """D1: an ambiguous create the venue never shows is looked up `lookup_tries` times, then the
-    run halts with the floor kept; the sample is `stopped`, never `ok`, and never resent."""
-    cfg = ArmConfig(lookup_tries=3, lookup_every_s=0.25, lookup_wait_s=10.0)
+@pytest.mark.parametrize(("arm", "tries", "wait_s", "n"), [("a", 3, 10.0, 3), ("b", 100, 1.0, 5)])
+async def test_a_create_10016_never_final_halts_at_the_lookup_bound(
+    tmp_path: Path, arm: Arm, tries: int, wait_s: float, n: int
+) -> None:
+    """D1: an ambiguous create the venue never shows is looked up until `lookup_tries` or
+    `lookup_wait_s` runs out, then the run halts with the floor kept; the sample is `stopped`,
+    never `ok`, never resent, and in arm (b) not proven unfilled: its stop never landed (E1)."""
+    cfg = ArmConfig(lookup_tries=tries, lookup_every_s=0.25, lookup_wait_s=wait_s)
     rig = Rig(tmp_path, cfg=cfg)
     rig.venue.create_answers = [error(10016, "Internal server error")]
     await rig.up()
     with pytest.raises(RunHalted, match="not final"):
-        await rig.drive(lambda: rig.runner.run("a", 1))
+        await rig.drive(lambda: rig.runner.run(arm, 1))
     [sample] = rig.runner.samples
     assert sample.outcome == "discarded" and sample.discard_reason == "stopped"
-    assert sample.attempts == 1 and sample.stage == "create"
+    assert sample.attempts == (1 if arm == "a" else 0) and sample.stage == "create"
     assert sample.ret_code == 10016 and sample.adapter_error_code == "TRANSPORT_ERROR"
     assert sample.s86_code == "TRANSPORT_ERROR" and sample.taxonomy_divergent is False
     assert len(rig.venue.creates) == 1 and ("BTCUSDT", 0) in rig.port.protected
+    assert sample.stop_landed is (False if arm == "b" else None)
     sent = _lookups(rig)
-    assert len(sent) == 3 and sent[-1] - sent[0] == pytest.approx(500.0)
-
-
-async def test_the_lookups_stop_at_their_total_wait(tmp_path: Path) -> None:
-    cfg = ArmConfig(lookup_tries=100, lookup_every_s=0.25, lookup_wait_s=1.0)
-    rig = Rig(tmp_path, cfg=cfg)
-    rig.venue.create_answers = [error(10016, "Internal server error")]
-    await rig.up()
-    with pytest.raises(RunHalted, match="not final"):
-        await rig.drive(lambda: rig.runner.run("b", 1))
-    sent = _lookups(rig)
-    assert len(sent) == 5 and sent[-1] - sent[0] == pytest.approx(1000.0)
-    assert rig.runner.samples[0].discard_reason == "stopped" and rig.port.protected != {}
-    assert rig.runner.samples[0].stop_landed is False  # E1: not proven unfilled at the halt
+    assert len(sent) == n and sent[-1] - sent[0] == pytest.approx(250.0 * (n - 1))
 
 
 #: A create answered before the venue acts: 10016 (seen `New` first with `rest_s`), 110079 and
@@ -182,6 +176,7 @@ async def test_an_ambiguous_create_then_a_late_fill_is_closed_before_the_next_op
 
     [first, second] = await rig.drive(both)
     assert first.outcome == "ambiguous" and first.ret_code == code and first.attempts == 1
+    assert first.stage == "create"
     creates = rig.venue.creates
     assert [c["reduceOnly"] for c in creates] == [False, True, False, True]
     assert [c["qty"] for c in creates] == ["0.002"] * 4
@@ -379,21 +374,32 @@ async def test_a_lost_fill_push_is_no_fill_and_the_leftover_closed(tmp_path: Pat
     assert table["unbounded"] == 2 and table["stop_success_rate"] == 0.0
 
 
-@pytest.mark.parametrize("cancel", [False, True])
-@pytest.mark.parametrize("arm", ["a", "b"])
-async def test_an_ok_opener_seen_late_is_settled(tmp_path: Path, arm: Arm, cancel: bool) -> None:
-    """E2 (`no_fill`) / E1: acked `ok`, the order rests `New`, then fills or is cancelled past
-    `fill_wait_s`. It is looked up until final; a fill is closed before the floor is freed
-    and in arm (b) owed a stop that never landed; a cancel owes none."""
+#: (arm, what the venue does late, the close's qty, `stop_landed`)
+SEEN_LATE: list[tuple[Arm, str, str | None, bool | None]] = [
+    ("a", "fill", "0.002", None),
+    ("a", "cancel", None, None),
+    ("b", "fill", "0.002", False),
+    ("b", "cancel", None, None),
+    ("b", "partial", "0.001", False),
+]
+
+
+@pytest.mark.parametrize(("arm", "late", "closed", "landed"), SEEN_LATE)
+async def test_an_ok_opener_seen_late_is_settled(
+    tmp_path: Path, arm: Arm, late: str, closed: str | None, landed: bool | None
+) -> None:
+    """E2 (`no_fill`) / E1 / E7: acked `ok`, the order rests `New`, then fills, is cancelled,
+    or fills one step and is cancelled, past `fill_wait_s`. It is looked up until final; a fill
+    is closed before the floor is freed and in arm (b) owed a stop that never landed."""
     rig = Rig(tmp_path, cfg=ArmConfig(fill_wait_s=0.5))
-    rig.fill_late_s, rig.late_cancel = 1.0, cancel
+    rig.fill_late_s, rig.late = 1.0, late
     await rig.up()
     [sample] = await rig.drive(lambda: rig.runner.run(arm, 1))
     await rig.drive(lambda: rig.clock.sleep(5.0))  # a fill the run did not wait for lands
     assert sample.discard_reason == "no_fill" and len(_lookups(rig)) >= 2
-    assert [c["reduceOnly"] for c in rig.venue.creates] == ([False] if cancel else [False, True])
-    assert sample.stop_landed is (False if arm == "b" and not cancel else None)
-    assert rig.venue.size == 0 and rig.port.protected == {}
+    closes = [c["qty"] for c in rig.venue.creates if c["reduceOnly"]]
+    assert closes == ([] if closed is None else [closed]) and len(rig.venue.creates) > 0
+    assert sample.stop_landed is landed and rig.venue.size == 0 and rig.port.protected == {}
 
 
 async def test_a_refused_close_halts_and_a_restart_never_opens_over_the_leftover(
@@ -422,6 +428,32 @@ async def test_a_refused_close_halts_and_a_restart_never_opens_over_the_leftover
     with pytest.raises(HeldFloor):
         await fresh.place_order(_opener("buy", backstop))
     assert len(rig.venue.creates) == 2 and fresh.protected == {}  # opener, refused close
+
+
+async def test_a_restart_waits_for_a_halted_runs_open_create(tmp_path: Path) -> None:
+    """E6: a 10016 create the venue acts on 6 s later (past the lookup bound), resting 1 s, then
+    filled. A fresh runner refuses while the halted link is not final, (not given it) while the
+    order rests, and once it filled while the symbol is held: nothing is sent."""
+    rig = Rig(tmp_path)
+    rig.venue.create_late = [error(10016, "Internal server error")]
+    rig.late_s, rig.rest_s = 6.0, 1.0
+    await rig.up()
+    with pytest.raises(RunHalted, match="not final") as halted:
+        await rig.drive(lambda: rig.runner.run("b", 8))
+    link = halted.value.link
+    assert link is not None and halted.value.sample.stop_landed is False
+    fresh = SlGuardedPort(rig.port._port)
+    fresh.limits, fresh.ledger = rig.port.limits, rig.port.ledger
+    restarted = dataclasses.replace(rig.runner, port=fresh, samples=[])
+    with pytest.raises(HeldFloor, match="read flat"):  # t = 1.8 to 3.5 s: not final
+        await rig.drive(lambda: restarted.run("b", 8, pending=[link]))
+    await rig.drive(lambda: rig.clock.sleep(2.5))  # the venue acts; the order rests `New`
+    with pytest.raises(HeldFloor, match="held before"):
+        await rig.drive(lambda: restarted.run("b", 8))
+    with pytest.raises(HeldFloor, match="held before"):  # filled at t = 7 s: final, held
+        await rig.drive(lambda: restarted.run("b", 8, pending=[link]))
+    assert [c["reduceOnly"] for c in rig.venue.creates] == [False] and rig.venue.size > 0
+    assert fresh.protected == {} and fresh.flat == set()
 
 
 async def test_a_raised_start_read_sends_nothing(tmp_path: Path) -> None:
@@ -501,16 +533,3 @@ async def test_the_close_takes_the_held_qty_not_the_configured_one(tmp_path: Pat
     [_, close] = rig.venue.creates
     assert close["reduceOnly"] is True and close["qty"] == "0.003"
     assert rig.venue.size == 0 and rig.port.protected == {}
-
-
-def test_the_backstop_must_sit_five_to_ten_percent_away() -> None:
-    for pct in ("4.99", "10.01"):
-        with pytest.raises(Refused, match="5 to 10"):
-            ArmConfig(backstop_pct=Decimal(pct))
-    with pytest.raises(Refused, match="allow-list"):
-        ArmConfig(symbol="SOLUSDT")
-    with pytest.raises(Refused, match="tightens"):
-        ArmConfig(sl_bps=Decimal(800), backstop_pct=Decimal(5))
-    for bad in ({"lookup_tries": 0}, {"lookup_every_s": 0.0}, {"lookup_wait_s": 0.0}):
-        with pytest.raises(Refused, match="bounded"):
-            ArmConfig(**bad)

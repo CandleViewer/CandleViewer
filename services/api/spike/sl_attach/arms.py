@@ -1,38 +1,34 @@
-"""The two arms (#856 Scope; the scout's §2; the Q5 ruling), one sample per call, over the real
-`BybitTradingPort` behind #843's `GuardedPort`, here widened by one guarded call (`SlGuardedPort`).
+"""The two arms (#856 Scope; the scout's §2; Q5), one sample per call, over the real
+`BybitTradingPort` behind #843's `GuardedPort`, widened by one guarded call (`SlGuardedPort`).
 
-- **Arm (a)**: a create carrying an attached `stopLoss` (`Full`, mark-triggered), timed from the
-  call to its ack. Its protection evidence is the first position push showing the stop, after
-  the first execution (`protected_lag_ms`, reported, not gated).
-- **Arm (b)**: a create carrying a far attached **backstop** stop (5 to 10 % away, Q5), then, on
-  the first execution push of that order, the `trading-stop` that tightens it. The create runs
-  as its own task, so the stop is sent as soon as the push arrives, ack or not. It is timed from
-  the execution's `execTime` to the `200`, on the exchange clock (`timing.ExposureTiming`). This
-  times a modify after an attached open, not a first attach from naked, which the finding says.
+- **Arm (a)**: a create with an attached `stopLoss` (`Full`, mark), timed from the call to its
+  ack; `protected_lag_ms` (the first position push showing the stop) is reported, not gated.
+- **Arm (b)**: a create with a far attached **backstop** (5 to 10 %, Q5), then, on the order's
+  first execution push (ack or not: the create is its own task), the `trading-stop` that
+  tightens it, timed from `execTime` to the `200` on the exchange clock (`ExposureTiming`): a
+  modify after an attached open, not a first attach from naked, which the finding says.
 
-Each sample then reads the position over REST: the stop the sample wrote must be there, or the
-sample is discarded `incomplete` (the ticket's self-check). Every sample that sent an opener
-ends flat (`_flatten`, its cost not counted): it reads the position, closes whatever is held,
-reduce-only, and reads it again. A close the venue refuses, or a position still held after it,
-halts the run (`RunHalted`, the sample recorded `stopped`): the next opener would otherwise add
-to that position, and its far attached backstop would replace the tightened stop. So does a
-position read that raises. An opener whose outcome is open (an ambiguous create: 10016, a
-timeout, a 5xx; or no fill seen) is first looked up by its `orderLinkId`, realtime then
-history (24 §8.6), until its order is final; the lookups are bounded in count and in total wait
-on the injected clock, and an order still not final at the bound halts the run the same way: a
-late fill could otherwise land after the flat read. In arm (b), an opener that filled with no
-stop write sent owed a stop that never landed (`stop_landed` false). A stop write the guard
-refuses ends the sample `refused`, flattened as any other. A run starts only on a symbol read
-flat with no floor held (`prove_flat`): a fresh guard assumes nothing.
+Each sample reads the position over REST: the written stop is there, or it is `incomplete`.
+Each sample that sent an opener ends flat (`_flatten`, uncounted): read, close what is held
+reduce-only, read again. A refused close, a position still held or a raised read halts the run
+(`RunHalted`, `stopped`): a next opener would add to it, its backstop replacing the tightened
+stop. An opener with an open outcome (10016, a timeout, a 5xx, 110079, a duplicate id; or no
+fill seen) is looked up by `orderLinkId`, realtime then history (24 §8.6), until final, bounded
+in count and total wait on the injected clock; not final at the bound halts the run, its link
+kept. In arm (b) an opener that filled with no stop write sent owed a stop (`stop_landed`
+false). A stop write the guard refuses ends the sample `refused`, flattened. A run starts only
+on a symbol read flat, no order open on it, no floor held and each link a halted run left open
+final (`prove_flat`): a fresh guard assumes nothing. Where the fill is seen (arm (a)'s ok ack,
+arm (b)'s tighten) the opener is not looked up: the flat read relies on IOC, the venue
+cancelling the rest at once (Bybit does; the corpus venue can keep a touch-partial open).
 
-`Tap` sits on the port's transport and keeps every exchange: the host's wall clock at send and
-reply, the envelope `time`, the code and the rate headers, from which come the offset, each
-sample's skew, the retries and the requests per protected position.
+`Tap` keeps every exchange on the port's transport (wall clock at send and reply, envelope
+`time`, code, rate headers): the offset, the skew, the retries, the requests per position.
 
 No path here opens a position without a native stop: `GuardedPort` refuses such an opener before
-anything is sent, and `SlGuardedPort` refuses a stop write that removes, loosens or names a
-position the run did not open, and an opener while a floor it holds for the symbol is live (the
-position not proven flat). No reconciler or watchdog is touched: the harness owns none.
+anything is sent; `SlGuardedPort` refuses a stop write that removes, loosens or names a position
+the run did not open, and an opener while the symbol is not proven flat. No reconciler or
+watchdog is touched: the harness owns none.
 """
 
 from __future__ import annotations
@@ -99,12 +95,9 @@ def _int(value: object) -> int | None:
 
 
 class Tap(httpx.AsyncBaseTransport):
-    """The port's transport, each exchange kept (`log`): no header but the four rate and time
-    headers, and no body, so nothing here can hold a key or a signature.
-
-    It has no host allow-list and no reply cap of its own: it is only ever stacked over #843's
-    `RecordingTransport` (S3's live wiring), or over a `MockTransport` in tests, never over a raw
-    network transport."""
+    """The port's transport, each exchange kept (`log`): the four rate and time headers, no
+    body, so nothing here can hold a key or a signature. No host allow-list or reply cap of its
+    own: only ever stacked over #843's `RecordingTransport` (S3) or a test `MockTransport`."""
 
     def __init__(self, inner: httpx.AsyncBaseTransport, wall_ms: Callable[[], float]) -> None:
         self._inner = inner
@@ -154,11 +147,9 @@ class HeldFloor(Refused):
 
 
 class SlGuardedPort(GuardedPort):
-    """#843's guarded surface plus one call, `set_trading_stop`, admitted only to tighten the
-    stop of a position one of the run's own openers opened (Q5; C-2.6). Every opener is still
-    refused without its native stop, before anything is sent (`GuardedPort.place_order`), and
-    refused while a floor for its symbol is held, or before the symbol was first read flat
-    (E4): only `release` (after a flat read) admits it."""
+    """#843's guarded surface plus `set_trading_stop`, admitted only to tighten the stop of a
+    position the run's own opener opened (Q5; C-2.6). An opener is refused without its native
+    stop (`GuardedPort`), and until `release` (a flat read) with no floor held (E4)."""
 
     def __init__(self, port: TradingPort, timings: Timings | None = None) -> None:
         super().__init__(port, timings)
@@ -324,12 +315,12 @@ class NotFlat(Exception):
 
 
 class RunHalted(Exception):
-    """A sample could not prove its symbol flat: the run stops. `sample` is that sample,
-    recorded `discarded` / `stopped`; the floor stays held, so no later opener is admitted."""
+    """A sample could not prove its symbol flat: the run stops, the floor held. `sample` is it,
+    `stopped`; `link` its opener's if not final (E6), for a restart's `run(pending=)`."""
 
-    def __init__(self, sample: Sample, reason: str) -> None:
+    def __init__(self, sample: Sample, reason: str, link: str | None = None) -> None:
         super().__init__(reason)
-        self.sample = sample
+        self.sample, self.link = sample, link
 
 
 def _open_outcome(exc: ExchangeError) -> Outcome:
@@ -364,20 +355,24 @@ class ArmRunner:
             if read.venue_ms is not None:
                 self.offset.sample(read.sent_wall_ms, read.received_wall_ms, read.venue_ms)
 
-    async def prove_flat(self) -> None:
-        """E4: the symbol reads flat with no floor held, or nothing is sent (`HeldFloor`)."""
+    async def prove_flat(self, pending: Sequence[str] = ()) -> None:
+        """E4, E6: each `pending` link (a halted run's) final (`_settle`), no open order on the
+        symbol and no position, with no floor held; else nothing is sent (`HeldFloor`)."""
         if self.port.holds(self.cfg.symbol):
             raise HeldFloor("a halted sample's floor is still held: nothing is sent")
         try:
+            for link in pending:
+                await self._settle(link)
+            orders = await self.port.open_orders(self.account, self.cfg.symbol)
             held = await self._held()
-        except NotFlat as exc:
+        except (NotFlat, ExchangeError) as exc:
             raise HeldFloor("the symbol could not be read flat before the run") from exc
-        if held is not None:
+        if held is not None or orders:
             raise HeldFloor("the symbol is held before the run's first opener: nothing is sent")
         self.port.release(self.cfg.symbol)
 
-    async def run(self, arm: Arm, count: int) -> list[Sample]:
-        await self.prove_flat()
+    async def run(self, arm: Arm, count: int, *, pending: Sequence[str] = ()) -> list[Sample]:
+        await self.prove_flat(pending)
         out: list[Sample] = []
         for i in range(count):
             if i % self.cfg.offset_every == 0:
@@ -524,14 +519,16 @@ class ArmRunner:
         """The sample's end: flat first (`_flatten`), else the run halts with it `stopped`.
         With `settle` (an opener's link whose outcome is open), its order is final first.
         `owed` (arm (b), no stop sent): a fill, or no proof of none at a halt, is a failed stop."""
+        open_link = settle
         try:
             filled = await self._settle(settle) if settle is not None else False
+            open_link = None
             await self._flatten()
         except NotFlat as exc:
             if owed:
                 fields["stop_landed"] = False
             stopped = self._finish(fields, outcome, reading, stage, "stopped")
-            raise RunHalted(stopped, str(exc)) from exc
+            raise RunHalted(stopped, str(exc), open_link) from exc
         if owed and filled:
             fields["stop_landed"] = False
         return self._finish(fields, outcome, reading, stage, discard)
@@ -649,14 +646,9 @@ class ArmRunner:
         create: asyncio.Task[OrderAck],
         mark: int,
     ) -> Sample:
-        """The measured call: the first execution has arrived; the stop goes now.
-
-        The write carries the stop side only: the arms set no take-profit, so this is §8.9's
-        both-sides shape with an empty TP (no OCO pair to keep). S2, which adds a TP, must send
-        the unchanged TP with it.
-
-        `exposure_ms` ends at the tap's receipt of the `200` (`received_wall_ms`); the port's
-        own return after its parse is kept apart (`port_parse_ms`)."""
+        """The measured call, on the first execution. The stop side only: no take-profit, so
+        §8.9's both-sides shape with an empty TP (S2, adding a TP, sends it unchanged with it).
+        `exposure_ms` ends at the tap's receipt of the `200`; the parse is `port_parse_ms`."""
         fill = self.watch.first[link]
         t0_wall, t0 = self.clock.wall_ms(), self.clock.monotonic()
         request = TradingStopRequest(
