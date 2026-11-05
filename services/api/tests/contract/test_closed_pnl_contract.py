@@ -29,7 +29,9 @@ The orchestrator's ruling of 2026-11-03 (08:03Z), as the four plan documents sta
 - Slice 3b and its fold: the sync's composition in the OMS runtime, a refused account's poll
   ended, an empty or absent `orderId` alike, and the orchestrator's ruling of 2026-11-04 (22:19Z),
   the sync's task's end paged and a fourth readiness condition in 24 Sec.8.12 and 20 Sec.6.2;
-  logged once, as Sec.19.134.
+  with its review of 2026-11-05 (04:05Z), an unasked cancel paged too and a start the lane did
+  not confirm a fault as well, in the same words there and in `_oms_state`; logged once, as
+  Sec.19.134.
 
 Nothing serves the new members yet: E29-S06's later slices implement them against this contract.
 """
@@ -48,6 +50,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from candleviewer.api._generated import openapi_models as api
+from candleviewer.app import _oms_state
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from tests.contract._generated_contract import _REGISTRY, _URI, SPEC
 
@@ -888,38 +891,46 @@ def test_contract_24_states_the_final_rule_as_the_sync_builds_it_and_21_its_read
 
 def test_contract_24_and_20_state_the_syncs_composition_and_its_fourth_readiness_line() -> None:
     """E29-S06 slice 3b (#981): 24 Sec.8.13 "Its composition" as built, and the orchestrator's
-    ruling of 2026-11-04 (22:19Z): a sync task that ended unasked is paged once and is a fourth
-    condition of Sec.8.12 "Readiness", which 20 Sec.6.2's consumer paragraph states too, never a
-    gate on order entry. Its fold's change log is Sec.19.134, which occurs once."""
+    ruling of 2026-11-04 (22:19Z) with its review of 2026-11-05 (04:05Z): a sync that has faulted,
+    its task ended unasked (a cancel included) or a start the lane did not confirm, is paged once
+    and is a fourth condition of Sec.8.12 "Readiness", which 20 Sec.6.2's consumer paragraph and
+    `_oms_state` state in the same words, never a gate on order entry. Its fold's change log is
+    Sec.19.134, which occurs once."""
     internal = _doc("24-internal-schemas.md")
     assert not _missing(
         _s813(),
         "A start the lane does not confirm (one that fails, or one whose answer the bound cuts "
-        "off, which may still have run) is logged CRITICAL and paged as unconfirmed, and `ready` "
-        "stands.",
+        "off, which may still have run) is logged CRITICAL and paged as unconfirmed, and the "
+        '`oms` check of `/readyz` reads `degraded` (§8.12 "Readiness"), while `ready` stands.',
         "and, with reconciliation composed, each `resyncing` the consumer answers goes to "
         "`reconnected` ahead of reconciliation's request.",
-        "once it has ended unasked, its end is paged once and the `oms` check of `/readyz` reads "
-        '`degraded` (§8.12 "Readiness"), and what `placeOrder` and the exits read is unchanged; '
-        "a stop it was asked for pages nothing.",
+        "once it has ended unasked (by an error, a return, or a cancellation no stop asked for, "
+        "as the order lane's death makes one), its end is paged once and the `oms` check of "
+        '`/readyz` reads `degraded` (§8.12 "Readiness"), and what `placeOrder` and the exits '
+        "read is unchanged; a stop it was asked for pages nothing.",
     )
     readiness = _between(internal, "**Readiness (the orchestrator's ruling of 2026-10-25).**", "\n")
     assert not _missing(
         readiness,
-        "The orchestrator's ruling of 2026-11-04 (22:19Z) adds a fourth condition: the check is "
-        "`degraded` too once the closed-PnL sync's task has ended unasked (§8.13 \"Its "
-        'composition"), as that task never restarts itself, and its end is paged once. That '
-        "condition never gates order entry: `placeOrder` and the exits read neither the check nor "
-        "the sync, whose records no route serves yet.",
+        "The orchestrator's ruling of 2026-11-04 (22:19Z), with its review of 2026-11-05 "
+        "(04:05Z), adds a fourth condition: the check is `degraded` too once the closed-PnL sync "
+        'has faulted (its task ended unasked, or a start the lane did not confirm; §8.13 "Its '
+        'composition"), as neither is tried again, and each is paged once. That condition never '
+        "gates order entry: `placeOrder` and the exits read neither the check nor the sync, whose "
+        "records no route serves yet.",
     )
     consumer = _between(_doc("20-architecture.md"), "**The private-stream consumer (E29-T05", "\n")
     assert not _missing(
         consumer,
-        "The check is also `degraded` once the task of E29-S06's closed-PnL sync, which the "
-        "runtime starts after the consumer, has ended unasked: it never restarts itself, and its "
-        "end is paged once (the orchestrator's ruling of 2026-11-04, `24-internal-schemas.md` "
-        "§8.12 and §8.13); that condition never gates order entry either.",
+        "The check is also `degraded` once E29-S06's closed-PnL sync, which the runtime starts "
+        "after the consumer, has faulted (its task ended unasked, or a start the lane did not "
+        "confirm): neither is tried again, and each is paged once (the orchestrator's ruling of "
+        "2026-11-04 and its review of 2026-11-05, `24-internal-schemas.md` §8.12 and §8.13); that "
+        "condition never gates order entry either.",
     )
+    fourth = "has faulted (its task ended unasked, or a start the lane did not confirm"
+    code = " ".join((_oms_state.__doc__ or "").split())
+    assert all(fourth in text for text in (readiness, consumer, code))  # the same words
     assert internal.count("\n### 19.134 ") == 1
     log = _between(internal, "### 19.134 ", "\n### 19.")
     assert not _missing(
@@ -932,6 +943,9 @@ def test_contract_24_and_20_state_the_syncs_composition_and_its_fourth_readiness
         "`resyncing` asks again; any other failure keeps the poll.",
         "the adapter reads a record with no `orderId` field as one with an empty one (§14.2 rule "
         "12).",
+        "The orchestrator's review of 2026-11-05 (04:05Z): an end of the sync's task that no stop "
+        "asked for is unasked, a cancellation included (the order lane's death makes one), and is "
+        "paged once; and a start the lane did not confirm is the sync's fault too.",
     )
 
 
