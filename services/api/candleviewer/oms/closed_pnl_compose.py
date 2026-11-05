@@ -36,9 +36,12 @@ records settle, the pass's delta set (Q3), whose final rule it completes (Q4).
   A wrong `final_at` is permanent (21 `trg_cpr_guard`); in doubt the record stays open, polled.
 - **Bounds (C-2.18).** A walk takes at most `WALK_BUDGET` and runs on a worker thread
   (`asyncio.to_thread`): 500 fills take a few milliseconds, more than the loop may spend. A step
-  takes at most `COMPOSE_LIMIT` orders, and a pass spends at most `WALL_BUDGET_S` of the loop's
-  clock, checked before each order; every store call is bounded. An order past a walk's cap or
-  the budget gets no figures this pass, logged at WARNING with the account and its record.
+  takes at most `COMPOSE_LIMIT` orders, those named by id first, and a pass spends about
+  `WALL_BUDGET_S` of the loop's clock, checked before each order, so the last order's bounded
+  calls may run past it; every store call is bounded. The venue ids a step leaves, past its limit
+  or the budget, are `unreached`, for its caller to carry. An order past a walk's cap gets no
+  figures, and one past the budget none this pass, each logged at WARNING with the account and
+  its record.
 - **Logs.** Ids and counts only, never a figure (C-12.6). No cap reads these figures: the day's
   loss keeps its own read of the venue's settled records (`day_figures`).
 """
@@ -72,7 +75,7 @@ from .errors import OmsNotReady
 from .ports import Instruments
 
 #: C-2.18: a walk's fills and flats (one more is read, so a capped walk knows), the orders one
-#: step composes, the loop time a pass spends, and each store call's and walk's bound.
+#: step composes, the loop time past which a pass starts no order, and each call's bound.
 WALK_BUDGET: Final = WalkBudget(fills=500, flats=32)
 COMPOSE_LIMIT: Final = 256
 WALL_BUDGET_S: Final = 5.0
@@ -206,6 +209,14 @@ class ComposePass:
         self._hedged: dict[str, bool] = {}
         self._intervals: dict[str, int | None] = {}
         self._spent = 0.0  # the loop time its steps took
+        self._unreached: list[str] = []
+
+    @property
+    def unreached(self) -> tuple[str, ...]:
+        """The venue ids its last step left, for its caller to carry to a later pass: those it was
+        given past `COMPOSE_LIMIT`, after the orders it was given by id, then those of the orders
+        the wall budget left."""
+        return tuple(self._unreached)
 
     async def compose(
         self, orders: Collection[UUID], exchange_order_ids: Collection[str] = (), *,
@@ -225,9 +236,11 @@ class ComposePass:
         took: Callable[[], float],
     ) -> tuple[Composed, ...]:  # fmt: skip
         ids, venue = list(dict.fromkeys(orders)), list(dict.fromkeys(names))
-        if len(ids) + len(venue) > COMPOSE_LIMIT:  # the named first, then the records read
+        room = max(0, COMPOSE_LIMIT - len(ids))  # the named by id first, then the venue ids
+        self._unreached = venue[room:]
+        if len(ids) + len(venue) > COMPOSE_LIMIT:
             left = len(ids) + len(venue) - COMPOSE_LIMIT
-            ids, venue = ids[:COMPOSE_LIMIT], venue[: max(0, COMPOSE_LIMIT - len(ids))]
+            ids, venue = ids[:COMPOSE_LIMIT], venue[:room]
             _log().warning("closed_pnl_compose_limited", account_id=str(self._account), left=left)
         if not ids and not venue:
             return ()
@@ -243,6 +256,7 @@ class ComposePass:
             for a in group:
                 if self._spent + took() >= self._c.wall_s:  # its figures wait for a later pass
                     self._warn("closed_pnl_compose_budget_spent", a)
+                    self._unreached.append(cast(str, a.exchange_order_id))
                     continue
                 if walked is None and start is not None:
                     walked = await self._walk((symbol, idx, start), group)
