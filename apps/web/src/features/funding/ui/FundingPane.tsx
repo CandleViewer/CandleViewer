@@ -23,6 +23,13 @@ export interface FundingPaneProps {
   readonly density?: "comfortable" | "compact";
 }
 
+// a read has answered for the series shown: a failed first read says nothing about the interval
+const hasLastGood = (snapshot: FundingSnapshot): boolean =>
+  snapshot.lastSuccessAtMs !== null &&
+  (snapshot.series.settled.length > 0 ||
+    snapshot.series.gaps.length > 0 ||
+    snapshot.series.intervalMs !== null);
+
 function Band({
   symbol,
   snapshot,
@@ -59,6 +66,20 @@ function Band({
     case "unavailable":
       return <div className="cv-funding-pane__retry">{retryButton}</div>;
     case "loading":
+      // the skeleton is for "nothing to show yet": over a shown last-good table a retry in flight keeps the
+      // retry / stale band (busy is not a skeleton)
+      if (hasLastGood(snapshot)) {
+        return (
+          <div className="cv-funding-pane__retry" aria-busy="true">
+            {retryButton}
+            {snapshot.lastSuccessAtMs === null ? null : (
+              <p className="cv-funding-pane__caption">
+                {copy.lastLoaded(snapshot.lastSuccessAtMs)}
+              </p>
+            )}
+          </div>
+        );
+      }
       return snapshot.series.settled.length > 0 ? null : (
         <div className="cv-funding-pane__loading" aria-busy="true">
           <Skeleton shape="chart" />
@@ -99,11 +120,8 @@ export function FundingPane({
   const heading = useRef<HTMLHeadingElement>(null);
   const { history, series } = snapshot;
   const unavailable = history.phase === "unavailable";
-  // a read has answered for the series shown: a failed first read says nothing about the interval
   // (a retry in flight keeps the last good series, so its legend and table stay while the read runs)
-  const lastGood =
-    snapshot.lastSuccessAtMs !== null &&
-    (series.settled.length > 0 || series.gaps.length > 0 || series.intervalMs !== null);
+  const lastGood = hasLastGood(snapshot);
   const answered =
     history.phase === "ready" ||
     ((history.phase === "failed" || history.phase === "loading") && lastGood);

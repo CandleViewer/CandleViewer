@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import * as stories from "../../../src/features/funding/ui/FundingPane.stories";
-import { buildFundingSeries } from "../../../src/features/funding/series";
+import { buildFundingSeries, EMPTY_SERIES } from "../../../src/features/funding/series";
 import { FundingPane } from "../../../src/features/funding/ui/FundingPane";
 import {
   INITIAL_FUNDING_SNAPSHOT,
@@ -169,6 +169,41 @@ describe("funding pane (CMP-186, FundingOnly)", () => {
     render(<FundingPane symbol="BTCUSDT" onRetry={vi.fn()} snapshot={retrying} showTables />);
     expect(within(region()).getByText("settles every 8 h")).toBeTruthy();
     expect(within(screen.getByRole("table")).getAllByText("settled")).toHaveLength(rows);
+  });
+
+  it("shows the retry band, not a skeleton, for a retry in flight over a shown last-good table", () => {
+    const from = Date.parse("2023-11-14T00:00:00Z");
+    const retrying: FundingSnapshot = {
+      history: { phase: "loading" },
+      series: buildFundingSeries({
+        settled: [],
+        intervalMinutes: 480,
+        coverage: { noCoverage: false, gaps: [{ fromMs: from, toMs: from + 8 * 3_600_000 }] },
+      }),
+      lastSuccessAtMs: Date.parse("2023-11-15T09:14:02Z"),
+    };
+    const { container } = render(
+      <FundingPane symbol="BTCUSDT" onRetry={vi.fn()} snapshot={retrying} showTables />,
+    );
+    expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+    expect(screen.queryByText("Loading funding history…")).toBeNull();
+    expect(container.querySelector(".cv-funding-pane__loading")).toBeNull();
+    expect(within(screen.getByRole("table")).getByText(/missing settlement/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry loading Funding" })).toBeTruthy();
+  });
+
+  it("shows the skeleton and no table while nothing is shown yet", () => {
+    const first: FundingSnapshot = {
+      history: { phase: "loading" },
+      series: EMPTY_SERIES,
+      lastSuccessAtMs: null,
+    };
+    const { container } = render(
+      <FundingPane symbol="BTCUSDT" onRetry={vi.fn()} snapshot={first} showTables />,
+    );
+    expect(screen.getByText("Loading funding history…")).toBeTruthy();
+    expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
   });
 
   it("says the instrument is unavailable, with no interval, table or settled claim", () => {
