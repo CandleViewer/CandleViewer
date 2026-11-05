@@ -14,6 +14,7 @@ real-backend auth lane), from main only. So is perf-recorder-nightly.yml (#481, 
 `chaos-recorder-issue` job reports a failed `chaos-recorder` job. So is gpu-runner-health.yml
 (E03-T14): its `alert` job reports an unfit GPU bench runner, never when none is registered. So is
 chaos-bars-nightly.yml (#529, E12-Q06): its `chaos-bars-issue` job reports a failed `chaos-bars` job.
+So is e2e-admin-real.yml (#1215, E42-Q02's real-stack admin lane), from main only, as the auth lane.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ NIGHTLIES = (
     "dast-admin-nightly.yml",
     "chaos-ws-nightly.yml",
     "e2e-auth-real.yml",
+    "e2e-admin-real.yml",
     "perf-recorder-nightly.yml",
     "chaos-recorder-nightly.yml",
     "gpu-runner-health.yml",
@@ -113,6 +115,14 @@ SIGNALS = {
         "e2e-auth-real",
         "test: e2e-auth-real nightly failed",
         "type/test,area/auth-rbac",
+    ),
+    # #1215 (E42-Q02): the real-stack admin lane; a failed step of its testnet job is the verdict.
+    ("e2e-admin-real.yml", "report"): (
+        "testnet",
+        "${{ always() && needs.testnet.result == 'failure' && github.ref == 'refs/heads/main' }}",
+        "e2e-admin-real",
+        "test: e2e-admin-real nightly failed",
+        "type/test,area/accounts-admin",
     ),
     # #481 (E16-Q04): the recorder chaos suite; any failed step of its one job is the verdict.
     ("chaos-recorder-nightly.yml", "chaos-recorder-issue"): (
