@@ -3670,8 +3670,8 @@ class FundingEstimate(BaseModel):
     amount: Annotated[
         str,
         Field(
-            description="The charge's magnitude in the settle coin (USDT), never negative; its sign is `direction`. Quantised to 8 dp, `ROUND_HALF_UP`, as funding payments are (24 §1.5).",
-            examples=["63120.50", "-0.0004", "0"],
+            description="The charge's magnitude in the settle coin (USDT), never negative; its sign is `direction`. A `Decimal` string (convention C6) declared in place, not by reference, so it carries its own non-negative examples and none of `Decimal`'s signed ones. Quantised to 8 dp, `ROUND_HALF_UP`, as funding payments are (24 §1.5).",
+            examples=["12.62378000", "0"],
             pattern="^[0-9]+(\\.[0-9]+)?$",
         ),
     ]
@@ -5438,8 +5438,8 @@ class Deriv(BaseModel):
     liq_min_notional_usd: Annotated[
         str | None,
         Field(
-            description='The liquidation filter\'s minimum print notional in USDT, the shape of the `min_notional_usd` option of `getLiquidations` and 23 `liquidations.{symbol}`: a non-negative `Decimal` string of at most 1,000,000,000 with at most 2 fractional digits; client default `"0"` (6612964585 Q1).',
-            examples=["63120.50", "-0.0004", "0"],
+            description="The liquidation filter's minimum print notional in USDT, the shape of the `min_notional_usd` option of `getLiquidations` and 23 `liquidations.{symbol}`: a non-negative `Decimal` string of at most 1,000,000,000 with at most 2 fractional digits, declared in place so it inherits none of `Decimal`'s signed examples; client default `\"0\"` (6612964585 Q1).",
+            examples=["0", "50000", "250000.50"],
             pattern="^((0|[1-9][0-9]{0,8})(\\.[0-9]{1,2})?|1000000000(\\.0{1,2})?)$",
         ),
     ] = None

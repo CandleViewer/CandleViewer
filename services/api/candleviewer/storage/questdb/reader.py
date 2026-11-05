@@ -123,6 +123,13 @@ def build_read_funding(sym: str, rng: TimeRange, limit: int) -> QueryBuilder:
     return _checked(sql, (sym, ts_param(rng.start_us), ts_param(rng.end_us)))
 
 
+def build_funding_coverage(sym: str) -> QueryBuilder:
+    """E24-S03 (#778) coverage of one symbol's settled funding: its first and last stored `ts`
+    (NULLs when none is stored)."""
+    sql = "SELECT min(ts) lo, max(ts) hi FROM funding_rates WHERE symbol = $1"
+    return _checked(sql, (sym,))
+
+
 def build_read_oi(sym: str, interval: str, source: str, rng: TimeRange, limit: int) -> QueryBuilder:
     """E24-T01 one open-interest series: symbol, interval and source equality, two-sided ts
     bound, ts-ordered, hard row cap (`limit` validated int, inlined as for funding)."""

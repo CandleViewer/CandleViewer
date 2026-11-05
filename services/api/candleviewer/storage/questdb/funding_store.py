@@ -19,7 +19,11 @@ from candleviewer.domain.funding import (
 from candleviewer.domain.sql_names import ts_us_from_row
 from candleviewer.storage.models import TimeRange
 from candleviewer.storage.questdb.ilp_writer import IlpWriter
-from candleviewer.storage.questdb.reader import QuestDbReader, build_read_funding
+from candleviewer.storage.questdb.reader import (
+    QuestDbReader,
+    build_funding_coverage,
+    build_read_funding,
+)
 from candleviewer.storage.sql_identifiers import checked_identifier
 
 
@@ -61,6 +65,13 @@ class QuestDbFundingStore:
             for r in rows
         ]
 
+    async def coverage(self, symbol: str) -> tuple[int, int] | None:
+        checked_identifier(symbol)
+        rows = await self._reader.run(build_funding_coverage(symbol))
+        if not rows or rows[0]["lo"] is None or rows[0]["hi"] is None:
+            return None
+        return ts_us_from_row(rows[0]["lo"]), ts_us_from_row(rows[0]["hi"])
+
 
 class InMemoryFundingStore:
     """Test/fake-backend store with the same dedup `(ts, symbol)` and guard."""
@@ -81,6 +92,10 @@ class InMemoryFundingStore:
             if r.symbol == symbol and rng.start_us <= r.ts_us < rng.end_us
         ]
         return sorted(hits, key=lambda r: r.ts_us)[:limit]
+
+    async def coverage(self, symbol: str) -> tuple[int, int] | None:
+        stamps = [ts for ts, sym in self._rows if sym == symbol]
+        return (min(stamps), max(stamps)) if stamps else None
 
     def __len__(self) -> int:
         return len(self._rows)

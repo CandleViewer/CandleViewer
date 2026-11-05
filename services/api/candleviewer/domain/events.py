@@ -57,8 +57,9 @@ class Instrument(BaseModel):
     min_leverage: Decimal
     leverage_step: Decimal
     funding_interval_min: int
-    upper_funding_rate: Decimal
-    lower_funding_rate: Decimal
+    #: None: instrument info carries no bound (24 §1.3 / §19.110), never served as `0`.
+    upper_funding_rate: Decimal | None
+    lower_funding_rate: Decimal | None
     copy_trading: bool
     metadata_version: int
     fetched_at: TsUs

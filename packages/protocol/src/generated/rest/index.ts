@@ -3821,14 +3821,30 @@ export interface paths {
      *     it, or `covered_to` when none is; both edges are exclusive (the missing settlements lie
      *     strictly between them), and a span is a gap when `to − from` exceeds one
      *     `funding_interval_minutes`. At most 64 gaps are listed, oldest first; past the cap the
-     *     oldest are joined into one span, which never leaves a missing settlement out.
+     *     oldest are joined into one span, which never leaves a missing settlement out. A
+     *     joined span runs from the oldest joined gap's `from` to the newest joined gap's `to`,
+     *     so stored settlements may lie inside it: it says a settlement is missing somewhere in
+     *     it, never that nothing is stored there. A covered edge is not a stored settlement: a
+     *     settlement due exactly on `covered_from` or `covered_to` with none stored there is
+     *     missing too, so a span bounded by a covered edge is a gap when a settlement time of the
+     *     symbol's grid (the ticker's `nextFundingTime` shifted by whole intervals, or a stored
+     *     settlement's time when the ticker holds none) lies inside it or on that edge, and with
+     *     no grid known when `to − from` is at least one `funding_interval_minutes`. No
+     *     settlement is due before the symbol's listing (instrument info's `launchTime`): the
+     *     listing bounds a gap as a stored settlement does. Gaps are listed within the page's
+     *     span: from the covered part's start, or the settlement the cursor resumes after, to the
+     *     page's last item while `has_more` is true and to `covered_to` on the last page, so a
+     *     client joins the pages' lists.
      *
      *     **`annualised_pct`** (E24-S04, #779 ruling 6618709412) is on every item, the predicted
      *     one included: the item's `funding_rate` annualised by the server, as a percentage, the
      *     rate × the settlements per year from `funding_interval_minutes` (525 600 /
      *     `funding_interval_minutes`) × 100, in `Decimal` (24 §2.7). It is the server's
      *     computation: a client displays it and never computes it, and the predicted item's value
-     *     is an estimate as that item is.
+     *     is an estimate as that item is. It is served quantised to 6 fractional digits
+     *     (`ROUND_HALF_UP`), in fixed point with trailing zeros dropped (`"8.76"`, never
+     *     `"8.760000"` or exponent form), which is exact for a rate of at most 8 fractional digits
+     *     on an interval that divides 525 600 minutes (every interval the venue publishes).
      *
      *     The two bounds, `annualised_pct` and `meta.coverage` are contract first (C-6.1): optional
      *     until the handler serves them, and a client reads an absent member as unknown, never as
@@ -9143,8 +9159,12 @@ export interface components {
     };
     /** @description One position's estimated funding charge at the next settlement (E24-S03, #778), the per-account carrier of E24-D02 G11. It is computed server-side only (C-2.12): the position's value at mark times the symbol's accruing rate (the ticker's `fundingRate`, the item `getFundingHistory` flags `predicted`), with `Decimal` arithmetic; a client formats it and never multiplies. A long pays and a short receives when the rate is positive, the reverse when it is negative. A demo position is priced at the live public rate, the only one there is. It is served on the position reads (`listPositions`, `getPosition`) only, so its scope is theirs: `positions:read` over the caller's granted accounts, every account for the Owner and the assigned ones for a Manager (C-12.4); no operation of its own exists, a market-data read never carries it, and the other `Position` carriers send it absent. Annualising never applies to it: money is never annualised on the client. */
     FundingEstimate: {
-      /** @description The charge's magnitude in the settle coin (USDT), never negative; its sign is `direction`. Quantised to 8 dp, `ROUND_HALF_UP`, as funding payments are (24 §1.5). */
-      amount: components["schemas"]["Decimal"];
+      /**
+       * @description The charge's magnitude in the settle coin (USDT), never negative; its sign is `direction`. A `Decimal` string (convention C6) declared in place, not by reference, so it carries its own non-negative examples and none of `Decimal`'s signed ones. Quantised to 8 dp, `ROUND_HALF_UP`, as funding payments are (24 §1.5).
+       * @example 12.62378000
+       * @example 0
+       */
+      amount: string;
       /**
        * Format: date-time
        * @description When the server read the mark and the rate; a client compares it with its stale threshold and marks the charge stale, never recomputing it.
@@ -12368,8 +12388,13 @@ export interface components {
          * @enum {string}
          */
         funding_style?: "line" | "bars";
-        /** @description The liquidation filter's minimum print notional in USDT, the shape of the `min_notional_usd` option of `getLiquidations` and 23 `liquidations.{symbol}`: a non-negative `Decimal` string of at most 1,000,000,000 with at most 2 fractional digits; client default `"0"` (6612964585 Q1). */
-        liq_min_notional_usd?: components["schemas"]["Decimal"];
+        /**
+         * @description The liquidation filter's minimum print notional in USDT, the shape of the `min_notional_usd` option of `getLiquidations` and 23 `liquidations.{symbol}`: a non-negative `Decimal` string of at most 1,000,000,000 with at most 2 fractional digits, declared in place so it inherits none of `Decimal`'s signed examples; client default `"0"` (6612964585 Q1).
+         * @example 0
+         * @example 50000
+         * @example 250000.50
+         */
+        liq_min_notional_usd?: string;
         /**
          * @description The liquidation sub-pane's rendering; client default `bars` (6612964585 Q1).
          * @enum {string}

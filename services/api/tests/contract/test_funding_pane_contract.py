@@ -107,8 +107,45 @@ def test_funding_coverage_tells_not_recorded_from_none_settled() -> None:
         "At most 64 gaps are listed, oldest first; past the cap the oldest are joined into one "
         "span, which never leaves a missing settlement out",
         'a client reads an absent member as unknown, never as `0` or as "covered"',
+        # The serving slice's doc items (#5699 body, carried under 6612964585 Q4).
+        "A joined span runs from the oldest joined gap's `from` to the newest joined gap's `to`",
+        "a settlement due exactly on `covered_from` or `covered_to` with none stored there is "
+        "missing too, so a span bounded by a covered edge is a gap when",
+        "a settlement time of the symbol's grid (the ticker's `nextFundingTime` shifted by whole "
+        "intervals, or a stored settlement's time when the ticker holds none) lies inside it or on "
+        "that edge",
+        "Gaps are listed within the page's span",
+        "No settlement is due before the symbol's listing (instrument info's `launchTime`)",
+        "It is served quantised to 6 fractional digits (`ROUND_HALF_UP`), in fixed point with "
+        "trailing zeros dropped",
     ):
         assert phrase in _FUNDING_DOC, phrase
+
+
+@pytest.mark.parametrize(
+    ("pointer", "model", "field"),
+    [
+        ("/components/schemas/FundingEstimate/properties/amount", api.FundingEstimate, "amount"),
+        (
+            "/components/schemas/Settings/properties/deriv/properties/liq_min_notional_usd",
+            api.Deriv,
+            "liq_min_notional_usd",
+        ),
+    ],
+)
+def test_a_narrowed_decimal_carries_examples_its_own_pattern_accepts(
+    pointer: str, model: type[Any], field: str
+) -> None:
+    """The `Decimal` examples (`-0.0004`) break a narrowed pattern: each states its own, in place,
+    as the generators concatenate a `$ref`'s examples with a sibling's (#5699 x2, 6622598492)."""
+    node: Any = SPEC
+    for part in pointer.strip("/").split("/"):
+        node = node[part]
+    assert "$ref" not in node and node["examples"]
+    generated = model.model_fields[field].examples
+    assert generated == node["examples"]
+    for example in [*node["examples"], *generated]:
+        assert re.fullmatch(node["pattern"], example), example
 
 
 @pytest.mark.parametrize(
@@ -286,8 +323,10 @@ def test_settings_gain_the_deriv_group() -> None:
         if enum is None:
             assert leaves[leaf]["type"] == "boolean", leaf
         elif enum == "decimal":
-            assert leaves[leaf]["$ref"] == "#/components/schemas/Decimal", leaf
+            # In place, not a `Decimal` `$ref`: the generators merge a `$ref`'s examples in.
+            assert leaves[leaf]["type"] == "string" and "$ref" not in leaves[leaf], leaf
             assert leaves[leaf]["pattern"] == _NOTIONAL_PATTERN, leaf
+            assert all(re.fullmatch(_NOTIONAL_PATTERN, e) for e in leaves[leaf]["examples"])
         else:
             assert leaves[leaf] == {**leaves[leaf], "type": "string", "enum": enum}, leaf
         assert "client default" in leaves[leaf]["description"], leaf
@@ -362,7 +401,7 @@ def test_the_change_log_names_the_change() -> None:
         "eight leaves: `oi_mode` (`absolute | delta`, client default `absolute`)",
         "`deriv.basis.annualised` (dropped by 6612480577) is the one key of D02 §10's nine not "
         "in it",
-        "§1 `InstrumentInfo`'s `upper_funding_rate` / `lower_funding_rate` become "
+        "§1.3 `Instrument`'s `upper_funding_rate` / `lower_funding_rate` become "
         "`Decimal | None` (PROPOSED)",
         "(`exchange/bybit/instruments.py:202-210`) is the serving slice's to change",
         "a Manager reading an unassigned account's position",

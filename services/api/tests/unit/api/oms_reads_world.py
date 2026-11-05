@@ -8,7 +8,7 @@ test_oms_reads_pg.py`). A support module: pytest collects nothing from it."""
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, datetime, timedelta
@@ -349,6 +349,8 @@ class World:
     now: datetime = NOW
     #: A live view-as context bound around each request, as the view-as guard binds one.
     viewing: ViewAsRequestContext | None = None
+    #: The latest ticker per symbol for `funding_estimate` (#778); None: no source composed.
+    tickers: Callable[[str], Any] | None = None
 
     def app(self) -> FastAPI:
         reads = OmsReads(ReadStore(self.store), "demo") if self.composed else None  # type: ignore[arg-type]  # the in-memory port
@@ -356,7 +358,7 @@ class World:
         app.include_router(
             make_oms_reads_router(
                 self.principals, reads, audit=self.audit, versions=self.versions.get,
-                clock=lambda: self.now,
+                clock=lambda: self.now, tickers=self.tickers,
             )
         )  # fmt: skip
         if self.viewing is not None:

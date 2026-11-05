@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -9,7 +10,7 @@ from candleviewer.domain.sql_names import ts_param
 from candleviewer.storage.models import TimeRange
 from candleviewer.storage.questdb.funding_store import QuestDbFundingStore
 from candleviewer.storage.questdb.ilp_writer import serialize_ilp_line
-from candleviewer.storage.questdb.reader import build_read_funding
+from candleviewer.storage.questdb.reader import build_funding_coverage, build_read_funding
 from candleviewer.storage.questdb.schemas import ALL_SCHEMAS, FUNDING_RATES_SCHEMA
 
 
@@ -89,3 +90,38 @@ def test_schema_registered_with_dedup_ddl_and_symbol_tags() -> None:
         ts_param(1),
         ts_param(2),
     )
+
+
+# -- E24-S03 (#778): the coverage read behind `getFundingHistory`'s `meta.coverage` ------------
+
+
+def test_build_funding_coverage_is_one_bound_symbol_with_aliased_min_and_max() -> None:
+    q = build_funding_coverage("BTCUSDT")
+    assert q.sql == "SELECT min(ts) lo, max(ts) hi FROM funding_rates WHERE symbol = $1"
+    assert q.params == ("BTCUSDT",)
+
+
+async def test_coverage_converts_the_lo_and_hi_aliases_to_microseconds() -> None:
+    first = datetime(2023, 11, 14, 0, 0, tzinfo=UTC)  # the recorded settlements' first and last
+    last = datetime(2023, 11, 15, 0, 0, tzinfo=UTC)
+    reader = _Reader([{"lo": first, "hi": last}])
+    got = await QuestDbFundingStore(_Writer(), reader).coverage("BTCUSDT")  # type: ignore[arg-type]
+    assert got == (1_699_920_000_000_000, 1_700_006_400_000_000)
+    assert reader.sql == [(build_funding_coverage("BTCUSDT").sql, ("BTCUSDT",))]
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [[], [{"lo": None, "hi": None}], [{"lo": None, "hi": 5}], [{"lo": 5, "hi": None}]],
+    ids=["no-row", "null-row", "null-lo", "null-hi"],
+)
+async def test_coverage_is_none_when_nothing_is_stored(rows: list[dict[str, object]]) -> None:
+    store = QuestDbFundingStore(_Writer(), _Reader(rows))  # type: ignore[arg-type]
+    assert await store.coverage("BTCUSDT") is None
+
+
+async def test_coverage_refuses_a_non_identifier_symbol_before_querying() -> None:
+    reader = _Reader([])
+    with pytest.raises(ValueError):
+        await QuestDbFundingStore(_Writer(), reader).coverage("BTC;DROP")  # type: ignore[arg-type]
+    assert reader.sql == []
