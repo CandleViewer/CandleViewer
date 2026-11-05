@@ -46,6 +46,7 @@ NIGHTLIES = (
     "chaos-recorder-nightly.yml",
     "gpu-runner-health.yml",
     "chaos-bars-nightly.yml",
+    "perf-oms-nightly.yml",
 )
 BOT = "github-actions[bot]"
 #: Jobs that read more than `contents` and write nothing: #2825's guard lists runs and jobs.
@@ -139,6 +140,14 @@ SIGNALS = {
         "perf,area/recorder-replay",
     ),
     # E03-T14: the hourly GPU bench runner health check; an unfit, set runner is the verdict.
+    # E29-Q03 (#977): the OMS submit-ack k6 profiles; any failed step of its one job is the verdict.
+    ("perf-oms-nightly.yml", "oms-load-issue"): (
+        "oms-load",
+        "${{ always() && needs.oms-load.result == 'failure' && github.ref == 'refs/heads/main' }}",
+        "perf-oms",
+        "perf: OMS nightly failed",
+        "perf,area/oms-execution",
+    ),
     ("gpu-runner-health.yml", "alert"): (
         ["check", "streak"],
         (

@@ -254,11 +254,12 @@ E16-Q04; its ingest leg runs the scaled `hosted` profile at 20 000 msg/s on `ubu
 50 000 msg/s `full` product budget is judged on the bench runner class; a dispatch with
 `ingest_profile=full` here runs on `ubuntu-latest` and measures the hosted ceiling only, #5333)
 and `chaos-recorder-nightly.yml` (`chaos-recorder`, labels `qa`, `area/recorder-replay`,
-`priority/p1`; nightly at 03:33 UTC and on dispatch, E16-Q04) and `chaos-bars-nightly.yml`
+`priority/p1`; nightly at 03:33 UTC and on dispatch, E16-Q04), `chaos-bars-nightly.yml`
 (`chaos-bars`, labels `qa`, `area/ingestion`, `priority/p1`; nightly at 03:41 UTC and on
-dispatch, E12-Q06) report a red signal through
-`_nightly-issue.yml`, from scheduled and manual runs alike; `dast-admin` and `e2e-auth-real` report
-from `main` only, so a dispatch on a branch files nothing. Its `report` job comments on the
+dispatch, E12-Q06) and `perf-oms-nightly.yml` (`perf-oms`, labels `perf`, `area/oms-execution`;
+nightly at 04:19 UTC and on dispatch, E29-Q03) report a red signal through
+`_nightly-issue.yml`, from scheduled and manual runs alike; `dast-admin`, `e2e-auth-real` and
+`perf-oms` report from `main` only, so a dispatch on a branch files nothing. Its `report` job comments on the
 newest open issue that `github-actions[bot]` opened with the signal's title prefix and all its
 labels, or opens one titled `<prefix> (YYYY-MM-DD)`, so a lasting drift or regression keeps one
 issue with a comment per red night. Close the issue when the cause is fixed: the next red night

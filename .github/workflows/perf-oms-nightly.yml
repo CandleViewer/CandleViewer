@@ -1,0 +1,237 @@
+name: perf-oms-nightly
+# E29-Q03 (#977, BQ-08/09): budget #4, order submit to ack, with the k6 OMS submit-ack profile on a
+# stack this job starts. Nightly and on dispatch, never on a PR, and not a required check (C-9.1
+# owns that list, C-9.2). Every target is loopback. The API boots as perf-alerts-nightly.yml's
+# does (real storage, compose Postgres and QuestDB), but on demo with the account fixture armed:
+# CV_FEED=synthetic, no CV_BYBIT_API_* variable, CV_ACCOUNT_FIXTURE=compliant, and
+# CV_ACCOUNT_FIXTURE_DIR a 0700 run directory holding the `order_lane.json` this job writes (pack
+# mode, #977 slice 1b), so every venue call the order lane makes is answered by the fixture pack and
+# no exchange client is built (C-2.11, C-13.5); the S8 boot guard still runs before any module.
+# The runner itself has egress (k6 is downloaded here), which is not what this rests on. Every
+# credential is made here per run, masked and never echoed; no repository secret is read; the
+# pack's key is fabricated and its secret derived by the pack's rule in arm_account.js.
+# - arm_account.js: the demo account on the pack key `fixture-compliant-0001`, its default profile
+#   trading CV_E29_SYMBOL with every cap bounded; it writes the account id and the mark price only.
+# - oms_submit_ack.js, `calibrate` once on a 100 ms pack delay (BQ-09: the timer must see it), then,
+#   after a restart on the gate pack (40 ms, jitter 10), `gate` 3 times, 31 s apart (the API
+#   refuses a spent TOTP step). Each run places at most CV_E29_MAX_ORDERS, none cancelled, so the
+#   four stay inside the profile's 500 concurrent orders.
+# - compare_baseline.py: the +5 % p95 gate on the median of 3 against tests/load/k6/oms/baseline.json
+#   (06 7.4, C-13.9), warn-only with null values until a reviewed PR records CI-runner numbers.
+# A red run on main files under the `perf-oms` signal (_nightly-issue.yml), and, as the other
+# nightlies, no workflow-level concurrency group (#3449).
+on:
+  schedule:
+    - cron: "19 4 * * *"
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  oms-load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BASE_URL: http://127.0.0.1:8000
+      OUT: ${{ github.workspace }}/oms-load
+      K6_VERSION: v2.3.0
+      # sha256 of k6-v2.3.0-linux-amd64.tar.gz, as perf-ws-load.yml pins it
+      K6_SHA256: 39c3117b6af817592dcd0ce4242105c0a7af10948c2a425306f0be8f7a8a8ab1
+      K6_NO_USAGE_REPORT: "true"
+      K6_AUTO_EXTENSION_RESOLUTION: "false"
+      CV_E29_FIXTURE_STACK: "1"
+      CV_E29_RUN_S: "60"
+      CV_E29_MAX_ORDERS: "100"
+      CALIBRATE_DELAY_MS: "100"
+      GATE_DELAY_MS: "40"
+      # Compose checks every service's variables on each command; these stores never start here.
+      GF_SECURITY_ADMIN_PASSWORD: unused-ci
+      MINIO_ROOT_PASSWORD: unused-ci
+      CV_ALERT_PAGE_WEBHOOK_URL: http://127.0.0.1:1/unused
+      CV_ALERT_TICKET_WEBHOOK_URL: http://127.0.0.1:1/unused
+      CV_ALERT_DEADMAN_URL: http://127.0.0.1:1/unused
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: Install the pinned k6 (sha256 verified twice)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/k6"
+          mkdir -p "$dir"
+          cd "$dir"
+          tarball="k6-${K6_VERSION}-linux-amd64.tar.gz"
+          gh release download "$K6_VERSION" -R grafana/k6 -p "$tarball" -p "k6-${K6_VERSION}-checksums.txt" --clobber
+          echo "${K6_SHA256}  ${tarball}" | sha256sum -c -
+          grep " ${tarball}\$" "k6-${K6_VERSION}-checksums.txt" | sha256sum -c -
+          tar -xzf "$tarball" --strip-components=1 "k6-${K6_VERSION}-linux-amd64/k6"
+          ./k6 version | grep -F "k6 ${K6_VERSION} "
+          echo "$dir" >> "$GITHUB_PATH"
+      - name: Make this run's synthetic credentials (masked, never echoed)
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane" "$RUNNER_TEMP/cv-kek" "$RUNNER_TEMP/cv-fixture" "$OUT"
+          secret() { v=$(openssl rand -hex 32); echo "::add-mask::$v"; echo "$1=$v" >> "$GITHUB_ENV"; }
+          for name in POSTGRES_PASSWORD CV_AUTH_PEPPER CV_AUTH_TOTP_KEY_HEX \
+            CV_AUTH_RECOVERY_HMAC_KEY_HEX CV_AUTH_CSRF_KEY_HEX CV_E29_PASSWORD; do secret "$name"; done
+          (umask 277 && openssl rand -hex 32 > "$RUNNER_TEMP/cv-lane/lane.key")
+          (umask 277 && openssl rand 32 > "$RUNNER_TEMP/cv-kek/kek")
+      - name: Start Postgres and QuestDB (the compose data stores, loopback only)
+        run: docker compose -f infra/compose/docker-compose.yml --profile core up -d --wait postgres questdb
+      - name: Migrate and seed one Owner
+        working-directory: services/api
+        env:
+          # seed_fixture_user.py refuses anything but testnet (C-2.11); the user row is environment-less.
+          CV_ENVIRONMENT: testnet
+        run: |
+          set -euo pipefail
+          umask 077
+          export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
+          uv sync --frozen
+          uv run --frozen alembic upgrade head
+          user="perf-oms-$(openssl rand -hex 4)"
+          CV_SEED_USERNAME="$user" CV_SEED_PASSWORD="$CV_E29_PASSWORD" \
+            uv run --frozen python scripts/seed_fixture_user.py --totp-secret-out "$RUNNER_TEMP/cv/owner.totp"
+          echo "::add-mask::$(cat "$RUNNER_TEMP/cv/owner.totp")"
+          python3 - "$user" "$RUNNER_TEMP/cv/owner.totp" > "$RUNNER_TEMP/cv/user.json" <<'PY'
+          import json, pathlib, sys
+          print(json.dumps({"identifier": sys.argv[1],
+                            "totp_seed": pathlib.Path(sys.argv[2]).read_text().strip()}))
+          PY
+      - name: Start the API on the calibration pack (demo, account fixture, loopback)
+        id: api
+        run: |
+          set -euo pipefail
+          # The launcher: writes order_lane.json (read once at boot), then (re)starts the API from
+          # the repository root, where the fixture pack's relative root resolves, with `cvdev` on
+          # the path as the compose override mounts it.
+          (umask 077 && cat > "$RUNNER_TEMP/cv/api.sh") <<'SH'
+          set -euo pipefail
+          delay=$1 jitter=$2
+          if [ -f "$RUNNER_TEMP/cv/api.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/cv/api.pid")" 2>/dev/null || true
+            for _ in $(seq 30); do kill -0 "$(cat "$RUNNER_TEMP/cv/api.pid")" 2>/dev/null || break; sleep 1; done
+            # the port must be free before the next boot, or the old pack keeps answering /healthz
+            for _ in $(seq 30); do curl -fsS -o /dev/null "$BASE_URL/healthz" 2>/dev/null || break; sleep 1; done
+            if curl -fsS -o /dev/null "$BASE_URL/healthz" 2>/dev/null; then
+              echo "::error title=oms-load::the previous API still answers /healthz after the kill"
+              exit 1
+            fi
+          fi
+          export CV_ENVIRONMENT=demo CV_FEED=synthetic CV_STORAGE_BACKEND=real
+          # The account fixture (ADR-0036): Settings refuses it off demo and the synthetic feed or
+          # beside any CV_BYBIT_API_* variable, none of which this job sets.
+          export CV_ACCOUNT_FIXTURE=compliant CV_ACCOUNT_FIXTURE_DIR="$RUNNER_TEMP/cv-fixture"
+          export CV_KEK_SOURCE=file CV_KEK_HANDLE="$RUNNER_TEMP/cv-kek/kek" CV_KEK_VERSION=1
+          export CV_QUESTDB_PG=127.0.0.1:8812 CV_QUESTDB_ILP=127.0.0.1:9009
+          export CV_BIND_HOST=127.0.0.1 CV_BIND_PORT=8000 CV_METRICS_BIND=127.0.0.1:9108
+          # SR-042: an empty list refuses every WS upgrade; oms_submit_ack.js sends this Origin.
+          export CV_ALLOWED_ORIGINS=http://127.0.0.1:5173
+          umask 077
+          printf '{"mode": "pack", "delay_ms": %d, "jitter_ms": %d, "seed": 7, "fill": false}\n' \
+            "$delay" "$jitter" > "$CV_ACCOUNT_FIXTURE_DIR/order_lane.json"
+          export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
+          export CV_AUDIT_LANE_KEY_FILE="$RUNNER_TEMP/cv-lane/lane.key"
+          export CV_AUDIT_WAL_PATH="$RUNNER_TEMP/cv/audit/audit.wal"
+          export CV_PARQUET_ROOT="$RUNNER_TEMP/cv/data/parquet" CV_BACKUP_ROOT="$RUNNER_TEMP/cv/data/backups"
+          mkdir -p -m 700 "$RUNNER_TEMP/cv/audit" "$RUNNER_TEMP/cv/data" "$CV_PARQUET_ROOT" "$CV_BACKUP_ROOT"
+          cd "$GITHUB_WORKSPACE"
+          PYTHONPATH="$GITHUB_WORKSPACE/services/api" nohup uv run --frozen --project services/api \
+            python -m candleviewer.server >> "$RUNNER_TEMP/cv/api.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/cv/api.pid"
+          for _ in $(seq 60); do
+            if curl -fsS -o /dev/null "$BASE_URL/healthz"; then exit 0; fi
+            kill -0 "$(cat "$RUNNER_TEMP/cv/api.pid")" 2>/dev/null || break
+            sleep 2
+          done
+          echo "::error title=oms-load::the API did not answer /healthz; the last of its log follows"
+          tail -n 200 "$RUNNER_TEMP/cv/api.log"
+          exit 1
+          SH
+          chmod 0700 "$RUNNER_TEMP/cv/api.sh"
+          bash "$RUNNER_TEMP/cv/api.sh" "$CALIBRATE_DELAY_MS" 0
+      - name: Arm the demo account on the pack key (account id and mark price only)
+        env:
+          CV_E29_USER_FILE: ${{ runner.temp }}/cv/user.json
+          CV_E29_ARM_OUT: ${{ runner.temp }}/cv/arm.json
+        run: |
+          set -euo pipefail
+          echo "::add-mask::fixture-compliant-secret-not-real" # derived in arm_account.js; never printed
+          k6 run --quiet tests/load/k6/oms/arm_account.js
+          python3 - "$CV_E29_ARM_OUT" >> "$GITHUB_ENV" <<'PY'
+          import json, re, sys
+          a = json.load(open(sys.argv[1]))
+          assert re.fullmatch(r"[0-9a-f-]{36}", a["account_id"]), "no account id"
+          assert re.fullmatch(r"\d{1,12}(\.\d{1,8})?", a["price"]), "no price"
+          print(f"CV_E29_ACCOUNT_IDS={a['account_id']}\nCV_E29_PRICE={a['price']}")
+          PY
+          sleep 31 # the next sign-in needs a TOTP step the arm did not use
+      - name: Calibration profile, 100 ms pack delay (BQ-09; the timer must see it)
+        env:
+          CV_E29_USER_FILE: ${{ runner.temp }}/cv/user.json
+          CV_E29_PROFILE: calibrate
+          CV_E29_PACK_DELAY_MS: ${{ env.CALIBRATE_DELAY_MS }}
+          CV_E29_SUMMARY: ${{ github.workspace }}/oms-load/k6-summary-oms-calibrate.json
+        run: k6 run tests/load/k6/oms/oms_submit_ack.js
+      - name: Restart the API on the gate pack (40 ms, jitter 10)
+        id: restart
+        if: ${{ !cancelled() && steps.api.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          bash "$RUNNER_TEMP/cv/api.sh" "$GATE_DELAY_MS" 10
+          sleep 31 # the next sign-in must land on a TOTP step after the calibration run's
+      - name: Gate profile, budget #4 (3 runs; each run's thresholds decide it)
+        id: gate
+        if: ${{ !cancelled() && steps.restart.outcome == 'success' }} # after a red calibration too
+        env:
+          CV_E29_USER_FILE: ${{ runner.temp }}/cv/user.json
+          CV_E29_PROFILE: gate
+          CV_E29_PACK_DELAY_MS: ${{ env.GATE_DELAY_MS }}
+        run: |
+          set -uo pipefail
+          set +e # every run is wanted even after a red one; the step's code is the worst
+          worst=0
+          for i in 1 2 3; do
+            [ "$i" -gt 1 ] && sleep 31 # a TOTP step per sign-in
+            mkdir -p "$OUT/run-$i"
+            CV_E29_SUMMARY="$OUT/run-$i/k6-summary-oms-submit-ack.json" k6 run tests/load/k6/oms/oms_submit_ack.js
+            code=$?
+            [ "$code" -gt "$worst" ] && worst=$code
+          done
+          exit "$worst"
+      - name: Regression gate (+5 % p95 on the median of 3 runs, C-13.9)
+        if: ${{ !cancelled() && contains(fromJSON('["success","failure"]'), steps.gate.outcome) }}
+        run: |
+          python3 tests/load/k6/oms/compare_baseline.py --baseline tests/load/k6/oms/baseline.json \
+            --out-dir "$OUT" "$OUT"/run-1/k6-summary-oms-submit-ack.json \
+            "$OUT"/run-2/k6-summary-oms-submit-ack.json "$OUT"/run-3/k6-summary-oms-submit-ack.json
+          cat "$OUT/compare.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: oms-load
+          path: oms-load/ # summaries drop setup_data in handleSummary; compare refuses one that has it
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Tear down
+        if: always()
+        run: |
+          kill "$(cat "$RUNNER_TEMP/cv/api.pid" 2>/dev/null)" 2>/dev/null || true
+          docker compose -f infra/compose/docker-compose.yml --profile core down -v || true
+          rm -rf "$RUNNER_TEMP/cv-kek" "$RUNNER_TEMP/cv-lane" "$RUNNER_TEMP/cv-fixture" "$RUNNER_TEMP/cv" || true
+
+  oms-load-issue:
+    needs: oms-load
+    # a dispatch on a branch (an experiment) files nothing; main's runs are the signal
+    if: ${{ always() && needs.oms-load.result == 'failure' && github.ref == 'refs/heads/main' }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_nightly-issue.yml
+    with:
+      signal: perf-oms
+      title-prefix: "perf: OMS nightly failed"
+      labels: perf,area/oms-execution
+      body: "perf-oms-nightly failed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Artifact: oms-load."
