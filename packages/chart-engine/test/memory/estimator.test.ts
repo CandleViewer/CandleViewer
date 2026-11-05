@@ -110,6 +110,22 @@ describe("Scenario: The estimate matches what the allocators hold (AC1, ±20 %)"
     expect(Math.abs(totalBytes - real) / real).toBeLessThanOrEqual(0.2);
   });
 
+  it.each(CASES)("candleBuffers matches the CandleRing upload (±20 %%): %s", (_, p) => {
+    const store = new BarStore({ maxBars: p.maxBars ?? 200_000 });
+    for (let at = 0; at < p.bars; at += 50_000) {
+      store.append(bars(at, Math.min(50_000, p.bars - at)));
+    }
+    const gl = new FakeGl();
+    const buffers = new GlBuffers(gl, new GlRegistry(gl));
+    const ring = new CandleRing();
+    ring.sync(store, { op: "replace", from: 0, to: store.length, indexShift: 0 });
+    buffers.attach("candles", ring);
+    buffers.uploadSubRange({ nodeId: "candles" } as RetainedBatch, 0, 1);
+    const real = buffers.bytes;
+    const est = byItem(estimateLoad(p, 600)).candleBuffers as number;
+    expect(Math.abs(est - real) / real).toBeLessThanOrEqual(0.2);
+  });
+
   it("charges 30 d × 1 m at the ring's 65,536 slots, as the BarStore does (BQ-S15-05)", () => {
     const store = new BarStore();
     store.append(bars(0, 43_200));

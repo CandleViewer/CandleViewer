@@ -9,6 +9,11 @@ import type {
   RenderProfile,
 } from "../gl/capability.js";
 import type { LossDetails } from "../gl/context-loss.js";
+import {
+  MAX_BARS_CEILING,
+  MEMORY_BUDGET_CEILING_MB,
+  MEMORY_BUDGET_FLOOR_MB,
+} from "../memory/config.js";
 import type { AtlasDetails } from "../text/atlas.js";
 import type { ChartFont } from "../text/platform.js";
 import { INT32_TICKS } from "../viewport/transform.js";
@@ -79,6 +84,13 @@ export interface ChartConfig {
   readonly timeZone?: string;
   /** `ChartOptions.memory.sampleIntervalMs` (E11-S15, 26 §7); absent means 5000. */
   readonly sampleIntervalMs?: number;
+  /**
+   * `ChartOptions.maxBars` and `memoryBudgetMb` (F-08, 26 §7 "When"): every `data` batch is checked
+   * against them before it is applied. Absent means the hard ceilings (`MAX_BARS_CEILING`,
+   * `MEMORY_BUDGET_CEILING_MB`); the host threads the chart's values in PR-2b.
+   */
+  readonly maxBars?: number;
+  readonly memoryBudgetMb?: number;
 }
 
 /** One column of a columnar buffer: `count` elements of `bytes` each from `offset`. */
@@ -396,6 +408,9 @@ const finite = (v: unknown): v is number => typeof v === "number" && Number.isFi
 /** `config.sampleIntervalMs`: absent, or a positive safe integer (what `MemorySampler` accepts). */
 const sampleInterval = (v: unknown): boolean =>
   v === undefined || (typeof v === "number" && Number.isSafeInteger(v) && v >= 1);
+/** Absent, or a safe integer in [min, max] (what `createChart`'s `boundedInt` accepts). */
+const optInt = (v: unknown, min: number, max: number): boolean =>
+  v === undefined || (typeof v === "number" && Number.isSafeInteger(v) && v >= min && v <= max);
 const chartId = (v: unknown): v is ChartId => Number.isSafeInteger(v) && (v as number) >= 0;
 /** An OffscreenCanvas (worker) or an HTMLCanvasElement (inline), reached structurally. */
 const canvasLike = (v: unknown): boolean =>
@@ -549,6 +564,8 @@ export function rejectReason(msg: unknown): string | null {
         isObj(msg["config"]) &&
         optional(msg["config"]["timeZone"], (v) => typeof v === "string") &&
         sampleInterval(msg["config"]["sampleIntervalMs"]) &&
+        optInt(msg["config"]["maxBars"], 1, MAX_BARS_CEILING) &&
+        optInt(msg["config"]["memoryBudgetMb"], MEMORY_BUDGET_FLOOR_MB, MEMORY_BUDGET_CEILING_MB) &&
         (msg["profile"] === undefined || msg["profile"] === "degraded-2d") &&
         (msg["reducedMotion"] === undefined || typeof msg["reducedMotion"] === "boolean")
         ? null
