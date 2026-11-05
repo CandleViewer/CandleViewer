@@ -27,7 +27,9 @@ Gates (each FAIL led by its name):
                carrying that `ref` with the same string; each verbatim W row's string stands on
                the D02 line D03 cites.
   G-LR         D04 §7.3's announced rows LR-2 ... LR-5 each have a deck row, and every LR row's
-               text stands in that LR row's Text cell.
+               text stands in that LR row's Text cell; every `announce` row, and no other, carries
+               `live: polite`, the one polite `role="status"` region D04 §7.3 rules (never
+               `assertive`), read in that section.
   G-T2         every `t2` row has a `key`: an E09-D09 §3.1 key whose template the text fills
                with a §3.2 verb (or a verb narrowed by a named authority), or `state`, PROPOSED
                and owned by E18-D05 or E17-D01; every reason is one sentence, at most 60
@@ -89,7 +91,7 @@ FIELDS: tuple[str, ...] = (
     "ref",
 )
 FIELDS += ("consumer", "frozen")
-OPTIONAL = ("key", "narrowed")
+OPTIONAL = ("key", "narrowed", "live")
 HEADER = {
     "pack": "E18-D05",
     "slice": "1a",
@@ -126,6 +128,7 @@ W_ROW = re.compile(r"W-\d+")
 D02_CITE = re.compile(rf"D02:(\d+)(?:{EN}(\d+))?")
 LR_HEADING = "### 7.3 The announcement policy table"
 LR_ANNOUNCED = ("LR-2", "LR-3", "LR-4", "LR-5")
+LR_POLICY = ('role="status"', "never `assertive`")  # D04 §7.3's one polite region
 
 T2_TEMPLATES = {
     "rbac.permission": "Your role can't {verb}.",
@@ -314,6 +317,13 @@ def g_lr(t: L.Tree) -> list[str]:
         ref = s(r, "ref")
         if ref.startswith("LR-") and s(r, "text") not in cells.get(ref, ""):
             bad.append(f"{s(r, 'id')}: not in D04 {ref}'s Text cell")
+    block = L.section("\n".join(doc_lines("D04")), LR_HEADING)
+    if not all(p in block for p in LR_POLICY):
+        raise L.AuditError("D04 §7.3 no longer rules one polite status region")
+    for r in rows:
+        want = "polite" if r.get("kind") == "announce" else None
+        if r.get("live") != want:
+            bad.append(f"{s(r, 'id')}: `live` is {r.get('live')!r}, D04 §7.3 rules {want!r}")
     return bad
 
 
@@ -424,6 +434,10 @@ MUTATIONS: tuple[L.Mutation, ...] = (
        fn=deck_edit("footprint.canvas.stack_short.tested", ref=None)),
     _M("M-9", "G-LR", "LR-4 loses its deck row",
        fn=deck_edit("footprint.live.new_stack", ref=None)),
+    _M("M-18", "G-LR", "an announcement turned assertive",
+       fn=deck_edit("footprint.scr056.located", live="assertive")),
+    _M("M-19", "G-LR", "a caption given a live politeness",
+       fn=deck_edit("footprint.board.synthetic", live="polite")),
     _M("M-10", "G-T2", "a permission reason under the account key",
        fn=deck_edit("footprint.t2.save", key="rbac.account")),
     _M("M-11", "G-T2", "a narrowed verb without its authority",
