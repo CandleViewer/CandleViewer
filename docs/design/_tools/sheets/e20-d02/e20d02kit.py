@@ -67,7 +67,7 @@ COMPONENTS, TOKENS_FILE = TOOLS / "components.offline.json", TOOLS / "token-sync
 HEAD = "the boards PR"  # the spec as built (§0 drawn, §19); re-pin DOCS when a further text fold lands
 DOCS = {  # key -> (repo-relative path, md5 at HEAD): every read is md5-checked
     "spec": (_SPEC_PATH, "558c4ba6afdb5eafb65d4ac6b2e922df"),
-    "floor": ("docs/design/E18/E18-D02.md", "fd75a21fdc0b045c206182da712d94a8"),
+    "floor": ("docs/design/E18/E18-D02.md", "c18b4d41a6d91836a193cf5991a3adbf"),
     "fixture": ("packages/fixtures/bybit/2026-10-05/rest/instruments_before.json", "edd9dd2a060c51bd4bd1450307728ddf"),
 }
 REV = "r1"
