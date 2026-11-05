@@ -223,6 +223,8 @@ export type Command =
       readonly groupId: string | null;
       readonly modes: WireSyncModes;
       readonly relay: boolean;
+      /** E11-S09 PR 2b (additive): echoed as the refusal's `reqId`, so the facade knows which. */
+      readonly req?: number;
     }
   | { readonly k: "release" };
 
@@ -423,6 +425,8 @@ export type FromWorker =
       readonly code: string;
       readonly message: string;
       readonly recoverable: boolean;
+      /** E11-S09 PR 2b (additive): on `ENGINE_SYNC_REFUSED`, the refused `setSync`'s `req`. */
+      readonly reqId?: number;
       /** On `ENGINE_CONTEXT_LOST` (BQ-64), `ENGINE_NO_WEBGL2` (BQ-90) and
        * `ENGINE_ATLAS_GENERATION_FAILED` (BQ-272) only. */
       readonly details?: LossDetails | DegradeDetails | AtlasDetails;
@@ -640,6 +644,7 @@ function validCommand(cmd: unknown): boolean {
       return (
         (cmd["groupId"] === null || groupName(cmd["groupId"])) &&
         isBool(cmd["relay"]) &&
+        optional(cmd["req"], Number.isSafeInteger) &&
         isObj(cmd["modes"]) &&
         Object.keys(cmd["modes"]).length === 3 &&
         ["time", "crosshair", "levels"].every((f) =>

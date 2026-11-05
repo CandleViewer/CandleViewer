@@ -6,6 +6,7 @@
 
 import type { DataRange, InstanceRing, SeriesProjection } from "../layers/plugin-api.js";
 import type { SyncModes } from "../sync/SyncGroup.js";
+import type { SyncRegistry } from "../sync/registry.js";
 
 export type { SyncModes };
 
@@ -22,6 +23,9 @@ export interface ChartOptions {
   // E11-S09 PR 2a (BQ-17, additive): what the sync group shares, from mount; default time and
   // crosshair on. `scale: true` is refused (BQ-24: reserved).
   syncModes?: Partial<SyncModes>;
+  // E11-S09 PR 2b (BQ-21, additive): the page's sync registry (`createSyncRegistry`); with it the
+  // chart's publications are relayed to other workers and the group's state is announced once.
+  syncRegistry?: SyncRegistry;
   maxBars?: number; // default 200_000
   memoryBudgetMb?: number; // default 600
   // Design delta BQ-258 (E11-S11): the design fonts' bytes for the SDF atlas (C-2.16: the
