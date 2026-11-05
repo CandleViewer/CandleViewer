@@ -195,6 +195,11 @@ def test_edge_ticks_keep_one_exact_boundary_hit_per_builder_kind() -> None:
     assert any(
         Decimal(r["high"]) - Decimal(r["low"]) == Decimal("2.0") for r in _rows(n, "range:20")
     )
+    ranged = _rows(n, "range:20")
+    # a closing trade at exactly 2 x width (2 x 2.0) is a jump: the next bar carries gap_before
+    jump = next(i for i, r in enumerate(ranged) if Decimal(r["high"]) - Decimal(r["low"]) == 4)
+    assert ranged[jump]["closed"] == "true"
+    assert ranged[jump + 1]["gap_before"] == "true"
     assert any(Decimal(r["high"]) - Decimal(r["low"]) == Decimal(3) for r in _rows(n, "renko:30"))
     assert any(Decimal(r["delta"]) == Decimal(500) for r in _rows(n, "delta:500"))
     assert any(r["trade_count"] == "100" for r in _rows(n, "tick:100"))

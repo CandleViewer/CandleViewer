@@ -208,7 +208,17 @@ def _edge() -> tuple[list[TradeEvent], dict[str, Any]]:
         add(base + 3000 + k, "1", dt_us=1)
     for i in range(1200):  # (f) tick-count padding: crosses tick:100 and tick:1000 exactly
         add(base + 4000 + (i % 7), "0.5", "buy" if i % 2 else "sell", dt_us=500_000)
-    return out, {"sections": "vol-exact+3x, range-exact, renko-exact, delta-exact, boundary, ticks"}
+    # (g) range:20 jump boundary: the closing trade lands exactly 2 x width (40 ticks) above the
+    # pinned open. The padding keeps the open bar within 6 ticks, so 30 ticks up closes it without
+    # a jump (span 24..30 < 40), pinning the next open at base+4030; +40 ticks from there is
+    # span == 2 * width exactly (the `>=` in the jump check); the print after it shows gap_before.
+    add(base + 4030, "1")
+    add(base + 4070, "1")
+    add(base + 4070, "1")
+    return out, {
+        "sections": "vol-exact+3x, range-exact, renko-exact, delta-exact, boundary, ticks, "
+        "range-2x-jump"
+    }
 
 
 TAPES: dict[str, TapeDef] = {
