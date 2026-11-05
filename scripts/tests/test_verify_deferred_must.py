@@ -101,6 +101,11 @@ def test_a_missing_owner_or_one_in_another_epic_file_fails(tmp_path: Path) -> No
     [
         ("E43-S02", {"labels": ["retired"]}, ("not retired", "no `retired` label", "retired")),
         ("E44-T04", {"milestone": "R5"}, ("milestone", mod.MILESTONE, "R5")),
+        (
+            "E44-T04",
+            {"milestone": "R4 Live enablement (moved)"},
+            ("milestone", mod.MILESTONE, "R4 Live enablement (moved)"),
+        ),
         ("E44-S01", {"milestone": None}, ("milestone", mod.MILESTONE, "none")),
         ("E44-S01", {"sprint": "Sprint 23"}, ("R4 window", "Sprint 20 to Sprint 22", "Sprint 23")),
         ("E43-S01", {"sprint": "Sprint 19"}, ("R4 window", "Sprint 20 to Sprint 22", "Sprint 19")),
@@ -221,6 +226,16 @@ def test_the_record_is_written_on_a_pass_the_same_bytes_each_time(tmp_path: Path
     design = r"\| S18 +\| R4 Live enablement +\| yes +\| design, 2 sprints before E43-S02; "
     assert re.search(design + r"names SCR-137 \|$", text, re.MULTILINE)
     assert "\n".join(mod._wrap(mod.EXCEPTION)) in text
+    assert re.search(r"^\| US-ADMIN-012 +\| E43 +\| E43-S01 +\|", text, re.MULTILINE)
+    flat = " ".join(text.split())
+    assert "except a design ticket, which instead lands at least 2 sprints" in flat
+    assert "owners still hold" not in flat and "name the owners" not in flat
+    assert "; tests use an in-memory fake." in flat
+    assert "The static checks are the `cv-admin-no-live-enable` Semgrep rules" in flat
+    assert (
+        "and the live-gate AST guard (`services/api/tests/unit/admin/test_live_gate_guard.py`)"
+        in flat
+    )
     digests = re.findall(r"^  - `([\w.]+)`: `[0-9a-f]{64}`$", text, re.MULTILINE)
     assert digests == ["E42.json", "E43.json", "E44.json", "verify_deferred_must.py"]
 
