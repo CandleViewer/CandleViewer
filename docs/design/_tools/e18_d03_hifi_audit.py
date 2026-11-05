@@ -4,13 +4,13 @@
 Offline and default-deny. The shared gates (git, cites, pins, G-T2 vocabulary, closing keywords,
 public text, R7, G-UNTOUCHED, the runner and the mutation harness) live in `spec_audit_lib.py`;
 this file keeps only E18-D03's rows. It reads, AS TEXT at the pinned base, the plan and design
-texts the spec cites and the token JSON, and, from the working tree, the spec and its hand-off. The only repo code it runs is `contrast_ratio()`, `simulate()`, `delta_e76()`,
+texts the spec cites and the token JSON, and, from the working tree, the spec and its hand-off.
+The only repo code it runs is `contrast_ratio()`, `simulate()`, `delta_e76()`,
 `srgb_to_xyz()` and `xyz_to_lab()` of `docs/research/_tools/cvd_simulate.py`, loaded by path.
 
 Gates: G-CITE, G-QUOTE, G-VERSION, G-AC, G-BQ, G-RULED, G-BOARDS, G-PENPOT, G-TOKENS,
-G-CONTRAST, G-CVD, G-AC1, G-GLYPH, G-FORMAT, G-SAMPLES, G-T2, G-ENV, G-NOCLOSE, G-PUBLIC,
-G-UNTOUCHED and G-MUTLIST (section 16.3 equals this tool's list). Slice 1c adds G-AROWS and
-G-HANDOFF with section C and the hand-off.
+G-CONTRAST, G-CVD, G-AC1, G-GLYPH, G-FORMAT, G-SAMPLES, G-T2, G-ENV, G-AROWS, G-HANDOFF,
+G-NOCLOSE, G-PUBLIC, G-UNTOUCHED and G-MUTLIST (section 16.3 equals this tool's list).
 Pins (G-RULED): each BQ bullet's sha256[:16] in RULED_PINS below, no separate pins file (the
 hand-off-pack rule 2, R370 02b); `--repin-ruled` is the only writer, and it also prints where each
 pinned D02 line now stands (BQ-1). The BQ list is comment 6599273411 on #497, RULED by comment
@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import spec_audit_lib as L  # the shared helper sits beside this file
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "136142433"  # origin/main at the ruling fold; every cite is read here
+BASE = "1708e0ad3"  # origin/main at the closing slice; every cite is read here
 BQ_LIST = "6599273411"  # the BQ list on #497
 RULING = "6608046466"  # the orchestrator's ruling of record on it
 AGREE = frozenset({0, 1, 3, 5, 6, 7, 8})  # the rest are AMEND: 2, 4, 9
@@ -148,6 +148,7 @@ MARKS: tuple[tuple[str, str, str, float], ...] = (
     ("broken lane hatch", "color.chart.boundary", CANVAS, 3.0),
     ("forming cap", "color.text.secondary", CANVAS, 3.0),
     ("bracket label text", TEXT, CANVAS, 4.5),
+    ("reduced-detail badge glyph", "color.status.warning.strong", PANEL, 3.0),
     ("SCR-056 side glyph, buy", "color.buy.default", PANEL, 3.0),
     ("SCR-056 side glyph, sell", "color.sell.default", PANEL, 3.0),
     ("SCR-056 side and status words", TEXT, PANEL, 4.5),
@@ -176,35 +177,81 @@ SIG_STATES = (
 WEIGHTS = {"active": "3 px", "tested": "2 px", "broken": "1 px"}
 # BQ-2 (RULED): the registered patterns win where the meaning is the same (D05E11 section 7).
 STATE_IDS = {"tested": "`pattern.dashed.tested`", "broken": "`pattern.hatch.absent`"}
-# 26:282: printable ASCII plus the three mono extras; the canvas never needs another glyph.
-CANVAS_GLYPHS = frozenset(chr(c) for c in range(0x20, 0x7F)) | {"×", "▲", "▼"}
+REGISTERED = (
+    "pattern.dashed.tested",
+    "pattern.hatch.absent",
+    "pattern.dashed.estimated",
+    "pattern.hatch.estimated",
+    "pattern.outline.imbalance",
+)
+TIMES = "\u00d7"  # the multiplication sign, the mono family's extra glyph
+# 26:284: printable ASCII plus the three mono extras; the canvas never needs another glyph.
+CANVAS_GLYPHS = frozenset(chr(c) for c in range(0x20, 0x7F)) | {TIMES, "▲", "▼"}
 COMPACT_RE = re.compile(r"\d(?:\.\d+)?[KMB]\b")
 FORMAT_ROWS = 7
 INVALIDATIONS = 5
-MODES = ("Bid × Ask", "Volume", "Delta", "Delta / Total")
+MODES = (f"Bid {TIMES} Ask", "Volume", "Delta", "Delta / Total")
+HANDOFF_CMPS = ("CMP-109", "CMP-132", "CMP-182", "CMP-228")
+# E24-D05's hand-off form: section A placement ... section G the `16` section 11.4 checklists.
+HANDOFF_PARTS = ("§A", "§B", "§C", "§D", "§E", "§F", "§G")
+# `16` section 11.4's thirteen lines, in order (the ruling's missed row; `02`:56).
+HANDOFF_ITEMS = (
+    "**Final Penpot link**",
+    f"**Variants {TIMES} States matrix**",
+    "**Keyboard table**",
+    "**Accessible name / role table**",
+    "**Live data**",
+    "**Motion pair**",
+    "**Density notes**",
+    "**Essential-exceptions log**",
+    "**Tokens used**",
+    "**Data contract confirmed**",
+    "**Contrast and CVD**",
+    "**Design QA checklist (16 §12)**",
+    "**Sign-off**",
+)
+AROW_RE = re.compile(
+    r"^### (A-\d+) · (CMP-\d+|tokens) · `(15|16)`:(\d+)(?:\u2013(\d+))? · (replace|insert after)$",
+    re.MULTILINE,
+)
+FENCE_RE = re.compile(r"Old:\n\n```text\n(.*?)\n```\n\nNew:\n\n```text\n(.*?)\n```", re.DOTALL)
+# A-15 … A-20 are section 13.3's routed rows, so the API sketch's row takes the next free id.
+AROW_IDS = (*(f"A-{i}" for i in range(1, 15)), "A-21")
+AROW_COUNT = len(AROW_IDS)
+# Once every row is applied, CMP-109's entry in `15` keeps neither struck member (A-1, A-21).
+CMP109_HEAD = "### CMP-109 FootprintCell"
+STRUCK_RE = re.compile(r'isImbalanced\?: boolean;|"orderEstimated"')
 BAN_RE = re.compile(r"\b(?:dash(?:ed)?|hatch(?:ed)?)\b", re.IGNORECASE)
+BAN_OK = re.compile(r"\b(?:never|no|not|nor|withdrawn|struck|reserved|retired)\b", re.IGNORECASE)
 # G-RULED: sha256[:16] of each RULED BQ bullet; `--repin-ruled` rewrites the block, nothing else.
 PINS_OPEN = 'RULED_PINS = """\n'
 PINS_CLOSE = '"""  # end of the ruled pins'
 RULED_PINS = """
 BQ-0 30751ee038b0c596
 BQ-1 e4d1b7385446bf6b
-BQ-2 96794f3c0610d583
-BQ-3 851fd69660ce6b30
+BQ-2 915052ece5fc908f
+BQ-3 165cf2594447bb46
 BQ-4 e4bcdae43d3e6df0
 BQ-5 3130f065ff4ffb0b
 BQ-6 4f40a7ea895c8f39
 BQ-7 6a3870e8ef137e06
-BQ-8 4f526ff9bad0e4b7
-BQ-9 71a834638c3b1dac
+BQ-8 c99a99762c325739
+BQ-9 5a12d29b77b3ab16
 """  # end of the ruled pins
-# BQ-1: D02 lines this pack builds on, re-pinned when #496's boards PR moves them.
+# BQ-1: D02 lines this pack builds on, re-pinned when #496's boards PR moves them; then the
+# `26` section 3.7 lines and `16`'s DoD item 7 (a cite that names the line above fails here).
 KEY_CITES = (
     L.KeyCite("D02", 155, "D5  | Imbalance"),
     L.KeyCite("D02", 157, "alpha is E18-D03's"),
     L.KeyCite("D02", 289, "3 px active, 2 px tested, 1 px broken"),
     L.KeyCite("D02", 877, "A-25"),
     L.KeyCite("D02", 935, "E18-D03 (#497)"),
+    L.KeyCite("26", 284, "**Glyph set**: printable ASCII"),
+    L.KeyCite("26", 286, "**mandatory, not opportunistic**"),
+    L.KeyCite("26", 287, "a per-cell glyph run"),
+    L.KeyCite("26", 288, "**Batching**: all cell text in a pane is a single draw call"),
+    L.KeyCite("26", 297, "Measured budget: 5,000 glyphs"),
+    L.KeyCite("16", 750, "7. Ticket's linked downstream engineering ticket"),
 )
 
 
@@ -361,6 +408,18 @@ def cited_text(cell: str) -> str:
 def squash(s: str) -> str:
     """Whitespace runs as one space: prettier collapses them inside table cells."""
     return " ".join(s.split())
+
+
+def arows(spec: str) -> list[tuple[re.Match[str], str, str]]:
+    """(heading match, old, new) per section C row, in order."""
+    out = []
+    body = L.section(spec, "## §C Copy-ready A-rows")
+    heads = list(AROW_RE.finditer(body))
+    for i, h in enumerate(heads):
+        chunk = body[h.end() : heads[i + 1].start() if i + 1 < len(heads) else len(body)]
+        m = FENCE_RE.search(chunk)
+        out.append((h, m.group(1) if m else "", m.group(2) if m else ""))
+    return out
 
 
 # ---------- this spec's gates ---------------------------------------------------------------------
@@ -575,6 +634,62 @@ def g_env(t: L.Tree) -> list[str]:
     return [n for n in need if n not in r1]
 
 
+def applied_15(got: list[tuple[re.Match[str], str, str]]) -> list[str]:
+    """`15` at the base with every section C row on it applied, bottom row first."""
+    lines = list(docs().lines("15") or ())
+    for h, _old, new in sorted(got, key=lambda g: -int(g[0].group(4))):
+        if h.group(3) != "15":
+            continue
+        lo = int(h.group(4))
+        hi = int(h.group(5) or lo)
+        at = slice(lo - 1, hi) if h.group(6) == "replace" else slice(hi, hi)
+        lines[at] = new.split("\n")
+    return lines
+
+
+def g_arows(t: L.Tree) -> list[str]:
+    got = arows(t.text("spec"))
+    bad = [] if len(got) == AROW_COUNT else [f"{len(got)} rows, not {AROW_COUNT}"]
+    names = L.token_names(repo(), BASE)
+    for i, (h, old, new) in enumerate(got):
+        aid, doc, n = h.group(1), h.group(3), int(h.group(4))
+        if i >= AROW_COUNT or aid != AROW_IDS[i]:
+            bad.append(f"{aid} out of order")
+        span = "\n".join(line_of(doc, k) for k in range(n, int(h.group(5) or n) + 1))
+        if not old or old != span:
+            bad.append(f"{aid} Old is not `{doc}`:{n}")
+        if not new.strip():
+            bad.append(f"{aid} has no New")
+        bare = new
+        for rid in REGISTERED:
+            bare = bare.replace(rid, "@" * len(rid))
+        for m in BAN_RE.finditer(bare):
+            named = "@" in bare[m.end() : m.end() + 24]
+            if not named and not BAN_OK.search(bare[max(0, m.start() - 48) : m.start()]):
+                bad.append(f"{aid} draws a {m.group(0)}")
+        for line in new.split("\n"):
+            for name in L.check_token_refs(line, names):
+                if name not in PROPOSED or "PROPOSED" not in line:
+                    bad.append(f"{aid} binds {name}")
+    entry = L.section("\n".join(applied_15(got)), CMP109_HEAD)
+    bad += [f"applied CMP-109 keeps {m.group(0)}" for m in STRUCK_RE.finditer(entry)]
+    return bad
+
+
+def g_handoff(t: L.Tree) -> list[str]:
+    h = t.text("handoff")
+    heads = [m.group(1) for m in re.finditer(r"^## (§[A-G]) ", h, re.MULTILINE)]
+    bad = [] if heads == list(HANDOFF_PARTS) else [f"parts {heads}, not {list(HANDOFF_PARTS)}"]
+    for cmp in HANDOFF_CMPS:
+        block = L.section(h, f"## Handoff checklist — {cmp} ")
+        miss = [i for i in HANDOFF_ITEMS if f"- [ ] {i}" not in block and f"- [x] {i}" not in block]
+        if not block or miss:
+            bad.append(f"{cmp}: {miss or 'no block'}")
+        if f"### Table 1 — Variants {TIMES} States" not in block:
+            bad.append(f"{cmp}: Table 1")
+    return bad
+
+
 def g_noclose(t: L.Tree) -> list[str]:
     return L.closing_keywords(t.named("spec", "handoff"))
 
@@ -595,8 +710,8 @@ def g_mutlist(t: L.Tree) -> list[str]:
 # fmt: off
 GATES = tuple(L.Gate("G-" + f.__name__[2:].upper(), f) for f in (
     g_cite, g_quote, g_version, g_ac, g_bq, g_ruled, g_boards, g_penpot, g_tokens, g_contrast,
-    g_cvd, g_ac1, g_glyph, g_format, g_samples, g_t2, g_env, g_noclose, g_public, g_untouched,
-    g_mutlist,
+    g_cvd, g_ac1, g_glyph, g_format, g_samples, g_t2, g_env, g_arows, g_handoff, g_noclose,
+    g_public, g_untouched, g_mutlist,
 ))
 # fmt: on
 
@@ -604,7 +719,7 @@ _M = L.Mutation
 _V = "### 16.1 Version line\n"
 # fmt: off
 MUTATIONS: tuple[L.Mutation, ...] = (
-    _M("M-1", "G-CITE", "a cite past the end of `26`", "spec", "`26`:295", "`26`:99999"),
+    _M("M-1", "G-CITE", "a cite past the end of `26`", "spec", "`26`:297", "`26`:99999"),
     _M("M-2", "G-QUOTE", "W-8 reworded off its line", "spec",
        '"Reduced detail — footprint text hidden · zoom in for numbers"',
        '"Reduced detail — text hidden · zoom in for numbers"'),
@@ -617,7 +732,8 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-6", "G-BQ", "the heading drops the ruling", "spec",
        "— RULED (comment 6608046466, on the BQ list", "— defaults built (comment 6608046466, on"),
     _M("M-7", "G-RULED", "a ruled bullet edited without a re-pin", "spec",
-       "ten boards, one light and one high-contrast", "nine boards, one light and one high-contrast"),
+       "ten boards, one light and one high-contrast",
+       "nine boards, one light and one high-contrast"),
     _M("M-8", "G-BOARDS", "an eleventh board", "spec",
        r"(\| 10 +\| `E18-D03 / 10 [^\n]*\n)",
        r"\1| 11  | `E18-D03 / 11 extra` | x | dark | PENDING |\n", regex=True),
@@ -658,6 +774,26 @@ MUTATIONS: tuple[L.Mutation, ...] = (
     _M("M-26", "G-UNTOUCHED", "an owner document edited", "@changed",
        "", "docs/plan/15-component-catalogue.md"),
     _M("M-27", "G-MUTLIST", "the list drifts", "spec", "| M-1  | G-CITE ", "| M-1  | G-AC   "),
+    _M("M-28", "G-AROWS", "an Old drifts from its line", "spec",
+       "- **Storybook**: HighZoom(text visible), LowZoom(LOD text hidden), AllCellModes.\n```",
+       "- **Storybook**: HighZoom, LowZoom, AllCellModes.\n```"),
+    _M("M-29", "G-AROWS", "a New draws a hatch", "spec",
+       "no pattern on a cell beyond these", "a hatched cell, no pattern beyond these"),
+    _M("M-30", "G-HANDOFF", "CMP-228 loses its sign-off line", "handoff",
+       "- [ ] **Sign-off** — owner `approved` on #497 (pending, #2701); CMP-228",
+       "- [ ] **Approval** — owner `approved` on #497 (pending, #2701); CMP-228"),
+    _M("M-31", "G-NOCLOSE", "a closing keyword with no space", "handoff",
+       "## Handoff checklist — CMP-109", "Fix" + "es#497.\n\n## Handoff checklist — CMP-109"),
+    _M("M-32", "G-PUBLIC", "a local path", "handoff", "file `E18-D03 boards`",
+       "file `" + "/" + "home/x/E18-D03 boards`"),
+    _M("M-33", "G-AROWS", "A-21's Old loses a line of its range", "spec",
+       '  isImbalanced?: boolean;\n  inputSource: "aggTrades" | "numTrades" | "orderEstimated";\n',
+       "  isImbalanced?: boolean;\n"),
+    _M("M-34", "G-AROWS", "A-21's New keeps `orderEstimated`", "spec",
+       '  inputSource: "aggTrades" | "numTrades";\n```',
+       '  inputSource: "aggTrades" | "numTrades" | "orderEstimated";\n```'),
+    _M("M-35", "G-HANDOFF", "the hand-off drops section E", "handoff",
+       "## §E Test hooks", "## Test hooks"),
 )
 # fmt: on
 
@@ -717,7 +853,7 @@ def fill() -> int:
     spec = p.read_text(encoding="utf-8")
     h23 = ["Theme", "Palette", "Density", "Size class", "Worst fill, bare", "Bare"]
     t23 = table(
-        h23 + ["Worst fill, outlined", "Outlined", "Floor"],
+        [*h23, "Worst fill, outlined", "Outlined", "Floor"],
         [text_row(n, p, d, s) for n in THEMES for p in RAMPS for d, s in DENSITIES],
     )
     t24 = table(
@@ -728,7 +864,7 @@ def fill() -> int:
         f"{d[:4].title()} {p}" for d in DEFICIENCIES for p in ["±1", "±ε", "imb"]
     ]
     t25 = table(
-        h25 + ["Grey ±1", "Grey ±ε", "Grey imb"], [cvd_row(n, q) for n in THEMES for q in RAMPS]
+        [*h25, "Grey ±1", "Grey ±ε", "Grey imb"], [cvd_row(n, q) for n in THEMES for q in RAMPS]
     )
     spec = replace_table(spec, "### 2.3 Cell text over the heat", t23)
     spec = replace_table(spec, "### 2.4 Marks over the heat", t24)
