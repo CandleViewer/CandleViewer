@@ -164,7 +164,31 @@ export type Command =
       readonly kind: BarSeriesKind;
       readonly heikinAshi?: boolean;
     }
+  /**
+   * E11-S09 (BQ-1 to BQ-3, additive): `pane` is the facade's stable key (0 the first, never
+   * reused). `addPane` without `share` takes an equal share; `setPaneShares` gives each listed
+   * pane its share and rescales the unlisted ones into the rest (the worker normalises, BQ-11).
+   */
+  | { readonly k: "addPane"; readonly pane: number; readonly share?: number }
+  | { readonly k: "removePane"; readonly pane: number }
+  | { readonly k: "setPaneShares"; readonly shares: readonly (readonly [number, number])[] }
+  | { readonly k: "setPaneCollapsed"; readonly pane: number; readonly collapsed: boolean }
   | { readonly k: "release" };
+
+/** A pane's price window and scale state; the `viewport` top level is slot 0's (BQ-5). */
+export type PaneScaleRow = Omit<
+  Extract<FromWorker, { t: "viewport" }>,
+  "t" | "id" | "timeStart" | "timeEnd" | "barSpacing" | "panes"
+>;
+
+/** E11-S09 (BQ-4): one pane's laid-out rows, CSS px; a collapsed pane's `height` is its stub. */
+export interface PaneRow {
+  readonly pane: number;
+  readonly top: number;
+  readonly height: number;
+  readonly share: number;
+  readonly collapsed: boolean;
+}
 
 export type ToWorker =
   | {
@@ -272,7 +296,7 @@ export type FromWorker =
       readonly priceLow: number;
       readonly priceHigh: number;
       readonly barSpacing: number;
-      /** E11-S05 (BQ-124, additive): the reported pane's scale state (pane 0 until E11-S09). */
+      /** E11-S05 (BQ-124, additive): slot 0's scale state; E11-S09: its key (-1 when keyless). */
       readonly pane: number;
       readonly mode: ScaleModeName;
       readonly requestedMode: ScaleModeName;
@@ -283,8 +307,19 @@ export type FromWorker =
       readonly logReason: "non-positive" | "no-price-origin" | null;
       /** Percent / indexed: the anchor bar's close in ticks; null when none. */
       readonly anchorTick: number | null;
+      /** E11-S09 (BQ-5, additive): slots 1.. in order; absent while the chart has one pane. */
+      readonly panes?: readonly PaneScaleRow[];
     }
   | { readonly t: "a11y"; readonly id: ChartId; readonly cursorSummary: string }
+  /** E11-S09 (BQ-4, additive): posted when the layout recomputes, at most once per frame. */
+  | {
+      readonly t: "layout";
+      readonly id: ChartId;
+      readonly panes: readonly PaneRow[];
+      /** The time strip's [top, height], under the last pane. */
+      readonly timeAxis: readonly [number, number];
+      readonly plotWidth: number;
+    }
   /**
    * E12-S06 (BQ-9, additive): the main series' visible range holds no bar (`empty`) or some
    * (`ready`); posted on a change only. While empty the engine draws no grid; SCR-047 is the app's.
@@ -435,6 +470,17 @@ const optional = (v: unknown, ok: (v: unknown) => boolean): boolean => v === und
 const isBool = (v: unknown): boolean => typeof v === "boolean";
 const isMargin = (v: unknown): boolean => finite(v) && v >= 0 && v <= 0.45;
 const seriesId = (v: unknown): boolean => Number.isSafeInteger(v) && (v as number) >= 0;
+/** One chart's live panes and a share vector's length (C-2.18); E15-K01's `maxPanes` 16 is the app's. */
+export const MAX_PANES = 64;
+/** A pane key (BQ-1): the facade mints them from 0; the range is bounded so a key stays small. */
+export const MAX_PANE_KEY = 0xffff;
+const paneKey = (v: unknown): boolean => seriesId(v) && (v as number) <= MAX_PANE_KEY;
+const isShare = (v: unknown): boolean => finite(v) && v > 0 && v <= 1;
+/** BQ-3: [pane, share] pairs, at most `MAX_PANES` of them. */
+const isShares = (v: unknown): boolean =>
+  Array.isArray(v) &&
+  v.length <= MAX_PANES &&
+  v.every((e: unknown) => Array.isArray(e) && e.length === 2 && paneKey(e[0]) && isShare(e[1]));
 
 /** BQ-124: a pane index, a known mode, booleans and margins in [0, 0.45], nothing else. */
 function validScale(cmd: Record<string, unknown>): boolean {
@@ -491,6 +537,14 @@ function validCommand(cmd: unknown): boolean {
         BAR_SERIES.has(cmd["kind"]) &&
         optional(cmd["heikinAshi"], isBool)
       );
+    case "addPane":
+      return paneKey(cmd["pane"]) && optional(cmd["share"], isShare);
+    case "removePane":
+      return paneKey(cmd["pane"]);
+    case "setPaneShares":
+      return isShares(cmd["shares"]);
+    case "setPaneCollapsed":
+      return paneKey(cmd["pane"]) && isBool(cmd["collapsed"]);
     case "release":
       return true;
     default:

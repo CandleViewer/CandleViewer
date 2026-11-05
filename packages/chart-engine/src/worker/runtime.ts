@@ -73,6 +73,7 @@ import {
   ENGINE_SERIES_INCOMPATIBLE,
   INPUT,
   INPUT_STRIDE,
+  MAX_PANES,
   rejectReason,
   RESTART_BACKOFF_MS,
   STORE_IDS,
@@ -87,12 +88,16 @@ import {
   type ExportRejectReason,
   type FromWorker,
   type LodLevels,
+  type PaneScaleRow,
   type PickPointer,
   type RunMode,
   type StoreId,
   type ThemeLut,
   type ToWorker,
 } from "./protocol.js";
+
+/** A pane without sources (every pane but 0 until E12): shared, so autoscale allocates nothing. */
+const NO_SOURCES: readonly PriceExtentSource[] = Object.freeze([]);
 
 /** The canvas members the runtime touches, common to OffscreenCanvas and HTMLCanvasElement. */
 interface CanvasLike {
@@ -152,6 +157,17 @@ export interface RenderRuntime {
   graph(id: ChartId): scene.SceneGraph | undefined;
   /** Internal (E12-S07): the series-kind metrics, per chart. */
   seriesMetrics(id: ChartId): Readonly<SeriesMetrics> | undefined;
+  /** Internal (E11-S09, BQ-14): each pane's x words as last submitted; `FrameStats` stays frozen. */
+  paneStats(id: ChartId): PaneStat[] | undefined;
+}
+
+/** One pane's shared-time evidence (BQ-14): its key, the chart's range and its block's x words. */
+export interface PaneStat {
+  readonly key: number;
+  readonly timeStart: number;
+  readonly timeEnd: number;
+  /** `u_indexBase`, bar spacing (device px) and the index fraction, from the pane's block. */
+  readonly xWords: readonly [number, number, number];
 }
 
 /** Upper bounds of `series_type_switch_duration_ms`' buckets (the 100 ms budget is one); the last is open. */
@@ -206,6 +222,13 @@ interface Instance {
   axesDirty: boolean;
   /** Pane 0's GPU block, rewritten once per frame before submission. */
   readonly uniforms: PaneUniforms;
+  /** E11-S09 (BQ-10): every pane's block, by layout slot ([0] is `uniforms`: content is pane 0's
+   * until E12 mounts series per pane); and the layout count last posted (BQ-4). */
+  readonly paneBlocks: PaneUniforms[];
+  layoutPosted: number;
+  /** M1: the layout compute `placePanes` and blocks 1.. last followed (-1: a transform moved). */
+  placedAt: number;
+  blocksAt: number;
   ready: boolean;
   /** The scheduler's requested frame, run by the shared callback; null while parked. */
   readonly slot: { frame: scene.FrameCallback | null };
@@ -308,7 +331,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     inst.scheduler.wake();
   };
 
-  /** One chart's scene, laid out as one pane until the multi-pane wiring (E11-S09, BQ-45). */
+  /** One chart's scene: slot 0 is the `main` pane (key 0); E11-S09's commands stack more. */
   function createScene(
     slot: Instance["slot"],
     gpu: Instance["gpu"],
@@ -324,7 +347,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     graph.addPane("main");
     graph.addNode("main", "background", axes.grid);
     const layout = new scene.LayoutEngine(graph);
-    layout.addPane("main");
+    layout.addPane("main", undefined, 0);
     const builder = new scene.BatchBuilder(graph, {
       uploadSubRange: (b, from, to) => gpu.backend?.uploadSubRange(b, from, to),
     });
@@ -479,12 +502,14 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
    * and refits on the new width before the axes rebuild; a rebuilt grid rewrites its ring.
    */
   function prepare(inst: Instance): void {
+    placePanes(inst);
     if (inst.autoscale.update()) inst.viewportDirty = true;
     const { axes, layout, viewport: vp } = inst;
     let r = axes.update(vp, layout, inst.theme);
     if ((r & UPDATE.gutter) !== 0) {
       layout.setPriceGutter(axes.gutter.width);
       layout.run();
+      placePanes(inst);
       // In this frame, before collect: TRANSFORM without a wake, so no second frame follows.
       if (vp.setSize(plotWidthOf(layout.width, layout.priceGutter), vp.height, vp.dpr)) {
         inst.viewportDirty = true;
@@ -500,6 +525,88 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       inst.builder.patch(GRID_NODE_ID, gridRange.set("replace", 0, axes.grid.count, 0));
     }
     if ((r & UPDATE.labels) !== 0) inst.axesDirty = true;
+  }
+
+  /** BQ-11: each pane's price plot is its laid-out row; a changed row is a TRANSFORM (no wake). */
+  function placePanes(inst: Instance): void {
+    const { layout, viewport: vp } = inst;
+    if (inst.placedAt === layout.computes) return; // the rows change only on a recompute
+    inst.placedAt = layout.computes;
+    for (let i = 0; i < layout.panes.length; i += 1) {
+      const r = (layout.panes[i] as scene.PaneLayout).rect;
+      const p = vp.panes[i];
+      if (p === undefined || (p.plotTop === r[1] && p.plotHeight === r[3])) continue;
+      vp.setPanePlot(i, r[1], r[3]);
+      inst.graph.markViewport(); // the `viewport` message carries no plot rect: nothing to post
+    }
+  }
+
+  /**
+   * E11-S09 (BQ-2): a pane under the facade's key. A known key only takes `share`; a keyless sole
+   * slot (every key was removed) is adopted; else a pane is appended below the others, up to
+   * `MAX_PANES` (C-2.18). LAYOUT only: no ring is re-uploaded.
+   */
+  function addPane(inst: Instance, key: number, share: number | undefined): void {
+    const { layout } = inst;
+    const known = layout.byKey(key) ?? (layout.panes.length === 1 ? layout.byKey(-1) : undefined);
+    if (known !== undefined) {
+      known.key = key;
+      inst.graph.markResize(); // the `layout` message names the key
+      if (share !== undefined) layout.setHeightRatio(known.id, share);
+    } else if (layout.panes.length >= MAX_PANES) {
+      return fail(inst.id, `chart ${inst.id} already has ${MAX_PANES} panes`);
+    } else appendPane(inst, key, share);
+    touch(inst);
+  }
+
+  /** A pane node, a layout row, a transform and a block, below the others. */
+  function appendPane(inst: Instance, key: number, share: number | undefined): void {
+    const id = `pane.${key}`;
+    inst.graph.addPane(id);
+    inst.layout.addPane(id, share, key);
+    inst.viewport.addPane();
+    inst.paneBlocks.push(createPaneUniforms());
+  }
+
+  /**
+   * BQ-11a: the sole pane is never removed, only left keyless. Slot 0 (`main`) holds the content
+   * until E12 mounts series per pane, so removing its key while others remain hands it the next
+   * pane's key, share, collapse and transform; that pane's node, row and block go.
+   */
+  function removePane(inst: Instance, key: number): void {
+    const { layout } = inst;
+    const p = layout.byKey(key);
+    if (p === undefined) return fail(inst.id, `no pane ${key} on chart ${inst.id}`);
+    inst.gestures.pane = 0; // the slots shift: a price gesture re-targets on the next pointer
+    if (layout.panes.length === 1) {
+      p.key = -1;
+      inst.graph.markResize();
+      touch(inst);
+      return;
+    }
+    let i = layout.panes.indexOf(p);
+    let gone = p;
+    if (i === 0) {
+      gone = layout.panes[1] as scene.PaneLayout;
+      layout.absorb(p.id, gone.id);
+    } else layout.removePane(p.id);
+    inst.graph.removePane(gone.id); // detached: the graph stays bounded under churn
+    inst.viewport.removePane(i);
+    if (i === 0) i = 1; // [0] stays `uniforms`; blocks 1.. are rewritten on the recompute
+    inst.paneBlocks.splice(i, 1);
+    touch(inst);
+  }
+
+  /** BQ-3: the listed keys' shares; an unknown key refuses the whole command. */
+  function setShares(inst: Instance, shares: readonly (readonly [number, number])[]): void {
+    const ids: [string, number][] = [];
+    for (const [key, share] of shares) {
+      const p = inst.layout.byKey(key);
+      if (p === undefined) return fail(inst.id, `no pane ${key} on chart ${inst.id}`);
+      ids.push([p.id, share]);
+    }
+    inst.layout.setShares(ids);
+    touch(inst);
   }
 
   /** F-13 (BQ-92): no export while the pixels cannot be trusted; the reason, never a stale PNG. */
@@ -536,7 +643,6 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       if (c.height !== bh) c.height = bh;
       inst.resizes.reallocations += 1;
     }
-    inst.viewport.setPanePlot(0, 0, h);
     moved(inst, inst.viewport.setSize(plotWidthOf(w, inst.layout.priceGutter), h, dpr));
     inst.layout.setSize(w, h); // LAYOUT: recomputed on the next frame only
     const from = inst.dpr;
@@ -877,9 +983,29 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       case "setMotion":
         inst.gestures.setMotion(cmd.reduce); // the engine never reads the media query (BQ-104)
         return;
-      case "setPriceScale":
-        moved(inst, inst.viewport.setScale(cmd.pane, cmd)); // TRANSFORM only: no data refetch
+      case "setPriceScale": {
+        // BQ-1: `pane` is the facade's key; its slot is the transform's index.
+        const p = inst.layout.byKey(cmd.pane);
+        const i = p === undefined ? -1 : inst.layout.panes.indexOf(p);
+        moved(inst, inst.viewport.setScale(i, cmd)); // TRANSFORM only: no data refetch
         return;
+      }
+      case "addPane":
+        addPane(inst, cmd.pane, cmd.share);
+        return;
+      case "removePane":
+        removePane(inst, cmd.pane);
+        return;
+      case "setPaneShares":
+        setShares(inst, cmd.shares);
+        return;
+      case "setPaneCollapsed": {
+        const p = inst.layout.byKey(cmd.pane);
+        if (p === undefined) return fail(inst.id, `no pane ${cmd.pane} on chart ${inst.id}`);
+        if (inst.layout.setCollapsed(p.id, cmd.collapsed)) touch(inst);
+        else if (cmd.collapsed && !p.collapsed) fail(inst.id, `pane ${cmd.pane} is the last open`);
+        return;
+      }
       case "pickAt":
         // BQ-135: an explicit pick always replies and leaves the hover edge state alone.
         locate(inst, cmd.x, cmd.y, cmd.pointer ?? "mouse");
@@ -946,9 +1072,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       const c = msg.canvas as CanvasLike;
       const viewport = new ChartViewport(deps.timeMap);
       const axes = new AxisModel(msg.config.timeZone);
+      const uniforms = createPaneUniforms();
       const [w, h] = [c.width / msg.dpr, c.height / msg.dpr];
       viewport.setSize(plotWidthOf(w), h, msg.dpr); // the plot rect, not the canvas (RULED (5))
-      viewport.setPanePlot(0, 0, h);
       const scene = createScene(
         slot,
         gpu,
@@ -972,9 +1098,13 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         viewport,
         axes,
         axesDirty: false,
-        uniforms: createPaneUniforms(),
+        uniforms,
+        paneBlocks: [uniforms],
+        layoutPosted: -1,
+        placedAt: -1,
+        blocksAt: -1,
         autoscale: new AutoScaler(viewport, (pane) =>
-          pane === 0 ? (deps.priceSources ?? []) : [],
+          pane === 0 ? (deps.priceSources ?? NO_SOURCES) : NO_SOURCES,
         ),
         ready: false,
         viewportDirty: false,
@@ -1031,6 +1161,15 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       }
       const main = inst.series.get(inst.main);
       if (main !== undefined) viewport.setMap(main.store);
+      // BQ-10: the degraded-2d handoff keeps the panes, their keys, shares, collapse and scales.
+      if (old !== undefined) {
+        const rows = old.layout.panes;
+        for (let i = 1; i < rows.length; i += 1) {
+          appendPane(inst, (rows[i] as scene.PaneLayout).key, undefined);
+        }
+        inst.layout.copyFrom(rows);
+        old.viewport.panes.forEach((t, i) => Object.assign(viewport.panes[i] ?? {}, t));
+      }
       inst.gestures.reduce = msg.reducedMotion === true;
       // 06 §4.3's marks run in bench mode only; a production chart's scheduler keeps `null`.
       if (msg.config.bench && deps.timeline !== undefined) {
@@ -1103,12 +1242,20 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     // At most one refit per pane per frame, and only when a key changed (BQ-116).
     if (inst.autoscale.update()) inst.viewportDirty = true;
     if (backend !== null && backend.failure === null) {
-      writePaneUniforms(inst.viewport, 0, inst.uniforms); // once per pane per frame (§3.5)
       // The clip space spans the exact store on both axes (BQ-101, BQ-142, BQ-149); the plot is
       // its left part, so x maps unchanged, and y never mixes vp.height * dpr with the rounded
       // size. A padded store is drawn in its exact top-left sub-rect.
-      inst.uniforms.floats[4] = width;
-      inst.uniforms.floats[5] = height;
+      // Block 0 (drawn) every frame (§3.5); blocks 1.. only on a moved transform or relayout (M1).
+      const blocks = inst.paneBlocks;
+      if (inst.viewportDirty) inst.blocksAt = -1;
+      const n = inst.blocksAt === inst.layout.computes ? 1 : blocks.length;
+      inst.blocksAt = inst.layout.computes;
+      for (let i = 0; i < n; i += 1) {
+        const b = blocks[i] as PaneUniforms;
+        writePaneUniforms(inst.viewport, i, b);
+        b.floats[4] = width;
+        b.floats[5] = height;
+      }
       backend.setBackground(inst.theme[BACKGROUND_TOKEN]);
       const cs = inst.candles;
       const vp = inst.viewport;
@@ -1143,24 +1290,23 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     }
     if (inst.viewportDirty) {
       inst.viewportDirty = false;
-      const vp = inst.viewport;
-      const pane = vp.panes[0];
+      postViewport(inst);
+    }
+    if (inst.layoutPosted !== inst.layout.computes) {
+      inst.layoutPosted = inst.layout.computes;
+      const l = inst.layout;
       deps.post({
-        t: "viewport",
+        t: "layout",
         id: inst.id,
-        timeStart: vp.timeStart,
-        timeEnd: vp.timeEnd,
-        priceLow: pane?.priceLow ?? 0,
-        priceHigh: pane?.priceHigh ?? 0,
-        barSpacing: vp.barSpacing,
-        pane: 0,
-        mode: pane?.scaleMode ?? "linear",
-        requestedMode: pane?.requestedMode ?? "linear",
-        inverted: pane?.inverted ?? false,
-        autoScale: pane?.autoScale ?? true,
-        logAvailable: pane?.logReason === null,
-        logReason: pane?.logReason ?? null,
-        anchorTick: Number.isFinite(pane?.anchorTick) ? (pane?.anchorTick ?? null) : null,
+        panes: l.panes.map((p) => ({
+          pane: p.key,
+          top: p.rect[1],
+          height: p.rect[3],
+          share: p.share,
+          collapsed: p.collapsed,
+        })),
+        timeAxis: [l.timeAxis[1], l.timeAxis[3]],
+        plotWidth: l.timeAxis[2],
       });
     }
     if (inst.axesDirty || inst.axes.say !== SAY.none) {
@@ -1213,6 +1359,38 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         backingStorePx: [backing.width, backing.height],
       });
     }
+  }
+
+  /** BQ-5 (M1): ONE `viewport` a frame; time is the chart's, slot 0's row on top, then 1.. */
+  function postViewport(inst: Instance): void {
+    const { viewport: vp, layout } = inst;
+    const n = layout.panes.length;
+    const panes = n > 1 ? Array.from({ length: n - 1 }, (_, i) => scaleRow(inst, i + 1)) : null;
+    deps.post({
+      t: "viewport",
+      id: inst.id,
+      timeStart: vp.timeStart,
+      timeEnd: vp.timeEnd,
+      barSpacing: vp.barSpacing,
+      ...scaleRow(inst, 0),
+      ...(panes !== null && { panes }),
+    });
+  }
+
+  function scaleRow(inst: Instance, i: number): PaneScaleRow {
+    const pane = inst.viewport.panes[i];
+    return {
+      priceLow: pane?.priceLow ?? 0,
+      priceHigh: pane?.priceHigh ?? 0,
+      pane: inst.layout.panes[i]?.key ?? 0,
+      mode: pane?.scaleMode ?? "linear",
+      requestedMode: pane?.requestedMode ?? "linear",
+      inverted: pane?.inverted ?? false,
+      autoScale: pane?.autoScale ?? true,
+      logAvailable: pane?.logReason === null,
+      logReason: pane?.logReason ?? null,
+      anchorTick: Number.isFinite(pane?.anchorTick) ? (pane?.anchorTick ?? null) : null,
+    };
   }
 
   function tick(): void {
@@ -1281,5 +1459,14 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     dataRejected: (id) => charts.get(id)?.dataRejected,
     seriesMetrics: (id) => charts.get(id)?.kinds,
     graph: (id) => charts.get(id)?.graph,
+    paneStats(id) {
+      const inst = charts.get(id);
+      return inst?.paneBlocks.map((b, i) => ({
+        key: inst.layout.panes[i]?.key ?? -1,
+        timeStart: inst.viewport.timeStart,
+        timeEnd: inst.viewport.timeEnd,
+        xWords: [b.ints[0] ?? 0, b.floats[0] ?? 0, b.floats[3] ?? 0],
+      }));
+    },
   };
 }

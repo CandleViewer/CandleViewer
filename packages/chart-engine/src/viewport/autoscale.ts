@@ -48,7 +48,7 @@ const flagsOf = (p: Readonly<PaneTransform>): number =>
 export class AutoScaler {
   readonly counters: ScaleCounters = { autoscale_recomputes: 0, log_guard_trips: 0 };
   private readonly out = new Float64Array(2);
-  private readonly keys: Float64Array;
+  private keys: Float64Array;
   private readonly next = new Float64Array(KEYS);
 
   constructor(
@@ -62,6 +62,10 @@ export class AutoScaler {
   /** Once per frame: true when a window, mode, anchor or log reason changed. */
   update(): boolean {
     let changed = false;
+    // E11-S09: a pane added or removed re-keys every pane (NaN: each refits once).
+    if (this.keys.length !== this.vp.panes.length * KEYS) {
+      this.keys = new Float64Array(this.vp.panes.length * KEYS).fill(Number.NaN);
+    }
     for (let i = 0; i < this.vp.panes.length && i * KEYS < this.keys.length; i += 1) {
       changed = this.pane(i) || changed;
     }

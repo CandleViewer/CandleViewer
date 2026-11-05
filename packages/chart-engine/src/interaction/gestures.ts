@@ -27,8 +27,8 @@ export interface GestureSink {
 }
 
 const Drag = { none: 0, pan: 1, spacing: 2, price: 3 } as const;
-/** The pane the price gestures act on: the runtime lays out one pane (BQ-45, E11-S09). */
-const PANE = 0;
+/** The price-axis stop's pane: slot 0's until PR 1b ships a stop per pane (G-S09a). */
+const AXIS_STOP_PANE = 0;
 
 export class Gestures {
   readonly velocity = new VelocityEstimator();
@@ -39,6 +39,11 @@ export class Gestures {
   panModifier = false;
   /** The pointer's last x inside the plot (NaN until it enters): the `+/-` anchor (BQ-108). */
   pointerX = Number.NaN;
+  /**
+   * E11-S09 (BQ-10): the pane a pointer's price gesture acts on, set where it goes down, wheels or
+   * double-clicks; -1 over a collapsed stub (nothing visible moves). Never a key's target.
+   */
+  pane = 0;
   private drag: number = Drag.none;
   private dragX = 0;
   private dragY = 0;
@@ -56,6 +61,11 @@ export class Gestures {
       readonly width: number;
       readonly height: number;
       readonly priceGutter?: number;
+      /** The stacked panes' rows (the layout engine's), top to bottom. */
+      readonly panes?: readonly {
+        readonly rect: readonly number[];
+        readonly collapsed?: boolean;
+      }[];
     },
     private readonly sink: GestureSink,
   ) {
@@ -104,6 +114,17 @@ export class Gestures {
     return regionAt(x, y, this.size.width, this.size.height, this.size.priceGutter);
   }
 
+  /**
+   * The pane whose row (or gutter) holds y; below them all (the time strip), the last one. A
+   * collapsed stub's row is -1: a price gesture over it changes no hidden pane's scale.
+   */
+  private paneAt(y: number): number {
+    const ps = this.size.panes ?? [];
+    let i = 0;
+    while (i < ps.length - 1 && y >= (ps[i]?.rect[1] ?? 0) + (ps[i]?.rect[3] ?? 0)) i += 1;
+    return ps[i]?.collapsed === true ? -1 : i;
+  }
+
   private down(touch: boolean, x: number, y: number, id: number): void {
     const slot = Number.isNaN(this.ids[0] as number) ? 0 : 1;
     if (touch && !Number.isNaN(this.ids[slot] as number)) return; // a third finger is ignored
@@ -118,6 +139,7 @@ export class Gestures {
       }
     }
     const r = this.region(x, y);
+    this.pane = this.paneAt(y);
     this.drag =
       r === REGION.plot
         ? Drag.pan
@@ -149,12 +171,12 @@ export class Gestures {
     const vp = this.vp;
     if (this.drag === Drag.pan) {
       this.sink.moved(vp.pan(dx));
-      this.sink.moved(vp.panPrice(PANE, dy)); // inert while autoscale is on (E11-D01 D2)
+      this.sink.moved(vp.panPrice(this.pane, dy)); // inert while autoscale is on (E11-D01 D2)
       this.velocity.sample(dx, dt);
     } else if (this.drag === Drag.spacing) {
       this.sink.moved(vp.zoomAt(vp.plotWidth, axisDragFactor(dx)));
     } else if (this.drag === Drag.price && dy !== 0) {
-      this.sink.moved(vp.zoomPrice(PANE, this.anchorY, priceDragFactor(dy))); // locks
+      this.sink.moved(vp.zoomPrice(this.pane, this.anchorY, priceDragFactor(dy))); // locks
     }
   }
 
@@ -198,10 +220,11 @@ export class Gestures {
   private wheel(x: number, y: number, px: number, mods: number): void {
     this.stop();
     const r = this.region(x, y);
+    this.pane = this.paneAt(y);
     const vp = this.vp;
     if ((mods & MOD.pan) !== 0) this.sink.moved(vp.pan(-px));
     else if (r === REGION.price)
-      this.sink.moved(vp.zoomPrice(PANE, y, wheelFactor(px))); // locks
+      this.sink.moved(vp.zoomPrice(this.pane, y, wheelFactor(px))); // locks
     else this.sink.moved(vp.zoomAt(r === REGION.time ? vp.plotWidth : x, wheelFactor(px)));
   }
 
@@ -209,11 +232,12 @@ export class Gestures {
     this.stop();
     const vp = this.vp;
     const r = this.region(x, y);
+    this.pane = this.paneAt(y);
     if (r === REGION.plot)
       this.sink.moved(resetView(vp)); // as `Ctrl+Home` (BQ-107), autoscale included (BQ-119)
     else if (r === REGION.time) {
       this.sink.moved(vp.zoomAt(vp.plotWidth, DEFAULT_BAR_SPACING / vp.barSpacing));
-    } else this.sink.moved(vp.setScale(PANE, { auto: true })); // the price axis restores auto
+    } else this.sink.moved(vp.setScale(this.pane, { auto: true })); // the price axis restores auto
   }
 
   /**
@@ -233,7 +257,7 @@ export class Gestures {
     // E11-S06 (BQ-194): an axis stop's key, and what it announces.
     const say =
       target === TARGET.price
-        ? priceAxisKey(this.vp, PANE, code, mods)
+        ? priceAxisKey(this.vp, AXIS_STOP_PANE, code, mods)
         : timeAxisKey(this.vp, code, mods);
     this.sink.moved(say !== 0);
     if (say !== 0) this.sink.say?.(say);
