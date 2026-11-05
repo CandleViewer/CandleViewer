@@ -17,9 +17,11 @@ import type { Role } from "../../../../src/routes/rbac";
 import { buildRoutes } from "../../../../src/routes/tree";
 import { resetShellState, setShellState, type Me } from "../../../../src/shell/bootstrap/store";
 
-const chunk = vi.hoisted(() => ({ loads: 0, overview: 0 }));
+// A slow chunk, as on a busy host: the owner's code arrives later than the deny half's bound.
+const chunk = vi.hoisted(() => ({ loads: 0, overview: 0, delayMs: 6_000 }));
 vi.mock("../../../../src/features/admin/shell/AdminArea", async (importOriginal) => {
   chunk.loads += 1;
+  await new Promise((resolve) => setTimeout(resolve, chunk.delayMs));
   return importOriginal<typeof AdminAreaModule>();
 });
 vi.mock("../../../../src/features/admin/overview/OverviewPage", async (importOriginal) => {
@@ -47,6 +49,8 @@ function deniedHeading(role: Role, id: string): string {
 
 /** A route's render with the admin area's lazy chunk: a busy host can take seconds over it. */
 const ROUTE_WAIT = { timeout: 5_000 } as const;
+/** The owner's positive control waits on that chunk and on the area's reads: longer than any denial's wait. */
+const OWNER_WAIT = { timeout: 20_000 } as const;
 
 const requested = (): string[] => vi.mocked(fetch).mock.calls.map(([input]) => String(input));
 
@@ -95,26 +99,26 @@ describe("E42-S01 BQ-7: the admin area's code sits behind the guard", () => {
       sessionFor("owner");
       const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/journal"] });
       render(<RouterProvider router={router} />);
-      await screen.findByRole("heading", { name: /R-180/ }, ROUTE_WAIT);
+      await screen.findByRole("heading", { name: /R-180/ }, OWNER_WAIT);
       expect(chunk.loads).toBe(0);
       await act(() => router.navigate("/admin/users/new"));
-      const band = await screen.findByRole("region", { name: "Admin area" }, ROUTE_WAIT);
+      const band = await screen.findByRole("region", { name: "Admin area" }, OWNER_WAIT);
       expect(band.textContent).toBe("◆ Admin area · Invite user");
       expect(chunk.loads).toBe(1);
       // The shell found no h1 while the code was on its way; focus still ends on the page's h1.
       const h1 = screen.getByRole("heading", { name: "Invite user", level: 1 });
-      await waitFor(() => expect(document.activeElement).toBe(h1), ROUTE_WAIT);
+      await waitFor(() => expect(document.activeElement).toBe(h1), OWNER_WAIT);
       await waitFor(
         () => expect(requested().some((u) => u.endsWith("/users/invites"))).toBe(true),
-        ROUTE_WAIT,
+        OWNER_WAIT,
       );
       // Only now does the owner's area read: the strip's sources on every admin route.
-      await waitFor(() => expect(requested()).toContain("/api/v1/admin/overview"), ROUTE_WAIT);
+      await waitFor(() => expect(requested()).toContain("/api/v1/admin/overview"), OWNER_WAIT);
       // And R-300 mounts SCR-120 from the same chunk, which was evaluated once.
       await act(() => router.navigate("/admin"));
-      await screen.findByRole("heading", { name: "Overview", level: 1 }, ROUTE_WAIT);
+      await screen.findByRole("heading", { name: "Overview", level: 1 }, OWNER_WAIT);
       expect([chunk.loads, chunk.overview]).toEqual([1, 1]);
-      await waitFor(() => expect(requested()).toContain("/api/v1/admin/health"), ROUTE_WAIT);
+      await waitFor(() => expect(requested()).toContain("/api/v1/admin/health"), OWNER_WAIT);
     },
   );
 });

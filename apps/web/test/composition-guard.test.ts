@@ -24,8 +24,6 @@ const ENTRY = join(SRC, "main.tsx");
 const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
   "admin-connectivity":
     "E08-S12 (#5207) PR 1: SCR-147's pure core, flags off; PR 2 mounts it once #5330 and the R-id land",
-  "admin/statecharts":
-    "E42-S08 (#1137) parts 1-7: the statechart inspector, unrouted; part 8 of 8 mounts R-357",
   "chart-errors": "E11-S02 (#334): SCR-048 wraps <Chart>, which no screen mounts until SCR-030",
   "chart-price-scale":
     "E11-S05 (#386): SCR-043 is a <Chart> child; no screen mounts one until SCR-030",

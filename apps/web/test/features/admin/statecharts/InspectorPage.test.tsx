@@ -1,14 +1,15 @@
 /**
  * E42-S08 (#1137) §5.1: the statechart inspector's page at R-357 `/admin/statecharts` (BQ-1 as
  * ruled; E42-D05 §11 SI-1, SI-2). CMP-088's `h1` and its "as of" line, the kind counters, the
- * rowless lines, the latch banner, "Latched only" and the machine grid; every state of §5.1's
- * table; the tab order, the focus moves and the page's polite
+ * rowless lines, the latch banner, "Latched only", the machine grid and the machine view as the
+ * query's state; every state of §5.1's table; the tab order, the focus moves and the page's polite
  * lines through the shell's announcer; no timer (BQ-7). Reads go through the real read layer and a
  * store of the test's own, against a stubbed `fetch` (no network, C-13.5).
  */
 import { createRequire } from "node:module";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router";
+import type { JSX } from "react";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GatedAnnounceProvider } from "@candleviewer/ui";
 import { clearAnnouncements, ShellAnnouncer } from "../../../../src/features/app-shell/announcer";
@@ -30,11 +31,15 @@ import {
   inspector,
   type InspectorStore,
 } from "../../../../src/features/admin/statecharts/inspectorStore";
+import { ROUTE_MANIFEST } from "../../../../src/routes/manifest";
+import { ROUTE_TITLES } from "../../../../src/routes/titles";
 import { THEME_ANALYTICS_EVENT } from "../../../../src/shell/bootstrap/themeStore";
 import {
   KILL_SWITCH_HASH,
+  LATCHED_DETAIL,
   LATCHED_KEY,
   LATCHED_ROW,
+  ORDER_EXPORT,
   ORDER_HASH,
   shortHash,
   WORLD_LATCHED_LIST,
@@ -48,7 +53,10 @@ const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/play
 
 const LIST = "/api/v1/admin/statecharts?limit=200";
 const LATCHED_LIST = "/api/v1/admin/statecharts?limit=200&degraded=true";
+const DETAIL = `/api/v1/admin/statecharts/${encodeURIComponent(LATCHED_KEY)}?environment=demo`;
+const EXPORT = "/api/v1/admin/statecharts/order/export";
 const PAGE = "/admin/statecharts";
+const OPEN = `${PAGE}?machine=${encodeURIComponent(LATCHED_KEY)}&env=demo`;
 const NOW = Date.parse("2026-10-15T18:00:06Z");
 const WAIT = { timeout: 5_000 } as const;
 
@@ -112,6 +120,29 @@ const storeFor = (): InspectorStore =>
     deny: (refId) => void denials.push(refId),
   });
 
+/** The current location, for the test to read: `?machine=…&env=…` is the page's query state. */
+let here = "";
+/** The current entry's state and key: what the page keeps in history, and whether it navigated. */
+let hereState: unknown = null;
+let hereKey = "";
+function Here(): null {
+  const location = useLocation();
+  here = `${location.pathname}${location.search}`;
+  hereState = location.state;
+  hereKey = location.key;
+  return null;
+}
+
+/** The browser's Forward, as a control the test can press. */
+function Forward(): JSX.Element {
+  const navigate = useNavigate();
+  return (
+    <button type="button" onClick={() => void navigate(1)}>
+      Forward
+    </button>
+  );
+}
+
 /** The page as the shell holds it, inside a router whose history starts at `entries`. */
 function show(entries: readonly string[] = [PAGE], store: InspectorStore = storeFor()) {
   const view = render(
@@ -121,9 +152,12 @@ function show(entries: readonly string[] = [PAGE], store: InspectorStore = store
           <main>
             <Routes>
               <Route path={PAGE} element={<InspectorPage store={store} />} />
+              <Route path="/journal" element={<h1>Journal</h1>} />
             </Routes>
           </main>
         </InShellProvider>
+        <Here />
+        <Forward />
       </MemoryRouter>
       <ShellAnnouncer />
     </GatedAnnounceProvider>,
@@ -134,6 +168,8 @@ function show(entries: readonly string[] = [PAGE], store: InspectorStore = store
 const WORLD: Readonly<Record<string, Reply>> = {
   [LIST]: { body: WORLD_LIST },
   [LATCHED_LIST]: { body: WORLD_LATCHED_LIST },
+  [DETAIL]: { body: LATCHED_DETAIL },
+  [EXPORT]: { body: ORDER_EXPORT },
 };
 /** The page alone: the shell's announcer, outside it, repeats some of its lines. */
 const page = () => within(screen.getByRole("main"));
@@ -179,6 +215,9 @@ const onAnalytics = (event: Event): void => {
 beforeEach(() => {
   denials.length = 0;
   analytics.length = 0;
+  here = "";
+  hereState = null;
+  hereKey = "";
   clearAnnouncements();
   window.addEventListener(THEME_ANALYTICS_EVENT, onAnalytics);
 });
@@ -192,6 +231,19 @@ afterEach(() => {
   vi.restoreAllMocks();
   // A test's own `performance.measure`, whatever its assertions did (the prototype's is restored).
   Reflect.deleteProperty(performance, "measure");
+});
+
+describe("R-357: the route (BQ-1)", () => {
+  it("test_route_r357_is_admin_statecharts_owner_only_and_hidden_as_404", () => {
+    const entry = ROUTE_MANIFEST.find((e) => e.id === "R-357");
+    expect(entry).toEqual({
+      id: "R-357",
+      path: "/admin/statecharts",
+      access: { roles: ["owner"], denyAs: "404" },
+      owner: null,
+    });
+    expect(ROUTE_TITLES["R-357"]).toBe("Statechart inspector");
+  });
 });
 
 describe("the page frame (BQ-1)", () => {
@@ -354,6 +406,17 @@ describe("SI-1: the list as served", { timeout: 30_000 }, () => {
     expect(within(latched as HTMLElement).getByText("triggered").style.whiteSpace).toBe("normal");
   });
 
+  it("test_page_grid_shows_that_enter_opens_a_machine_and_describes_its_rows_with_it", async () => {
+    // The cue is visible to a sighted keyboard user, and still each row header's description.
+    serve(WORLD);
+    show();
+    const [, latched] = await machineRows();
+    const hint = page().getByText("Enter opens a machine.");
+    expect(hint.closest(".cv-visually-hidden")).toBeNull();
+    expect(hint.compareDocumentPosition(grid()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(latched?.querySelector("th")).toHaveAccessibleDescription("Enter opens a machine.");
+  });
+
   it("test_page_rowless_kind_is_a_line_never_a_row", async () => {
     serve(WORLD);
     show();
@@ -399,11 +462,15 @@ describe("SI-1: the list as served", { timeout: 30_000 }, () => {
   it("test_page_says_none_of_its_rows_and_owns_no_live_region", async () => {
     serve(WORLD);
     const { view } = show();
-    await machineRows();
+    const [, latched] = await machineRows();
     await act(async () => undefined);
     expect(polite()).toHaveTextContent(/^Metrics unavailable/); // its one SI-2 inset line
     const main = view.container.querySelector("main") as HTMLElement;
     const LIVE = "[aria-live], [role='status'], [role='alert']";
+    expect(main.querySelector(LIVE)).toBeNull();
+    // A machine open too: its timeline's table says nothing of its own (C-1137-03).
+    fireEvent.keyDown(latched?.querySelector("th") as HTMLElement, { key: "Enter" });
+    await screen.findByRole("table", { name: "Events, newest first" }, WAIT);
     expect(main.querySelector(LIVE)).toBeNull();
   });
 });
@@ -711,6 +778,121 @@ describe("SI-2 and §5.1's other states", { timeout: 30_000 }, () => {
   });
 });
 
+describe("the machine view as the page's query state (§5.2)", { timeout: 30_000 }, () => {
+  it("test_page_enter_on_a_row_opens_its_machine_and_focuses_its_heading", async () => {
+    serve(WORLD);
+    show();
+    const [, latched] = await machineRows();
+    const cell = latched?.querySelector<HTMLElement>("th") as HTMLElement;
+    act(() => cell.focus());
+    fireEvent.keyDown(cell, { key: "Enter" });
+    const heading = await screen.findByRole(
+      "heading",
+      { level: 2, name: `${LATCHED_KEY} · DEMO` },
+      WAIT,
+    );
+    expect(here).toBe(OPEN);
+    await waitFor(() => expect(heading).toHaveFocus(), WAIT);
+    expect(await screen.findByRole("heading", { name: "Transitions" }, WAIT)).toBeInTheDocument();
+  });
+
+  it("test_page_a_held_enter_opens_once_and_a_press_opens_too", async () => {
+    serve(WORLD);
+    show();
+    const [clear, latched] = await machineRows();
+    fireEvent.keyDown(latched?.querySelector("th") as HTMLElement, { key: "Enter", repeat: true });
+    expect(here).toBe(PAGE);
+    fireEvent.click(clear?.querySelector("td") as HTMLElement);
+    expect(here).toBe(`${PAGE}?machine=kill_switch&env=demo`);
+  });
+
+  it("test_page_back_to_machines_closes_the_view_and_returns_focus_to_its_row", async () => {
+    serve(WORLD);
+    show();
+    const [, latched] = await machineRows();
+    fireEvent.keyDown(latched?.querySelector("th") as HTMLElement, { key: "Enter" });
+    const back = await screen.findByRole("button", { name: "Back to machines" }, WAIT);
+    act(() => back.focus());
+    fireEvent.click(back);
+    await waitFor(() => expect(here).toBe(PAGE), WAIT);
+    expect(screen.queryByRole("heading", { level: 2, name: /· DEMO$/ })).toBeNull();
+    const row = grid().querySelector(`tr[data-machine-row="${LATCHED_KEY}@demo"]`);
+    await waitFor(() => expect(row?.contains(document.activeElement)).toBe(true), WAIT);
+  });
+
+  it("test_page_a_deep_link_opens_the_machine_and_back_replaces_it_with_the_list", async () => {
+    serve(WORLD);
+    show(["/journal", OPEN]);
+    const heading = await screen.findByRole(
+      "heading",
+      { level: 2, name: `${LATCHED_KEY} · DEMO` },
+      WAIT,
+    );
+    expect(heading).not.toHaveFocus(); // a deep link moves no focus
+    fireEvent.click(screen.getByRole("button", { name: "Back to machines" }));
+    await waitFor(() => expect(here).toBe(PAGE), WAIT); // the list in its place, not the journal
+  });
+
+  it("test_page_a_machine_opened_from_another_replaces_its_entry_and_its_row_finds_its_heading", async () => {
+    serve(WORLD);
+    show();
+    const [clear, latched] = await machineRows();
+    fireEvent.keyDown(latched?.querySelector("th") as HTMLElement, { key: "Enter" });
+    await waitFor(() => expect(here).toBe(OPEN), WAIT);
+    // From the open view, another row: its entry replaces the first one's (C-1137-05 (c)).
+    const other = clear?.querySelector("th") as HTMLElement;
+    fireEvent.keyDown(other, { key: "Enter" });
+    const heading = await screen.findByRole(
+      "heading",
+      { level: 2, name: "kill_switch · DEMO" },
+      WAIT,
+    );
+    expect(here).toBe(`${PAGE}?machine=kill_switch&env=demo`);
+    await waitFor(() => expect(heading).toHaveFocus(), WAIT);
+    await waitFor(() => expect(hereState).toEqual({ cvInspectorOpened: true }), WAIT);
+    // The open machine's row again: focus goes back to its heading, and nothing navigates.
+    const entry = hereKey;
+    act(() => other.focus());
+    fireEvent.keyDown(other, { key: "Enter" });
+    expect(heading).toHaveFocus();
+    await act(async () => undefined);
+    expect(hereKey).toBe(entry);
+    // Back to machines pops the one entry: the list, not the machine opened first.
+    fireEvent.click(screen.getByRole("button", { name: "Back to machines" }));
+    await waitFor(() => expect(here).toBe(PAGE), WAIT);
+  });
+
+  it("test_page_the_focus_flag_moves_focus_once_never_again_on_forward", async () => {
+    serve(WORLD);
+    show();
+    const [, latched] = await machineRows();
+    fireEvent.keyDown(latched?.querySelector("th") as HTMLElement, { key: "Enter" });
+    const name = `${LATCHED_KEY} · DEMO`;
+    const heading = await screen.findByRole("heading", { level: 2, name }, WAIT);
+    await waitFor(() => expect(heading).toHaveFocus(), WAIT);
+    // Used once, the flag is gone from the entry: it keeps only that the list opened it.
+    await waitFor(() => expect(hereState).toEqual({ cvInspectorOpened: true }), WAIT);
+    fireEvent.click(screen.getByRole("button", { name: "Back to machines" }));
+    await waitFor(() => expect(here).toBe(PAGE), WAIT);
+    // Browser Forward reopens the machine and moves no focus (A-1137-12).
+    const forward = screen.getByRole("button", { name: "Forward" });
+    act(() => forward.focus());
+    fireEvent.click(forward);
+    await waitFor(() => expect(here).toBe(OPEN), WAIT);
+    await screen.findByRole("heading", { level: 2, name }, WAIT);
+    await act(async () => undefined);
+    expect(forward).toHaveFocus();
+  });
+
+  it("test_page_a_query_off_its_pattern_is_ignored_and_asks_nothing", async () => {
+    const requests = serve(WORLD);
+    show([`${PAGE}?machine=${encodeURIComponent("../users")}&env=prod`]);
+    await machineRows();
+    expect(screen.queryByRole("heading", { level: 2, name: /·/ })).toBeNull();
+    expect(requests.map((r) => r.path)).toEqual([LIST]);
+  });
+});
+
 describe("tab order and axe", { timeout: 60_000 }, () => {
   it("test_page_tab_order_is_reread_then_latched_only_then_the_grid_once", async () => {
     serve(WORLD);
@@ -744,8 +926,9 @@ describe("tab order and axe", { timeout: 60_000 }, () => {
   it.each(["dark", "light"])("test_page_has_no_serious_axe_violation_in_%s", async (theme) => {
     document.documentElement.setAttribute("data-theme", theme);
     serve(WORLD);
-    show();
+    show([OPEN]);
     await machineRows();
+    await screen.findByRole("heading", { name: "Transitions" }, WAIT);
     // jsdom has no layout: contrast is the real-browser collectors' (e2e/a11y) and inspector-pairs'.
     const res = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
     document.documentElement.removeAttribute("data-theme");

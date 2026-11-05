@@ -67,6 +67,14 @@ describe("the a11y gate's screen set (#3470)", () => {
     });
   });
 
+  it("audits the statechart inspector (R-357) as a signed-in owner screen (E42-S08, #1137)", () => {
+    expect(SIGNED_IN_SCREENS).toContainEqual({
+      id: "R-357",
+      path: "/admin/statecharts",
+      signedIn: { role: "owner", heading: "Statechart inspector" },
+    });
+  });
+
   it("audits the hotkey editor (R-202) as a signed-in owner screen (#305, A11Y-305B-04)", () => {
     expect(SIGNED_IN_SCREENS).toContainEqual({
       id: "R-202",

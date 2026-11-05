@@ -72,7 +72,7 @@ function Shell({
 
 describe("the admin routes and the band's route words", () => {
   it("counts R-300 to R-360 as the admin area, and no other route", () => {
-    expect(ADMIN_IDS).toHaveLength(21);
+    expect(ADMIN_IDS).toHaveLength(22);
     expect(ROUTE_MANIFEST.filter((e) => isAdminRoute(e.id)).map((e) => e.id)).toEqual(ADMIN_IDS);
     expect(["R-100", "R-150", "R-201", "R-900", "R-901"].some(isAdminRoute)).toBe(false);
   });
@@ -125,6 +125,17 @@ describe("AdminArea: CMP-087 around the route's page", () => {
     const band = screen.getByRole("region", { name: "Admin area" });
     expect(band.textContent).toBe("◆ Admin area · Security centre");
     expect(screen.getByRole("heading", { level: 1 })).toHaveAccessibleName("Security centre");
+  });
+
+  it("holds the statechart inspector on R-357, named by its page title (E42-S08, BQ-1)", () => {
+    expect(adminRouteLabel("R-357")).toBe("Statechart inspector");
+    render(<Shell routeId="R-357" owner={null} />);
+    const band = screen.getByRole("region", { name: "Admin area" });
+    expect(band.textContent).toBe("◆ Admin area · Statechart inspector");
+    const main = screen.getByRole("main");
+    expect(within(main).getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveAccessibleName("Statechart inspector");
+    expect(screen.queryByRole("heading", { name: /owned by/ })).toBeNull(); // no stub
   });
 
   it("draws the strip from the served counts on any admin route, then the footer (BQ-6, D27)", async () => {

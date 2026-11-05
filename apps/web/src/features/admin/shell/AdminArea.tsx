@@ -8,6 +8,7 @@ import { OverviewPage } from "../overview/OverviewPage";
 import { useAdminHold, useAdminSelector } from "../overview/readStore";
 import { areaEntered, denial, STRIP_READS, stripItems } from "../overview/strip";
 import { routerLink } from "../routerLink";
+import { InspectorPage } from "../statecharts/InspectorPage";
 import { AdminDenied } from "./AdminDenied";
 import { SecurityCentrePlaceholder } from "./SecurityCentrePlaceholder";
 import { useStripAnnouncements } from "./useStripAnnouncements";
@@ -34,6 +35,7 @@ function pageFor(routeId: string, owner: string | null): ReactNode {
   if (routeId === "R-300") return <OverviewPage />; // SCR-120 (E42-S01)
   if (routeId === "R-303") return <AdminInviteScreen />; // SCR-123 (E09-S05)
   if (routeId === "R-354") return <SecurityCentrePlaceholder />; // until E43's SCR-137
+  if (routeId === "R-357") return <InspectorPage />; // E42-S08's statechart inspector
   return <StubRoute routeId={routeId} owner={owner ?? "E42"} />;
 }
 
