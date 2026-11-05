@@ -37,6 +37,9 @@ TRADING_TRADE_GROUPS = "trading.trade_groups"
 #: E28-S01 (#971, BQ-09 as ruled): the client mounts SCR-130 / SCR-131 only while it reads on; no
 #: route or check reads it (C-4.14). Its removal ticket is #5667 (C-4.13).
 ADMIN_ACCOUNT_PROFILES = "admin.account_profiles"
+#: E15-S03 (#476, BQ-02 (b) as ruled): the client mounts the workspace route only while it reads
+#: on; no route or check reads it (C-4.14). Its removal ticket is #5672 (C-4.13).
+UI_WORKSPACE_DOCK = "ui.workspace_dock"
 #: Ruling Q3: the value the insert-only `ensure` gives a flag with no row in a process of an
 #: environment, where it is not the flag's default (21 10.7), so an Owner's later write sticks.
 #: Never a kill switch or the live gate (C-4.14): `flags_wiring._seeds` ignores such a seed, and
@@ -85,6 +88,15 @@ FLAGS: tuple[FlagSpec, ...] = (
         ADMIN_ACCOUNT_PROFILES,
         _B,
         "The account-profile screens SCR-130 and SCR-131 (E28-S01); owner @basiltt, removal #5667",
+        _UI,
+        False,
+        _ALL,
+        restrictive=False,
+    ),
+    FlagSpec(
+        UI_WORKSPACE_DOCK,
+        _B,
+        "The workspace route and its dock (E15-S03); owner @basiltt, removal #5672",
         _UI,
         False,
         _ALL,
