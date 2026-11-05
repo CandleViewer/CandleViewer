@@ -1,7 +1,10 @@
 # The OMS chaos scenarios: E29-T05's half, and E29-Q04's
 
-Suite: `services/api/tests/chaos/oms/` (marker `chaos`, PR-lane safe, no Docker), from E29-T05's
-closing slice (#848). Run: `cd services/api && uv run pytest tests/chaos/oms -m chaos --no-cov`.
+Suite: `services/api/tests/chaos/oms/`, from E29-T05's closing slice (#848). Its in-process tier
+(marker `chaos`, PR-lane safe, no Docker) runs with:
+`cd services/api && uv run pytest tests/chaos/oms -m "chaos and not integration" --no-cov`;
+E29-Q04's Postgres tier (below; markers `chaos`, `integration` and `nightly`) is
+`-m "chaos and integration and nightly"` and needs Docker.
 
 **Harness.** `tests/unit/oms/stream_world.py`: the private-stream consumer as the OMS runtime
 composes it (`build_stream_consumer`, S8b), over the real facade (`OrderMachines` on B1 and the
@@ -59,8 +62,8 @@ Unmutated: `5 passed`, and six runs in a row green (`-p no:randomly`).
 
 ## E29-Q04 (#1148): the composed runtime, the venue and the oracle
 
-Slices 1 and 2 of 4: the harness, the oracle, the meta-test, s5 and s6 (slice 1), and s4b and s7
-to s13 (slice 2), in the same lane. Built to the
+Slices 1 to 3 of 4: the harness, the oracle, the meta-test, s5 and s6 (slice 1), s4b and s7 to
+s13 (slice 2), and the Postgres tier with s14 and s16 (slice 3), in the same lane. Built to the
 ruling on #1148's blocking questions (comment 6603186420): BQ-1, BQ-4 and BQ-9 as amended, BQ-6 as
 ruled (the oracle holds a native stop sized to each position), the rest as recommended; BQ-5 is
 held, and no S1 scenario reaches that point.
@@ -122,7 +125,30 @@ no earlier than the next millisecond, pushed (`VenuePort.set_trading_stop`).
 | s11        | #5, half          | E29-T04, E29-T06          | the venue answers a pass's read `10018`; the IP hold is `rest.py`'s (`test_rate_limit_10018_holds_every_uid_for_ten_minutes`)                                | `429 exchange_rate_limited`, `Retry-After` 60; after 2 min the account stale, new orders refused                    | `bybit_ip_hold_remaining_seconds` 600; `oms_rate_reject_total` +1; the stale page                       | the hold, 600 s, then the Owner's `resolveReconciliation`                     | nothing recorded or sent; the position keeps its create's native stop; locked stale; entry back after both; the oracle                                                                                                                                       | ✅ 604.8 s, test-driven (in production: ≥ the 600 s hold, then the Owner)                                  |
 | s12        | #10               | E29-T03, E29-T04          | the tier refuses the VALIDATE commit (`commit` door)                                                                                                         | `503 store_unavailable`                                                                                             | —                                                                                                       | the tier's return: the same request, its key unspent                          | nothing recorded, no create; the retry sent once; the oracle                                                                                                                                                                                                 | ✅ at once                                                                                                 |
 | s13        | #10, audit half   | E29-T04                   | the lane writer's log full, Postgres down; an entry's first fill finds its position without the create's stop                                                | `503 audit_unavailable`; the entry's protection `sl_missing`, its position without a stop                           | the writer's alarm, `oms_lane_audit_alarm`; `SL_ATTACH_FAILED`                                          | the log's drain: a submit at once; the stop at the position's next due attach | the submit refused before anything is recorded or sent; the due stop write withheld: no `set_trading_stop`, `SL_ATTACH_FAILED` paged; after the drain a submit accepted, one more create, and its due attach writes the stop, nothing more paged; the oracle | ✅ at the drain                                                                                            |
-| s14 to s16 | #12, #7, #10      | E29-T04, E29-T06, E29-S03 | SIGKILL mid-submission and mid-partial-close; a real node's outage                                                                                           | planned: slice 3, the Postgres tier and the nightly                                                                 |                                                                                                         |                                                                               |                                                                                                                                                                                                                                                              | planned                                                                                                    |
+| s14 to s16 | #12, #7, #10      | E29-T04, E29-T06, E29-S03 | SIGKILL mid-submission and mid-partial-close; a real node's outage                                                                                           | slice 3's, on Postgres: the table below (the nightly is slice 4's)                                                  |                                                                                                         |                                                                               |                                                                                                                                                                                                                                                              | below                                                                                                      |
+
+**Slice 3: the Postgres tier.** `_pg.py` and `_child.py`, markers `chaos`, `integration` and
+`nightly` (registered in `conftest.py`): the PR lanes deselect the tier (`_job-py.yml`), the merge
+group's integration step leaves it out (`not nightly`), and the nightly job, slice 4's, selects it
+(`-m "chaos and integration and nightly"`). A Postgres 16 node
+(testcontainers, on loopback at a port of its own, so a node stopped and started again keeps its
+address), set up as production is: the roles (`pg_bootstrap.sql`), then the migrations at head as
+`cv_owner`; each test clones the migrated database. A process is the runtime as cv-api composes it
+over `pg_stores` (20 Sec.6.2: the order lane on its own thread, the environment's lock, the fencing
+grace, the startup sweep and the account's startup pass), as `test_startup_sweep_pg.py` composes
+it: the account read in memory, the lane's writer a double, no private stream. `_child.py` runs one
+as a child process, which the test kills with SIGKILL at a named point (as
+`tests/chaos/audit/_lane_child.py` is killed); the venue as it stood then (its orders, executions
+and positions, the exchange ids it issued and the creates it counted) goes to the next process,
+whose creates are counted on top. The book is read from Postgres, as the runtime's role reads it.
+Recovery is wall time, bounded as `test_startup_sweep_pg.py` bounds it (ready within 30 s of the
+start, the startup pass within a cycle of that), and printed (`-rA`).
+
+| #   | C-13.6                           | Keys             | Fault injected                                                                                                                                                                                                                                                                                                | What the operator sees                                                                                                          | Which alert                                                                                             | Expected recovery                                                                                             | Asserted                                                                                                                                                                                                                                                                                                                                              | Observed                                                                                                         |
+| --- | -------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| s14 | #12, #7                          | E29-T04, E29-T06 | SIGKILL mid-submission, at one of three points: the order `submitting`, its create at the venue's door (`door`); a restart finds an order `submitting` whose create the venue already holds (the process went down after the send; `taken`); the order part filled while the account had no stream (`filled`) | the process gone; after the restart the order `submitted`, or `partially_filled` with its fill and its position, the stop shown | —                                                                                                       | the restart: ready after the 6 s fencing grace and the sweep, ≤ 30 s; the startup pass within a cycle of that | the killed session's lock freed; `door`: looked up first, then sent once under its own id with its native stop; `taken`: bound by the full match (`adopted_after_lookup`), nothing sent again; `filled`: the startup pass applies the fill and lists the correction, the position under its stop; one create per id across both processes; the oracle | ✅ ready 6.6 to 8.3 s after the restart, its startup pass reported at 6.8 to 9.0 s (wall time; the three points) |
+| s15 | #12; #9 the nearest for the stop | E29-S03, E29-T06 | a crash mid-partial-close                                                                                                                                                                                                                                                                                     | —                                                                                                                               | —                                                                                                       | —                                                                                                             | not built: the ruled s15 asserts that after the restart the remainder keeps a native stop sized to it (BQ-6), and below 100 % `main` resizes no stop (#5356; 22 `closePosition`, 24 Sec.19.73: E32-S02's); the oracle is not weakened to fit                                                                                                          | open deviation on #978, E32-S02 named                                                                            |
+| s16 | #10                              | E29-T03, E29-T04 | the node stopped as a submit reaches its VALIDATE commit (`at_validate`)                                                                                                                                                                                                                                      | `503 store_unavailable`; the process fenced until a restart                                                                     | `oms_environment_lock_lost` page; the node's own alert is #5542's (`PostgresDown`, asserted in slice 4) | the node's return, then a restart: the same request under its key                                             | nothing recorded or sent for it; the lock lost, paged; the oracle once the node is back; after the restart the retry sent once; the oracle                                                                                                                                                                                                            | ✅ the node back in 2.0 s, the restart ready in 7.3 s (wall time); run twice                                     |
 
 **Negative controls.** The meta-test (`test_teeth.py`) runs s5 (both) and s6 over the composed
 pass, where the oracle is clean, and over the stand-ins the runtime composes without E29-T06's
@@ -140,7 +166,7 @@ Slice 2's rows in `test_teeth.py`: s7 and s8 over the stand-ins fail the oracle 
 state, filled quantity and executions, the gap's `exec_id` and the position's size; s8 on the
 order's id and state); s4b's book is the venue's either way (S6), and over the stand-ins nothing
 alerts or records its anomaly. Each non-pass scenario's defence removed in the test, the outcome it
-forbids happens:
+forbids happens (slice 3's in their own modules, on Postgres):
 
 | Scenario | Defence removed                                                              | Then                                                                                                                                                                                                   |
 | -------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -148,6 +174,8 @@ forbids happens:
 | s10      | the clock halt (`ClockHalt.refusal` answers None)                            | the create it refuses reaches the venue                                                                                                                                                                |
 | s11      | the IP hold (`TokenBucketGovernor.hold_ip` holds nothing)                    | the create it refuses reaches the venue                                                                                                                                                                |
 | s13      | the writer's refusal (`Wal(refuses=False)`: a full log drops)                | the create it refuses reaches the venue: it proves the refusal's cause, not production's fail-closed code, which one-off mutants removed (the submit's and the attach's write-ahead), each failing s13 |
+| s14      | the resumed create's lookups, in the process after the kill                  | the re-send meets the venue's refusal of the reused id, the lookup after it binds the one order, and the oracle fails: 2 creates, one from each process                                                |
+| s16      | the outage at the VALIDATE commit (`at_validate`'s stop disarmed)            | the node stays up, the same request is accepted and its create goes out: it proves the refusal's cause, as s13's control does                                                                          |
 
 **Deviations, as ruled.** The suite path and the venue (BQ-1, amended): it extends
 `services/api/tests/chaos/oms/`, not the ticket's top-level `tests/chaos/oms/`, and its faults are
@@ -158,21 +186,27 @@ post-GA, E45-T08's. The partial-close resize (BQ-6): the oracle holds each posit
 size, never weakened to fit; #978 shipped its BQ-1 option A (#5356 merged, 24 Sec.19.73: below
 100 % no stop is resized, which is E32-S02's), so that row is an open deviation on #978, with
 E32-S02 named. E29-S07's banner, controls and summary (BQ-9, amended):
-E29-Q02's (#1147); the server half is slice 4's, s7's "never stale as live" with it. The stores
-are in memory. The 10018 reserve for stop and cancel (s11): E34-T02's, its chaos E34-Q04's. s4b's
+E29-Q02's (#1147); the server half is slice 4's, s7's "never stale as live" with it.
+The in-process tier's stores are in memory. The 10018 reserve for stop and cancel (s11): E34-T02's,
+its chaos E34-Q04's. s4b's
 anomaly is audited in the pass's own record (`oms.reconcile`, 24 Sec.8.5 step 3c), the facade's
 `oms.reconcile_anomaly` being the stream's (s4). s4b uses a venue whose reads lag its stream,
 which lets the oracle end clean once they catch up. s9's restart is in process; s14 is the
 SIGKILL. s13's writer is a double; `test_writer_wal_full_with_postgres_down_refuses_never_drops`
 pins the writer's refusal, and its fills show the position without the create's stop, so each
 entry's attach is due. s7's outage stays inside the consumer's 30 s silence bound, and its 5 s runs
-from the reconnect. The alert names and runbook anchors wait for #5542, the labelled metrics for
-#5339.
+from the reconnect. Slice 3's processes compose the account read in memory and the lane's writer
+as a double, as `test_startup_sweep_pg.py` does, and stream no account (the stream's half is the
+in-process tier's); their recovery is wall time, bounded, not virtual. s14's `door` point is that
+test's `place` door: the order `submitting`, nothing at the venue. s16 stops the node
+(`docker stop`) as the request reaches the VALIDATE commit, and at that commit alone. The alert
+names and runbook anchors wait for #5542, the labelled metrics for #5339.
 
 ## Not covered here
 
-- E29-Q04's slices 3 and 4 (#1148): the planned s17 in this lane; the Postgres tier (s14 to s16,
-  the SIGKILL child of #12) and the nightly; the labelled metrics, the alerts and E29-S07's server
-  half.
+- E29-Q04's slice 4 (#1148): the planned s17 in this lane; the nightly that runs the Postgres tier;
+  the labelled metrics, the alerts and E29-S07's server half.
+- s15, a crash mid-partial-close: an open deviation on #978, with E32-S02 named (BQ-6, above).
 - s12's other commit points: a later slice, with a server fix (held privately)
+- s16's other commit points: a later slice, with a server fix (held privately)
 - E29-T06's (#914): the reconciliation pass itself, and keeping a fill with no OMS intent.
