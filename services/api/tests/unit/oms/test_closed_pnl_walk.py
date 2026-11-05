@@ -87,7 +87,7 @@ def test_partial_and_full_closes_take_their_share_of_the_entry_value_and_opening
         WalkClose(
             fill=f, closed=Decimal(c), closing_fee=f.exec_fee, entry_value=Decimal(value),
             opening_fees=Decimal(fees), avg_entry=Decimal(101), opened_at=at(1),
-            groups=frozenset(), unreadable=False, disagreeing=False,
+            groups=frozenset(), unreadable=False, sizes_sure=True, disagreeing=False,
         )
         for f, c, value, fees in ((f3, 1, 101, "0.06"), (f4, 2, 202, "0.12"))
     )  # fmt: skip
@@ -135,36 +135,52 @@ _OPEN_AGAIN = (
     fill(4, "Buy", "1", "103", order=C),
     fill(5, "Sell", "1", "104", closed="1", order=D),
 )
-_UNREADABLE = {
+_UNREADABLE = {  # each case's closes: their flags, then whether the walk is sure of their sizes
     "no closed PnL": ((
         fill(1, "Buy", "2", "100"), fill(2, "Sell", "1", "101", pnl=None, order=B),
         fill(3, "Sell", "1", "102", closed="1", order=B),
-    ), (), False, [(N(1), True, False), (N(1), True, False)]),
+    ), (), False, [(N(1), True, False), (N(1), True, False)], [True, True]),
     "larger than the open size, no closedSize": ((
         fill(1, "Buy", "1", "100"), fill(2, "Sell", "3", "101", order=B),
         fill(3, "Buy", "2", "99", closed="2", order=C),
-    ), (), False, [(N(1), True, False), (N(2), True, False)]),
+    ), (), False, [(N(1), True, False), (N(2), True, False)], [False, False]),
     "hedge mode, no order row": ((
         fill(1, "Buy", "1", "100"), fill(2, "Buy", "1", "101", order=None),
         fill(3, "Sell", "2", "102", closed="2", order=B),
-    ), (), True, [(N(2), True, False)]),
+    ), (), True, [(N(2), True, False)], [False]),
     "no closed PnL, then a confirmed flat": ((
         fill(1, "Buy", "2", "100"), fill(2, "Sell", "1", "101", pnl=None, order=B),
-    ), (at(3),), False, [(N(1), True, False)]),
+    ), (at(3),), False, [(N(1), True, False)], [True]),
+    "a disagreeing closedSize, then no closed PnL": ((
+        fill(1, "Buy", "2", "100"), fill(2, "Sell", "1", "101", closed="0.5", order=B),
+        fill(3, "Sell", "1", "102", pnl=None, order=B),
+    ), (at(3),), False, [(N(1), True, True), (N(1), True, True)], [False, False]),
+    "no closed PnL, then larger than the open size": ((
+        fill(1, "Buy", "2", "100"), fill(2, "Sell", "1", "101", pnl=None, order=B),
+        fill(3, "Sell", "2", "102", order=B),
+    ), (at(3),), False, [(N(1), True, False), (N(1), True, False)], [True, False]),
+    "no closed PnL and larger than the open size, then no closed PnL": ((
+        fill(1, "Buy", "1", "100"), fill(2, "Sell", "3", "101", pnl=None, order=B),
+        fill(3, "Buy", "2", "99", pnl=None, order=C),
+    ), (), False, [(N(1), True, False), (N(2), True, False)], [False, False]),
 }  # fmt: skip
 
 
 @pytest.mark.parametrize(
-    ("fills", "later", "hedged", "unread"), _UNREADABLE.values(), ids=list(_UNREADABLE)
+    ("fills", "later", "hedged", "unread", "sure"), _UNREADABLE.values(), ids=list(_UNREADABLE)
 )
 def test_an_unreadable_fill_leaves_sizes_only_until_the_walk_next_goes_flat(
     fills: tuple[WalkFill, ...], later: tuple[datetime, ...], hedged: bool,
-    unread: list[tuple[Decimal, bool, bool]],
+    unread: list[tuple[Decimal, bool, bool]], sure: list[bool],
 ) -> None:  # fmt: skip
     """The fill's close, and every close until the walk is flat by its own count or at a
-    confirmed flat, give `c` alone; the position after it is read again."""
+    confirmed flat, give `c` alone; the position after it is read again. A fill with no closed PnL
+    leaves the walk sure of its sizes; one larger than the open size with no `closedSize`, a
+    hedge-mode fill with no order row and a disagreement put them in doubt, which no later fill
+    with no closed PnL lifts."""
     w = run(*fills, *_OPEN_AGAIN, flats=(START, *later), hedged=hedged)
     assert flags(w) == [*unread, (N(1), False, False)]
+    assert [c.sizes_sure for c in w.closes] == [*sure, True]
     absent = [(c.entry_value, c.opening_fees, c.avg_entry, c.opened_at) for c in w.closes[:-1]]
     assert absent == [(None, None, None, None)] * len(absent)
     assert (w.closes[-1].entry_value, w.closes[-1].opened_at, w.clean) == (N(103), at(4), False)
