@@ -5,6 +5,7 @@ import {
   getMeClaims,
   refreshMeClaims,
   resetMeClaims,
+  setBootMeClaims,
   setMeClaims,
   setMeClaimsReader,
   subscribeMeClaims,
@@ -132,6 +133,47 @@ describe("meCache refresh on navigation", () => {
     unsubscribe();
     setMeClaims(owner);
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  // #5904: one `/me` per boot (E09-TC-C01); the boot's answer is the first navigation's read.
+  it("lets the boot's answer stand for the first navigation once, then re-reads past the bound", async () => {
+    const read = vi.fn(() => Promise.resolve(viewer));
+    setBootMeClaims(owner);
+    setMeClaimsReader(read);
+    age(10 * CLAIMS_MAX_AGE_MS);
+    await refreshMeClaims();
+    expect(read).not.toHaveBeenCalled();
+    expect(getMeClaims()).toEqual(owner);
+    age(CLAIMS_MAX_AGE_MS - 1);
+    await refreshMeClaims(); // a redirect of that navigation, within the bound
+    expect(read).not.toHaveBeenCalled();
+    age(1);
+    await refreshMeClaims();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(getMeClaims()).toEqual(viewer);
+  });
+
+  it("carries no boot answer across a reset: the next session's claims are read", async () => {
+    const read = vi.fn(() => Promise.resolve(viewer));
+    setBootMeClaims(owner);
+    resetMeClaims(); // a sign-out, or a session change
+    expect(getMeClaims().authenticated).toBe(false);
+    setMeClaims(owner);
+    setMeClaimsReader(read);
+    age(CLAIMS_MAX_AGE_MS);
+    await refreshMeClaims();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(getMeClaims()).toEqual(viewer);
+  });
+
+  it("lets a later setMeClaims (a navigation's read) end the boot's pass", async () => {
+    const read = vi.fn(() => Promise.resolve(viewer));
+    setBootMeClaims(owner);
+    setMeClaims(owner);
+    setMeClaimsReader(read);
+    age(CLAIMS_MAX_AGE_MS);
+    await refreshMeClaims();
+    expect(read).toHaveBeenCalledTimes(1);
   });
 
   it("drops a read that answers after a reset", async () => {

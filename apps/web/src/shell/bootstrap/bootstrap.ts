@@ -21,7 +21,7 @@
  */
 import {
   MeSignedOutError,
-  setMeClaims,
+  setBootMeClaims,
   setMeClaimsReader,
   type MeClaimsReader,
 } from "../../lib/auth/meCache.js";
@@ -112,7 +112,8 @@ export async function runBootstrap(deps: BootstrapDeps = {}): Promise<void> {
   }
 
   const me = meResult.value;
-  setMeClaims(meToClaims(me));
+  // #5904: one `/me` per boot; the first navigation's loaders guard on this answer
+  setBootMeClaims(meToClaims(me));
   // #5405: a later navigation re-reads `/me` past the claims' staleness bound, so a role or grant
   // the server changed applies without a reload; the shell's `me` and environment follow the
   // same answer, so the environment badge never disagrees with `me`.

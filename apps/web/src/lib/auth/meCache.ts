@@ -11,6 +11,11 @@
  * keeps the old claims: a blip never locks the user out, and the server still refuses anything the
  * claims no longer allow. The rail subscribes through `useMeClaims()`. The server stays the
  * boundary (C-12.4): this cache only keeps the UI in step with it.
+ *
+ * One `/me` per boot (#5904, E09-TC-C01): the page's first navigation is the boot itself, so its
+ * loaders guard on the bootstrap's answer (`setBootMeClaims`), however long the App chunk took to
+ * load before the router ran them; the bound restarts there, so that navigation's redirects fold
+ * into it too. Every later navigation re-reads as above.
  */
 import { useSyncExternalStore } from "react";
 import type { MeClaims } from "../../routes/rbac";
@@ -42,6 +47,9 @@ let cached: MeClaims = UNAUTHENTICATED;
 let readAt = Number.NEGATIVE_INFINITY;
 let reader: MeClaimsReader | null = null;
 let inFlight: Promise<void> | null = null;
+// Set by the bootstrap's answer, spent by the first `refreshMeClaims()`: that answer is the page's
+// first navigation's read. Any other set of the claims, or a reset, spends it.
+let bootAnswer = false;
 // Bumped by `resetMeClaims()`: a read started before a reset (sign-out, a test) must not bring
 // back the claims it answers with.
 let generation = 0;
@@ -66,10 +74,17 @@ export function getMeClaims(): MeClaims {
  * the same object, so subscribers re-render only on a real change.
  */
 export function setMeClaims(claims: MeClaims): void {
+  bootAnswer = false;
   readAt = Date.now();
   if (sameClaims(cached, claims)) return;
   cached = claims;
   for (const listener of listeners) listener();
+}
+
+/** The bootstrap's `/me` answer: as `setMeClaims`, and it stands for the first navigation's read. */
+export function setBootMeClaims(claims: MeClaims): void {
+  setMeClaims(claims);
+  bootAnswer = true;
 }
 
 /** Registers (or, with `null`, removes) the `/me` reader the navigation re-read uses. */
@@ -84,6 +99,12 @@ export function setMeClaimsReader(next: MeClaimsReader | null): void {
  */
 export function refreshMeClaims(): Promise<void> {
   if (inFlight) return inFlight;
+  if (bootAnswer) {
+    // the boot's first navigation: the bootstrap read `/me` for it; its redirects fold in from here
+    bootAnswer = false;
+    readAt = Date.now();
+    return Promise.resolve();
+  }
   const read = reader;
   if (read === null || Date.now() - readAt < CLAIMS_MAX_AGE_MS) return Promise.resolve();
   const started = generation;
@@ -120,6 +141,7 @@ export function useMeClaims(): MeClaims {
 /** Back to unauthenticated; a read still in flight is dropped when it answers. */
 export function resetMeClaims(): void {
   generation += 1;
+  bootAnswer = false;
   cached = UNAUTHENTICATED;
   readAt = Number.NEGATIVE_INFINITY;
   reader = null;
