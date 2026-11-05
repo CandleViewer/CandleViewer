@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { find, itIsTokenOnlyAndStatic, loadCss } from "./css-contract.js";
 import { shippedComponentsCss } from "./componentsCss.js";
 import { Table, WatchlistRow, watchlistColumns, type WatchlistRowData } from "../src/index.js";
+import { cascadedColor } from "./cascade.js";
 import { mount } from "./theme/mount.js";
 
 const css = loadCss("freshness.css");
@@ -62,78 +63,6 @@ describe("freshness.css contract", () => {
     expect(css.forced).not.toContain("var(--color");
   });
 });
-
-/** The top-level rules of a stylesheet (an at-rule's block is skipped whole): each selector and its body. */
-function topLevelRules(sheet: string): { readonly selector: string; readonly body: string }[] {
-  const text = sheet.replace(/\/\*[\s\S]*?\*\//g, "");
-  const rules: { selector: string; body: string }[] = [];
-  let depth = 0;
-  let start = 0;
-  let head = "";
-  for (let i = 0; i < text.length; i += 1) {
-    if (text[i] === "{") {
-      if (depth === 0) {
-        head = text.slice(start, i).trim();
-        start = i + 1;
-      }
-      depth += 1;
-    } else if (text[i] === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        if (!head.startsWith("@")) {
-          for (const selector of head.split(/,(?![^(]*\))/))
-            rules.push({ selector: selector.trim(), body: text.slice(start, i) });
-        }
-        start = i + 1;
-      }
-    }
-  }
-  return rules;
-}
-
-/** CSS specificity (ids, classes / attributes / pseudo-classes, types) of one selector: enough for these sheets. */
-function specificity(selector: string): [number, number, number] {
-  let rest = selector.replace(/::[\w-]+/g, "").replace(/:where\((?:[^()]|\([^()]*\))*\)/g, "");
-  const total: [number, number, number] = [0, 0, 0];
-  rest = rest.replace(/:(?:is|not|has)\(((?:[^()]|\([^()]*\))*)\)/g, (_, args: string) => {
-    const best = args
-      .split(/,(?![^(]*\))/)
-      .map((arg) => specificity(arg.trim()))
-      .sort((a, b) => b[0] - a[0] || b[1] - a[1] || b[2] - a[2])[0] ?? [0, 0, 0];
-    total[0] += best[0];
-    total[1] += best[1];
-    total[2] += best[2];
-    return " ";
-  });
-  total[0] += (rest.match(/#[\w-]+/g) ?? []).length;
-  total[1] += (rest.match(/\.[\w-]+|\[[^\]]*\]|:[\w-]+(?:\([^)]*\))?/g) ?? []).length;
-  total[2] += rest
-    .replace(/\[[^\]]*\]|[.#:][\w-]+(?:\([^)]*\))?/g, " ")
-    .split(/[\s>+~]+/)
-    .filter((part) => /^[a-z][\w-]*$/i.test(part)).length;
-  return total;
-}
-
-/** The `color` the cascade gives `element` from `sheet`'s top-level rules: highest specificity, then the last. */
-function cascadedColor(sheet: string, element: Element): string | undefined {
-  let winner: { readonly spec: [number, number, number]; readonly value: string } | undefined;
-  for (const { selector, body } of topLevelRules(sheet)) {
-    const value = /(?:^|;)\s*color\s*:\s*([^;]+)/.exec(body)?.[1]?.trim();
-    if (value === undefined || selector.includes("::")) continue;
-    let matches = false;
-    try {
-      matches = element.matches(selector);
-    } catch {
-      matches = false;
-    }
-    if (!matches) continue;
-    const spec = specificity(selector);
-    const [a, b, c] = winner?.spec ?? [-1, -1, -1];
-    if (spec[0] > a || (spec[0] === a && (spec[1] > b || (spec[1] === b && spec[2] >= c))))
-      winner = { spec, value };
-  }
-  return winner?.value;
-}
 
 // CR-4702A-01: copy-css concatenates by file name, so freshness.css precedes table.css in the shipped bundle; at
 // equal specificity `.cv-table__cell`'s text.primary won and a stale OI cell kept its live colour in the app.

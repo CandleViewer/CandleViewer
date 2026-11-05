@@ -71,6 +71,7 @@ import "../src/components/skiplink.css";
 import "../src/components/slider.css";
 import "../src/components/sparkline.css";
 import "../src/components/splitbutton.css";
+import "../src/components/staledatashade.css";
 import "../src/components/stepper.css";
 import "../src/components/swatchlegend.css";
 import "../src/components/symbolinfopopover.css";
