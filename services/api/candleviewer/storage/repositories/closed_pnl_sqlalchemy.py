@@ -24,6 +24,10 @@ once (`ix_psnap_flat`); 58, a key's trade fills after a `FillKey` with their ord
 account alone (the `trade_group_legs` PK); 61, the order rows named, each with its trade fills'
 times (`ix_exec_order`), its walk's start (`ix_psnap_flat`) and its record (`ux_cpr_order`);
 and 62, whether the account holds the symbol in hedge mode (the `positions` key).
+
+`mark_divergent` sets `divergent` with the pair its record names on a settled row, and
+`clear_divergent` clears it and keeps the pair, both under `LOCK` and writable once final: the
+guard leaves them alone, and `cpr_pair` refuses a flag without a settled row and its pair.
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import fields
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Final
 from uuid import UUID
 
@@ -130,6 +135,32 @@ def finalize_statement(account_id: UUID, record_id: UUID) -> sa.Update:
         .where(_C.exchange_account_id == account_id, _C.id == record_id, _C.final_at.is_(None))
         .where(*settled)
         .values(final_at=sa.func.now(), updated_at=sa.func.now())
+        .returning(_C.id)
+    )
+
+
+def mark_statement(
+    account_id: UUID, record_id: UUID, local_net: Decimal, closed_pnl: Decimal
+) -> sa.Update:
+    """The comparison's flag with the pair its record names, on a settled row (`cpr_pair`)."""
+    return (
+        sa.update(closed_pnl_records)
+        .where(_C.exchange_account_id == account_id, _C.id == record_id)
+        .where(_C.settled_at.is_not(None))
+        .values(
+            divergent=True, audited_local_net=local_net, audited_closed_pnl=closed_pnl,
+            updated_at=sa.func.now(),
+        )
+        .returning(_C.id)
+    )  # fmt: skip
+
+
+def clear_statement(account_id: UUID, record_id: UUID) -> sa.Update:
+    """A comparison within the bound clears the flag and keeps the pair it recorded."""
+    return (
+        sa.update(closed_pnl_records)
+        .where(_C.exchange_account_id == account_id, _C.id == record_id, _C.divergent)
+        .values(divergent=False, updated_at=sa.func.now())
         .returning(_C.id)
     )
 
@@ -370,10 +401,23 @@ class SqlAlchemyClosedPnlStore(CappedStore):
         return outcome
 
     async def finalize(self, account_id: UUID, record_id: UUID) -> bool:
+        return await self._stamped(account_id, finalize_statement(account_id, record_id))
+
+    async def mark_divergent(
+        self, account_id: UUID, record_id: UUID, local_net: Decimal, closed_pnl: Decimal
+    ) -> bool:
+        return await self._stamped(
+            account_id, mark_statement(account_id, record_id, local_net, closed_pnl)
+        )
+
+    async def clear_divergent(self, account_id: UUID, record_id: UUID) -> bool:
+        return await self._stamped(account_id, clear_statement(account_id, record_id))
+
+    async def _stamped(self, account_id: UUID, stmt: sa.Update) -> bool:
+        """One update under the account's lock: whether it met a row, committed only then."""
         async with self._unit_of_work() as uow:
             await uow.session.execute(LOCK, {"account": str(account_id)})
-            stamped = await uow.session.execute(finalize_statement(account_id, record_id))
-            if stamped.first() is None:
+            if (await uow.session.execute(stmt)).first() is None:
                 return False
             await uow.commit()
         return True
