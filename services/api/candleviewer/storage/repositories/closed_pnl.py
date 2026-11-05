@@ -5,7 +5,8 @@ One row per venue closed-PnL record of a closing order, named by its uuid5 (`rec
 and the item the venue's record settles are one row. The composition writes `ComposedRecord`, its
 `trade_group_id` included, which only it writes; a venue read writes `VenueRecord`, settling the
 row once and replacing the venue's columns until the record is final (`settle_outcome`);
-`finalize` freezes them. A record refuses, before any statement and naming the rule, never a
+`finalize` freezes them; `mark_divergent` and `clear_divergent` write the comparison's flag and
+its pair. A record refuses, before any statement and naming the rule, never a
 value, what the table would: an order id of 1 to 64 characters, `long` or `short`, a
 `position_idx` of 0, 1 or 2, a `qty` above 0, money numeric(38,18) holds exactly (`leverage`
 numeric(10,2)); every time is aware. The reads are 21 Sec.13.1 rows 55 to 59, 61 and 62, each
@@ -312,6 +313,15 @@ class ClosedPnlStore(Protocol):
     async def compose(self, record: ComposedRecord) -> ClosedPnlRecordRow: ...
     async def settle(self, record: VenueRecord) -> SettleOutcome: ...
     async def finalize(self, account_id: UUID, record_id: UUID) -> bool: ...
+    async def mark_divergent(
+        self, account_id: UUID, record_id: UUID, local_net: Decimal, closed_pnl: Decimal
+    ) -> bool:
+        """Flag a settled record divergent with the pair its record names (24 Sec.8.13), final or
+        not; False when no settled row of the account has the id."""
+
+    async def clear_divergent(self, account_id: UUID, record_id: UUID) -> bool:
+        """Clear the flag, keeping the pair; False when the account's row is not flagged."""
+
     async def get(self, account_id: UUID, record_id: UUID) -> ClosedPnlRecordRow | None: ...
     async def page(
         self, query: ClosedPnlQuery, after: Keyset | None, limit: int

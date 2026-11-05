@@ -329,6 +329,8 @@
 ["oms_cancel_all_fold_members", "histogram", ["outcome"], "planned", "E29"]
 ["oms_clock_drift_blocked_total", "counter", [], "planned", "E29"]
 ["oms_clock_halt_trips_total", "counter", [], "planned", "E29"]
+["oms_closed_pnl_divergence_total", "counter", [], "planned", "E29"]
+["oms_closed_pnl_divergence_withheld_total", "counter", ["reason"], "planned", "E29"]
 ["oms_closed_pnl_fetch_seconds", "histogram", ["result"], "planned", "E29"]
 ["oms_command_deferred_total", "counter", [], "planned", "E29"]
 ["oms_command_unsettled_total", "counter", [], "planned", "E29"]
