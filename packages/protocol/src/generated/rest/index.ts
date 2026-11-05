@@ -4613,6 +4613,10 @@ export interface paths {
      *       preconditions hold, the `CV_TRADING_LIVE_ENABLED` setting and the `trading.live_enabled`
      *       flag (`20-architecture.md` section 6.2); the B17 live-enablement gate stays the
      *       user-facing truth.
+     *     * While the credential key (KEK) did not load at boot, the request is refused with `403
+     *       kek_unavailable` (a fixed `detail`, not retryable), after live trading not enabled and
+     *       the kill switch and before the order-entry gate, nothing sent; a `reduce_only` order
+     *       too (a slot PROPOSED and ruled on #2331; see `Forbidden`).
      *     * Every refusal is audited before it is answered (C-2.9; 24-internal-schemas.md section
      *       8.4), the `501` and the runtime's `oms_not_ready` aside (below). A refusal by RBAC, or
      *       by the account's grant or existence, stays `403` when its record cannot be written; any
@@ -4791,6 +4795,7 @@ export interface paths {
      *     reduce-only (a resting entry repriced to a marketable price fills at once), increases
      *     exposure (24-internal-schemas.md section 8.10 defines it): it meets every check `placeOrder`
      *     meets, the `trading.oms_enabled` flag, live trading enabled, the B18 kill switch, the
+     *     credential key (`403 kek_unavailable`, #2331, a slot PROPOSED), the
      *     order-entry gate, on a live account the arm token, and the risk check of the amended, sized
      *     and rounded order evaluated at the amended price (`403 risk_limit_breached`, SR-E29-04). Its
      *     class is read from the order as it stands when the amend is admitted, its version read
@@ -5138,7 +5143,9 @@ export interface paths {
      *     `Idempotency-Key` (`400 validation_failed` without one) and its 24 h record (`409
      *     idempotency_key_reuse`, or `idempotency_in_flight` with `Retry-After: 1` while the key's
      *     first request runs); the `trading.oms_enabled` flag, then live trading enabled, the kill
-     *     switch and the order-entry gate (`403 trading_disabled`); then the bounds, server-side:
+     *     switch, the credential key (`403 kek_unavailable` while the KEK did not load at boot;
+     *     #2331, a slot PROPOSED) and the order-entry gate (`403 trading_disabled`); then the
+     *     bounds, server-side:
      *     above zero, at least the instrument's minimum, at most its maximum, on its leverage step,
      *     and at most the account's effective profile's `max_leverage_cap` when the profile names
      *     one (an account with no default profile is bounded by the instrument alone), each broken
@@ -5218,7 +5225,9 @@ export interface paths {
      *     `Retry-After`. A repeat still passes the arm check, which precedes the lookup. The refusals knowable before any send (the
      *     `trading_disabled` checks of the binding point under Idempotency: the OMS flag, live
      *     trading not enabled, the kill switch and the order-entry gate) are checked before the
-     *     close, as for any order submit: `403 trading_disabled`, nothing sent.
+     *     close, as for any order submit: `403 trading_disabled`, nothing sent. Between the kill
+     *     switch and the gate, while the credential key (KEK) did not load at boot, the reversal is
+     *     `403 kek_unavailable`, nothing sent (#2331, a slot PROPOSED; see `Forbidden`).
      *     Each order keeps its own write-ahead submit audit record (C-2.9); one
      *     `position.reversed` record correlates the pair and the outcome.
      *
@@ -6834,6 +6843,10 @@ export interface paths {
      *     principal already used for a `placeOrder` entry; a repeat while the first is still being
      *     processed is `409 idempotency_in_flight` with `retry_after_seconds`; and a key that
      *     another principal sent is answered as one never seen.
+     *
+     *     While the credential key (KEK) did not load at boot, a request this lookup does not
+     *     answer is `403 kek_unavailable`, nothing sent, after live trading not enabled and the
+     *     kill switch and before the order-entry gate (#2331, a slot PROPOSED; see `Forbidden`).
      */
     post: operations["createTradeGroup"];
     delete?: never;
@@ -6906,6 +6919,14 @@ export interface paths {
      *       stop moved the ratchet's way (a long leg's up, a short leg's down), passes (C-2.6;
      *       24-internal-schemas.md section 8.10).
      *       When one request holds both a `400` and a `403` offender, the `400` answers.
+     *     * An amend that increases exposure (24-internal-schemas.md section 8.10) is
+     *       `403 kek_unavailable` while the credential key (KEK) did not load at boot, after the
+     *       idempotency lookup, live trading not enabled and the kill switch and before the
+     *       order-entry gate, nothing amended (#2331, a slot PROPOSED); every other amend is not.
+     *       On an amend the KEK latch is read before the `trading.oms_enabled` flag, which the
+     *       exit service checks in a later step, so a terminal with the flag off answers
+     *       `kek_unavailable` to an amend that increases exposure (24-internal-schemas.md
+     *       section 8.4 step 10, after step 8).
      */
     post: operations["amendTradeGroup"];
     delete?: never;
@@ -13245,7 +13266,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones and from `exportWorkspace`, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target` and, for `live_enablement` and `killswitch`, `step_up_reason`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. A `trading_disabled` body without `reason` is this response's plain `Problem`, never a `TradingDisabledProblem` (whose `reason` is required), so a client tells the gate's refusal by that member. On `placeOrder` and `amendOrder` the three come after the idempotency lookup (see the order of the checks under Idempotency in `info.description`), so the exact repeat of an accepted request gets its stored outcome instead. On `placeOrder`, on an `amendOrder` that increases exposure (#913 slice 4 ruling Q10), and on `reversePosition` before its close (#915), the `trading.oms_enabled` flag, while off, also refuses with `trading_disabled` and no `reason`, after the lookup and ahead of the three (#913 slice 3 ruling Q3), an admission that opens or increases exposure only: an order whose body says `reduce_only` passes it (21-database-schema.md section 10.7). On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `previewTradeGroup`, `cancelAllOrders`, `closeAllPositions`, `createTradeGroupDefinition` and `updateTradeGroupDefinition` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). On `createTradeGroup`, `previewTradeGroup` and `amendTradeGroup` it may be `code: risk_limit_breached`: a request whose submitted values would take a leg past its bound profile's caps and risk budget is refused whole, never clamped, with one `errors[]` entry per offending leg (`field`, `rule`, `limit`, and the requested value in `message`; example `tradeGroupWidening`, ADR-0040 (proposed, #4461) Decision 1). */
+    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones and from `exportWorkspace`, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target` and, for `live_enablement` and `killswitch`, `step_up_reason`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. A `trading_disabled` body without `reason` is this response's plain `Problem`, never a `TradingDisabledProblem` (whose `reason` is required), so a client tells the gate's refusal by that member. On `placeOrder` and `amendOrder` the three come after the idempotency lookup (see the order of the checks under Idempotency in `info.description`), so the exact repeat of an accepted request gets its stored outcome instead. On `placeOrder`, on an `amendOrder` that increases exposure (#913 slice 4 ruling Q10), and on `reversePosition` before its close (#915), the `trading.oms_enabled` flag, while off, also refuses with `trading_disabled` and no `reason`, after the lookup and ahead of the three (#913 slice 3 ruling Q3), an admission that opens or increases exposure only: an order whose body says `reduce_only` passes it (21-database-schema.md section 10.7). On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `previewTradeGroup`, `cancelAllOrders`, `closeAllPositions`, `createTradeGroupDefinition` and `updateTradeGroupDefinition` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). So does an order mutation that opens or increases exposure, while the KEK did not load at boot (#2331; the slot is PROPOSED): `placeOrder` (a `reduce_only` one included), `createTradeGroup`, `reversePosition`, `setPositionLeverage`, and `amendOrder` or `amendTradeGroup` only when the amend increases exposure (24-internal-schemas.md section 8.10). It comes after the idempotency lookup, so the exact repeat of an accepted request gets its stored outcome, and after live trading not enabled and the kill switch, before the order-entry gate. Its `detail` is a fixed sentence (example `kekUnavailableOrderEntry`) and is not retryable: a restart with the KEK clears it. The C-2.6 carve-out binds it too: a cancel, `cancelAllOrders`, `cancelTradeGroup`, `closePosition`, `closeAllPositions`, a `setPositionTpSl` that attaches or tightens, every other amend and `previewTradeGroup` never answer it. A KEK rotation or stranded key rows stay `trading_disabled`. On `createTradeGroup`, `previewTradeGroup` and `amendTradeGroup` it may be `code: risk_limit_breached`: a request whose submitted values would take a leg past its bound profile's caps and risk budget is refused whole, never clamped, with one `errors[]` entry per offending leg (`field`, `rule`, `limit`, and the requested value in `message`; example `tradeGroupWidening`, ADR-0040 (proposed, #4461) Decision 1). */
     Forbidden: {
       headers: {
         [name: string]: unknown;

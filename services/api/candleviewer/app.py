@@ -2800,6 +2800,7 @@ def create_app(
             oms_enabled=feature_flags.oms_enabled,
             metrics=metrics_facade,
             auth=ctx.auth,
+            kek=ctx.oms_read_only_gate,  # #2331: the KEK latch, 403 kek_unavailable
         )
     )
     # E28-T05 S3c (#909): `previewTradeGroup`, the submit's dry run, over the same principals and
@@ -2846,6 +2847,7 @@ def create_app(
             auth=ctx.auth,
             protective=protective_writes,
             view_as_refusals=lambda: app.state.view_as_refusals,
+            kek=ctx.oms_read_only_gate,  # #2331: a risk-increasing amend reads the KEK latch
         )
     )
     # E29-T07 #915 PR 1: the OMS reads (`listOrders`, `getOrder`, `listPositions`, `getPosition`,
@@ -2881,6 +2883,7 @@ def create_app(
             oms_enabled=feature_flags.oms_enabled,
             metrics=metrics_facade,
             auth=ctx.auth,
+            kek=ctx.oms_read_only_gate,  # #2331: the KEK latch, 403 kek_unavailable
         )
     )
     # E29-T07 #915 PR 2: `closePosition` and `closeAllPositions` (never gated by the arm token,
@@ -2912,6 +2915,7 @@ def create_app(
             oms_enabled=feature_flags.oms_enabled,
             metrics=metrics_facade,
             auth=ctx.auth,
+            kek=ctx.oms_read_only_gate,  # #2331: the KEK latch, 403 kek_unavailable
         )
     )
     # #2111: the start-up and nightly audit chain verify job (lifespan-started). #2966: the real

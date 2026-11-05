@@ -19,7 +19,9 @@ before the next:
     fresh one meets the group namespace next: the raw key already anchoring one of the caller's
     trade groups is 409 `idempotency_key_reuse`, nothing sent (`group_key_free`);
 12. the refusals knowable before any send: `trading.oms_enabled` (the entry is no reduce-only
-    order), then live trading, the kill switch and the order-entry gate (403 `trading_disabled`);
+    order), then live trading, the kill switch and the order-entry gate (403 `trading_disabled`),
+    with the credential key's latch read between the kill switch and the gate (`api.order_kek`,
+    #2331, the slot PROPOSED): 403 `kek_unavailable`;
     an open position; the native-stop pre-check (`PositionWrites.entry_stop_ready`, C-2.6): an
     account whose profile cannot give the entry a stop is 422 `validation_failed`
     (`native_stop_required`), nothing sent;
@@ -68,6 +70,7 @@ from candleviewer.api.order_admission import (
     replay_cached,
     replay_key,
 )
+from candleviewer.api.order_kek import KekLatch, entry_refusal
 from candleviewer.api.order_problems import order_problem, outcome_problem
 from candleviewer.api.position_admission import (
     PositionCaller,
@@ -96,6 +99,7 @@ from candleviewer.oms.errors import (
     OmsError,
     OmsNotReady,
     OrderInvalid,
+    OrderKekUnavailable,
     SessionNotArmed,
     TradingDisabled,
     problem_for,
@@ -196,11 +200,12 @@ def make_position_reverse_router(
     reads: OmsReads | None, *, audit: AuditEmitter, records: SubmitAudit,
     oms_enabled: Callable[[], bool], metrics: Metrics, auth: SessionsLike | None = None,
     replays: IdempotencyCache | None = None, limiter: WriteLimiter | None = None,
-    pager: Pager | None = None, wait_s: float = REVERSE_WAIT_S,
+    pager: Pager | None = None, wait_s: float = REVERSE_WAIT_S, kek: KekLatch | None = None,
 ) -> APIRouter:  # fmt: skip
     """`reversePosition` (module docstring). The wait is at most `wait_s` from the request's
     arrival, measured on the runtime's own clock (`PositionRuntime.monotonic`), the one the fill
-    wait's deadline is read on, so the deadline uses one clock."""
+    wait's deadline is read on, so the deadline uses one clock. `kek`, the OMS read-only gate, is
+    the credential key's latch step 12 reads (#2331)."""
     router = APIRouter(tags=["positions"])
     kept = replays if replays is not None else IdempotencyCache()
     rate = limiter if limiter is not None else WriteLimiter(rate_per_minute=RATE_PER_MINUTE)
@@ -433,7 +438,11 @@ def make_position_reverse_router(
             if not oms_enabled():
                 raise TradingDisabled
             step = "switches"
-            switched = oms.route.switches.refusal(account, oms.route.environment)
+            switched = entry_refusal(
+                kek, oms.route.switches.refusal(account, oms.route.environment)
+            )
+            if isinstance(switched, OrderKekUnavailable):
+                step = "kek"
             if switched is not None:
                 raise switched
             step = "position"

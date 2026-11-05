@@ -166,7 +166,7 @@ type ExitOperation = Literal["amend", "cancel", "cancel_all"]
 #: in-flight guard (9), or step 11's class re-check (`class`), the exit service's, of an amend the
 #: order as it stands makes risk-increasing where step 4's read did not (SEC-S4C2B-01; the
 #: orchestrator's ruling of 2026-10-25 00:27Z (1)).
-type ExitStep = Literal["key", "replay", "guard", "class", "body", "arm"]
+type ExitStep = Literal["key", "replay", "guard", "class", "body", "arm", "kek"]
 
 #: How long a cancel waits for a step in flight to settle before it is sent (D9).
 TRANSITION_TIMEOUT_S: Final = CV_COMMAND_TIMEOUT
@@ -609,9 +609,10 @@ class OrderExits:
         `orders.cancel` denied with its code, the order-entry gate's `account.disabled_by_policy`
         with its reason (`outcome.reason`, the gate's alone); else `503 audit_unavailable` in its
         place, nothing sent. The route's own refusals of an order take it too, `step` naming the
-        24 Sec.8.4 step that refused (an amend's `body` and `arm`, then `key`, `replay`, `guard`)
-        as `placeOrder`'s records do, and so does `amend`'s refusal at step 11's class re-check
-        (`class`), `reason` naming its cause in the detail beside the code (`RECLASSIFIED`)."""
+        24 Sec.8.4 step that refused (an amend's `body` and `arm`, then `key`, `replay`, `kek`
+        (#2331), `guard`) as `placeOrder`'s records do, and so does `amend`'s refusal at step
+        11's class re-check (`class`), `reason` naming its cause in the detail beside the code
+        (`RECLASSIFIED`)."""
         return await self._deny(
             row, operation, outcome, actor=actor, request_id=request_id, step=step, reason=reason
         )

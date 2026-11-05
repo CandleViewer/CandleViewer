@@ -322,6 +322,7 @@ class World:
     metrics: Metrics = field(default_factory=lambda: Metrics("demo"))
     cache: IdempotencyCache = field(default_factory=IdempotencyCache)
     pager: Pager = field(default_factory=Pager)
+    kek: Any = None  # the OMS read-only gate as the credential key's latch (#2331)
 
     @property
     def oms(self) -> Runtime:
@@ -333,7 +334,7 @@ class World:
         router = make_orders_router(
             self.principals, lambda: self.runtime, audit=self.audit, records=self.audit,
             oms_enabled=lambda: self.flag, metrics=self.metrics, replays=self.cache,
-            pager=self.pager,
+            pager=self.pager, kek=self.kek,
         )  # fmt: skip
         app.include_router(router)
         app.add_middleware(CorrelationMiddleware)  # binds `request_id`, as `create_app` does
