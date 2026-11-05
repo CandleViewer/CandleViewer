@@ -147,7 +147,7 @@ for (const key of ["Enter", "Space"] as const) {
     await patient.poll(() => harness.authenticated()).toBe(2); // the stopped retry comes back only by this press
     expect(harness.connections()).toBe(before + 1);
     await patient(chip(page)).toHaveAttribute("data-status", "live");
-    await expect(region(page)).toHaveCount(0);
+    await patient(region(page)).toHaveAttribute("data-state", "recovered"); // E29-S07 (#1028)
   });
 }
 
