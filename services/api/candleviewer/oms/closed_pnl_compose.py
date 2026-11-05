@@ -53,7 +53,15 @@ import asyncio
 from collections.abc import Awaitable, Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from decimal import ROUND_HALF_UP, Context, Decimal
+from decimal import (
+    ROUND_HALF_UP,
+    Context,
+    Decimal,
+    DivisionByZero,
+    Inexact,
+    InvalidOperation,
+    Overflow,
+)
 from typing import Any, Final, Literal, Protocol, cast
 from uuid import UUID
 
@@ -81,7 +89,10 @@ WALK_BUDGET: Final = WalkBudget(fills=500, flats=32)
 COMPOSE_LIMIT: Final = 256
 WALL_BUDGET_S: Final = 5.0
 CALL_TIMEOUT_S: Final = 5.0
-_EXACT: Final = Context(prec=400)  # sums and products of the walk's outputs, never rounded
+#: Sums, products and negations of the walk's outputs, never rounded: they span about 200
+#: digits, and `Inexact` is trapped, as the walk's is, so one past 400 digits raises instead.
+_EXACT: Final = Context(prec=400, traps=[InvalidOperation, DivisionByZero, Overflow, Inexact])
+_ROUND: Final = Context(prec=400)  # a figure's one quantize, the only rounding past a division
 _WIDE: Final = Context(prec=80)  # a price's one division, as the walk's
 _8DP, _18DP, _DAY = Decimal("1e-8"), Decimal("1e-18"), timedelta(days=1)
 _ZERO: Final = Decimal(0).quantize(_8DP)
@@ -137,7 +148,7 @@ def _sum(values: Iterable[Decimal]) -> Decimal:
 
 
 def _q(value: Decimal, places: Decimal) -> Decimal:
-    return value.quantize(places, ROUND_HALF_UP, _EXACT)
+    return value.quantize(places, ROUND_HALF_UP, _ROUND)
 
 
 def is_final(
