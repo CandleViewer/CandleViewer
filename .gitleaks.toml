@@ -6,7 +6,7 @@ title = "CandleViewer gitleaks"
 [extend]
 useDefault = true
 
-[allowlist]
+[[allowlists]]
 description = "Known non-secrets"
 # NB: `regexes` are matched against the *secret* gitleaks extracted, not the
 # whole line.
@@ -42,6 +42,15 @@ regexes = [
   # ticket prose "config keys: `oms.algo.max_children=450`" — settings names, not secrets
   '''^oms\.[a-z0-9_.]+=[a-z0-9_.]+$''',
 ]
+
+# E28-D06: the copy deck's string ids are copy keys (reason-key tokens), not credentials. The hits come
+# from the deck's earlier `key` field in this PR's commits (the per-commit scan), not from the `id` field
+# at the head. Scoped to this one file (anchored at the segment start and the end, so a copy elsewhere or
+# a `.bak` is still scanned) and the generic-api-key rule only, so every other rule still scans it.
+[[allowlists]]
+description = "E28-D06 copy deck reason-key tokens"
+targetRules = ["generic-api-key"]
+paths = ['''(?:^|/)docs/design/E28/E28-D06-copy-deck\.jsonl$''']
 
 # E08-X03: Bybit-specific secret shapes the default gitleaks ruleset does
 # not know about — API key, HMAC signature and the X-BAPI-* auth headers.
