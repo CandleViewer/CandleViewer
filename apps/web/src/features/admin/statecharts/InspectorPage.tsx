@@ -3,13 +3,14 @@
  * ruled): an owner-only admin page inside CMP-087, reached by its URL (nothing links to it yet).
  * Top to bottom (D05:746-752, board 09): CMP-088's `h1`, its "as of" line and [Re-read]; the kind
  * counters (CMP-049), a line per latched kind that has no rows; the danger banner while any
- * machine is latched; and the machine grid (CMP-049).
+ * machine is latched; "Latched only" (CMP-004); and the machine grid (CMP-049).
  *
  * It shows served values only (C-2.19 to C-2.22): every state, count and latch is the server's;
  * nothing is derived but words, and no interpreter is asked anything. Reads run on entry, on
  * [Re-read] and on a Retry, never on a timer (BQ-7). The page owns no live
  * region: its lines are said once, politely, through the shell's announcer, behind any other
- * writer's last line; "as of", rows and re-reads are never said, a recovery once. It measures one render (`cv_admin_statecharts_render_ms`, E42-Q03) and reports
+ * writer's last line; "as of", rows and re-reads are never said, a filter's result and a recovery
+ * once each. It measures one render (`cv_admin_statecharts_render_ms`, E42-Q03) and reports
  * `empty_state_shown`, nothing else.
  */
 import {
@@ -31,6 +32,7 @@ import {
   ErrorState,
   Icon,
   PageHeader,
+  Toggle,
 } from "@candleviewer/ui";
 import { THEME_ANALYTICS_EVENT } from "../../../shell/bootstrap/themeStore";
 import { announce, forget, lastWrittenAt, REGION_BUDGET_MS } from "../../app-shell/announcer";
@@ -104,7 +106,9 @@ const OCTAGON: CSSProperties = {
 const selectData = (s: InspectorState): MachineList | undefined => s.list.data;
 const selectPhase = (s: InspectorState): ListState["phase"] => s.list.phase;
 const selectInFlight = (s: InspectorState): boolean => s.list.inFlight;
+const selectLatchedOnly = (s: InspectorState): boolean => s.list.latchedOnly;
 const selectAnsweredAt = (s: InspectorState): number | undefined => s.list.answeredAt;
+const selectOtherFilter = (s: InspectorState): boolean => s.list.otherFilter === true;
 const selectDenied = (s: InspectorState): InspectorState["denied"] => s.denied;
 
 /** What the list shows, from the store's served answer (§5.1's state table). */
@@ -124,9 +128,19 @@ type View =
       readonly sealFailed: boolean;
       /** A re-read failed: the rows shown are the last good answer's. */
       readonly stale: boolean;
+      /**
+       * This filter's rows (`shown`), or none while a new filter's first page is read (`loading`)
+       * or after it failed (`failed`): `data` is then the other filter's, and only its kinds,
+       * slices and "as of", the same on every filter, show (A-1137-06).
+       */
+      readonly rows: "shown" | "loading" | "failed";
     };
 
-function viewOf(phase: ListState["phase"], data: MachineList | undefined): View {
+function viewOf(
+  phase: ListState["phase"],
+  data: MachineList | undefined,
+  otherFilter: boolean,
+): View {
   if (phase === "not_built") return { kind: "not_built" };
   if (data === undefined) return phase === "failed" ? { kind: "failed" } : { kind: "loading" };
   const { snapshots } = data;
@@ -135,13 +149,17 @@ function viewOf(phase: ListState["phase"], data: MachineList | undefined): View 
   if (snapshots.status === "ok" && data.kinds.length === 0 && data.items.length === 0) {
     return { kind: "empty" };
   }
-  return { kind: "list", data, sealFailed, stale: phase === "failed" };
+  const rows = !otherFilter ? "shown" : phase === "failed" ? "failed" : "loading";
+  return { kind: "list", data, sealFailed, stale: rows === "shown" && phase === "failed", rows };
 }
 
 /** What the page's lines need besides the view. */
 interface LineState {
+  readonly latchedOnly: boolean;
   /** A read is in flight: a failure's line is forgotten until it answers. */
   readonly inFlight: boolean;
+  /** The filter was changed in this visit: its result is said (D05 §13 "results"). */
+  readonly filtered: boolean;
   /** A good read came after a failed one: the recovery is said (D05 §13 "recovery"). */
   readonly recovered: boolean;
 }
@@ -150,17 +168,29 @@ interface LineState {
  * The lines the page says once, politely: each by its key while its condition holds, so a key is
  * forgotten only when its condition ends, never while rows are read.
  */
-function linesOf(view: View, { inFlight, recovered }: LineState): (readonly [string, string])[] {
+function linesOf(
+  view: View,
+  { latchedOnly, inFlight, filtered, recovered }: LineState,
+): (readonly [string, string])[] {
   const lines: (readonly [string, string])[] = [];
   // A failed read is said once per failure: a Retry or Re-read in flight forgets it (CMP-049's rule).
-  const failed = view.kind === "failed" || (view.kind === "list" && view.stale);
+  const failed =
+    view.kind === "failed" || (view.kind === "list" && (view.stale || view.rows === "failed"));
   if (failed && !inFlight) lines.push(["failed", COPY.list.failed]);
   if (view.kind === "not_built") lines.push(["not_built", COPY.list.notBuilt]);
   if (view.kind === "unreadable") lines.push(["unreadable", COPY.unreadable]);
   if (view.kind === "empty") lines.push(["empty", COPY.list.empty]);
   if (view.kind !== "list") return lines;
-  // A recovery first: it answers the user's own Retry.
-  if (recovered) lines.push(["loaded", COPY.list.loaded]);
+  // A recovery and a filter's result first: each answers the user's own Retry or switch.
+  if (view.rows === "shown" && recovered) lines.push(["loaded", COPY.list.loaded]);
+  // One result per filter: a filter left and taken again is said again (WCAG 4.1.3).
+  if (view.rows === "shown" && filtered) {
+    const shown = view.data.items.length;
+    lines.push([
+      `result:${latchedOnly ? "latched" : "all"}`,
+      latchedOnly && shown === 0 ? COPY.list.noneLatched : COPY.list.listed(shown, latchedOnly),
+    ]);
+  }
   if (view.sealFailed) lines.push(["seal_failed", COPY.sealFailed]);
   if (view.data.metrics.status !== "ok") {
     lines.push(["metrics", COPY.list.metricsUnavailable(metricsDetail(view.data))]);
@@ -273,15 +303,17 @@ function useRenderBudget(answered: boolean): void {
   }, [answered]);
 }
 
-/** Whether the list's last answer read after a failed one: true until the next failure. */
+/**
+ * Whether the list's answer is a recovery: a good answer straight after a failed one, from the
+ * render that shows it until the phase moves again (a filter's new read, a failure). Derived while
+ * rendering, so its line comes with the rows, and said once per recovery, never again when a
+ * filter's rows come back (C-1137-d02, A-1137-d01).
+ */
 function useRecovered(phase: ListState["phase"]): boolean {
-  const [recovered, setRecovered] = useState(false);
-  const last = useRef(phase);
-  useEffect(() => {
-    if (phase === "failed") setRecovered(false);
-    else if (phase === "ok" && last.current === "failed") setRecovered(true);
-    last.current = phase;
-  }, [phase]);
+  const [seen, setSeen] = useState({ phase, recovered: false });
+  if (seen.phase === phase) return seen.recovered;
+  const recovered = phase === "ok" && seen.phase === "failed";
+  setSeen({ phase, recovered }); // state adjusted while rendering, no effect
   return recovered;
 }
 
@@ -322,11 +354,17 @@ export function InspectorPage({ store = inspector }: InspectorPageProps = {}): J
   const data = useInspectorSelector(selectData, store);
   const phase = useInspectorSelector(selectPhase, store);
   const inFlight = useInspectorSelector(selectInFlight, store);
+  const latchedOnly = useInspectorSelector(selectLatchedOnly, store);
   const answeredAt = useInspectorSelector(selectAnsweredAt, store);
+  const otherFilter = useInspectorSelector(selectOtherFilter, store);
   const denied = useInspectorSelector(selectDenied, store);
+  const [filtered, setFiltered] = useState(false);
   const recovered = useRecovered(phase);
-  const view = useMemo(() => viewOf(phase, data), [phase, data]);
-  const lines = useMemo(() => linesOf(view, { inFlight, recovered }), [view, inFlight, recovered]);
+  const view = useMemo(() => viewOf(phase, data, otherFilter), [phase, data, otherFilter]);
+  const lines = useMemo(
+    () => linesOf(view, { latchedOnly, inFlight, filtered, recovered }),
+    [view, latchedOnly, inFlight, filtered, recovered],
+  );
   usePoliteLines(lines);
   useEmptyReport(view);
   useRenderBudget(phase !== "idle");
@@ -349,7 +387,11 @@ export function InspectorPage({ store = inspector }: InspectorPageProps = {}): J
   const today = Math.floor((answeredAt ?? 0) / DAY_MS) * DAY_MS;
   const kinds = data?.kinds ?? NO_KINDS;
   const metricsOk = data?.metrics.status === "ok";
-  const empty: GridEmpty = kinds.length > 0 ? "no_rows_rowless" : "no_rows";
+  const empty: GridEmpty = latchedOnly
+    ? "none_latched"
+    : kinds.length > 0
+      ? "no_rows_rowless"
+      : "no_rows";
 
   let body: JSX.Element;
   // Under the `h1` with no section of their own: an `h2`, never a skipped level (`05` §8.2).
@@ -359,6 +401,7 @@ export function InspectorPage({ store = inspector }: InspectorPageProps = {}): J
   else if (view.kind === "empty") body = <EmptyState title={COPY.list.empty} headingLevel={2} />;
   else {
     const list = view.kind === "list" ? view : null;
+    const rows = list === null ? null : list.rows;
     body = (
       <>
         {view.kind === "failed" ? null : (
@@ -380,6 +423,16 @@ export function InspectorPage({ store = inspector }: InspectorPageProps = {}): J
           <h2 id={machinesId} ref={machinesHeading} tabIndex={-1} style={H2}>
             {COPY.list.machinesHeading}
           </h2>
+          <div>
+            <Toggle
+              label={COPY.list.latchedOnly}
+              checked={latchedOnly}
+              onChange={(on) => {
+                setFiltered(true);
+                store.setLatchedOnly(on);
+              }}
+            />
+          </div>
           {list?.stale === true ? (
             <ErrorState
               form="inline"
@@ -391,11 +444,13 @@ export function InspectorPage({ store = inspector }: InspectorPageProps = {}): J
           {list?.sealFailed === true ? (
             <ErrorState form="inline" live="off" message={COPY.sealFailed} />
           ) : null}
-          {list?.data.meta.has_more === true ? <p style={NOTE}>{COPY.list.more}</p> : null}
+          {rows === "shown" && list?.data.meta.has_more === true ? (
+            <p style={NOTE}>{COPY.list.more}</p>
+          ) : null}
           <MachineGrid
-            machines={list !== null ? list.data.items : NO_MACHINES}
-            loading={view.kind === "loading"}
-            error={view.kind === "failed" ? listError : undefined}
+            machines={rows === "shown" && list !== null ? list.data.items : NO_MACHINES}
+            loading={view.kind === "loading" || rows === "loading"}
+            error={view.kind === "failed" || rows === "failed" ? listError : undefined}
             empty={empty}
             today={today}
           />

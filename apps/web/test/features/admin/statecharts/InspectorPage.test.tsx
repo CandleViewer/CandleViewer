@@ -1,8 +1,9 @@
 /**
  * E42-S08 (#1137) §5.1: the statechart inspector's page at R-357 `/admin/statecharts` (BQ-1 as
  * ruled; E42-D05 §11 SI-1, SI-2). CMP-088's `h1` and its "as of" line, the kind counters, the
- * rowless lines, the latch banner and the machine grid; every state of §5.1's table; the focus
- * moves and the page's polite lines through the shell's announcer; no timer (BQ-7). Reads go through the real read layer and a
+ * rowless lines, the latch banner, "Latched only" and the machine grid; every state of §5.1's
+ * table; the tab order, the focus moves and the page's polite
+ * lines through the shell's announcer; no timer (BQ-7). Reads go through the real read layer and a
  * store of the test's own, against a stubbed `fetch` (no network, C-13.5).
  */
 import { createRequire } from "node:module";
@@ -36,6 +37,7 @@ import {
   LATCHED_ROW,
   ORDER_HASH,
   shortHash,
+  WORLD_LATCHED_LIST,
   WORLD_LIST,
 } from "./fixtures";
 
@@ -45,6 +47,7 @@ const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/play
 ) as { run: (el: Element, o?: object) => Promise<{ violations: { impact?: string | null }[] }> };
 
 const LIST = "/api/v1/admin/statecharts?limit=200";
+const LATCHED_LIST = "/api/v1/admin/statecharts?limit=200&degraded=true";
 const PAGE = "/admin/statecharts";
 const NOW = Date.parse("2026-10-15T18:00:06Z");
 const WAIT = { timeout: 5_000 } as const;
@@ -90,6 +93,15 @@ function serve(replies: Readonly<Record<string, Reply>>): Request[] {
   return requests;
 }
 
+/** A reply's gate: the request waits until the test opens it. */
+function gate(): { readonly after: Promise<unknown>; readonly open: () => void } {
+  let open = (): void => undefined;
+  const after = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { after, open };
+}
+
 const denials: (string | undefined)[] = [];
 const storeFor = (): InspectorStore =>
   createInspectorStore({
@@ -121,6 +133,7 @@ function show(entries: readonly string[] = [PAGE], store: InspectorStore = store
 
 const WORLD: Readonly<Record<string, Reply>> = {
   [LIST]: { body: WORLD_LIST },
+  [LATCHED_LIST]: { body: WORLD_LATCHED_LIST },
 };
 /** The page alone: the shell's announcer, outside it, repeats some of its lines. */
 const page = () => within(screen.getByRole("main"));
@@ -141,6 +154,22 @@ const cellsOf = (row: Element): string[] =>
   [...row.querySelectorAll("th, td")].map((cell) => spoken(cell));
 const polite = (): HTMLElement | null =>
   document.querySelector<HTMLElement>('[aria-live="polite"] p');
+
+/** Every line the shell's polite region is handed from now on, in order: what is heard. */
+function hearPolite(): string[] {
+  const heard: string[] = [];
+  const region = document.querySelector('[aria-live="polite"]');
+  if (region === null) throw new Error("no polite region");
+  let last: string | undefined;
+  new MutationObserver(() => {
+    const line = region.querySelector<HTMLElement>("p");
+    const seq = line?.dataset["seq"];
+    if (line === null || seq === undefined || seq === last) return;
+    last = seq;
+    heard.push(line.textContent ?? "");
+  }).observe(region, { childList: true, subtree: true, characterData: true });
+  return heard;
+}
 
 const analytics: Record<string, unknown>[] = [];
 const onAnalytics = (event: Event): void => {
@@ -379,6 +408,133 @@ describe("SI-1: the list as served", { timeout: 30_000 }, () => {
   });
 });
 
+describe("Latched only (CMP-004)", { timeout: 30_000 }, () => {
+  it("test_page_latched_only_reads_degraded_true_as_a_switch", async () => {
+    const requests = serve(WORLD);
+    show();
+    await machineRows();
+    const toggle = screen.getByRole("switch", { name: "Latched only" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(toggle);
+    await waitFor(
+      () => expect(grid().querySelectorAll("tr[data-machine-row]")).toHaveLength(1),
+      WAIT,
+    );
+    expect(screen.getByRole("switch", { name: "Latched only" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(requests.map((r) => r.path)).toEqual([LIST, LATCHED_LIST]);
+  });
+
+  it("test_page_latched_only_with_none_latched_says_so_once", async () => {
+    // Metrics read, so no inset line is said first (a second line waits out the region's budget).
+    const all = { ...WORLD_LIST, metrics: { status: "ok" } };
+    const none = { ...all, items: [], meta: { next_cursor: null, has_more: false, count: 0 } };
+    serve({ ...WORLD, [LIST]: { body: all }, [LATCHED_LIST]: { body: none } });
+    show();
+    await machineRows();
+    fireEvent.click(screen.getByRole("switch", { name: "Latched only" }));
+    expect(await page().findByText("No machine is latched.", {}, WAIT)).toBeVisible();
+    await waitFor(() => expect(polite()).toHaveTextContent("No machine is latched."), WAIT);
+  });
+
+  it("test_page_latched_only_keeps_the_counters_while_its_rows_load_and_says_its_result_once", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const latchedRows = gate();
+    serve({ ...WORLD, [LATCHED_LIST]: { after: latchedRows.after, body: WORLD_LATCHED_LIST } });
+    show();
+    const heard = hearPolite();
+    await machineRows();
+    await waitFor(() => expect(polite()).toHaveTextContent(/^Metrics unavailable/), WAIT);
+    fireEvent.click(screen.getByRole("switch", { name: "Latched only" }));
+    // While the latched rows are read: none of the other filter's, and the kinds, the banner and
+    // "as of", the same on every filter, stay (A-1137-06).
+    expect(grid()).toHaveAttribute("aria-busy", "true");
+    expect(grid().querySelectorAll("tr[data-machine-row]")).toHaveLength(0);
+    expect(counters()).not.toHaveAttribute("aria-busy");
+    expect(within(counters()).getAllByRole("row")).toHaveLength(4);
+    expect(
+      page().getByText(
+        "A latched machine refuses order-path commands until its latch is acknowledged.",
+      ),
+    ).toBeInTheDocument();
+    expect(page().getByText("All times UTC · as of 18:00:05")).toBeInTheDocument();
+    act(() => latchedRows.open());
+    await waitFor(
+      () => expect(grid().querySelectorAll("tr[data-machine-row]")).toHaveLength(1),
+      WAIT,
+    );
+    await act(async () => void (await vi.advanceTimersByTimeAsync(6_000)));
+    // One result for the filter, and the metrics line never again: its condition never ended.
+    expect(heard).toEqual([
+      "Metrics unavailable — metrics timed out after 300 ms",
+      "1 latched machine listed.",
+    ]);
+    fireEvent.click(screen.getByRole("switch", { name: "Latched only" }));
+    await waitFor(
+      () => expect(grid().querySelectorAll("tr[data-machine-row]")).toHaveLength(2),
+      WAIT,
+    );
+    await act(async () => void (await vi.advanceTimersByTimeAsync(6_000)));
+    expect(heard.slice(2)).toEqual(["2 machines listed."]);
+  });
+
+  it("test_page_a_recovery_is_said_once_never_again_when_the_filter_changes", async () => {
+    // The first read fails, Retry, then Latched only on and off (C-1137-d02, A-1137-d01).
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    serve({ [LIST]: { status: 503, body: { code: "unavailable" } } });
+    show();
+    const heard = hearPolite();
+    /** One region budget and a little more: each line lands in its own render. */
+    const step = (): Promise<void> =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(5_100);
+      });
+    await waitFor(
+      () => expect(polite()).toHaveTextContent("The machine list can't be read right now."),
+      WAIT,
+    );
+    serve(WORLD);
+    fireEvent.click(within(grid()).getByRole("button", { name: "Retry" }));
+    await machineRows();
+    await step();
+    await step();
+    expect(heard).toEqual([
+      "The machine list can't be read right now.",
+      "The machine list loaded.",
+      "Metrics unavailable — metrics timed out after 300 ms",
+    ]);
+    const rows = (n: number) =>
+      waitFor(() => expect(grid().querySelectorAll("tr[data-machine-row]")).toHaveLength(n), WAIT);
+    fireEvent.click(screen.getByRole("switch", { name: "Latched only" }));
+    await rows(1);
+    await step();
+    fireEvent.click(screen.getByRole("switch", { name: "Latched only" }));
+    await rows(2);
+    await step();
+    await step();
+    // Each filter's result once; the recovery never again.
+    expect(heard.slice(3)).toEqual(["1 latched machine listed.", "2 machines listed."]);
+  });
+
+  it("test_page_a_filters_failed_first_page_keeps_the_counters_and_retries_its_rows", async () => {
+    serve({ ...WORLD, [LATCHED_LIST]: { status: 503, body: { code: "unavailable" } } });
+    show();
+    await machineRows();
+    fireEvent.click(screen.getByRole("switch", { name: "Latched only" }));
+    const retry = await within(grid()).findByRole("button", { name: "Retry" }, WAIT);
+    expect(grid().querySelectorAll("tr[data-machine-row]")).toHaveLength(0);
+    expect(within(counters()).getAllByRole("row")).toHaveLength(4);
+    serve(WORLD);
+    fireEvent.click(retry);
+    await waitFor(
+      () => expect(grid().querySelectorAll("tr[data-machine-row]")).toHaveLength(1),
+      WAIT,
+    );
+  });
+});
+
 describe("SI-2 and §5.1's other states", { timeout: 30_000 }, () => {
   it("test_page_unreadable_snapshots_read_machine_unreadable_once_with_no_tables", async () => {
     const body = {
@@ -556,6 +712,20 @@ describe("SI-2 and §5.1's other states", { timeout: 30_000 }, () => {
 });
 
 describe("tab order and axe", { timeout: 60_000 }, () => {
+  it("test_page_tab_order_is_reread_then_latched_only_then_the_grid_once", async () => {
+    serve(WORLD);
+    const { view } = show();
+    await machineRows();
+    const page = view.container.querySelector("main") as HTMLElement;
+    const stops = [
+      ...page.querySelectorAll<HTMLElement>("button, a[href], input, [tabindex]"),
+    ].filter((node) => node.tabIndex >= 0 && !node.closest("[aria-hidden='true']"));
+    expect(stops).toHaveLength(3);
+    expect(stops[0]).toBe(screen.getByRole("button", { name: "Re-read" }));
+    expect(stops[1]).toBe(screen.getByRole("switch", { name: "Latched only" }));
+    expect(grid().contains(stops[2] as HTMLElement)).toBe(true); // the grid's one roving stop
+  });
+
   it("test_page_reread_keeps_focus_where_it_is_and_says_nothing", async () => {
     const requests = serve(WORLD);
     show();

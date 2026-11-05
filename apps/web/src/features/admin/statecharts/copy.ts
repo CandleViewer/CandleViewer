@@ -84,6 +84,19 @@ export const INSPECTOR_COPY = {
     /** PROPOSED: the timeline's two empty states. */
     eventsUnavailable: "Events can't be read right now.",
     eventsNone: "No events recorded yet.",
+    /**
+     * PROPOSED `machine.live_differs` (§3.4): the topic's state against the saved snapshot's, never
+     * announced. While the snapshot shows the latch clear, the live side reads "{state}, latched"
+     * and the saved side says so: "it clear" when only the latch differs (A-1137-14), else
+     * "{state}, clear".
+     */
+    liveDiffers: (live: string, time: string, saved: string): string =>
+      `Live: ${live} at ${time} UTC. The saved snapshot shows ${saved}.`,
+    liveLatched: (state: string): string => `${state}, latched`,
+    savedClear: "it clear",
+    savedStateClear: (state: string): string => `${state}, clear`,
+    /** PROPOSED `machine.latched_now`: the latch seen live, assertive once (D05:773). */
+    latchedNow: (machine: string): string => `${machine} latched.`,
   },
   /** The machine's facts: §11's column names. */
   facts: {
