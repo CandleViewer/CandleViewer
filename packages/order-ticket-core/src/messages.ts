@@ -103,7 +103,9 @@ function pick(
  *   not a ceiling), nor does `symbol_not_trading` take `preview:symbol_not_allowed` (an owner
  *   setting, not the market's status): both stay `PENDING`;
  * - an unread position is not "no open position": it is `PENDING` until the deck has a
- *   "position not read yet" sentence (#919).
+ *   "position not read yet" sentence (#919);
+ * - a stop or take-profit that lands at or past zero (`kind` `non_positive`) is neither "move the
+ *   stop away from the entry" nor "below / above entry": `PENDING` until the deck has one (#919).
  */
 export function messageFor(failure: ValidationFailure): RuleMessage {
   const p = failure.params;
@@ -124,11 +126,12 @@ export function messageFor(failure: ValidationFailure): RuleMessage {
     case "native_stop_required":
       return message("ticket.order.v.sl.required");
     case "invalid_stop_distance":
+      if (p["kind"] === "non_positive") return PENDING;
       return p["kind"] === "level"
         ? message(`ticket.order.v.sl.side.${side}`)
         : message("ticket.order.refusal.invalid_stop_distance");
     case "take_profit_side":
-      return message(`ticket.order.v.tp.side.${side}`);
+      return p["kind"] === "non_positive" ? PENDING : message(`ticket.order.v.tp.side.${side}`);
     case "post_only_cross":
       return message("ticket.order.v.post_only.cross");
     case "reduce_only_no_position":

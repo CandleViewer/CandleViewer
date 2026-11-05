@@ -12,6 +12,8 @@ type Outcome = DeckKey | typeof PENDING_ROW;
 export const RULE_KEYS = {
   symbol_not_trading: [PENDING_ROW],
   account_not_targeted: [PENDING_ROW],
+  // `refusal.leverage_unavailable` keys the preview's code, not this rule's: pending (#919).
+  max_leverage: [PENDING_ROW],
   side_invalid: [PENDING_ROW],
   price_invalid: [PENDING_ROW],
   tick_size: ["ticket.order.v.price.tick"],
@@ -25,12 +27,15 @@ export const RULE_KEYS = {
   min_notional: ["ticket.order.v.notional.min"],
   native_stop_required: ["ticket.order.v.sl.required"],
   stop_unit_unsupported: [PENDING_ROW],
+  // A stop or target at or past zero (`non_positive`) has no true sentence yet: pending.
   invalid_stop_distance: [
     "ticket.order.refusal.invalid_stop_distance",
     "ticket.order.v.sl.side.long",
     "ticket.order.v.sl.side.short",
+    PENDING_ROW,
   ],
-  take_profit_side: ["ticket.order.v.tp.side.long", "ticket.order.v.tp.side.short"],
+  take_profit_side: ["ticket.order.v.tp.side.long", "ticket.order.v.tp.side.short", PENDING_ROW],
+  reduce_only_invalid: [PENDING_ROW],
   reduce_only_tpsl: [PENDING_ROW],
   post_only_cross: ["ticket.order.v.post_only.cross"],
   // An unread position is not "no open position" (code lens m2): pending.
