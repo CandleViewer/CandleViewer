@@ -236,9 +236,9 @@ async def test_the_record_stores_the_one_group_its_opening_fills_orders_name(
         ((START,), "0", False, None),  # an opening order: no stored fill of it closes
         ((), "2", False, "no figures"),  # a stated close with no walk start: an item, none
         ((), None, False, None),  # a REST-recovered close with no start waits for its record
-        ((), None, True, "no figures"),  # its record read, the composition loses its figures
+        ((), None, True, None),  # its record read, no walk: not written, the read's row stands
     ],
-    ids=["opening order", "stated close, no start", "REST close, no start", "record held"],
+    ids=["opening order", "stated close, no start", "REST close, no start", "held, no start"],
 )
 async def test_an_item_is_written_for_an_order_whose_stored_fill_closes_or_whose_record_is_held(
     flats: tuple[datetime, ...], closed: str | None, held: bool, item: str | None
@@ -397,9 +397,8 @@ async def test_a_record_closing_two_episodes_takes_funding_from_the_first_openin
     assert figures(c) == (N(3), N(0), None, None)
 
 
-async def test_a_capped_walk_composes_no_figure_is_never_final_and_warns_with_ids_alone() -> None:
-    store = book()
-    await store.settle(venue_record(_record(exchange_order_id=f"x-{CLOSE.int}", qty=N(2))))
+async def test_a_capped_walk_composes_no_figure_and_warns_with_ids_alone() -> None:
+    store = book()  # a stated close, its record not yet read
     with capture_logs() as logs:
         c = await compose(store, CLOSE, finalize=True, budget=WalkBudget(fills=1, flats=4))
     assert figures(c) == (None, None, None, None) and not c.final and c.closed is None
@@ -407,6 +406,55 @@ async def test_a_capped_walk_composes_no_figure_is_never_final_and_warns_with_id
     rid = str(record_id(ACCOUNT_A, f"x-{CLOSE.int}"))
     assert logs == [{"event": "closed_pnl_walk_capped", "log_level": "warning",
                      "account_id": str(ACCOUNT_A), "record_id": rid}]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("case", "kept"), [("start pruned", True), ("walk capped", True), ("a disagreement", False)]
+)
+async def test_a_held_record_keeps_its_figures_when_a_later_pass_cannot_walk_it(
+    case: str, kept: bool
+) -> None:
+    """The orchestrator's m2 ruling (2026-11-05, 07:47Z): a later pass that cannot walk a held
+    record, its start pruned or its walk capped, leaves the figures it composed and never makes
+    it final; a disagreement span still leaves it none (24 Sec.8.13)."""
+    store, rid = book(), record_id(ACCOUNT_A, f"x-{CLOSE.int}")
+    await compose(store, CLOSE)
+    await store.settle(venue_record(_record(exchange_order_id=f"x-{CLOSE.int}", qty=N(2))))
+    before, budget = store.rows[rid], WalkBudget(fills=500, flats=32)
+    match case:
+        case "start pruned":
+            store.flats[("ETHUSDT", 0)] = (at(3),)  # the prune keeps the key's latest flat
+        case "walk capped":
+            budget = WalkBudget(fills=1, flats=4)
+        case "a disagreement":  # a close stored late before it: it states 2 with 1 open
+            order(store, OTHER, "Sell")
+            fill(store, 1.5, OTHER, "Sell", "1", "102", closed="1", pnl="2")
+    done = await composer(store, budget=budget).begin(ACCOUNT_A).compose([CLOSE], finalize=True)
+    row = store.rows[rid]
+    assert row.final_at is None and before.gross_pnl == 6
+    if kept:
+        assert done == () and row is before
+    else:
+        assert (figures(done[0]), row.trade_group_id) == ((None, None, None, None), G1)
+
+
+async def test_a_walk_a_later_sibling_caps_is_taken_again_to_an_earlier_orders_own_end() -> None:
+    """The m2 ruling (b): in one step a sibling's later fills cap the walk two orders share; the
+    earlier order, whose own fills fit, is walked again to its last fill and composes as alone,
+    while the sibling, itself past the cap, has none."""
+    store = Store(flats={("ETHUSDT", 0): (START,)})
+    for oid, side in ((OPEN, "Buy"), (CLOSE, "Sell"), (OTHER, "Buy"), (CLOSE2, "Sell")):
+        order(store, oid, side)
+    fill(store, 1, OPEN, "Buy", "1", "100", fee="0.06", closed="0", group=G1)
+    fill(store, 2, CLOSE, "Sell", "1", "101", fee="0.0606", closed="1", pnl="1")
+    fill(store, 3, OTHER, "Buy", "1", "100", closed="0")
+    fill(store, 4, OTHER, "Buy", "1", "100", closed="0")
+    fill(store, 5, CLOSE2, "Sell", "2", "102", fee="0.1224", closed="2", pnl="4")
+    composing = composer(store, budget=WalkBudget(fills=3, flats=4)).begin(ACCOUNT_A)
+    done = await composing.compose([CLOSE, CLOSE2])
+    assert [figures(c) for c in done] == [
+        (N(1), N("-0.1206"), N(0), N("0.8794")), (None, None, None, None),
+    ]  # fmt: skip
 
 
 async def test_a_spent_wall_budget_composes_nothing_more_and_warns_per_closing_order() -> None:
