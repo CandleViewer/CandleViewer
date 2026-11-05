@@ -37,6 +37,7 @@ class ErrorCode(StrEnum):
     KEK_UNAVAILABLE = "kek_unavailable"
     TRADING_DISABLED = "trading_disabled"
     RISK_LIMIT_BREACHED = "risk_limit_breached"
+    ACCOUNT_LOCKED = "account_locked"
     VIEW_AS_READ_ONLY = "view_as_read_only"
     VIEW_AS_EXPIRED = "view_as_expired"
     VIEW_AS_SELF_TARGET = "view_as_self_target"
@@ -81,6 +82,7 @@ class ErrorCode(StrEnum):
     EXCHANGE_UNAVAILABLE = "exchange_unavailable"
     CLOCK_DRIFT = "clock_drift"
     OMS_NOT_READY = "oms_not_ready"
+    RISK_STATE_UNAVAILABLE = "risk_state_unavailable"
     SIZING_UNAVAILABLE = "sizing_unavailable"
     STORE_UNAVAILABLE = "store_unavailable"
     AUDIT_UNAVAILABLE = "audit_unavailable"
@@ -151,6 +153,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.KEK_UNAVAILABLE: ErrorMeta(("rest",), None, False, None, None, "The credential key is unavailable; operations that need it are refused"),
     ErrorCode.TRADING_DISABLED: ErrorMeta(("rest",), None, False, None, None, "Order entry refused"),
     ErrorCode.RISK_LIMIT_BREACHED: ErrorMeta(("rest",), None, False, None, None, "The account's profile is disabled, is not trading-enabled, does not allow the symbol, or a risk cap (daily loss, max position) would be exceeded, by the account's state or by a submitted value"),
+    ErrorCode.ACCOUNT_LOCKED: ErrorMeta(("rest",), None, False, None, None, "A risk lockout is active for the account or the acting user; every order submission is refused until it is released; cancels, position closes and stop tightening are never refused"),
     ErrorCode.VIEW_AS_READ_ONLY: ErrorMeta(("rest", "ws",), "any", False, None, None, "Session is viewing as another user, read-only; end view-as to make changes"),
     ErrorCode.VIEW_AS_EXPIRED: ErrorMeta(("rest",), None, False, None, None, "View-as context ended by the server; clear it with DELETE /auth/session/view-as"),
     ErrorCode.VIEW_AS_SELF_TARGET: ErrorMeta(("rest",), None, False, None, None, "A session cannot view as its own user"),
@@ -195,6 +198,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.EXCHANGE_UNAVAILABLE: ErrorMeta(("rest", "ws",), "any", True, None, None, "Exchange connectivity lost (WS down and REST failing)"),
     ErrorCode.CLOCK_DRIFT: ErrorMeta(("rest",), None, True, None, None, "Order entry halted until the server clock is back in sync with the exchange"),
     ErrorCode.OMS_NOT_READY: ErrorMeta(("rest",), None, True, None, None, "Order entry is not open yet; the order service is starting or a dependency it needs is not ready"),
+    ErrorCode.RISK_STATE_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "The risk gate has no state to judge the order by (its figures are being rebuilt, or the order is not in the process's environment); refused, fail closed, nothing recorded or sent"),
     ErrorCode.SIZING_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "A figure the order's size needs (the day's loss, the committed risk, the fee rate) cannot be read yet; nothing was recorded or sent"),
     ErrorCode.STORE_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "QuestDB / Postgres / Parquet tier unavailable"),
     ErrorCode.AUDIT_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)"),
