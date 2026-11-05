@@ -4,12 +4,13 @@ E42-X03's `tests/security/admin/test_abuse_catalogue.py` does for the admin area
 `docs/security/abuse-cases/e29-oms.md` holds one row per seed of `E29-oms.md` section 8.2 (AC-01 to
 AC-31), and rows for the ticket's named cases, the rows posted on #982 and the Gherkin. This fails,
 in CI, when a seed has no row or a row no seed; when a cited test is renamed or removed; when a
-verdict is not a word of the key; when a waiting row names no ticket, a manual row not E29-X03, or
-a row holding the case cites no test; when a pin names no accepted-risk record or another owner
-ticket than its record's, a record has no sign-off for its owner ticket or no pin, a strict xfail
-of this suite names no record or its record's ticket, or a row or a record's pin cites a test (and
-parameter) whose strict xfail does not name that record (BQ-5 as ruled); and when an in-scope route
-or private topic is missing from the coverage table (BQ-8 as ruled).
+verdict is not a word of the key; when a waiting row names no ticket, a manual row not E29-X03, a
+row holding the case cites no test, or a SUITE row no test of this suite; when a pin names no
+accepted-risk record or another owner ticket than its record's (whole numbers compared), a record
+has no sign-off for its owner ticket or no pin, a strict xfail of this suite names no record or its
+record's ticket, or a row or a record's pin cites a test (and parameter) whose strict xfail does
+not name that record (BQ-5 as ruled); and when an in-scope route or private topic is missing from
+the coverage table (BQ-8 as ruled).
 """
 
 from __future__ import annotations
@@ -32,10 +33,12 @@ _SEED: Final = re.compile(r"^\| (AC-\d\d) +\|", re.MULTILINE)
 #: `tests/...py::name`, `tests/...py`, or `::name` continuing the path cited before it.
 _CITE: Final = re.compile(r"`(tests/[\w/.-]+\.py)?(?:::(\w+))?`")
 _TICKET: Final = re.compile(r"#\d+|\bE\d\d-[A-Z]\d\d\b")
+_ISSUE: Final = re.compile(r"#\d+\b")
 _RECORD: Final = re.compile(r"\b(X02-R\d+), (#\d+)")
 _KEY_WORD: Final = re.compile(r"^  - \*\*([A-Z]+)\*\*:", re.MULTILINE)
 _KEY: Final = {"SUITE", "NEW", "COVERED", "PIN", "WAITING", "MANUAL"}
 _HOLDING: Final = {"SUITE", "NEW", "COVERED", "PIN"}  # each must cite the test that holds it
+_SUITE: Final = "tests/security/oms/"  # where a SUITE verdict's cells live
 
 Row = tuple[str, str]  # (verdict, evidence)
 #: test name -> parameter id (None: the whole function) -> the reason of its strict xfail.
@@ -67,6 +70,11 @@ def _records() -> dict[str, tuple[str, str, str]]:
     return {c[0]: (c[5], c[6], c[2]) for c in _table("Accepted risks and sign-off")}
 
 
+def _owner(cell: str) -> str | None:
+    """A record's owner ticket: its cell's first issue number, whole (`#1152`, never `#115`)."""
+    return found[0] if (found := _ISSUE.search(cell)) else None
+
+
 def _cited(line: str) -> list[tuple[str, str | None]]:
     out: list[tuple[str, str | None]] = []
     path = None
@@ -90,11 +98,13 @@ def _row_faults(rows: dict[str, Row], records: dict[str, tuple[str, str, str]]) 
             faults.append(f"{name}: MANUAL names no E29-X03 (#1152)")
         if words & _HOLDING and not _cited(evidence):
             faults.append(f"{name}: {verdict} cites no test")
+        if "SUITE" in words and not [p for p, _t in _cited(evidence) if p.startswith(_SUITE)]:
+            faults.append(f"{name}: SUITE cites no test of {_SUITE}")
         pins = _RECORD.findall(evidence)
         if "PIN" in words and not pins:
             faults.append(f"{name}: PIN names no accepted-risk record and owner ticket")
         for record, ticket in pins:
-            if ticket not in records.get(record, ("", "", ""))[0]:
+            if ticket != _owner(records.get(record, ("", "", ""))[0]):
                 faults.append(f"{name}: {record} is no record of {ticket}")
     return faults
 
@@ -132,15 +142,32 @@ def test_every_row_has_a_verdict_of_the_key_and_its_evidence() -> None:
 
 
 def test_a_verdict_outside_the_key_or_a_row_without_its_evidence_fails() -> None:
-    records = {"X02-R1": ("#859", "signed", "")}
+    records = {"X02-R1": ("#859", "signed", ""), "X02-R4": ("#1152 (E29-X03)", "signed", "")}
     rows = {
+        "AC-93": ("PIN", "`tests/security/oms/test_x.py::test_y`; X02-R4, #115"),
+        "AC-94": ("PIN", "`tests/security/oms/test_x.py::test_y`; X02-R1, #85"),
+        "AC-95": ("SUITE", "the cells: `tests/unit/test_x.py::test_y`"),
         "AC-96": ("COVERED, WAITING", "the rest waits on E34-T02 (#859)"),
         "AC-97": ("WATING", "E34-T02 (#859)"),
         "AC-98": ("PIN", "`tests/security/oms/test_x.py::test_y`; X02-R1, #1152"),
         "AC-99": ("MANUAL", "a checklist"),
     }
     faults = _row_faults(rows, records)
-    assert [f.split(":", 1)[0] for f in faults] == ["AC-96", "AC-97", "AC-98", "AC-99"]
+    assert [f.split(":", 1)[0] for f in faults] == [f"AC-9{n}" for n in range(3, 10)], faults
+    held = {"AC-90": ("PIN", "`tests/security/oms/test_x.py::test_y`; X02-R4, #1152"),
+            "AC-91": ("SUITE", "`tests/security/oms/test_x.py::test_y`")}  # fmt: skip
+    assert _row_faults(held, records) == []
+
+
+def test_ac19_pins_its_429_and_waits_on_its_owner_for_the_per_symbol_alert() -> None:
+    """AC-19's three expectations: the 429 and another user admitted are X02-R4's pin; the
+    per-symbol cap's alert at 80 % has no control on `main` to pin, so it is WAITING on its owner,
+    E29-X03 (#1152), provisional until main-orchestrator confirms it (Deviations)."""
+    verdict, evidence = _rows()["AC-19"]
+    assert {w.strip() for w in verdict.split(",")} == {"PIN", "WAITING"}
+    alert = evidence.split("X02-R4, #1152", 1)[1]
+    assert "alert at 80 %" in alert and "E29-X03 (#1152)" in alert, evidence
+    assert "AC-19 is split" in _text().split("\n## Deviations\n", 1)[1]
 
 
 def _strict_pins() -> Pins:
@@ -191,10 +218,10 @@ def test_every_record_is_signed_for_its_owner_ticket_and_every_pin_names_its_rec
         r
         for r, (ticket, sign, _pin) in records.items()
         if not (
-            (owner := _TICKET.search(ticket))
+            (owner := _owner(ticket))
             and "main-orchestrator" in sign
             and "#982" in sign
-            and f"for {owner[0]}" in sign
+            and re.search(rf"\bfor {owner}\b", sign)
         )
     ]
     assert unsigned == [], "a record with no owner ticket or no sign-off for it"
@@ -202,7 +229,8 @@ def test_every_record_is_signed_for_its_owner_ticket_and_every_pin_names_its_rec
     for test, held in pins.items():
         for reason in held.values():
             found = re.match(r"(X02-R\d+) \((#\d+)\): ", reason)
-            assert found and found[2] in records.get(found[1], ("", "", ""))[0], (test, reason)
+            owner = _owner(records.get(found[1], ("", "", ""))[0]) if found else None
+            assert found and found[2] == owner, (test, reason)
             named.add(found[1])
     assert named == set(records), "a record no strict xfail names"
     pinned = {r for _v, e in _rows().values() for r, _t in _RECORD.findall(e)}
