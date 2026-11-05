@@ -111,6 +111,15 @@ export class ChartViewport implements ViewportState {
     return this.place(this.leftIndex, this.barSpacing) || !same;
   }
 
+  /** E11-S09: a pane's own price state; time stays shared by construction (26 §3.5). */
+  addPane(): void {
+    this.panes.push(createPaneTransform());
+  }
+
+  removePane(pane: number): void {
+    if (pane >= 0 && pane < this.panes.length) this.panes.splice(pane, 1);
+  }
+
   setPanePlot(pane: number, top: number, height: number): void {
     const p = this.panes[pane];
     if (p === undefined || !(height >= 0) || !Number.isFinite(top + height)) return;

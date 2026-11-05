@@ -36,6 +36,15 @@ export class SceneGraph {
     return pane;
   }
 
+  /** E11-S09: detaches a pane and its subtree, so its ids are free and the graph stays bounded. */
+  removePane(id: string): void {
+    const pane = this.pane(id);
+    this.root.children.splice(this.root.children.indexOf(pane), 1);
+    pane.parent = null;
+    this.forget(pane);
+    this.layoutPending = true;
+  }
+
   addNode(paneId: string, layer: LayerName, node: ContentNode): void {
     const target = this.pane(paneId).layers[LAYER_ORDER.indexOf(layer)];
     if (target === undefined) throw new RangeError(`unknown layer ${layer}`);
@@ -134,6 +143,11 @@ export class SceneGraph {
     parent.children.splice(at, 0, node);
     node.parent = parent;
     this.layoutPending = true;
+  }
+
+  private forget(node: SceneNode): void {
+    this.byId.delete(node.id);
+    for (const child of node.children) this.forget(child);
   }
 
   private linearise(node: SceneNode): void {
