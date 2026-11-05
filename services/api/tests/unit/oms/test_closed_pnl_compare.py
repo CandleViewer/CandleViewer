@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -20,6 +20,7 @@ from structlog.testing import capture_logs
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms import closed_pnl_compare as cmp
+from candleviewer.oms import closed_pnl_sync as sync_mod
 from candleviewer.oms.closed_pnl_compare import (
     DIVERGENCE_TOTAL,
     WITHHELD_TOTAL,
@@ -31,6 +32,9 @@ from candleviewer.oms.closed_pnl_compare import (
 from candleviewer.oms.closed_pnl_compose import Composed
 from candleviewer.storage.repositories.closed_pnl import ClosedPnlRecordRow, record_id
 from tests.unit.audit.audit_waits import virtual
+from tests.unit.exchange.bybit._trading import ACCOUNT_A
+from tests.unit.oms.test_closed_pnl_sync import REACH, XID, Store, _composable, _record
+from tests.unit.oms.test_closed_pnl_sync import rig as sync_rig
 
 T0 = datetime(2026, 11, 5, 9, 0, tzinfo=UTC)
 ACCOUNT = UUID(int=0xA1)
@@ -421,3 +425,152 @@ def test_the_counter_is_unlabelled_and_the_withheld_one_bounded_by_its_reasons()
     assert (total.kind, total.labels, total.max_series) == ("counter", (), 1)
     assert (held.kind, held.labels, held.max_series) == ("counter", ("reason",), len(cmp.WITHHELD))
     assert "OmsClosedPnlDivergence" in total.alert
+
+
+# --- in the sync's pass (24 Sec.8.13 "The sync"; Q2, Q3) ------------------------------------------
+
+
+def comparing(writer: Writer) -> Any:
+    def build(store: Store, metrics: Metrics) -> ClosedPnlComparer:
+        return ClosedPnlComparer(marks=store, writer=writer, tolerance=TOL, metrics=metrics)
+
+    return build
+
+
+def priced(r: Any) -> Any:
+    """`_composable`'s long opened at the record's own entry, so the entry gate holds: the local
+    net -49.275 against the venue's -47.4065323."""
+    named = _composable(r)
+    symbol, opener = r.store.fills[0]
+    r.store.fills[0] = (symbol, replace(opener, exec_price=_record().avg_entry_price))
+    r.venue.records = [_record()]
+    return named
+
+
+@virtual
+async def test_the_sync_compares_what_the_delta_set_composed_and_records_a_divergence() -> None:
+    writer = Writer([])
+    r = sync_rig(composed=True, comparer=comparing(writer))
+    priced(r)
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(10)
+    held = r.store.rows[record_id(ACCOUNT_A, XID)]
+    assert [rec.reason for rec in writer.records] == ["closed_pnl_divergence"]
+    assert (held.divergent, held.audited_local_net, held.audited_closed_pnl) == (
+        True, D("-49.275"), D("-47.4065323"),
+    )  # fmt: skip
+    assert held.final_at is not None and r.sync._state[ACCOUNT_A].owed == {}
+    await r.sync.stop()
+
+
+@virtual
+async def test_a_comparison_owed_keeps_the_poll_until_its_record_is_written() -> None:
+    """The record final, nothing else polled: the owed comparison alone asks for the next pass,
+    which composes the order again and writes the record."""
+    writer = Writer([], fails=[OSError("full")])
+    r = sync_rig(composed=True, comparer=comparing(writer))
+    priced(r)
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(10)
+    rid = record_id(ACCOUNT_A, XID)
+    assert r.sync._state[ACCOUNT_A].owed == {XID: None} and not r.store.rows[rid].divergent
+    assert r.store.rows[rid].final_at is not None and r.sync._state[ACCOUNT_A].due is not None
+    await asyncio.sleep(61)
+    assert len(writer.records) == 1 and r.store.rows[rid].divergent
+    assert r.sync._state[ACCOUNT_A].owed == {} and r.sync._state[ACCOUNT_A].due is None
+    await r.sync.stop()
+
+
+def provisional(xid: str, closed_at: datetime, store: Store) -> ClosedPnlRecordRow:
+    held = row(xid, exchange_account_id=ACCOUNT_A, id=record_id(ACCOUNT_A, xid),
+               closed_at=closed_at, settled_at=None, closed_pnl=None, leverage=None,
+               venue_created_at=None)  # fmt: skip
+    store.rows[held.id], store.orders[xid] = held, (UUID(int=len(store.orders) + 0x100), "filled")
+    return held
+
+
+@virtual
+async def test_a_venue_figure_missing_when_its_item_leaves_the_reach_is_recorded_once() -> None:
+    """Q2: the first pass looks from MISSING_SPAN before the reach; a later one from where the
+    last one's reach was, so the item is recorded once, and one older than the span is not."""
+    writer = Writer([])
+    r = sync_rig(composed=True, comparer=comparing(writer))
+    gone = provisional("x-gone", REACH - timedelta(hours=1), r.store)
+    provisional("x-old", REACH - sync_mod.MISSING_SPAN - timedelta(hours=1), r.store)
+    provisional("x-due", REACH + timedelta(hours=1), r.store)
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(10)
+    r.sync.reconnected(ACCOUNT_A)
+    await asyncio.sleep(10)
+    assert [(rec.record_id, rec.reason) for rec in writer.records] == [
+        (gone.id, "closed_pnl_venue_missing")
+    ]
+    assert not r.store.rows[gone.id].divergent
+    await r.sync.stop()
+
+
+@virtual
+async def test_a_venue_figure_missing_held_back_is_recorded_at_the_next_pass_once() -> None:
+    """Q2, Q3: a strained writer holds the record back; the next pass's look has moved past the
+    item, so only the owed row brings it back, and it is written once."""
+    writer = Writer([], strain=True)
+    r = sync_rig(composed=True, comparer=comparing(writer))
+    gone = provisional("x-gone", REACH - timedelta(hours=1), r.store)
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(10)
+    assert writer.records == [] and r.sync._state[ACCOUNT_A].owed == {"x-gone": gone}
+    assert r.sync._state[ACCOUNT_A].due is not None
+    writer.strain = False
+    await asyncio.sleep(61)
+    r.sync.reconnected(ACCOUNT_A)
+    await asyncio.sleep(10)
+    assert [(rec.record_id, rec.reason) for rec in writer.records] == [
+        (gone.id, "closed_pnl_venue_missing")
+    ]
+    assert r.sync._state[ACCOUNT_A].owed == {}
+    await r.sync.stop()
+
+
+@virtual
+async def test_a_failed_look_for_the_missing_is_made_again_from_where_it_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer = Writer([])
+    r = sync_rig(composed=True, comparer=comparing(writer))
+    gone = provisional("x-gone", REACH - timedelta(hours=1), r.store)
+    pending, failed = r.store.pending, list[datetime]()
+
+    async def failing_once(account_id: UUID, since: datetime, limit: int) -> Any:
+        if since < REACH and not failed:
+            failed.append(since)
+            raise OSError("down")
+        return await pending(account_id, since, limit)
+
+    monkeypatch.setattr(r.store, "pending", failing_once)
+    with capture_logs() as logs:
+        r.sync.start([ACCOUNT_A])
+        await asyncio.sleep(10)
+    assert writer.records == [] and r.sync._state[ACCOUNT_A].due is not None
+    assert any(e["event"] == "closed_pnl_missing_read_failed" for e in logs)
+    await asyncio.sleep(61)
+    assert [rec.record_id for rec in writer.records] == [gone.id]
+    await r.sync.stop()
+
+
+@virtual
+async def test_a_full_page_of_the_missing_moves_the_look_only_to_its_last_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C-2.18: row 56's page bounds the look; the rest of that time waits for the next pass."""
+    monkeypatch.setattr(sync_mod, "PENDING_LIMIT", 2)
+    writer = Writer([])
+    r = sync_rig(composed=True, comparer=comparing(writer))
+    rows = [provisional(f"x{n}", REACH - timedelta(hours=3 - n), r.store) for n in range(3)]
+    r.sync.start([ACCOUNT_A])
+    seen = []
+    for _ in range(3):
+        await asyncio.sleep(10)
+        seen.append([rec.record_id for rec in writer.records])
+        r.sync.reconnected(ACCOUNT_A)
+    assert seen == [[rows[0].id], [rows[0].id, rows[1].id], [row.id for row in rows]]
+    await r.sync.stop()
