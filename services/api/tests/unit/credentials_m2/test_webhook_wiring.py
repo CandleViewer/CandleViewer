@@ -60,11 +60,12 @@ async def test_the_bundle_seals_opens_and_signs_once_started() -> None:
 async def test_the_bundle_refuses_every_call_before_start() -> None:
     sealer, opener, signer = _ports(secrets_bundle(SecretsService()))
     digest = hashlib.sha256(BODY).digest()
+    shaped = b"cvw1" + (1).to_bytes(4, "big") + b"x" * 92  # a blob's shape: it reaches `keks()`
     for call in (
         sealer.seal_target(URL, ALERT),
         sealer.seal_secret(SECRET, ALERT),
-        opener.open_target(b"x" * 100, ALERT),
-        signer.sign_delivery(b"x" * 100, ALERT, 1, 1, digest),
+        opener.open_target(shaped, ALERT),
+        signer.sign_delivery(shaped, ALERT, 1, 1, digest),
     ):
         with pytest.raises(WebhookCapabilityRefused) as info:
             await call
@@ -76,7 +77,8 @@ async def test_the_bundle_refuses_every_call_before_start() -> None:
 
 def _mint_calls(trees: dict[str, ast.AST]) -> dict[str, list[str]]:
     """Each webhook mint's call sites, by file, across the given modules; a call through an
-    aliased import (`from … import mint_webhook_signer as m`) counts as the mint's."""
+    aliased import (`from … import mint_webhook_signer as m`) or an assigned alias (`m =
+    mint_webhook_signer`, chains too) counts as the mint's."""
     sites: dict[str, list[str]] = {name: [] for name in WEBHOOK_MINTS}
     for rel, tree in trees.items():
         aliases = {
@@ -86,6 +88,7 @@ def _mint_calls(trees: dict[str, ast.AST]) -> dict[str, list[str]]:
             for alias in node.names
             if alias.asname and alias.name in sites
         }
+        aliases |= _assigned_aliases(tree, set(sites), aliases)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 fn = node.func
@@ -94,6 +97,30 @@ def _mint_calls(trees: dict[str, ast.AST]) -> dict[str, list[str]]:
                 if name in sites:
                     sites[name].append(rel)
     return sites
+
+
+def _assigned_aliases(tree: ast.AST, known: set[str], aliases: dict[str, str]) -> dict[str, str]:
+    """Names bound to a mint by assignment (`m = mint_webhook_signer`, `n: Any = m`, a walrus),
+    followed to a fixed point so a chain of them resolves to the mint."""
+    pairs: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+            targets, value = [node.target], node.value
+        else:
+            continue
+        if isinstance(value, ast.Name):
+            pairs += [(t.id, value.id) for t in targets if isinstance(t, ast.Name)]
+    found: dict[str, str] = {}
+    grew = True
+    while grew:
+        grew = False
+        for target, source in pairs:
+            mint = found.get(source) or aliases.get(source) or (source if source in known else None)
+            if mint is not None and target not in found:
+                found[target], grew = mint, True
+    return found
 
 
 def _package() -> dict[str, ast.AST]:
@@ -129,6 +156,29 @@ def test_an_aliased_second_mint_is_counted(mint: str) -> None:
     wiring = trees["admin/wiring.py"]
     assert isinstance(wiring, ast.Module)
     second = ast.parse(f"from candleviewer.secrets import {mint} as m\nagain = m(svc)\n")
+    trees["admin/wiring.py"] = ast.Module(body=[*wiring.body, *second.body], type_ignores=[])
+    assert _mint_calls(trees)[mint] == ["admin/wiring.py", "admin/wiring.py"]
+
+
+@pytest.mark.parametrize("mint", WEBHOOK_MINTS)
+@pytest.mark.parametrize(
+    "src",
+    [
+        "m = {mint}\nagain = m(svc)\n",
+        "m = {mint}\nn = m\nagain = n(svc)\n",
+        "n: object = {mint}\nagain = n(svc)\n",
+        "if (m := {mint}):\n    again = m(svc)\n",
+        "from candleviewer.secrets import {mint} as a\nm = a\nagain = m(svc)\n",
+    ],
+    ids=["assigned", "chain", "annotated", "walrus", "import-then-assigned"],
+)
+def test_an_assigned_alias_second_mint_is_counted(mint: str, src: str) -> None:
+    """#5954 review: a mint name bound to another name inside `wiring.py`, then called, counts
+    as a second mint site."""
+    trees = _package()
+    wiring = trees["admin/wiring.py"]
+    assert isinstance(wiring, ast.Module)
+    second = ast.parse(src.format(mint=mint))
     trees["admin/wiring.py"] = ast.Module(body=[*wiring.body, *second.body], type_ignores=[])
     assert _mint_calls(trees)[mint] == ["admin/wiring.py", "admin/wiring.py"]
 

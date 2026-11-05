@@ -10,13 +10,13 @@ blob moved to another alert or column does not open.
 
 The signer signs only ``cv.alert.webhook.v1:{timestamp}:{delivery_id}:{hex digest}``, built here
 from a checked field set: no caller bytes reach the MAC but the 32 digest bytes, so it is no
-general signing oracle. Each call checks its request before any decrypt; a seal wraps its DEK
-under the current KEK, an open or a sign opens the DEK under the held KEK of the blob's version;
-every wrap and unwrap runs under the broker's `_guard` (`Keks`), and the call zeroes the DEK and
-any opened plaintext before it returns. A
-refusal is a `WebhookCapabilityRefused` with a closed reason, raised after the handler (nothing
-chained), and its log names the operation and the check, never a value (C-12.6). The secret is
-write-only: no capability opens it outside the signer. SR-009's residual applies: `bytes` copies
+general signing oracle. Each call checks its request, the blob's shape included, before any KEK is
+resolved; a seal wraps its DEK under the current KEK, an open or a sign opens the DEK under the
+held KEK of the blob's version; every wrap and unwrap runs under the broker's `_guard` (`Keks`),
+and the call zeroes the DEK and any opened plaintext before it returns. A refusal is a
+`WebhookCapabilityRefused` with a closed reason, raised after the handler (nothing chained), and
+its log names the operation and the check, never a value (C-12.6). The secret is write-only: no
+capability opens it outside the signer. SR-009's residual applies: `bytes` copies
 that `hmac` and `AESGCM` take cannot be wiped, and the opened URL is a `str` the caller holds.
 """
 
@@ -177,8 +177,11 @@ def _wh_seal(
     return MAGIC + kek.version.to_bytes(4, "big") + wrapped + sealed
 
 
-def _wh_open(keks: tuple[LoadedKek, ...], alert: UUID, field: str, value: object) -> bytearray:
-    version, wrapped, sealed = _wh_blob(value)
+def _wh_open(
+    keks: tuple[LoadedKek, ...], alert: UUID, field: str, parts: tuple[int, bytes, bytes]
+) -> bytearray:
+    """The value of a blob `_wh_blob` parsed before `keks()` was entered."""
+    version, wrapped, sealed = parts
     kek = _wh_held(keks, version)
     dek = kek.unwrap_webhook_dek(wrapped, alert_id=alert, field=field)
     try:
@@ -195,8 +198,9 @@ def _wh_sign(keks: Keks, call: tuple[object, ...]) -> str:
         _wh_bounded_int(delivery_id, DELIVERY_ID_MAX, "delivery_id"),
         _wh_digest(body_digest),
     )
+    parts = _wh_blob(blob)  # the blob's shape too, before any KEK is resolved
     with keks() as held:
-        secret = _wh_open(held, alert, "secret", blob)
+        secret = _wh_open(held, alert, "secret", parts)
     try:
         if not SECRET_MIN <= len(secret) <= SECRET_MAX:
             raise _WhRefused("webhook_seal_invalid", "secret_length")
@@ -207,8 +211,9 @@ def _wh_sign(keks: Keks, call: tuple[object, ...]) -> str:
 
 def _wh_open_target(keks: Keks, blob: object, alert_id: object) -> str:
     alert = _wh_alert_id(alert_id)
+    parts = _wh_blob(blob)
     with keks() as held:
-        raw = _wh_open(held, alert, "url", blob)
+        raw = _wh_open(held, alert, "url", parts)
     try:
         return raw.decode("utf-8")
     finally:
@@ -225,8 +230,8 @@ def rewrap(keks: Keks, blob: object, alert_id: object, field: str) -> bytes:
         if field not in env.WEBHOOK_FIELDS:
             _wh_invalid("field")
         alert = _wh_alert_id(alert_id)
+        version, wrapped, sealed = _wh_blob(blob)
         with keks() as held:
-            version, wrapped, sealed = _wh_blob(blob)
             current = held[0]
             if version == current.version:
                 return MAGIC + version.to_bytes(4, "big") + wrapped + sealed
