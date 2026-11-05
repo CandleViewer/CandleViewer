@@ -874,6 +874,14 @@ x-error-codes:
     status: 503
     title: Second factor temporarily unavailable
     retryable: true
+  - code: step_up_unavailable
+    status: 503
+    title: Step-up is not wired on this server, so the gated action cannot be confirmed; nothing was done
+    retryable: false
+  - code: lifecycle_unavailable
+    status: 503
+    title: The lifecycle refused the command, its inbox full or its machine held degraded until an operator acknowledges it; nothing was done
+    retryable: true
   - code: signing_unavailable
     status: 503
     title: The audit export signing key is missing or cannot be opened, or the export directory takes no hard links; export alone is unavailable
