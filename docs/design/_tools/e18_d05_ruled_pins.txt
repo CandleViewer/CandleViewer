@@ -1,0 +1,11 @@
+# E18-D05 ruled pins: a hash per BQ bullet. Written by --repin-ruled only.
+BQ-0 2d5bda9d68493f8b
+BQ-1 276aaf19a2fb3e5f
+BQ-2 d56771bf714700cd
+BQ-3 b90b6c79dae4b879
+BQ-4 915f60332fb768cf
+BQ-5 64e9115bf95995a6
+BQ-6 1697ec6b4bcbc9aa
+BQ-7 6ca604a901e4391d
+BQ-8 59f056fd0be7f99d
+BQ-9 0318ddcdc83de9da
