@@ -372,6 +372,8 @@ function retainKey(cmd: Command): string | null {
       return `series:${cmd.series}`;
     case "addDrawing":
       return `drawing:${cmd.drawingId}`;
+    case "setTheme": // E14-T04: the latest theme carries `metrics`, which `init` does not
+      return "theme";
     default:
       return null;
   }

@@ -8,6 +8,7 @@ import { createScaleBadge } from "../host/scale-badge.js";
 import { readReducedMotion, watchMotion } from "../host/motion.js";
 import { watchSize } from "../host/resize.js";
 import { PRICE_GUTTER_PX } from "../scene/layout-engine.js";
+import { ingestMetrics } from "../theme/ThemeIngest.js";
 import {
   captureInput,
   createChartHost,
@@ -33,6 +34,8 @@ import type {
   Pane,
   PaneId,
   PaneOptions,
+  DrawingAnchor,
+  DrawingBounds,
   ThemeTokens,
   Unsubscribe,
   VisibleWindow,
@@ -72,6 +75,31 @@ const copyDetails = (d: ErrorDetails | DegradeDetails): ErrorDetails =>
 
 type Listener<E extends keyof ChartEvents> = (p: ChartEvents[E]) => void;
 
+/** E14-T04: flat `[time, tick, …]` pairs as §8 anchors. */
+const anchorsOf = (flat: readonly number[]): DrawingAnchor[] => {
+  const out: DrawingAnchor[] = [];
+  for (let i = 0; i + 1 < flat.length; i += 2) {
+    out.push({ time: flat[i] as number, price: flat[i + 1] as number });
+  }
+  return out;
+};
+
+/** E14-T04: a `[x0, y0, x1, y1]` box as a §8 `Rect`. */
+const rectOf = (b: readonly number[]) => {
+  const [x0 = 0, y0 = 0, x1 = 0, y1 = 0] = b;
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+};
+
+/** E14-T04: `[cx, cy, …]` handle centres as `size` px squares (the 24 px target, 2.5.8). */
+const squares = (centres: readonly number[], size: number) => {
+  const out = [];
+  for (let i = 0; i + 1 < centres.length; i += 2) {
+    const [x, y] = [centres[i] as number, centres[i + 1] as number];
+    out.push({ x: x - size / 2, y: y - size / 2, w: size, h: size });
+  }
+  return out;
+};
+
 function positiveInt(value: number | undefined, fallback: number, name: string): number {
   if (value === undefined) return fallback;
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -102,6 +130,8 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
   const listeners = new Map<keyof ChartEvents, Set<Listener<keyof ChartEvents>>>();
   const panes: PaneInternal[] = [];
   let theme = opts.theme;
+  // E14-T04 (BQ-02): resolved and range-checked first; ENGINE_THEME_INVALID names a bad field.
+  let metrics = ingestMetrics(opts.theme.metrics);
   let density: Density = opts.density ?? CHART_DEFAULTS.density;
   let disposed = false;
   let paneSeq = 0;
@@ -109,6 +139,9 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
   let lastStats: FrameStats | null = null;
   let lastRange = { from: 0, to: 1 };
   let stops: AxisStops | null = null; // the axis stops (E11-S06), from the first `axes` message
+  /** E14-T04: pending `getDrawingBounds` replies by reqId; resolved empty on dispose. */
+  const boundsReplies = new Map<number, (items: DrawingBounds[]) => void>();
+  let boundsSeq = 0;
 
   function emit<E extends keyof ChartEvents>(e: E, payload: ChartEvents[E]): void {
     const set = listeners.get(e);
@@ -205,6 +238,33 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
         });
         stops.update(msg);
         return;
+      case "selection":
+        emit("selection", {
+          ids: [...msg.ids],
+          focused: msg.focused === null ? null : { id: msg.focused, handle: msg.handle },
+          mode: msg.mode,
+        });
+        return;
+      case "drawingsChanged":
+        emit("drawingsChanged", {
+          phase: msg.phase,
+          intent: msg.intent,
+          changes: msg.changes.map((c) => ({ id: c.id, anchors: anchorsOf(c.anchors) })),
+        });
+        return;
+      case "refused":
+        emit("refused", { ids: [...msg.ids], reason: msg.reason, intent: msg.intent });
+        return;
+      case "bounds":
+        boundsReplies.get(msg.reqId)?.(
+          msg.items.map((it) => ({
+            id: it.id,
+            rect: rectOf(it.rect),
+            handles: squares(it.handles, metrics.handleTargetPx),
+          })),
+        );
+        boundsReplies.delete(msg.reqId);
+        return;
       default:
       // pick and a11y are the hit-test and live-region layers' (E11-S08 / E11-S13).
     }
@@ -254,6 +314,10 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
       },
     },
   });
+  // `init` carries the colours only: `init.theme.metrics` reaches the worker as one setTheme.
+  if (opts.theme.metrics !== undefined) {
+    host.command({ k: "setTheme", theme: opts.theme.colors, metrics: opts.theme.metrics });
+  }
   const gutter = { price: PRICE_GUTTER_PX };
   const detachInput = captureInput(opts.container, host, gutter);
   const detachSize = watchSize(opts.container, host); // BQ-146
@@ -311,8 +375,13 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
     },
     setTheme(next: ThemeTokens): void {
       if (disposed) return;
+      metrics = ingestMetrics(next.metrics); // throws before anything changes
       theme = next;
-      host.command({ k: "setTheme", theme: next.colors });
+      host.command({
+        k: "setTheme",
+        theme: next.colors,
+        ...(next.metrics !== undefined && { metrics: next.metrics }),
+      });
       badge.setTheme(next.colors);
       stops?.setTheme(next.colors);
     },
@@ -346,9 +415,52 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
     // No data plane yet (E11-T03): nothing is visible or focused until series hold bars.
     getVisibleWindow: (): VisibleWindow | null => null,
     getFocusedUnit: (): FocusedUnit | null => null,
+    // E14-T04 (#359): the selection lives in the worker; each call is one command.
+    setSelection(ids, op): void {
+      if (!disposed) host.command({ k: "setSelection", ids: [...ids], op });
+    },
+    selectAll(pane?: PaneId): void {
+      const i = pane === undefined ? 0 : panes.findIndex((p) => p.id === pane);
+      if (!disposed && i >= 0) host.command({ k: "selectAll", pane: i });
+    },
+    setInteractionMode(mode, o): void {
+      if (disposed) return;
+      host.command({
+        k: "setInteractionMode",
+        mode,
+        ...(o?.readOnly !== undefined && { readOnly: o.readOnly }),
+      });
+    },
+    focusObject(id, handle): void {
+      if (disposed) return;
+      host.command({ k: "focusObject", drawingId: id, ...(handle !== undefined && { handle }) });
+    },
+    nudgeSelection(bars, ticks): void {
+      if (!Number.isSafeInteger(bars) || !Number.isSafeInteger(ticks)) {
+        throw new RangeError("chart-engine: a nudge is whole bars and ticks");
+      }
+      if (!disposed) host.command({ k: "nudgeSelection", bars, ticks });
+    },
+    deleteSelection(): void {
+      if (!disposed) host.command({ k: "deleteSelection" });
+    },
+    cancelDrag(): void {
+      if (!disposed) host.command({ k: "cancelDrag" });
+    },
+    getDrawingBounds(ids): Promise<DrawingBounds[]> {
+      if (disposed) return Promise.resolve([]);
+      boundsSeq += 1;
+      const reqId = boundsSeq;
+      return new Promise((resolve) => {
+        boundsReplies.set(reqId, resolve);
+        host.command({ k: "boundsOf", ids: [...ids], reqId });
+      });
+    },
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      for (const done of boundsReplies.values()) done([]);
+      boundsReplies.clear();
       for (const pane of [...panes]) pane.remove();
       listeners.clear();
       detachInput();

@@ -208,14 +208,22 @@ describe("Scenario: The package builds and exports the designed surface", () => 
   it("keeps the Chart and Pane members of §8 (plus BQ-3's accessibility queries)", () => {
     expect(Object.keys(surface.members("Chart")).sort()).toEqual([
       "addPane",
+      "cancelDrag", // E14-T04 (#359): the drawing selection and its keyboard parity
+      "deleteSelection",
       "dispose",
+      "focusObject",
       "getDomMirrorRoot",
+      "getDrawingBounds",
       "getFocusedUnit",
       "getStats",
       "getVisibleWindow",
+      "nudgeSelection",
       "panes",
       "removePane",
+      "selectAll",
       "setDensity",
+      "setInteractionMode",
+      "setSelection",
       "setTheme",
       "subscribe",
       "takeScreenshot",

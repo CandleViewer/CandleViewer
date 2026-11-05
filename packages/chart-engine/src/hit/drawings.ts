@@ -8,7 +8,8 @@
 // allocates nothing. Rays and extended lines are clipped to the plot first (ticket Technical
 // notes). A hidden drawing is kept here but never in the index; one handle per anchor.
 import { indexAt, priceToScreen, timeAt, timeToScreen } from "../viewport/transform.js";
-import { clipToBox, distToEllipse, distToSegment } from "./geometry.js";
+import type { IndexTimeMap } from "../viewport/types.js";
+import { clipToBox, distToEllipse, distToRect, distToSegment } from "./geometry.js";
 import type { Anchor, ObjectIndex, PickGeometry } from "./ObjectIndex.js";
 
 /**
@@ -74,7 +75,7 @@ const SEG = new Float64Array(4);
 export class DrawingAdapter {
   private readonly records = new Map<string, DrawingRecord>();
 
-  constructor(private readonly index: ObjectIndex) {}
+  constructor(readonly index: ObjectIndex) {}
 
   get size(): number {
     return this.records.size;
@@ -188,6 +189,87 @@ export class DrawingAdapter {
     }
   }
 
+  /**
+   * Published bounds (E11-S13 G-22, focus rings): the index's box, and for an extended line its
+   * part inside the plot. `out` gets [x0, y0, x1, y1]; false for an unknown or hidden drawing.
+   */
+  bounds(rec: DrawingRecord, out: number[]): boolean {
+    if (!rec.visible || !this.index.boundsOf(rec.id, out)) return false;
+    if (rec.family !== LINE) return true;
+    const xy = this.project(rec);
+    this.clipBox(0);
+    if (!this.clipLine(xy)) return true;
+    const pad = rec.widthPx / 2;
+    out[0] = Math.min(SEG[0] as number, SEG[2] as number) - pad;
+    out[1] = Math.min(SEG[1] as number, SEG[3] as number) - pad;
+    out[2] = Math.max(SEG[0] as number, SEG[2] as number) + pad;
+    out[3] = Math.max(SEG[1] as number, SEG[3] as number) + pad;
+    return true;
+  }
+
+  /** Select area (D02 §5.5): does the drawing's geometry meet the box [x0, y0, x1, y1]? */
+  intersects(rec: DrawingRecord, x0: number, y0: number, x1: number, y1: number): boolean {
+    const xy = this.project(rec);
+    CLIP[0] = Math.min(x0, x1);
+    CLIP[1] = Math.min(y0, y1);
+    CLIP[2] = Math.max(x0, x1);
+    CLIP[3] = Math.max(y0, y1);
+    const [ax, ay, bx, by] = [xy[0] as number, xy[1] as number, xy[2] as number, xy[3] as number];
+    const clip = (px: number, py: number, qx: number, qy: number, lo: number, hi: number) =>
+      clipToBox(px, py, qx, qy, lo, hi, CLIP, SEG);
+    switch (rec.family) {
+      case POINT:
+        return distToRect(ax, ay, CLIP[0], CLIP[1], CLIP[2], CLIP[3]) === 0;
+      case HLINE:
+        return ay >= CLIP[1] && ay <= CLIP[3];
+      case VLINE:
+        return ax >= CLIP[0] && ax <= CLIP[2];
+      case RAY:
+        return clip(ax, ay, bx, by, 0, Infinity);
+      case LINE:
+        return clip(ax, ay, bx, by, -Infinity, Infinity);
+      case BOX:
+      case ELLIPSE: {
+        const ox = Math.max(Math.min(ax, bx), CLIP[0]);
+        const oy = Math.max(Math.min(ay, by), CLIP[1]);
+        const overlap =
+          ox <= Math.min(Math.max(ax, bx), CLIP[2]) && oy <= Math.min(Math.max(ay, by), CLIP[3]);
+        if (!overlap || rec.family === BOX) return overlap;
+        // The rect's point nearest the centre lies in the ellipse when they meet.
+        const cx = Math.min(Math.max((ax + bx) / 2, CLIP[0]), CLIP[2]);
+        const cy = Math.min(Math.max((ay + by) / 2, CLIP[1]), CLIP[3]);
+        return distToEllipse(cx, cy, ax, ay, bx, by) === 0;
+      }
+      case FIB: {
+        const [xl, xh] = xSpan(xy); // every anchor's x, as the pick measures the levels
+        for (let i = 0; i < rec.levels.length; i += 1) {
+          const ly = this.levelY(rec, i);
+          if (clip(xl, ly, xh, ly, 0, 1)) return true;
+        }
+        return clip(ax, ay, bx, by, 0, 1);
+      }
+      case CHANNEL: {
+        const [cx, cy] = xy.length >= 6 ? [xy[4] as number, xy[5] as number] : [ax, ay];
+        return clip(ax, ay, bx, by, 0, 1) || clip(cx, cy, cx + bx - ax, cy + by - ay, 0, 1);
+      }
+      default:
+        for (let i = 0; i + 3 < xy.length; i += 2) {
+          if (
+            clip(
+              xy[i] as number,
+              xy[i + 1] as number,
+              xy[i + 2] as number,
+              xy[i + 3] as number,
+              0,
+              1,
+            )
+          )
+            return true;
+        }
+        return false;
+    }
+  }
+
   private register(rec: DrawingRecord): void {
     this.index.registerPickable({
       id: rec.id,
@@ -278,17 +360,19 @@ export class DrawingAdapter {
   /** Each level is a horizontal segment over the anchors' x span; the leg counts too. */
   private fibDistance(rec: DrawingRecord, x: number, y: number): number {
     const xy = rec.xy;
-    let [xl, xh] = [Infinity, -Infinity];
-    for (let i = 0; i < xy.length; i += 2) {
-      xl = Math.min(xl, xy[i] as number);
-      xh = Math.max(xh, xy[i] as number);
-    }
+    const [xl, xh] = xSpan(xy);
     let d = distToSegment(x, y, xy[0] as number, xy[1] as number, xy[2] as number, xy[3] as number);
     for (let i = 0; i < rec.levels.length; i += 1) {
       const ly = this.levelY(rec, i);
       d = Math.min(d, distToSegment(x, y, xl, ly, xh, ly));
     }
     return d;
+  }
+
+  /** The extended line through the first two anchors, clipped into SEG; false off the box. */
+  private clipLine(xy: Float64Array): boolean {
+    const [ax, ay, bx, by] = [xy[0] ?? 0, xy[1] ?? 0, xy[2] ?? 0, xy[3] ?? 0];
+    return clipToBox(ax, ay, bx, by, -Infinity, Infinity, CLIP, SEG);
   }
 
   /** The plot box padded by `pad` px: what lies past it cannot be within tolerance. */
@@ -302,6 +386,22 @@ export class DrawingAdapter {
   }
 }
 
+/** The x span [min, max] of projected anchors `[x, y, …]` (fib levels run across it). */
+const SPAN: [number, number] = [0, 0];
+const xSpan = (xy: Float64Array): [number, number] => {
+  SPAN[0] = Infinity;
+  SPAN[1] = -Infinity;
+  for (let i = 0; i < xy.length; i += 2) {
+    SPAN[0] = Math.min(SPAN[0], xy[i] as number);
+    SPAN[1] = Math.max(SPAN[1], xy[i] as number);
+  }
+  return SPAN;
+};
+
 /** The distance to the clipped segment in SEG. */
 const segDist = (x: number, y: number): number =>
   distToSegment(x, y, SEG[0] as number, SEG[1] as number, SEG[2] as number, SEG[3] as number);
+
+/** Moves a time by whole or fractional bars through the map (gaps keep their spacing). */
+export const shiftTime = (map: IndexTimeMap, t: number, bars: number): number =>
+  bars === 0 ? t : timeAt(map, indexAt(map, t) + bars);

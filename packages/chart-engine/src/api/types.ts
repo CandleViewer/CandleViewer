@@ -40,6 +40,16 @@ export interface Chart {
   getDomMirrorRoot(): HTMLElement;
   getVisibleWindow(): VisibleWindow | null;
   getFocusedUnit(): FocusedUnit | null;
+  // E14-T04 (#359, additive; 26 §8): the worker owns the drawing selection; keyboard parity.
+  // Ids are the E14-T02 store's stable local `Handle`, never the server id.
+  setSelection(ids: readonly string[], op: "replace" | "add" | "toggle" | "clear"): void;
+  selectAll(pane?: PaneId): void; // every visible drawing on the pane (default: the first)
+  setInteractionMode(mode: "cursor" | "select-area", opts?: { readOnly?: boolean }): void;
+  focusObject(id: string | null, handle?: number): void; // the same `selection` as a press
+  nudgeSelection(bars: number, ticks: number): void; // whole bars / ticks; one `commit`
+  deleteSelection(): void; // one `commit { intent: "delete" }`
+  cancelDrag(): void; // Esc mid-drag: the pre-drag geometry; no commit and no event
+  getDrawingBounds(ids: readonly string[]): Promise<DrawingBounds[]>;
 }
 
 // E14-T04: anchors in engine units, µs time and ticks (the host maps them to the store's points,

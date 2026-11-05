@@ -8,6 +8,7 @@ import {
   ObjectIndex,
   PICK_BUDGET,
   createPickHit,
+  shiftTime,
   type DrawingPickSource,
 } from "../../src/hit/index.js";
 import { priceToScreen, timeToScreen } from "../../src/viewport/index.js";
@@ -166,6 +167,7 @@ describe("Scenario: Hidden objects are not pickable / locked are", () => {
     const { drawings, add, at, pick } = setup();
     const rec = add("h", "trendline", [9_890, 1_000, 9_910, 1_000], { visible: false });
     expect(pick(...at(9_900, 1_000)).id).toBeNull();
+    expect(drawings.bounds(rec, [])).toBe(false);
     drawings.setVisible(rec, true);
     expect(pick(...at(9_900, 1_000)).id).toBe("h");
     drawings.setVisible(rec, false);
@@ -208,6 +210,53 @@ describe("Scenario: Touch tolerance differs from pointer", () => {
     expect(pick(x, y + 12.5, "mouse").id).toBeNull();
     index.handleHalfPx = 20; // ThemeMetrics.handleTargetPx 40
     expect(pick(x, y + 19, "mouse")).toMatchObject({ part: "handle", handle: 0 });
+  });
+});
+
+describe("bounds and select area", () => {
+  it("publishes a box per drawing; an extended line's spans the plot", () => {
+    const { viewport, drawings, add } = setup();
+    const out: number[] = [];
+    expect(drawings.bounds(add("x", "extended_line", [9_900, 1_000, 9_901, 1_000]), out)).toBe(
+      true,
+    );
+    expect(out[0]).toBeCloseTo(-1, 6);
+    expect(out[2]).toBeCloseTo(viewport.plotWidth + 1, 6);
+  });
+
+  it("intersects by geometry, not by box: a diagonal misses a box it only spans", () => {
+    const { drawings, add, at } = setup();
+    const t = add("t", "trendline", [9_880, 800, 9_920, 1_200]);
+    const [x0, y0] = at(9_881, 1_150);
+    const [x1, y1] = at(9_890, 1_190);
+    expect(drawings.intersects(t, x0, y0, x1, y1)).toBe(false); // inside its box, off the line
+    const [mx, my] = at(9_900, 1_000);
+    expect(drawings.intersects(t, mx - 5, my - 5, mx + 5, my + 5)).toBe(true);
+    const e = add("e", "ellipse", [9_880, 800, 9_920, 1_200]);
+    const [cx, cy] = at(9_880, 1_200);
+    expect(drawings.intersects(e, cx - 2, cy - 2, cx + 2, cy + 2)).toBe(false); // the corner
+    expect(drawings.intersects(e, mx - 2, my - 2, mx + 2, my + 2)).toBe(true);
+    const h = add("h", "horizontal_line", [9_900, 1_000]);
+    expect(drawings.intersects(h, 0, my - 1, 10, my + 1)).toBe(true);
+    const f = add("f", "fib_retracement", [9_880, 0, 9_920, 2_000], { levels: [0.5] });
+    expect(drawings.intersects(f, mx - 2, my - 2, mx + 2, my + 2)).toBe(true);
+  });
+
+  it("marquee = pick: a fib extension past its leg; a 2-anchor channel", () => {
+    const { drawings, add, at, pick } = setup();
+    const x = add("x", "fib_extension", [9_880, 0, 9_890, 400, 9_900, 200], { levels: [1] });
+    const [lx, ly] = at(9_895, 600); // level 1, past the first leg's x span
+    expect(pick(lx, ly).id).toBe("x");
+    expect(drawings.intersects(x, lx - 2, ly - 2, lx + 2, ly + 2)).toBe(true);
+    const c = add("c", "parallel_channel", [9_880, 1_500, 9_920, 1_500]);
+    const [cx, cy] = at(9_900, 1_500);
+    expect(drawings.intersects(c, cx - 2, cy - 2, cx + 2, cy + 2)).toBe(true);
+  });
+
+  it("moves a time by bars through the map", () => {
+    const { viewport } = setup();
+    expect(shiftTime(viewport.map, T(100), 5)).toBe(T(105));
+    expect(shiftTime(viewport.map, T(100), 0)).toBe(T(100));
   });
 });
 
