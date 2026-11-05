@@ -115,13 +115,68 @@ def test_the_guard_reads_memory_and_imports_no_write_or_exchange_port() -> None:
     froms = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
     assert {(n.module, a.name) for n in froms if n.module != "typing" for a in n.names} == {
         ("__future__", "annotations"), ("candleviewer.accounts.profiles", "AccountProfile"),
+        ("collections.abc", "Callable"), ("contextlib", "suppress"),
         ("candleviewer.domain.events", "Instrument"), ("candleviewer.oms", "ports"),
         ("candleviewer.oms.errors", "OmsNotReady"), ("candleviewer.risk.models", "RiskRefusal"),
     }  # fmt: skip
     read = {n.attr for n in ast.walk(tree)
             if isinstance(n, ast.Attribute) and ast.unparse(n.value) == "ports"}  # fmt: skip
-    assert read == {"RiskGate", "SizedOrder", "TradingSwitches"}
+    assert read == {"OrderEffect", "RiskGate", "SizedOrder", "TradingSwitches"}
     assert {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names} == {
         "structlog"
     }
     assert not [n for n in ast.walk(tree) if isinstance(n, ast.Await | ast.AsyncFunctionDef)]
+
+
+@pytest.mark.parametrize("raising", ["gate", "switch"])
+def test_a_raising_port_counts_fail_closed(raising: str) -> None:
+    """E28-T04 BQ-8(a): a guard port that raised refuses the leg and is counted fail-closed
+    (`cv_risk_guard_fail_closed_total`, wired by the composition root); a refusal it answered,
+    a fence included, is not."""
+    counted: list[int] = []
+    fault = RuntimeError("down")
+    gate, switch = (_Port(fault), None) if raising == "gate" else (None, fault)
+    held = guard.S4SGuard(
+        gate or ports.InterimRiskGate(now=lambda: NOW), _Port(switch),
+        fail_closed=lambda: counted.append(1),
+    )  # fmt: skip
+    assert held.refusal(_order(), profile=profile(), instrument=instrument()) == (
+        "risk_state_unavailable"
+    )
+    fenced = guard.S4SGuard(
+        _Port(ALLOWED), _Port(OmsNotReady()), fail_closed=lambda: counted.append(1)
+    )
+    assert fenced.refusal(_order(), profile=profile(), instrument=instrument()) == (
+        "trading_disabled"
+    )
+    assert counted == [1]
+
+
+def test_a_raising_port_on_a_reduce_leg_is_not_counted() -> None:
+    """Code review 3 on #908: only a position-opening leg's refusal is fail-closed (BQ-8(a)); a
+    reduce leg whose port raised is refused, never counted."""
+    counted: list[int] = []
+    held = guard.S4SGuard(
+        _Port(RuntimeError("down")), _Port(), fail_closed=lambda: counted.append(1)
+    )
+    reduce = _order(
+        side="sell", reduce_only=True, intent="exit", stop_loss=None,
+        effect=ports.OrderEffect.REDUCE,
+    )  # fmt: skip
+    assert held.refusal(reduce, profile=profile(), instrument=instrument()) == (
+        "risk_state_unavailable"
+    )
+    assert counted == []
+
+
+def test_a_raising_counter_still_refuses_the_leg() -> None:
+    """Fable 3 on #908: `LegGuard` must not raise; a fail-closed counter that raises inside the
+    port's except handler still leaves the leg refused `risk_state_unavailable`."""
+
+    def broken() -> None:
+        raise RuntimeError("the registry is gone")
+
+    held = guard.S4SGuard(_Port(RuntimeError("down")), _Port(), fail_closed=broken)
+    assert held.refusal(_order(), profile=profile(), instrument=instrument()) == (
+        "risk_state_unavailable"
+    )

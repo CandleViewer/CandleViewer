@@ -250,6 +250,7 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
     r["cv_tradegroup_preview_total"].labels("rate_limited").inc()
     r["cv_tradegroup_legs_skipped_total"].labels("symbol_not_allowed").inc()
     r["cv_override_refused_total"].labels("max_leverage_cap").inc()
+    r["cv_risk_guard_refusals_total"].labels("symbol").inc()  # E28-T04 (#908)
     r["ticker_bulk_cache_refresh_total"].labels("ok").inc()
     r["scanner_evaluations_total"].labels("ok").inc()
     r["cv_tradegroup_ws_frames_total"].labels("delta").inc()

@@ -718,7 +718,8 @@ def test_an_unlisted_symbol_is_refused_with_risk_limit_breached() -> None:
     eth = _instrument(symbol="ETHUSDT", base_coin="ETH")
     with pytest.raises(RiskRefused) as refused:
         _check(_order(symbol="ETHUSDT"), instrument=eth)
-    assert refused.value.errors == ()
+    assert _rules(refused.value) == [("symbol", "symbol_not_allowed")]  # its gate (E28-T04)
+    assert refused.value.cap == "symbol_not_allowed"
     assert refused.value.detail == "The account's profile does not allow this symbol."
 
 
@@ -735,6 +736,32 @@ def test_all_symbols_allows_every_symbol_but_the_denied() -> None:
 def test_a_suffix_pattern_matches_a_trading_usdt_perpetual() -> None:
     profile = _profile("fixed_notional")  # allowed_symbols: ["*USDT"]
     assert symbol_allowed(profile, _instrument(symbol="SOLUSDT", base_coin="SOL"))
+
+
+def test_a_suffix_pattern_admits_a_symbol_listed_after_the_save() -> None:
+    """AC3 (E28-T04, SR-E28-06): the pattern is expanded at check time, never at save time, so
+    a USDT perpetual listed after the profile was saved is admitted by `*USDT`; one the pattern
+    does not match is refused, its gate named."""
+    saved = _profile("fixed_notional")  # allowed_symbols: ["*USDT"], validated as saved
+    newer = _instrument(symbol="NEWCOINUSDT", base_coin="NEWCOIN", launch_time=1_800_000_000_000)
+    _check(_order(symbol="NEWCOINUSDT"), instrument=newer, profile=saved)
+    other = _instrument(symbol="NEWCOINUSDC", base_coin="NEWCOIN", quote_coin="USDC")
+    with pytest.raises(RiskRefused) as refused:
+        _check(_order(symbol="NEWCOINUSDC"), instrument=other, profile=saved)
+    assert _rules(refused.value) == [("symbol", "symbol_not_allowed")]
+
+
+def test_a_symbol_on_the_block_list_is_refused_naming_symbol_denied() -> None:
+    with pytest.raises(RiskRefused) as refused:
+        _check(profile=_profile("pct_equity", denied_symbols=["BTCUSDT"]))
+    assert _rules(refused.value) == [("symbol", "symbol_denied")]
+
+
+def test_an_entry_without_a_profile_names_profile_disabled() -> None:
+    validator = Validator(read_only_gate=_Gate())
+    with pytest.raises(RiskRefused) as refused:
+        validator.check_order(_order(), instrument=_instrument(), profile=None)
+    assert refused.value.cap == "profile_disabled"
 
 
 @pytest.mark.parametrize(
@@ -781,7 +808,7 @@ def test_an_entry_under_a_profile_not_enabled_for_trading_is_refused(
     profile = _profile(enabled=enabled, trading_enabled=trading_enabled)
     with pytest.raises(RiskRefused) as refused:
         _check(profile=profile)
-    assert refused.value.errors == ()
+    assert _rules(refused.value) == [("symbol", "profile_disabled")]  # its gate (E28-T04)
     assert refused.value.detail == "The account's profile is not enabled for trading."
 
 

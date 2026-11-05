@@ -26,6 +26,7 @@ from candleviewer.api.order_exits_common import exit_fault, exit_response, run_c
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.exchange.base.fakes import FakeReject
+from candleviewer.oms import ports
 from candleviewer.oms.errors import (
     OMS_NOT_READY_RETRY_AFTER_S,
     AccountScopeDenied,
@@ -974,3 +975,29 @@ async def test_a_stale_account_refuses_a_risk_increasing_amend_and_never_a_reduc
     assert (up.kind, up.status) == ("refused", 403) and amends(rig) == []
     down = await exits.amend(found, AmendTerms(qty=D("0.009")), caller=CALLER, expected_seq=None)
     assert down.kind == "accepted" and len(amends(rig)) == 1
+
+
+async def test_a_live_reduce_only_amend_passes_the_interim_risk_gate_and_an_entry_amend_does_not(
+    rig: SubmitRig,
+) -> None:
+    """Fable 4 on #908 (E28-T04): on a non-demo process the interim risk gate (`InterimRiskGate`,
+    until E39-S01 #954) refuses a risk-increasing entry amend `403 risk_limit_breached`, recorded,
+    nothing sent; a reduce-only amend's order (effect `REDUCE`) passes the same gate at the amend's
+    risk step (`OrderExits._gated`), as every reduce-only order does (C-2.6, 24 Sec.8.4)."""
+    found = await scoped(rig)
+    gate = ports.InterimRiskGate(now=lambda: cr.T0)
+    exits = exits_of(rig, environment="live", risk_gate=gate)
+    up = await exits.amend(found, AmendTerms(qty=D("0.011")), caller=CALLER, expected_seq=None)
+    assert (up.kind, up.status, up.code) == ("refused", 403, "risk_limit_breached")
+    assert amends(rig) == [] and requests(rig, "orders.amend") == [
+        ("denied", "risk_limit_breached")
+    ]
+    instrument = sr.instrument()
+    reduce = ports.SizedOrder(
+        account_id=cr.ACCOUNT, environment="live", symbol=instrument.symbol, side="sell",
+        order_type="limit", qty=D("0.005"), price=D("60100"), trigger_price=None,
+        reference_price=D("60100"), reduce_only=True, intent="exit",
+        effect=ports.OrderEffect.REDUCE, stop_loss=None,
+    )  # fmt: skip
+    assert gate.check(reduce, profile=sr.profile()).allowed is True
+    assert await exits._gated(found, reduce, instrument) is None

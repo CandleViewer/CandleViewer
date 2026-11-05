@@ -401,6 +401,7 @@ async def test_submit_a_turn_not_had_in_time_is_503_and_holds_nothing(rig: Submi
     await held.acquire()  # another entry of the account holds its turn
     refused = await _refused(rig, _by_profile())
     assert isinstance(refused, SizingUnavailable) and refused.retry_after_s == 1
+    assert rig.count("cv_risk_guard_fail_closed_total") == 1  # ruling (i), 6627610242
     held.release()
     assert _free(rig)
 

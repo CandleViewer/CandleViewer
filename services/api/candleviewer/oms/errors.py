@@ -344,8 +344,10 @@ class RiskRefused(OrderRefused):
     profile does not allow the symbol. `cap` names the limit that refused it, for a rule action's
     `blocked_by = cap` (24 Sec.8.4 "Rule-originated orders" item 5): the risk gate's
     `RiskDecision.cap` when given, else the rule of the first field the size step judged
-    (`errors`), else None. It is read in process only; the route's problem body never carries
-    it."""
+    (`errors`), else None. `limit` and `observed` are the risk gate's figures for that cap
+    (`RiskDecision.limit` / `.actual`), which the refusal's record carries for a profile cap only,
+    never a price or a quantity (24 Sec.15.5, E28-T04). All three are read in process only; the
+    route's problem body never carries them."""
 
     default_detail = "The account's risk limits or profile do not allow this order."
 
@@ -355,9 +357,12 @@ class RiskRefused(OrderRefused):
         *,
         errors: Iterable[FieldError] = (),
         cap: str | None = None,
+        limit: Decimal | None = None,
+        observed: Decimal | None = None,
     ) -> None:
         super().__init__(detail, errors=errors)
         self.cap: str | None = cap if cap is not None else next((e.rule for e in self.errors), None)
+        self.limit, self.observed = limit, observed
 
 
 class TradingDisabled(OrderRefused):
@@ -510,14 +515,21 @@ class SizingUnavailable(OrderRefused):
     """`sizing_unavailable` (#913 S4-S ruling Q5): a figure the size step needs (the day's loss,
     the committed risk, the fee rate, the margin) cannot be read yet (`figure_unknown`), so nothing
     was recorded or sent; never a venue outage. `retry_after_s` is the answer's `Retry-After`.
-    `detail` is `DETAIL_TIERS_PENDING` when the symbol's tiers are being fetched, else the default
-    sentence (22 `placeOrder`)."""
+    `detail` is `DETAIL_TIERS_PENDING` when the symbol's tiers are being fetched and its
+    maintenance margin rate is the only figure unknown, else the default sentence (22
+    `placeOrder`). `tiers_pending` is the typed cause of that case: the by-design
+    lazy tier fetch (S4-S-d), a transient no input outage explains, so the order-path guard does
+    not count it fail-closed (E28-T04 BQ-8(a), `cv_risk_guard_fail_closed_total`). Once the
+    symbol's last tier fetch has failed the `detail` stays and `tiers_pending` is False: counted."""
 
     default_detail = "The order cannot be sized yet, so it was not sent."
 
-    def __init__(self, *, retry_after_s: int, detail: str | None = None) -> None:
+    def __init__(
+        self, *, retry_after_s: int, detail: str | None = None, tiers_pending: bool = False
+    ) -> None:
         super().__init__(detail)
         self.retry_after_s = _positive_delay(retry_after_s)
+        self.tiers_pending = tiers_pending
 
 
 class EnvironmentMismatch(OmsError):

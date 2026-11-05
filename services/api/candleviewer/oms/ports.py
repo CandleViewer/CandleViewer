@@ -355,12 +355,22 @@ class TierRequests(Protocol):
 
     def request_tiers(self, symbol: Symbol) -> None: ...
 
+    def tiers_failed(self, symbol: Symbol) -> bool:
+        """Whether the symbol's last tier fetch failed, no fetch succeeding since: a memory read of
+        the catalogue (no I/O). False while the symbol was not yet asked or its fetch is pending,
+        so only then is a missing rate `tiers_pending`; a fetch that keeps failing is counted
+        fail-closed (`cv_risk_guard_fail_closed_total`)."""
+        ...
+
 
 class NoTierRequests:
-    """`TierRequests` where no catalogue is composed: every request is a no-op."""
+    """`TierRequests` where no catalogue is composed: every request is a no-op, no fetch fails."""
 
     def request_tiers(self, symbol: Symbol) -> None:
         return None
+
+    def tiers_failed(self, symbol: Symbol) -> bool:
+        return False
 
 
 #: The no-op the pipeline holds until its composition binds the bridge.
@@ -1001,15 +1011,19 @@ class InterimRiskGate(Interim):
     port: ClassVar[PortName] = "risk_gate"
     replaced_by: ClassVar[str] = "E39-S01 (#954)"
     serves: ClassVar[str] = (
-        "admits demo orders without a risk evaluation; refuses every other environment's"
+        "admits demo orders and every order that only reduces without a risk evaluation; refuses "
+        "every other environment's entries"
     )
 
     def __init__(self, *, now: Callable[[], datetime]) -> None:
         self._now = now
 
     def check(self, order: SizedOrder, *, profile: AccountProfile | None) -> RiskDecision:
+        """A `REDUCE` order is admitted in every environment (`reduce_exemptions.EXEMPTIONS`,
+        the risk gate's row; C-2.6: a protective close is never refused for a risk state this
+        gate cannot read). The effect is compared by identity, so any other value fails closed."""
         evaluated_at = self._now()
-        if order.environment in _UNEVALUATED:
+        if order.environment in _UNEVALUATED or order.effect is OrderEffect.REDUCE:
             return RiskDecision(allowed=True, evaluated_at=evaluated_at)
         return RiskDecision(
             allowed=False,

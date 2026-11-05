@@ -11,6 +11,8 @@ import pytest
 from candleviewer.account_health_wiring import HEALTH_SERIES, NOTICE_STATES
 from candleviewer.accounts.health import HealthState
 from candleviewer.accounts.key_age import RotationState
+from candleviewer.observability.metrics import Metrics
+from candleviewer.observability.metrics_catalogue import CATALOGUE, register_r0
 from tests.unit.observability.test_auth_backstop_alert_rules import _route_for, _rule
 
 _GAUGE = 'cv_account_health_state{state="down",reason="no_success"}'
@@ -51,9 +53,26 @@ def test_a_key_rotation_ticket_reads_its_notices_and_is_held_past_the_mute(
         "cv_account_health_state",
         "cv_account_health_transitions_total",
         "cv_key_rotation_notices_total",
+        "cv_risk_guard_fail_closed_total",
     ],
 )
 def test_every_series_an_account_rule_reads_has_an_absent_guard(series: str) -> None:
     guard = "ExpectedMetricMissing" + "".join(part.title() for part in series.split("_"))
     rule = _rule(guard)
     assert (rule["expr"], rule["labels"]["severity"]) == (f"absent({series})", "ticket")
+
+
+def test_risk_guard_fail_closed_pages_any_increase_of_the_unlabelled_counter() -> None:
+    """#908 (E28-T04, PF-D03, BQ-7(a)): the page reads the one label-less counter the pipeline and
+    the leg guard increment, bound at 0 from process start (`register_r0`), so the first refusal is
+    an increase; never per account (SR-125)."""
+    rule = _rule("RiskGuardFailClosed")
+    increase = "increase(cv_risk_guard_fail_closed_total[5m])"
+    assert rule["expr"] == f"sum by (env) ({increase}) > 0"
+    page = {"severity": "page", "component": "risk_guard"}
+    assert (rule["for"], rule["labels"]) == ("0m", page)
+    route = _route_for({**rule["labels"], "alertname": "RiskGuardFailClosed", "env": "live"})
+    assert route["receiver"] == "page" and "mute_time_intervals" not in route
+    (spec,) = [s for s in CATALOGUE if s.name == "cv_risk_guard_fail_closed_total"]
+    assert (spec.labels, spec.status, spec.exported) == ((), "live", False)
+    assert "cv_risk_guard_fail_closed_total" in register_r0(Metrics("live"))

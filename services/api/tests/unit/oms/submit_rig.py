@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from functools import partial
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 from uuid import UUID
 
 from prometheus_client import generate_latest
@@ -36,7 +36,9 @@ from candleviewer.oms.order_machine import OrderMachinePorts, OrderMachines
 from candleviewer.oms.order_steps import OrderStepWriter
 from candleviewer.oms.ports import (
     FiguresReading,
+    Interim,
     MarketReading,
+    PortName,
     SizedOrder,
     SizingRequest,
     StopOffset,
@@ -230,12 +232,17 @@ class Figures:
 
 @dataclass
 class TierAsks:
-    """`TierRequests` that lists each symbol asked for, in order."""
+    """`TierRequests` that lists each symbol asked for, in order; `failed` holds the symbols whose
+    last tier fetch failed."""
 
     asked: list[Symbol] = field(default_factory=list)
+    failed: set[Symbol] = field(default_factory=set)
 
     def request_tiers(self, symbol: Symbol) -> None:
         self.asked.append(symbol)
+
+    def tiers_failed(self, symbol: Symbol) -> bool:
+        return symbol in self.failed
 
 
 @dataclass
@@ -348,6 +355,15 @@ class Risk:
         self.seen.append(order)
         decision: RiskDecision = self.inner.check(order, profile=profile)
         return decision
+
+
+class InterimRisk(Risk, Interim):
+    """`Risk` over the interim gate, still an `Interim` port: its by-design refusals are not
+    counted fail-closed (E28-T04 BQ-8(a))."""
+
+    port: ClassVar[PortName] = "risk_gate"
+    replaced_by: ClassVar[str] = "E39-S01 (#954)"
+    serves: ClassVar[str] = "the rig's interim risk gate"
 
 
 class FlakyLookup:
@@ -469,7 +485,7 @@ def build_rig(
         return cr.EPOCH + timedelta(microseconds=port.now.us)
 
     ports = SubmissionPorts.interim(now=now)
-    recording = Risk(risk if risk is not None else ports.risk_gate)
+    recording = Risk(risk) if risk is not None else InterimRisk(ports.risk_gate)
     ports = replace(ports, risk_gate=recording)
     instruments, prices, profiles, held = Instruments(), Prices(), Profiles(), Figures()
     groups, tiers = Groups(store), TierAsks()

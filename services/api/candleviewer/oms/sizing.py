@@ -13,8 +13,10 @@ risk was computed from, so the sizer is an entry's one stop source; `NativeStopG
 it (C-2.6). Each outcome but `ok` is one answer (22 `placeOrder`'s mapping), before anything is
 recorded or sent. A `figure_unknown` whose symbol's maintenance margin rate is unknown (its tiers
 missing from the catalogue) first requests the symbol's tiers (`TierRequests`, 24 Sec.9.3.6), never
-awaited, and is `503 sizing_unavailable` with `detail` `tiers_pending`. Every leg the answer rests
-on is recorded in `cv_sizer_*`.
+awaited, and is `503 sizing_unavailable` with `detail` `tiers_pending`; it is typed
+`tiers_pending` (not counted fail-closed) only while the symbol's last tier fetch has not failed
+(`TierRequests.tiers_failed`, a memory read). Every leg the answer rests on is recorded in
+`cv_sizer_*`.
 
 The judged path is taken when the request names a sizing value, a `max_notional_usd`, a stop or a
 take-profit, each of which the comparator judges: a `max_notional_usd` is refused when the leg is
@@ -233,6 +235,14 @@ def out_of_range(profile: AccountProfile, fields: dict[str, object]) -> OrderInv
     return _invalid("stop_loss", "profile_overlay", "The request's stop is out of range.")
 
 
+def _rate_alone_unknown(leg: LegSizing, figures: AccountFigures) -> bool:
+    """Whether a `figure_unknown` leg failed on the maintenance margin rate alone: `size_leg`
+    sets `initial_margin` only once steps 4 to 6 have read every other figure they need, and
+    the rate is the one figure it reads after the available margin. An unknown equity, committed
+    risk, realised loss, fee rate or available margin is a figure outage, never `tiers_pending`."""
+    return leg.initial_margin is not None and figures.available_margin is not None
+
+
 def _answered(leg: LegSizing) -> LegSizing:
     """The leg when `ok`, else its answer (22 `placeOrder`'s mapping)."""
     reason = leg.reason
@@ -324,9 +334,11 @@ class EntrySizer:
             if intent.stop_loss is None:
                 message = "No stop_loss supplied and the account profile defines no SL offset."
                 raise _invalid("stop_loss", RULE_NATIVE_STOP_REQUIRED, message)
-            raise RiskRefused("No profile allows this order.")
+            message = "No profile allows this order."
+            raise RiskRefused(message, errors=(FieldError("symbol", "profile_disabled", message),))
         if not (profile.enabled and profile.trading_enabled):  # before any figure is read
-            raise RiskRefused("The account's profile is not enabled for trading.")
+            message = "The account's profile is not enabled for trading."
+            raise RiskRefused(message, errors=(FieldError("symbol", "profile_disabled", message),))
         overlay = sizing_overlay(intent.sizing)
         named = (intent.sizing.max_notional_usd, intent.stop_loss, intent.take_profit)
         judged = overlay is not None or any(value is not None for value in named)
@@ -346,8 +358,13 @@ class EntrySizer:
         def answered(leg: LegSizing) -> LegSizing:
             if untiered and leg.reason is FailReason.FIGURE_UNKNOWN:
                 self._tier_requests.request_tiers(intent.symbol)  # never awaited, never raises
-                retry = SIZING_RETRY_AFTER_S
-                raise SizingUnavailable(retry_after_s=retry, detail=DETAIL_TIERS_PENDING)
+                if _rate_alone_unknown(leg, figures):  # else a figure outage too: plain 503
+                    # a fetch that failed is an outage that pages, not the lazy fetch (#908)
+                    pending = not self._tier_requests.tiers_failed(intent.symbol)
+                    retry = SIZING_RETRY_AFTER_S
+                    raise SizingUnavailable(
+                        retry_after_s=retry, detail=DETAIL_TIERS_PENDING, tiers_pending=pending
+                    )
             return _answered(leg)
 
         if not judged:
