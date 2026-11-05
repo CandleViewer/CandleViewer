@@ -5532,7 +5532,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "AuditSinkRefusing (any; ticket, page pending #2701)",
         _L,
         "E09",
-        max_series=44,  # one per `AUDIT_ACTIONS` domain; #915 adds `order` and `position`
+        max_series=45,  # one per `AUDIT_ACTIONS` domain; #981 adds `pnl`
         exported=True,
     ),
     _s(
