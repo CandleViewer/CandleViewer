@@ -20,3 +20,4 @@ rules:
         - "**/test_*.py"
         - "**/conftest.py"
         - "**/observability/context.py" # implements spawn() and the thread offloads (run_in_thread, thread_future, executor_future)
+        - "**/cvbackup/tasks.py" # the backup sidecar's spawn(): it may not import observability (ADR-0041)

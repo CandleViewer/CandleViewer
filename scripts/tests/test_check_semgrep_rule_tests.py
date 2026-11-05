@@ -136,13 +136,15 @@ def test_semgrepignore_fixture_entries_are_anchored_to_the_repo_root() -> None:
 def test_bare_create_task_rule_excludes_only_tests_and_the_module_that_implements_spawn() -> None:
     """#1822: `**/observability/**` hid five of the rule's nine first findings; only `context.py`,
     which implements `spawn()` and the thread offloads (`run_in_thread`, `thread_future`,
-    `executor_future`), is exempt."""
+    `executor_future`), is exempt; and the backup sidecar's `cvbackup/tasks.py`, its own `spawn()`,
+    since the sidecar may not import `candleviewer` (#3319, ADR-0041 section 1)."""
     text = (REPO_ROOT / ".semgrep" / "cv-bare-create-task.yml").read_text(encoding="utf-8")
     (rule,) = yaml.safe_load(text)["rules"]
     assert rule["paths"]["exclude"] == [
         "**/test_*.py",
         "**/conftest.py",
         "**/observability/context.py",
+        "**/cvbackup/tasks.py",
     ]
 
 
