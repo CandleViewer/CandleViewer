@@ -654,3 +654,24 @@ async def test_a_kept_loss_is_never_served_past_its_days_next_start() -> None:
     venue.records = [_closed("-30", MIDNIGHT + DAY)]
     assert (await _read(figures)).account.realised_loss_today == Decimal(30)
     assert venue.windows[-1] == (_us(MIDNIGHT + DAY - CLOSED_PNL_LOOKBACK), _us(MIDNIGHT + DAY))
+
+
+@pytest.mark.parametrize("crossing", ["closed_pnl", "fee_rate"], ids=["its_own_read", "kept"])
+async def test_a_read_across_its_days_next_start_answers_the_loss_unknown(crossing: str) -> None:
+    """Begun at the day's last instant, a read whose venue read completes at the day's
+    `next_start` answers the loss unknown, never the ended day's: one its own read summed, or one
+    kept inside `FIGURES_TTL_S` while the fee read of a symbol not yet read crossed it."""
+    venue, clock, wall = Venue(), Clock(), [MIDNIGHT + DAY - US]
+    figures = _figures(venue, clock, now=lambda: wall[0])
+    symbol: Symbol = "BTCUSDT"
+    if crossing == "fee_rate":
+        assert (await _read(figures)).account.realised_loss_today == Decimal(20)  # kept
+        symbol = "ETHUSDT"
+    venue.paused = {crossing}
+    async with asyncio.TaskGroup() as group:
+        read = group.create_task(figures.read(REF, [symbol], fallback_sl_offset_pct=FALLBACK))
+        await venue.entered.wait()
+        wall[0] = MIDNIGHT + DAY  # the day ends while the venue read is in flight
+        venue.release.set()
+    assert read.result().account.realised_loss_today is None
+    assert venue.calls.count("closed_pnl") == 1  # the kept loss was not read again
