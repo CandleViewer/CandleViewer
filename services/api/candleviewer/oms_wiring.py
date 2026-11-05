@@ -84,6 +84,7 @@ from candleviewer.oms.cancel_all import (
 from candleviewer.oms.cancel_all_coalescer import CancelAllCoalescer
 from candleviewer.oms.cancel_all_fold import CancelAllSpacer
 from candleviewer.oms.clock_halt import ClockHalt
+from candleviewer.oms.closed_pnl_compose import ClosedPnlComposer
 from candleviewer.oms.closed_pnl_sync import ClosedPnlSync, StoredCloses
 from candleviewer.oms.commands import NEVER_SENT_ALERT, OmsCommandPort
 from candleviewer.oms.day_figures import DayRiskFigures, Tiers
@@ -3457,15 +3458,20 @@ class OmsRuntime:
             # path stores asks it for a read, and so does each `resyncing`, ahead of the jobs'
             # request; a stand-in stays bare, so still announced. No flag (C-4.13): it writes only
             # records nothing serves yet. Its task, ended other than by its stop, is paged once and
-            # degrades `readyz` (24 Sec.8.12 "Readiness"); it never restarts itself.
+            # degrades `readyz` (24 Sec.8.12 "Readiness"); it never restarts itself. Its
+            # composition (slice 5b) walks the same store's fills, the funding interval read from
+            # the catalogue in place; no cap reads what it composes (`DayRiskFigures`: the venue).
             sync: ClosedPnlSync | None = None
             requests: ReconciliationRequests | None = None if reconcile is None else reconcile.jobs
             if stores.closed_pnl is not None:
                 ended = functools.partial(_page, self._pager, "oms_closed_pnl_sync_ended")
+                composer = ClosedPnlComposer(
+                    store=stores.closed_pnl, instruments=InstrumentsBinding(ingestion.instruments)
+                )
                 sync = ClosedPnlSync(
                     accounts=accounts, router=router, records=stores.closed_pnl,
                     closes=stores.executions, snapshots=snapshot_rows, metrics=metrics, now=wall,
-                    on_ended=ended, day_start=days.day_start,
+                    on_ended=ended, day_start=days.day_start, composer=composer,
                 )  # fmt: skip
                 fills.bind_stored(sync.stored)
                 if requests is not None:
