@@ -187,6 +187,9 @@ test("E42-S04 an expand at 200 rows: its scripting time, BQ-11's 8 ms check", as
   await expect(expander(page, 1_204_300)).toHaveAttribute("aria-expanded", "true");
   test.info().annotations.push({ type: "cv_audit_expand_ms", description: ms.toFixed(1) });
   test.info().annotations.push({ type: "cv_audit_200_rows_drawn_ms", description: String(drawn) });
+  // A-13 measure branch only: the figures in the job log (the report is not uploaded)
+  console.log(`cv_audit_expand_ms=${ms.toFixed(1)}`);
+  console.log(`cv_audit_200_rows_drawn_ms=${drawn}`);
 });
 
 test("E42-S04 no control on the page, a row or the drawer changes a record", async ({ page }) => {
