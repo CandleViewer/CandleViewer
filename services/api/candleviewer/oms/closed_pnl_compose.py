@@ -14,7 +14,8 @@ records settle, the pass's delta set (Q3), whose final rule it completes (Q4).
   (row 62). Every read names the account (C-12.4).
 - **One walk per key per pass.** The orders of a key that share a start share a walk, up to their
   last fill: a confirmed flat drops all a walk holds, so the key's walk taken in pieces between
-  its confirmed flats gives each close what one walk across them would, and walks no fill twice.
+  its confirmed flats gives each close what one walk across them would; the pieces overlap only
+  where an order's own fills straddle a flat, with the same closes.
   A walk is kept for the pass, so the settled step reuses the first step's unless it needs a
   fill past that walk's end, and a walk capped by a later sibling's fills is taken again for each
   earlier order, to that order's last fill.
@@ -303,6 +304,8 @@ class ComposePass:
         if a.held and (w is None or w.capped):  # no start, as when pruned, or past its cap: a
             return None  # held record is not written, keeping what an earlier walk composed
         f = await self._figures(a.symbol, closes)
+        # A held, unsettled record with no close this pass takes its last fill's time, which may
+        # move a provisional item's day until the read settles it; a settled row keeps the venue's.
         record = ComposedRecord(
             exchange_account_id=self._account, exchange_order_id=cast(str, a.exchange_order_id),
             symbol=a.symbol, side="long" if a.side == "Sell" else "short",

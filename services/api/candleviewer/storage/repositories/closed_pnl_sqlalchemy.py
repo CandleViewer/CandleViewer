@@ -243,7 +243,9 @@ def walk_fills_statement(
 ) -> sa.Select[Any]:
     """Row 58: the key's trade fills after `after`, in order, with their order rows; a fill with
     no order row too, which the walk must see. A row's group is its leg's when the leg is the
-    fill's own account's (C-12.4): another account's leg names none and drops no fill."""
+    fill's own account's (C-12.4): another account's leg names none and drops no fill. The order
+    joins by its key alone, the fill's FK: an account term there lets Postgres pick an
+    account-wide index of `orders` and filter the join, where row 58 reads the `orders` PK."""
     later = (
         _X.exec_ts > after.at if after.exec_id is None
         else sa.tuple_(_X.exec_ts, _X.exec_id) > sa.tuple_(after.at, after.exec_id)
