@@ -1,9 +1,18 @@
 /*
  * The statechart inspector's drawing (E42-S08 §4.4; E42-D05 §11 SI-4, §16): the chart beside its text list, the
- * diagram region and the SVG's marks. Tokens only (no hard-coded colour or spacing). The pairs these bind are pinned
- * at 3:1 or 4.5:1 in every theme by packages/ui/test/contrast/inspector-pairs.test.ts (axe sees no SVG stroke). No
- * transition or animation: reduced motion needs nothing here.
+ * diagram region and the SVG's marks; and the kind counters' headers. Tokens only (no hard-coded colour or spacing).
+ * The pairs these bind are pinned at 3:1 or 4.5:1 in every theme by packages/ui/test/contrast/inspector-pairs.test.ts
+ * (axe sees no SVG stroke). No transition or animation: reduced motion needs nothing here.
  */
+
+/*
+ * The kind counters' headers wrap, never cut (A-1137-d05): the counters are no grid, so a cut label would have no
+ * echo, and under WCAG 1.4.12 spacing "Dropped receipts" needs more than its column at 1280.
+ */
+.cv-inspector-counters .cv-table__label {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 
 /* The drawing beside its text list: side by side at 2560, stacked at 1280 and at 200 % (D05 §4.2). */
 .cv-inspector-chart {
