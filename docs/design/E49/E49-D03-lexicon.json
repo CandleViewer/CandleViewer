@@ -1,8 +1,8 @@
 {
   "pack": "E49-D03",
-  "version": "v2 (RULED, comment 6643525794)",
+  "version": "v3 (RULED, comment 6643525794; BQ-4 erratum 6648333489)",
   "base": "506c6e12f",
-  "header": "The machine-readable lexicon of E49-D03 (docs/design/E49/E49-D03.md section 3.1), the interface the E49-S06 banned-synonym lint reads (section 9); its schema is held by the pack's audit (G-SCHEMA). One approved UI term per concept, its scoped banned synonyms and a pointer to the concept's definition (04 section 17, 20 section 18) or its owner, never a second definition. A banned term matches as a whole word, case-insensitive, with an optional s / es / ed ending and a space or a hyphen between words, never inside a phrase the concept's optional unless list holds, and binds only inside its concept's scope. deck_hits lists every match in the merged copy decks at the base: [deck, key, term, verdict]; a verdict is 'other: <sense>' (out of the concept's scope) or 'P2' / 'P3' with its finding and A-row. A key is the JSON path of the string's parent, dot-joined (a JSONL row by its id). frozen lists the twelve read-aloud strings and their hooks (section 6.3). PROPOSED until the owner approves.",
+  "header": "The machine-readable lexicon of E49-D03 (docs/design/E49/E49-D03.md section 3.1, which also states its schema and the allow rule), the interface the E49-S06 banned-synonym lint reads (section 9). One approved UI term per concept, its scoped banned synonyms and a pointer to the concept's definition or owner, never a second definition. PROPOSED until the owner approves.",
   "concepts": [
     {
       "id": "L-01",
@@ -23,10 +23,10 @@
     {
       "id": "L-03",
       "concept": "Native SL (the protective order)",
-      "approved": "exchange-side stop-loss",
+      "approved": "exchange-side stop",
       "banned": ["exchange stop", "hard stop"],
-      "scope": "a string naming the protective order, never inside 'exchange stop-loss'; 'native SL' is the engineering term",
-      "owner": "`04` :2014; CONSTITUTION :128; `14` :3127",
+      "scope": "a string naming the protective order, never inside 'exchange stop-loss'; 'native SL' / 'native stop-loss' is the engineering term; 46 deck strings (12 decks) saying 'native stop(s)' / 'native stop-loss' / 'native SL' are tolerated engineering wording, a P3 row class",
+      "owner": "`04` :2014; CONSTITUTION :128; D02E17 :227",
       "unless": ["exchange stop-loss"]
     },
     {
@@ -198,6 +198,7 @@
       "owner": "`E33-D06:strings.start.iceberg`"
     }
   ],
+  "allow": [],
   "deck_hits": [
     ["E08-D13", "strings.d08.W-3", "signal", "P2: F-4, A-3"],
     ["E08-D13", "strings.e17d2.B.2", "confirmed", "other: a server or exchange confirmation"],
