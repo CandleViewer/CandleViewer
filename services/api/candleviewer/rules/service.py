@@ -82,6 +82,7 @@ async def _never_dispatched(_req: ActionRequest) -> None:
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
+    from candleviewer.rules.producers import ProducerBridge
     from candleviewer.rules.scope import ActionSink, AuditSink, ScopedActionEmitter, ScopeResolver
     from candleviewer.rules.scope_state import ScopeSource, SnapshotScopeState
 
@@ -97,9 +98,12 @@ class RulesService:
         self._store: RuleStore = InMemoryRuleStore()
         self._audit: Audit | None = None
         self._broadcast: Broadcast | None = None
+        self._producers: ProducerBridge | None = None  # E35-T15: attached while the runner runs
         #: E35-S02-B1: set by `start()` only when `rules_evaluator_enabled` (C-4.13).
         self.metric_source: PushedMetricSource | None = None
         self.runner: RuleEvaluationRunner | None = None
+        #: rule id -> (version, instances in an open binding episode); live rules only.
+        self.binding_episodes: dict[str, tuple[int, set[str]]] = {}
         self.scope_state: SnapshotScopeState | None = None
         self.scope_resolver: ScopeResolver | None = None
         self._scope_audit: AuditSink | None = None
@@ -127,6 +131,7 @@ class RulesService:
         records: tuple[RunRecords, ActionAudit] | None = None,
         alerts: AlertPort | None = None,
         metrics: ExecutorMetrics | None = None,
+        producers: ProducerBridge | None = None,
     ) -> None:
         """Composition-root wiring (store / audit / WS fan-out / action executor); before `start`.
         Each option is set only when given, so a later call (E35-S05's simulation sink, the
@@ -138,7 +143,10 @@ class RulesService:
         `action_sink` stands in for the engine-internal handlers no slice has bound, never for an
         action that would reach the OMS (`ActionExecutor`). `records` are the executor's two
         write-ahead ports, `alerts` its partial-fire and write-ahead alerts and `metrics` its
-        series (E35-T09, `rules_oms_wiring`)."""
+        series (E35-T09, `rules_oms_wiring`), `producers` the metric bridge (E35-T15), attached once
+        the runner runs and detached first in `stop`."""
+        if producers is not None:
+            self._producers = producers
         if action_sink is not None:
             self._action_sink = action_sink
         if simulation_sink is not None:
@@ -155,6 +163,23 @@ class RulesService:
             self._audit = audit
         if broadcast is not None:
             self._broadcast = broadcast
+
+    def _woken(self, broadcast: Broadcast) -> Broadcast:
+        """`broadcast`, then a poke of the producers' demand: a rule change is read at once, even
+        when the broadcast fails."""
+
+        async def _bc(payload: dict[str, Any]) -> None:
+            try:
+                await broadcast(payload)
+            finally:
+                if self._producers is not None:
+                    self._producers.poke()
+
+        return _bc
+
+    def producer_gaps(self) -> frozenset[str] | None:
+        """Registry names no producer feeds while the bridge runs; None otherwise."""
+        return None if self._producers is None else self._producers.uncovered()
 
     def manager(self) -> RulesManager | None:
         """The store/version/mode manager while the module runs; `None` otherwise (-> 503)."""
@@ -326,7 +351,7 @@ class RulesService:
         if self._audit is not None:
             self._manager.set_hooks(audit=self._audit)
         if self._broadcast is not None:
-            self._manager.set_hooks(broadcast=self._broadcast)
+            self._manager.set_hooks(broadcast=self._woken(self._broadcast))
         self._started = True
         # E35-X02 (i): out-of-band tampering with a protected sys.* rule is audited at boot.
         await self._manager.verify_system_rules()
@@ -355,8 +380,10 @@ class RulesService:
         dispatch.start()
         audits.start()
 
-        #: (rule id, instance) -> the version of its open binding episode (`_on_fire`).
-        binding_episodes: dict[tuple[str, str], int] = {}
+        #: rule id -> (its version, the instances in an open binding episode) (`_on_fire`); a
+        #: rule the tick no longer evaluates is dropped (`_evaluable`), so it holds live rules only.
+        episodes: dict[str, tuple[int, set[str]]] = {}
+        self.binding_episodes = episodes
 
         def _binding_episode(result: EvaluationResult) -> bool:
             """Whether `result` is the first evaluation of its (rule, instance) episode skipped
@@ -364,14 +391,22 @@ class RulesService:
             instance's refs are next read (any result past the binding), and a new rule version
             starts a new one, as it drops the evaluator's state; a skip decided before the refs
             are bound (`_UNBOUND_SKIPS`) neither starts nor ends one."""
-            key = (result.rule_id, result.scope_instance)
+            rid, instance = result.rule_id, result.scope_instance
+            held = episodes.get(rid)
+            if held is not None and held[0] != result.rule_version:
+                held = None
+                del episodes[rid]  # a new version: its instances start new episodes
             if not result.binding_refused:
-                if result.skipped_reason not in _UNBOUND_SKIPS:
-                    binding_episodes.pop(key, None)
+                if held is not None and result.skipped_reason not in _UNBOUND_SKIPS:
+                    held[1].discard(instance)
+                    if not held[1]:
+                        del episodes[rid]
                 return False
-            if binding_episodes.get(key) == result.rule_version:
+            if held is None:
+                held = episodes[rid] = (result.rule_version, set())
+            if instance in held[1]:
                 return False
-            binding_episodes[key] = result.rule_version
+            held[1].add(instance)
             return True
 
         def _on_fire(item: EvaluableRule, result: EvaluationResult) -> None:
@@ -440,6 +475,9 @@ class RulesService:
                 ("simulate", "armed") if emitter is not None else ("simulate",)
             )
             items = await manager.evaluable_rules(modes)
+            live = {str(item.rule.rule_id) for item in items}
+            for rid in episodes.keys() - live:  # the runner drops its evaluator on this tick too
+                del episodes[rid]
             # Revocation/freeze reach every tick (AC1/AC5).
             await self._refresh_scope_for([item.rule for item in items])
             return items
@@ -455,6 +493,11 @@ class RulesService:
             self.evaluation_sink(), _on_error, on_fire=_on_fire,
         )  # fmt: skip
         self.runner.start()
+        if self._producers is not None:  # after the runner exists, so no early tick is dropped
+            try:
+                self._producers.attach(self.metric_source, self.submit_tick)
+            except Exception as exc:  # fail closed: the runner runs on, every metric stays warmup
+                _log().error("rules.producers_attach_failed", error=type(exc).__name__)
 
     def submit_tick(
         self, trigger_type: str, symbol: str | None = None, timeframe: str | None = None
@@ -477,6 +520,8 @@ class RulesService:
         self._started = False
         deadline, drained = monotonic() + grace_s, False
         try:
+            if self._producers is not None:
+                await self._producers.detach()  # before the runner stops: no tick after it
             if self.runner is not None:
                 await self.runner.stop()
             self.runner = self.metric_source = None
