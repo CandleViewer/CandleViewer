@@ -5,15 +5,21 @@ Pre-stage on E47-S01 #1316, E47-S02 #1358 and E47-S03 #1317. Protocol: `docs/pla
 
 ## What is here
 
-| File                                                               | Purpose                                                                          |
-| ------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| `scripts/00-cross-cutting.md`                                      | XC: environment badge, login, landmarks, symbol switch, reduced motion, fills    |
-| `scripts/10-chart-data-cursor.md`                                  | CDC: bar sentence, SCR-045 table                                                 |
-| `scripts/20-footprint-inspection.md`                               | FPI: footprint cells, table parity                                               |
-| `scripts/30-dom-ladder.md`                                         | DOM: ladder, demo order place and cancel, read-back                              |
-| `scripts/40-rule-form-editor.md`, `scripts/50-rule-node-editor.md` | RFE, RNE: SCR-081, SCR-082                                                       |
-| `regression-checklist.md`                                          | Dated pin changelog, living checklist, deferred checks, carried rows, scrub list |
-| `records/_template.md`                                             | One pass record; copy to `qa/evidence/e47/sr/<at>-<date>/record.md`              |
+| File                                                               | Purpose                                                                                  |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `scripts/00-cross-cutting.md`                                      | XC: environment badge, login, landmarks, symbol switch, reduced motion, fills            |
+| `scripts/10-chart-data-cursor.md`                                  | CDC: bar sentence, SCR-045 table                                                         |
+| `scripts/20-footprint-inspection.md`                               | FPI: footprint cells, table parity                                                       |
+| `scripts/30-dom-ladder.md`                                         | DOM: ladder, demo order place and cancel, read-back                                      |
+| `scripts/40-rule-form-editor.md`, `scripts/50-rule-node-editor.md` | RFE, RNE: SCR-081, SCR-082                                                               |
+| `scripts/60-order-ticket.md`                                       | ORD: SCR-060 limit order, SCR-076 confirm, streaming focus-steal check                   |
+| `scripts/70-flatten.md`                                            | FLT: SCR-063 and SCR-087 rule-engine flatten announcement                                |
+| `scripts/80-demo-to-live.md`                                       | LIV: SCR-074 switch and SCR-075 badge, demo-flagged build, stops at Cancel               |
+| `scripts/90-admin-and-alerts.md`                                   | ADA: SCR-121 and SCR-122 user creation; SCR-091 and SCR-092 alert create, fire           |
+| `regression-checklist.md`                                          | Dated pin changelog, living checklist, deferred checks, carried rows, scrub list         |
+| `records/_template.md`                                             | One pass record; copy to `qa/evidence/e47/sr/<at>-<date>/record.md`                      |
+| `records/_calibration-template.md`                                 | Two-tester calibration on task 3 (footprint); copy to `.../calibration.md`               |
+| `records/_pass-summary-template.md`                                | Screen x AT x verdict x blocking defects; copy to `qa/evidence/e47/sr/summary-<date>.md` |
 
 ## Matrix (05 §8.1)
 
@@ -47,3 +53,26 @@ Scrub before commit: account ids, key or token material, window titles, username
 - Every step row has an `Oracle` (spec row, or the `Source` formatter `file:line`) and `heuristic: true`.
 - Carried rows, the "Remediation has landed is false today" note, Deviations (C-4.9) and the public-repo scrub list are
   in `regression-checklist.md`. No real captures are committed.
+
+## E47-Q02 (#1355) and E47-T04 (#1359): who does what
+
+T04 owns the scripts, pins and templates (merged in #5501). Q02 adds the missing task scripts (ORD, FLT, LIV, ADA),
+the calibration and pass-summary templates, and the VoiceOver launch-flag field, and then **executes** the passes with the
+owner. Q02's execution is human and stays carried: nothing in this directory is a pass.
+
+- **Results path:** `qa/evidence/e47/sr/<at>-<date>/` (BQ-02; 05 §8.4 fixes `qa/evidence/e47/sr/`, which refines the
+  ticket's `qa/evidence/e47/<at>-<date>/`). `<at>` is `nvda`, `jaws` or `voiceover`.
+- **Agent records:** only `mode: heuristic` records, which count toward no §8.1 pass (BQ-03). A `pass:<record id>@<sha>`
+  reference is written only from a human record signed by the Accessibility role, in the shape of the pass-summary template.
+- **Findings** go in the record's finding block (`docs/plan/a11y/finding-record.schema.json`); the coordinator files the
+  issues (BQ-09). Do not absorb a failure.
+- **Calibration** (BQ-04): two testers run task 3 independently on one build; disagreements are resolved by the
+  Accessibility role and written back into E47-Q01 before the main pass. The template waits for the footprint surface (E18-S11).
+- **VoiceOver** (BQ-06): the record header requires `voiceover_launch_flags`, the exact Electron launch flags and how
+  `NSAccessibility` was activated.
+- **Demo to Live** (BQ-08, as amended by the orchestrator): script LIV needs a demo-flagged build and stops at the typed
+  confirmation (Cancel); XC-01's rule that a Live reading fails a trading script stands. The SCR-075 badge-change
+  announcement after a completed switch is a carried human row until the owner names a safe target.
+- **Streaming focus-steal** (BQ-07, AC4) is step ORD-06 and ORD-07; its automated twin is the E47-Q03 keyboard suite,
+  linked by test-plan case id (E47-TC-204, E47-TC-205).
+- Every new script is `SURFACE PENDING` against the owning tickets named in its header until they mount their surfaces.

@@ -14,7 +14,9 @@ ROOT = Path(__file__).resolve().parents[2]
 SR = ROOT / "docs" / "qa" / "a11y" / "sr"
 EVID = ROOT / "qa" / "evidence" / "e47" / "sr"
 SCRIPTS = sorted((SR / "scripts").glob("[0-9][0-9]-*.md"))
-PREFIX = {"XC", "CDC", "FPI", "DOM", "RFE", "RNE"}
+PREFIX = {"XC", "CDC", "FPI", "DOM", "RFE", "RNE", "ORD", "FLT", "LIV", "ADA"}
+TEMPLATES = ("_template.md", "_calibration-template.md", "_pass-summary-template.md")
+PASS_REF = re.compile(r"pass:[\w.-]+@[0-9a-f]{7,40}")
 STOP = {
     "or",
     "the",
@@ -162,7 +164,7 @@ def problems(text: str, check_sources: bool = True) -> list[str]:
     return out
 
 
-def test_scripts_cover_the_six_surfaces() -> None:
+def test_scripts_cover_the_ten_surfaces() -> None:
     ids = {header(p.read_text(encoding="utf-8"))["script_id"] for p in SCRIPTS}
     assert ids == PREFIX
 
@@ -175,7 +177,9 @@ def test_script_is_usable_by_a_stranger(path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "path", [p for p in SCRIPTS if p.name[:2] in ("30", "00")], ids=lambda p: p.name
+    "path",
+    [p for p in SCRIPTS if p.name[:2] in ("30", "00", "60", "70", "80", "90")],
+    ids=lambda p: p.name,
 )
 def test_environment_badge_is_read_first_and_live_fails(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
@@ -218,7 +222,7 @@ def test_pins_are_dated_owner_owned_and_have_a_next_repin() -> None:
 
 
 def test_results_live_under_qa_evidence_and_checklist_carries_the_rulings() -> None:
-    assert list((SR / "records").glob("*")) == [SR / "records" / "_template.md"]
+    assert sorted(p.name for p in (SR / "records").glob("*")) == sorted(TEMPLATES)
     assert heuristic_records()
     text = (SR / "regression-checklist.md").read_text(encoding="utf-8")
     for needle in ("Carried rows", "false today", "Deviations (C-4.9)", "scrub checklist"):
@@ -253,6 +257,97 @@ def test_regression_checklist_is_referenced_from_03_and_05() -> None:
 def test_no_home_paths_or_secrets_in_the_sr_docs() -> None:
     for p in [*SR.rglob("*.md"), *EVID.rglob("*.md")]:
         assert not hits_home_or_secret(p.read_text(encoding="utf-8")), p
+
+
+NEW = {"60": "ORD", "70": "FLT", "80": "LIV", "90": "ADA"}
+NEW_SCRIPTS = [p for p in SCRIPTS if p.name[:2] in NEW]
+
+
+def test_new_task_scripts_exist_and_are_surface_pending() -> None:
+    assert {p.name[:2] for p in NEW_SCRIPTS} == set(NEW)
+    for p in NEW_SCRIPTS:
+        text = p.read_text(encoding="utf-8")
+        assert header(text)["script_id"] == NEW[p.name[:2]]
+        assert str(header(text)["status"]).startswith("SURFACE PENDING")
+        assert all("SURFACE PENDING" in r[2] or r[3].endswith(".tsx:47") for r in steps(text))
+        assert "NEVER AGAINST LIVE" in text or p.name.startswith("90")
+
+
+def test_every_new_step_cites_a_screen_and_a_wcag_criterion() -> None:
+    for p in NEW_SCRIPTS:
+        for r in steps(p.read_text(encoding="utf-8")):
+            assert re.match(
+                r"^\[SCR-\d{3}( SCR-\d{3})* \u00b7 SC \d\.\d\.\d+( \d\.\d\.\d+)*\]", r[1]
+            ), r[0]
+
+
+def test_every_ticket_a_step_cites_is_in_the_script_parents() -> None:
+    for p in NEW_SCRIPTS:
+        text = p.read_text(encoding="utf-8")
+        head = header(text)
+        owned = " ".join([str(head["status"]), *map(str, head["parents"])])
+        for r in steps(text):
+            for ticket in re.findall(r"E\d\d-[A-Z]\d\d", " ".join(r[1:3])):
+                assert ticket in owned, f"{r[0]} cites {ticket}, absent from parents and status"
+
+
+def test_order_script_carries_the_streaming_focus_steal_check_and_its_twin() -> None:
+    text = (SR / "scripts" / "60-order-ticket.md").read_text(encoding="utf-8")
+    rows = {r[0]: r for r in steps(text)}
+    assert "P0" in rows["ORD-06"][2] and "focus" in rows["ORD-06"][2].lower()
+    assert "SCR-076" in text and "limit" in text.lower()
+    assert "E47-TC-205" in text and "E47-Q03" in text
+
+
+def test_demo_to_live_is_demo_flagged_and_stops_at_the_typed_confirmation() -> None:
+    text = (SR / "scripts" / "80-demo-to-live.md").read_text(encoding="utf-8")
+    pre = " ".join(header(text)["preconditions"])
+    assert "demo-flagged" in pre and "Never Live" in pre and "sandbox" not in text.lower()
+    rows = steps(text)
+    assert "Cancel" in rows[-1][1]
+    assert not any("Confirm the switch" in r[1] for r in rows)
+    checklist = (SR / "regression-checklist.md").read_text(encoding="utf-8")
+    readme = (SR / "README.md").read_text(encoding="utf-8")
+    for doc in (checklist, readme):
+        assert "badge-change announcement" in " ".join(doc.split())
+
+
+def test_voiceover_launch_flags_are_a_required_record_field() -> None:
+    for name in ("_template.md", "_calibration-template.md"):
+        head = header((SR / "records" / name).read_text(encoding="utf-8"))
+        assert "voiceover_launch_flags" in head
+    assert "REQUIRED" in (SR / "records" / "_template.md").read_text(encoding="utf-8")
+
+
+def test_calibration_template_is_task_3_with_two_independent_testers() -> None:
+    text = (SR / "records" / "_calibration-template.md").read_text(encoding="utf-8")
+    head = header(text)
+    assert head["approved"] == "pending" and "footprint" in head["task"]
+    for field in ("tester_a", "tester_b", "resolved_by", "tester_a_ran_independently"):
+        assert field in head
+    assert "E47-Q01" in text and "Agree" in text
+
+
+def test_pass_summary_has_the_columns_and_never_a_concrete_pass_ref() -> None:
+    text = (SR / "records" / "_pass-summary-template.md").read_text(encoding="utf-8")
+    for col in ("Screen", "AT (pinned version)", "Verdict", "Blocking defects", "pass_ref"):
+        assert col in text
+    assert "pass:<record id>@<sha>" in text and "never written without a human record" in text
+    for p in [*SR.rglob("*.md"), *EVID.rglob("*.md")]:
+        assert not PASS_REF.search(p.read_text(encoding="utf-8")), p
+
+
+def test_readme_states_the_split_and_the_results_path() -> None:
+    text = (SR / "README.md").read_text(encoding="utf-8")
+    assert "qa/evidence/e47/sr/<at>-<date>/" in text and "E47-Q02" in text and "E47-T04" in text
+
+
+def test_checklist_carries_the_pin_wording_question_and_the_q02_rows() -> None:
+    text = (SR / "regression-checklist.md").read_text(encoding="utf-8")
+    assert (
+        "Pin wording question" in text and "2024.x" in text and "E47-Q02 #1355 human rows" in text
+    )
+    assert text.count("OWNER FILL") >= 5
 
 
 GOOD = (SR / "scripts" / "20-footprint-inspection.md").read_text(encoding="utf-8")

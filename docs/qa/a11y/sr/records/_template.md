@@ -10,10 +10,21 @@ date: ""
 tester: ""
 build_sha: ""
 fixture: ""
-script: "" # XC | CDC | FPI | DOM | RFE | RNE
+profile: fresh # a pass on a customised profile is void (E47-Q02 technical notes)
+voiceover_launch_flags: "" # REQUIRED for VoiceOver rows: the exact Electron launch flags and NSAccessibility activation used; "n/a (not VoiceOver)" otherwise
+script: "" # XC | CDC | FPI | DOM | RFE | RNE | ORD | FLT | LIV | ADA
 dry_run_by: "" # a second person
 approved: pending # the Accessibility role only
 ```
+
+## Setup
+
+Required before step 1. A record with an empty field here is invalid.
+
+- [ ] Fresh profile, default hotkey map, default theme, default screen-reader verbosity (05 §8.2 item 1).
+- [ ] Versions copied from the pin changelog in `regression-checklist.md`, never guessed; a drift from the pin is a dated changelog entry.
+- [ ] **VoiceOver only:** `voiceover_launch_flags` above holds the exact launch command flags and how `NSAccessibility` was activated for Electron (for example whether the app was started with an accessibility flag, or VoiceOver was already running at launch), so the pass is reproducible. macOS-only defects are filed apart from their Windows equivalent.
+- [ ] Demo-flagged build; the LIV script stops at Cancel (BQ-08).
 
 ## Matrix rows covered
 
