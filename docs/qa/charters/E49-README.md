@@ -55,7 +55,7 @@ any incidental credential exposure is reported and rotated (ticket Security note
 | `security-private` | Security class: reported privately (SECURITY.md); the public row has no detail.      |
 | `pending filing`   | A graded candidate awaiting its ticket (filing freeze); the closing PR resolves it.  |
 
-- `pending filing` must be 0 at the closing PR; the disposition query counts it as undecided.
+- `pending filing` must be 0 at the closing PR; `--closing` counts it as undecided.
 - A missing native exchange stop-loss on any submitted order is P0 (charter 4, RSK-016).
 - Any state change performed while impersonating (SCR-124) is P0 (charter 7).
 - Perf findings route to E46 (#72); screen-reader findings to E49-Q03 (#1395); fixes to E49-S02
@@ -65,8 +65,10 @@ any incidental credential exposure is reported and rotated (ticket Security note
 ## Findings table schema (every run record)
 
 `ID | Charter | Oracle | Area | Steps | Expected | Actual | Severity | Status | Evidence`. Oracle names
-the charter oracle that raised the row (or says why none did). No cell is empty; the
-check is `grep -nE '\|\s*\|' docs/qa/e49-run-*-findings.md` on the findings table (no output).
+the charter oracle that raised the row (or says why none did). No cell is empty; the check is
+`python scripts/check_e49_records.py` (add `--closing` for the closing PR, where `pending filing`
+counts as undecided): it fails on an empty cell or a Status that is not a disposition above, and prints
+`undecided = 0` when every row is decided.
 
 ## Bug-bash record template (for the closing PR)
 
