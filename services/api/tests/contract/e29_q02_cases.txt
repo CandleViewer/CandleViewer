@@ -24,3 +24,27 @@ tests/contract/test_order_exits_contract.py::test_amend_order_that_re_pairs_a_tp
 tests/contract/test_order_exits_contract.py::test_cancel_all_orders_failing_two_of_five_accounts_is_200_with_a_result_each | cancelAllOrders: POST /orders/cancel-all | E29-TC-105
 tests/contract/test_order_exits_contract.py::test_cancel_all_orders_by_a_manager_answers_the_status_its_scope_gives_it | cancelAllOrders as a Manager | E29-TC-110
 tests/contract/test_order_exits_contract.py::test_cancel_all_orders_counts_in_affected_only_the_orders_its_selection_takes | cancelAllOrders: POST /orders/cancel-all | E29-TC-114
+
+# C4a: 24 Sec.8.2's rules S1 to S5 through REST and the WS frames on the composed app, as the Owner
+# (tests/qa/oms/test_conformance_s1_s5.py, its world `_world.py`; `tests/qa/oms/conftest.py`
+# registers this report for a run of that directory). A row here is the half of each plan case
+# a client reads, the answers and the frames, with the stored steps and the venue's calls its
+# Oracle names; it is not full coverage. What the rows leave out, by plan case:
+#   TC-503: the reconciliation that resolves the order (T06, E29-TC-600), the unknown-order alert
+#   (E29-G-09) and the retry of a create that never left the process (the adapter's own tests).
+#   TC-104 (b), TC-102: the diagnostics read (`FakeTradingPort` keeps no call record, so no
+#   `exchange_calls[]`) and, for TC-104, the reconciliation. TC-505: the audit is read from the
+#   order lane's writer, not `GET /admin/audit`. TC-451: a cancel answer that comes later (B1 cuts
+#   the held call short). TC-453, TC-553, TC-202: a repeat across a reconnect or by REST backfill.
+#   TC-500: the intent recorded before the send (S8, C4b). S5 (24 Sec.8.2): a push, not only a
+#   fill, that comes before the bind.
+tests/qa/oms/test_conformance_s1_s5.py::test_s1_a_create_whose_answer_is_lost_lands_unknown_and_is_never_resent | S1: placeOrder, getOrder, orders topic | E29-TC-503
+tests/qa/oms/test_conformance_s1_s5.py::test_s1_a_cancel_the_venue_answers_110001_parks_the_order_unknown_and_is_sent_once | S1: cancelOrder, orders topic | E29-TC-104
+tests/qa/oms/test_conformance_s1_s5.py::test_s2_a_refused_amend_leaves_the_prior_order_live_and_unchanged | S2: amendOrder, getOrder, orders topic | E29-TC-452, E29-TC-505, E29-TC-102
+tests/qa/oms/test_conformance_s1_s5.py::test_s3_a_fill_that_arrives_during_a_cancel_wins_the_race | S3: cancelOrder, getOrder, orders, executions and machine topics | E29-TC-451, E29-TC-104
+tests/qa/oms/test_conformance_s1_s5.py::test_s4_a_repeated_exec_id_never_double_counts | S4: getOrder, listExecutions, orders and executions topics | E29-TC-453, E29-TC-553, E29-TC-202
+tests/qa/oms/test_conformance_s1_s5.py::test_s4_a_bundle_of_fills_is_split_one_row_each_and_a_repeat_adds_none | S4: listExecutions, orders and executions topics | E29-TC-551
+tests/qa/oms/test_conformance_s1_s5.py::test_s5_fills_delivered_before_the_bind_wait_for_it_and_apply_in_order | S5: placeOrder, getOrder, listExecutions, orders, executions and machine topics | E29-TC-559, E29-TC-459
+tests/qa/oms/test_conformance_s1_s5.py::test_s5_a_stale_push_is_ignored_and_a_fill_never_is | S5: getOrder, orders and executions topics | E29-TC-459
+tests/qa/oms/test_conformance_s1_s5.py::test_s5_a_push_stamped_far_ahead_of_the_clock_does_not_hide_a_later_one | S5: getOrder, orders topic | E29-TC-459
+tests/qa/oms/test_conformance_s1_s5.py::test_s5_the_rest_ack_only_accepts_and_the_stream_alone_fills | S5: placeOrder, getOrder, orders, executions and machine topics | E29-TC-550, E29-TC-500
