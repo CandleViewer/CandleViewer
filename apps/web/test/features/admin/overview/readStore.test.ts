@@ -355,3 +355,55 @@ describe("the admin read store", () => {
     release();
   });
 });
+
+// E42-S02 (#1023): a page read outside the store (SCR-121's users reads) answered `403`: `deny(refId)` withdraws the
+// area as a refusal of the store's own reads does (BQ-8, S-5330-03).
+describe("the admin read store: deny(refId)", () => {
+  it("aborts every read in flight, drops every answer and keeps the refusal's Ref", async () => {
+    const { store, calls, answer } = setup();
+    const release = store.hold(["overview", "capacity"]);
+    await answer("overview", ok());
+    store.deny("urn:cv:req:42");
+    expect(calls.find((c) => c.id === "capacity")?.signal.aborted).toBe(true);
+    const s = store.getState();
+    for (const id of Object.keys(s) as ReadId[]) {
+      expect(s[id], id).toMatchObject({ phase: "denied", refId: "urn:cv:req:42", inFlight: false });
+      expect(s[id].data, id).toBeUndefined();
+    }
+    // An answer that lands after the refusal is dropped.
+    await answer("capacity", ok({ subaccounts: { status: "ok", used: 3 } }));
+    expect(store.getState().capacity).toMatchObject({ phase: "denied" });
+    expect(store.getState().capacity.data).toBeUndefined();
+    release();
+  });
+
+  it("asks nothing more: no hold, Retry or cycle reads again", async () => {
+    const { store, ids } = setup();
+    store.deny(undefined);
+    const release = store.hold(["overview", "health"]);
+    store.retry(["overview"], "users");
+    await vi.advanceTimersByTimeAsync(REREAD_MS * 2);
+    expect(ids()).toEqual([]);
+    expect(store.getState().overview).toMatchObject({ phase: "denied", refId: undefined });
+    release();
+  });
+
+  it("keeps the first refusal: a second deny changes nothing", () => {
+    const { store } = setup();
+    const listener = vi.fn();
+    store.subscribe(listener);
+    store.deny("urn:cv:req:1");
+    store.deny("urn:cv:req:2");
+    expect(store.getState().overview.refId).toBe("urn:cv:req:1");
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("outlives the last release, as a read's own refusal does", async () => {
+    const { store } = setup();
+    const release = store.hold(["overview"]);
+    store.deny("urn:cv:req:3");
+    release();
+    await settle();
+    expect(store.getState().overview).toMatchObject({ phase: "denied", refId: "urn:cv:req:3" });
+  });
+});

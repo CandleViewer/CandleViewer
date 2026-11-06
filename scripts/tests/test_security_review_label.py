@@ -55,6 +55,12 @@ SECURITY = [
     "apps/web/src/features/view-as/ViewAsBanner.tsx",
     "apps/web/src/features/view-as/exitViewAs.ts",
     "apps/web/src/features/view-as/heldBoot.tsx",
+    # #1023: the admin write kit, which holds each refused admin write and re-sends it once after
+    # the step-up the server asked for, named here too so that dropping its entry from
+    # WEB_AUTH_PATHS fails this list, not only the list built from it (S-1023-d01)
+    "apps/web/src/features/admin/write/writeCall.ts",
+    "apps/web/src/features/admin/write/stepUpHost.tsx",
+    "apps/web/src/features/admin/write/idempotency.ts",
     "apps/web/src/features/sessions/SessionsScreen.tsx",  # a future slice, before the list names it
     "apps/web/src/lib/session/store.ts",
     "package.json",
