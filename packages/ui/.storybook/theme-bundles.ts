@@ -49,6 +49,7 @@ import "../src/components/freshness.css";
 import "../src/components/fundingcountdown.css";
 import "../src/components/fuzzylist.css";
 import "../src/components/iconbutton.css";
+import "../src/components/indicatorchips.css";
 import "../src/components/infopanel.css";
 import "../src/components/inlinespinnertext.css";
 import "../src/components/kbd.css";
