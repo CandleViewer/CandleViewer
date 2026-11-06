@@ -67,6 +67,10 @@ WEB_AUTH_PATHS = (
     # denial (BQ-8, S-5330-03)
     "apps/web/src/features/admin/write/",  # the admin write kit: holds each refused admin write
     # and re-sends it once after the step-up the server asked for (E42-S02, #1023)
+    "apps/web/src/features/admin/users/usersApi.ts",  # the users client: the targets, bodies and
+    # flags of every users write, and the created invite's link handed to its caller alone
+    "apps/web/src/features/admin/users/vet.ts",  # vets every users answer: the UUID check behind
+    # each write's target, and the invite link kept to a relative `/invite/` path
     "apps/web/src/features/app-shell/ConnectionRegionSlot.tsx",  # Sign in ends the session
     "apps/web/src/features/auth/",  # login, password change, the auth REST client
     "apps/web/src/features/app-shell/NavRail.tsx",  # filters the rail by the session claims
