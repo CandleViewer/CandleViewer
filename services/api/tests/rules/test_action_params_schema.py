@@ -73,6 +73,15 @@ SCHEMA = {
     },
     "additionalProperties": False,
 }
+#: A test schema whose object param writes a `required` member of its own. No catalogue action does
+#: but `place_order`'s native stop, and the native-stop check answers that one's defects first.
+NESTED = {
+    "type": "object",
+    "required": ["box"],
+    "properties": {
+        "box": {"type": "object", "required": ["lo"], "properties": {"lo": {"type": "number"}}},
+    },
+}
 
 
 def _action(kind: str, **params: Any) -> dict[str, Any]:
@@ -146,6 +155,29 @@ def test_param_defects_undeclared_key_where_the_schema_takes_none_is_refused_unn
         "",
         "additionalProperties",
         "'params' takes only a, b",
+    )
+
+
+@pytest.mark.parametrize("held", [{}, {"lo": None}], ids=["absent", "null"])
+def test_param_defects_member_missing_inside_an_object_param_is_not_a_missing_param(
+    held: dict[str, Any],
+) -> None:
+    """Only a required param the action leaves out is `missing`, which the validator answers as
+    `missing_action_param`; a member left out of an object param the action holds is the schema's
+    `required` defect at that param, answered as `schema_error`."""
+    (inner,) = param_defects(NESTED, {"box": held})
+    assert (inner.param, inner.keyword, inner.text, inner.missing) == (
+        "box",
+        "required",
+        "'box' is missing 'lo'",
+        False,
+    )
+    (outer,) = param_defects(NESTED, {})
+    assert (outer.param, outer.keyword, outer.text, outer.missing) == (
+        "box",
+        "required",
+        "'params' is missing 'box'",
+        True,
     )
 
 
