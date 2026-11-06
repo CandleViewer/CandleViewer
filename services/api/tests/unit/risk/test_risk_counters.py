@@ -505,15 +505,42 @@ def test_held_record_confirms_on_a_re_poll_once_the_sibling_settles() -> None:  
     assert outcome is RecordOutcome.BOUND_SETTLED and c.realised_today == D("-12.09")
 
 
-def test_early_fill_is_booked_when_an_offset_change_stretches_the_key() -> None:  # l1
+def test_early_fill_is_booked_in_the_short_key_after_an_offset_change() -> None:  # l1, 24 §8.13
     calendar = DayCalendar(0, NOW)
     c = counters_module.AccountCounters(calendar, taker_rate=D(0))
     c.mark_ready()
     after_end = NOW + 12 * H + 30 * 60 * S
     assert c.apply_fill(fill("e", exec_pnl=D(-50), exec_time=after_end), NOW) is FillOutcome.QUEUED
-    calendar.change_offset(-60, NOW)  # the key now ends at 01:00 tomorrow
-    assert (figures := c.figures(NOW + S)) is not None and figures.daily_figure == D(-50)
+    calendar.change_offset(-60, NOW)  # today keeps its end; tomorrow's key ends at 01:00
+    assert (figures := c.figures(NOW + S)) is not None and figures.daily_figure == 0
+    assert (figures := c.figures(after_end)) is not None and figures.daily_figure == D(-50)
     assert c.figures(NOW + 13 * H + S) is not None and c.realised_today == 0  # not booked twice
+
+
+def test_early_fill_dated_in_a_skipped_short_key_is_not_booked() -> None:  # 24 §8.13
+    calendar = DayCalendar(0, NOW)
+    c = counters_module.AccountCounters(calendar, taker_rate=D(0))
+    c.mark_ready()
+    end = calendar.key.end
+    early = fill("e", exec_pnl=D(500), exec_time=end + 10 * S)  # in the skipped one-minute key
+    assert c.apply_fill(early, NOW) is FillOutcome.QUEUED
+    calendar.change_offset(-1, NOW)  # tomorrow's key is one minute long
+    assert (figures := c.figures(end + 2 * 60 * S)) is not None and figures.daily_figure == 0
+
+
+def test_dropped_prior_day_fill_frees_its_queue_slot(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(counters_module, "MAX_EARLY", 1)
+    calendar = DayCalendar(0, NOW)
+    c = counters_module.AccountCounters(calendar, taker_rate=D(0))
+    c.mark_ready()
+    end = calendar.key.end
+    early = fill("e", exec_pnl=D(500), exec_time=end + 10 * S)
+    assert c.apply_fill(early, NOW) is FillOutcome.QUEUED
+    calendar.change_offset(-1, NOW)  # the queued fill's key is skipped: it is dropped, not requeued
+    later = end + 2 * 60 * S
+    assert (figures := c.figures(later)) is not None and figures.daily_figure == 0
+    other = fill("e2", exec_pnl=D(7), exec_time=calendar.key.end + S)
+    assert c.apply_fill(other, later) is FillOutcome.QUEUED  # the bound is free again
 
 
 def test_consecutive_losses_follow_exec_time_not_arrival() -> None:
@@ -937,7 +964,7 @@ def test_offset_change_keeps_the_day_loss_run_and_peak() -> None:  # BQ-10: `_ro
         D(200),
         1,
     )
-    calendar.change_offset(-60, NOW + 2 * S)  # stretches the key; the day is the same
+    calendar.change_offset(-60, NOW + 2 * S)  # the day in progress keeps its end
     after = c.figures(NOW + 3 * S)
     assert after is not None
     assert (after.daily_figure, after.day_peak_figure, after.consecutive_losses) == (
@@ -969,3 +996,25 @@ def test_mark_gap_is_unavailable_until_ready_again() -> None:  # K01 §5.5
     assert c.figures(NOW) is None
     c.mark_ready()
     assert c.figures(NOW) is not None
+
+
+def test_gap_and_cold_start_keep_the_fills_and_pushes_applied_while_unavailable() -> None:
+    c = counters_module.AccountCounters(DayCalendar(0, NOW), taker_rate=D(0))
+    c.set_equity(D(100_000), NOW)
+    c.apply_position(RiskPosition("ETHUSDT", "buy", D(2), D(100), NOW))  # before the first ready
+    c.apply_fill(fill("pre-open", symbol="ETHUSDT", opening=True, exec_time=NOW + S), NOW)
+    c.apply_fill(fill("pre-loss", symbol="ETHUSDT", exec_pnl=D(-3), exec_time=NOW + S), NOW)
+    c.mark_ready()
+    c.apply_position(RiskPosition("BTCUSDT", "buy", D(2), D(100), NOW + 2 * S))  # before the gap
+    c.mark_gap()
+    c.apply_fill(fill("gap-loss", order_ref="o2", exec_pnl=D(-4), exec_time=NOW + 3 * S), NOW)
+    c.apply_position(RiskPosition("SOLUSDT", "buy", D(5), D(10), NOW + 3 * S))
+    c.mark_ready()
+    at = NOW + 4 * S
+    for symbol, price in (("ETHUSDT", 100), ("BTCUSDT", 100), ("SOLUSDT", 10)):
+        c.apply_mark(mark(price, at, symbol=symbol))
+    after = c.figures(at)
+    assert after is not None
+    assert after.daily_figure == D(-7)  # the loss before the first ready and the one in the gap
+    assert after.open_positions == 3
+    assert after.symbol_notional == {"ETHUSDT": D(200), "BTCUSDT": D(100), "SOLUSDT": D(50)}

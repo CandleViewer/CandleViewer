@@ -5,11 +5,12 @@ offset bounded -720..840 (`risk_policy.day_boundary_utc_offset_minutes`); no tim
 daylight saving. Times are the exchange-synchronised clock's, passed in; nothing here reads a clock.
 A key is in UTC whatever offset the time passed in carries.
 
-An offset change never shortens the key in progress: it keeps its start and runs to the first
-boundary of the new offset at or after its old end, so one change gives a key of 24 h to under
-48 h; whole days on the new grid follow (`21:4329`, SR-E39-09). Each further change in the same key
-adds under 24 h more (0, then +60, then -720 minutes gives 60 h): longer, never shorter, so a loss
-is never forgotten early. Single asyncio loop, no `await`: no lock is needed.
+An offset change never moves the key in progress (`24` §8.13, SR-E39-09): that key keeps the offset
+it started with and its scheduled end, so a loss it has counted stays counted. The new offset takes
+effect there: the next key runs from that end to the first instant after it that is a midnight of
+the new offset, so that one key is shorter than 24 h (24 h when the two midnights coincide), and
+whole days on the new grid follow. A later change in the same key replaces a pending one. Once E32
+S4's resolver merges, this module wraps it. Single asyncio loop, no `await`: no lock is needed.
 """
 
 from __future__ import annotations
@@ -48,16 +49,11 @@ def grid_key(at: datetime, offset_minutes: int) -> DayKey:
     return DayKey(start, start + _DAY)
 
 
-def first_boundary_at_or_after(at: datetime, offset_minutes: int) -> datetime:
-    key = grid_key(at, offset_minutes)
-    return key.start if key.start == at else key.end
-
-
 class DayCalendar:
-    """The current key: advanced by the clock, stretched (never shortened) by an offset change."""
+    """The current key, advanced by the clock; an offset change waits for the key's end."""
 
     def __init__(self, offset_minutes: int, now: datetime) -> None:
-        self._offset = offset_minutes
+        self._offset = self._pending = offset_minutes
         self._key = grid_key(now, offset_minutes)
 
     @property
@@ -73,15 +69,16 @@ class DayCalendar:
         _check(self._offset, now)
         if now < self._key.end:
             return False
-        self._key = grid_key(now, self._offset)
+        # The next key runs from this end: after an offset change, the one shortened key.
+        self._offset, start = self._pending, self._key.end
+        self._key = DayKey(start, grid_key(start, self._offset).end)
+        if now >= self._key.end:
+            self._key = grid_key(now, self._offset)
         return True
 
     def change_offset(self, offset_minutes: int, now: datetime) -> DayKey:
-        """Apply a new offset from the first new-offset boundary at or after the current end."""
+        """Take `offset_minutes` from the current key's end (module docstring); the key stays."""
         _check(offset_minutes, now)
         self.advance(now)
-        if offset_minutes != self._offset:
-            end = first_boundary_at_or_after(self._key.end, offset_minutes)
-            self._key = DayKey(self._key.start, end)
-            self._offset = offset_minutes
+        self._pending = offset_minutes
         return self._key

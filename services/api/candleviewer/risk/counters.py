@@ -19,7 +19,8 @@ Single asyncio loop: every method is synchronous with no `await`, so no lock is 
   then the push's); a missing, stale or future mark answers `None` (K01 §5.2, §5.8).
 - **Rollover** on the shared `DayCalendar`: the day's closes, peak and day-start equity reset;
   positions carry (K01 §5.3). A fill dated after the key's end waits (bounded) until a roll or an
-  offset change brings it inside the key.
+  offset change brings it inside the key, or is dropped as a prior-day fill when a roll skips its
+  key (a §8.13 short day or a multi-day jump); the caller saw QUEUED and gets no second outcome.
 - **A position push includes every fill dated at or before it** (K01 §5.5, §5.8): such a fill books
   its close but never moves the size or entry; one at the push's own instant counts as in it (the
   venue pushes per change). The first push is the baseline: fills already applied that are dated
@@ -78,7 +79,8 @@ class FillOutcome(StrEnum):
     APPLIED = "applied"
     DUPLICATE = "duplicate"
     PRIOR_DAY = "prior_day"  # dated before the key: the position moves, today's figure does not
-    QUEUED = "queued"  # dated after the key's end: booked when its key starts
+    QUEUED = "queued"  # after the key's end: booked when its key starts, or dropped as a
+    # prior-day fill when a roll skips its key (a §8.13 short day or multi-day jump); no 2nd outcome
     OVERFLOW = "overflow"  # an id or queue bound is reached: the counter fails closed
     INVALID = "invalid"  # a malformed value or an unboundable close: the counter fails closed
 
@@ -525,22 +527,23 @@ class AccountCounters:
     def _roll(self, now: datetime) -> None:
         self._calendar.advance(now)
         key = self._calendar.key
-        if key == self._key:
+        if key == self._key:  # a key changes only at its end (`clock.py`): a new day
             return
-        if key.start != self._key.start:
-            self._closes.clear()
-            self._order.clear()
-            self._by_key.clear()
-            self._awaiting.clear()
-            self._awaiting_on.clear()
-            self._records.clear()
-            self._seen_before, self._seen = self._seen, set()
-            self._run, self._realised, self._peak = 0, _ZERO, _ZERO
-            self._day_equity = self._equity
-        self._key = key  # a new day, or an offset change stretched the end: re-examine the queue
+        self._closes.clear()
+        self._order.clear()
+        self._by_key.clear()
+        self._awaiting.clear()
+        self._awaiting_on.clear()
+        self._records.clear()
+        self._seen_before, self._seen = self._seen, set()
+        self._run, self._realised, self._peak = 0, _ZERO, _ZERO
+        self._day_equity = self._equity
+        self._key = key  # re-examine the queue
         early, self._early = self._early, []
         for fill, bound, exact, state in early:
             if fill.exec_time >= key.end:
                 self._early.append((fill, bound, exact, state))
+            elif fill.exec_time < key.start:  # before the key: prior day, as in `apply_fill`
+                continue
             else:
                 self._book(fill, bound, exact, state, now)

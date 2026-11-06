@@ -2487,6 +2487,10 @@ share one base. Notional is a position's size at a fresh mark (the cached public
   injected `now` runs ahead of the exchange time of the account's latest private-stream event by more than a bound it
   states; and a backfill of missed executions routes each through `ReservationLedger.on_fill` with its `exec_id`, as a
   released reservation's unconverted notional is cleared only there and `on_fill`, like the counters, dedupes by it.
+- **Day key** (`risk/clock.py`): an offset change never moves the day in progress, which keeps its scheduled end; the
+  next day runs from there to the new offset's first midnight after it, shorter than 24 h (24 h when the two
+  midnights coincide), the day-boundary rule of §8.13, which E29-S06 adds with #5711. `clock.py` wraps E32 S4's
+  resolver once it merges.
 
 ### 8.12 The private-stream consumer (E29-T05)
 
