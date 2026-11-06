@@ -311,6 +311,11 @@
       "path": "services/api/candleviewer/migrations/versions/0064_orders_origin.py",
       "sha256": "1de769f3e21c2d1277e88339602dacff4e28bc696500cd8c01b289669918f2de",
       "down_revision": "0063_rule_version_account_refs"
+    },
+    "0065_hotkey_profiles": {
+      "path": "services/api/candleviewer/migrations/versions/0065_hotkey_profiles.py",
+      "sha256": "a81fe42e54f8287baa2590a4616aaddbf3bbf8716cebe6b34d3756a0dfb8de6b",
+      "down_revision": "0064_orders_origin"
     }
   }
 }

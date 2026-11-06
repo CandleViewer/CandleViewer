@@ -50,6 +50,7 @@ ALLOW_HEADERS: Final[tuple[str, ...]] = (
 EXPOSE_HEADERS: Final[tuple[str, ...]] = (
     "Content-Disposition",
     "ETag",
+    "Hotkey-Bindings-Rewritten",
     "Idempotency-Replayed",
     "RateLimit-Limit",
     "RateLimit-Remaining",

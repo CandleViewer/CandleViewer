@@ -35,6 +35,9 @@ services/api/candleviewer/auth/rbac_seed.json              text eol=lf linguist-
 # #5269 / SR-028: the offline breached-password digests, written only by
 # services/api/scripts/build_breached_passwords.py (SecLists Common-Credentials, MIT).
 services/api/candleviewer/auth/data/breached_passwords.sha1 text eol=lf linguist-generated=true
+# E10-T05 (#5211, BQ-8): the server's keymap vocabulary, written by `scripts/keymap_lint.py
+# --vocabulary` and byte-checked by its --check-vocabulary and the py lane's freshness test.
+services/api/candleviewer/api/_generated/hotkey_vocabulary.json text eol=lf linguist-generated=true
 
 # E13-T02: indicator golden vectors, written by `CV_REGEN_GOLDEN=1 pytest
 # tests/unit/orderflow/indicators/test_golden_vectors.py` (json.dumps + LF) and byte-checked by it.

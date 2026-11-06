@@ -40,9 +40,14 @@ absent and the client applies its built-in default. After the checks above, a st
 wired or cannot be read is a 503 `store_unavailable` (logged by its class), never an empty answer:
 the problem `/settings` answers for it (`user_settings.settings_store_unavailable`, its title and
 detail, `Retry-After: 5`), not the session store's.
-The keymap serves the contract's empty answer: `hotkey_profiles` is not migrated (E10-S02), so
-there is no stored profile and the client applies its built-in defaults. Its handler reads its
-data here and nowhere else, so the store slots in without a contract change.
+The keymap is the subject's active hotkey profile (E10-T05, #5211), read from the store
+`/settings/hotkeys*` writes (`HotkeyProfileStore.get_active`): its id and its stored entries as
+`HotkeyProfile.bindings` answers them (`hotkey_rules.read_bindings`: in the keymap's command order,
+each with the `scope`, `requires_arm` and `confirm` derived from its action, an id the keymap no
+longer has left out). With no active profile `hotkey_profile_id` is absent and `bindings` is
+empty, and the client applies its built-in keymap. After the checks above, a store that is not
+wired or cannot be read is a 503 `store_unavailable` (logged by its class), never an empty
+answer: the problem `/settings/hotkeys` answers for it (`hotkey_profiles.hotkey_store_unavailable`).
 """
 
 from __future__ import annotations
@@ -58,6 +63,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from candleviewer.api._generated import openapi_models as api
+from candleviewer.api.hotkey_profiles import hotkey_store_unavailable
+from candleviewer.api.hotkey_rules import read_bindings
 from candleviewer.api.idle_lock import idle_locked_problem, store_unavailable_problem
 from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.api.storage_outage import is_storage_outage
@@ -69,6 +76,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.step_up import grace_expires_at
 from candleviewer.settings import Environment
+from candleviewer.storage.repositories.hotkey_profiles import HotkeyProfileStore
 from candleviewer.storage.repositories.user_settings import UserSettings
 
 SETTINGS_READ: Final = Permission.SETTINGS_READ.value
@@ -181,13 +189,15 @@ def make_me_router(
     identity: MeIdentity | None,
     environment: Environment,
     settings: Callable[[], UserSettings | None],
+    hotkeys: Callable[[], HotkeyProfileStore | None],
     clock: Callable[[], datetime] | None = None,
 ) -> APIRouter:
     """`identity=None` answers 501 after authenticating, so nothing is served unchecked. The app
     wires the identity provider and the session backend together or not at all (the fake storage
     backend has neither and answers 503 first), so only a router built by hand reaches the 501.
-    `settings` answers the per-user settings store `GET /settings` reads (None while none is
-    wired). `clock` defaults to UTC now; pass the auth clock where it is offset."""
+    `settings` answers the per-user settings store `GET /settings` reads, and `hotkeys` the hotkey
+    profile store `/settings/hotkeys*` writes (each None while none is wired). `clock` defaults to
+    UTC now; pass the auth clock where it is offset."""
     router = APIRouter()
     now = clock or (lambda: datetime.now(UTC))
 
@@ -299,6 +309,19 @@ def make_me_router(
         caller = await _gate(request, permission=SETTINGS_READ, query=GET_MY_KEYMAP_QUERY)
         if isinstance(caller, Response):
             return caller
-        return JSONResponse({"bindings": []}, headers=_NO_STORE)
+        store = hotkeys()
+        if store is None:
+            return hotkey_store_unavailable()
+        try:
+            active = await store.get_active(caller.subject)  # the target's on a live view
+        except Exception as exc:  # re-raised below unless it is a store outage
+            if not is_storage_outage(exc):
+                raise
+            _log().error("auth.me.hotkey_store_unavailable", error=type(exc).__name__)
+            return hotkey_store_unavailable()
+        if active is None:  # no active profile: the client applies its built-in keymap
+            return JSONResponse({"bindings": []}, headers=_NO_STORE)
+        body = {"hotkey_profile_id": str(active.id), "bindings": read_bindings(active.bindings)}
+        return JSONResponse(body, headers=_NO_STORE)
 
     return router

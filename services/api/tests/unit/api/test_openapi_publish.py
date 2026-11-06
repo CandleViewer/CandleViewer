@@ -306,6 +306,11 @@ def test_the_app_publishes_only_its_schema_routes_and_validates() -> None:
     assert writes | {("put", "/exchange-accounts/{accountId}/default-profile")} <= served
     lists, one = "/watchlists", "/watchlists/{watchlistId}"
     assert {("get", lists), ("post", lists), ("put", one), ("delete", one)} <= served
+    # E10-T05 (#5211): the five `/settings/hotkeys*` operations, raw-body too.
+    hotkeys, profile = "/settings/hotkeys", "/settings/hotkeys/{hotkeyProfileId}"
+    assert {("get", hotkeys), ("post", hotkeys), ("put", profile), ("delete", profile),
+            ("post", f"{profile}/activate")} <= served  # fmt: skip
+    assert "/settings/hotkey-audit" not in {path for _, path in served}
     for method, path in served:
         assert doc["paths"][path][method] == SUBSET["paths"][path][method]
     # The contract's forms, not FastAPI's: the bodies, `If-Match` and the declared statuses.
