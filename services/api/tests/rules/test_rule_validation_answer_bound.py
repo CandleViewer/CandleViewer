@@ -335,6 +335,21 @@ def test_a_counterpart_that_does_not_compile_counts_every_issue_as_its_divergenc
     assert seen == [("form", 60)]
 
 
+def test_a_counterpart_the_schema_refuses_counts_every_issue_as_its_divergence() -> None:
+    """A counterpart that compiles to a document the model refuses lists its first issues and
+    counts all of them: the divergence is that count, not the length of the list."""
+    seen: list[tuple[str, int]] = []
+    app, _ = _app(on_divergence=lambda editor, n: seen.append((editor, n)))
+    other = _at_the_bounds(_form(_ir()))
+    total = len(list(_refused(other["conditions"])))
+    body = {"editor": "graph", "model": _graph(_ir()), "counterpart_model": other}
+    answer = TestClient(app).post(COMPILE, json=body)
+    assert total > MAX_RETURNED_ISSUES
+    assert (answer.status_code, answer.json()["issues_total"]) == (422, total)
+    assert len(answer.json()["errors"]) == MAX_RETURNED_ISSUES
+    assert seen == [("graph", total)]
+
+
 def _differing(n: int) -> dict[str, Any]:
     """A compile body whose model and counterpart differ in `n` leaves, a set's values."""
     model, other = _ir(), _ir()
