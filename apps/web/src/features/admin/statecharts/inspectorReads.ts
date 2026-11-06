@@ -168,7 +168,8 @@ const idsOf = (raw: unknown): string[] | null =>
 
 /**
  * A slice's outcome, open-ended for readers (C-6.3): a status it does not know reads as
- * `unavailable`, never `ok`. A detail over the contract's 200 characters is dropped.
+ * `unavailable`, never `ok`. A detail over the contract's 200 characters, or a `generated_at` off
+ * its pattern, is dropped, not refused: both are optional here, and neither decides what is shown.
  */
 function sliceOf(raw: unknown): AdminSliceStatus | null {
   if (!isRecord(raw)) return null;
@@ -334,7 +335,9 @@ export function vetExport(raw: unknown, kind: string): ChartExport | null {
 /** A problem's `code` and `instance` (CMP-089's Ref, `urn:cv:req:{uuid}`), each only in shape. */
 async function problemOf(res: Response): Promise<{ code?: string; instance?: string }> {
   try {
-    const body: unknown = await res.json();
+    const text = await textOf(res); // the same cap as a 200: no unbounded parse on a refusal
+    if (text === null) return {};
+    const body: unknown = JSON.parse(text);
     if (!isRecord(body)) return {};
     const code = body["code"];
     const instance = body["instance"];
