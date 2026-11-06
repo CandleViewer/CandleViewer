@@ -1009,3 +1009,4 @@ def test_the_contract_states_the_causal_orders_bounds() -> None:
     assert f"waits for its execution's row, {wt.FILL_READ_S:g} s at most." in section
     assert f"later steps queue behind it, at most {wt.QUEUE_MAX} an account." in section
     assert f"At {wt.HOLD_S:g} s, or when it finds {wt.HOLD_MAX} positions of its account" in section
+    assert "It also covers every rebuild of an order from its row" in section
