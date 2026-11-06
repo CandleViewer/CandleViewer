@@ -95,6 +95,8 @@ const STATUSES: ReadonlySet<string> = new Set<UserStatus>([
 const ENVIRONMENTS: ReadonlySet<string> = new Set<Environment>(["live", "demo", "testnet"]);
 /** The longest name or address a row shows (the server's own caps are shorter). */
 const MAX_TEXT = 320;
+/** `22`'s `Cursor` parameter `maxLength`: a longer `next_cursor` could not be sent back, so it is not followed. */
+export const CURSOR_MAX = 512;
 /** A relative one-time link: `/invite/` and a URL-safe token, nothing that could leave the page's origin. */
 const INVITE_PATH = /^\/invite\/[A-Za-z0-9_-]{1,512}$/;
 
@@ -142,8 +144,9 @@ export function vetUserPage(raw: unknown): UserPage | null {
   const items = listOf(raw, "items");
   const meta = isRecord(raw) ? raw["meta"] : undefined;
   if (items === null || !isRecord(meta) || typeof meta["has_more"] !== "boolean") return null;
-  const cursor = typeof meta["next_cursor"] === "string" ? meta["next_cursor"] : null;
-  // A page that says it has more but gives no cursor cannot be followed: no further page is read.
+  const next = meta["next_cursor"];
+  const cursor = typeof next === "string" && next.length <= CURSOR_MAX ? next : null;
+  // A page that says it has more but gives no cursor (or one past CURSOR_MAX) cannot be followed: no further page is read.
   const hasMore = meta["has_more"] && cursor !== null && cursor !== "";
   return { items: kept(items, vetUser), hasMore, nextCursor: hasMore ? cursor : null };
 }
