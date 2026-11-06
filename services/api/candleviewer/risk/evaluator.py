@@ -214,9 +214,11 @@ def _judge(
                 RiskRefusal.RISK_STATE_UNAVAILABLE, "risk_state", "risk inputs are malformed"
             )
         symbol = order.symbol
-        if not (caps.all_symbols or symbol in caps.allowed_symbols):
+        # `SymbolScope`'s own verdicts, so the gate and the profile layer never disagree (#908);
+        # an instrument's status and product type are the order validator's fence, not this gate's.
+        if not caps.symbols.admits(order.instrument):
             raise refuse(RiskRefusal.SYMBOL_NOT_ALLOWED, "allowed_symbols", f"{symbol} not allowed")
-        if symbol in caps.blocked_symbols:
+        if not caps.symbols.allows(order.instrument):
             raise refuse(RiskRefusal.SYMBOL_NOT_ALLOWED, "blocked_symbols", f"{symbol} is blocked")
         if figures.kill_switch_engaged:
             raise refuse(RiskRefusal.TRADING_DISABLED, "kill_switch", "the kill switch is engaged")

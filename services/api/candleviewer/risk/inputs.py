@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 
+from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Environment, Side, UserId
 
 
@@ -32,7 +33,7 @@ class RiskOrder:
     environment: Environment
     paper: bool
     user_id: UserId | None  # the acting user; None for a system origin (no manager override)
-    symbol: str
+    instrument: Instrument  # the catalogue's row: a symbol pattern matches only a USDT perpetual
     side: Side
     qty: Decimal
     reference_price: Decimal
@@ -40,6 +41,10 @@ class RiskOrder:
     reduce_only: bool
     opens_exposure: bool
     opens_position: bool
+
+    @property
+    def symbol(self) -> str:
+        return self.instrument.symbol
 
     @property
     def exempt(self) -> bool:

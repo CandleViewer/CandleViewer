@@ -301,9 +301,7 @@ def test_evaluate_stamps_the_injected_time() -> None:
 
 
 def test_evaluate_with_no_limit_at_any_layer_admits() -> None:
-    bare = ResolvedCaps(
-        caps={}, all_symbols=True, allowed_symbols=frozenset(), blocked_symbols=frozenset()
-    )
+    bare = ResolvedCaps(caps={}, symbols=caps().symbols)  # all symbols, no cap
     f = figures(daily_figure=D(-(10**9)), consecutive_losses=99, symbol_notional={"BTCUSDT": D(1)})
     assert run(order(notional=D(10**12)), f, bare).decision.allowed
 
@@ -348,9 +346,7 @@ def test_evaluate_policy_warn_never_disables_a_looser_blocking_limit(  # SR-E39-
 
 
 def test_evaluate_concentration_without_an_aggregate_cap_refuses_closed() -> None:
-    bare = ResolvedCaps(
-        caps={}, all_symbols=True, allowed_symbols=frozenset(), blocked_symbols=frozenset()
-    )
+    bare = ResolvedCaps(caps={}, symbols=caps().symbols)  # all symbols, no cap
     with_cap = caps(pol={"per_symbol_concentration_pct": D(1)})
     concentration = with_cap.caps["per_symbol_concentration_pct"]
     decision = run(c=replace(bare, caps={concentration.name: concentration})).decision
