@@ -6,8 +6,17 @@
 import type { generated } from "@candleviewer/protocol";
 import type {
   AddRecordedSymbolBody,
+  ArchiveImportResult,
+  CompactionRunResult,
+  HealthReport,
+  ImportBody,
+  JobAccepted,
   RecordedSymbolPage,
   RecordingStatus,
+  RetentionPoliciesSaved,
+  RetentionPolicyList,
+  RetentionPurgeResult,
+  RetentionSweepResult,
   StorageUsage,
 } from "../../../src/features/recorder/recorderApi";
 import type { RecorderFrame } from "../../../src/features/recorder/recorderTopic";
@@ -226,3 +235,164 @@ export const frameHealthy = {
     projected_full_at_ms: Date.parse("2028-03-27T10:31:03Z"),
   },
 } satisfies RecorderFrame;
+
+// E16-S03 / E16-S04: the retention, import and health calls. Where `22` has an example the fixture
+// is it (`test/contract/recorder{Retention,Storage}.contract.test.ts` compares); the import's `202`
+// and the job results have none, so those are the shapes the routes serve, as the backend's
+// `tests/contract/test_recording_retention_contract.py` pins them, each held to its schema's keys.
+
+/** `listRetentionPolicies` example `defaults`: two global rows and ETHUSDT's override. */
+export const retentionDefaults = {
+  items: [
+    {
+      id: "f1000000-0000-4000-8000-000000000001",
+      stream: "trades",
+      retain_days: 30,
+      action: "archive_parquet",
+      symbol: null,
+      applies_to_pinned: false,
+    },
+    {
+      id: "f1000000-0000-4000-8000-000000000002",
+      stream: "orderbook_delta",
+      retain_days: 7,
+      action: "archive_parquet",
+      symbol: null,
+      applies_to_pinned: false,
+    },
+    {
+      id: "f1000000-0000-4000-8000-000000000003",
+      stream: "orderbook_delta",
+      retain_days: 3,
+      action: "drop",
+      symbol: "ETHUSDT",
+      applies_to_pinned: false,
+    },
+  ],
+} satisfies RetentionPolicyList;
+
+/** The one stored row both `setRetentionPolicies` `200` examples answer. */
+const tradesSaved = {
+  id: "f2000000-0000-4000-8000-000000000001",
+  stream: "trades",
+  retain_days: 30,
+  action: "archive_parquet",
+  symbol: null,
+  applies_to_pinned: false,
+  updated_at: "2026-09-14T10:31:03Z",
+} satisfies RetentionPoliciesSaved["items"][number];
+
+/** `setRetentionPolicies` example `scheduled`: saved for the next nightly run, no sweep started. */
+export const retentionScheduled = {
+  items: [tradesSaved],
+  job_id: null,
+} satisfies RetentionPoliciesSaved;
+
+/** `setRetentionPolicies` example `appliedNow`: `apply_now=true` started the sweep `job_id`. */
+export const retentionAppliedNow = {
+  items: [tradesSaved],
+  job_id: "19000000-0000-4000-8000-000000000002",
+} satisfies RetentionPoliciesSaved;
+
+/** `getHealth` example `degraded` (SCR-142's tiers: `postgres`, `questdb`, `parquet_store`). */
+export const healthDegraded = {
+  overall: "degraded",
+  version: "1.0.0",
+  git_sha: "a91f0c3",
+  uptime_seconds: 184220,
+  server_time: "2026-09-14T10:37:10Z",
+  clock_offset_ms: 4,
+  components: [
+    { name: "postgres", state: "healthy", latency_ms: 2, detail: "pool 4/20" },
+    { name: "questdb", state: "healthy", latency_ms: 6, detail: "ingest 18.4k msg/s" },
+    {
+      name: "parquet_store",
+      state: "healthy",
+      latency_ms: 44,
+      detail: "last sync 2026-09-14T10:00:00Z",
+    },
+    {
+      name: "bybit_public_ws",
+      state: "healthy",
+      latency_ms: 18,
+      detail: "14 topics, 0 reconnects/h",
+    },
+    {
+      name: "bybit_private_ws",
+      state: "degraded",
+      latency_ms: 210,
+      detail: "account a1000000… reconnected 3× in the last hour",
+    },
+    { name: "bybit_rest", state: "healthy", latency_ms: 118, detail: "rate budget 62% free" },
+    { name: "oms", state: "healthy", latency_ms: 1, detail: "0 unreconciled orders" },
+    { name: "rule_engine", state: "healthy", latency_ms: 1, detail: "4 armed, 0 errors/h" },
+    { name: "recorder", state: "healthy", latency_ms: 42, detail: "2 symbols recording" },
+    {
+      name: "disk",
+      state: "warning",
+      latency_ms: 0,
+      detail: "30% free; projected full 2027-02-11",
+    },
+  ],
+  alerts_active: 1,
+} satisfies HealthReport;
+
+/** `importTradeArchive`'s body: E16-D04's fixture range, BTCUSDT over January 2026. */
+export const importJanuary = {
+  symbol: "BTCUSDT",
+  from: "2026-01-01",
+  to: "2026-01-31",
+} satisfies ImportBody;
+
+/** `importTradeArchive`'s `202`, which `22` gives no example: the job to poll. */
+export const importAccepted = {
+  job_id: "19000000-0000-4000-8000-000000000003",
+} satisfies JobAccepted;
+
+/** An `apply_now` sweep's `Job.result`: one partition deleted, one kept late, one failed. */
+export const sweepResult = {
+  deleted: 1,
+  freed_bytes: 2048,
+  skipped: 1,
+  failed: 1,
+  skipped_locked: false,
+} satisfies RetentionSweepResult;
+
+/** A compaction's `Job.result`; its job reports `kind: retention_sweep`, as a sweep's does. */
+export const compactionResult = {
+  compacted: 3,
+  skipped: 1,
+  deferred: ["trades/symbol=BTCUSDT/dt=2026-10-16"],
+  failed: ["trades/symbol=ETHUSDT/dt=2026-10-15"],
+} satisfies CompactionRunResult;
+
+/** A purge's `Job.result`: two days deleted, two kept because another symbol shares them. */
+export const purgeResult = {
+  deleted: 2,
+  freed_bytes: 1220004410,
+  skipped: [{ partition: "2026-09-03", reason: "shared_partition" }],
+  protected: [{ partition: "2026-09-04", reason: "shared_partition" }],
+  failed: 0,
+} satisfies RetentionPurgeResult;
+
+/** An import's `Job.result`: 27 files written, 1 from an earlier run, 2 skipped, 1 overlap. */
+export const importResult = {
+  symbol: "BTCUSDT",
+  from: "2026-06-01",
+  to: "2026-06-30",
+  files_total: 30,
+  files_processed: 27,
+  files_already_imported: 1,
+  files_skipped: [
+    { file: "BTCUSDT2026-06-07.csv.gz", reason: "import_checksum_failed" },
+    { file: "BTCUSDT2026-06-09.csv.gz", reason: "import_parse_failed" },
+  ],
+  rows_written: 648,
+  rows_discarded_overlap: 264,
+  rows_discarded_duplicate: 2,
+  overlap: [{ from: "2026-06-20T00:00:00Z", to: "2026-07-01T00:00:00Z" }],
+  bytes_downloaded: 1048576,
+  already_imported: { rows_written: 24, rows_discarded_overlap: 0, rows_discarded_duplicate: 0 },
+  streams: ["trades"],
+  source: "archive",
+} satisfies ArchiveImportResult;

@@ -1,9 +1,11 @@
 /**
  * E16-S01 2/9: the recorder screen's REST client against a stubbed `apiFetch` (no network, C-13.5),
  * answered with the `22` examples (fixtures.ts): the calls, one Idempotency-Key per write, the step-up
- * hold (E16-D06 §20.3 (iii)) and §16.4's routing of every declared code.
+ * hold (E16-D06 §20.3 (iii)) and §16.4's routing of every declared code. E16-S03 / E16-S04 add the
+ * retention set and its sweep's `job_id`, the archive import, the health read and the job result
+ * read by the action that issued the id (BQ-2, BQ-4, BQ-11).
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 const { apiFetch } = vi.hoisted(() => ({
   apiFetch: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(),
@@ -17,16 +19,28 @@ import {
   READ_TIMEOUT_MS,
   readResult,
   recorderApi,
+  type CompactionRunResult,
+  type JobAction,
+  type RetentionPoliciesBody,
+  type RetentionSweepResult,
 } from "../../../src/features/recorder/recorderApi";
 import {
   addManual,
+  compactionResult,
+  healthDegraded,
+  importJanuary,
+  importResult,
   listTwo,
   problem,
   purgeAnchoredBound,
   purgeJobRunning,
+  retentionAppliedNow,
+  retentionDefaults,
+  retentionScheduled,
   statusHealthy,
   stepUpRequired,
   storageUsage,
+  sweepResult,
 } from "./fixtures";
 
 const ID = "e1000000-0000-4000-8000-000000000001";
@@ -40,6 +54,21 @@ const PURGE = {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const EMPTY_PAGE = { items: [], meta: { count: 0, has_more: false } };
 const OK = { ok: true, status: 200, code: null, stepUp: null, route: null };
+/** A set to PUT: the client sends what it is given (the model builds the whole set, BQ-10). */
+const POLICY_SET = {
+  items: [
+    { stream: "trades", retain_days: 7, action: "drop", symbol: null, applies_to_pinned: false },
+  ],
+} satisfies RetentionPoliciesBody;
+/** A succeeded job as `getJob` answers it: `kind` and `result` as the route serves them. */
+const done = (kind: string, result: object) => ({
+  id: JOB,
+  kind,
+  status: "succeeded",
+  progress_pct: 100,
+  result,
+  error: null,
+});
 
 const reply = (status: number, body?: unknown): Response =>
   new Response(body === undefined ? null : JSON.stringify(body), { status });
@@ -60,6 +89,10 @@ const READS = [
   ["sessions", () => recorderApi.sessions({ symbol: "BTCUSDT", limit: 1 }), "/recording/sessions?symbol=BTCUSDT&limit=1", EMPTY_PAGE],
   ["coverage", () => recorderApi.coverage({ symbol: "BTCUSDT", stream: ["trades", "klines"] }), "/market/data-coverage?symbol=BTCUSDT&stream=trades&stream=klines", { symbol: "BTCUSDT" }],
   ["job", () => recorderApi.job(JOB, "compact"), `/admin/jobs/${JOB}`, { id: JOB, status: "running", progress_pct: 42 }],
+  ["retention", () => recorderApi.retention(), "/recording/retention-policies", retentionDefaults],
+  ["health", () => recorderApi.health(), "/admin/health", healthDegraded],
+  ["job, a sweep", () => recorderApi.job(JOB, "retention"), `/admin/jobs/${JOB}`, done("retention_sweep", sweepResult)],
+  ["job, an import", () => recorderApi.job(JOB, "import"), `/admin/jobs/${JOB}`, done("archive_import", importResult)],
 ] as const;
 
 // prettier-ignore
@@ -71,6 +104,9 @@ const WRITES = [
   ["pin", () => recorderApi.pin(ID, { pinned: true }), "PUT", `/recording/symbols/${ID}/pin`, { pinned: true }],
   ["compact", () => recorderApi.compact(), "POST", "/admin/recorder/compact", undefined],
   ["purge", () => recorderApi.purge(PURGE), "POST", "/admin/recorder/purge", PURGE],
+  ["set retention", () => recorderApi.setRetention(POLICY_SET), "PUT", "/recording/retention-policies", POLICY_SET],
+  ["set retention, apply now", () => recorderApi.setRetention(POLICY_SET, { apply_now: true }), "PUT", "/recording/retention-policies?apply_now=true", POLICY_SET],
+  ["import", () => recorderApi.importArchive(importJanuary), "POST", "/admin/recorder/import", importJanuary],
 ] as const;
 
 describe("recorderApi calls", () => {
@@ -128,6 +164,20 @@ describe("the step-up hold (E16-D06 §20.3 (iii))", () => {
     expect(answer).toMatchObject({ ok: true, data: listTwo.items[0], route: null });
   });
 
+  it("a retention set's 403 holds the PUT with apply_now; its one re-send answers the sweep's id", async () => {
+    apiFetch.mockResolvedValueOnce(reply(403, stepUpRequired));
+    const refused = await recorderApi.setRetention(POLICY_SET, { apply_now: true });
+    expect(refused).toMatchObject({ ok: false, status: 403, code: "step_up_required", data: null });
+    expect(refused.route).toEqual({ kind: "step_up", hold: refused.stepUp });
+    if (refused.stepUp === null) throw new Error("no hold");
+    const { held } = refused.stepUp;
+    apiFetch.mockResolvedValueOnce(reply(200, retentionAppliedNow));
+    const answer = await readResult("setRetentionPolicies", await sendHeld(held), held);
+    expect(sent(1)).toEqual(sent(0)); // the same URL, body and Idempotency-Key: one submission
+    expect(sent(1).url).toBe("/api/v1/recording/retention-policies?apply_now=true");
+    expect(answer).toMatchObject({ ok: true, data: retentionAppliedNow, route: null });
+  });
+
   it("a 403 that is not a challenge is a refusal, never a held request", async () => {
     apiFetch.mockResolvedValueOnce(reply(403, problem(403, "session_read_only")));
     const result = await recorderApi.update(ID, { retention_days: 90 });
@@ -158,8 +208,11 @@ const SERVER_TEXT = [
 ];
 const purge = () => recorderApi.purge(PURGE);
 const compact = () => recorderApi.compact({ older_than_days: 7 });
-const poll = (job: "compact" | "purge") => () => recorderApi.job(JOB, job);
+const poll = (job: JobAction) => () => recorderApi.job(JOB, job);
 const add = () => recorderApi.add(addManual);
+const setRetention = () => recorderApi.setRetention(POLICY_SET);
+const applyNow = () => recorderApi.setRetention(POLICY_SET, { apply_now: true });
+const importArchive = () => recorderApi.importArchive(importJanuary);
 
 // prettier-ignore
 const ROUTES = [
@@ -179,6 +232,21 @@ const ROUTES = [
   ["add, the symbol limit", add, problem(422, "recorder_symbol_limit"), t4("recorder_symbol_limit", 422)],
   ["stop, a trigger holds it", () => recorderApi.remove(ID), problem(409, "conflict"), t4("conflict", 409)],
   ["list, a stale cursor", () => recorderApi.list({ cursor: "c1" }), problem(400, "invalid_cursor"), t4("invalid_cursor", 400)],
+  ["set retention, the derived rule", setRetention, problem(422, "retention_invalid_policy"), deck("retention.refused.invalid", "retention_invalid_policy")],
+  ["set retention, a field refused", setRetention, problem(422, "validation_failed", FIELD), deck("retention.refused.unknown", "validation_failed")],
+  ["set retention, a run already running", applyNow, problem(409, "job_running"), deck("retention.refused.job_running", "job_running")],
+  ["set retention, runs off on the server", applyNow, problem(409, "conflict"), deck("retention.refused.scheduler_off", "conflict")],
+  ["set retention, no audit record", setRetention, problem(503, "audit_unavailable"), deck("retention.refused.audit", "audit_unavailable")],
+  ["set retention, not the owner", setRetention, problem(403, "forbidden"), t4("forbidden", 403)],
+  ["set retention, the write budget spent", setRetention, problem(429, "rate_limited"), t4("rate_limited", 429)],
+  ["retention read, no store yet", () => recorderApi.retention(), problem(503, "store_unavailable"), t4("store_unavailable", 503)],
+  ["import, one running", importArchive, problem(409, "job_running"), deck("storage.job.refused.running", "job_running")],
+  ["import, the range refused", importArchive, problem(422, "import_range_invalid"), t4("import_range_invalid", 422)],
+  ["import, the key reused", importArchive, problem(422, "idempotency_key_reused"), t4("idempotency_key_reused", 422)],
+  ["import, no audit record", importArchive, problem(503, "audit_unavailable"), t4("audit_unavailable", 503)],
+  ["import poll, the job lost", poll("import"), problem(404, "not_found", LOST), deck("storage.import.unknown", "not_found")],
+  ["sweep poll, the job lost (no deck line)", poll("retention"), problem(404, "not_found", LOST), t4("not_found", 404, "jobId")],
+  ["health read, not wired", () => recorderApi.health(), problem(501, "not_implemented"), t4("not_implemented", 501)],
 ] as const;
 
 describe("E16-D06 §16.4: a refusal is a deck sentence or the generic T4, never server text", () => {
@@ -305,5 +373,28 @@ describe("the whole list, page by page (A-5309-02, C-5309-10 (a))", () => {
       route: t4(null, 200),
     });
     expect(apiFetch).toHaveBeenCalledTimes(MAX_LIST_PAGES);
+  });
+});
+
+describe("the retention set's sweep and each job's result (E16-S03 AC 6; BQ-2, BQ-4, BQ-11)", () => {
+  it.each([
+    ["no apply_now: saved for the nightly run, job_id null", {}, retentionScheduled],
+    ["apply_now: the sweep it started, to poll", { apply_now: true }, retentionAppliedNow],
+  ] as const)("%s", async (_, query, answer) => {
+    apiFetch.mockResolvedValueOnce(reply(200, answer));
+    const result = await recorderApi.setRetention(POLICY_SET, query);
+    expect(result).toEqual({ ...OK, data: answer });
+    expect(result.data?.job_id).toBe(answer.job_id);
+  });
+
+  it("a poll reads the result by the action that issued the id, never by its kind", async () => {
+    // A compaction and an apply_now sweep both report `kind: retention_sweep` (22 `Job.result`).
+    apiFetch.mockResolvedValueOnce(reply(200, done("retention_sweep", compactionResult)));
+    const compaction = await recorderApi.job(JOB, "compact");
+    apiFetch.mockResolvedValueOnce(reply(200, done("retention_sweep", sweepResult)));
+    const sweep = await recorderApi.job(JOB, "retention");
+    expect([compaction.data?.result, sweep.data?.result]).toEqual([compactionResult, sweepResult]);
+    expectTypeOf(compaction.data?.result).toEqualTypeOf<CompactionRunResult | null | undefined>();
+    expectTypeOf(sweep.data?.result).toEqualTypeOf<RetentionSweepResult | null | undefined>();
   });
 });
