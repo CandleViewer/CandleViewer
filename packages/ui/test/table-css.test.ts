@@ -114,6 +114,11 @@ describe("table.css contract", () => {
     expect(find(css.normal, ".cv-table__lock", "display")).toContain("inline-flex");
   });
 
+  it("the table is its own stacking context, so its sticky header never paints over a dialog", () => {
+    // The header's z-index 1 stays inside the table: a later layer with no z-index (CMP-043's) covers it whole.
+    expect(find(css.normal, ".cv-table", "isolation")).toContain("isolation: isolate");
+  });
+
   it("the echo stacks above the sticky header row, so a first-row echo is never painted under it", () => {
     const layer = (selector: string): number =>
       Number(/z-index:\s*(\d+)/.exec(find(css.normal, selector, "z-index"))?.[1] ?? Number.NaN);

@@ -5,6 +5,7 @@ import { ReasonText, useDisabledReason, useGatedAnnounce } from "./internal/disa
 import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { cx } from "./internal/cx.js";
 import { useFocusRing } from "./FocusRing.js";
+import { Spinner } from "./Spinner.js";
 
 interface IconButtonBase<N extends IconName> extends Omit<
   ComponentPropsWithoutRef<"button">,
@@ -26,6 +27,12 @@ interface IconButtonBase<N extends IconName> extends Omit<
   disabledReasonId?: string;
   /** Emits `data-density` so `theme.css` re-points the control height; absent = inherit. */
   density?: "comfortable" | "compact";
+  /**
+   * In flight (E42-D03 U-7): these words ("Disabling alex…") replace `label` as the name, a CMP-014 spinner replaces
+   * the glyph and the button is `aria-busy`. It stays the same focusable element, so focus that was on it, or comes
+   * back to it as a dialog closes, stays; a press does nothing and says nothing (availability, never T2).
+   */
+  busy?: string;
 }
 
 /** Toggle mode (`pressed`) exists on secondary and ghost only: a pressed primary or danger reads as another variant. */
@@ -51,6 +58,7 @@ export function IconButton<N extends IconName>({
   disabledReason,
   disabledReasonId,
   density,
+  busy,
   onClick,
   onKeyDown,
   type = "button",
@@ -60,14 +68,21 @@ export function IconButton<N extends IconName>({
   const reason = useDisabledReason(disabled, disabledReason, disabledReasonId);
   const announceGated = useGatedAnnounce();
   const ring = useFocusRing();
+  const busyName = busy?.trim() || undefined;
+  const name = busyName ?? label;
   // `reason.reason` is set exactly when gated: the name, then the reason, joined by " · "; under a gate notice the
   // notice carries the reason, so the echo is the name alone.
   const echo = reason.disabled
     ? undefined
     : reason.reason === undefined || reason.fromNotice
-      ? label
-      : `${label} · ${reason.reason}`;
+      ? name
+      : `${name} · ${reason.reason}`;
   const handleClick = (event: MouseEvent<HTMLButtonElement>): void => {
+    // Enter and Space reach here as clicks: a busy button does nothing and says nothing (its name says why).
+    if (busyName !== undefined) {
+      event.preventDefault();
+      return;
+    }
     // Enter and Space reach here as clicks: a gated button stays focusable but does nothing.
     if (reason.gated) {
       event.preventDefault();
@@ -95,14 +110,15 @@ export function IconButton<N extends IconName>({
           data-density={density}
           data-gated={reason.gated ? "" : undefined}
           disabled={reason.disabled}
-          aria-label={label}
+          aria-label={name}
           aria-pressed={pressed}
           aria-disabled={reason.ariaDisabled}
+          aria-busy={busyName === undefined ? undefined : true}
           aria-describedby={cx(describedBy, reason.ariaDescribedBy) || undefined}
           onClick={handleClick}
           onKeyDown={handleKeyDown}
         >
-          <Icon name={icon} size={size} />
+          {busyName === undefined ? <Icon name={icon} size={size} /> : <Spinner size="sm" />}
           {reason.gated ? (
             <span className="cv-icon-button__badge">
               {/* E05-D02 CMP-079 a11y: the badge is CMP-019 `decorative=false`, an img named "Not available". */}

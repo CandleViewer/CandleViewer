@@ -35,6 +35,7 @@ lock leads the label, named "Not available".
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | Tab / Shift+Tab              | Moves focus; focus-visible shows the ring. Plain disabled is skipped.                                        |
 | Enter, Space                 | Activates (`onClick`). Toggle mode: the consumer flips `pressed`; the name never changes.                    |
+| Enter, Space (busy)          | No action and nothing said; the button keeps focus (its busy words say why).                                 |
 | Enter, Space (with a reason) | No action; the button stays focusable and its reason is the accessible description.                          |
 | A held Enter (with a reason) | No action; its repeats are swallowed, so the reason is said once per press, not once per repeat.             |
 | Esc (name or reason echo)    | Hides the echo (CMP-016, `aria-hidden`); focus stays and the key stops there. A second Esc reaches the host. |
@@ -43,7 +44,9 @@ Hover and keyboard focus show the name in a CMP-016 echo (D10); with a reason, o
 reason. The name stays the `aria-label` and the reason the description. Plain disabled has no echo. The echo joins
 the name and the reason with " · ", e.g. "Panel settings · Owner only: your role can't use this action."
 With `disabledReasonId` (a read-only panel's one notice) the notice is the description and no hidden copy renders;
-the badge and the echo stay.
+the badge and the echo stay. With `busy` (a write in flight, E42-D03 U-7) the busy words ("Disabling alex…") are the
+`aria-label` and the echo, a CMP-014 spinner takes the glyph's place and the button is `aria-busy="true"`: the same
+focusable element, never `disabled` or `aria-disabled` (availability, never T2).
 
 ### NumericStepperInput (CMP-008, APG Spin Button)
 

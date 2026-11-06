@@ -44,6 +44,11 @@ import type {
   WatchlistRowProps,
   CheckboxProps,
   CommandPaletteProps,
+  ConfirmAcknowledge,
+  ConfirmAuditCode,
+  ConfirmChoice,
+  ConfirmRung,
+  ConfirmStepUpState,
   ConfirmDialogProps,
   DatePickerProps,
   DateRangePickerProps,
@@ -325,6 +330,16 @@ describe("@candleviewer/ui audit log components (E42-S04)", () => {
           PaginationProps,
         ]
       | null = null;
+    expect(props).toBeNull();
+  });
+});
+
+describe("@candleviewer/ui CMP-044's ladder (E42-S02)", () => {
+  it("exports the rung, the two-choice block, the tick, the step-up line and the marker types", () => {
+    const rung: ConfirmRung = 3;
+    const state: ConfirmStepUpState = "code";
+    expect([rung, state]).toEqual([3, "code"]);
+    const props: [ConfirmChoice, ConfirmAcknowledge, ConfirmAuditCode] | null = null;
     expect(props).toBeNull();
   });
 });

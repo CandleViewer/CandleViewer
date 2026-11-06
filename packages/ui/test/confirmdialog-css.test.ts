@@ -84,3 +84,77 @@ describe("confirmdialog.css contract (CMP-044)", () => {
     expect(find(forced, ".cv-confirm__restatement-label", "color")).toContain("color: CanvasText");
   });
 });
+
+describe("confirmdialog.css: the ladder (E42-S02; E42-D03 §12, R-2)", () => {
+  it("the validity form: a natively disabled Confirm on surface.raised, a border.default hairline, text.tertiary", () => {
+    const look = find(normal, ".cv-button[data-unmet]:disabled", "background");
+    expect(look).toContain("background: var(--color-surface-raised)");
+    expect(look).toContain(
+      "border: calc(var(--border-hairline) * 1px) solid var(--color-border-default)",
+    );
+    expect(look).toContain("color: var(--color-text-tertiary)");
+    // Full strength: the look carries the state, never a dimmed control (G-T2.2's tokens, no lock).
+    expect(look).toContain("opacity: 1");
+    // It out-specifies a variant's fill and colour (CMP-001's `[data-variant]` rules).
+    expect(find(normal, ".cv-button[data-unmet][data-variant]:disabled", "background")).toBe(look);
+  });
+
+  it("never color.text.disabled or opacity.disabled anywhere in the dialog's sheet", () => {
+    expect(css.all).not.toMatch(/--color-text-disabled|--opacity-disabled/);
+  });
+
+  it("the hint: its own row under the buttons, at the end, a caption in text.secondary", () => {
+    const hint = find(normal, ".cv-confirm__hint", "color");
+    expect(hint).toContain("flex: 1 0 100%");
+    expect(hint).toContain("text-align: end");
+    expect(hint).toContain("color: var(--color-text-secondary)");
+    expect(hint).toContain("var(--type-ui-caption-font-size)");
+  });
+
+  it("the lead in text.primary; an option's second lines are captions in text.secondary", () => {
+    expect(find(normal, ".cv-confirm__lead", "color")).toContain(
+      "color: var(--color-text-primary)",
+    );
+    for (const line of [".cv-confirm__choice-reason", ".cv-confirm__choice-consequence"]) {
+      const body = find(normal, line, "color");
+      expect(body).toContain("color: var(--color-text-secondary)");
+      expect(body).toContain("var(--type-ui-caption-font-size)");
+    }
+  });
+
+  it("a T2 option: its lock and label in text.tertiary (2a), never dimmed", () => {
+    const label = find(
+      normal,
+      ".cv-confirm__choice[data-gated] .cv-confirm__choice-label",
+      "color",
+    );
+    expect(label).toContain("color: var(--color-text-tertiary)");
+  });
+
+  it("the step-up line a caption in text.secondary; the marker a caption in text.tertiary", () => {
+    const line = find(normal, ".cv-confirm__stepup", "color");
+    expect(line).toContain("color: var(--color-text-secondary)");
+    expect(line).toContain("var(--type-ui-caption-font-size)");
+    const marker = find(normal, ".cv-confirm__marker", "color");
+    expect(marker).toContain("color: var(--color-text-tertiary)");
+    expect(marker).toContain("var(--type-ui-caption-font-size)");
+  });
+
+  it("forced colours: the validity form greys as plain disabled; the T2 label and the lines stay CanvasText", () => {
+    const look = find(forced, ".cv-button[data-unmet]:disabled", "color");
+    expect(look).toContain("color: GrayText");
+    expect(look).toContain("border-color: GrayText");
+    expect(look).toContain("background: ButtonFace");
+    for (const line of [
+      ".cv-confirm__hint",
+      ".cv-confirm__lead",
+      ".cv-confirm__choice-reason",
+      ".cv-confirm__choice-consequence",
+      ".cv-confirm__stepup",
+      ".cv-confirm__marker",
+      ".cv-confirm__choice[data-gated] .cv-confirm__choice-label",
+    ]) {
+      expect(find(forced, line, "color")).toContain("color: CanvasText");
+    }
+  });
+});

@@ -1044,3 +1044,28 @@ const treeTheme = (theme: string): Story => ({
 });
 export const ContrastLight: Story = treeTheme("light");
 export const ContrastHighContrast: Story = treeTheme("high-contrast");
+
+/**
+ * A row's write in flight (`rowBusy`, E42-D03 U-7): ETHUSDT's ⋯ is CMP-002 `busy`, "Closing ETHUSDT…", the same
+ * focusable control; neither its menu nor the context menu opens until the words go; the other rows are as before.
+ */
+export const RowActionsBusy: Story = {
+  render: () => (
+    <Host
+      rowActions={rowMenu}
+      rowBusy={(p) => (p.symbol === "ETHUSDT" ? "Closing ETHUSDT…" : undefined)}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const busy = canvas.getByRole("button", { name: "Closing ETHUSDT…" });
+    await expect(busy).toHaveAttribute("aria-busy", "true");
+    busy.focus();
+    await userEvent.keyboard("{Enter}");
+    await expect(within(document.body).queryByRole("menu")).toBeNull();
+    await expect(busy).toHaveFocus();
+    await expect(canvas.getByRole("button", { name: "Actions for BTCUSDT" })).not.toHaveAttribute(
+      "aria-busy",
+    );
+  },
+};

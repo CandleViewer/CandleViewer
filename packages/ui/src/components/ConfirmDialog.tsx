@@ -17,6 +17,27 @@ import { FormField } from "./FormField.js";
 import { TextInput } from "./TextInput.js";
 import { cx } from "./internal/cx.js";
 import { clampHold, PRESS_WINDOW_MS, useHoldGate, type HoldGate } from "./internal/holdGate.js";
+import {
+  choiceReason,
+  ConfirmStepUpLine,
+  LADDER_COPY,
+  LadderInputs,
+  markerText,
+  rungVariant,
+  type ConfirmAcknowledge,
+  type ConfirmAuditCode,
+  type ConfirmChoice,
+  type ConfirmRung,
+  type ConfirmStepUpState,
+} from "./internal/ladderParts.js";
+
+export type {
+  ConfirmAcknowledge,
+  ConfirmAuditCode,
+  ConfirmChoice,
+  ConfirmRung,
+  ConfirmStepUpState,
+} from "./internal/ladderParts.js";
 
 /**
  * `standard` confirms on one activation; `typed` first asks for an exact token; `hold` asks for a press held
@@ -107,7 +128,8 @@ export interface ConfirmDialogProps {
   typedReason?: string | undefined;
   /**
    * The host's own form validity (its fields in `children`): while set, Confirm takes the same validity look with
-   * this reason, after the typed token's (E16-D04 §1.3: the first unmet rule, form validity, never T2).
+   * this reason, after the typed token's (E16-D04 §1.3: the first unmet rule, form validity, never T2). With the
+   * ladder (`rung`, `choices`, `acknowledge`) it is the hint's last input instead, Confirm natively disabled (R-2).
    */
   validityReason?: string | undefined;
   /** `hold`: the press length, ms; default 800, clamped to 300–2,000 (H2, the user's setting). */
@@ -141,6 +163,47 @@ export interface ConfirmDialogProps {
   fallbackFocusRef?: RefObject<HTMLElement | null> | undefined;
   /** The clock, ms (monotonic `performance.now` by default); injectable for tests. */
   now?: (() => number) | undefined;
+  /**
+   * E42-D03 §12's ladder (AD-11): the rung derives `variant` (0 hold, 1–2 standard, 3 typed, 4 typed where
+   * `typedConfirmValue` is set, else standard); passing `variant` too is a dev error and the rung wins. A rung,
+   * `choices` or `acknowledge` turns on the validity form (R-2: form validity, never T2): Confirm stays natively
+   * disabled, out of the Tab order, with no lock, on `color.surface.raised` with a `color.border.default` hairline and
+   * its label in `color.text.tertiary`, until a choice is made, then the tick, then the typed value matches; the hint
+   * under it names the first unmet input. While `summaryLoading` it takes CMP-001's loading look instead.
+   */
+  rung?: ConfirmRung | undefined;
+  /**
+   * The two-choice block (UD-11/12), before the typed field: a radiogroup labelled by `choiceLead`, `aria-required`,
+   * none checked. Tab enters it without checking, Space checks, the arrows move and check; a T2 option is focused,
+   * never checked, and Space, Enter or a press re-shows its reason once. Enter in the group never confirms.
+   */
+  choices?: readonly ConfirmChoice[] | undefined;
+  /** The block's lead (`unbind.lead`, `unbind.unknown`): its visible first line and the group's name. */
+  choiceLead?: string | undefined;
+  /**
+   * Controlled: the chosen option's id, `undefined` until the user chooses. Never pre-selected: the host clears it
+   * for each opening (one held when the dialog opens is a dev warning), and no dismissal sets it.
+   */
+  choice?: string | undefined;
+  onChoiceChange?: ((id: string) => void) | undefined;
+  /** The unknown-positions tick (D21): a CMP-005 after the choices; Confirm waits on it. */
+  acknowledge?: ConfirmAcknowledge | undefined;
+  /**
+   * The step-up line (E42-D02 §4.1), after the typed field: `code` "You'll confirm with your password and a code.",
+   * `fresh` "This always needs a fresh code." (rung 4), `grace` "Still trusted for {stepUpClassLabel} · {m:ss}"
+   * until `stepUpGraceEndsAt` and the code line after it; `none` or absent, no line.
+   */
+  stepUpState?: ConfirmStepUpState | undefined;
+  /** `grace`: the class in words: "user changes" (`users`), "risk limits" (`risk_caps`). */
+  stepUpClassLabel?: string | undefined;
+  /** `grace`: when the window ends, epoch ms (the server's), counted by CMP-035 on the wall clock. */
+  stepUpGraceEndsAt?: number | undefined;
+  /**
+   * The audit marker (E42-D02 D5, §4.3): "Recorded in the audit log · {label} ({code})", several joined by " + ",
+   * the last line before the buttons and part of the dialog's description; `[]` is the marker without a code. The
+   * server writes every record ahead of its answer: the dialog only names what it will record.
+   */
+  auditCodes?: readonly ConfirmAuditCode[] | undefined;
 }
 
 interface Spoken {
@@ -269,6 +332,8 @@ function HoldRing({ label, progress, percent, windowEndsAt, now }: HoldRingProps
  * `hold` (H25): Confirm never reads a click; a pointer held for `holdDurationMs`, `Enter` held as long, or two
  * non-repeat `Enter` / `Space` presses 250 ms – 5 s apart confirm, the guard applying to each press's start.
  * `autoCancelMs` counts down in CMP-035, restarts on any input and cancels at 0:00, never confirming.
+ * E42-D03 §12's ladder (`rung`, `choices`, `acknowledge`): the validity form holds Confirm natively disabled, its
+ * hint naming the first unmet input; the step-up line and the audit marker close the body (E42-D02 §4.1, §4.3).
  */
 export function ConfirmDialog({
   open,
@@ -288,7 +353,7 @@ export function ConfirmDialog({
   confirmLabel,
   cancelLabel = "Cancel",
   confirmVariant = "danger",
-  variant = "standard",
+  variant: variantProp,
   typedConfirmValue,
   typedInstruction,
   typedReason,
@@ -303,6 +368,16 @@ export function ConfirmDialog({
   confirmDisabledReason,
   fallbackFocusRef,
   now = monotonic,
+  rung,
+  choices,
+  choiceLead,
+  choice,
+  onChoiceChange,
+  acknowledge,
+  stepUpState,
+  stepUpClassLabel,
+  stepUpGraceEndsAt,
+  auditCodes,
 }: ConfirmDialogProps): JSX.Element | null {
   const id = useId();
   const confirmId = `${id}-confirm`;
@@ -341,17 +416,32 @@ export function ConfirmDialog({
 
   const trimmedReason = confirmDisabledReason?.trim();
   const reason = trimmedReason === undefined || trimmedReason === "" ? undefined : trimmedReason;
+  // E42-D03 §12's ladder: the rung derives the variant; the choice and the tick hold Confirm (R-2, form validity).
+  const variant: ConfirmDialogVariant =
+    rung === undefined ? (variantProp ?? "standard") : rungVariant(rung, typedConfirmValue);
+  const choiceList = choices ?? [];
+  /** A choice made in the block: a T2 option never counts, whoever set it. */
+  const chosen =
+    choiceList.length === 0 ||
+    choiceList.some((option) => option.id === choice && choiceReason(option) === undefined);
+  const acknowledged = acknowledge === undefined || acknowledge.checked;
+  const ladder = rung !== undefined || choiceList.length > 0 || acknowledge !== undefined;
+  const ladderMet = chosen && acknowledged;
   const isHold = variant === "hold";
   // `typed`, or a `hold` that also asks for the token (E29-D02 §8.4).
   const isTyped = variant === "typed" || (isHold && typedConfirmValue !== undefined);
   const token = typedConfirmValue ?? "";
   const matched = !isTyped || (token !== "" && typed === token);
   const hostRule = validityReason?.trim() || undefined;
-  // The validity look's reason: the typed token's first while it differs, else the host's rule.
-  const validity = matched ? hostRule : typedReason?.trim() || undefined;
-  const ready = !summaryLoading && matched && hostRule === undefined;
-  /** Native `disabled`: availability (the summary loading), or a typed mismatch with no look asked for. */
-  const nativelyDisabled = summaryLoading || (!matched && validity === undefined);
+  // The validity look's reason: the typed token's first while it differs, else the host's rule. The ladder keeps
+  // its own validity form (R-2: natively disabled, the hint naming the first unmet input), so no look with it.
+  const validity = ladder ? undefined : matched ? hostRule : typedReason?.trim() || undefined;
+  const ready = !summaryLoading && matched && ladderMet && hostRule === undefined;
+  /**
+   * Native `disabled`: availability (the summary loading), or a typed mismatch with no look asked for; with the
+   * ladder, every unmet input (its validity form, R-2).
+   */
+  const nativelyDisabled = ladder ? !ready : summaryLoading || (!matched && validity === undefined);
   const instruction = typedInstruction ?? `Type ${token} to confirm`;
   const available = ready && reason === undefined;
   const delayMs = Number.isFinite(confirmDelayMs)
@@ -410,6 +500,38 @@ export function ConfirmDialog({
     if (delayMs !== confirmDelayMs)
       warn(`confirmDelayMs below ${String(CONFIRM_DELAY_FLOOR_MS)} ms is raised to it.`);
   }, [open, confirmLabel, isTyped, token, delayMs, confirmDelayMs, isHold, holdMs, holdDurationMs]);
+
+  // The ladder's dev warnings (E42-D03 §12): a choice already held as the dialog opens (none is ever pre-selected),
+  // a rung with a variant, a block without its lead, and a grace line without its class or its end.
+  const heldChoice = useRef(choice);
+  heldChoice.current = choice;
+  useEffect(() => {
+    if (open && heldChoice.current !== undefined)
+      warn("a choice is held as the dialog opens: no option is ever pre-selected (E42-D03 §12).");
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    if (rung !== undefined && variantProp !== undefined)
+      warn("pass rung or variant, never both: the rung derives the variant (E42-D03 §12).");
+    if (choiceList.length > 0 && (choiceLead?.trim() ?? "") === "")
+      warn("choices need a choiceLead: the radiogroup's visible name.");
+    if (
+      stepUpState === "grace" &&
+      ((stepUpClassLabel?.trim() ?? "") === "" || stepUpGraceEndsAt === undefined)
+    )
+      warn(
+        "a grace step-up line needs stepUpClassLabel and stepUpGraceEndsAt: the code line shows.",
+      );
+  }, [
+    open,
+    rung,
+    variantProp,
+    choiceList.length,
+    choiceLead,
+    stepUpState,
+    stepUpClassLabel,
+    stepUpGraceEndsAt,
+  ]);
 
   // The auto-cancel starts at the opening, and from the full count whenever it shows again (a `busy` that
   // ended without a send); any non-repeat key or pointer input restarts it (E30-D03 D3 (5)–(6)). The dialog
@@ -505,6 +627,27 @@ export function ConfirmDialog({
   const cancelKeys = useKeyGuard();
   const confirmKeys = useKeyGuard(startPress);
 
+  // The ladder's validity form (R-2): the hint names the first unmet input, under Confirm, which it describes;
+  // none while the counts load (CMP-001's loading look says it), while busy, or while a T2 reason holds Confirm.
+  const hintId = `${id}-hint`;
+  const markerId = `${id}-marker`;
+  const hint =
+    !ladder || summaryLoading || busy || reason !== undefined
+      ? undefined
+      : !chosen
+        ? LADDER_COPY.chooseFirst
+        : !acknowledged
+          ? LADDER_COPY.ackFirst
+          : matched
+            ? hostRule
+            : instruction;
+  const ladderConfirm = ladder
+    ? {
+        ...(hint === undefined ? {} : { "data-unmet": "", "aria-describedby": hintId }),
+        ...(summaryLoading ? { loading: true } : {}),
+      }
+    : {};
+
   const footer = (
     <>
       {counting && deadline !== null ? (
@@ -536,6 +679,7 @@ export function ConfirmDialog({
         {...(isTyped && validity === undefined ? { "aria-describedby": instructionId } : {})}
         loading={busy}
         {...(isHold ? hold.handlers : { ...confirmKeys, onPointerDown: startPress })}
+        {...ladderConfirm}
         data-hold={isHold ? "" : undefined}
         data-holding={hold.holding ? "" : undefined}
         data-armed={hold.armedAt === null ? undefined : ""}
@@ -558,6 +702,12 @@ export function ConfirmDialog({
           now={() => clock.current()}
         />
       ) : null}
+      {hint === undefined ? null : (
+        // The validity form's hint, its own row under the buttons: form validity, never a T2 reason (R-2).
+        <p id={hintId} className="cv-confirm__hint">
+          {hint}
+        </p>
+      )}
       {reason === undefined ? null : (
         // H30 (a): the host's reason under the footer (15 CMP-044 States), besides CMP-001's echo; the
         // accessible description is CMP-001's own reason node.
@@ -588,8 +738,14 @@ export function ConfirmDialog({
       size={size}
       role={role}
       {...(label === undefined ? {} : { "aria-label": label })}
-      {...(hasRestatement || describedBy !== undefined
-        ? { "aria-describedby": cx(hasRestatement && restatementId, describedBy) }
+      {...(hasRestatement || describedBy !== undefined || auditCodes !== undefined
+        ? {
+            "aria-describedby": cx(
+              hasRestatement && restatementId,
+              describedBy,
+              auditCodes !== undefined && markerId,
+            ),
+          }
         : {})}
       initialFocusRef={cancelRef}
       {...(fallbackFocusRef === undefined ? {} : { fallbackFocusRef })}
@@ -619,6 +775,19 @@ export function ConfirmDialog({
         ) : null}
         {legs}
         {children}
+        <LadderInputs
+          choices={choiceList}
+          lead={choiceLead ?? ""}
+          choice={choice}
+          onChoose={(next) => {
+            if (!busy) onChoiceChange?.(next);
+          }}
+          acknowledge={acknowledge}
+          onAcknowledge={(next) => {
+            if (!busy) acknowledge?.onChange(next);
+          }}
+          onRefused={(text) => setPolite((s) => ({ n: s.n + 1, text }))}
+        />
         {isTyped ? (
           <FormField label={instruction} labelId={instructionId}>
             <TextInput
@@ -644,6 +813,17 @@ export function ConfirmDialog({
             {...(failure.retry === undefined ? {} : { retry: failure.retry })}
             {...(failure.details === undefined ? {} : { details: failure.details })}
           />
+        )}
+        <ConfirmStepUpLine
+          state={stepUpState}
+          classLabel={stepUpClassLabel}
+          graceEndsAt={stepUpGraceEndsAt}
+        />
+        {auditCodes === undefined ? null : (
+          // The marker, last before the buttons and part of the dialog's description (E42-D02 §4.3).
+          <p id={markerId} className="cv-confirm__marker">
+            {markerText(auditCodes)}
+          </p>
         )}
         <span role="status" className="cv-visually-hidden">
           {polite.text === "" ? null : <span key={polite.n}>{polite.text}</span>}

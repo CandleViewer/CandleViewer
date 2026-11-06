@@ -2,7 +2,12 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState, type JSX } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 import { Button } from "./Button.js";
-import { ConfirmDialog, type ConfirmDialogProps, type ConfirmMeta } from "./ConfirmDialog.js";
+import {
+  ConfirmDialog,
+  type ConfirmChoice,
+  type ConfirmDialogProps,
+  type ConfirmMeta,
+} from "./ConfirmDialog.js";
 
 const column = { display: "flex", flexDirection: "column", gap: "var(--space-stack-sm)" } as const;
 
@@ -528,3 +533,277 @@ const themed = (theme: string): Story => ({
 });
 export const ContrastLight: Story = themed("light");
 export const ContrastHighContrast: Story = themed("high-contrast");
+
+/*
+ * E42-D03 §12's ladder (E42-S02): the rung derives the variant; the two-choice block, the tick and the typed name
+ * hold Confirm natively disabled (form validity, R-2), its hint naming the first unmet input; the step-up line and
+ * the audit marker close the body. Each play: Cancel has first focus, Confirm waits with its hint.
+ */
+
+/** A ladder host: it owns the choice and the tick, as SCR-121's dialogs do. */
+function LadderDemo({
+  options,
+  tick,
+  ...props
+}: DemoProps & {
+  readonly options?: readonly ConfirmChoice[];
+  readonly tick?: string;
+}): JSX.Element {
+  const [choice, setChoice] = useState<string>();
+  const [ticked, setTicked] = useState(false);
+  return (
+    <Demo
+      stayOpen
+      {...(options === undefined ? {} : { choices: options, choice, onChoiceChange: setChoice })}
+      {...(tick === undefined
+        ? {}
+        : { acknowledge: { label: tick, checked: ticked, onChange: setTicked } })}
+      {...props}
+    />
+  );
+}
+
+const ACK =
+  "I accept that any open positions and orders stay open on Bybit under their exchange stop-losses.";
+const LEAVE: ConfirmChoice = {
+  id: "leave",
+  label: "Leave positions open — you take over",
+  consequence:
+    "The positions and orders stay as they are on Bybit. Their exchange stop-losses stay active. You manage them from now on.",
+};
+const FLATTEN: ConfirmChoice = {
+  id: "flatten",
+  label: "Flatten first, then remove access",
+  consequence:
+    "Closes the 2 open positions at market and cancels the 3 working orders on sub_001, then removes alex's access.",
+};
+const DISABLE_LIST = (
+  <ul style={{ margin: 0, paddingInlineStart: "var(--space-inset-lg)" }}>
+    <li>Signs alex out everywhere within 5 seconds.</li>
+    <li>Removes alex&apos;s access to sub_001 and sub_002.</li>
+    <li>Disarms alex&apos;s rules.</li>
+    <li>Keeps everything: journal, rules, settings and audit history stay.</li>
+    <li>You can enable alex again at any time.</li>
+  </ul>
+);
+const DISABLE_CODES = [
+  { label: "Disable user", code: "users.disable" },
+  { label: "Session signed out", code: "auth.session_revoked" },
+] as const;
+
+/**
+ * The open dialog's own controls. Its opener carries the same words as its Confirm ("Disable alex") and stays in the
+ * accessibility tree under `inert` (testing-library does not read `inert`), so a query scoped to the page finds both.
+ */
+const inDialog = (): ReturnType<typeof within> => within(page.getByRole("alertdialog"));
+
+/** The hint under a waiting Confirm, and Confirm natively disabled (out of the Tab order, no lock). */
+const waits = async (confirmName: string, hint: string): Promise<HTMLElement> => {
+  const confirm = inDialog().getByRole("button", { name: confirmName });
+  await expect(page.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  await expect(confirm).toBeDisabled();
+  await expect(confirm).not.toHaveAttribute("aria-disabled");
+  await expect(confirm).toHaveAccessibleDescription(hint);
+  // The hint row under the buttons (the typed field's label may carry the same words).
+  const row = document.querySelector(".cv-confirm__hint");
+  await expect(row).toHaveTextContent(hint);
+  await expect(row).toBeVisible();
+  return confirm;
+};
+
+/** Rung 1 (Enable dan): enabled at once; the step-up line and the marker close the body. */
+export const Rung1: Story = {
+  render: () => (
+    <LadderDemo
+      opener="Enable dan"
+      rung={1}
+      title="Enable dan"
+      message="dan can sign in again. Their access stays removed: grant accounts again on their page."
+      restatement={<p>If a deletion is scheduled, enabling cancels it.</p>}
+      confirmLabel="Enable dan"
+      confirmVariant="primary"
+      stepUpState="code"
+      auditCodes={[{ label: "Enable user", code: "users.enable" }]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await opened(canvasElement, "Enable dan");
+    await expect(page.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await expect(inDialog().getByRole("button", { name: "Enable dan" })).toBeEnabled();
+    await expect(page.getByText("You'll confirm with your password and a code.")).toBeVisible();
+    await expect(
+      page.getByText("Recorded in the audit log · Enable user (users.enable)"),
+    ).toBeVisible();
+  },
+};
+
+/** Rung 2 (Disable alex, positions unknown, no account with grants): the tick alone holds Confirm. */
+export const Rung2: Story = {
+  render: () => (
+    <LadderDemo
+      opener="Disable alex"
+      rung={2}
+      title="Disable alex"
+      message="alex can't sign in from now on."
+      restatement={DISABLE_LIST}
+      tick={ACK}
+      confirmLabel="Disable alex"
+      stepUpState="code"
+      auditCodes={DISABLE_CODES}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await opened(canvasElement, "Disable alex");
+    const confirm = await waits("Disable alex", "Tick the acknowledgement first.");
+    await userEvent.click(page.getByRole("checkbox", { name: ACK }));
+    await expect(confirm).toBeEnabled();
+  },
+};
+
+/** Rung 3 (Delete alex, keeps history): the tick, then the typed username; Enter in the field never confirms. */
+export const Rung3: Story = {
+  render: () => (
+    <LadderDemo
+      opener="Delete alex"
+      rung={3}
+      title="Delete alex (keeps history)"
+      message="alex can't sign in from now on."
+      restatement={
+        <ul style={{ margin: 0, paddingInlineStart: "var(--space-inset-lg)" }}>
+          <li>Their journal, rules and audit history are kept.</li>
+          <li>90 days after the first Delete their e-mail and login name are anonymised.</li>
+          <li>Until then, Enable cancels the deletion.</li>
+        </ul>
+      }
+      tick={ACK}
+      typedConfirmValue="alex"
+      typedInstruction="Type the username to confirm."
+      confirmLabel="Delete alex (keeps history)"
+      stepUpState="code"
+      auditCodes={[
+        { label: "Disable user", code: "users.disable" },
+        { label: "Delete user", code: "users.delete" },
+      ]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await opened(canvasElement, "Delete alex");
+    const confirm = await waits("Delete alex (keeps history)", "Tick the acknowledgement first.");
+    await userEvent.click(page.getByRole("checkbox", { name: ACK }));
+    await expect(confirm).toHaveAccessibleDescription("Type the username to confirm.");
+    const field = page.getByRole("textbox", { name: "Type the username to confirm." });
+    await userEvent.type(field, "alex{Enter}");
+    await expect(page.getByRole("alertdialog")).toBeVisible();
+    await expect(confirm).toBeEnabled();
+  },
+};
+
+/** Rung 4 (a restore): the typed value and "This always needs a fresh code." */
+export const Rung4: Story = {
+  render: () => (
+    <LadderDemo
+      opener="Restore"
+      rung={4}
+      title="Restore CandleViewer data from 2026-09-13 04:00"
+      message="Trading is disabled while the restore runs; you re-enable it afterwards."
+      restatement={<p>Replaces today&apos;s data with the backup&apos;s. Bybit is not affected.</p>}
+      typedConfirmValue="2026-09-13 04:00"
+      confirmLabel="Restore from 2026-09-13 04:00"
+      stepUpState="fresh"
+      auditCodes={[{ label: "Backup restored", code: "backup.restore" }]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await opened(canvasElement, "Restore");
+    await waits("Restore from 2026-09-13 04:00", "Type 2026-09-13 04:00 to confirm");
+    await expect(page.getByText("This always needs a fresh code.")).toBeVisible();
+  },
+};
+
+/** The two-choice block (counts known): none checked; Tab enters without checking; Space checks; Enter waits. */
+export const TwoChoice: Story = {
+  render: () => (
+    <LadderDemo
+      opener="Remove access"
+      rung={2}
+      title="Remove alex's access to sub_001"
+      message="alex keeps access to sub_002."
+      restatement={undefined}
+      choiceLead="sub_001 [LIVE] has 2 open positions and 3 working orders. Choose what happens when you remove alex's access:"
+      options={[LEAVE, FLATTEN]}
+      confirmLabel="Remove access"
+      stepUpState="code"
+      auditCodes={[{ label: "Account access changed", code: "users.access_change" }]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await opened(canvasElement, "Remove access");
+    const confirm = await waits("Remove access", "Choose an option first.");
+    const group = page.getByRole("radiogroup");
+    await expect(group).toHaveAttribute("aria-required", "true");
+    await userEvent.tab();
+    const leave = page.getByRole("radio", { name: LEAVE.label });
+    await expect(leave).toHaveFocus();
+    await expect(leave).toHaveAttribute("aria-checked", "false");
+    await userEvent.keyboard("{Enter}");
+    await expect(confirm).toBeDisabled();
+    await userEvent.keyboard(" ");
+    await expect(leave).toHaveAttribute("aria-checked", "true");
+    await expect(confirm).toBeEnabled();
+  },
+};
+
+/** Positions unknown (D21): choice B is T2 "Needs the open-position count.", focused but never checked; the tick. */
+export const TwoChoiceUnknown: Story = {
+  render: () => (
+    <LadderDemo
+      opener="Disable alex"
+      rung={2}
+      title="Disable alex"
+      message="alex can't sign in from now on."
+      restatement={DISABLE_LIST}
+      choiceLead="We can't count the open positions and orders on sub_001 [LIVE] right now."
+      options={[LEAVE, { ...FLATTEN, disabledReason: "Needs the open-position count." }]}
+      tick={ACK}
+      confirmLabel="Disable alex"
+      stepUpState="code"
+      auditCodes={DISABLE_CODES}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await opened(canvasElement, "Disable alex");
+    const confirm = await waits("Disable alex", "Choose an option first.");
+    await userEvent.tab();
+    await userEvent.keyboard("{ArrowDown}");
+    const flatten = page.getByRole("radio", { name: /Flatten first, then remove access$/ });
+    await expect(flatten).toHaveFocus();
+    await expect(flatten).toHaveAttribute("aria-disabled", "true");
+    await expect(flatten).toHaveAttribute("aria-checked", "false");
+    await userEvent.keyboard(" ");
+    await expect(flatten).toHaveAttribute("aria-checked", "false");
+    await expect(confirm).toBeDisabled();
+  },
+};
+
+/**
+ * The ladder in light and high contrast (A-1023-10): its own pairs (the validity Confirm's tertiary label on
+ * surface.raised, the hint, the T2 option's lock and reason, the step-up line and the marker) under axe in each theme,
+ * through the story's own play. Dark is the stories above.
+ */
+const twin = (story: Story, theme: string): Story => ({
+  ...story,
+  globals: { theme },
+  play: async (context) => {
+    // The theme runtime applies the global in an effect: prove axe runs on this theme, not the dark default.
+    await waitFor(() => expect(document.documentElement).toHaveAttribute("data-theme", theme));
+    await story.play?.(context);
+  },
+});
+/** Rung 3 (the tick, then the typed username) in the light theme. */
+export const Rung3ContrastLight: Story = twin(Rung3, "light");
+/** Rung 3 in the high-contrast theme. */
+export const Rung3ContrastHighContrast: Story = twin(Rung3, "high-contrast");
+/** The two-choice block with its T2 option and the tick, in the light theme. */
+export const TwoChoiceUnknownContrastLight: Story = twin(TwoChoiceUnknown, "light");
+/** The two-choice block with its T2 option and the tick, in the high-contrast theme. */
+export const TwoChoiceUnknownContrastHighContrast: Story = twin(TwoChoiceUnknown, "high-contrast");

@@ -127,13 +127,18 @@ export type { ConfidenceDotsProps, ConfidenceLevel } from "./ConfidenceDots.js";
 
 export { ConfirmDialog } from "./ConfirmDialog.js";
 export type {
+  ConfirmAcknowledge,
+  ConfirmAuditCode,
   ConfirmButtonVariant,
   ConfirmCancelReason,
+  ConfirmChoice,
   ConfirmDialogProps,
   ConfirmDialogVariant,
   ConfirmFailure,
   ConfirmGate,
   ConfirmMeta,
+  ConfirmRung,
+  ConfirmStepUpState,
 } from "./ConfirmDialog.js";
 
 export { CopyableCodeBlock } from "./CopyableCodeBlock.js";

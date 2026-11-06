@@ -94,6 +94,11 @@
   opacity: var(--opacity-disabled);
 }
 
+/* In flight (E42-D03 U-7): the spinner in place of the glyph, the fill kept, still focusable; nothing dims. */
+.cv-icon-button[aria-busy="true"] {
+  cursor: progress;
+}
+
 /* The lock is a corner badge inside the box, so a role change never reflows a toolbar. */
 .cv-icon-button__badge {
   position: absolute;
