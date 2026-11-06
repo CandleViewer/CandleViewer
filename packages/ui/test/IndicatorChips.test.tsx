@@ -59,7 +59,7 @@ describe("IndicatorChips (CMP-224)", () => {
     expect(page.getByRole("button", { name: /5 on this chart, 1 error —/ })).toBeTruthy();
   });
 
-  it("is pressed while the drawer is open, and carries no pressed state otherwise", async () => {
+  it("is a disclosure opener: aria-expanded tracks the drawer, never aria-pressed", async () => {
     await mount(
       <>
         <IndicatorChips count={1} open onOpen={fn()} />
@@ -67,16 +67,27 @@ describe("IndicatorChips (CMP-224)", () => {
         <IndicatorChips count={3} onOpen={fn()} />
       </>,
     );
+    const chip = (n: number): HTMLElement =>
+      page.getByRole("button", { name: new RegExp(`^Indicators: ${n} `) });
+    expect(chip(1)).toHaveAttribute("aria-expanded", "true");
+    expect(chip(2)).toHaveAttribute("aria-expanded", "false");
+    expect(chip(3)).not.toHaveAttribute("aria-expanded");
+    for (const n of [1, 2, 3]) expect(chip(n)).not.toHaveAttribute("aria-pressed");
+  });
+
+  it("controls the drawer the host names, and names none otherwise", async () => {
+    await mount(
+      <>
+        <IndicatorChips count={1} open drawerId="scr-036" onOpen={fn()} />
+        <IndicatorChips count={2} open={false} onOpen={fn()} />
+      </>,
+    );
     expect(page.getByRole("button", { name: /^Indicators: 1 / })).toHaveAttribute(
-      "aria-pressed",
-      "true",
+      "aria-controls",
+      "scr-036",
     );
-    expect(page.getByRole("button", { name: /^Indicators: 2 / })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-    expect(page.getByRole("button", { name: /^Indicators: 3 / })).not.toHaveAttribute(
-      "aria-pressed",
+    expect(page.getByRole("button", { name: /^Indicators: 2 / })).not.toHaveAttribute(
+      "aria-controls",
     );
   });
 

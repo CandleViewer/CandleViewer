@@ -18,8 +18,16 @@ export const WithError: Story = { args: { suffix: { kind: "error", n: 1 } } };
 export const WithComputing: Story = { args: { suffix: { kind: "computing", n: 1 } } };
 export const WithStale: Story = { args: { suffix: { kind: "stale", n: 2 } } };
 export const AtCap: Story = { args: { count: 20 } };
-/** SCR-036 is open: the chip is `aria-pressed`. */
-export const PressedDrawerOpen: Story = { args: { open: true } };
+/** SCR-036 is open: the chip is `aria-expanded` and `aria-controls` the drawer, with the pressed fill. */
+export const PressedDrawerOpen: Story = {
+  args: { open: true, drawerId: "scr-036-drawer" },
+  play: async ({ canvasElement }) => {
+    const chip = within(canvasElement).getByRole("button", { name: /^Indicators: 4 / });
+    await expect(chip).toHaveAttribute("aria-expanded", "true");
+    await expect(chip).toHaveAttribute("aria-controls", "scr-036-drawer");
+    await expect(chip).not.toHaveAttribute("aria-pressed");
+  },
+};
 /** Keyboard focus shows the ring; `Enter` opens SCR-036. */
 export const Focused: Story = {
   args: { suffix: { kind: "hidden", n: 1 } },

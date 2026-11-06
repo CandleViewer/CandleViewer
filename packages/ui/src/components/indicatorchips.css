@@ -28,9 +28,10 @@
   min-height: var(--size-control-compact);
 }
 
-/* Pressed while the drawer is open: the house pressed-segment fill (E11-D02 "neutral pressed
-   segment", color.surface.selected), an instant flip. CMP-224 names no pressed token: PROPOSED. */
-.cv-indicator-chips[aria-pressed="true"] .cv-indicator-chips__pill {
+/* Pressed look while the drawer is open (aria-expanded, a disclosure opener): the house pressed-segment
+   fill (E11-D02 "neutral pressed segment", color.surface.selected), an instant flip. CMP-224 names no
+   pressed token: PROPOSED. */
+.cv-indicator-chips[aria-expanded="true"] .cv-indicator-chips__pill {
   background: var(--color-surface-selected);
 }
 
