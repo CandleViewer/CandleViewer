@@ -34,6 +34,7 @@ afterEach(() => {
 });
 
 const AUDIT = "/api/v1/settings/hotkey-audit";
+const VIEW_AS = "/api/v1/auth/session/view-as";
 const PROFILE = "cv.keymap-profile.v1";
 const OUTBOX = "cv.hotkey-audit-outbox.v1";
 const DEAD = "cv.hotkey-audit-dead.v1";
@@ -61,7 +62,8 @@ interface Post {
 }
 /**
  * Every audit POST's body, in order; `status` answers the nth (1-based), a thrown answer (0) is a network
- * error, and `body` is what a refusal carries (`{}` unless a test names a problem document).
+ * error, and `body` is what a refusal carries (`{}` unless a test names a problem document). The view-as
+ * read answers `204`: the session holds no view-as context.
  */
 function stubServer(
   status: (n: number) => number = () => 204,
@@ -71,6 +73,7 @@ function stubServer(
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url) === VIEW_AS) return new Response(null, { status: 204 });
       if (String(url) !== AUDIT) return new Response("{}", { status: 404 });
       posts.push(JSON.parse(String(init?.body)) as Post);
       const code = status(posts.length);
@@ -124,6 +127,7 @@ describe("A55: a remap applies on the device for every role; its audit is sent o
         <Cheatsheet />
       </>,
     );
+    await vi.waitFor(() => expect(m.keymapUser()).toBe("u-viewer")); // the view-as read answered
     bind(CANCEL_ALL, "Q", ["Ctrl", "Alt"]);
     expect(m.getBindings().get("dom.cancel_all")).toBe("Ctrl+Alt+Q");
     await act(() => m.flushAuditOutbox());
@@ -146,6 +150,7 @@ describe("A55: a remap applies on the device for every role; its audit is sent o
           <HotkeyEditor />
         </>,
       );
+      await vi.waitFor(() => expect(m.keymapUser()).toBe(`u-${role}`)); // the view-as read answered
       bind(CANCEL_ALL, "Q", ["Ctrl", "Alt"]);
       expect(m.getBindings().get("dom.cancel_all")).toBe("Ctrl+Alt+Q");
       await vi.waitFor(() =>
@@ -214,6 +219,7 @@ describe("A55: the profile and the audit outbox are keyed by user and device", (
     expect(m.auditOutbox().map((r) => r.commandId)).toEqual(["dom.cancel_all"]);
 
     signIn("u-b", "manager");
+    await m.readViewAs(); // 204: the keymap names B
     expect(m.getBindings().get("dom.cancel_all")).toBe("Ctrl+Shift+X"); // never A's remap
     expect(m.auditOutbox()).toEqual([]); // nor A's record
     const sentForA = posts.length;
@@ -429,10 +435,12 @@ describe("E42-S03: a view-as context keeps no keymap for anyone (#304 gap 13)", 
 
   it.each(["active", "expired"] as const)(
     "names no keymap user while a context is held (%s), and the target's id after none",
-    (state) => {
+    async (state) => {
+      stubServer(); // the keymap's own read of `getViewAs`, beside the shell's, answers 204
       viewAsTarget(state);
       expect(m.keymapUser()).toBeNull();
       act(() => m.setShellState({ viewAs: { kind: "none" } }));
+      await m.readViewAs(); // 204: the keymap's read agrees with the shell's, so it names the target
       expect(m.keymapUser()).toBe(TARGET);
     },
   );

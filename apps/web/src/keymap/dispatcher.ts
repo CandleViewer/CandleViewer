@@ -3,6 +3,7 @@ import {
   composesCharacter,
   eventBinding,
   isBareBinding,
+  isCharacterKey,
   type KeyEventLike,
   type KeymapCommand,
 } from "./keymap";
@@ -45,6 +46,8 @@ export interface DispatcherDeps {
   readonly countInert?: (commandId: string, view: string) => void;
   /** Current bindings (profile); defaults to the keymap defaults. */
   readonly bindings?: ReadonlyMap<string, string>;
+  /** While true a character key (`isCharacterKey`) takes nothing: the user's profile is not known yet (`session.ts`). */
+  readonly characterKeysInert?: () => boolean;
 }
 
 const EDITABLE_ROLES = new Set(["combobox", "searchbox", "textbox"]);
@@ -131,6 +134,7 @@ export function createDispatcher(deps: DispatcherDeps) {
       return { status: "ignored", reason: "composing" };
     }
     const got = eventBinding(e);
+    if (deps.characterKeysInert?.() === true && isCharacterKey(got)) return { status: "unbound" };
     const bare = isBareBinding(got);
     if (bare && e.defaultPrevented === true) return { status: "ignored", reason: "prevented" };
     const typing =

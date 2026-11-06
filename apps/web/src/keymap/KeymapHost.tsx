@@ -14,7 +14,9 @@ import { Cheatsheet } from "./Cheatsheet";
 import { reportHotkey } from "./analytics";
 import { flushAuditOutbox, recordAudit } from "./audit";
 import { appArm, isCommandValid, registerCommand, runCommand, setArmPort } from "./registry";
+import { viewAsPending } from "./session";
 import { cycleRegion, toggleReducedMotionAnnounced } from "./shellCommands";
+import { startProfileSync } from "./sync";
 
 /**
  * Views register their commands' handlers through the registry's guard (#305); a command with no handler, or whose
@@ -113,9 +115,12 @@ export function KeymapHost(): JSX.Element {
       window.removeEventListener("online", retry);
     };
   }, []);
+  // E10-T05: the profile store on, the server's profile at sign-in, and a flush on `online` and at sign-in (BQ-9)
+  useEffect(() => startProfileSync(), []);
   useEffect(() => {
     const dispatch = createDispatcher({
       bindings,
+      characterKeysInert: viewAsPending, // until the view-as read answers, read at each press
       now: () => Date.now(),
       arm: appArm, // BQ-5: whatever E30 injected, read at each press
       isValid: (c: KeymapCommand) => isCommandValid(c.id),

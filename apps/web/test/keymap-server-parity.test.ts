@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { generated } from "@candleviewer/protocol";
 import {
   KEYMAP,
@@ -11,6 +11,7 @@ import {
 } from "../src/keymap/keymap";
 import { httpProfileStore } from "../src/keymap/profileStore";
 import { normaliseBinding, storedProfile, type BindingProblem } from "../src/keymap/validate";
+import { resetMeClaims, setMeClaims } from "../src/lib/auth/meCache";
 
 /**
  * E10-T05 (#5211, BQ-4): the server's port of the binding rules (`services/api/candleviewer/api/hotkey_rules.py`) is
@@ -148,12 +149,25 @@ describe("each profile case is judged here as the server judges it", () => {
 });
 
 describe("the client's own default profile, which the server accepts as it is", () => {
+  /** `22` `getViewAs`, which the store reads before a session's first write (E10-T05 BQ-14). */
+  const VIEW_AS = "/api/v1/auth/session/view-as";
+  // The store sends only for a session holding `settings:write`, and once the view-as read answers `204`.
+  beforeEach(() =>
+    setMeClaims({
+      authenticated: true,
+      role: "owner",
+      permissions: ["settings:read", "settings:write"],
+    }),
+  );
+  afterEach(() => resetMeClaims());
+
   it("is the body profileStore.ts sends: every command at its default, its scope, arm and confirm", async () => {
     const [found] = CASES.profiles.filter((c) => c.bindings === "client_default");
     expect(found?.expect).toEqual({ accepted: { rewritten: [] } });
     const sent: ProfileInput[] = [];
     const store = httpProfileStore(
-      async (_path: RequestInfo | URL, init: RequestInit = {}) => {
+      async (path: RequestInfo | URL, init: RequestInit = {}) => {
+        if (String(path) === VIEW_AS) return new Response(null, { status: 204 }); // no view-as context
         if ((init.method ?? "GET") === "GET") return Response.json({ items: [] });
         sent.push(JSON.parse(String(init.body)) as ProfileInput);
         return new Response(null, { status: 503 }); // nothing more to send here

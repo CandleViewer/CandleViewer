@@ -1088,6 +1088,92 @@ describe("onLocked: SCR-005 hears of an idle lock (#1640)", () => {
   });
 });
 
+describe("onEnded: what holds requests made under the session hears of its end (E10-T05 BQ-15)", () => {
+  it.each<[string, () => unknown]>([
+    ["endSession", () => holder.endSession()],
+    ["clear", () => holder.clear()],
+    ["a logout's 2xx", () => holder.send("/api/v1/auth/logout", { method: "POST" }, transport)],
+    [
+      "a refresh that finds the session lost",
+      () => {
+        fetchMock.mockResolvedValueOnce(refused("refresh_token_invalid"));
+        holder.invalidate();
+        return holder.getToken();
+      },
+    ],
+  ])("%s tells each listener once", async (_what, end) => {
+    const [a, b] = [vi.fn(), vi.fn()];
+    holder.onEnded(a);
+    holder.onEnded(b);
+    holder.set(bundle(1));
+    await end();
+    expect([a.mock.calls.length, b.mock.calls.length]).toEqual([1, 1]);
+  });
+
+  it("a sibling tab's sign-out tells this tab's listeners", async () => {
+    vi.stubGlobal("BroadcastChannel", siblingChannels());
+    const [own, sibling] = [createAccessTokenHolder(vi.fn()), createAccessTokenHolder(vi.fn())];
+    const listener = vi.fn();
+    sibling.onEnded(listener);
+    own.set(bundle(1));
+    await flush(); // the sibling holds the bundle
+    own.endSession();
+    await flush(); // the sign-out reaches it
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("an idle lock is no end: a refresh answered 401 session_idle_locked tells no listener", async () => {
+    const listener = vi.fn();
+    holder.onEnded(listener);
+    holder.set(bundle(1));
+    holder.invalidate();
+    fetchMock.mockImplementation(async () => refused("session_idle_locked"));
+    await expect(holder.getToken()).resolves.toEqual({ kind: "locked" });
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("an unsubscribed listener hears nothing, and one that throws stops neither the end nor the rest", () => {
+    const gone = vi.fn();
+    const after = vi.fn();
+    holder.onEnded(() => {
+      throw new Error("listener");
+    });
+    holder.onEnded(after);
+    holder.onEnded(gone)();
+    expect(() => holder.endSession()).not.toThrow();
+    expect([after.mock.calls.length, gone.mock.calls.length, toSignIn.mock.calls.length]).toEqual([
+      1, 0, 1,
+    ]);
+  });
+
+  it.each<[string, () => void]>([
+    ["endSession", () => holder.endSession()],
+    ["clear", () => holder.clear()],
+  ])(
+    "a listener that calls %s itself is told once, never from inside its own telling, and the listeners after it still hear the end",
+    (_what, again) => {
+      let told = 0;
+      const after = vi.fn();
+      holder.onEnded(() => {
+        told += 1;
+        again(); // a cleanup of its own that ends the session once more
+      });
+      holder.onEnded(after);
+      expect(() => holder.endSession()).not.toThrow();
+      expect([told, after.mock.calls.length]).toEqual([1, 1]);
+    },
+  );
+
+  it("an idle lock's listener that ends the session still tells the end listeners: the guard is per set of listeners", async () => {
+    const ended = vi.fn();
+    holder.onEnded(ended);
+    holder.onLocked(() => holder.endSession());
+    transport.mockResolvedValueOnce(refused("session_idle_locked"));
+    await holder.send("/api/v1/x", {}, transport);
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("the calls allowed while locked fall back to the cookie (#1640)", () => {
   // The server's real answers to a stale (rotated-away or never-issued) bearer:
   // - the uniform 401 of `api/sessions.py` `_unauthorized()`, a problem with no `code`

@@ -1,18 +1,18 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { act } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { generated } from "@candleviewer/protocol";
 import { DANGEROUS_COMMANDS, KEYMAP } from "../src/keymap/keymap";
 import type { TokenBundle } from "../src/lib/auth/accessToken";
 import type { Role } from "../src/routes/rbac";
 
 /**
- * #305 (E10-S02) PR C, the profile store's client half (BQ-1, A55). The device store (PR B) stays the active one; the
- * HTTP adapter is written against `22`'s `/settings/hotkeys` as it stands and is wired off until a server exists, so
- * nothing is sent. Switched on, a change is queued only for a session holding `settings:write`, as the whole profile
- * in `22`'s shape, and only under its own user's session. A profile read from the server is checked by an import's
- * rules, so no acknowledgement made elsewhere carries over (CR-305BD-04's server path). Each test loads its own copy.
+ * #305 (E10-S02) PR C, the profile store's client half (BQ-1, A55), which E10-T05 switches on (`sync.ts`; its wiring is
+ * tested in `keymap-profile-sync.test.tsx`). The device store (PR B) stays the active one. A change is queued only for
+ * a session holding `settings:write`, as the whole profile in `22`'s shape, and only under its own user's session. A
+ * profile read from the server is checked by an import's rules, so no acknowledgement made elsewhere carries over
+ * (CR-305BD-04's server path). Each test loads its own copy.
  */
 type ProfileInput = generated.rest.components["schemas"]["HotkeyProfileInput"];
 const load = async () => ({
@@ -25,8 +25,12 @@ const load = async () => ({
 });
 let m: Awaited<ReturnType<typeof load>>;
 
+// The first load transforms the module graph (the generated protocol types with it), which a loaded runner can take
+// past the 10 s hook budget; each test's own load then evaluates it again.
+beforeAll(async () => void (await load()), 60_000);
 beforeEach(async () => {
   window.localStorage.clear();
+  viewReads = 0;
   vi.resetModules();
   m = await load();
 });
@@ -36,6 +40,10 @@ afterEach(() => {
 });
 
 const PROFILES = "/api/v1/settings/hotkeys";
+/** `22` `getViewAs`, which a store reads once before its session's first write (E10-T05 BQ-14). */
+const VIEW_AS = "/api/v1/auth/session/view-as";
+/** The view-as reads, each answered `204` (no view); kept apart from `calls` so each test's sequence is the profile's. */
+let viewReads = 0;
 const FORCED = [
   "chart.limit_at_price",
   "chart.market_order",
@@ -101,6 +109,10 @@ function stubServer(
       init?.signal?.throwIfAborted();
       const method = init?.method ?? "GET";
       const url = String(input);
+      if (url === VIEW_AS) {
+        viewReads += 1;
+        return new Response(null, { status: 204 });
+      }
       calls.push({
         method,
         url,
@@ -116,7 +128,7 @@ const lines = (calls: readonly Call[]): string[] => calls.map((c) => `${c.method
 const rebind = (id: string, key: string): void =>
   act(() => m.setBindings(new Map(m.getBindings()).set(id, key)));
 
-describe("wired off: the device store stays the active one and nothing is sent", () => {
+describe("with no store set, the device store stays the active one and nothing is sent", () => {
   it("an Owner's change is kept on the device and no request reaches /settings/hotkeys", async () => {
     const calls = stubServer();
     signIn("u-1", "owner");
@@ -124,7 +136,7 @@ describe("wired off: the device store stays the active one and nothing is sent",
     await act(async () => {
       await Promise.resolve();
     });
-    expect(calls).toEqual([]);
+    expect([calls, viewReads]).toEqual([[], 0]);
     const stored: unknown = JSON.parse(
       window.localStorage.getItem(`cv.keymap-profile.v1:u-1`) ?? "",
     );
@@ -215,7 +227,7 @@ describe("switched on: queued only with settings:write (A55), as the whole profi
     m.setProfileStore(store);
     rebind("chart.footprint_toggle", "Alt+Q");
     await store.flush();
-    expect(calls).toEqual([]);
+    expect([calls, viewReads]).toEqual([[], 0]);
     expect(m.getBindings().get("chart.footprint_toggle")).toBe("Alt+Q");
   });
 
@@ -273,6 +285,7 @@ describe("switched on: queued only with settings:write (A55), as the whole profi
 
   it("CR-305C-04: a pass that throws leaves the queue usable, so the next flush sends what waits", async () => {
     const calls = stubServer();
+    signIn("u-1", "owner"); // every request checks `settings:write` (E10-T05)
     let unreadable = true;
     const store = m.httpProfileStore(undefined, () => {
       if (unreadable) throw new Error("session unreadable");
