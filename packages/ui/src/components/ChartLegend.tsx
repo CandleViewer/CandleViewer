@@ -79,6 +79,8 @@ export interface ChartLegendProps {
 const DASH = "—";
 const LABEL_MAX = 18;
 const MIN_ROWS = 3;
+/** How long a Remove's focus hand-off waits for the host to drop the row: the removal toast's 10 s (E13-D02 §12). */
+const HANDOFF_MS = 10_000;
 /** OQ-B: until the descriptor names its primary parameter. */
 const PRIMARY_PARAM = "primary parameter (per descriptor)";
 const PANE = "pane";
@@ -171,7 +173,9 @@ function QuickEdit({ item, onCommit, onClose }: QuickEditProps): JSX.Element {
   useEffect(() => field.current?.focus(), []);
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
     if (event.key === "Escape") {
+      // The field's Esc only reverts it; an enclosing popover or dialog must not close as well.
       event.preventDefault();
+      event.stopPropagation();
       onClose(true);
       return;
     }
@@ -247,11 +251,15 @@ export function ChartLegend({
   const ring = useFocusRing();
   const notice = useGateNotice();
   const root = useRef<HTMLDivElement>(null);
-  /** A focus hand-off armed by Remove: consumed only once the removed row is gone, dropped on any other items change. */
+  /**
+   * A focus hand-off armed by Remove, keyed on the removed id: it survives re-renders that still hold the row (an
+   * async host removal, value ticks) and lapses after `HANDOFF_MS`.
+   */
   const pendingFocus = useRef<{
     readonly nav: string;
     readonly removedId: string;
-    readonly items: readonly ChartLegendItem[];
+    readonly row: Element | null;
+    readonly expiresAt: number;
   } | null>(null);
   const pendingRestore = useRef<string | null>(null);
   const [isCollapsed, setCollapsed] = useState(collapsed);
@@ -330,10 +338,19 @@ export function ChartLegend({
       focusNav(restore);
     }
     const pending = pendingFocus.current;
-    if (pending === null || pending.items === items) return;
+    if (pending === null) return;
+    if (Date.now() > pending.expiresAt) {
+      pendingFocus.current = null;
+      return;
+    }
+    if (items.some((item) => item.id === pending.removedId)) return;
     pendingFocus.current = null;
-    // A host that ignored or delayed the removal must not have focus stolen later.
-    if (!items.some((item) => item.id === pending.removedId)) focusNav(pending.nav);
+    // Only focus the removal dropped is handed on: a user who has moved elsewhere keeps their place.
+    const doc = root.current?.ownerDocument;
+    const focused = doc?.activeElement ?? null;
+    if (focused === null || focused === doc?.body || pending.row?.contains(focused) === true) {
+      focusNav(stops.has(pending.nav) ? pending.nav : navId(PANE, "chevron"));
+    }
   });
 
   const toggle = (item: ChartLegendItem): void => {
@@ -477,7 +494,7 @@ export function ChartLegend({
             label={`Remove ${item.label}`}
             variant="ghost"
             {...(notice === null ? {} : { disabledReason: notice.reason })}
-            onClick={() => {
+            onClick={(event) => {
               const at = rows.findIndex((entry) => entry.key === item.id);
               const near =
                 rows[at + 1]?.key === "more" ? rows[at - 1] : (rows[at + 1] ?? rows[at - 1]);
@@ -488,7 +505,8 @@ export function ChartLegend({
                     ? navId(PANE, "chevron")
                     : navId(near.key, control),
                 removedId: item.id,
-                items,
+                row: event.currentTarget.closest("li"),
+                expiresAt: Date.now() + HANDOFF_MS,
               };
               onRemove(item.id);
             }}
