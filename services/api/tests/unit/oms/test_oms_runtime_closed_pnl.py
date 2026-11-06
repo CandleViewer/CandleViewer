@@ -22,6 +22,7 @@ from structlog.testing import capture_logs
 from candleviewer.app import _oms_state
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.models import PrivateStreamStatus
+from candleviewer.oms.closed_pnl_compose import ClosedPnlComposer
 from candleviewer.oms.closed_pnl_sync import (
     CLOSED_PNL_LOOKBACK,
     DEBOUNCE_S,
@@ -35,7 +36,7 @@ from candleviewer.oms.reconcile_job import ReconcileJobs
 from candleviewer.oms.repository import ExecutionRepository
 from candleviewer.oms.stop_gate import ResolvingStopGate
 from candleviewer.oms_stream_wiring import ExchangeWallClock
-from candleviewer.oms_wiring import ClosedPnlResyncs, OmsStores
+from candleviewer.oms_wiring import ClosedPnlResyncs, InstrumentsBinding, OmsStores
 from candleviewer.risk.day_boundary import DayBoundary, day_containing
 from candleviewer.storage.repositories.executions import NewExecution
 from candleviewer.storage.repositories.trading_accounts import TradingAccountRow
@@ -106,6 +107,9 @@ async def test_the_sync_is_built_from_the_runtimes_parts_and_starts_once_ready(
         assert sync._router is parts.submission._router and accounts is parts.route.accounts
         assert sync._records is world.records and closes is world.store.executions
         assert sync._snapshots is parts.stream.positions._snapshots
+        composer = sync._composer  # slice 5b: over the same store, the catalogue read in place
+        assert isinstance(composer, ClosedPnlComposer) and composer.store is world.records
+        assert isinstance(composer.instruments, InstrumentsBinding)
         [clock] = world.position_clocks
         assert isinstance(clock, ExchangeWallClock) and sync._now is clock
         await settle()
