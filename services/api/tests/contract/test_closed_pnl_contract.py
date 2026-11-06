@@ -37,6 +37,8 @@ The orchestrator's ruling of 2026-11-03 (08:03Z), as the four plan documents sta
 - Slice 5b, on the rulings of 2026-11-04 (23:45Z): the composition before the read and after the
   settle, one walk per key per pass, the final rule completed by the walk's `c`, step 3's three
   readings and 21 Sec.13.1's rows 61 and 62; logged once, as Sec.19.137.
+- Slice 5c, on the rulings Q2 and Q6: the divergence record's action, reasons and after-state,
+  the absolute floor (PROPOSED) and the two counters; logged once, as Sec.19.138.
 
 Nothing serves the new members yet: E29-S06's later slices implement them against this contract.
 """
@@ -612,10 +614,11 @@ def test_contract_24_defines_a_provisional_item_and_when_a_settled_one_is_compar
         "each pass compares again the settled items of its delta set (below), idempotent by the "
         "recorded pair.",
         "shipped **unvalidated** until #843, whose captures also judge the two cases where it "
-        "falls below the 8-decimal rounding step, with no floor added (the ruling fixed `1e-8`): "
-        "a record under 1 USDT (|`closed_pnl`| < 1), where the rounding of the opening share "
-        "alone, or any difference from a venue figure of 0, is divergent; and an entry price "
-        "below about 0.5, where the venue's 8-decimal `avgEntryPrice` alone fails the entry gate",
+        "falls below the 8-decimal rounding step, the relative bound the ruling fixed at `1e-8` "
+        "and the absolute floor below beside it: a record under 1 USDT (|`closed_pnl`| < 1), "
+        "where the rounding of the opening share alone, or any difference from a venue figure of "
+        "0, passes the relative bound; and an entry price below about 0.5, where the venue's "
+        "8-decimal `avgEntryPrice` alone fails the entry gate",
     )
     assert missing == []
     assert "a history that starts after the opening" not in _s813()  # Choice 1 removed it
@@ -1129,3 +1132,35 @@ def test_contract_24_gives_the_cap_and_the_sync_the_one_resolver_and_logs_it_onc
         "sizing_unavailable` with `Retry-After`), as §8.4 reads the figures before the risk gate, "
         "while the gate's own `risk_state_unavailable` stays for held costs (#881 addendum 3).",
     )
+
+
+def test_contract_24_states_the_divergence_record_and_the_floor_and_logs_slice_5c_once() -> None:
+    """The rulings Q2 and Q6 (2026-11-04 23:45Z, 2026-11-05): the record's reasons and after-state,
+    the floor; Sec.19.138, which occurs once; 20's floor and second counter; 21's flag writes."""
+    internal = _doc("24-internal-schemas.md")
+    assert not _missing(
+        _s813(),
+        "a comparison is divergent only when the difference is also strictly greater than "
+        "`CV_OMS_CLOSED_PNL_TOLERANCE_ABS` (0.01 USDT,",
+    )
+    vocabulary = _between(internal, "### 15.5 ", "\n### 15.6 ")
+    assert "reason `closed_pnl_venue_missing`, its `closed_pnl` and difference null" in vocabulary
+    assert "`difference` (signed, local \N{MINUS SIGN} venue)" in vocabulary
+    assert "severity `warning` and its reason as above;" in vocabulary
+    assert internal.count("\n### 19.138 ") == 1
+    log = _between(internal, "### 19.138 ", "\n### 19.")
+    assert not _missing(
+        log,
+        "2026-11-05 — §8.13 and §15.5: the comparison writes the divergence record, bounded, and a "
+        "venue figure missing is recorded (E29-S06, #981)",
+        "The absolute floor, PROPOSED (Q6; 24 carried none, as checked on 2026-11-05)",
+        "superseding the ticket's `{account}`",
+        "No REST operation, WS frame, table, column, migration, chart or `machine_hash` changes.",
+    )
+    doc = _doc("20-architecture.md")
+    [row] = [
+        line for line in doc.splitlines() if line.startswith("| `CV_OMS_CLOSED_PNL_TOLERANCE_ABS`")
+    ]
+    assert [c.strip() for c in row.split("|")[2:5]] == ["decimal", "`0.01`", "process"]
+    assert "| OMS | `oms_closed_pnl_divergence_withheld_total{reason}` | counter |" in doc
+    assert "clears `divergent` alone, keeping the pair" in _doc("21-database-schema.md")
