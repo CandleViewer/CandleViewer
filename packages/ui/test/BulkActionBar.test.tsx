@@ -149,6 +149,72 @@ describe("BulkActionBar: actions, Clear and the keyboard", () => {
     expect(within(host).getByRole("button", { name: "Export" })).toHaveFocus();
   });
 
+  it("a handled roving key (arrows, Home, End) is prevented, so it never scrolls the panel", async () => {
+    const host = await mount(<BulkActionBar count={3} actions={actions()} onClear={fn()} />);
+    const disarm = within(host).getByRole("button", { name: "Disarm" });
+    disarm.focus();
+    const kept = [];
+    for (const key of ["ArrowRight", "End", "ArrowLeft", "Home"]) {
+      const focused = document.activeElement ?? disarm;
+      kept.push(await fireEvent.keyDown(focused, { key }));
+    }
+    expect(kept).toEqual([false, false, false, false]);
+    expect(disarm).toHaveFocus();
+  });
+
+  /** A host whose action list changes from Clear's press (focus stays on Clear) or from a gated toggle. */
+  const stopsOf = (host: HTMLElement): [string | null, number][] =>
+    within(toolbar(host))
+      .getAllByRole("button")
+      .map((b) => [b.textContent, b.tabIndex]);
+
+  it("an action added before the focused button: the stop stays on it, and ← moves from it", async () => {
+    const hideLock = (): BulkAction[] => [
+      { id: "hide", label: "Hide", onClick: fn() },
+      { id: "lock", label: "Lock", onClick: fn() },
+    ];
+    function Growing(): JSX.Element {
+      const [list, setList] = useState(hideLock);
+      return (
+        <BulkActionBar
+          count={2}
+          actions={list}
+          onClear={() => setList((now) => [{ id: "show", label: "Show", onClick: fn() }, ...now])}
+        />
+      );
+    }
+    const host = await mount(<Growing />);
+    await userEvent.click(within(host).getByRole("button", { name: "Clear" }));
+    expect(stopsOf(host)).toEqual([
+      ["Show", -1],
+      ["Hide", -1],
+      ["Lock", -1],
+      ["Clear", 0],
+    ]);
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(within(host).getByRole("button", { name: "Lock" })).toHaveFocus();
+  });
+
+  it("an action removed before the focused button: the stop stays on it, and → moves from it", async () => {
+    function Dropping(): JSX.Element {
+      const [list, setList] = useState<BulkAction[]>(() => [
+        { id: "disarm", label: "Disarm", onClick: fn() },
+        { id: "export", label: "Export", onClick: () => setList((now) => now.slice(1)) },
+      ]);
+      return <BulkActionBar count={2} actions={list} onClear={fn()} />;
+    }
+    const host = await mount(<Dropping />);
+    const exportButton = within(host).getByRole("button", { name: "Export" });
+    await userEvent.click(exportButton);
+    expect(exportButton).toHaveFocus();
+    expect(stopsOf(host)).toEqual([
+      ["Export", 0],
+      ["Clear", -1],
+    ]);
+    await userEvent.keyboard("{ArrowRight}");
+    expect(within(host).getByRole("button", { name: "Clear" })).toHaveFocus();
+  });
+
   it("Enter and Space press the roving button", async () => {
     const onClear = fn();
     const host = await mount(<BulkActionBar count={1} actions={[]} onClear={onClear} />);
@@ -212,6 +278,12 @@ describe("bulkactionbar.css contract (A-14, A-17)", () => {
     );
     expect(css.all).not.toMatch(/transition/);
     expect(css.all.match(/animation:/g)).toHaveLength(1);
+  });
+
+  it("its height is the host's custom property, falling back to the control height (`15` CMP-243 Tokens)", () => {
+    expect(find(css.normal, ".cv-bulk-bar", "min-block-size")).toContain(
+      "min-block-size: var(--cv-bulk-bar-height, var(--size-control-height))",
+    );
   });
 
   it("never truncates a button's label: a narrow bar wraps", () => {

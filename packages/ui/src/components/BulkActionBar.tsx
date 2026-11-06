@@ -10,6 +10,14 @@ export interface BulkAction {
   readonly disabledReason?: string;
 }
 
+/** Clear's stop key: a symbol, so no action `id` can collide with it. */
+const CLEAR: unique symbol = Symbol("clear");
+type StopKey = string | typeof CLEAR;
+interface Stop {
+  readonly key: StopKey | undefined;
+  readonly index: number;
+}
+
 export interface BulkActionBarProps {
   /** How many items are selected: "{count} selected", the toolbar's name. Zero hides the bar. */
   readonly count: number;
@@ -29,9 +37,19 @@ export interface BulkActionBarProps {
 export function BulkActionBar({ count, actions, onClear }: BulkActionBarProps): JSX.Element | null {
   const countId = useId();
   const bar = useRef<HTMLDivElement>(null);
-  const [current, setCurrent] = useState(0);
+  // The roving stop is a button's identity (an action's `id`, or Clear), not its position, so a host that adds or
+  // drops an action while focus is in the bar keeps the stop on the focused button. The index is the fallback for a
+  // stop whose action is gone: it clamps to the last button. Until a button takes focus the stop is the first one.
+  const [current, setCurrent] = useState<Stop>({ key: undefined, index: 0 });
   const total = actions.length + 1;
-  const active = Math.min(current, total - 1);
+  const keyAt = (index: number): StopKey => actions[index]?.id ?? CLEAR;
+  const found =
+    current.key === CLEAR
+      ? actions.length
+      : current.key === undefined
+        ? -1
+        : actions.findIndex((action) => action.id === current.key);
+  const active = found >= 0 ? found : Math.min(current.index, total - 1);
 
   if (count <= 0) return null;
 
@@ -39,21 +57,23 @@ export function BulkActionBar({ count, actions, onClear }: BulkActionBarProps): 
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     if (!(event.target instanceof HTMLElement) || event.target.dataset["bulkIndex"] === undefined)
       return;
+    // The arrows move from the button that has focus, which is the stop unless the host re-rendered under it.
+    const from = Number(event.target.dataset["bulkIndex"]);
     const keys: Record<string, number> = {
-      ArrowRight: (active + 1) % total,
-      ArrowLeft: (active - 1 + total) % total,
+      ArrowRight: (from + 1) % total,
+      ArrowLeft: (from - 1 + total) % total,
       Home: 0,
       End: total - 1,
     };
     const next = keys[event.key];
     if (next === undefined) return;
     event.preventDefault();
-    setCurrent(next);
+    setCurrent({ key: keyAt(next), index: next });
     bar.current?.querySelector<HTMLElement>(`[data-bulk-index="${String(next)}"]`)?.focus();
   };
   const stop = (index: number): { tabIndex: 0 | -1; onFocus: () => void } => ({
     tabIndex: index === active ? 0 : -1,
-    onFocus: () => setCurrent(index),
+    onFocus: () => setCurrent({ key: keyAt(index), index }),
   });
 
   return (

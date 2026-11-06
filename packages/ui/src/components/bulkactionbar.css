@@ -3,13 +3,15 @@
  * CMP-001 secondary at `size.control.height` (24 / 32 px by density). The appear is the panel-in recipe: opacity +
  * a `space.inset.sm` (8 px) slide, `motion.duration.fast` · `motion.easing.decelerate` (E36-D03 §10 row 9); the
  * recipe resolves to `none` under `data-motion="reduce"`, so the bar is there at frame 0 (A-17).
+ * The bar's height is per consumer (`15` CMP-243 Tokens): `--cv-bulk-bar-height` defaults to SCR-080's
+ * `size.control.height`, and a host with a taller bar (SCR-036, 32 / 40 px) sets it from a token.
  */
 .cv-bulk-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-stack-sm);
-  min-block-size: var(--size-control-height);
+  min-block-size: var(--cv-bulk-bar-height, var(--size-control-height));
   animation: var(--cv-recipe-panel-in);
 }
 
