@@ -10,11 +10,18 @@ Usage:
 
 Either source may be omitted (e.g. a PR touching only `apps/web` has no
 Python dependency change) — an omitted source contributes zero entries.
+
+This module only normalises names. The *decision* is `security_gate.py`'s: the
+collector maps licence names to SPDX ids and collapses an OR to its first
+acceptable operand, reading the allowlist beside it to know which operand that
+is (cached with `functools.lru_cache`, so a test must not rewrite the allowlist
+file after the first call), but it never allows or blocks anything itself.
 """
 
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import sys
 from pathlib import Path
@@ -94,6 +101,48 @@ _CONJUNCTION_SAFE = frozenset(
 )
 
 
+def _strip_group(text: str) -> str:
+    """Drop grouping parentheses that are not part of a licence name.
+
+    Called only after an alias lookup of the unmodified text has failed, so the
+    parentheses inside aliases such as "ISC License (ISCL)" are never touched.
+    Removes a pair that wraps the whole text, and an unbalanced "(" or ")" left by
+    splitting "(A OR B)" on " OR ".
+    """
+    text = text.strip()
+    while text:
+        if text.startswith("(") and text.count("(") > text.count(")"):
+            text = text[1:].strip()
+        elif text.endswith(")") and text.count(")") > text.count("("):
+            text = text[:-1].strip()
+        elif text.startswith("(") and text.endswith(")") and _wraps_whole(text):
+            text = text[1:-1].strip()
+        else:
+            break
+    return text
+
+
+def _wraps_whole(text: str) -> bool:
+    """True when the "(" at index 0 is closed by the final ")"."""
+    depth = 0
+    for i, ch in enumerate(text):
+        depth += ch == "("
+        depth -= ch == ")"
+        if depth == 0:
+            return i == len(text) - 1
+    return False
+
+
+def _lookup(part: str) -> str:
+    """SPDX id for one licence name: the alias table first, then without grouping parens."""
+    part = part.strip()
+    alias = _SPDX_ALIASES.get(part.lower())
+    if alias is not None:
+        return alias
+    part = _strip_group(part)
+    return _SPDX_ALIASES.get(part.lower(), part)
+
+
 def _normalise_and_part(part: str) -> str:
     """Normalise one operand of an "A AND B" SPDX expression.
 
@@ -103,15 +152,23 @@ def _normalise_and_part(part: str) -> str:
     conjunction-safety check below sees a single SPDX id per operand.
     """
     stripped = part.strip()
-    inner = stripped.removeprefix("(").removesuffix(")") if stripped.startswith("(") else None
-    if inner is not None:
+    if stripped.lower() in _SPDX_ALIASES:
+        return _SPDX_ALIASES[stripped.lower()]
+    inner = _strip_group(stripped)
+    if " OR " in inner:
         sub_parts = [p.strip() for p in inner.split(" OR ") if p.strip()]
-        mapped_sub = [_SPDX_ALIASES.get(p.lower(), p) for p in sub_parts] or ["UNKNOWN"]
+        mapped_sub = [_lookup(p) for p in sub_parts] or ["UNKNOWN"]
         for m in mapped_sub:
             if m in _CONJUNCTION_SAFE:
                 return m
         return mapped_sub[0]
-    return _SPDX_ALIASES.get(stripped.lower(), stripped)
+    return _lookup(inner)
+
+
+@functools.lru_cache(maxsize=1)
+def _allowed_licenses() -> frozenset[str]:
+    path = Path(__file__).with_name("licenses-allowlist.json")
+    return frozenset(json.loads(path.read_text(encoding="utf-8")).get("allowed", []))
 
 
 def normalise_license(raw: str) -> str:
@@ -124,6 +181,9 @@ def normalise_license(raw: str) -> str:
     # "A AND B" (conjunctive SPDX) means the package is under *both*; every part
     # must be acceptable, so keep the conjunction intact for the gate when any
     # part is outside the plain allow-list — otherwise collapse to the parts.
+    raw = raw.strip()
+    if raw.lower() not in _SPDX_ALIASES:
+        raw = _strip_group(raw)  # "(MIT AND GPL-3.0)" is judged as "MIT AND GPL-3.0"
     if " AND " in raw:
         parts_and = [_normalise_and_part(p.strip()) for p in raw.split(" AND ")]
         return (
@@ -131,8 +191,16 @@ def normalise_license(raw: str) -> str:
             if all(p in _CONJUNCTION_SAFE for p in parts_and)
             else " AND ".join(parts_and)
         )
+    # SPDX expressions arrive parenthesised, e.g. "(MIT OR CC0-1.0)": drop the
+    # grouping so "(MIT" is never reported as a licence name. Each part is looked
+    # up in the alias table BEFORE any parenthesis is stripped, because eight
+    # aliases ("ISC License (ISCL)", "... (LGPLv3)", ...) contain parentheses.
     parts = [p.strip() for p in raw.replace(" OR ", ";").split(";") if p.strip()]
-    mapped = [_SPDX_ALIASES.get(p.lower(), p) for p in parts] or ["UNKNOWN"]
+    mapped = [_lookup(p) for p in parts] or ["UNKNOWN"]
+    # A disjunction needs only one acceptable licence: prefer an allow-listed one.
+    for m in mapped:
+        if m in _allowed_licenses():
+            return m
     for m in mapped:
         if not m.upper().startswith(("GPL", "AGPL", "LGPL")):
             return m
@@ -254,6 +322,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="collect from the running interpreter's installed distributions (importlib.metadata)",
     )
+    parser.add_argument(
+        "--require-nonempty",
+        action="store_true",
+        help="exit 2 without writing --out when no entry was collected (a silent source change)",
+    )
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
 
@@ -266,6 +339,10 @@ def main(argv: list[str] | None = None) -> int:
         combined.extend(from_license_checker(_load_json(args.license_checker)))
     if args.pnpm_licenses is not None:
         combined.extend(from_pnpm_licenses(_load_json(args.pnpm_licenses)))
+
+    if args.require_nonempty and not combined:
+        print("collect_licenses: no entries collected and --require-nonempty set", file=sys.stderr)
+        return 2
 
     args.out.write_text(
         json.dumps(combined, indent=2, sort_keys=True) + "\n", encoding="utf-8"

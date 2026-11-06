@@ -84,7 +84,8 @@ NODE_COMMANDS = {
         f"corepack enable && corepack prepare {PNPM.split('+')[0]} --activate",
         "pnpm install --frozen-lockfile --ignore-scripts",
         "pnpm audit --json > npm-audit.json || true",
-        "pnpm licenses list --json --prod > pnpm-licenses.json",
+        "pnpm licenses list --json > pnpm-licenses.json",
+        "pnpm licenses list --json --prod > pnpm-licenses-prod.json",
     },
 }
 # Job -> the actions it uses (SHA pins aside), so no install action joins a job unnoticed.

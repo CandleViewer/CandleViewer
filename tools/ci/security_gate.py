@@ -328,14 +328,23 @@ def evaluate_licenses(
     risks: list[AcceptedRisk],
     *,
     run_date: date,
+    dev_only_exceptions: bool = True,
 ) -> GateResult:
     """SR-136: allowed / needs-approval (LGPL) / prohibited (GPL/AGPL/SSPL/
     BUSL/Commons-Clause/non-commercial) / unknown-license-is-a-failure.
+
+    `dev_only_exceptions=False` ignores the allowlist's `dev_only_exceptions`: the
+    production-dependency scan runs this way, so a package that is reachable from
+    production cannot ride a dev-only exemption (#5628).
     """
     allowed = set(allowlist.get("allowed", []))
     needs_approval = set(allowlist.get("needs_approval", {}).get("licenses", []))
     prohibited = set(allowlist.get("prohibited", {}).get("licenses", []))
-    dev_only = {p for p in allowlist.get("dev_only_exceptions", {}).get("packages", [])}
+    dev_only = (
+        set(allowlist.get("dev_only_exceptions", {}).get("packages", []))
+        if dev_only_exceptions
+        else set()
+    )
     unknown_policy = allowlist.get("unknown_license_policy", "fail")
 
     messages: list[str] = []
@@ -1595,6 +1604,12 @@ def main(argv: list[str] | None = None) -> int:
         help="only used when --tool license-scan",
     )
     parser.add_argument(
+        "--no-dev-only-exceptions",
+        action="store_true",
+        help="only used when --tool license-scan: ignore the allowlist's dev_only_exceptions "
+        "(for the production-dependency scan, #5628)",
+    )
+    parser.add_argument(
         "--base",
         default=None,
         help="only used when --tool dependabot: HEAD's merge base with main, a full commit id",
@@ -1635,7 +1650,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.tool == "license-scan":
             deps = parse_license_report(args.report)
             allowlist = load_license_allowlist(args.allowlist)
-            result = evaluate_licenses(deps, allowlist, risks, run_date=run_date)
+            result = evaluate_licenses(
+                deps,
+                allowlist,
+                risks,
+                run_date=run_date,
+                dev_only_exceptions=not args.no_dev_only_exceptions,
+            )
         elif args.tool == "semgrep-auth":
             # The auth pack's scan (`--error`) fails on any finding itself; this judges what it
             # did not analyse, every rule counted as the repo's own (#3549).
