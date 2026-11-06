@@ -1,0 +1,408 @@
+{
+  "_meta": {
+    "spike": "E33-K01 (#991); throwaway (C-4.5). Aggregates only: the raw per-trial rows stay off main",
+    "labels": {
+      "M": "measured locally on the base sha, with fakes for the venue, and Postgres 16 for spike A",
+      "D": "demo; pending #843, none yet"
+    },
+    "date": "2026-11-04",
+    "base_main": "f79d6fa372099940759672d08956072d916b913f",
+    "spike_a": {
+      "branch": "spike/e33-k01-algo-scheduler",
+      "head": "f2626389bb54f304bfeb4754c7e3bf818afa405c",
+      "round_1_utc": "13:13Z-14:52Z",
+      "round_2_utc": "14:55Z-16:15Z",
+      "first_end_to_end_utc": "13:39Z",
+      "half_day_fallback_trigger_utc": "17:13Z"
+    },
+    "spike_b": {
+      "branch": "spike/e33-k01-sched",
+      "head": "4a3ede4b6c6627353596721fef3a759bb172586c",
+      "window_utc": "13:00Z-17:47Z",
+      "matrix_utc": "13:49Z-17:42Z"
+    },
+    "host": "8 vCPUs, shared; one spike process at a time per lane; spike A's client at nice 19, spike B at nice 10",
+    "load": "1/5/15-minute load averages",
+    "definitions": {
+      "duplicate": "more than one venue order carrying quantity in one slice chain, or a carrying venue order of the run's group22 with no slice row",
+      "lost": "a chain the rows mark bound, or any chain of a run that reached `completing`, with no carrying venue order",
+      "in_doubt": "a child of the run in B1 `unknown` or `quarantined` at the end",
+      "stuck": "the restart did not reach `completing` within 40 s, and the run is not paused on a held or in-doubt child",
+      "chain": "the attempts of one slice (algo_slices rows sharing planned_at)",
+      "rider_window": "Kc/Ka: from the exit state's write to the write of the step leaving it; Kf: from the partially_filled write (fill in executions) to the slice/run update",
+      "first_correct_action": "per run, after its account's first B19 pass: its due child bound, its next deadline armed, or a pause with its reason (rate budget, held, in doubt)",
+      "first_child": "the first phase-2 create of the run accepted at the venue, from `ready`; B1's resumed re-send counts (it can precede `ready`)"
+    }
+  },
+  "e0": {
+    "runs": 5,
+    "run_status": { "completing": 5 },
+    "ids_ok": "5 of 5",
+    "duplicates": "0 of 5",
+    "lost": "0 of 5"
+  },
+  "seam": {
+    "columns": "trials killed duplicates lost in_doubt stuck ids_ok killed_mid_window b1_state_at_restart restart_to_ready_ms_p50 restart_to_ready_ms_p95",
+    "rows": {
+      "K0": [30, 30, 0, 0, 0, 0, 30, 26, "none", 462.3, 1066.9],
+      "K1": [30, 30, 0, 0, 0, 0, 30, 24, "none", 528.7, 1274.0],
+      "K2": [30, 30, 0, 0, 0, 0, 30, 5, "validated", 469.2, 989.5],
+      "K3": [30, 30, 0, 0, 0, 0, 30, 7, "submitting", 1496.6, 5501.2],
+      "K4": [30, 30, 0, 0, 0, 0, 30, 1, "submitting", 413.2, 1071.8],
+      "K5": [30, 30, 0, 0, 0, 0, 30, 15, "submitted", 372.0, 869.6],
+      "K6": [30, 30, 0, 0, 0, 0, 30, 30, "submitted", 371.4, 460.3],
+      "K4u": [10, 10, 0, 0, 10, 0, 10, 10, "unknown", 289.0, 349.2],
+      "RC": [30, 30, 0, 0, 8, 0, null, null, "cancel_pending", null, null],
+      "RCb": [30, 30, 0, 0, 0, 0, null, null, "cancel_pending", null, null],
+      "RA": [30, 30, 0, 0, 0, 0, null, null, "amend_pending", null, null],
+      "RF": [30, 30, 0, 0, 0, 0, null, null, "partially_filled", null, null]
+    }
+  },
+  "seam_restart_actions": {
+    "K0": { "rescheduled_from_run_row": 30 },
+    "K1": { "redrive_same_id": 30 },
+    "K2": { "replan_new_seq2": 30 },
+    "K3": { "await_b1_resume:submitted": 26, "bind": 4 },
+    "K4": { "bind": 15, "await_b1_resume:submitted": 15 },
+    "K5": { "bind": 30 },
+    "K6": { "bind": 30 },
+    "K4u": { "hold_in_doubt": 10 },
+    "RC": {
+      "not_landed:replace_after_cancel:replacement": 22,
+      "landed:hold_in_doubt": 7,
+      "landed:await_b1_resume:unknown": 1
+    },
+    "RCb": {
+      "not_landed:replace_after_cancel:replacement": 25,
+      "landed:replace_after_cancel:replacement": 5
+    },
+    "RA": {
+      "not_landed:bind": 22,
+      "landed:bind": 3,
+      "not_landed:await_b1_resume:submitted": 3,
+      "landed:await_b1_resume:submitted": 2
+    },
+    "RF": { "bind": 30 }
+  },
+  "seam_extra": {
+    "RC_RCb_replacements": {
+      "trials_replaced": 52,
+      "first_attempt_refused_stop_request_pending": 52,
+      "created_after_the_cancel_resolved": 52
+    },
+    "RA": { "amended_price_at_venue": 30, "runs_with_2_creates": 30 },
+    "landed_before_kill": { "RC": 8, "RCb": 5, "RA": 5 },
+    "restarts_paging_step_outcome_unknown": { "K0": 2, "K1": 1, "K3": 19, "RF": 1 },
+    "RF": {
+      "filled_from_executions": 30,
+      "remainder_rests_on_same_child": 30,
+      "runs_with_2_creates": 30
+    }
+  },
+  "seam_windows_ms": {
+    "K0": { "n": 344, "p50": 110.5, "p95": 498.7, "max": 1900.3 },
+    "K1": { "n": 316, "p50": 132.3, "p95": 514.5, "max": 2498.1 },
+    "K2": { "n": 305, "p50": 3.0, "p95": 23.6, "max": 255.0 },
+    "K3": { "n": 272, "p50": 2.6, "p95": 22.9, "max": 184.6 },
+    "K3_to_K4": { "n": 205, "p50": 5.0, "p95": 52.9, "max": 465.4 },
+    "K4": { "n": 204, "p50": 1.5, "p95": 11.9, "max": 4230.7 },
+    "K5": { "n": 159, "p50": 41.3, "p95": 185.9, "max": 424.7 }
+  },
+  "native_stop": {
+    "venue_orders_of_children": 769,
+    "with_native_stop": 769,
+    "child_rows": 782,
+    "origin_algo_child_with_run_ref": 782,
+    "cells": "E0, K0-K6, K4u, RC, RCb, RA, RF, E5a (rows) and E5b (venue orders only: its rows are wiped)"
+  },
+  "e5": {
+    "columns": "trials b19_adoptions untracked_own_id untracked_ext_key boot_join_orphans run_status_reason bound held_rows creates_after_restart b19_pass_p95_s",
+    "rows": {
+      "E5a": [10, 0, 0, 0, 2, "no_run_row", 0, 0, 0, 1.59],
+      "E5b": [10, 2, 2, 0, 0, "no_run_row", 0, 0, 0, 1.67],
+      "E5c": [10, 1, 0, 1, 0, "child_held", 0, 10, 0, 0.59],
+      "E5d": [10, 1, 1, 0, 0, "slice_id_untracked", 0, 0, 0, 0.57]
+    }
+  },
+  "e3": {
+    "columns": "exec_to_ready to_hydrated to_pass_max action_p50 action_p95 action_max child_p95 child_max creates uid_max_5s ip_max_5s peak_inflight",
+    "rows": {
+      "1x1": [0.33, 0.57, 0.66, 1.08, 1.08, 1.08, 0.82, 0.82, 1, 4, 4, 1],
+      "10x1": [1.34, 1.14, 1.26, 1.26, 4.13, 4.13, 3.79, 3.79, 6, 15, 15, 1],
+      "100x1": [5.17, 3.5, 1.17, 3.45, 18.32, 19.68, 19.0, 19.62, 51, 26, 26, 1],
+      "1x5": [0.38, 1.1, 1.28, 1.57, 1.57, 1.57, 1.21, 1.21, 1, 4, 16, 4],
+      "10x5": [1.15, 1.63, 1.62, 2.75, 3.12, 3.12, 2.53, 2.53, 12, 12, 57, 3],
+      "100x5": [3.6, 5.38, 1.36, 5.16, 10.6, 10.91, 10.11, 10.58, 57, 12, 57, 4]
+    }
+  },
+  "e3_spread_s": {
+    "1x1": { "action_p95": [0.48, 1.77], "action_max": [0.48, 1.77] },
+    "10x1": { "action_p95": [3.61, 5.43], "action_max": [3.61, 5.43] },
+    "100x1": { "action_p95": [13.2, 19.68], "action_max": [14.22, 20.8] },
+    "1x5": { "action_p95": [1.28, 1.74], "action_max": [1.28, 1.74] },
+    "10x5": { "action_p95": [2.85, 3.71], "action_max": [2.85, 3.71] },
+    "100x5": { "action_p95": [9.45, 11.29], "action_max": [9.91, 11.86] }
+  },
+  "e3_first_action_kinds": {
+    "1x1": { "child_bound": 4, "deadline_armed": 1 },
+    "10x1": { "deadline_armed": 25, "child_bound": 25 },
+    "100x1": { "deadline_armed": 250, "child_bound": 250 },
+    "1x5": { "child_bound": 4, "deadline_armed": 1 },
+    "10x5": { "deadline_armed": 15, "child_bound": 35 },
+    "100x5": { "deadline_armed": 240, "child_bound": 260 }
+  },
+  "e3_common": {
+    "load_1min": [8.8, 15.9],
+    "cold_import_s": [6.15, 7.37],
+    "governor_in_code": { "capacity": 10, "refill_per_s": 5, "ip_per_5s": 600 },
+    "configured_order_rate_per_uid": 8,
+    "all_runs_acted": "every repeat of every cell",
+    "local_rate_refusals": 0,
+    "venue_10018": "not modelled by the fake (0)",
+    "spike_b_running": "during every E3 repeat",
+    "repeats_per_cell": 5,
+    "most_in_any_repeat": { "uid_5s": 28, "ip_5s": 61, "in_flight": 5 }
+  },
+  "e6": {
+    "columns": "state runs persist_refused restore_deadlines_rearmed restore_invokes_redriven restore_entry_actions hydration_deadlines_rearmed hydration_invokes_redriven persist_ms restore_ms hydration_build_ms",
+    "rows": {
+      "at_rest_armed": ["armed", 100, 0, 0, 0, 0, 100, 0, 1.25, 3.13, 2.86],
+      "in_flight": ["submitting_slice", 100, 0, 0, 0, 0, 100, 100, 1.09, 3.05, 2.35]
+    }
+  },
+  "e4_method": {
+    "clocks": {
+      "virtual": "warp loop: time advances with the loop thread CPU time while busy, jumps when idle (dedicated-core model)",
+      "real": "stock asyncio loop (the order lane factory), nice 10, shared host; 60 s idle-loop floor probe before each anchor"
+    },
+    "lane": "B1 and B6 via statechart.factory.build(lane=order) with cv_plugins; fake store (counts), fake venue (place ack after 20 ms); child per slice: VALIDATE, SEND, ack, one fill 0.5 s later, stopped; gc.freeze() after start-up",
+    "residents": "500 B1 in submitted; Poisson EXEC 25/s across them; each recycled after 10 fills",
+    "plans": "E33-S03: T = duration/slices = 6 s, +/-25 % jitter (seeded), all runs start together; min_slice_interval 1 s",
+    "shapes": {
+      "single": "1 run x 100 slices / 600 s",
+      "loaded": "50 runs x 100 / 600 s + residents; stop 15 s at 480 s",
+      "manual": "100 runs + residents + manual orders 2/s, 120 s",
+      "burst": "450 runs, 3 slices 20 s apart, no jitter",
+      "clock": "10 runs, 180 s window, event at 60 s: wall +/-60 s, 15 s stall (boot: CLOCK_BOOTTIME counts; vm: BOOTTIME stops, wall stepped +15 s 1 s after resume)",
+      "loadedcf": "loaded with --share-machines (counterfactual, never production)"
+    },
+    "metrics": {
+      "lateness": "handled (B6 submitting_slice entry action) minus planned, steady set",
+      "interval_error": "|(handled gap) - (planned gap)| for consecutive slices of one run in one plan generation, steady set",
+      "steady_set": "generation-0 slices planned before any disturbance",
+      "gc_free": "slices whose [planned, handled] window overlaps no gen-2 collection (post-hoc attribution)",
+      "loop_lag": "run_loop_lag_sampler: 100 ms sleep overshoot, disturbance window excluded"
+    },
+    "bars": {
+      "INV-B6-e": "interval error p95 <= 100 ms with 500 resident order machines (judged)",
+      "ticket": "drift < 250 ms (lateness), the looser figure"
+    }
+  },
+  "e4_loaded": {
+    "columns": "repeats interval_error_p50 interval_error_p95 interval_error_max interval_error_p95_repeat_min interval_error_p95_repeat_max lateness_p50 lateness_p95 lateness_max loop_lag_p99",
+    "rows": {
+      "V1-100": [5, 34.6, 384.6, 933.7, 318.7, 434.2, 54.7, 201.4, 958.1, 138.0],
+      "V1-250": [5, 81.2, 352.8, 956.4, 303.3, 401.9, 131.9, 256.5, 1008.4, 167.5],
+      "V1-1000": [5, 293.4, 784.3, 1568.9, 768.9, 799.0, 512.3, 958.9, 1672.0, 229.2],
+      "V2": [5, 1.7, 426.9, 888.8, 360.8, 512.9, 0.8, 200.3, 889.4, 149.5],
+      "V3": [5, 1.7, 432.0, 966.6, 408.4, 460.9, 0.8, 204.5, 967.2, 143.3],
+      "V3 mode B": [1, 2.3, 483.2, 971.9, 483.2, 483.2, 0.9, 253.4, 981.2, 158.5],
+      "residents only": [5, null, null, null, null, null, null, null, null, 5.8]
+    }
+  },
+  "e4_loaded_full_collections": {
+    "columns": "repeats_with_record collections pause_p50 pause_max share_hit",
+    "rows": {
+      "V1-100": [4, [63, 63], [469.5, 521.4], [866.1, 960.1], [0.072, 0.079]],
+      "V1-250": [5, [63, 64], [478.0, 543.4], [900.3, 938.5], [0.077, 0.085]],
+      "V1-1000": [5, [63, 64], [439.1, 567.8], [925.7, 998.5], [0.083, 0.108]],
+      "V2": [5, [63, 64], [477.2, 522.3], [900.9, 990.7], [0.068, 0.087]],
+      "V3": [5, [63, 63], [476.5, 570.3], [920.1, 964.1], [0.071, 0.086]],
+      "V3 mode B": [1, [63, 63], [518.2, 518.2], [988.4, 988.4], [0.082, 0.082]],
+      "residents only": [4, [12, 12], [452.4, 479.5], [681.8, 743.0], [1.0, 1.0]]
+    }
+  },
+  "e4_loaded_full_collection_growth_ms": {
+    "columns": "first_pause_min first_pause_max last_pause_min last_pause_max",
+    "rows": {
+      "V1-100": [188.9, 205.7, 827.5, 944.0],
+      "V1-250": [167.3, 199.0, 782.9, 935.9],
+      "V1-1000": [157.3, 182.6, 796.9, 933.6],
+      "V2": [164.0, 191.8, 790.9, 899.5],
+      "V3": [162.8, 208.1, 821.9, 959.5],
+      "V3 mode B": [198.0, 198.0, 988.4, 988.4],
+      "residents only": [88.8, 114.0, 681.8, 730.7]
+    }
+  },
+  "e4_loaded_gc_free": {
+    "columns": "interval_error_p50 interval_error_p95 interval_error_max lateness_p50 lateness_p95 lateness_max",
+    "rows": {
+      "V1-100": [29.1, 78.2, 881.9, 50.7, 96.5, 922.5],
+      "V1-250": [72.8, 192.1, 250.4, 124.3, 238.8, 266.1],
+      "V1-1000": [287.0, 768.9, 985.5, 480.6, 947.3, 1009.4],
+      "V2": [0.7, 21.5, 230.0, 0.7, 13.0, 230.8],
+      "V3": [0.7, 18.6, 242.4, 0.8, 12.0, 243.3],
+      "V3 mode B": [1.1, 25.0, 217.1, 0.8, 13.1, 217.8]
+    }
+  },
+  "e4_scheduler_cpu_s_and_wakes": {
+    "columns": "cpu_min cpu_max wakes_min wakes_max",
+    "rows": {
+      "V1-100": [0.78, 0.81, 5635, 5652],
+      "V1-250": [0.49, 0.6, 2303, 2309],
+      "V1-1000": [0.32, 0.62, 591, 591],
+      "V2": [0.23, 0.26, 5050, 5050],
+      "V3": [0.87, 0.97, 4363, 4472],
+      "V3 mode B": [1.11, 1.11, 4455, 4455]
+    }
+  },
+  "e4_counterfactual": {
+    "columns": "repeats interval_error_p50 interval_error_p95 interval_error_max interval_error_p95_repeat_min interval_error_p95_repeat_max lateness_p50 lateness_p95 lateness_max loop_lag_p99 full_collections full_collection_max_ms",
+    "rows": {
+      "V1-100": [1, 29.3, 75.4, 98.7, 75.4, 75.4, 51.6, 95.5, 104.1, 4.9, 6, 130.0],
+      "V2": [1, 0.2, 5.1, 94.2, 5.1, 5.1, 0.8, 4.6, 95.0, 5.5, 6, 113.7],
+      "V3": [1, 0.3, 5.7, 141.2, 5.7, 5.7, 0.8, 4.9, 142.2, 5.9, 6, 133.2],
+      "residents only": [1, null, null, null, null, null, null, null, null, 2.2, 1, 108.1]
+    }
+  },
+  "e4_single": {
+    "columns": "repeats interval_error_p50 interval_error_p95 interval_error_max interval_error_p95_repeat_min interval_error_p95_repeat_max lateness_p50 lateness_p95 lateness_max loop_lag_p99",
+    "rows": {
+      "V1-100": [5, 26.6, 80.3, 97.6, 76.9, 86.0, 51.5, 95.4, 100.5, 0.1],
+      "V1-250": [5, 70.9, 192.0, 243.4, 181.5, 205.4, 120.5, 234.2, 249.9, 0.1],
+      "V1-1000": [5, 289.9, 805.1, 987.0, 675.7, 860.8, 462.7, 950.1, 1000.6, 0.1],
+      "V2": [5, 0.1, 0.6, 9.5, 0.4, 5.5, 0.8, 1.2, 10.4, 0.1],
+      "V3": [5, 0.1, 0.4, 4.1, 0.3, 0.5, 0.9, 1.1, 5.1, 0.1]
+    }
+  },
+  "e4_anchor": {
+    "columns": "repeats interval_error_p50 interval_error_p95 interval_error_max interval_error_p95_repeat_min interval_error_p95_repeat_max lateness_p50 lateness_p95 lateness_max loop_lag_p99",
+    "rows": {
+      "V1-100": [1, 42.2, 535.0, 1101.9, 535.0, 535.0, 61.2, 403.8, 1110.8, 313.2],
+      "V1-250": [1, 97.2, 859.3, 2910.6, 859.3, 859.3, 145.7, 684.6, 2955.5, 476.0],
+      "V1-1000": [1, 297.9, 815.4, 2058.9, 815.4, 815.4, 519.2, 977.0, 2318.5, 489.1],
+      "V2": [1, 15.0, 833.4, 1943.6, 833.4, 833.4, 5.9, 628.2, 1944.9, 424.6],
+      "V3": [1, 6.4, 462.3, 1073.5, 462.3, 462.3, 4.0, 275.7, 1075.8, 333.2]
+    }
+  },
+  "e4_anchor_gc": {
+    "columns": "gc_free_interval_error_p95 share_hit load_1min_start",
+    "rows": {
+      "V1-100": [126.3, 0.105, 15.9],
+      "V1-250": [227.6, 0.118, 9.9],
+      "V1-1000": [764.4, 0.081, 12.2],
+      "V2": [300.2, 0.117, 10.6],
+      "V3": [119.3, 0.074, 10.1]
+    }
+  },
+  "e4_host_floor_idle_lag_ms": { "p99": [16.3, 32.5], "max": [48.8, 566.5] },
+  "e4_catch_up": {
+    "columns": "replans_min replans_max missed_min missed_max min_gap_near_s gaps_under_1s first_slice_p50_min_s first_slice_p50_max_s first_slice_max_s cap_shrinks_min cap_shrinks_max unfired_due_at_end",
+    "rows": {
+      "V1-100": [50, 50, 140, 148, 2.5, 0, 2.7, 3.8, 4.4, 347, 379, 0],
+      "V1-250": [50, 50, 144, 149, 2.3, 0, 2.8, 3.8, 4.4, 352, 381, 0],
+      "V1-1000": [50, 50, 150, 150, 2.0, 0, 3.0, 3.0, 4.2, 359, 388, 0],
+      "V2": [50, 50, 141, 145, 2.3, 0, 2.9, 3.8, 5.0, 345, 375, 0],
+      "V3": [50, 50, 141, 145, 2.0, 0, 2.9, 3.0, 4.2, 343, 377, 0],
+      "V3 mode B": [50, 50, 141, 141, 2.7, 0, 3.1, 3.1, 4.2, 344, 344, 0],
+      "V1-100 (real time)": [50, 50, 136, 136, 2.9, 0, 4.0, 4.0, 4.2, 340, 340, 0],
+      "V1-250 (real time)": [50, 50, 140, 140, 3.0, 0, 3.5, 3.5, 4.5, 350, 350, 0],
+      "V1-1000 (real time)": [50, 50, 141, 141, 2.7, 0, 3.0, 3.0, 5.0, 349, 349, 0],
+      "V2 (real time)": [50, 50, 136, 136, 2.7, 0, 4.0, 4.0, 4.4, 337, 337, 0],
+      "V3 (real time)": [50, 50, 148, 148, 2.7, 0, 3.6, 3.6, 4.9, 368, 368, 0]
+    }
+  },
+  "e4_clock": {
+    "columns": "fired_after_min fired_after_max replans missed_min missed_max overdue_unfired_at_end first_after_late_max_ms host_steps_seen reanchors_max guard_offset_end_ms",
+    "rows": {
+      "stall-boot V1-1000": [200, 203, 10, 29, 30, 19, 934.1, 0, 0, 0],
+      "stall-boot V1-100": [203, 207, 10, 29, 30, 0, 84.8, 0, 0, 0],
+      "stall-boot V1-250": [202, 207, 10, 28, 30, 1, 214.9, 0, 0, 0],
+      "stall-boot V2": [0, 0, 70, 229, 235, 107, null, 0, 1, 0],
+      "stall-boot V2 mode B": [200, 203, 10, 30, 30, 0, 1.3, 0, 1, 0],
+      "stall-boot V3": [0, 0, 70, 229, 235, 108, null, 0, 1, 0],
+      "stall-boot V3 mode B": [203, 207, 10, 30, 30, 0, 44.4, 0, 1, 0],
+      "stall-vm V1-1000": [201, 204, 10, 26, 29, 0, 15873.0, 1, 0, 0],
+      "stall-vm V1-100": [200, 202, 10, 26, 29, 2, 15088.8, 1, 0, 0],
+      "stall-vm V1-250": [200, 203, 10, 26, 28, 3, 15239.2, 1, 0, 0],
+      "stall-vm V2": [1, 1, 70, 227, 234, 80, 15001.3, 1, 2, 0],
+      "stall-vm V2 mode B": [197, 200, 10, 29, 29, 0, 15001.7, 1, 1, 0],
+      "stall-vm V3": [1, 1, 70, 227, 233, 77, 15001.5, 1, 2, 0],
+      "stall-vm V3 mode B": [201, 204, 10, 25, 28, 0, 15002.0, 1, 1, 0],
+      "wall+60 V1-1000": [200, 200, 0, 0, 0, 0, 982.0, 1, 0, -60000],
+      "wall+60 V1-100": [200, 200, 0, 0, 0, 0, 99.6, 1, 0, -60000],
+      "wall+60 V1-250": [200, 200, 0, 0, 0, 0, 249.9, 1, 0, -60000],
+      "wall+60 V2": [200, 200, 0, 0, 0, 0, 2.0, 1, 2, -60000],
+      "wall+60 V2 mode B": [200, 200, 0, 0, 0, 0, 2.5, 1, 1, -60000],
+      "wall+60 V3": [200, 200, 0, 0, 0, 0, 2.3, 1, 2, -60000],
+      "wall+60 V3 mode B": [200, 200, 0, 0, 0, 0, 1.9, 1, 1, -60000],
+      "wall-60 V1-1000": [200, 200, 0, 0, 0, 0, 980.2, 1, 0, 60000],
+      "wall-60 V1-100": [200, 200, 0, 0, 0, 0, 95.3, 1, 0, 60000],
+      "wall-60 V1-250": [200, 200, 0, 0, 0, 0, 246.6, 1, 0, 60000],
+      "wall-60 V2": [200, 200, 0, 0, 0, 0, 6.6, 1, 2, 60000],
+      "wall-60 V2 mode B": [200, 200, 0, 0, 0, 0, 2.7, 1, 1, 60000],
+      "wall-60 V3": [200, 200, 0, 0, 0, 0, 1.8, 1, 2, 60000],
+      "wall-60 V3 mode B": [200, 200, 0, 0, 0, 0, 1.9, 1, 1, 60000]
+    }
+  },
+  "e4_vm_pause_slices_over_1s_late": {
+    "columns": "per_repeat_min per_repeat_max max_per_run",
+    "rows": {
+      "V3 mode B": [2, 5, 1],
+      "V2 mode B": [2, 5, 1],
+      "V1-100": [1, 4, 1],
+      "V1-250": [2, 4, 1],
+      "V1-1000": [1, 5, 2],
+      "V3": [3, 5, 1],
+      "V2": [3, 5, 1]
+    }
+  },
+  "e4_manual_ms": {
+    "columns": "orders p50 p95 p99 gc_free_p95",
+    "rows": {
+      "V1-100": [1157, 15.0, 219.7, 343.0, 103.6],
+      "V1-250": [1234, 13.3, 274.1, 411.7, 133.1],
+      "V1-1000": [1217, 13.4, 437.9, 605.1, 282.7],
+      "V2": [1220, 16.0, 246.1, 393.0, 103.6],
+      "V3": [1159, 13.7, 188.0, 328.7, 69.2],
+      "residents only": [1238, 10.6, 20.2, 28.0, 19.2]
+    }
+  },
+  "e4_burst": {
+    "columns": "dispatch_per_s_p50 dispatch_span_ms_p50 handled_per_s_p50 last_handled_late_max_ms",
+    "rows": {
+      "V1-100": [20214, 22.3, 1507, 1110.1],
+      "V1-250": [17659, 25.5, 1552, 1252.8],
+      "V1-1000": [15726, 28.6, 1416, 2037.3],
+      "V2": [1274, 353.3, 1338, 1167.3],
+      "V3": [15744, 28.6, 1441, 1005.8]
+    }
+  },
+  "e4_tracked_objects_per_live_machine": {
+    "B1 (factory build)": 1146,
+    "B6 (factory build)": 358,
+    "B1 (one shared machine node, counterfactual)": 68
+  },
+  "e4_load_1min_start": {
+    "loaded": [8.5, 32.1],
+    "loadedcf": [10.9, 20.0],
+    "single": [10.4, 17.1],
+    "manual": [8.3, 13.6],
+    "burst": [9.7, 20.5],
+    "clock": [7.8, 13.0],
+    "anchor": [9.9, 15.9]
+  },
+  "spike_a_batches": {
+    "columns": "start_utc wall_s load_1min_start load_1min_end cells",
+    "rows": {
+      "batch1": ["13:44:48Z", 1349, 25.1, 23.21, "K0 K1 K3"],
+      "batch2": ["14:14:10Z", 235, 13.82, 12.18, "K4 K5"],
+      "batch3": ["14:19:57Z", 217, 13.3, 11.06, "K6 K2"],
+      "batch4b": ["14:37:55Z", 433, 21.5, 8.96, "E0 K4u"],
+      "r2-batch1": ["15:08:04Z", 326, 8.3, 9.89, "RC RA RF"],
+      "r2-batch2": ["15:18:18Z", 287, 11.11, 10.07, "E5a E5b E5c E5d RCb"],
+      "r2-e3a": ["15:57:56Z", 406, 12.98, 11.62, "1x1 10x1 100x1"],
+      "r2-e3b": ["16:05:27Z", 296, 10.21, 11.64, "1x5 10x5 100x5"]
+    }
+  }
+}

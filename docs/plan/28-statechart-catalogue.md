@@ -3244,6 +3244,7 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
 - Timing-light: no in-machine timers at all, which is why this rates the cleanest of the four algos.
 - **Corrected 2026-10-01 (C-04 / C-07b class, E50-S01, `tools/lint_statecharts.py` CV-LINT-KILL-ANCESTOR / CV-LINT-FALLTHROUGH):** root `on.KILL` → existing `failed` with `audit_kill`, so every invoking state has a kill ancestor (C-04; no new guard, no new business transition); ordered unguarded `audit_guard_denied` arm (internal, B18 shape) appended after the guarded arms of `racing.POSITION_FLAT` so a guard-denied event is audited, never silently deferred (C-07b).
 - **Corrected 2026-10-10 (#2204, OC-03, `docs/research/xstate/33-r5-findings-register.md` §6):** `completing` handled only `CHILDREN_TERMINAL`, so a late `LEG_A_FILL`/`LEG_B_FILL` correctly deferred by a settling state was replayed into `completing` and re-deferred forever (INV-B4-d broken). `completing` now records the fill on an unguarded internal arm and sends an overshooting fill to `overshoot` on a guarded first arm. Each `overshoot → completing → overshoot` lap needs another external fill, so this is not an invoke cycle. Chart `version: 1`; context shape unchanged, so no upcaster.
+- **Added 2026-11-04 (E33-K01, #991; ADR-0048):** B4–B7's shutdown stops or drains invokes before persisting, or skips the snapshot; a restore never resumes a state whose invoke is lost.
 
 ---
 
@@ -3611,6 +3612,7 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
 
 - `WS_DISCONNECT` is policy-driven via `on_disconnect_is_freeze`: freeze-and-pause or cancel, per the algo's configured disconnect policy (24 §10.1).
 - **Corrected 2026-10-01 (C-04 / C-07b class, E50-S01, `tools/lint_statecharts.py` CV-LINT-KILL-ANCESTOR / CV-LINT-FALLTHROUGH):** root `on.KILL` → existing `failed` with `audit_kill`, so every invoking state has a kill ancestor (C-04; no new guard, no new business transition); ordered unguarded `audit_guard_denied` arm (internal, B18 shape) appended after the guarded arms of `working.WS_DISCONNECT`, `working.POSITION_FLAT` so a guard-denied event is audited, never silently deferred (C-07b).
+- **Added 2026-11-04 (E33-K01, #991; ADR-0048):** B4–B7's shutdown stops or drains invokes before persisting, or skips the snapshot; a restore never resumes a state whose invoke is lost.
 
 ---
 
@@ -3960,6 +3962,7 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
 | **INV-B6-e** | Slice-interval error p95 `<= 100 ms` with 500 resident order machines (E33-S03 acceptance). |
 
 - **Corrected 2026-10-01 (C-04 / C-07b class, E50-S01, `tools/lint_statecharts.py` CV-LINT-KILL-ANCESTOR / CV-LINT-FALLTHROUGH):** root `on.KILL` → existing `failed` with `audit_kill`, so every invoking state has a kill ancestor (C-04; no new guard, no new business transition); ordered unguarded `audit_guard_denied` arm (internal, B18 shape) appended after the guarded arms of `armed.WS_DISCONNECT` so a guard-denied event is audited, never silently deferred (C-07b).
+- **Added 2026-11-04 (E33-K01, #991; ADR-0048):** B4–B7's shutdown stops or drains invokes before persisting, or skips the snapshot; a restore never resumes a state whose invoke is lost.
 
 ---
 
@@ -4328,6 +4331,7 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
 
 - This is the machine most at risk of being level-triggered by accident. The tracker is the boundary: it does the fast work in plain Python and emits a bounded event stream.
 - **Corrected 2026-10-01 (C-04 / C-07b class, E50-S01, `tools/lint_statecharts.py` CV-LINT-KILL-ANCESTOR / CV-LINT-FALLTHROUGH):** root `on.KILL` → existing `failed` with `audit_kill`, so every invoking state has a kill ancestor (C-04; no new guard, no new business transition); ordered unguarded `audit_guard_denied` arm (internal, B18 shape) appended after the guarded arms of `working.BOOK_TARGET_MOVED`, `working.WS_DISCONNECT` so a guard-denied event is audited, never silently deferred (C-07b).
+- **Added 2026-11-04 (E33-K01, #991; ADR-0048):** B4–B7's shutdown stops or drains invokes before persisting, or skips the snapshot; a restore never resumes a state whose invoke is lost.
 
 ---
 

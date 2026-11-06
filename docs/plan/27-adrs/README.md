@@ -47,6 +47,7 @@ Status values: `decided` (binding now), `proposed` (decision deadline stated ins
 | [ADR-0041](ADR-0041-backup-engine-and-artefact-key.md)            | Backup engine: the sidecar and its roles, age artefacts to an offline key, the restore halt latch (#3319)                     | **proposed** (ruled under the owner's delegation, #2701; veto pending; ratify before B1)    |
 | [ADR-0044](ADR-0044-rest-order-entry-and-code-only-rejections.md) | REST order entry in every environment in v1; the exchange's reject text code-only (E29-T09, #1029)                            | **accepted (interim)** (ruled 2026-11-03 by main-orchestrator, #1029; veto on #2701)        |
 | [ADR-0046](ADR-0046-order-ticket-reducer-placement.md)            | Order-ticket reducer placement: sync, external store or worker, and the submit dispatch path (E30-K01, #852)                  | **proposed** (provisional option B from the K01 run; number assigned on #852)               |
+| [ADR-0048](ADR-0048-algo-crash-seam-scheduler-adoption.md)        | Emulated-algo crash seam, scheduler and adoption (E33-K01; ticket said ADR-0016, taken)                                       | **proposed (gated)** (E33-T03 #1107 finalises; the demo leg, #843, is the gate)             |
 
 [adr-0040]: ADR-0040-per-trade-overrides-and-profile-propagation.md
 
