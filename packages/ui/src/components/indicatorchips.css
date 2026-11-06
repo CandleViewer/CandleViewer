@@ -64,4 +64,18 @@
   .cv-indicator-chips__glyph[data-kind] {
     color: ButtonText;
   }
+
+  /* Open: the selected fill is a background the system palette drops, so the pressed look is drawn
+     in system colours (Highlight plate, HighlightText label and glyph), as the segmented control's
+     checked segment is. */
+  .cv-indicator-chips[aria-expanded="true"] .cv-indicator-chips__pill {
+    border-color: Highlight;
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+
+  .cv-indicator-chips[aria-expanded="true"] .cv-indicator-chips__glyph[data-kind] {
+    color: HighlightText;
+  }
 }
