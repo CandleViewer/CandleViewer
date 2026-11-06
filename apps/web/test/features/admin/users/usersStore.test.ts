@@ -171,9 +171,34 @@ describe("the users page store: pages", () => {
     store.loadMore();
     await last(pages).answer({ kind: "failed", reason: "status", status: 400 });
     expect(last(pages).args).toEqual([{}, undefined]);
+    expect(store.getState().list).toMatchObject({ phase: "ok", failure: null }); // rows kept meanwhile
+    expect(usernames(store.getState().list.rows)).toEqual(["user001"]);
     await last(pages).answer(ok(page([user(1), user(2)])));
     expect(usernames(store.getState().list.rows)).toEqual(["user001", "user002"]);
     expect(store.getState().list.failure).toBeNull();
+  });
+
+  it("a cursor the server keeps refusing restarts the walk once, then fails it (no loop)", async () => {
+    const { store, pages, last } = setup();
+    const refused = { kind: "failed", reason: "status", status: 400 } as const;
+    store.setQuery({});
+    await last(pages).answer(ok(page([user(2)], "c1")));
+    store.sortBy({ columnId: "user", direction: "ascending" });
+    await last(pages).answer(refused); // the cursor expired: from the first page, once
+    expect(last(pages).args).toEqual([{}, undefined]);
+    await last(pages).answer(ok(page([user(2)], "c1")));
+    await last(pages).answer(refused); // refused again: the walk fails as a page does
+    expect(pages).toHaveLength(4);
+    expect(store.getState().list).toMatchObject({
+      phase: "ok",
+      sort: null,
+      sortPending: null,
+      failure: { reason: "status", status: 400 },
+    });
+    store.retry(); // a user action starts a new walk, with its own restart
+    expect(last(pages).args).toEqual([{}, "c1"]);
+    await last(pages).answer(refused);
+    expect(pages).toHaveLength(6);
   });
 
   it("a failed first page fails the list; Retry reads it again", async () => {
@@ -339,6 +364,7 @@ describe("the users page store: pages", () => {
     expect(store.getState().list.phase).toBe("idle");
     store.setQuery({});
     expect(pages).toHaveLength(2);
+    expect(invites).toHaveLength(2);
   });
 
   it("keeps no timer: nothing polls", async () => {
@@ -434,6 +460,35 @@ describe("the users page store: a sort orders every user", () => {
     expect(usernames(visibleRows(store.getState()))).toEqual(["user002", "user001"]);
   });
 
+  it("sortBy(null) in the middle of a walk clears the busy header", async () => {
+    const { store, pages, last } = setup();
+    store.setQuery({});
+    await last(pages).answer(ok(page([user(2)], "c1")));
+    store.sortBy({ columnId: "user", direction: "ascending" });
+    expect(store.getState().list.sortPending).toBe("user");
+    store.sortBy(null);
+    expect(store.getState().list).toMatchObject({ sort: null, sortPending: null });
+    await last(pages).answer(ok(page([user(1)])));
+    expect(store.getState().list).toMatchObject({ sort: null, sortPending: null });
+  });
+
+  it("a re-read under a sort that meets a repeated cursor drops the sort, as a failed page", async () => {
+    const { store, pages, last } = setup();
+    store.setQuery({});
+    await last(pages).answer(ok(page([user(2)], "c1")));
+    store.sortBy({ columnId: "user", direction: "ascending" });
+    await last(pages).answer(ok(page([user(1)])));
+    expect(store.getState().list.sort).not.toBeNull();
+    store.invalidate();
+    await last(pages).answer(ok(page([user(2)], "c1")));
+    await last(pages).answer(ok(page([user(1)], "c1"))); // the same cursor again
+    expect(store.getState().list).toMatchObject({
+      sort: null,
+      sortPending: null,
+      failure: { reason: "unreadable" },
+    });
+  });
+
   it("a sort asked while a page is on the wire is applied by that read, which reads on", async () => {
     const { store, pages, last } = setup();
     store.setQuery({});
@@ -461,6 +516,21 @@ describe("the users page store: a sort orders every user", () => {
     expect(order("lastSignIn", "ascending")).toEqual(["user003", "user002", "user001"]);
     expect(order("lastSignIn", "descending")).toEqual(["user002", "user003", "user001"]);
     expect(order("status", "ascending")).toEqual(["user002", "user003", "user001"]);
+  });
+
+  it("ranks a user by the highest of several roles, and one with none last", () => {
+    const rows = [
+      user(1, { roles: ["viewer", "owner"] }),
+      user(2, { roles: [] }),
+      user(3, { roles: ["manager"] }),
+      user(4, { roles: ["viewer"] }),
+    ];
+    expect(usernames(sortUsers(rows, { columnId: "role", direction: "ascending" }))).toEqual([
+      "user001",
+      "user003",
+      "user004",
+      "user002",
+    ]);
   });
 });
 
