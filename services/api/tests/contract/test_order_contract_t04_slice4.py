@@ -967,6 +967,22 @@ def test_the_exit_routes_declare_every_answer_their_routes_give() -> None:
     )
 
 
+def test_the_exit_routes_declare_the_replay_header_their_24h_record_answers_with() -> None:
+    """E29-Q02 (#1147): a repeat of a stored `2xx` is answered with `Idempotency-Replayed: true`
+    (Idempotency in `info`, which names these three: they keep no anchor, only the 24 h record),
+    so each declares the one shared header on its `2xx`, as `placeOrder` does; `amendOrder` keeps
+    its `ETag` beside it."""
+    replayed = {"$ref": "#/components/headers/IdempotencyReplayed"}
+    declared = {"amendOrder": "202", "cancelOrder": "202", "cancelAllOrders": "200"}
+    for name, status in declared.items():
+        headers = _OPS[name]["responses"][status]["headers"]
+        assert headers["Idempotency-Replayed"] == replayed, name
+    assert _OPS["amendOrder"]["responses"]["202"]["headers"]["ETag"] == {
+        "$ref": "#/components/headers/OrderETag"
+    }
+    assert "`amendOrder`, `cancelOrder` and `cancelAllOrders` keep no anchor" in _INFO
+
+
 def test_a_cancel_of_an_order_already_final_is_recorded_ahead_of_its_202() -> None:
     """The orchestrator's ruling of 2026-10-24 21:47Z (2), built in S4-C2b (`ALREADY_FINAL`): the
     user's cancel is the action even with nothing to send, and the `audit_outcome` enum has no

@@ -792,7 +792,7 @@
             }
           }
         },
-        "description": "Semantically invalid request. The `nativeStop` and `riskCap` examples predate the registry statuses (#2088): the order routes answer `validation_failed` with `400` and `risk_limit_breached` with `403`.\n"
+        "description": "Semantically invalid request: a well-formed body that fails semantic validation is `422 validation_failed` (`Problem` states the convention). The `nativeStop` and `riskCap` examples predate the registry statuses (#2088), which the order routes keep: they answer `validation_failed` with `400` and `risk_limit_breached` with `403`.\n"
       },
       "WatchlistSaveUnavailable": {
         "content": {
@@ -2468,7 +2468,7 @@
         "type": "string"
       },
       "Problem": {
-        "description": "RFC 9457 problem detail. `code` mirrors the `x-error-codes` catalogue.",
+        "description": "RFC 9457 problem detail. `code` mirrors the `x-error-codes` catalogue. `validation_failed` is 400 when the request is malformed (unparseable body, a bad query parameter or cursor) and 422 when a well-formed body fails semantic validation; an operation's declared responses name which.",
         "properties": {
           "action_class": {
             "description": "`step_up_required` only: the step-up class the refused request needs, one of the `action_class` values of `POST /auth/step-up`.\n",

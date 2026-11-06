@@ -2,10 +2,11 @@
 `closePosition`, `reversePosition` and `closeAllPositions` as #5013 amended them. Every answer the
 routes give on the fakes of `tests/unit/api/position_writes_world.py` is a status 22 declares for
 the operation, with a body its response schema accepts (the same `deref` and JSON Schema 2020-12
-the other order contract tests use; 401 is the session layer's, declared once in `info`)."""
+the other order contract tests use; a `401` is step 1's, the shared `Unauthorized`)."""
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Callable
 from decimal import Decimal
@@ -15,7 +16,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from candleviewer.api.contract_conformance import load_openapi_spec
-from candleviewer.api.position_close import CLOSE_ALL_PATH, CLOSE_PATH
+from candleviewer.api.position_close import CLOSE_ALL_PATH, CLOSE_PATH, CloseAllBody, close_all_body
 from candleviewer.api.position_reverse import REVERSE_PATH
 from candleviewer.oms.errors import (
     ExchangeRejected,
@@ -37,6 +38,7 @@ from tests.unit.api.position_writes_world import (
     World,
     headers,
     on,
+    post,
 )
 from tests.unit.oms.submit_rig import instrument
 
@@ -97,6 +99,7 @@ def _venue_changed(world: World) -> None:
 _CASES: list[tuple[str, str, int, Callable[[World], None], str, str, Any, dict[str, Any]]] = [
     ("close_ok", CLOSE_PATH, 202, _keep, "owner", ON_A, _FULL, {}),
     ("close_bad_id", CLOSE_PATH, 400, _keep, "owner", "x", _FULL, {}),
+    ("close_no_session", CLOSE_PATH, 401, _keep, "nobody", ON_A, _FULL, {}),
     ("close_no_key", CLOSE_PATH, 400, _keep, "owner", ON_A, _FULL, {"idempotency-key": None}),
     ("close_forbidden", CLOSE_PATH, 403, _keep, "viewer", ON_A, _FULL, {}),
     ("close_read_only", CLOSE_PATH, 403, _keep, "reader", ON_A, _FULL, {}),
@@ -124,6 +127,7 @@ _CASES: list[tuple[str, str, int, Callable[[World], None], str, str, Any, dict[s
      lambda w: setattr(w.pipeline, "entry", ExchangeRejected(ret_code=110007)), "owner", ON_A,
      None, {}),
     ("reverse_no_key", REVERSE_PATH, 400, _keep, "owner", ON_A, None, {"idempotency-key": None}),
+    ("reverse_no_session", REVERSE_PATH, 401, _keep, "nobody", ON_A, None, {}),
     ("reverse_not_armed", REVERSE_PATH, 403, _set("environment", "live"), "owner", ON_LIVE, None,
      {}),
     ("reverse_flag", REVERSE_PATH, 403, _set("oms_enabled", False), "owner", ON_A, None, {}),
@@ -138,7 +142,9 @@ _CASES: list[tuple[str, str, int, Callable[[World], None], str, str, Any, dict[s
     ("reverse_not_ready", REVERSE_PATH, 503, _set("readiness", "starting"), "owner", ON_A, None,
      {}),
     ("all_ok", CLOSE_ALL_PATH, 200, _keep, "owner", "", {}, {}),
+    ("all_null_symbol", CLOSE_ALL_PATH, 200, _keep, "owner", "", {"symbol": None}, {}),
     ("all_no_key", CLOSE_ALL_PATH, 400, _keep, "owner", "", {}, {"idempotency-key": None}),
+    ("all_no_session", CLOSE_ALL_PATH, 401, _keep, "nobody", "", {}, {}),
     ("all_forbidden", CLOSE_ALL_PATH, 403, _keep, "viewer", "", {}, {}),
     ("all_scope", CLOSE_ALL_PATH, 403, _keep, "manager", "",
      {"exchange_account_ids": [str(MISSING)]}, {}),
@@ -155,6 +161,23 @@ def _declared(path: str, status: int) -> Any:
     assert str(status) in responses, f"{operation['operationId']} answers {status}, undeclared"
     [media] = deref(_SPEC, responses[str(status)])["content"].values()
     return media["schema"]
+
+
+def _declared_headers(path: str, status: int) -> set[str]:
+    """The response headers 22 names for `status` on `path`'s POST, lower-cased as sent."""
+    response = deref(_SPEC, _SPEC["paths"][path]["post"]["responses"][str(status)])
+    return {name.lower() for name in response.get("headers", {})}
+
+
+def _close_all_members() -> Any:
+    """The members of `closeAllPositions`' request body, as 22 declares them."""
+    body = _SPEC["paths"][CLOSE_ALL_PATH]["post"]["requestBody"]["content"]["application/json"]
+    return deref(_SPEC, body["schema"])["properties"]
+
+
+def _named(count: int) -> dict[str, Any]:
+    """A close-all body naming `count` accounts, none of which exists."""
+    return {"exchange_account_ids": [str(uuid.uuid4()) for _ in range(count)]}
 
 
 @pytest.mark.parametrize(
@@ -179,3 +202,64 @@ async def test_position_writes_contract_every_answer_is_declared_and_shaped(
     Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER).validate(
         answer.json()
     )
+    if "idempotency-replayed" in answer.headers:  # sent only where 22 declares it
+        assert "idempotency-replayed" in _declared_headers(path, status), case
+
+
+def test_position_writes_contract_each_declares_the_shared_unauthorized_for_no_session() -> None:
+    """Step 1's `401` is the one shared `Unauthorized` on `closePosition`, `reversePosition` and
+    `closeAllPositions` (E29-Q02, #1147); the `*_no_session` cases above drive it."""
+    shared = {"$ref": "#/components/responses/Unauthorized"}
+    for path in (CLOSE_PATH, REVERSE_PATH, CLOSE_ALL_PATH):
+        assert _SPEC["paths"][path]["post"]["responses"].get("401") == shared, path
+
+
+async def test_position_writes_contract_a_close_all_replay_carries_the_declared_header() -> None:
+    """The same key and body answers the stored `200` with `Idempotency-Replayed: true`, a header
+    22 declares on `closeAllPositions`' `200`; the first answer carries none."""
+    world = World()
+    first = await post(world, CLOSE_ALL_PATH, "owner", {}, key=_KEY)
+    again = await post(world, CLOSE_ALL_PATH, "owner", {}, key=_KEY)
+    assert (first.status_code, again.status_code) == (200, 200)
+    assert "idempotency-replayed" not in first.headers
+    assert again.headers["idempotency-replayed"] == "true" and again.json() == first.json()
+    assert "idempotency-replayed" in _declared_headers(CLOSE_ALL_PATH, 200)
+    declared = _SPEC["paths"][CLOSE_ALL_PATH]["post"]["responses"]["200"]["headers"]
+    assert declared["Idempotency-Replayed"] == {"$ref": "#/components/headers/IdempotencyReplayed"}
+
+
+async def test_position_writes_contract_close_all_refuses_more_ids_than_22_declares() -> None:
+    """`exchange_account_ids` declares `maxItems`, the route's cap: that many ids is no refusal
+    of the body's size (these ids name no account, so the scope refuses them, `403`), one more is
+    refused as `validation_failed` naming the member, in a problem body 22 declares for the
+    status it answers, and nothing is sent."""
+    cap = _close_all_members()["exchange_account_ids"]["maxItems"]
+    taken = close_all_body(json.dumps(_named(cap)).encode())
+    assert isinstance(taken, CloseAllBody) and len(taken.exchange_account_ids) == cap
+    refused = close_all_body(json.dumps(_named(cap + 1)).encode())
+    assert not isinstance(refused, CloseAllBody) and refused[0].field == "exchange_account_ids"
+    world = World()
+    at_cap = await post(world, CLOSE_ALL_PATH, "owner", _named(cap))
+    assert (at_cap.status_code, at_cap.json()["code"]) == (403, "account_scope_denied")
+    over = await post(world, CLOSE_ALL_PATH, "owner", _named(cap + 1))
+    assert over.json()["code"] == "validation_failed"
+    assert over.json()["errors"][0]["field"] == "exchange_account_ids"
+    Draft202012Validator(
+        _declared(CLOSE_ALL_PATH, over.status_code),
+        format_checker=Draft202012Validator.FORMAT_CHECKER,
+    ).validate(over.json())
+    assert world.submitted() == []
+
+
+async def test_position_writes_contract_close_all_symbol_null_is_no_symbol() -> None:
+    """`symbol` is `oneOf [Symbol, null]` in 22, and `null` means what omitting it does: every
+    symbol. The declared body accepts it, and the route sends the same closes either way."""
+    symbol = _close_all_members()["symbol"]
+    validator = Draft202012Validator(symbol, format_checker=Draft202012Validator.FORMAT_CHECKER)
+    assert [e.message for e in validator.iter_errors(None)] == []
+    assert [e.message for e in validator.iter_errors("BTCUSDT")] == []
+    assert [e.message for e in validator.iter_errors("btc")] != []  # still a symbol when set
+    omitted, nulled = World(), World()
+    assert (await post(omitted, CLOSE_ALL_PATH, "owner", {})).status_code == 200
+    assert (await post(nulled, CLOSE_ALL_PATH, "owner", {"symbol": None})).status_code == 200
+    assert nulled.submitted() == omitted.submitted() != []

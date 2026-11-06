@@ -5195,7 +5195,8 @@ export interface paths {
      *     not_found`, then a trade grant on its account (`403 account_scope_denied`); the OMS
      *     (`501 not_implemented` where none is composed, `503 oms_not_ready` with `Retry-After`
      *     until it is ready); the arm token on a live account (`403 session_not_armed`); the
-     *     `Idempotency-Key` (`400 validation_failed` without one) and its 24 h record (`409
+     *     `Idempotency-Key` (`400 validation_failed` without one) and its 24 h record (the same key and
+     *     body replays the stored `200` with `Idempotency-Replayed: true`; `409
      *     idempotency_key_reuse`, or `idempotency_in_flight` with `Retry-After: 1` while the key's
      *     first request runs); the `trading.oms_enabled` flag, then live trading enabled, the kill
      *     switch and the order-entry gate (`403 trading_disabled`); then the bounds, server-side:
@@ -5364,7 +5365,10 @@ export interface paths {
      *     means the caller's granted accounts, and one listed id outside them, or one that does
      *     not exist, refuses the whole request alike with `403 account_scope_denied`: nothing is
      *     closed, no exchange call is made, and the refusal is audited. Once the scope check
-     *     passes, `results` reports exchange outcomes only.
+     *     passes, `results` reports exchange outcomes only. `exchange_account_ids` takes at most 200
+     *     ids: a longer list is refused as `validation_failed`, naming `exchange_account_ids`, and
+     *     nothing is closed or sent. `symbol` limits the flatten to that symbol; `null` and omitting
+     *     it mean the same, every symbol, as on `cancelAllOrders`.
      *
      *     As shipped (E29-T07, #915): each account's open orders are cancelled first when
      *     `cancel_open_orders` is true (never a position's recorded stop, C-2.6), then each open
@@ -10785,7 +10789,7 @@ export interface components {
     };
     /** @enum {string} */
     PositionMode: "one_way" | "hedge";
-    /** @description RFC 9457 problem detail. `code` mirrors the `x-error-codes` catalogue. */
+    /** @description RFC 9457 problem detail. `code` mirrors the `x-error-codes` catalogue. `validation_failed` is 400 when the request is malformed (unparseable body, a bad query parameter or cursor) and 422 when a well-formed body fails semantic validation; an operation's declared responses name which. */
     Problem: {
       /** @description `step_up_required` only: the step-up class the refused request needs, one of the `action_class` values of `POST /auth/step-up`. */
       action_class?: string;
@@ -13608,7 +13612,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description Semantically invalid request. The `nativeStop` and `riskCap` examples predate the registry statuses (#2088): the order routes answer `validation_failed` with `400` and `risk_limit_breached` with `403`. */
+    /** @description Semantically invalid request: a well-formed body that fails semantic validation is `422 validation_failed` (`Problem` states the convention). The `nativeStop` and `riskCap` examples predate the registry statuses (#2088), which the order routes keep: they answer `validation_failed` with `400` and `risk_limit_breached` with `403`. */
     UnprocessableEntity: {
       headers: {
         [name: string]: unknown;
@@ -20208,6 +20212,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -20346,6 +20351,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
@@ -20377,6 +20383,7 @@ export interface operations {
       /** @description Cancel accepted. */
       202: {
         headers: {
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           [name: string]: unknown;
         };
         content: {
@@ -20459,6 +20466,7 @@ export interface operations {
       202: {
         headers: {
           ETag: components["headers"]["OrderETag"];
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           [name: string]: unknown;
         };
         content: {
@@ -20501,6 +20509,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
@@ -20533,6 +20542,7 @@ export interface operations {
       /** @description Per-account cancel results. */
       200: {
         headers: {
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           [name: string]: unknown;
         };
         content: {
@@ -20607,6 +20617,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -20633,6 +20644,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
@@ -20676,6 +20688,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       /** @description `idempotency_key_reuse` or `idempotency_in_flight` (see the description). Nothing was sent for this request. `idempotency_in_flight` carries `Retry-After`. */
@@ -20779,6 +20792,7 @@ export interface operations {
       /** @description Leverage applied. */
       200: {
         headers: {
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           [name: string]: unknown;
         };
         content: {
@@ -20786,6 +20800,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
@@ -20865,6 +20880,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       /** @description `idempotency_key_reuse` or `idempotency_in_flight` (see the description). Nothing was sent for this request. `idempotency_in_flight` carries `Retry-After`. */
@@ -20996,7 +21012,7 @@ export interface operations {
           cancel_open_orders?: boolean;
           /** @description Empty means the caller's granted accounts; one id outside them, or one that does not exist, refuses the whole request (SR-E29-13). */
           exchange_account_ids?: string[];
-          symbol?: components["schemas"]["Symbol"];
+          symbol?: components["schemas"]["Symbol"] | null;
         };
       };
     };
@@ -21004,6 +21020,7 @@ export interface operations {
       /** @description Per-account results. */
       200: {
         headers: {
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           [name: string]: unknown;
         };
         content: {
