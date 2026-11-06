@@ -15,7 +15,7 @@ import { clearAnnouncements, ShellAnnouncer } from "../../../../src/features/app
 import { InShellProvider } from "../../../../src/features/app-shell/ScreenRoot";
 import { ROUTE_MANIFEST } from "../../../../src/routes/manifest";
 import { ROUTE_TITLES } from "../../../../src/routes/titles";
-import { resetShellState, setShellState } from "../../../../src/shell/bootstrap/store";
+import { resetShellState, setShellState, type Me } from "../../../../src/shell/bootstrap/store";
 
 // axe-core is a transitive dependency of @axe-core/playwright (as in test/features/invites.test.tsx).
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
@@ -249,5 +249,47 @@ describe("SecurityCentrePlaceholder: R-354 until E43's SCR-137 mounts here", () 
     expect(screen.getByText("Security posture checks ship in R4 (E43)")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Audit log" })).toHaveAttribute("href", "/admin/audit");
     expect(await seriousViolations()).toEqual([]);
+  });
+
+  // E42-Q06: the placeholder stands in for US-ADMIN-010, which E43-S02 owns, so it claims no posture
+  // verdict. These move to E43's PR when SCR-137 mounts here.
+  it("holds only its title, the R4 line and the link: no status, alert, tone or glyph (E42-Q06)", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <SecurityCentrePlaceholder />
+      </MemoryRouter>,
+    );
+    const texts: string[] = [];
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      const text = node.textContent?.trim() ?? "";
+      if (text !== "") texts.push(text);
+    }
+    expect(texts).toEqual([
+      "Security centre",
+      "Security posture checks ship in R4 (E43)",
+      "Audit log",
+    ]);
+    // Nothing that reads as a verdict: no live region, no tone or severity, no glyph or image.
+    const verdict = "[role=status], [role=alert], [aria-live], [data-tone], [data-severity]";
+    expect(container.querySelector(`${verdict}, [data-glyph], svg, img`)).toBeNull();
+  });
+
+  it("reads nothing under /admin/security when an owner opens R-354 (E42-Q06)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input).includes("/admin/security")
+          ? answer(500, { code: "not_mounted" })
+          : answer(200, { items: [] }),
+      ),
+    );
+    // The shell's `me` for an owner, as the bootstrap leaves it (only `role` is read here).
+    setShellState({ me: { role: "owner", permissions: [] } as unknown as Me, environment: "demo" });
+    render(<Shell routeId="R-354" />);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveAccessibleName("Security centre");
+    const requested = (): string[] => vi.mocked(fetch).mock.calls.map(([input]) => String(input));
+    await waitFor(() => expect(requested()).toContain("/api/v1/admin/overview"));
+    expect(requested().filter((url) => url.includes("/admin/security"))).toEqual([]);
   });
 });
