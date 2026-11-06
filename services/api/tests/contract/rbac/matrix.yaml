@@ -133,6 +133,13 @@ operations:
     public: false
     state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
+  GET /admin/feature-flags/{flagKey}/dependents:
+    permissions: ['flags:write']
+    scope: none
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml; #5479's read PR (PR 2 of 3) mounts it
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /admin/health:
     permissions: ['admin:read']
     scope: none

@@ -30,6 +30,10 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
+    "GET /admin/feature-flags/{flagKey}/dependents": {
+      "reason": "contract-first operation (#5479 PR 1 of 3, the armed-rule dependents of a flag); #5479's read PR serves it",
+      "ticket": "#5479"
+    },
     "GET /admin/security/summary": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"

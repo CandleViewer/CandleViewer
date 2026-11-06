@@ -81,6 +81,11 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     ("GET", "/exchange-accounts/{accountId}/consequences"): (
         "getAccountConsequences: a read; no step-up (04 row 45a)"
     ),
+    # #5479: `flags:write` is seeded dangerous; the read changes nothing, and the write it
+    # precedes, `setFeatureFlag`, is the gated one (04 row 46 names them side by side).
+    ("GET", "/admin/feature-flags/{flagKey}/dependents"): (
+        "listFeatureFlagDependents: a read; no step-up (04 row 46); the write it precedes is gated"
+    ),
     ("GET", "/users/invites"): "listPendingInvites: a read; the invite writes are gated (`users`)",
     ("GET", "/users/{userId}/mfa/reset-preview"): "previewMfaReset: a read; the reset is gated",
     # E42-T09 (#2649): the contract says listing needs no step-up; revoking one is gated (`users`).
@@ -407,14 +412,19 @@ def test_ad_f01_operations_are_handler_gated_with_their_documented_classes(
 
 
 def test_every_contract_flag_write_is_registered() -> None:
-    """Any operation needing `flags:write` - today `setFeatureFlag` only - is step-up gated."""
-    flag_writes = [
+    """Any write needing `flags:write` - today `setFeatureFlag` only - is step-up gated, and any
+    read needing it - `listFeatureFlagDependents` (#5479) - is allow-listed with its reason."""
+    flag_operations = [
         key
         for key, op in _contract_operations().items()
         if "flags:write" in op["x-rbac"]["permissions"]
     ]
+    flag_writes = [key for key in flag_operations if key[0] in _WRITE]
+    flag_reads = [key for key in flag_operations if key[0] not in _WRITE]
     assert flag_writes
     assert all(_registered_classes(*key) for key in flag_writes)
+    assert flag_reads
+    assert all(key in _NOT_DANGEROUS and not _registered_classes(*key) for key in flag_reads)
 
 
 def test_registered_classes_are_the_documented_classes() -> None:

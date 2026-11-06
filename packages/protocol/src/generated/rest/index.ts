@@ -775,7 +775,50 @@ export interface paths {
      *       not define (never `extra_forbidden`).
      *     - Decision order: authentication; RBAC and scope, before any validation that needs a
      *       lookup, so a caller without `flags:write` learns nothing from a `422`; request
-     *       validation; then, under the row lock, the step-up gate, the precondition and the write.
+     *       validation; then, under the row lock, the dependents check, the step-up gate, the
+     *       precondition and the write.
+     *     - The write confirms the armed rules that read the flag. As the first step under the row
+     *       lock, so after every other validation (`unknown_user` included) and before the step-up
+     *       gate, which a stale list therefore never spends, the server reads the live set that
+     *       `GET /admin/feature-flags/{flagKey}/dependents` lists (`24-internal-schemas.md` 16.4),
+     *       and `acknowledged_dependents` must hold exactly their rule ids, compared as sets. A set
+     *       that is not the live one, an omitted member included, is `422 validation_failed` (rule
+     *       `dependents_unacknowledged`, field `acknowledged_dependents`) and nothing is written;
+     *       the body is a `FeatureFlagWriteRefused`: the live list in `dependents`, the ids the
+     *       request lacked in `missing` and the ids it named in error in `unexpected`. An empty live
+     *       set needs no acknowledgement: an omitted member and `[]` both pass. The member stays
+     *       optional in the schema, as `reason` does (C-6.3), and the server requires it whenever
+     *       the live set is not empty. The check covers every write of every flag, in either
+     *       direction, a kill-switch-class flag's engaged value included, for every role, the Owner
+     *       too: no role, flag or setting turns it off, and it reads no flag or setting (C-4.14).
+     *       While the RBAC route matrix row of the code-free `POST /trading/kill-switch` is not
+     *       `executed` (`not_mounted` today), the check never refuses a write in a flag's stop
+     *       direction, the engaged value of a kill-switch-class flag (`killswitch.order_entry`,
+     *       `maintenance.mode`) or the off value of a flag that admits order entry or rule actions
+     *       (`trading.oms_enabled`, `rules.enabled`, `rules.oms_actions`): such an interim
+     *       stop-direction write proceeds, and its records carry the live ids. No flag has a
+     *       dependent until a row of the table in `24-internal-schemas.md` 16.4 lands with the code
+     *       that reads its flag, so until then every live set is empty and no write needs an
+     *       acknowledgement.
+     *     - A request that names more than 200 ids is `422 validation_failed` (rule `too_long`), and
+     *       a repeated id is `422 validation_failed` (rule `duplicate_rule`): both are refused with
+     *       the request validation, before the row lock. Apart from an interim stop-direction write
+     *       (above), a live set above 200 refuses the write, whatever the request names, as `422
+     *       validation_failed` (rule `dependents_over_bound`, no `dependents`, `missing` or
+     *       `unexpected` in the body), until E35 holds the cap of armed rules at arming
+     *       (`24-internal-schemas.md` 16.1), and a read of the rules store that fails or exceeds
+     *       its bound is `503 store_unavailable`, nothing is written, and its `flags.change`
+     *       refusal record holds the key, the row's `before` and the acknowledged ids.
+     *     - The acknowledgement is a confirmation, never the enforcement: what refuses a rule's
+     *       action is the executor's synchronous check at the moment of the action
+     *       (`24-internal-schemas.md` 11.5, checks 2 and 3, C-2.21), which reads the flag whatever
+     *       any list said. An arm or a disarm that commits between the check's read and the flag's
+     *       commit, inside the store write's bound (5 s at most), is a named residual; each event
+     *       keeps its own record (`rules.arm` or `rules.disarm`, and `flags.change`). So, once the
+     *       interim ends (the matrix row of the code-free emergency engage,
+     *       `POST /trading/kill-switch`, reads `executed`), this console's engage of a
+     *       kill-switch-class flag can be answered `422` or `503` by the check, which that route
+     *       never is.
      *     - `flags:write` is a dangerous permission. Every write needs exactly one fresh step-up
      *       elevation, chosen by key and by the stored value read under the row lock that
      *       `expected_updated_at` is checked against, never the cached value. An unreadable row
@@ -842,7 +885,14 @@ export interface paths {
      *       `503 store_unavailable` (no row can be read) is logged instead, with only the key and
      *       correlation id, plus a metric (SR-125). An unreadable row's `before` is `unreadable`,
      *       never its raw value. Toggling `maintenance.mode` is also audited as
-     *       `maintenance.enabled` or `maintenance.disabled`.
+     *       `maintenance.enabled` or `maintenance.disabled`. Every `flags.change` record that carries
+     *       the request also holds `acknowledged_dependents` as sent, sorted by id, and the record of
+     *       a `dependents_unacknowledged` refusal, or of an interim stop-direction write, holds
+     *       the live ids as well: ids only, at most 200 of each, never a rule's name (C-12.6). The
+     *       record of an interim stop-direction write whose read of the rules store failed or
+     *       exceeded its bound says that the live set was not read, and the record of one whose
+     *       live set is above 200 holds the first 200 ids by `rule_id` and marks the cut, as
+     *       `truncated` does.
      *     - A successful write pushes a `SystemUpdate` of kind `feature_flags`, carrying only the
      *       changed key, to every session the flag's `visibility` admits (`23-ws-protocol.md` 15.9).
      *
@@ -863,6 +913,61 @@ export interface paths {
      *     counts as a transition from unknown, so its side effects run.
      */
     put: operations["setFeatureFlag"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/feature-flags/{flagKey}/dependents": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        flagKey: string;
+      };
+      cookie?: never;
+    };
+    /**
+     * List the armed rules that depend on a feature flag
+     * @description The read before a flag write (#5479): the armed rules whose actions read the flag
+     *     `flagKey`, which `setFeatureFlag` asks its caller to acknowledge by id
+     *     (`acknowledged_dependents`). The write's check judges the same set, so what the Owner
+     *     reads is what the write compares. A rule depends on a flag through the code that runs its
+     *     actions: no node of the rule IR names a flag, so `reads` holds action nodes only
+     *     (`node_kind: action`). Which action types read which flag is a reviewed table in
+     *     `24-internal-schemas.md` 16.4, and a flag it does not name has no dependents: its list is
+     *     empty. That table holds no row until the code that reads a flag for a rule's action is
+     *     built (E35's executor checks and order handlers are not built yet), so until then every
+     *     list is `[]` and no write needs an acknowledgement.
+     *
+     *     A rule is listed while its stored `mode` is `armed` and it is not deleted
+     *     (`21-database-schema.md` 3.4.1), whatever B9 state it is in. The stored row decides,
+     *     never the IR's own `mode` member and never an interpreter (C-2.21), so a `simulate` or
+     *     `disabled` rule is never listed. Only the rule's active version counts: a newer saved
+     *     version of an armed rule is read once it becomes the active one. A rule whose active
+     *     version's actions cannot be read counts as reading every flag the table names: it is
+     *     listed with `unreadable: true` and no `reads`. The items are ordered by `rule_id` and are
+     *     not paged, since the write needs the whole set at once. There are at most 200, the cap of
+     *     armed rules (`24-internal-schemas.md` 16.1); while E35 does not hold that cap at arming, a
+     *     set above it answers its first 200 with `truncated: true`, and `setFeatureFlag` refuses
+     *     the write (`dependents_over_bound`), an interim stop-direction write apart
+     *     (`setFeatureFlag` defines it).
+     *
+     *     The read changes nothing and spends nothing: no rule is disarmed and nothing is queued.
+     *     It holds `flags:write`, the permission of the write it precedes, which the Owner alone
+     *     holds: a Manager, a Viewer and a caller holding `flags:read` only get `403` and learn no
+     *     rule id, and a view-as session reads as its target, so it gets `403` too. The audited
+     *     admin guard records `admin.area_entered` for the call, with outcome `denied` for a refused
+     *     caller, and nothing else is recorded (`503 audit_unavailable` when the guard cannot write
+     *     it). A rule's `name` is user text: it goes to this caller alone and to no audit record or
+     *     log (C-12.6). An unknown `flagKey`, or one the caller's role cannot see, is
+     *     `404 not_found`, as the write answers it, and a read of the rules store that fails or
+     *     exceeds its bound is `503 store_unavailable`.
+     */
+    get: operations["listFeatureFlagDependents"];
+    put?: never;
     post?: never;
     delete?: never;
     options?: never;
@@ -9171,11 +9276,58 @@ export interface components {
     FeatureFlagConflict: components["schemas"]["Problem"] & {
       current: components["schemas"]["FeatureFlag"];
     };
+    /** @description An armed rule that reads a flag, as its stored row and its active version state it (`21-database-schema.md` 3.4.1, 3.4.2). */
+    FeatureFlagDependent: {
+      /** @description User text, as saved (`RuleInput.name`): in no audit record and no log (C-12.6). */
+      name: string;
+      /** Format: uuid */
+      owner_user_id: string;
+      /** @description The action nodes of the active version that read the flag, in IR order: at most 10, as many as `RuleIr.actions` holds. Empty only when `unreadable` is `true`. */
+      reads: {
+        /** @description The action's `type` (`RuleAction.type`), the one the table names. */
+        action_type: string;
+        /** @description The action's `node_id` in the IR. */
+        node_id: string;
+        /**
+         * @description What the node is: `action` only, as no other node reads a flag. Closed: a new kind is a breaking change (C-6.3).
+         * @enum {string}
+         */
+        node_kind: "action";
+      }[];
+      /** Format: uuid */
+      rule_id: string;
+      /** @description The scope of the active version's IR (`RuleIrScope`). An empty `account_ids` means every account the rule's owner holds a grant on when the rule fires. A scope that cannot be read is shown as the widest: `level: global`, no account listed and every environment, as the profile delete's guard counts an unreadable scope as covering every account. */
+      scope: {
+        account_ids: string[];
+        environments: components["schemas"]["Environment"][];
+        level: components["schemas"]["RuleScope"];
+      };
+      /** @description `true` when the active version's actions cannot be read: the rule counts as reading every flag the table names (fail closed), and `reads` is empty. Sent only as `true`. */
+      unreadable?: boolean;
+      /** @description The number of the active version, the one the engine runs: an update of an armed rule keeps it, and `setActiveRuleVersion` moves it. */
+      version: number;
+    };
+    /** @description The armed rules that read a flag, from `GET /admin/feature-flags/{flagKey}/dependents` (#5479): ordered by `rule_id`, not paged. Confidential: served under `flags:write`, which only the Owner holds, and a rule's `name` is user text that no record holds. */
+    FeatureFlagDependents: {
+      flag_key: string;
+      items: components["schemas"]["FeatureFlagDependent"][];
+      /** @description `true` when more than 200 armed rules read the flag: `items` then holds the first 200 by `rule_id`, no `acknowledged_dependents` can match the live set, and `setFeatureFlag` refuses the write (`dependents_over_bound`), an interim stop-direction write apart (`setFeatureFlag` defines it), until fewer are armed. Always sent. */
+      truncated: boolean;
+    };
     /**
      * @description How `GET /admin/feature-flags` resolved its list (E42-T03), a closed set; always sent. `stored`: from the flag store. `fail_closed`: the store was unreachable (its read failed or exceeded its read budget), so every flag shows its fail-closed value and omits `default_value`, `overrides`, `updated_at` and `updated_by`. A single unreadable row is not an outage: the list stays `stored` and that flag is marked `unreadable`.
      * @enum {string}
      */
     FeatureFlagResolution: "stored" | "fail_closed";
+    /** @description `422 validation_failed` from `PUT /admin/feature-flags/{flagKey}` (#5479): the problem body, and, when `errors[].rule` is `dependents_unacknowledged`, the live dependents and the difference from the request, so the caller can read them and acknowledge deliberately, as `FeatureFlagConflict` carries `current`. No other refusal carries them. */
+    FeatureFlagWriteRefused: components["schemas"]["Problem"] & {
+      /** @description The live set, in the shape of `FeatureFlagDependents.items`. */
+      dependents?: components["schemas"]["FeatureFlagDependent"][];
+      /** @description The ids of live dependents that the request did not name. */
+      missing?: string[];
+      /** @description The ids the request named that are not live dependents: a rule disarmed since the caller read the list, or one that does not read the flag. */
+      unexpected?: string[];
+    };
     /** @enum {string} */
     FlagKind: "boolean" | "percentage" | "variant";
     /** @description A `Bar` with its footprint. The `Bar` flags `gap_before`, `partial` and `tape_gap` are not yet sent here (#5396 serves them on `/market/bars` and `/market/klines` first); a client reads them as absent, so `false`. */
@@ -12323,6 +12475,8 @@ export interface components {
       locked: boolean;
     };
     SetFeatureFlagRequest: {
+      /** @description The ids of the armed rules that read this flag, as the caller last read them (`listFeatureFlagDependents`, #5479). The write is applied only if they are exactly the live set, compared as sets, else `422 validation_failed` (rule `dependents_unacknowledged`); an empty live set needs none, and an omitted member and `[]` both pass. The server requires it whenever the live set is not empty (`422 validation_failed` without it); it stays optional in the schema for the same reason as `reason`. At most 200 ids, the cap of armed rules (`24-internal-schemas.md` 16.4); a repeated id is refused (`422`, rule `duplicate_rule`). */
+      acknowledged_dependents?: string[];
       /**
        * Format: uri
        * @description Required for gated flags such as `trading.live_enabled`. An `https` URL; recorded, never dereferenced.
@@ -14719,7 +14873,41 @@ export interface operations {
           "application/problem+json": components["schemas"]["FeatureFlagConflict"];
         };
       };
-      422: components["responses"]["UnprocessableEntity"];
+      /** @description `422 validation_failed`: `errors[]` names the `field` and the `rule` that refused the write, and nothing is written. When the rule is `dependents_unacknowledged`, the body also carries the live dependents and the difference from the request's `acknowledged_dependents`. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["FeatureFlagWriteRefused"];
+        };
+      };
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
+  listFeatureFlagDependents: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        flagKey: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The armed rules that read the flag; none when no row of the table names it. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FeatureFlagDependents"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
