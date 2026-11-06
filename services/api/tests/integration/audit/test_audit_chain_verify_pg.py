@@ -62,9 +62,8 @@ def test_the_entry_point_on_cv_ro_names_the_fixtures_victim(
     assert entry.main([]) == 1
     out = capsys.readouterr().out
     assert f"FAIL chain: first_bad_id={victim} kind=entry_hash_mismatch" in out
-    for section in ("grants", "triggers"):  # cv_app S+I, cv_ro exactly SELECT, live
+    for section in ("grants", "triggers", "fields"):  # cv_app S+I, cv_ro exactly SELECT, live
         assert f"PASS {section}" in out
-    assert "SKIP fields: lands in slice 2" in out
     assert "cv_ro_test_pw" not in out
 
 
@@ -154,6 +153,22 @@ def _changed(pg: str, change: Sequence[str], restore: Sequence[str]) -> Iterator
             ],
             "FAIL triggers: trg_audit_append on audit_log: disabled",
         ),
+        (  # the same function name in another schema is another function
+            [
+                "CREATE SCHEMA cv_verify_other; CREATE FUNCTION cv_verify_other.forbid_mutation() "
+                "RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NULL; END'; DROP TRIGGER "
+                "trg_audit_append ON audit_log; CREATE TRIGGER trg_audit_append BEFORE UPDATE "
+                "OR DELETE ON audit_log FOR EACH ROW EXECUTE FUNCTION "
+                "cv_verify_other.forbid_mutation()"
+            ],
+            [
+                "DROP TRIGGER trg_audit_append ON audit_log; CREATE TRIGGER trg_audit_append "
+                "BEFORE UPDATE OR DELETE ON audit_log FOR EACH ROW EXECUTE FUNCTION "
+                "public.forbid_mutation(); DROP SCHEMA cv_verify_other CASCADE"
+            ],
+            "FAIL triggers: trg_audit_append on audit_log: type=27 function=cv_verify_other."
+            "forbid_mutation, expected type=27 function=public.forbid_mutation",
+        ),
     ],
 )
 def test_the_live_check_names_every_state_that_does_not_hold(
@@ -165,6 +180,20 @@ def test_the_live_check_names_every_state_that_does_not_hold(
     assert f"RESULT: FAIL ({lines.count('FAIL ')} FAIL)" in out
     status, out = _check_on_cv_ro(pg, monkeypatch, capsys)  # restored
     assert status == 0 and "RESULT: PASS (0 FAIL)" in out, out
+
+
+def test_a_comment_in_the_deployed_audit_chain_fails_closed(
+    pg: str, monkeypatch: MP, capsys: Cap
+) -> None:
+    with psycopg.connect(pg) as conn:
+        row = conn.execute("SELECT pg_get_functiondef('public.audit_chain()'::regprocedure)")
+        (shipped,) = row.fetchone() or ("",)
+    assert "RETURN NEW;" in shipped
+    with _changed(pg, [shipped.replace("RETURN NEW;", "RETURN NEW; -- a note")], [shipped]):
+        status, out = _check_on_cv_ro(pg, monkeypatch, capsys)
+    assert status == 1 and "FAIL fields: definition not understood: a comment" in out, out
+    status, out = _check_on_cv_ro(pg, monkeypatch, capsys)  # restored
+    assert status == 0 and "PASS fields" in out, out
 
 
 def test_a_guard_trigger_that_always_fires_passes(pg: str, monkeypatch: MP, capsys: Cap) -> None:

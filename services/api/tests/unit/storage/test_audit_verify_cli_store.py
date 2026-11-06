@@ -76,13 +76,16 @@ async def test_every_session_is_read_only_and_named_for_the_run() -> None:
 
 
 def test_the_catalogue_reads_only_read_and_name_each_catalogue_object_with_its_schema() -> None:
-    assert "nspname = 'public'" in str(mod._HELD) and "nspname = 'public'" in str(mod._TRIGGERS)
-    for statement in (mod._HELD, mod._TRIGGERS, mod._REPLICATION):
+    for statement in (mod._HELD, mod._TRIGGERS, mod._REPLICATION, mod._CHAIN_FUNCTION):
         text = str(statement)
         assert text.startswith("SELECT ") and not re.search(r"INSERT |UPDATE |DELETE |GRANT ", text)
-        unqualified = r"(?<![\w.'])(pg_\w+|has_\w+|unnest|substr|lower|current_\w+)\b"
-        assert set(re.findall(unqualified, text)) == {"pg_catalog"}
-        assert "text[]" not in text.replace("pg_catalog.text[]", "")
+        names = r"pg_\w+|has_\w+|unnest|substr|lower|current_\w+|concat\w*|format|cardinality"
+        assert set(re.findall(rf"(?<![\w.'])({names})\b", text)) <= {"pg_catalog"}
+        assert not re.search(r"(?<!pg_catalog\.)\b(text|name|int2)\[\]", text)
+        assert not re.search(r"\|\||\bSET ", text)  # no operator looked up by argument type
+    assert all(
+        "nspname = 'public'" in str(s) for s in (mod._HELD, mod._TRIGGERS, mod._CHAIN_FUNCTION)
+    )
 
 
 async def test_held_privileges_groups_rows_by_role_and_table(monkeypatch: MP) -> None:
@@ -107,13 +110,41 @@ def test_a_privilege_counts_through_columns_and_every_role_the_login_can_become(
     assert "ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']" in text
 
 
+def test_only_the_trigger_states_that_fire_for_an_ordinary_session_count_as_enabled() -> None:
+    text = str(mod._TRIGGERS)
+    assert "t.tgenabled IN ('O', 'A') AS enabled" in text
+    assert "pg_catalog.format('type=%s', t.tgtype)" in text and "t.tgqual IS NOT NULL" in text
+    assert "pg_catalog.format('function=%s.%s', fn.nspname, f.proname)" in text
+    assert "CAST(t.tgattr AS pg_catalog.int2[])" in text
+
+
 @pytest.mark.parametrize("enabled", [False, None, "t"])
 async def test_a_trigger_is_enabled_only_when_the_catalogue_says_true(
     monkeypatch: MP, enabled: Any
 ) -> None:
     rows = [{"name": "trg_audit_append", "table_name": "audit_log", "enabled": enabled}]
+    rows[0]["shape"] = "type=27 function=public.forbid_mutation"
     database, _ = _database(monkeypatch, rows)
-    assert await database.triggers(["audit_log"]) == {("trg_audit_append", "audit_log"): False}
+    assert await database.triggers(["audit_log"]) == {
+        ("trg_audit_append", "audit_log"): (False, "type=27 function=public.forbid_mutation")
+    }
+    await database.dispose()
+
+
+async def test_triggers_and_the_chain_definition(monkeypatch: MP) -> None:
+    rows = [
+        {"name": "trg_audit_chain", "table_name": "audit_log", "enabled": True, "shape": "x when"}
+    ]
+    database, _ = _database(monkeypatch, rows)
+    assert await database.triggers(["audit_log"]) == {
+        ("trg_audit_chain", "audit_log"): (True, "x when")
+    }
+    await database.dispose()
+    database, _ = _database(monkeypatch, [{"definition": "CREATE FUNCTION audit_chain()"}])
+    assert await database.chain_definition() == "CREATE FUNCTION audit_chain()"
+    await database.dispose()
+    database, _ = _database(monkeypatch, [])
+    assert await database.chain_definition() is None
     await database.dispose()
 
 

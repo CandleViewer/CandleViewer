@@ -146,11 +146,19 @@ _HELD: Final = sa.text(
     "AND c.relname = ANY(CAST(:tables AS pg_catalog.name[])) AND c.relkind = 'r' ORDER BY 1, 2, 3"
 )
 #: A trigger fires for an ordinary session only in state 'O' (origin) or 'A' (always), and an 'O'
-#: one only while `session_replication_role` is `origin` (`_REPLICATION`).
+#: one only while `session_replication_role` is `origin` (`_REPLICATION`). `shape` is what decides
+#: when it fires and what it runs: its `tgtype` bits, its schema-qualified function, a WHEN clause
+#: and an `UPDATE OF` column list. Built with functions only, so no operator is looked up by type.
 _TRIGGERS: Final = sa.text(
-    "SELECT t.tgname AS name, c.relname AS table_name, t.tgenabled IN ('O', 'A') AS enabled "
+    "SELECT t.tgname AS name, c.relname AS table_name, t.tgenabled IN ('O', 'A') AS enabled, "
+    "pg_catalog.concat_ws(' ', pg_catalog.format('type=%s', t.tgtype), "
+    "pg_catalog.format('function=%s.%s', fn.nspname, f.proname), "
+    "CASE WHEN t.tgqual IS NOT NULL THEN 'when' END, CASE WHEN "
+    "pg_catalog.cardinality(CAST(t.tgattr AS pg_catalog.int2[])) > 0 THEN 'columns' END) AS shape "
     "FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid "
     "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public' "
+    "JOIN pg_catalog.pg_proc f ON f.oid = t.tgfoid "
+    "JOIN pg_catalog.pg_namespace fn ON fn.oid = f.pronamespace "
     "WHERE NOT t.tgisinternal AND c.relname = ANY(CAST(:tables AS pg_catalog.name[])) ORDER BY 1"
 )
 #: Every `session_replication_role` value that applies here: this session's (`db` NULL), and each
@@ -163,12 +171,19 @@ _REPLICATION: Final = sa.text(
     "WHERE pg_catalog.lower(c.cfg) LIKE 'session_replication_role=%' AND s.setdatabase IN (0, "
     "(SELECT d.oid FROM pg_catalog.pg_database d WHERE d.datname = pg_catalog.current_database()))"
 )
+#: The deployed `public.audit_chain()`, as Postgres renders it.
+_CHAIN_FUNCTION: Final = sa.text(
+    "SELECT pg_catalog.pg_get_functiondef(p.oid) AS definition FROM pg_catalog.pg_proc p "
+    "JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public' "
+    "WHERE p.proname = 'audit_chain' AND p.pronargs = 0"
+)
 
 
 class SqlAlchemyAuditVerifyDatabase(_CliDatabase):
     """An offline chain check's stores (#1238): `audit_log` with the in-app verify reads and their
-    budgets, and three catalogue reads, on read-only sessions; tables in `public`, never via the
-    login's `search_path`. A failed catalogue read raises `AuditReadFailed`, SQLSTATE only (C-12.6).
+    budgets, and four catalogue reads, on read-only sessions; tables and the function in `public`,
+    never via the login's `search_path`. A failed catalogue read raises `AuditReadFailed`, SQLSTATE
+    only (C-12.6).
     """
 
     def __init__(self, dsn: str, *, statement_timeout_ms: int, max_entry_bytes: int) -> None:
@@ -191,10 +206,13 @@ class SqlAlchemyAuditVerifyDatabase(_CliDatabase):
                 pair.add(str(row["privilege"]))
         return {pair: frozenset(privileges) for pair, privileges in held.items()}
 
-    async def triggers(self, tables: list[str]) -> dict[tuple[str, str], bool]:
-        """(user trigger, its table) on `tables` -> whether its state fires in `origin`."""
+    async def triggers(self, tables: list[str]) -> dict[tuple[str, str], tuple[bool, str]]:
+        """(user trigger, its table) on `tables` -> (whether its state fires in `origin`, shape)."""
         rows = await self._read(_TRIGGERS, {"tables": tables})
-        return {(str(r["name"]), str(r["table_name"])): r["enabled"] is True for r in rows}
+        return {
+            (str(r["name"]), str(r["table_name"])): (r["enabled"] is True, str(r["shape"]))
+            for r in rows
+        }
 
     async def replication_roles(self) -> list[tuple[str, str]]:
         """(where it is set, value) for each `session_replication_role` setting that applies."""
@@ -204,6 +222,11 @@ class SqlAlchemyAuditVerifyDatabase(_CliDatabase):
             where = "session" if r["db"] is None else f"{where}, role {r['role'] or 'any'}"
             found.append((where, str(r["value"])))
         return found
+
+    async def chain_definition(self) -> str | None:
+        """The deployed `audit_chain()` definition, or `None` when there is none."""
+        rows = await self._read(_CHAIN_FUNCTION, {})
+        return str(rows[0]["definition"]) if rows else None
 
     async def _read(self, statement: sa.TextClause, params: dict[str, Any]) -> list[Any]:
         state: str | None = None
