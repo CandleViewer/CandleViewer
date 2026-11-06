@@ -68,7 +68,7 @@ GitHub Project (PenniLogic-style schema): **Backlog → Ready → In Progress �
 | **Backlog**     | Captured, not yet groomed                                                                              | Anyone (Product/Owner/Architect creates)                                                                | Ticket has a title, Kind, and 1-sentence problem statement.                                                                                 |
 | **Ready**       | Groomed, estimated, unblocked, meets DoR for its Kind                                                  | Ticket owner or facilitator, at end of Refinement                                                       | DoR checklist complete (see `02-definition-of-ready-done.md`); for frontend Story tickets, linked design ticket is Done and ≥2 sprints old. |
 | **In Progress** | Actively being implemented                                                                             | Assignee, when they start work                                                                          | Ticket pulled into current sprint at Planning, or pulled mid-sprint only with capacity headroom + async lead approval.                      |
-| **In Review**   | PR open, code complete, checks running                                                                 | Assignee, on opening PR                                                                                 | Branch pushed, PR opened against `main` (or release branch for hotfix), self-checklist in PR template complete.                             |
+| **In Review**   | PR open, code complete, checks running                                                                 | Assignee, on opening PR                                                                                 | Branch pushed, PR opened against `main` (the only PR target; hotfixes too, §8), self-checklist in PR template complete.                     |
 | **In Test**     | PR approved & merged to `main` (or merged to a feature-flagged path); QA / manual verification pending | Reviewer/code-owner on merge, or QA lead on picking up manual test pass                                 | Merged commit present on the target environment (dev, then staging once promoted).                                                          |
 | **Blocked**     | Cannot progress — external dependency, unresolved question, failing infra                              | Anyone who discovers the blocker                                                                        | Ticket must have a linked "blocked by" reference and a comment stating the blocker; owner must post a daily-standup update while blocked.   |
 | **Done**        | Verification complete, DoD satisfied, demoed (if demoable)                                             | Ticket owner, after QA sign-off + (for design) CDO sign-off + (for security-labelled) Security sign-off | Full DoD checklist for the Kind is satisfied (see `02-definition-of-ready-done.md`).                                                        |
@@ -125,7 +125,7 @@ Automation (GitHub Actions) enforces: a Story/Bug cannot move to Done without `q
 
 ## 6. Branching model
 
-Trunk-based development on a protected `main`. No long-lived environment branches except transient `release/*` cut at train time.
+Trunk-based development on a protected `main`. No long-lived environment branches and no release branches: releases are tagged on `main` and roll forward (`07-release-and-prr.md` §4; C-15.7, `SECURITY.md`). A back-port `release/*` branch exists only by owner decision.
 
 ```mermaid
 gitGraph
@@ -146,17 +146,13 @@ gitGraph
    commit id: "fix: SL tick rounding"
    checkout main
    merge fix/oms-19-sl-rounding
-   branch release/1.4.0
-   checkout release/1.4.0
-   commit id: "cut R3 train"
-   checkout main
+   commit id: "prepare release 1.4.0" tag: "v1.4.0"
    branch hotfix/oms-77-fanout-race
    checkout hotfix/oms-77-fanout-race
    commit id: "hotfix: fan-out race"
-   checkout release/1.4.0
-   merge hotfix/oms-77-fanout-race tag: "v1.4.1"
    checkout main
    merge hotfix/oms-77-fanout-race
+   commit id: "prepare release 1.4.1" tag: "v1.4.1"
 ```
 
 ### 6.1 Branch naming
@@ -169,8 +165,7 @@ gitGraph
 | `design/<epic-slug>-<short>`     | Design-system code changes (tokens, Storybook) that accompany a design ticket | `design/of-50-heatmap-tokens` |
 | `spike/<short>`                  | Spike output, may never merge to main as-is                                   | `spike/webgl-footprint-bench` |
 | `docs/<short>`                   | Documentation and ADRs only (C-4.4)                                           | `docs/adr-0007-ws-framing`    |
-| `release/<semver>`               | Cut at release-train time, stabilization only                                 | `release/1.4.0`               |
-| `hotfix/<area>-<ticket>-<short>` | Emergency fix branched from a release tag / main                              | `hotfix/oms-77-fanout-race`   |
+| `hotfix/<area>-<ticket>-<short>` | Emergency fix branched from `main`, merged back into `main` (§8)              | `hotfix/oms-77-fanout-race`   |
 | `train/<yyyymmdd>-<n>`           | Merge train (§7): pushed and deleted by the orchestrator only, not a PR head  | `train/20261019-1`            |
 
 `main` is protected: no direct pushes, required status checks, required reviews, required linear history (squash or rebase merge only — no merge commits from feature branches), required conversation resolution.
@@ -235,20 +230,19 @@ Used only for P0/P1 defects already Live (production) or blocking a release curr
 
 ```mermaid
 flowchart TD
-    P0[P0/P1 bug detected in Live] --> H[branch hotfix/* from latest prod tag]
+    P0[P0/P1 bug detected in Live] --> H[branch hotfix/* from main]
     H --> Fix[minimal fix, tests added]
-    Fix --> FastPR[PR: 1 code-owner approval + Security sign-off if security-relevant, expedited CI]
+    Fix --> FastPR[PR into main: second reviewer and every check kept, Security sign-off if security-relevant, expedited]
     FastPR --> MQFast[Merge queue, expedited lane]
-    MQFast --> RelBranch[cherry-pick / merge into active release branch]
-    RelBranch --> TagPatch[tag vX.Y.Z+1, deploy to staging for smoke]
+    MQFast --> Prep[release-prep PR from main's tip, 07 §4.1]
+    Prep --> TagPatch[release run verifies, smokes and tags the C-15.5 version; deploy to staging for smoke]
     TagPatch --> ProdDeploy[deploy to prod behind kill-switch check]
-    ProdDeploy --> BackMain[merge/cherry-pick forward into main]
-    BackMain --> PostMortem[incident note + retro action item]
+    ProdDeploy --> PostMortem[incident note + retro action item]
 ```
 
 - Hotfix PRs skip the standard 2-reviewer wait only in the sense that the **second reviewer requirement is not waived** — it is expedited: reviewers are paged directly rather than waiting on async queue, and the merge queue has a dedicated expedited lane that jumps normal ordering (never skips checks).
 - Any hotfix touching auth/RBAC, keys, OMS, or fan-out safety invariant **must** get Security engineer sign-off even under time pressure — no exception.
-- Hotfix must be merged forward into `main` in the same day it goes to prod, to avoid divergence.
+- Hotfixes roll forward: the fix lands on `main` and ships in the next release from `main`, which is a PATCH only when no feature is pending (C-15.5). There is no back-port or merge-forward step; a back-port branch exists only by owner decision (`SECURITY.md`).
 - Every hotfix produces a one-page incident note (cause, blast radius, detection time, fix time) feeding `32-risk-register.md` and the next retro.
 
 ---
@@ -283,7 +277,7 @@ flowchart LR
 | Manual                                           | —                                                                                                                                                                                                              | PRR checklist complete (`07-release-and-prr.md`), Owner demo & acceptance at Sprint Review, Security sign-off, **for any release enabling Live trading for the first time or touching OMS/fan-out/keys: pen-test + key-permission audit + kill-switch test** (Live-enablement gate, see `07-release-and-prr.md` §Live-enablement)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Rollback                                         | Revert commit + redeploy dev                                                                                                                                                                                   | Documented rollback procedure (`07-release-and-prr.md`), previous release tag re-deployed to prod, feature flags flipped off first if the offending feature is flag-gated                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
-Dev is always on the tip of `main`. Only tagged `release/*` builds are promoted to staging and prod — no ad hoc hotfix bypasses promotion order except via the hotfix flow (§8), which still passes through staging smoke before prod.
+Dev is always on the tip of `main`. Only candidates tagged by the release run (`07-release-and-prr.md` §4) are promoted to staging and prod — no ad hoc hotfix bypasses promotion order except via the hotfix flow (§8), which still passes through staging smoke before prod.
 
 ---
 

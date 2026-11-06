@@ -17,6 +17,7 @@ Error codes referenced by callers (ticket "Technical notes"):
   CI-REL-002 1.0.0 guard
   CI-REL-003 unsigned release tag
   CI-REL-004 release checklist incomplete
+  CI-REL-005 release candidate refused: classify or verify (tools/ci/prepare_release.py)
 """
 
 from __future__ import annotations
@@ -47,11 +48,12 @@ EXEMPT_TYPES = frozenset({"chore", "ci", "docs"})
 _EXPLOIT_MARKERS = (
     "exploit",
     "payload",
-    "poc",
     "proof of concept",
     "proof-of-concept",
     "cve-",
 )
+# `poc` as a whole word only, so "epoch" and similar words pass.
+_POC_RE = re.compile(r"\bpoc\b")
 
 
 class Category(str, Enum):
@@ -79,10 +81,11 @@ _TYPE_TO_CATEGORY = {
     "fix": Category.FIXES,
     "perf": Category.PERFORMANCE,
 }
-# #3347 (07 §3): a PR with this label and one of these types is a security fix even without a
-# `Changelog-Security:` footer; its generated line moves to Security (the footer wins).
+# #3347 (07 §3): a `fix` or `perf` PR with this label is a security fix even without a
+# `Changelog-Security:` footer; its generated line moves to Security (the footer wins). Never
+# `feat`: a labelled feature stays under Features; only the footer (any type) routes one.
 SECURITY_LABEL = "security"
-_SECURITY_LABEL_TYPES = frozenset({"feat", "fix", "perf"})
+_SECURITY_LABEL_TYPES = frozenset({"fix", "perf"})
 _TYPE_TO_BUMP = {
     "feat": Bump.MINOR,
     "fix": Bump.PATCH,
@@ -158,8 +161,9 @@ def parse_commit(sha: str, message: str, labels: Iterable[str] = ()) -> ParsedCo
 
     Merge commits are recognised and excluded from changelog generation
     (ticket test-plan fixture corpus: "merge commits"). `labels` are the merged PR's labels
-    (#3347): `security` on a non-breaking `feat`/`fix`/`perf` routes its line to Security when
-    the commit has no `Changelog-Security:` footer and the line passes the wording guard.
+    (#3347): `security` on a non-breaking `fix`/`perf` (never `feat`) routes its line to
+    Security when the commit has no `Changelog-Security:` footer and the line passes the
+    wording guard.
     """
     lines = message.splitlines()
     header = lines[0] if lines else ""
@@ -333,6 +337,6 @@ def check_security_wording(security_lines: list[str]) -> SecurityWordingResult:
     violations = []
     for line in security_lines:
         lowered = line.lower()
-        if any(marker in lowered for marker in _EXPLOIT_MARKERS):
+        if any(marker in lowered for marker in _EXPLOIT_MARKERS) or _POC_RE.search(lowered):
             violations.append(line)
     return SecurityWordingResult(ok=not violations, violations=violations)
