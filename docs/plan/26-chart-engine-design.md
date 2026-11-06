@@ -457,6 +457,8 @@ Shipped by E11-S09 PR 1a (package README "Pane stack", BQ-1 to BQ-5), additive: 
 
 Shipped by E11-S09 PR 1b (package README "Pane splitters and chrome"), additive: `command { k: "moveSplitter", pane, by }` moves the boundary under pane `pane` by `by` share units (finite, |by| ≤ 1; + grows that pane), clamped at the minimums, changing only that pane and the one below; the worker posts a `layout` after every one, so the host announces each key once. `moveSplitter`, `setPaneShares` and `removePane` take an optional `seq` (a non-negative integer), which the worker echoes once as the next `layout`'s optional `ack`; a `setPaneShares` with a `seq` always gets a `layout`, and a command is answered only by the `layout` that acks it. A removal re-keys the remaining slots in order, and that re-key is announced on the acked `layout`, which lists every slot's key (ruling R58 on BQ-11a), so the main thread never points at a dead slot.
 
+Shipped by E11-S09 PR 2a (package README "Sync groups"), additive (C-6.3): `sync` gains `origin? { worker, chart, seq }` and its `timeRange` and `crosshair` become optional; it applies to every local member of `groupId` except when `origin.worker` is this worker, and a `seq` at or below the last one applied from the same origin `(worker, chart)` is dropped, the group remembering its 64 most recently seen origins (BQ-7). `init.config.workerId?` names the worker (host-assigned). A group id and a worker id are 1–128 characters of `[A-Za-z0-9._:-]` wherever they cross the wire (`init.config`, `setSync`, `sync`), and a `sync` `timeRange` has `to > from`; anything else is rejected at the boundary. `command { k: "setSync", groupId: string | null, modes: { time, crosshair, levels }, relay }` is retained and replaces `init.config.syncGroup`, which stays the default at mount (BQ-9); `scale` is never on the wire (BQ-24) and a `level?` field is reserved, not shipped (BQ-18). Worker → main gains `sync { id, groupId, timeRange?, crosshair?, origin }`, posted per publication when `relay` is set, for the main-thread relay (BQ-8; the relay is PR 2b). The one `viewport` message a frame gains, at its top level, `frameId?` (the worker frame it describes; the facade applies every row, then emits `viewportChanged` once for it) and `origin?` (the sync applied that frame, BQ-26). A join past 32 groups or 16 members per group is a recoverable `ENGINE_SYNC_REFUSED`; an `addPane` past 64 panes is a recoverable `ENGINE_PANE_CAP` (was the decode code), and the facade refuses both that and minting a pane key past `0xffff` before sending. A worker tick prepares every due chart, publishes local moves, flushes each group once, prepares the members it woke (again, for one it had prepared before a later peer published) and then finishes every chart, so a peer's move renders on the same frame whatever the creation order (BQ-12, §3.5).
+
 The WS client runs in a **shared worker** so that multiple chart instances (and the DOM ladder) decode each frame once; decoded typed arrays are transferred to the render worker without a copy.
 
 ---
@@ -495,6 +497,7 @@ export interface ChartOptions {
   timeZone?: "UTC" | string; // default 'UTC'
   density?: "comfortable" | "compact" | "dense";
   syncGroup?: string;
+  syncModes?: Partial<SyncModes>; // E11-S09 PR 2a (BQ-17): default { time, crosshair } on
   maxBars?: number; // default 200_000
   memoryBudgetMb?: number; // default 600
   fonts?: readonly { family: string; weight: number; bytes: ArrayBuffer; version?: string }[]; // SDF atlas (E11-S11 BQ-258)
@@ -523,6 +526,24 @@ export interface Chart {
   // (w: A11yWindow, rows: A11yRows | null, origin: CursorOrigin) => void.
   getA11yWindow(): A11yWindow;
   onA11yWindowChange(cb: A11yWindowListener): Unsubscribe;
+  // E11-S09 PR 2a (BQ-17): an app-named group (null: leave); `modes` merge over the current ones.
+  setSyncGroup(groupId: string | null, modes?: Partial<SyncModes>): void;
+}
+
+// E11-S09 PR 2a (BQ-17, BQ-18, BQ-24 AMEND): `levels` ships as a flag (its price payload is
+// E14's); `scale` is reserved, default off, and `true` is refused with an error.
+export interface SyncModes {
+  time: boolean;
+  crosshair: boolean;
+  levels: boolean;
+  scale: boolean;
+}
+
+// E11-S09 PR 2a (BQ-26 AMEND): the peer publication behind a viewport change, §6 `sync`'s origin.
+export interface SyncId {
+  worker: string;
+  chart: number;
+  seq: number;
 }
 
 // Mounts into `container` and returns synchronously; capability detection is lazy (E11-T01).
@@ -641,7 +662,14 @@ export interface ChartEvents {
   click: { time: number; price: number; button: number; modifiers: Modifiers };
   orderLineDragged: { id: string; price: number; commit: boolean };
   drawingChanged: { drawing: Drawing; phase: "create" | "update" | "delete" };
-  viewportChanged: { timeStart: number; timeEnd: number; barSpacing: number; lod: LodState }; // lod: E11-S12
+  viewportChanged: {
+    timeStart: number;
+    timeEnd: number;
+    barSpacing: number;
+    lod: LodState;
+    frameId: number;
+    syncId?: SyncId;
+  }; // lod: E11-S12; frameId, syncId: E11-S09 PR 2a (BQ-26: once per chart per frame)
   visibleRangeNeedsData: { fromTime: number; toTime: number }; // triggers paging
   frameStats: FrameStats;
   dataState: { state: "empty" | "ready" }; // E12-S06 (BQ-9): no bar in view; no grid drawn
@@ -720,6 +748,8 @@ export interface IndicatorPlugin {
 _E11-S09 PR 1a (additive note, C-15.2; ruling 6623589909 on BQ-11): `Pane.heightRatio` reads the worker's normalised share, and the open panes' shares sum to exactly 1. `addPane` without `heightRatio` gives the new pane an equal share, 1 / (open panes + 1); with one, it takes that share. Either way, and on `setHeightRatio(r)`, the other open panes rescale proportionally into 1 − r. A pane pushed below max(48 px, 3 × the axis label box) collapses to a 24 px stub (32 comfortable), and restoring gives it max(last share, minimum). Pixels: the stubs' px come out first, and the open panes tile the rest exactly, with the rounding remainder going to the last pane._
 
 _E11-S09 PR 1b (additive, C-15.2): `PaneOptions.label?: string` names the pane in its region, collapsed stub, splitters and announcements; the default is "Price pane" for the first pane and "Pane N" after it. The label is trimmed, its whitespace collapsed and capped at 64 characters; a blank label takes the default. A splitter move, by drag or by key, changes only the two panes beside it. `setHeightRatio` still rescales all the others._
+
+_E11-S09 PR 2a (additive, C-15.2): `ChartOptions.syncModes?`, `Chart.setSyncGroup(groupId, modes?)`, `SyncModes` and `SyncId` as sketched above; `viewportChanged` is emitted once per chart per frame with `frameId`, and `syncId` (BQ-7's origin token, no per-frame string) when a peer's sync moved it. `addPane` past 64 panes throws in the facade, so it never keeps a pane the worker refused._
 
 The shipped surface (`packages/chart-engine/src/api/types.ts`, E11-T01) keeps every name and member
 above. It defines the supporting types this sketch names but leaves open (`ThemeTokens`, `PaneId`,

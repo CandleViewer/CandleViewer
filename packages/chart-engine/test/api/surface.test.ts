@@ -144,6 +144,8 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "SeriesOptionsMap",
       "SeriesPlugin",
       "SeriesType",
+      "SyncId", // E11-S09 PR 2a (BQ-26): in the §8 sketch
+      "SyncModes", // E11-S09 PR 2a (BQ-17): in the §8 sketch
       "TextStyle",
       "TextureId",
       "ThemeTokens",
@@ -220,6 +222,7 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "panes",
       "removePane",
       "setDensity",
+      "setSyncGroup", // E11-S09 PR 2a (BQ-17)
       "setTheme",
       "subscribe",
       "takeScreenshot",

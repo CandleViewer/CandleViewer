@@ -42,6 +42,8 @@ export class ExportUnavailableError extends Error {
 export const BACKGROUND_TOKEN = "color.chart.background";
 
 export const ENGINE_DECODE_ERROR = "ENGINE_DECODE_ERROR";
+/** E11-S09 PR 2a (PR 1a m3): an `addPane` past `MAX_PANES`, recoverable. */
+export const ENGINE_PANE_CAP = "ENGINE_PANE_CAP";
 export const ENGINE_WORKER_LOST = "ENGINE_WORKER_LOST";
 // E11-S02's codes (ticket Observability), each posted with `recoverable` (README BQ-48).
 // ENGINE_CONTEXT_RESTORED is informational (BQ-55): SCR-048's strip clears on it.
@@ -78,6 +80,22 @@ export interface ChartConfig {
   readonly syncGroup: string | null;
   /** §8's `ChartOptions.timeZone` for the axis labels (E11-S06, BQ-203, additive); UTC when absent. */
   readonly timeZone?: string;
+  /** E11-S09 PR 2a (BQ-7, additive): this worker's id in a sync `origin`, host-assigned. */
+  readonly workerId?: string;
+}
+
+/** E11-S09 PR 2a (BQ-7): who published a sync, so a worker drops its own and a stale `seq`. */
+export interface SyncOrigin {
+  readonly worker: string;
+  readonly chart: ChartId;
+  readonly seq: number;
+}
+
+/** E11-S09 PR 2a (BQ-9): the wire's sync modes; `scale` is reserved, never on the wire (BQ-24). */
+export interface WireSyncModes {
+  readonly time: boolean;
+  readonly crosshair: boolean;
+  readonly levels: boolean;
 }
 
 /** One column of a columnar buffer: `count` elements of `bytes` each from `offset`. */
@@ -196,12 +214,23 @@ export type Command =
       readonly by: number;
       readonly seq?: number;
     }
+  /**
+   * E11-S09 PR 2a (BQ-9, additive): the chart's sync group (null: none) and modes, retained; it
+   * replaces `init.config.syncGroup`, which stays the default at mount. `relay`: also post each
+   * publication as a `FromWorker sync` for the main-thread relay (cross-worker groups).
+   */
+  | {
+      readonly k: "setSync";
+      readonly groupId: string | null;
+      readonly modes: WireSyncModes;
+      readonly relay: boolean;
+    }
   | { readonly k: "release" };
 
 /** A pane's price window and scale state; the `viewport` top level is slot 0's (BQ-5). */
 export type PaneScaleRow = Omit<
   Extract<FromWorker, { t: "viewport" }>,
-  "t" | "id" | "timeStart" | "timeEnd" | "barSpacing" | "panes"
+  "t" | "id" | "timeStart" | "timeEnd" | "barSpacing" | "panes" | "frameId" | "origin"
 >;
 
 /** E11-S09 (BQ-4): one pane's laid-out rows, CSS px; a collapsed pane's `height` is its stub. */
@@ -259,11 +288,16 @@ export type ToWorker =
       readonly series?: number;
     }
   | { readonly t: "command"; readonly id: ChartId; readonly cmd: Command }
+  /**
+   * Applied to every local member of `groupId`. E11-S09 PR 2a (BQ-7, additive): either part may
+   * be absent; with an `origin`, a sync from this worker or with a stale `seq` is dropped.
+   */
   | {
       readonly t: "sync";
       readonly groupId: string;
-      readonly timeRange: readonly [number, number];
-      readonly crosshair: number | null;
+      readonly timeRange?: readonly [number, number];
+      readonly crosshair?: number | null;
+      readonly origin?: SyncOrigin;
     };
 
 /**
@@ -345,8 +379,21 @@ export type FromWorker =
       readonly anchorTick: number | null;
       /** E11-S09 (BQ-5, additive): slots 1.. in order; absent while the chart has one pane. */
       readonly panes?: readonly PaneScaleRow[];
+      /** E11-S09 PR 2a (BQ-26, additive): the worker frame this one message describes. */
+      readonly frameId?: number;
+      /** The sync this frame applied, when the change came from a peer (BQ-26's `syncId`). */
+      readonly origin?: SyncOrigin;
     }
   | ({ readonly t: "a11y"; readonly id: ChartId; readonly cursorSummary: string } & A11yWire)
+  /** E11-S09 PR 2a (BQ-8, additive): a chart's publication, for the main-thread relay (PR 2b). */
+  | {
+      readonly t: "sync";
+      readonly id: ChartId;
+      readonly groupId: string;
+      readonly timeRange?: readonly [number, number];
+      readonly crosshair?: number | null;
+      readonly origin: SyncOrigin;
+    }
   /** E11-S09 (BQ-4, additive): posted when the layout recomputes, at most once per frame. */
   | {
       readonly t: "layout";
@@ -512,6 +559,15 @@ const optional = (v: unknown, ok: (v: unknown) => boolean): boolean => v === und
 const isBool = (v: unknown): boolean => typeof v === "boolean";
 const isMargin = (v: unknown): boolean => finite(v) && v >= 0 && v <= 0.45;
 const seriesId = (v: unknown): boolean => Number.isSafeInteger(v) && (v as number) >= 0;
+/** E11-S09 PR 2a: an app-named sync group id, bounded (the engine never invents one). */
+export const MAX_GROUP_ID = 128;
+/** A group or worker id: 1..`MAX_GROUP_ID` characters from a safe set (no control or markup). */
+export const GROUP_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+export const groupName = (v: unknown): v is string =>
+  typeof v === "string" && GROUP_ID_PATTERN.test(v);
+/** BQ-7's origin token: a bounded worker id, a chart id and a safe-integer `seq`. */
+const syncOrigin = (v: unknown): boolean =>
+  isObj(v) && groupName(v["worker"]) && chartId(v["chart"]) && seriesId(v["seq"]);
 /** One chart's live panes and a share vector's length (C-2.18); E15-K01's `maxPanes` 16 is the app's. */
 export const MAX_PANES = 64;
 /** A pane key (BQ-1): the facade mints them from 0; the range is bounded so a key stays small. */
@@ -594,6 +650,16 @@ function validCommand(cmd: unknown): boolean {
         Math.abs(cmd["by"] as number) <= 1 &&
         optional(cmd["seq"], seriesId)
       );
+    case "setSync":
+      return (
+        (cmd["groupId"] === null || groupName(cmd["groupId"])) &&
+        isBool(cmd["relay"]) &&
+        isObj(cmd["modes"]) &&
+        Object.keys(cmd["modes"]).length === 3 &&
+        ["time", "crosshair", "levels"].every((f) =>
+          isBool((cmd["modes"] as Record<string, unknown>)[f]),
+        )
+      );
     case "release":
       return true;
     default:
@@ -630,10 +696,17 @@ export function rejectReason(msg: unknown): string | null {
   if (!isObj(msg)) return "not an object";
   const t = msg["t"];
   if (t === "sync") {
-    const r = msg["timeRange"];
-    const c = msg["crosshair"];
-    const range = Array.isArray(r) && r.length === 2 && finite(r[0]) && finite(r[1]);
-    return typeof msg["groupId"] === "string" && range && (c === null || finite(c))
+    const range = (r: unknown): boolean =>
+      Array.isArray(r) &&
+      r.length === 2 &&
+      finite(r[0]) &&
+      finite(r[1]) &&
+      (r[1] as number) > (r[0] as number);
+    return groupName(msg["groupId"]) &&
+      (msg["timeRange"] !== undefined || msg["crosshair"] !== undefined) &&
+      optional(msg["timeRange"], range) &&
+      optional(msg["crosshair"], (c) => c === null || finite(c)) &&
+      optional(msg["origin"], syncOrigin)
       ? null
       : "malformed sync";
   }
@@ -646,6 +719,8 @@ export function rejectReason(msg: unknown): string | null {
         isObj(msg["theme"]) &&
         isObj(msg["config"]) &&
         optional(msg["config"]["timeZone"], (v) => typeof v === "string") &&
+        optional(msg["config"]["workerId"], groupName) &&
+        optional(msg["config"]["syncGroup"], (v) => v === null || groupName(v)) &&
         (msg["profile"] === undefined || msg["profile"] === "degraded-2d") &&
         (msg["reducedMotion"] === undefined || typeof msg["reducedMotion"] === "boolean")
         ? null
