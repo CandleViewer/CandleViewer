@@ -335,6 +335,21 @@ def test_a_counterpart_that_does_not_compile_counts_every_issue_as_its_divergenc
     assert seen == [("form", 60)]
 
 
+def test_a_counterpart_the_schema_refuses_counts_every_issue_as_its_divergence() -> None:
+    """A counterpart that compiles to a document the model refuses lists its first issues and
+    counts all of them: the divergence is that count, not the length of the list."""
+    seen: list[tuple[str, int]] = []
+    app, _ = _app(on_divergence=lambda editor, n: seen.append((editor, n)))
+    other = _at_the_bounds(_form(_ir()))
+    total = len(list(_refused(other["conditions"])))
+    body = {"editor": "graph", "model": _graph(_ir()), "counterpart_model": other}
+    answer = TestClient(app).post(COMPILE, json=body)
+    assert total > MAX_RETURNED_ISSUES
+    assert (answer.status_code, answer.json()["issues_total"]) == (422, total)
+    assert len(answer.json()["errors"]) == MAX_RETURNED_ISSUES
+    assert seen == [("graph", total)]
+
+
 def _differing(n: int) -> dict[str, Any]:
     """A compile body whose model and counterpart differ in `n` leaves, a set's values."""
     model, other = _ir(), _ir()
@@ -452,7 +467,11 @@ def test_an_unbounded_list_answers_its_first_unparsed_entry_alone(where: str) ->
     """A mixed list, entries that parse, then one that does not, then more of both: the list is
     named at its first bad index, one issue for the list."""
     (one, other), path = UNBOUNDED[where]
-    entries = [one, other, 0, one, *[0] * MAX_RETURNED_ISSUES]
+    entries = (
+        [one, other, 0]
+        if where == "environments"
+        else [one, other, 0, one, *[0] * MAX_RETURNED_ISSUES]
+    )
     doc = _ir()
     if where == "set_values":
         doc["conditions"] = {"node_id": "c", "op": "in_set", "left": {"metric": "price"}}
@@ -481,7 +500,7 @@ def test_a_models_unknown_members_answer_their_first_alone() -> None:
 
 #: `rule-ir.json` as this change found it: the one-issue rules change no JSON schema. A later
 #: change to the schema moves this pin with the file.
-RULE_IR_SHA256 = "e07dcd16a3bb14ac9970d0786a0a888e9f42e0650932b1544cab672855f87fb6"
+RULE_IR_SHA256 = "7bc51750857b4f13ac223b8f42ea33bce45eb14e96c24ec18717b8843cff1259"
 
 
 def test_the_one_issue_rules_leave_the_ir_schema_byte_for_byte() -> None:
