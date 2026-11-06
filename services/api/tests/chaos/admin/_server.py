@@ -11,7 +11,7 @@ recorder port that never answers (scenario 3; the real recorder slice is always 
 main, `tests/fixtures/admin/README.md`).
 
 Audit rows are permanent (C-5.7): `require_test_database` refuses any DSN that is not loopback and
-a database named `test` or `*_test`, before anything connects.
+a database named `test` or `*_test`, or that carries query parameters, before anything connects.
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, FastAPI, Request
 from prometheus_client import REGISTRY
-from sqlalchemy.engine import make_url
 
 from candleviewer.admin.flags.policy import StepUpClass
 from candleviewer.admin.flags.push import Session
@@ -49,6 +48,7 @@ from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRe
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from tests.chaos.admin._relay import dsn_url
 
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 #: What `GET /admin/health` reports of the build: fixed, so the generated model validates.
@@ -61,9 +61,12 @@ class HarnessRefused(RuntimeError):
 
 
 def require_test_database(dsn: str) -> None:
-    """Loopback only, and a database named `test` or `*_test`; the message never echoes the
-    DSN (it carries a password)."""
-    url = make_url(dsn)
+    """Loopback only, and a database named `test` or `*_test`, read by `_relay.dsn_url` (no
+    query parameters); the message never echoes the DSN (it carries a password)."""
+    try:
+        url = dsn_url(dsn)
+    except ValueError as refused:
+        raise HarnessRefused(str(refused)) from None
     if url.host not in LOOPBACK:
         raise HarnessRefused("the admin chaos harness runs against a loopback Postgres only")
     name = url.database or ""

@@ -28,7 +28,8 @@ from enum import StrEnum
 from types import TracebackType
 from typing import Self
 
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
+from sqlalchemy.exc import ArgumentError
 
 from candleviewer.observability import spawn
 
@@ -46,9 +47,21 @@ class Mode(StrEnum):
     CUT = "cut"
 
 
+def dsn_url(dsn: str) -> URL:
+    """`dsn` parsed, the one reader both guards share: a DSN that does not parse, or that carries
+    query parameters, is refused. The message never echoes the DSN (it carries a password)."""
+    try:
+        url = make_url(dsn)
+    except (ArgumentError, ValueError):
+        raise ValueError("the harness could not read the DSN") from None
+    if url.query:
+        raise ValueError("the harness takes a DSN without query parameters")
+    return url
+
+
 def upstream_of(dsn: str) -> tuple[str, int]:
     """The (host, port) a SQLAlchemy DSN dials; 5432 when it names none."""
-    url = make_url(dsn)
+    url = dsn_url(dsn)
     if url.host is None:
         raise ValueError("the DSN names no host")
     return url.host, url.port or 5432
@@ -85,7 +98,7 @@ class Relay:
         """`dsn` with its host and port replaced by the relay's."""
         if not self.port:
             raise RuntimeError("the relay is not listening yet")
-        return make_url(dsn).set(host=HOST, port=self.port).render_as_string(hide_password=False)
+        return dsn_url(dsn).set(host=HOST, port=self.port).render_as_string(hide_password=False)
 
     async def _listen(self) -> None:
         self._server = await asyncio.start_server(self._accept, HOST, self.port)
@@ -128,9 +141,9 @@ class Relay:
                 answer = await reader.readexactly(1)
             finally:
                 writer.close()
+                with contextlib.suppress(OSError):
+                    await writer.wait_closed()
         assert answer in {b"S", b"N"}, "the upstream did not answer the SSLRequest"
-        with contextlib.suppress(OSError):
-            await writer.wait_closed()
 
     async def close(self) -> None:
         self._set(Mode.CUT)
