@@ -231,7 +231,7 @@ export function vetProtection(raw: unknown): ProtectionBody | null {
   return { kinds, snapshots: { status: member(SLICE_STATUSES, status) ? status : "unavailable" } };
 }
 
-const REF = /^[\w:.-]{1,128}$/;
+const REF = /^urn:cv:req:[\w.-]{1,116}$/;
 const UNREADABLE = { kind: "failed", reason: "unreadable" } as const;
 const NOT_BUILT = { kind: "not_built" } as const;
 

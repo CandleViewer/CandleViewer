@@ -100,6 +100,7 @@ export function foldHealthFrame(words: Words, frame: SystemUpdate): Words {
     const read = frameWord(item);
     if (read === null) continue;
     const [name, word] = read;
+    if (next.has(name)) continue; // a name listed twice keeps its first item, as the report does
     const prev = words.get(name);
     const same =
       prev === null || word === null ? prev === word : prev !== undefined && sameWords(prev, word);
@@ -130,7 +131,8 @@ export function mergeComponents(
   type Served = NonNullable<HealthReport["components"]>[number];
   const served = new Map<string, Served>();
   for (const c of report?.body.components ?? []) {
-    if (typeof c.name === "string" && !served.has(c.name)) served.set(c.name, c);
+    const name = textOf(c.name);
+    if (name !== undefined && !served.has(name)) served.set(name, c);
   }
   const names = [...served.keys(), ...[...words.keys()].filter((name) => !served.has(name))];
   return names.flatMap((name): ComponentRecord[] => {
