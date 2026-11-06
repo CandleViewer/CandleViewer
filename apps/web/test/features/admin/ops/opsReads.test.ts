@@ -75,6 +75,9 @@ describe("readOps: four kinds of answer", () => {
     reply(503, { code: "audit_unavailable", detail: "db-1.internal refused", instance: "x y" });
     const refused = { kind: "refused", status: 503, code: "audit_unavailable", denied: false };
     expect(await read()).toEqual(refused);
+    // The Ref is a `urn:cv:req:` id (`22` Problem.instance); a host-like token is not one.
+    reply(503, { code: "audit_unavailable", instance: "db-1.internal:5432" });
+    expect(await read()).toEqual(refused);
     reply(503, { code: "made_up_code" });
     expect(await read()).toMatchObject({ code: null });
     reply(503, "<html>");

@@ -33,6 +33,12 @@ describe("foldHealthFrame", () => {
     const before = foldHealthFrame(NO_WORDS, frame(ok("oms"), ok("disk")));
     const warning = { ...ok("disk", "2026-10-22T14:01:40Z"), state: "warning", detail: "30% free" };
     const after = foldHealthFrame(before, frame(ok("oms"), warning as Item));
+    // A detail-only change is a change too.
+    const worse = foldHealthFrame(
+      after,
+      frame(ok("oms"), { ...warning, detail: "8% free" } as Item),
+    );
+    expect(worse.get("disk")).toMatchObject({ state: "warning", detail: "8% free" });
     expect(after.get("oms")).toBe(before.get("oms"));
     expect(after.get("disk")).toEqual({
       state: "warning",
@@ -118,6 +124,25 @@ describe("mergeComponents", () => {
     expect(merged).toMatchObject({ source: "frame", state: "down", wordAt: T + 2_000 });
   });
 
+  it("test_fold_a_frame_that_only_omits_a_name_drops_it_and_a_down_not_deployed_stays_down", () => {
+    const before = foldHealthFrame(NO_WORDS, frame(ok("oms"), ok("disk")));
+    expect([...foldHealthFrame(before, frame(ok("oms"))).keys()]).toEqual(["oms"]);
+    // `not deployed` is a word of a healthy item only (`23` §15.9).
+    const down = foldHealthFrame(
+      NO_WORDS,
+      frame({ name: "oms", state: "down", detail: "not deployed" }),
+    );
+    expect(down.get("oms")).toMatchObject({ state: "down" });
+  });
+
+  it("test_fold_a_name_listed_twice_keeps_its_first_item_as_the_report_does", () => {
+    const twice = foldHealthFrame(
+      NO_WORDS,
+      frame({ name: "oms", state: "down" }, { name: "oms", state: "healthy" }),
+    );
+    expect(twice.get("oms")).toMatchObject({ state: "down" });
+  });
+
   it("test_merge_a_frame_seen_at_the_reports_own_answer_time_gives_the_words", () => {
     const words = foldHealthFrame(NO_WORDS, frame({ name: "oms", state: "down" }));
     const rest = report([{ name: "oms", state: "healthy" }], T);
@@ -192,6 +217,16 @@ describe("mergeComponents", () => {
     });
     // No report yet: the frames' names stand alone.
     expect(mergeComponents(undefined, words, T)[1]).toMatchObject({ source: "frame" });
+    // No report and no frame since mount: the held frame's word stands, untimed.
+    expect(mergeComponents(undefined, words, undefined)[1]).toMatchObject({
+      source: "frame",
+      state: "healthy",
+      wordAt: undefined,
+    });
+    // A report serving an empty name keeps no record for it, as a frame keeps none.
+    expect(mergeComponents(report([{ name: "", state: "healthy" }]), NO_WORDS, undefined)).toEqual(
+      [],
+    );
   });
 
   it("test_merge_a_reported_name_with_no_readable_state_reads_not_received_never_an_older_frame", () => {
