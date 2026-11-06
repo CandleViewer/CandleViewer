@@ -290,6 +290,40 @@ describe("TreeView: platform chords keep their defaults", () => {
     expect(s.onSelect).not.toHaveBeenCalled();
   });
 
+  it("in multi-select, Ctrl/Alt/Cmd+letter other than Ctrl/Cmd+A keeps its default and selects nothing", async () => {
+    const s = spies();
+    const host = await mount(<Host spies={s} multiSelect />);
+    const overlays = item(host, "Overlays");
+    overlays.focus();
+    const chords: [string, KeyboardEventInit][] = [
+      ["c", { ctrlKey: true }],
+      ["c", { metaKey: true }],
+      ["e", { ctrlKey: true }],
+      ["v", { metaKey: true }],
+      ["a", { altKey: true }],
+      ["a", { ctrlKey: true, altKey: true }],
+    ];
+    const kept = [];
+    for (const [key, init] of chords) kept.push(await press(overlays, key, init));
+    expect(kept).toEqual(chords.map(() => true));
+    expect(overlays).toHaveFocus();
+    expect(s.onSelect).not.toHaveBeenCalled();
+  });
+
+  it("Ctrl/Cmd+Shift+A is not Ctrl+A: it keeps its default and selects nothing", async () => {
+    const s = spies();
+    const host = await mount(<Host spies={s} multiSelect />);
+    const ema = item(host, "EMA 21");
+    ema.focus();
+    const kept = [
+      await press(ema, "A", { ctrlKey: true, shiftKey: true }),
+      await press(ema, "A", { metaKey: true, shiftKey: true }),
+      await press(ema, "a", { metaKey: true, shiftKey: true }),
+    ];
+    expect(kept).toEqual([true, true, true]);
+    expect(s.onSelect).not.toHaveBeenCalled();
+  });
+
   it("Ctrl+Space and Ctrl+A belong to multi-select alone: in single-select they keep their default", async () => {
     const s = spies();
     const host = await mount(<Host spies={s} />);

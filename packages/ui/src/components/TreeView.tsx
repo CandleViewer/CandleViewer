@@ -227,13 +227,17 @@ export function TreeView({
     const ctrl = event.ctrlKey || event.metaKey;
     // A chord with Alt, Ctrl or Meta is the platform's (Alt/Cmd+←/→ history, Ctrl/Cmd+Home/End, Ctrl+letter
     // shortcuts) unless the tree declares it: Alt+↑/↓ with `onMove`, Ctrl+Space and Ctrl+A with `multiSelect`.
+    // Ctrl/Cmd+Shift+A is not Ctrl+A (Cmd+Shift+A is the browser's tab search on macOS).
     // An undeclared chord is left alone, its default intact.
     const declared =
       (event.altKey &&
         !ctrl &&
         onMove !== undefined &&
         (key === "ArrowUp" || key === "ArrowDown")) ||
-      (ctrl && !event.altKey && multiSelect && (key === " " || key.toLowerCase() === "a"));
+      (ctrl &&
+        !event.altKey &&
+        multiSelect &&
+        (key === " " || (!event.shiftKey && key.toLowerCase() === "a")));
     if ((event.altKey || ctrl) && !declared) return;
     const parent = isParent(row.node);
     switch (key) {
@@ -287,7 +291,9 @@ export function TreeView({
         if (key.length !== 1) return;
         typeAhead(key, at);
     }
-    // Reached only by a key the tree acts on; every other key returned above with its default intact.
+    // Reached by every key the tree handles, including the APG no-ops (an arrow past the first or last row,
+    // ArrowRight on a leaf), which stay prevented so they never scroll the panel. Every key the tree leaves
+    // to the browser returned above with its default intact.
     event.preventDefault();
   };
 
