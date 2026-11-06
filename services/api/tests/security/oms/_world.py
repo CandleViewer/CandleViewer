@@ -198,10 +198,14 @@ def oms_world(bars_state_root: Path, *, submits: bool = False) -> Iterator[OmsWo
         oms, reads = Runtime(store=_orders()), _reads()
         oms.accounts.extend(TradingAccountRow(a, "demo", "1001", False, _KEY) for a in ENVIRONMENT)
         over: dict[str, Any] = {}
-        if submits:  # each account its default profile
+        if submits:  # each account its default profile, its order caps out of the burst's way
             chaos.listed(oms.ingestion)
+            # The pins target the per-user limit (OM-D01), not the profile caps: once E39-S01
+            # (#954) enforces `fixed_qty.json`'s 5 concurrent / 60 per minute, a burst must not
+            # meet them, so each is pinned at the highest a trading profile takes.
+            caps = {"max_concurrent_orders": 500, "max_orders_per_minute": 600}
             held: dict[tuple[uuid.UUID, uuid.UUID | None], Any] = {
-                (a, None): rig.profile(AccountId(a)) for a in ENVIRONMENT}  # fmt: skip
+                (a, None): rig.profile(AccountId(a), **caps) for a in ENVIRONMENT}  # fmt: skip
             over["profiles"] = rig.Profiles(held)
         built: list[Any] = []
 

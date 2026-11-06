@@ -85,8 +85,8 @@ def test_ac19_a_burst_of_orders_from_one_session_meets_a_429_and_another_user_is
     (C-2.6), and another user's order is still admitted, `202`. The limit is expected per user
     between step 2 (`enforce`) and step 3 (the runtime) of `api/orders.py`, as the position
     writes' limiter stands after their `enforce`: before step 6, so both shapes meet it. With
-    `trading.oms_enabled` on, an entry reaches step 12's submit, so a limit anywhere on its path
-    turns this pin XPASS."""
+    `trading.oms_enabled` on, an entry reaches step 12's submit, so a per-user `429` with
+    `Retry-After`, answered before the submit, turns this pin XPASS."""
     sent = len(_sent(world, GRANTED))
     answers = [r for r, _ in _burst(world, "ac19", shape)]
     limited = [r for r in answers if observed(r) == "429 rate_limited"]
