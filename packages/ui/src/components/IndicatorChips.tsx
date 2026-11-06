@@ -16,8 +16,14 @@ export interface IndicatorChipsProps {
   readonly count: number;
   /** The one state suffix; pick it with `pickIndicatorSuffix` (error first). */
   readonly suffix?: IndicatorSuffix;
-  /** SCR-036 is open for this chart: the chip reads as pressed (`aria-pressed`), the name is unchanged. */
+  /**
+   * SCR-036 is open for this chart. SCR-036 is a non-modal docked drawer the chip opens (E13-D02 §6.1 D20), so the
+   * chip is a disclosure opener (`aria-expanded`), not a toggle: a second press does not close it. The look is the
+   * house pressed fill; the name is unchanged. Absent when unset.
+   */
   readonly open?: boolean;
+  /** The SCR-036 drawer's `id`, for the chip's `aria-controls`; the host supplies it. */
+  readonly drawerId?: string;
   /** Opens SCR-036 for this chart. */
   readonly onOpen: () => void;
 }
@@ -57,7 +63,13 @@ const suffixWords = ({ kind, n }: IndicatorSuffix): string =>
  * (E11-D02 A-14; E13-D02 D29). Per-indicator toggle, settings and remove live on CMP-199's rows. No live region of
  * its own; a change of the count or the suffix is an instant state flip (E13-D04 M9).
  */
-export function IndicatorChips({ count, suffix, open, onOpen }: IndicatorChipsProps): JSX.Element {
+export function IndicatorChips({
+  count,
+  suffix,
+  open,
+  drawerId,
+  onOpen,
+}: IndicatorChipsProps): JSX.Element {
   const ring = useFocusRing();
   const words = suffix === undefined || suffix.n <= 0 ? undefined : suffixWords(suffix);
   const name = `Indicators: ${count} on this chart${words === undefined ? "" : `, ${words}`} — open the object manager`;
@@ -67,7 +79,8 @@ export function IndicatorChips({ count, suffix, open, onOpen }: IndicatorChipsPr
       className={cx("cv-indicator-chips", ring.className)}
       data-cmp="CMP-224"
       aria-label={name}
-      aria-pressed={open === undefined ? undefined : open}
+      aria-expanded={open === undefined ? undefined : open}
+      aria-controls={drawerId}
       onClick={onOpen}
     >
       <span className="cv-indicator-chips__pill">
