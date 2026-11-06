@@ -23,6 +23,10 @@ export const visibleTabbables = (root: ParentNode): HTMLElement[] =>
 /**
  * APG Dialog (Modal): Tab and Shift+Tab cycle inside `container`, in DOM order. Call it from the
  * container's keydown handler; it prevents the default only at the edges (or with nothing to reach).
+ * Focus on an element inside that is no tab stop (a heading a step focused, `tabindex="-1"`) moves to
+ * the next or previous tab stop after it in document order, as the browser's own order would; only
+ * past the last or before the first does it wrap (A-5335-03: Tab from a preview's heading went to the
+ * dialog's first stop, its Close).
  */
 export const trapTab = (event: KeyboardEvent, container: HTMLElement): void => {
   if (event.key !== "Tab") return;
@@ -31,8 +35,18 @@ export const trapTab = (event: KeyboardEvent, container: HTMLElement): void => {
   const last = items[items.length - 1];
   const active = document.activeElement;
   const onItem = items.some((item) => item === active);
-  if (first === undefined || last === undefined) event.preventDefault();
-  else if (event.shiftKey && (active === first || !onItem)) {
+  if (first === undefined || last === undefined) {
+    event.preventDefault();
+    return;
+  }
+  if (!onItem && active !== null && active !== container && container.contains(active)) {
+    // Inside, off the order: the stop after it (its own descendants included), or the one before it.
+    const next = event.shiftKey
+      ? items.filter((item) => following(item, active)).pop()
+      : items.find((item) => following(active, item));
+    event.preventDefault();
+    (next ?? (event.shiftKey ? last : first)).focus();
+  } else if (event.shiftKey && (active === first || !onItem)) {
     event.preventDefault();
     last.focus();
   } else if (!event.shiftKey && (active === last || !onItem)) {
@@ -40,6 +54,10 @@ export const trapTab = (event: KeyboardEvent, container: HTMLElement): void => {
     first.focus();
   }
 };
+
+/** `b` comes after `a` in document order (a descendant of `a` does). */
+const following = (a: Node, b: Node): boolean =>
+  (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 
 export interface FocusTrapOptions {
   /** The trap's surface: focus that leaves it for anywhere outside `allow` is taken back. */

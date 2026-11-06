@@ -215,6 +215,8 @@ describe("the metadata the editor and the cheatsheet read", () => {
       "rules.nudge_right_large",
       "rules.nudge_up",
       "rules.nudge_up_large",
+      "watchlist.move_down",
+      "watchlist.move_up",
       "workspace.panel_next",
       "workspace.panel_prev",
     ]);

@@ -137,6 +137,25 @@ describe("FileDrop (CMP-067): the picker", () => {
     expect(error).toHaveAttribute("data-form", "inline");
   });
 
+  it("onPick runs as each file is taken, picked or dropped, before it is read: the host clears its last words, so they are not said again", async () => {
+    function Clearing(): JSX.Element {
+      const [error, setError] = useState<string | undefined>("This file has no symbols.");
+      return (
+        <Host
+          {...(error === undefined ? {} : { error })}
+          onPick={() => setError(undefined)}
+          onText={() => setError("This file has no symbols.")}
+        />
+      );
+    }
+    await mount(<Clearing />);
+    expect(page.getByText("This file has no symbols.")).toBeInTheDocument();
+    pick(new File([new Uint8Array([0xff, 0xfe, 0xfd])], "odd.txt", { type: "text/plain" }));
+    expect(page.queryByText("This file has no symbols.")).toBeNull();
+    await waitFor(() => expect(page.getByText(NOT_TEXT)).toBeInTheDocument());
+    expect(page.queryByText("This file has no symbols.")).toBeNull();
+  });
+
   it("T2: the button stays, aria-disabled with its reason; a press opens nothing", async () => {
     await mount(<Host disabledReason={READ_ONLY} />);
     const click = vi.spyOn(input(), "click");

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { stubAdminReads } from "../support/admin";
-import { stubSession, stubSessionsList } from "../support/api";
+import { stubSession, stubSessionsList, stubWatchlists } from "../support/api";
 import { stubRecorder } from "../support/recorder";
 import { REFRESH_INVALID } from "../support/contexts";
 import type { A11yScreen } from "./screens";
@@ -25,6 +25,8 @@ const SCREEN_STUBS: Readonly<Record<string, (page: Page) => Promise<void>>> = {
     await stubAdminReads(page); // the strip's reads, registered first so the recorder stub answers its own
     await stubRecorder(page); // SCR-140: a fresh install's empty state
   },
+  "R-111": stubWatchlists, // SCR-100: a list and its instruments
+  "R-110": stubWatchlists, // SCR-101 over the page: its lists and the list's symbols
 };
 
 /**
@@ -72,6 +74,20 @@ export async function openScreen(page: Page, s: A11yScreen): Promise<void> {
     await expect(loading, `${s.id}: a tile is still loading`).toHaveCount(0, {
       timeout: STEP_TIMEOUT_MS,
     });
+  }
+  if (s.id === "R-111") {
+    const grid = page.getByRole("grid", { name: /^Watchlist Majors/ }); // the list, not loading
+    await expect(grid, `${s.id}: its grid did not render`).toBeVisible({
+      timeout: STEP_TIMEOUT_MS,
+    });
+  }
+  if (s.id === "R-110") {
+    // SCR-101 open on the first list (the stub's session has no workspaces:write: the read-only manager)
+    const dialog = page.getByRole("dialog", { name: "Watchlists" });
+    await expect(
+      dialog.getByRole("option", { name: "Majors, 3 symbols" }),
+      `${s.id}: the manager's lists did not render`,
+    ).toBeVisible({ timeout: STEP_TIMEOUT_MS });
   }
 }
 

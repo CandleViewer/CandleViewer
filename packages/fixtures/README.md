@@ -136,6 +136,17 @@ before commit.
   `bybit/2026-10-05/ws/private-execution.jsonl` push with E29-D03 §3.4's values through the shipped
   adapter, fill step and mappers, and one ADL fill through reconciliation's store path. Provenance,
   the mapper commits and regeneration: `golden/executions/README.md` and its `manifest.json`.
+- `golden/ticker/ticker_items.jsonl` — E08-S08 CV `ticker` items (`23-ws-protocol.md` §14.8), one
+  `{body, source}` line per mapper output, replayed by the web ticker client's and SCR-100's tests.
+  Derived, never hand-written (#4702 pre-ruling 3): the capture
+  `bybit/2026-10-05/ws/recorded_tickers_BTCUSDT.jsonl` (a snapshot and 19 deltas, 100 ms apart) and
+  the three `rest/recorded_tickers_{BTC,ETH,SOL}USDT.json` replies, through E08-T08's shipped mapper
+  (the venue parsers, the merged state and `ticker_item`).
+  `golden/ticker/manifest.json` pins each source's sha256 and names the mapper's commit; env: public
+  market data, no account data; redaction: derived output of already-redacted captures, no
+  identifiers. Byte-checked by `tests/unit/exchange/bybit/test_ticker_cv_golden.py`, which fails
+  when a capture or the mapper's output moves; regenerate with the manifest's `regenerate` command
+  (`CV_REGEN_GOLDEN=1` and the mapper's commit) and review the diff.
 
 ## Scripts
 
