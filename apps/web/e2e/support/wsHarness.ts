@@ -53,6 +53,8 @@ export interface WsHarness {
   revokeSession(): void;
   /** The next fixture ticker (BTCUSDT) or `fields`, as a `snap` then `d`s on `ticker.<symbol>` (6.1, 14.8). */
   sendTicker(symbol: string, fields?: Partial<TickerRow>): void;
+  /** E24-Q02: `p` as the next data frame on `ch`, a `snap` the first time and `d`s after (6.1); any subscribed topic. */
+  sendData(ch: string, p: Readonly<Record<string, unknown>>): void;
   /** Test-only: the age of every data frame sent from now on (`GatewayOptions.ageMs`). */
   setFrameAge(ms: number): void;
   /**
