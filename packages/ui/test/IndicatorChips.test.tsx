@@ -43,6 +43,43 @@ describe("IndicatorChips (CMP-224)", () => {
     expect(page.getByRole("button", { name: /6 on this chart, 2 errors/ })).toBeTruthy();
   });
 
+  it("names the stale and computing suffixes and the singular error, as a plain button", async () => {
+    await mount(
+      <>
+        <IndicatorChips count={3} suffix={{ kind: "stale", n: 2 }} onOpen={fn()} />
+        <IndicatorChips count={2} suffix={{ kind: "computing", n: 1 }} onOpen={fn()} />
+        <IndicatorChips count={5} suffix={{ kind: "error", n: 1 }} onOpen={fn()} />
+      </>,
+    );
+    expect(page.getByRole("button", { name: /3 on this chart, 2 stale —/ })).toHaveAttribute(
+      "type",
+      "button",
+    );
+    expect(page.getByRole("button", { name: /2 on this chart, 1 computing —/ })).toBeTruthy();
+    expect(page.getByRole("button", { name: /5 on this chart, 1 error —/ })).toBeTruthy();
+  });
+
+  it("is pressed while the drawer is open, and carries no pressed state otherwise", async () => {
+    await mount(
+      <>
+        <IndicatorChips count={1} open onOpen={fn()} />
+        <IndicatorChips count={2} open={false} onOpen={fn()} />
+        <IndicatorChips count={3} onOpen={fn()} />
+      </>,
+    );
+    expect(page.getByRole("button", { name: /^Indicators: 1 / })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(page.getByRole("button", { name: /^Indicators: 2 / })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(page.getByRole("button", { name: /^Indicators: 3 / })).not.toHaveAttribute(
+      "aria-pressed",
+    );
+  });
+
   it("opens SCR-036 on Enter and on Space", async () => {
     const onOpen = fn();
     await mount(<IndicatorChips count={4} onOpen={onOpen} />);
