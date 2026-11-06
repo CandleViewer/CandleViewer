@@ -1,0 +1,53 @@
+/*
+ * CMP-243 BulkActionBar (E13-D02 §10 G-4; `15` CMP-243 Tokens, E36-D05 §C A-14). The buttons draw themselves as
+ * CMP-001 secondary at `size.control.height` (24 / 32 px by density). The appear is the panel-in recipe: opacity +
+ * a `space.inset.sm` (8 px) slide, `motion.duration.fast` · `motion.easing.decelerate` (E36-D03 §10 row 9); the
+ * recipe resolves to `none` under `data-motion="reduce"`, so the bar is there at frame 0 (A-17).
+ * The bar's height is per consumer (`15` CMP-243 Tokens): `--cv-bulk-bar-height` defaults to SCR-080's
+ * `size.control.height`, and a host with a taller bar (SCR-036, 32 / 40 px) sets it from a token.
+ */
+.cv-bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-stack-sm);
+  min-block-size: var(--cv-bulk-bar-height, var(--size-control-height));
+  animation: var(--cv-recipe-panel-in);
+}
+
+.cv-bulk-bar__count {
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-strong-font-weight) var(--type-ui-body-strong-font-size) /
+    var(--type-ui-body-strong-line-height) var(--type-ui-body-strong-font-family);
+  white-space: nowrap;
+}
+
+/* A label never truncates (`05` §5 item 7): a narrow bar wraps a button to the next row instead. */
+.cv-bulk-bar > .cv-button {
+  flex: none;
+}
+
+.cv-bulk-bar > .cv-button > .cv-button__label {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* The universal reduce pair for animations (as theme.css applies it), kept here so the file is self-contained:
+   the reduced-motion CSS contract (test/theme/motion-css.test.ts) requires it in every file that animates. */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) *,
+  :root:not([data-motion]) *::before,
+  :root:not([data-motion]) *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+  }
+}
