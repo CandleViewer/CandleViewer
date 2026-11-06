@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type JSX } from "react";
 import { getMeClaims } from "../../lib/auth/meCache";
 import { SessionLockDialog, type LockFailure, type LockPhase } from "./SessionLockDialog";
 import { SessionExpiredCard, SignOutConfirm } from "./SessionLockEscapes";
@@ -59,6 +59,38 @@ export function SessionLockHost({
   const [idleMinutes, setIdleMinutes] = useState(15);
   const [now, setNow] = useState(() => Date.now());
   const actions = useRef<Actions | null>(null);
+  /**
+   * #5561: the last element focused while none of this host's dialogs was up, where the focus goes back
+   * once they are gone if a dialog's own opener cannot take it (a warning that gives way to the lock in
+   * one commit leaves the lock no opener; an opener under a CMP-043 dialog may be inert by then). `up`
+   * turns in a layout effect, before any focus move of the commit, so a dialog's own focus is not kept.
+   * A blur that leaves the focus on `body` meanwhile (a press on the page) clears it, as nothing had the
+   * focus then; a switch to another window keeps the active element, and the record.
+   */
+  const returnTo = useRef<HTMLElement | null>(null);
+  const up = useRef(false);
+  useLayoutEffect(() => {
+    up.current = view.kind !== "none";
+  }, [view.kind]);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const onFocusIn = ({ target }: FocusEvent): void => {
+      if (!up.current && target instanceof HTMLElement && target !== document.body) {
+        returnTo.current = target;
+      }
+    };
+    const onFocusOut = ({ relatedTarget }: FocusEvent): void => {
+      if (!up.current && relatedTarget === null && document.activeElement === document.body) {
+        returnTo.current = null;
+      }
+    };
+    document.addEventListener("focusin", onFocusIn, true);
+    document.addEventListener("focusout", onFocusOut, true);
+    return () => {
+      document.removeEventListener("focusin", onFocusIn, true);
+      document.removeEventListener("focusout", onFocusOut, true);
+    };
+  }, [enabled]);
   const unlocked = useRef(onUnlocked);
   useEffect(() => {
     unlocked.current = onUnlocked;
@@ -205,6 +237,7 @@ export function SessionLockHost({
         expiresInSec={(view.deadlineMs - now) / 1000}
         onExtend={() => actions.current?.extend()}
         onDismiss={() => actions.current?.dismiss()}
+        returnTo={returnTo}
       />
     );
   }
@@ -216,6 +249,7 @@ export function SessionLockHost({
         failure={view.failure}
         onUnlock={(password) => actions.current?.unlock(password)}
         onSignOut={() => actions.current?.signOut()}
+        returnTo={returnTo}
       />
     );
   }
@@ -229,6 +263,8 @@ export function SessionLockHost({
       />
     );
   }
-  if (view.kind === "expired") return <SessionExpiredCard onSignIn={() => api.endSession()} />;
+  if (view.kind === "expired") {
+    return <SessionExpiredCard onSignIn={() => api.endSession()} returnTo={returnTo} />;
+  }
   return null;
 }

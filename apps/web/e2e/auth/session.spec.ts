@@ -437,6 +437,41 @@ test("E09-TC-D02 SCR-112 revoke this session: the confirm says so, and it signs 
   expect(store.sessions.map((s) => s.revoked)).toEqual([true, false]);
 });
 
+// #5561: the session dialogs over a modal open under them. SCR-112's confirm has its own focus guard, as the lock has;
+// before the fix the two pulled the focus to and fro until the stack overflowed. Each session dialog now paints last,
+// the confirm is inert while one is up, and the focus comes back to the confirm's Cancel on unlock.
+test("E09-TC-C02 the warning and the lock arrive over an open SCR-112 confirm: each takes the focus, the confirm stays open under them", async ({
+  page,
+}) => {
+  const store = new SessionStore();
+  await page.clock.install();
+  const harness = await attach(page, store, store.mint(), { ws: true });
+  store.mint("Desktop app");
+  await page.goto(SETTINGS);
+  await expect.poll(() => harness?.authenticated()).toBe(1);
+  const table = page.getByRole("table", { name: SESSIONS });
+  await table.getByRole("button", { name: /^Revoke Desktop app/u }).click();
+  const confirm = page.getByRole("alertdialog", { name: "Revoke session?" });
+  const cancel = confirm.getByRole("button", { name: "Cancel" });
+  await expect(cancel).toBeFocused();
+  await store.advance(TO_WARNING_MS, page);
+  const warning = page.getByRole("alertdialog", { name: "Your session will lock soon" });
+  await expect(warning.getByRole("button", { name: "Stay signed in" })).toBeFocused();
+  await store.advance(TO_LOCK_MS, page);
+  const lock = page.getByRole("alertdialog", { name: "Session locked" });
+  await expect(lock.getByLabel("Password")).toBeFocused();
+  expect(await seriousAxe(page)).toEqual([]); // the lock over the confirm, both in the page
+  await page.keyboard.press("Escape"); // Esc does not dismiss SCR-005, nor reach the confirm under it
+  await expect(lock).toBeVisible();
+  await page.keyboard.type(UNLOCK_PASSWORD);
+  await page.keyboard.press("Enter");
+  await expect(lock).toBeHidden();
+  await expect(confirm).toBeVisible();
+  await expect(cancel).toBeFocused();
+  expect(await seriousAxe(page)).toEqual([]);
+  expect(unlocks(store)).toEqual([{ password: UNLOCK_PASSWORD }]);
+});
+
 // ---- Two contexts, one user (AC3): the other browser is told by the server, not by this tab.
 test("E09-TC-D03 sign out everywhere in context A: B's socket gets bye then 4401, and B's next call lands on SCR-001", async ({
   browser,

@@ -55,6 +55,20 @@ const escape = (): void =>
 const CASE = { timeout: 30_000 } as const;
 const drawer = (symbol: string): HTMLElement =>
   screen.getByRole("dialog", { name: `${symbol} recording` });
+/** Under a later modal: `inert`, or CMP-043's `aria-hidden` where the engine has no `inert`. */
+const BELOW = '[inert], [aria-hidden="true"]';
+/**
+ * SCR-006 raised from the drawer is on top of it (#5561, A-5347-d01): its layer is the last in `body`, after the
+ * drawer's, so it paints and takes the pointer over the drawer (the layers have no z-index); it is live, and the
+ * drawer under it is inert and still open.
+ */
+function expectOverDrawer(host: HTMLElement, challenge: HTMLElement): void {
+  const layers = document.querySelectorAll("body > [data-cv-layer]");
+  expect(layers[layers.length - 1]).toContainElement(challenge);
+  expect(host.compareDocumentPosition(challenge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(challenge.closest(BELOW)).toBeNull();
+  expect(host.closest(BELOW)).not.toBeNull();
+}
 
 /** The newest frame: BTCUSDT's health (D02 §6.7) and an incident on it. */
 const FRAME: RecorderFrame = {
@@ -430,10 +444,10 @@ describe(
       fireEvent.click(screen.getByRole("option", { name: "50" }));
       await settle();
       await settle();
-      // `22` challenges no depth write today; were it to, its SCR-006 is the drawer's, live inside it (A-5347-d01).
+      // `22` challenges no depth write today; were it to, its SCR-006 is the drawer's, live over it (A-5347-d01).
       const challenge = screen.getByRole("alertdialog", { name: "Confirm with two-factor" });
-      expect(drawer("BTCUSDT")).toContainElement(challenge);
-      act(() => void vi.advanceTimersByTime(5 * 60_000)); // the challenge expires
+      expectOverDrawer(drawer("BTCUSDT"), challenge);
+      act(() => void vi.advanceTimersByTime(5 * 60_000)); // the challenge expires: its notice stays in the drawer
       fireEvent.click(
         within(drawer("BTCUSDT")).getByRole("button", { name: "Request a new confirmation" }),
       );
@@ -444,7 +458,7 @@ describe(
       expect(JSON.parse(String(patches[1]?.[1]?.body))).toEqual({ depth: 50 });
     });
 
-    it("Record again challenged from the drawer: SCR-006 opens inside it on its Password, and the grant re-sends the first key (A-5347-d01)", async () => {
+    it("Record again challenged from the drawer: SCR-006 opens over it on its Password, and the grant re-sends the first key (A-5347-d01)", async () => {
       // `22` challenges any add whose body names `pinned` or `retention_days`, as a re-add's does.
       const stopped = D02_ROWS.map((r) =>
         r.symbol === "BTCUSDT" ? { ...r, state: "stopped" as const } : r,
@@ -472,10 +486,15 @@ describe(
         method: "POST",
         body: { symbol: "BTCUSDT", pinned: true, retention_days: null },
       });
-      // Found by role with no `hidden`: live, inside the modal drawer, focus on its first field (E09-D06).
+      // Found by role with no `hidden`: live, over the modal drawer, focus on its first field (E09-D06).
       const challenge = screen.getByRole("alertdialog", { name: "Confirm with two-factor" });
-      expect(dialog).toContainElement(challenge);
+      expectOverDrawer(dialog, challenge);
       const password = within(challenge).getByLabelText("Password");
+      expect(password).toHaveFocus();
+      // Tab stays in SCR-006: from its last control back to its first (E09-D06 §6).
+      const stops = within(challenge).getAllByRole("button");
+      act(() => stops[stops.length - 1]?.focus());
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: "Tab" });
       expect(password).toHaveFocus();
       fireEvent.change(password, { target: { value: "pw" } });
       fireEvent.change(within(challenge).getByLabelText("Authenticator code"), {
@@ -494,7 +513,11 @@ describe(
       expect(written).toEqual([
         { kind: "added", row: expect.objectContaining({ symbol: "BTCUSDT" }) },
       ]);
+      // SCR-006 gone: the drawer is still open, live again, and has the focus back.
+      expect(screen.queryByRole("alertdialog", { name: "Confirm with two-factor" })).toBeNull();
       expect(drawer("BTCUSDT")).toBeInTheDocument();
+      expect(drawer("BTCUSDT").closest(BELOW)).toBeNull();
+      expect(drawer("BTCUSDT")).toContainElement(document.activeElement as HTMLElement);
     });
 
     it("the drawer's Record again is busy while its add is on the wire: a second press sends nothing (A-5347-d04)", async () => {
