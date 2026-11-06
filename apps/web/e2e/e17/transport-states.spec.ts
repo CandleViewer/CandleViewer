@@ -10,7 +10,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "../support/pack";
 import {
   BYE_FATAL,
   BYE_SESSION_ENDED,
@@ -39,7 +39,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const ageNow = async (page: Parameters<typeof region>[0]): Promise<number> =>
   lastDataAgeSeconds(await region(page).textContent());
 
-test(`Q04-S01 the page's clock moves the page, not the shared worker ${PACK}`, async ({ page }) => {
+test(`Q04-S01 the page's clock moves the page, not the shared worker @ga-regression @ga-area-shell ${PACK}`, async ({
+  page,
+}) => {
   covers("BQ-09");
   const harness = await openWorkspace(page, { clock: true, heartbeat: FAST_HEARTBEAT });
   await page.clock.fastForward(60_000);
@@ -51,7 +53,7 @@ test(`Q04-S01 the page's clock moves the page, not the shared worker ${PACK}`, a
   expect(pageNow - workerNow).toBeGreaterThan(50_000);
 });
 
-test(`Q04-S02 the suite runs on the shipped bundle, which has no fault channel ${PACK}`, () => {
+test(`Q04-S02 the suite runs on the shipped bundle, which has no fault channel @ga-regression @ga-area-shell ${PACK}`, () => {
   covers("BQ-02");
   const dir = join(ROOT, "apps/web/dist/assets");
   const bundles = readdirSync(dir).filter((f) => f.endsWith(".js"));
@@ -60,7 +62,7 @@ test(`Q04-S02 the suite runs on the shipped bundle, which has no fault channel $
     expect(readFileSync(join(dir, file), "utf8")).not.toContain("cv-ws-fault-injection");
 });
 
-test(`Q04-T01 first connect reads Connecting… with no region and no announcement ${PACK}`, async ({
+test(`Q04-T01 first connect reads Connecting… with no region and no announcement @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("C7", "D02-row-1", "US-MKT-005#Reconnect");
@@ -76,7 +78,9 @@ test(`Q04-T01 first connect reads Connecting… with no region and no announceme
   await expect(statusWord(page)).toHaveText("Connection: live");
 });
 
-test(`Q04-T02 live: no region, no announcement, one socket ${PACK}`, async ({ page }) => {
+test(`Q04-T02 live: no region, no announcement, one socket @ga-regression @ga-area-shell ${PACK}`, async ({
+  page,
+}) => {
   covers("C7", "D02-row-2", "US-MKT-005#Subscribed");
   const harness = await openWorkspace(page, { heartbeat: FAST_HEARTBEAT });
   await expect(chip(page)).toHaveAttribute("data-status", "live");
@@ -86,7 +90,7 @@ test(`Q04-T02 live: no region, no announcement, one socket ${PACK}`, async ({ pa
   expect(harness.connections()).toBe(1);
 });
 
-test(`Q04-T03 a lost transport shows Disconnected and the last good time, said once ${PACK}`, async ({
+test(`Q04-T03 a lost transport shows Disconnected and the last good time, said once @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("C7", "D02-row-3", "US-MKT-003#Feed interrupted", "AC-2");
@@ -112,7 +116,7 @@ test(`Q04-T03 a lost transport shows Disconnected and the last good time, said o
   await stillTheSameAnnouncement(page);
 });
 
-test(`Q04-T04 reconnect: Live on a new session with a fresh snapshot; the episode ends ${PACK}`, async ({
+test(`Q04-T04 reconnect: Live on a new session with a fresh snapshot; the episode ends @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("C7", "D02-row-16", "US-MKT-005#Reconnect", "AC-3");
@@ -132,7 +136,7 @@ test(`Q04-T04 reconnect: Live on a new session with a fresh snapshot; the episod
   expect(systemSnaps(harness).at(-1)).toMatchObject({ s: 1 }); // a new session counts from 1
 });
 
-test(`Q04-T05 a 60 s outage on the page's clock, then Live with nothing older than it ${PACK}`, async ({
+test(`Q04-T05 a 60 s outage on the page's clock, then Live with nothing older than it @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("C7", "D02-row-20", "US-MKT-005#Reconnect", "AC-3");
@@ -151,7 +155,7 @@ test(`Q04-T05 a 60 s outage on the page's clock, then Live with nothing older th
   expect(Number(systemSnaps(harness).at(-1)?.["ts"])).toBeGreaterThan(lastBefore);
 });
 
-test(`Q04-T06 the T4 steps: the age line turns at 30 s, the region escalates at 5 min ${PACK}`, async ({
+test(`Q04-T06 the T4 steps: the age line turns at 30 s, the region escalates at 5 min @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("C7", "D02-row-20", "AC-2");
@@ -175,7 +179,7 @@ test(`Q04-T06 the T4 steps: the age line turns at 30 s, the region escalates at 
   await expect(region(page)).toContainText(/Disconnected for 0[5-9]:\d\d — escalated/);
 });
 
-test(`Q04-T07 a fatal close: Offline — retry stopped, said once, never retried ${PACK}`, async ({
+test(`Q04-T07 a fatal close: Offline — retry stopped, said once, never retried @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("C7", "D02-row-6", "US-MKT-005#Reconnect");
@@ -197,7 +201,9 @@ test(`Q04-T07 a fatal close: Offline — retry stopped, said once, never retried
   expect(harness.connections()).toBe(2); // 23 section 9.2: 4400 is never retried by the client itself
 });
 
-test(`Q04-T08 session ended: Sign in, no Retry now, said once ${PACK}`, async ({ page }) => {
+test(`Q04-T08 session ended: Sign in, no Retry now, said once @ga-regression @ga-area-shell ${PACK}`, async ({
+  page,
+}) => {
   covers("C7", "D02-row-21", "AC-2");
   const harness = await openWorkspace(page);
   harness.closeWith({
@@ -212,7 +218,7 @@ test(`Q04-T08 session ended: Sign in, no Retry now, said once ${PACK}`, async ({
   await patient(assertive(page)).toHaveText(SAID.sessionEnded);
 });
 
-test(`Q04-T09 a sequence gap is a resync on the same socket; the chrome stays Live ${PACK}`, async ({
+test(`Q04-T09 a sequence gap is a resync on the same socket; the chrome stays Live @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("C2", "D02-row-9", "US-MKT-006#Gap detection", "US-MKT-007#Sequence break");
@@ -230,7 +236,7 @@ test(`Q04-T09 a sequence gap is a resync on the same socket; the chrome stays Li
   expect(harness.connections()).toBe(1); // a resync is a new snapshot, never a new socket
 });
 
-test(`Q04-T10 while system resyncs the kill switch reads unknown: order entry off ${PACK}`, async ({
+test(`Q04-T10 while system resyncs the kill switch reads unknown: order entry off @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("C12", "D02-row-18", "WS-E06", "AC-2");
@@ -247,7 +253,9 @@ test(`Q04-T10 while system resyncs the kill switch reads unknown: order entry of
   expect(harness.connections()).toBe(1);
 });
 
-test(`Q04-T11 a lagging quality class has no treatment ${PACK}`, async ({ page }) => {
+test(`Q04-T11 a lagging quality class has no treatment @ga-regression @ga-area-shell ${PACK}`, async ({
+  page,
+}) => {
   covers("C4", "D02-row-4", "AC-2");
   const harness = await openWorkspace(page, { heartbeat: FAST_HEARTBEAT });
   harness.sendSystem({ kind: "connection_quality", class: "lagging", rtt_ms: 240, queue_pct: 40 });
@@ -271,7 +279,7 @@ const ERR_TREATMENTS = [
   },
 ] as const;
 for (const { code, shows } of ERR_TREATMENTS) {
-  test(`Q04-T12 err ${code} shows its 10.3 treatment and changes no transport state ${PACK}`, async ({
+  test(`Q04-T12 err ${code} shows its 10.3 treatment and changes no transport state @ga-regression @ga-area-shell ${PACK}`, async ({
     page,
   }) => {
     covers("§10.3", "D02-row-23", "AC-2");
@@ -291,7 +299,7 @@ for (const { code, shows } of ERR_TREATMENTS) {
   });
 }
 
-test(`Q04-T13 a slow-consumer close is Disconnected, then Live again on its own ${PACK}`, async ({
+test(`Q04-T13 a slow-consumer close is Disconnected, then Live again on its own @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("C7", "D02-row-3", "US-MKT-005#Reconnect");
@@ -314,7 +322,7 @@ test(`Q04-T13 a slow-consumer close is Disconnected, then Live again on its own 
 const politeSays = (page: Parameters<typeof region>[0], text: string) =>
   page.locator('[aria-live="polite"]', { hasText: text });
 
-test(`Q04-T14 the exchange's public feed down: a warning row, said politely; the chip reads Stale, then Live ${PACK}`, async ({
+test(`Q04-T14 the exchange's public feed down: a warning row, said politely; the chip reads Stale, then Live @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("§15.9", "D02-row-13", "US-MKT-003#Feed interrupted");
@@ -334,7 +342,7 @@ test(`Q04-T14 the exchange's public feed down: a warning row, said politely; the
   await patient(chip(page)).toHaveAttribute("data-status", "live");
 });
 
-test(`Q04-T15 maintenance and the store down: blocking rows, new orders off, said assertively ${PACK}`, async ({
+test(`Q04-T15 maintenance and the store down: blocking rows, new orders off, said assertively @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("§15.9", "D02-row-22", "AC-2");
@@ -356,7 +364,7 @@ test(`Q04-T15 maintenance and the store down: blocking rows, new orders off, sai
   await expect(region(page)).toHaveCount(0); // a CMP-092 row, never the connection region (one reason, one surface)
 });
 
-test(`Q04-T16 the private feed reconnecting: a row for 10 s, then the region's R5 ${PACK}`, async ({
+test(`Q04-T16 the private feed reconnecting: a row for 10 s, then the region's R5 @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("§15.9", "D02-row-24", "D02-row-17", "AC-2");

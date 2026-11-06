@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./support/pack";
 import { stubNoViewAs } from "./support/api";
 
 // E10-T04-B1 (#1725): the real app (main.tsx -> startShell) loads the session
@@ -10,7 +10,9 @@ const json = (body: unknown) => ({
   body: JSON.stringify(body),
 });
 
-test("authenticated session reaches /terminal without redirect to /login", async ({ page }) => {
+test("authenticated session reaches /terminal without redirect to /login @ga-regression @ga-area-shell", async ({
+  page,
+}) => {
   const calls: string[] = [];
   await page.route("**/api/v1/me", (r) => {
     calls.push("me");
@@ -31,7 +33,9 @@ test("authenticated session reaches /terminal without redirect to /login", async
   expect(calls).toEqual(["me"]);
 });
 
-test("unauthenticated (/me 401) is redirected to /login", async ({ page }) => {
+test("unauthenticated (/me 401) is redirected to /login @ga-regression @ga-area-shell", async ({
+  page,
+}) => {
   await page.route("**/api/v1/me", (r) => r.fulfill({ status: 401, body: "{}" }));
   await page.route("**/api/v1/me/**", (r) => r.fulfill({ status: 401, body: "{}" }));
   await page.goto("/terminal");
@@ -40,7 +44,9 @@ test("unauthenticated (/me 401) is redirected to /login", async ({ page }) => {
 
 // E47-S06: theme switch + chart colour mode reach the document root that every
 // surface (incl. the canvas theme object) keys off, after a real bootstrap.
-test("stored theme and chart colour mode are applied to the root", async ({ page }) => {
+test("stored theme and chart colour mode are applied to the root @ga-regression @ga-area-shell @US-SET-004", async ({
+  page,
+}) => {
   await page.addInitScript(() =>
     localStorage.setItem(
       "cv.chartColorMode",
@@ -70,7 +76,7 @@ test("stored theme and chart colour mode are applied to the root", async ({ page
 
 // #3139: the theme runtime of @candleviewer/ui is the only writer of the root attributes, and the token
 // CSS and theme.css that the app imports (built into the page) follow them.
-test("server appearance reaches the root through the runtime and the built CSS applies", async ({
+test("server appearance reaches the root through the runtime and the built CSS applies @ga-regression @ga-area-shell @US-SET-004", async ({
   page,
 }) => {
   await page.route("**/api/v1/me", (r) =>
