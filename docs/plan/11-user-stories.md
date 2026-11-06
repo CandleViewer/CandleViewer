@@ -181,13 +181,13 @@ Refs: R12 §2.5, P1, P2
 
 #### US-ONB-005 — Step-up re-authentication · Must
 
-As the **owner**, I want sensitive actions to demand a fresh TOTP, so that a hijacked session cannot rotate keys or enable Live.
+As the **owner**, I want sensitive actions to demand a fresh password and TOTP code, so that a hijacked session cannot rotate keys or enable Live.
 
 ```gherkin
 Scenario: Step-up required
   Given I am signed in and open Admin → API keys
   When I attempt to reveal-scope, rotate or revoke a key
-  Then I must enter a fresh TOTP code before the action proceeds
+  Then I must enter a fresh password and TOTP code before the action proceeds
 Scenario: Step-up grace
   Given I completed step-up 3 minutes ago
   When I perform a second sensitive action within 5 minutes

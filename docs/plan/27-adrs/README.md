@@ -45,10 +45,14 @@ Status values: `decided` (binding now), `proposed` (decision deadline stated ins
 | [ADR-0039](ADR-0039-audit-export-signing-key.md)                  | Audit export signing key: Ed25519 custody in M2, the injected signer, verification and rotation (#889)                        | **accepted** (ratified 2026-10-29 by main-orchestrator, #2701 ledger 2 row 35)              |
 | [ADR-0040][adr-0040]                                              | Per-trade profile overrides and profile-change propagation to open tickets (E28-K01; ticket said ADR-0016, taken)             | **accepted** (ratified 2026-10-29 by main-orchestrator, #2701 ledger 2 row 33)              |
 | [ADR-0041](ADR-0041-backup-engine-and-artefact-key.md)            | Backup engine: the sidecar and its roles, age artefacts to an offline key, the restore halt latch (#3319)                     | **proposed** (ruled under the owner's delegation, #2701; veto pending; ratify before B1)    |
+| [ADR-0042][adr-0042]                                              | Admin re-authentication and elevation: per-action step-up, no admin window (E42-T06, D8; ticket said ADR-0022, taken)         | **accepted** (D8 ruled 2026-10-29 by main-orchestrator, #2701 ledger 2 row 12)              |
+| [ADR-0043][adr-0043]                                              | Feature flags may not gate a security control: the registry's refusal and its fences (E42-T06; ticket said ADR-0023, taken)   | **accepted** (2026-11-03 by main-orchestrator, #1085 BQ ruling, comment 6602836897)         |
 | [ADR-0044](ADR-0044-rest-order-entry-and-code-only-rejections.md) | REST order entry in every environment in v1; the exchange's reject text code-only (E29-T09, #1029)                            | **accepted (interim)** (ruled 2026-11-03 by main-orchestrator, #1029; veto on #2701)        |
 | [ADR-0046](ADR-0046-order-ticket-reducer-placement.md)            | Order-ticket reducer placement: sync, external store or worker, and the submit dispatch path (E30-K01, #852)                  | **proposed** (provisional option B from the K01 run; number assigned on #852)               |
 
 [adr-0040]: ADR-0040-per-trade-overrides-and-profile-propagation.md
+[adr-0042]: ADR-0042-admin-reauth-and-elevation-model.md
+[adr-0043]: ADR-0043-feature-flags-never-gate-a-security-control.md
 
 ## Writing a new ADR
 
