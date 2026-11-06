@@ -17,6 +17,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Discriminator,
+    FailFast,
     Field,
     PlainSerializer,
     StrictBool,
@@ -25,7 +26,7 @@ from pydantic import (
     Tag,
     model_validator,
 )
-from pydantic_core import PydanticCustomError
+from pydantic_core import PydanticCustomError, PydanticKnownError
 
 from candleviewer.domain.plain_decimal import PlainWidthError, plain_decimal
 from candleviewer.domain.primitives import AccountId, Environment, Notional, RuleId, Symbol, UserId
@@ -135,28 +136,77 @@ def storable_text(v: Any) -> Any:
     return v
 
 
-class MetricRef(BaseModel):
+def _at_most(limit: int) -> BeforeValidator:
+    """A list's bound (``max_length``) decided on the list as sent, before any entry is read: the
+    model's own check counts only the entries that parse, so past the bound a list of entries that
+    do not would answer one issue per entry. The refusal is the one ``max_length`` answers
+    (``too_long``, its message and its place), one for the list."""
+
+    def check(v: Any) -> Any:
+        if isinstance(v, (list, tuple)) and len(v) > limit:
+            context = {"field_type": "Tuple", "max_length": limit, "actual_length": len(v)}
+            raise PydanticKnownError("too_long", context)
+        return v
+
+    return BeforeValidator(check)
+
+
+class _Model(BaseModel):
+    """An IR model, which answers one issue for the members it does not hold, however many."""
+
     model_config = _CFG
+
+    @model_validator(mode="before")
+    @classmethod
+    def _first_unknown(cls, data: Any) -> Any:
+        """``data`` with the first of its unknown members and none after it: the model refuses it
+        as it refuses one alone (``extra_forbidden``, at its name) and reads no other."""
+        if isinstance(data, dict) and len(data) > 1:
+            unknown = (k for k in data if k not in cls.model_fields)
+            first = next(unknown, None)
+            if first is not None and next(unknown, None) is not None:
+                return {k: v for k, v in data.items() if k in cls.model_fields or k == first}
+        return data
+
+
+def _first_refused(v: Any) -> Any:
+    """``params`` up to its first value ``_one_refusal`` refuses, which it then holds alone: the
+    model refuses that value as it refuses it alone, at its key, and reads no value after it."""
+    if isinstance(v, dict):
+        for key, value in v.items():
+            try:
+                _one_refusal(value)
+            except PydanticCustomError:
+                return {key: value}
+    return v
+
+
+class MetricRef(_Model):
     metric: Annotated[str, Field(pattern=METRIC_PATTERN)]
-    params: dict[str, ParamValue] = Field(default_factory=dict)
+    params: Annotated[dict[str, ParamValue], BeforeValidator(_first_refused)] = Field(
+        default_factory=dict
+    )
     symbol: Symbol | None = None
     account_id: AccountId | None = None
     timeframe: str | None = None
 
 
-class Literal_(BaseModel):
+class Literal_(_Model):
     """Constant operand; ``{"const": ...}`` in JSON."""
 
     model_config = _CFG
     const: bool | int | Decimal | str
 
 
-class ArithmeticNode(BaseModel):
+class ArithmeticNode(_Model):
     model_config = _CFG
     node_id: PairedStr
     op: ArithmeticOp
     operands: Annotated[
-        tuple[Operand, ...], Field(min_length=1, max_length=MAX_ARITHMETIC_OPERANDS)
+        tuple[Operand, ...],
+        Field(min_length=1, max_length=MAX_ARITHMETIC_OPERANDS),
+        FailFast(),
+        _at_most(MAX_ARITHMETIC_OPERANDS),
     ]
 
 
@@ -186,28 +236,31 @@ Operand = Annotated[
 ]
 
 
-class Comparison(BaseModel):
+class Comparison(_Model):
     model_config = _CFG
     node_id: PairedStr
     op: ComparisonOp
     left: Operand
     right: Operand | None = None
     right2: Operand | None = None
-    set_values: tuple[str, ...] = ()
+    set_values: Annotated[tuple[str, ...], FailFast()] = ()
     tolerance: Decimal | None = None
 
 
-class BooleanNode(BaseModel):
+class BooleanNode(_Model):
     model_config = _CFG
     node_id: PairedStr
     op: BooleanOp
     children: Annotated[
-        tuple[ConditionNode, ...], Field(min_length=1, max_length=MAX_BOOLEAN_CHILDREN)
+        tuple[ConditionNode, ...],
+        Field(min_length=1, max_length=MAX_BOOLEAN_CHILDREN),
+        FailFast(),
+        _at_most(MAX_BOOLEAN_CHILDREN),
     ]
     n: Annotated[int, Field(ge=1)] | None = None
 
 
-class TemporalNode(BaseModel):
+class TemporalNode(_Model):
     model_config = _CFG
     node_id: PairedStr
     op: TemporalOp
@@ -243,7 +296,7 @@ ConditionNode = Annotated[
 ]
 
 
-class Action(BaseModel):
+class Action(_Model):
     model_config = _CFG
     node_id: PairedStr
     type: ActionType
@@ -253,14 +306,14 @@ class Action(BaseModel):
     dry_run_only: bool = False
 
 
-class RuleScope(BaseModel):
+class RuleScope(_Model):
     model_config = _CFG
     level: Literal["global", "account", "symbol", "position", "trade_group"]
-    account_ids: tuple[AccountId, ...] = ()
-    symbols: tuple[Symbol, ...] = ()
+    account_ids: Annotated[tuple[AccountId, ...], FailFast()] = ()
+    symbols: Annotated[tuple[Symbol, ...], FailFast()] = ()
     applies_to: Literal["open_positions", "pending_orders", "account", "any"] = "any"
     # SAFE DEFAULT (24-internal-schemas.md 11.5 E12): demo only. Never widen.
-    environments: tuple[Environment, ...] = ("demo",)
+    environments: Annotated[tuple[Environment, ...], FailFast()] = ("demo",)
     exclude_algo_children: bool = True
 
 
@@ -272,7 +325,7 @@ _TRIGGER_REQUIRED = {
 }
 
 
-class Trigger(BaseModel):
+class Trigger(_Model):
     model_config = ConfigDict(
         frozen=True,
         extra="forbid",
@@ -298,7 +351,7 @@ class Trigger(BaseModel):
         return self
 
 
-class RuleLimits(BaseModel):
+class RuleLimits(_Model):
     model_config = _CFG
     once: bool = False
     once_per: Literal["position", "day", "group", "rule_lifetime"] | None = None
@@ -313,7 +366,7 @@ class RuleLimits(BaseModel):
     kill_switch_on_error_count: Annotated[int, Field(ge=1)] = 5
 
 
-class Rule(BaseModel):
+class Rule(_Model):
     model_config = _CFG
     rule_id: RuleId
     version: Annotated[int, Field(ge=1)]
@@ -324,7 +377,12 @@ class Rule(BaseModel):
     scope: RuleScope
     trigger: Trigger
     conditions: ConditionNode
-    actions: Annotated[tuple[Action, ...], Field(min_length=1, max_length=MAX_ACTIONS)]
+    actions: Annotated[
+        tuple[Action, ...],
+        Field(min_length=1, max_length=MAX_ACTIONS),
+        FailFast(),
+        _at_most(MAX_ACTIONS),
+    ]
     limits: RuleLimits = Field(default_factory=RuleLimits)
     editor: Literal["form", "graph"] = "form"
     graph_layout: Annotated[dict[str, Any] | None, AfterValidator(_paired)] = None

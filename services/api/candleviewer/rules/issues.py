@@ -7,10 +7,14 @@ never the prose) and a human message that names the row/node in words.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 Severity = Literal["error", "warning"]
 IssueClass = Literal["syntax", "semantics", "safety", "performance"]
+
+#: The most issues a validation answer lists (22 `validateRule`, `compileRule`, "Bounded answer"):
+#: the first ones found, in order, beside `issues_total`, the count of every one found.
+MAX_RETURNED_ISSUES: Final = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,9 +40,12 @@ class Issue:
 
 
 class RuleCompileError(Exception):
-    """Structural compile failure: no IR is produced (maps to 422 ``rule_ir_invalid``)."""
+    """Structural compile failure: no IR is produced (maps to 422 ``rule_ir_invalid``). ``total``
+    counts every issue found, ``issues`` holding only the first of them when a collector keeps
+    no more than an answer lists (``MAX_RETURNED_ISSUES``); it defaults to their number."""
 
-    def __init__(self, issues: list[Issue]) -> None:
+    def __init__(self, issues: list[Issue], total: int | None = None) -> None:
         first = issues[0].message if issues else "invalid rule model"
-        super().__init__(f"{len(issues)} error(s) compiling the rule model: {first}")
+        self.total = len(issues) if total is None else total
+        super().__init__(f"{self.total} error(s) compiling the rule model: {first}")
         self.issues = issues

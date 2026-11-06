@@ -2562,6 +2562,11 @@
             "description": "Correlation id, `urn:cv:req:{uuid}`; matches the `X-Correlation-Id` header and the audit entry.",
             "type": "string"
           },
+          "issues_total": {
+            "description": "`rule_ir_invalid` from `compileRule` only: every error the compile found, of which `errors` lists the first 50 (`compileRule`, \"Bounded answer\").\n",
+            "minimum": 0,
+            "type": "integer"
+          },
           "recording_started_at": {
             "description": "`no_data_recorded` from `GET /market/bars` only: when recording of the symbol's trade tape began, so the client can offer the first recorded window; null when nothing was ever recorded for the symbol. Optional, additive (C-6.3).\n",
             "format": "date-time",

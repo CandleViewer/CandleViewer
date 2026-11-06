@@ -299,7 +299,7 @@ def test_compile_round_trip_match_and_divergence_reported_never_reconciled() -> 
     c, url = TestClient(app), f"/rules/{RULE_ID}/compile"
     form, graph = _jsonable(to_form_model(ir)), _jsonable(to_graph_model(ir))
     ok = c.post(url, json={"editor": "form", "model": form, "counterpart_model": graph}).json()
-    assert ok["round_trip"] == {"match": True, "diff": []}
+    assert ok["round_trip"] == {"match": True, "diff": [], "diff_total": 0}
     other = _rule("form_simple_0.json")
     bad = c.post(
         url,

@@ -263,6 +263,13 @@ class Problem(BaseModel):
     errors: Annotated[list[Error] | None, Field(description="Field-level validation failures.")] = (
         None
     )
+    issues_total: Annotated[
+        JsonInt | None,
+        Field(
+            description='`rule_ir_invalid` from `compileRule` only: every error the compile found, of which `errors` lists the first 50 (`compileRule`, "Bounded answer").\n',
+            ge=0,
+        ),
+    ] = None
     required_permissions: list[str] | None = None
     retry_after_seconds: JsonInt | None = None
     idle_locked_at: Annotated[
@@ -330,7 +337,7 @@ class Problem(BaseModel):
             description="`no_data_recorded` from `GET /market/bars` only: when recording of the symbol's trade tape began, so the client can offer the first recorded window; null when nothing was ever recorded for the symbol. Optional, additive (C-6.3).\n"
         ),
     ] = None
-    __null_refused = field_validator("detail", "instance", "errors", "required_permissions", "retry_after_seconds", "idle_locked_at", "revoked_reason", "exchange", "action_class", "challenge_id", "challenge_expires_at", "action_summary", "step_up_reason", "failures_remaining", mode="before")(_refuse_null)
+    __null_refused = field_validator("detail", "instance", "errors", "issues_total", "required_permissions", "retry_after_seconds", "idle_locked_at", "revoked_reason", "exchange", "action_class", "challenge_id", "challenge_expires_at", "action_summary", "step_up_reason", "failures_remaining", mode="before")(_refuse_null)
 
 
 class PageMeta(BaseModel):
@@ -4411,8 +4418,15 @@ class RuleValidationIssue(BaseModel):
 
 class RuleValidationResult(BaseModel):
     valid: StrictBool
-    errors: list[RuleValidationIssue]
-    warnings: list[RuleValidationIssue]
+    errors: Annotated[list[RuleValidationIssue], Field(max_length=50)]
+    warnings: Annotated[list[RuleValidationIssue], Field(max_length=50)]
+    issues_total: Annotated[
+        JsonInt | None,
+        Field(
+            description='Every error and warning found; `errors` and `warnings` list at most 50 of them together, the errors first (`validateRule`, "Bounded answer").\n',
+            ge=0,
+        ),
+    ] = None
     referenced_variables: list[str] | None = None
     referenced_actions: list[str] | None = None
     estimated_evaluations_per_minute: JsonInt | None = None
@@ -4420,7 +4434,7 @@ class RuleValidationResult(BaseModel):
         StrictBool | None,
         Field(description="True when any error or open safety warning refuses mode=armed."),
     ] = None
-    __null_refused = field_validator("referenced_variables", "referenced_actions", "estimated_evaluations_per_minute", "blocks_arming", mode="before")(_refuse_null)
+    __null_refused = field_validator("issues_total", "referenced_variables", "referenced_actions", "estimated_evaluations_per_minute", "blocks_arming", mode="before")(_refuse_null)
 
 
 class SimulateRuleRequest(BaseModel):
