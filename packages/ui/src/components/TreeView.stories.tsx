@@ -234,3 +234,34 @@ export const CopyPath: Story = {
     await expect(copies.filter((b) => b.tabIndex === 0)).toHaveLength(1);
   },
 };
+
+/**
+ * No nodes: the tree draws nothing, so the host's empty state (CMP-026) replaces the body (E13-D02 §6.4 D23). The
+ * empty state's copy is the host screen's, so this story shows the tree's half alone.
+ */
+export const Empty: Story = {
+  args: { nodes: [], initialExpanded: [] },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).queryByRole("tree")).toBeNull();
+    await expect(within(canvasElement).queryByRole("treeitem")).toBeNull();
+  },
+};
+
+const LONG =
+  "conditions › children › 0 › left › metric: unrealised_r_multiple_of_the_initial_risk_at_entry_across_all_legs";
+
+/** A label longer than the row wraps rather than clip (`05` §5 item 7); the item's name is the whole label. */
+export const LongLabel: Story = {
+  args: {
+    nodes: [{ id: "long", label: LONG, children: [{ id: "leaf", label: `${LONG} › value: 1.0` }] }],
+    initialExpanded: ["long"],
+    itemActions: (_node, { tabIndex }) => (
+      <IconButton icon="copy" label="Copy path" variant="ghost" tabIndex={tabIndex} />
+    ),
+  },
+  play: async ({ canvasElement }) => {
+    const leaf = item(canvasElement, `${LONG} › value: 1.0`);
+    await expect(leaf).toHaveAttribute("aria-level", "2");
+    await expect(leaf.querySelector(".cv-tree__label")).toHaveTextContent(`${LONG} › value: 1.0`);
+  },
+};
