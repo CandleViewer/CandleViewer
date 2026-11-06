@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { afterEach, describe, it, vi } from "vitest";
 import {
   Callout,
   ChartLegend,
+  GatedAnnounceProvider,
   RbacGate,
   formatRbacReason,
   type ChartLegendItem,
@@ -152,6 +153,112 @@ describe("ChartLegend (CMP-199)", () => {
     await userEvent.click(page.getByRole("button", { name: "Remove EMA 21" }));
     await userEvent.click(page.getByRole("button", { name: "refresh" }));
     expect(page.getByRole("button", { name: "refresh" })).toHaveFocus();
+  });
+
+  /** A host whose removal lands later (a server round trip), re-rendering `items` in between as value ticks do. */
+  const asyncHost = (): { Host: () => JSX.Element; commit: () => void; tick: () => void } => {
+    let setItems: (
+      next: (is: readonly ChartLegendItem[]) => readonly ChartLegendItem[],
+    ) => void = () => undefined;
+    let removed: string | null = null;
+    const Host = (): JSX.Element => {
+      const [items, set] = useState<readonly ChartLegendItem[]>(ITEMS);
+      setItems = set;
+      return (
+        <>
+          <button type="button">elsewhere</button>
+          <ChartLegend
+            {...props({
+              items,
+              onRemove: (id) => {
+                removed = id;
+              },
+            })}
+          />
+        </>
+      );
+    };
+    return {
+      Host,
+      tick: () => act(() => setItems((is) => is.map((i) => ({ ...i, value: (i.value ?? 0) + 1 })))),
+      commit: () => act(() => setItems((is) => is.filter((i) => i.id !== removed))),
+    };
+  };
+
+  it("keeps the focus hand-off across re-renders that still hold the removed row", async () => {
+    const { Host, tick, commit } = asyncHost();
+    await mount(<Host />);
+    await userEvent.click(page.getByRole("button", { name: "Remove EMA 21" }));
+    tick();
+    commit();
+    expect(page.getByRole("button", { name: "Remove ETHUSDT 5m" })).toHaveFocus();
+  });
+
+  it("leaves focus where the user moved it before the removal landed", async () => {
+    const { Host, commit } = asyncHost();
+    await mount(<Host />);
+    await userEvent.click(page.getByRole("button", { name: "Remove EMA 21" }));
+    await userEvent.click(page.getByRole("button", { name: "elsewhere" }));
+    commit();
+    expect(page.getByRole("button", { name: "elsewhere" })).toHaveFocus();
+  });
+
+  it("lets the focus hand-off lapse after the 10 s removal window", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const { Host, commit } = asyncHost();
+    await mount(<Host />);
+    await userEvent.click(page.getByRole("button", { name: "Remove EMA 21" }));
+    now.mockReturnValue(11_001);
+    commit();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("keeps the quick-edit's Esc inside the field: an enclosing popover does not see it", async () => {
+    // A popover or dialog host listens above the legend's React root, as Radix's dismiss layer does.
+    const outer = vi.fn<(event: KeyboardEvent) => void>();
+    document.body.addEventListener("keydown", outer);
+    const p = props({ items: [row("ema-21", { label: "EMA 21", editing: { param: "Period" } })] });
+    await mount(<ChartLegend {...p} />);
+    await userEvent.type(page.getByRole("spinbutton", { name: "Period for EMA 21" }), "{Escape}");
+    document.body.removeEventListener("keydown", outer);
+    expect(outer.mock.calls.filter(([event]) => event.key === "Escape")).toEqual([]);
+  });
+
+  it("says the gated reason once per Enter press, not per key repeat (T2-07)", async () => {
+    const announce = vi.fn<(text: string) => void>();
+    const reason = formatRbacReason("rbac.view_as", { user: "Dana" });
+    await mount(
+      <GatedAnnounceProvider announce={announce}>
+        <Callout id="n" title={reason} live="off" />
+        <RbacGate
+          form="notice"
+          noticeId="n"
+          allowed={false}
+          reason="rbac.view_as"
+          fills={{ user: "Dana" }}
+        >
+          <ChartLegend
+            {...props({
+              items: [row("ema-21", { label: "EMA 21", editing: { param: "Period" } })],
+            })}
+          />
+        </RbacGate>
+      </GatedAnnounceProvider>,
+    );
+    const field = page.getByRole("spinbutton", { name: "Period for EMA 21" });
+    fireEvent.keyDown(field, { key: "Enter" });
+    fireEvent.keyDown(field, { key: "Enter", repeat: true });
+    fireEvent.keyDown(field, { key: "Enter", repeat: true });
+    expect(announce.mock.calls).toEqual([[reason]]);
+  });
+
+  it("never shows fewer than 3 rows, however short the pane", async () => {
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(100);
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(24);
+    const items = Array.from({ length: 6 }, (_, i) => row(`ema-${i}`, { label: `EMA ${i}` }));
+    await mount(<ChartLegend {...props({ items })} />);
+    expect(page.getAllByRole("button", { name: /visible$/ })).toHaveLength(3);
+    expect(page.getByRole("button", { name: "3 more series" })).toBeTruthy();
   });
 
   it("never announces a value: values reach the legend only through props (BQ-07)", async () => {
