@@ -37,8 +37,10 @@ The orchestrator's ruling of 2026-11-03 (08:03Z), as the four plan documents sta
 - Slice 5b, on the rulings of 2026-11-04 (23:45Z): the composition before the read and after the
   settle, one walk per key per pass, the final rule completed by the walk's `c`, step 3's three
   readings and 21 Sec.13.1's rows 61 and 62; logged once, as Sec.19.137.
-- Slice 5c, on the rulings Q2 and Q6: the divergence record's action, reasons and after-state,
-  the absolute floor (PROPOSED) and the two counters; logged once, as Sec.19.138.
+- Slice 5c, on the rulings Q2, Q3, Q5 and Q6: the divergence record's action, reasons and
+  after-state, the absolute floor (PROPOSED) and the two counters; then the comparison as built, a
+  venue figure missing recorded, the volume bounded, the counter's ticket; logged once, as
+  Sec.19.138.
 
 Nothing serves the new members yet: E29-S06's later slices implement them against this contract.
 """
@@ -994,11 +996,12 @@ def test_contract_24_states_the_fold_of_slice_5bs_review() -> None:
         "record's, as the venue's `updatedTime` may move after the close.",
         "each pass compares again the settled items of its delta set (below), idempotent by the "
         "recorded pair.",
-        "That step takes the named orders first, then the venue ids an earlier step left, then the "
-        "records the read changed, then the poll's page less those, so a full page starves no "
-        "fresh settle; what it leaves past its 256 orders or its budget, but the page's, which the "
-        "poll reads again, is carried to the next pass, which it asks for, at most 1,024 an "
-        "account, any past that dropped and logged at WARNING with the account and their count.",
+        "That step takes the named orders first, then the venue ids an earlier step left or whose "
+        "comparison is owed, then the records the read changed, then the poll's page less those, "
+        "so a full page starves no fresh settle; what it leaves past its 256 orders or its budget, "
+        "but the page's, which the poll reads again, is carried to the next pass, which it asks "
+        "for, at most 1,024 an account, any past that dropped and logged at WARNING with the "
+        "account and their count.",
         "and the pieces overlap only where an order's own fills straddle a flat, with the same "
         "closes. A shared walk that a later order's fills cap is taken again for each earlier "
         "order, to its own last fill.",
@@ -1164,3 +1167,36 @@ def test_contract_24_states_the_divergence_record_and_the_floor_and_logs_slice_5
     assert [c.strip() for c in row.split("|")[2:5]] == ["decimal", "`0.01`", "process"]
     assert "| OMS | `oms_closed_pnl_divergence_withheld_total{reason}` | counter |" in doc
     assert "clears `divergent` alone, keeping the pair" in _doc("21-database-schema.md")
+
+
+def test_contract_24_states_the_comparison_as_built() -> None:
+    """The rulings Q2, Q3, Q5 and Q6 (2026-11-04 23:45Z, 2026-11-05): the order of the record and
+    the flag, a venue figure missing, the bounds, the owed set; Sec.19.138 done; 20's ticket."""
+    assert not _missing(
+        _s813(),
+        "for a new value pair it writes the record, awaits it durable, counts it, then flags the "
+        "item with that pair, in that order. The record is its own await, never inside a store "
+        "transaction, so no account lock is held across the audit WAL's `fsync`.",
+        "**A venue figure missing** at the end of the reach is itself a divergence:",
+        "is recorded with the same action and the reason `closed_pnl_venue_missing`, its venue "
+        "figure and difference null, never flagged",
+        "at most 32 records an account a pass, the rest owed; at most 8 records for one record id "
+        "in a process, whatever their pairs, past which that record writes none; and nothing while "
+        "the order lane's audit writer reports an append failure or 1,000 records uncommitted, as "
+        "the order audit has priority, the record owed.",
+        "An owed order whose composition fails is carried as any order the step leaves is, so the "
+        "1,024 bound below can drop it, logged.",
+        "A pair the process wrote last for the record counts as recorded, so a flag unwritten "
+        "after its record is retried alone;",
+    )
+    log = _between(_doc("24-internal-schemas.md"), "### 19.138 ", "\n### 19.")
+    assert not _missing(
+        log,
+        "E29-S06's comparison slice as built, on the orchestrator's rulings of 2026-11-04 (23:45Z) "
+        'and 2026-11-05: §8.13 gains "The comparison as built".',
+        "The volume is bounded (Q6, PROPOSED): 32 records an account a pass, 8 records a record id "
+        "in a process,",
+        "The counter's ticket `OmsClosedPnlDivergence` (20 §12.5) and its runbook (07 section 9) "
+        "land with the comparison (Q5).",
+    )
+    assert "Ticket — `OmsClosedPnlDivergence`" in _doc("20-architecture.md")
