@@ -1348,7 +1348,7 @@ Each row names the permission(s) and the operation(s) in `22-api-openapi.yaml` t
 ### 7.3 Enforcement rules
 
 - The UI MUST hide affordances the role lacks, but hiding is never the control; the server returns 403 regardless (SR-017, D1).
-- A denied request MUST return 403 with a stable reason code and MUST be audited; it MUST NOT reveal whether the target object exists.
+- A denied request MUST return 403 with a stable reason code and MUST be audited; it MUST NOT reveal whether the target object exists. A request naming an object outside the caller's scope is answered as a request naming a missing object is (`404 not_found`, the same body), and where that refusal is audited, a missing object's request is audited the same way, so neither the answer, its timing nor the caller's own audit view (SR-067) tells the two apart.
 - Grants are evaluated at request time; a revoked grant takes effect immediately, including terminating active WS subscriptions (SR-074) and disabling dependent rules (SR-103).
 - Capability strings are a closed enum in code — the 38 permissions listed in §7.2.0 — and the enum is **generated** from the `x-rbac` blocks in `22-api-openapi.yaml` rather than hand-maintained. Routes reference the generated enum; §7.2.2 is generated into a fixture used by the SR-151 tests, so a capability that is documented but unroutable, or a route whose permission is undocumented, fails CI (`rbac_vocabulary_single_source`, `rbac_matrix_fixture`).
 - The account dimension is applied per the `x-rbac.scope` value (§7.2.0): `granted_accounts` **narrows silently on reads** and **fails in full on writes**, so a fan-out never partially executes because of a scope gap.
