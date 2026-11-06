@@ -115,6 +115,13 @@ describe("vetUserPage", () => {
     expect(vetUserPage("[]")).toBeNull();
   });
 
+  it("never follows a cursor longer than 22's 512 characters, and follows one of 512", () => {
+    const page = (cursor: string) =>
+      vetUserPage({ items: [USER], meta: { count: 1, has_more: true, next_cursor: cursor } });
+    expect(page("c".repeat(512))).toMatchObject({ hasMore: true, nextCursor: "c".repeat(512) });
+    expect(page("c".repeat(513))).toMatchObject({ hasMore: false, nextCursor: null });
+  });
+
   it("never follows a page that has more but no cursor", () => {
     expect(
       vetUserPage({ items: [USER], meta: { count: 1, has_more: true, next_cursor: null } }),
