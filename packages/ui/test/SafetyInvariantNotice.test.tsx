@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
+import type { ReactNode } from "react";
 import { expect, within } from "storybook/test";
 import { describe, it } from "vitest";
 import { SafetyInvariantNotice } from "../src/components/index.js";
@@ -15,6 +16,10 @@ const CLAUSE =
 
 const notice = (): Promise<HTMLElement> =>
   mount(<SafetyInvariantNotice lead={LEAD} clause={CLAUSE} />);
+
+/** The text of the one `note` that `ui` renders. */
+const noteText = async (ui: ReactNode): Promise<string | null> =>
+  within(await mount(ui)).getByRole("note").textContent;
 
 describe("SafetyInvariantNotice (CMP-158), the rule editors' variant", () => {
   it("is one note: CMP-028's info callout carrying the two sentences byte for byte", async () => {
@@ -53,6 +58,58 @@ describe("SafetyInvariantNotice (CMP-158), the rule editors' variant", () => {
     expect(within(host).getByRole("note").textContent).toBe(
       `${LEAD} It is placed with the order, not after it.`,
     );
+  });
+});
+
+describe("SafetyInvariantNotice (CMP-158), the safety sentence never renders blank or partial", () => {
+  const HOST_LEAD = "The host's own lead.";
+  const HOST_CLAUSE = "The host's own clause.";
+  const canonical = `${LEAD} ${CLAUSE}`;
+
+  it("a missing sentence renders its canonical FS-1 or FS-2: no props, or undefined", async () => {
+    expect(await noteText(<SafetyInvariantNotice />)).toBe(canonical);
+    expect(await noteText(<SafetyInvariantNotice lead={undefined} clause={undefined} />)).toBe(
+      canonical,
+    );
+    expect(await noteText(<SafetyInvariantNotice clause={HOST_CLAUSE} />)).toBe(
+      `${LEAD} ${HOST_CLAUSE}`,
+    );
+    expect(await noteText(<SafetyInvariantNotice lead={HOST_LEAD} />)).toBe(
+      `${HOST_LEAD} ${CLAUSE}`,
+    );
+  });
+
+  it("an empty sentence renders its canonical FS-1 or FS-2, each on its own", async () => {
+    expect(await noteText(<SafetyInvariantNotice lead="" clause="" />)).toBe(canonical);
+    expect(await noteText(<SafetyInvariantNotice lead="" clause={HOST_CLAUSE} />)).toBe(
+      `${LEAD} ${HOST_CLAUSE}`,
+    );
+    expect(await noteText(<SafetyInvariantNotice lead={HOST_LEAD} clause="" />)).toBe(
+      `${HOST_LEAD} ${CLAUSE}`,
+    );
+  });
+
+  it("a whitespace-only sentence renders its canonical FS-1 or FS-2, each on its own", async () => {
+    const blank = " \t\n\u00a0\u2003 ";
+    expect(await noteText(<SafetyInvariantNotice lead={blank} clause={blank} />)).toBe(canonical);
+    expect(await noteText(<SafetyInvariantNotice lead="   " clause={HOST_CLAUSE} />)).toBe(
+      `${LEAD} ${HOST_CLAUSE}`,
+    );
+    expect(await noteText(<SafetyInvariantNotice lead={HOST_LEAD} clause={blank} />)).toBe(
+      `${HOST_LEAD} ${CLAUSE}`,
+    );
+  });
+
+  it("owns the separator: a host passes its clause without a leading space, one space apart", async () => {
+    const host = await mount(<SafetyInvariantNotice lead="Lead." clause="Clause." />);
+    expect(within(host).getByRole("note").textContent).toBe("Lead. Clause.");
+    // The one space is the clause element's first character, so compact reads one line (see the CSS below).
+    expect(host.querySelector(".cv-callout__title")?.textContent).toBe("Lead.");
+    expect(host.querySelector(".cv-callout__body")?.textContent).toBe(" Clause.");
+    // Outer whitespace on either sentence never doubles or drops it.
+    expect(
+      await noteText(<SafetyInvariantNotice lead={"  Lead.  "} clause={"\n Clause. "} />),
+    ).toBe("Lead. Clause.");
   });
 });
 

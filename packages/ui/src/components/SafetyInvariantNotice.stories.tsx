@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, within } from "storybook/test";
+import { expect, userEvent, within } from "storybook/test";
 import { Button } from "./Button.js";
 import { SafetyInvariantNotice } from "./SafetyInvariantNotice.js";
 
@@ -54,6 +54,12 @@ export const InRuleEditor: Story = {
     const note = within(canvasElement).getByRole("note");
     const bar = within(canvasElement).getByRole("group", { name: "Rule actions" });
     await expect(note.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The note is no Tab stop: one Tab from the page start lands on the next control, the bar's first.
+    const first = within(bar).getByRole("button", { name: "Save draft" });
+    await userEvent.tab();
+    await expect(first).toHaveFocus();
     await expect(note.contains(document.activeElement)).toBe(false);
+    // The capture is taken after the play (vr/page.ts): hand the page back without CMP-039's ring on `first`.
+    first.blur();
   },
 };
