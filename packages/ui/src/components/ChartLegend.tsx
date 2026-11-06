@@ -206,6 +206,7 @@ function QuickEdit({ item, onCommit, onClose }: QuickEditProps): JSX.Element {
         aria-invalid={invalid || undefined}
         aria-disabled={notice === null ? undefined : true}
         aria-describedby={notice?.noticeId}
+        readOnly={notice !== null}
         value={text}
         onChange={(event) => {
           setText(event.target.value);
@@ -232,7 +233,7 @@ const navId = (row: string, control: string): string => `${row}|${control}`;
  * CMP-199 ChartLegend: the per-pane DOM overlay legend, the one home for per-series visibility toggles and cursor
  * values (E11-D02 D12, A-14). Props-fed: the host adapter feeds `items` from `Pane.legend` (PROPOSED); this
  * component holds no data subscription. One roving stop (KL-01): `↑/↓` rows (never wrapping), `←/→` a row's
- * controls (a ribbon's chevron collapses / expands), `Space` toggles the row's visibility, `Enter` on the value
+ * controls (a ribbon's chevron collapses / expands), `Space` activates the focused control (the eye toggles visibility), `Enter` on the value
  * opens the quick-edit. Values are never announced; a toggle is, once, politely.
  */
 export function ChartLegend({
@@ -263,7 +264,8 @@ export function ChartLegend({
     if (legend === null || pane === null || pane === undefined) return undefined;
     const measure = (): void => {
       const rowHeight =
-        legend.querySelector<HTMLElement>(".cv-chart-legend__row")?.offsetHeight ?? 0;
+        legend.querySelector<HTMLElement>(".cv-chart-legend__row:not(.cv-chart-legend__pane)")
+          ?.offsetHeight ?? 0;
       const paneHeight = pane.clientHeight;
       setMaxRows(
         rowHeight > 0 && paneHeight > 0
@@ -276,7 +278,7 @@ export function ChartLegend({
     const observer = new ResizeObserver(measure);
     observer.observe(pane);
     return () => observer.disconnect();
-  }, []);
+  }, [isCollapsed, items.length]);
 
   const shown = maxRows === null || items.length <= maxRows ? items : items.slice(0, maxRows);
   const overflow = items.slice(shown.length);
@@ -362,8 +364,6 @@ export function ChartLegend({
     } else if (event.key === "ArrowLeft") {
       if (control === "chevron" && entry !== undefined && ribbonOpen) setRibbon(row.key, false);
       else if (c > 0) move(r, c - 1);
-    } else if (event.key === " " && entry !== undefined) {
-      toggle(entry.item);
     } else {
       return;
     }
@@ -441,6 +441,7 @@ export function ChartLegend({
               "cv-chart-legend__value-button",
               ring.className,
             )}
+            aria-label={`Edit ${item.editing?.param ?? PRIMARY_PARAM} for ${item.label}`}
             onClick={() => setEditingId(item.id)}
             {...nav("value")}
           >
@@ -463,7 +464,17 @@ export function ChartLegend({
             label={`Remove ${item.label}`}
             variant="ghost"
             {...(notice === null ? {} : { disabledReason: notice.reason })}
-            onClick={() => onRemove(item.id)}
+            onClick={() => {
+              const at = rows.findIndex((entry) => entry.key === item.id);
+              const near =
+                rows[at + 1]?.key === "more" ? rows[at - 1] : (rows[at + 1] ?? rows[at - 1]);
+              const control = near?.controls[near.controls.length - 1];
+              pendingFocus.current =
+                near === undefined || control === undefined
+                  ? navId(PANE, "chevron")
+                  : navId(near.key, control);
+              onRemove(item.id);
+            }}
             {...nav("remove")}
           />
         ) : null}
