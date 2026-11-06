@@ -400,11 +400,11 @@ are open and not accepted, and are recorded as RR-09..RR-12 in §16.1 (owner sig
 cases AC-01..AC-29 go to E26-X02 (hand-off comment on #814). Status Approved (2026-10-16; independent security review
 complete, Fable, #2681).
 
-**E22 big trades & bubbles** (`docs/security/threat-models/E22-big-trades.md`, ticket E22-X01) is
+**E22 big trades & bubbles** (`docs/security/threat-models/E22-big-trades.md`, tickets E22-X01 and E22-X02) is
 availability-first: unbounded `/market/trades` window, `min_size=0`, extreme `cluster_window_ms`, per-user
 `trades.*` subscription fan-out, per-symbol cluster-state memory, slow-consumer queues and bubble-burst
 render storms (High: D14-D19, D21). Controls SR-E22-01..15 (recommended bounds in its section 3) are
-assigned to E22-T01/T02/S02/S03/S05; abuse cases AC1-AC19 go to E22-X02 (see RSK-057).
+assigned to E22-T01/T02/S02/S03/S05; abuse cases AC1-AC19 go to E22-X02 (see RSK-057). E22-X02 (#756) verifies them against the shipped code in `docs/security/reviews/e22-big-trades-review.md` and runs the cases in `docs/security/abuse-cases/e22-big-trades.md`; the SR-E22 ids stay epic-local.
 
 **E12 bar builders, backfill & `bars` topic** (`docs/security/threat-models/E12-bars.md`, ticket E12-X01, epic #39) is
 integrity-first (objective O8): kline backfill overwriting tape-built rows (BR-07), silent history change on
