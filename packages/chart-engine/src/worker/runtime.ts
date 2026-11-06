@@ -18,6 +18,14 @@
 // refused (`ENGINE_SERIES_INCOMPATIBLE`) and the series keeps drawing. Two metrics:
 // `series_type_switch_duration_ms{target}` (the switch to the end of the next frame) and
 // `series_incompatible_combination_total{combination}`.
+import {
+  computeA11yWindow,
+  copyA11yWindow,
+  EMPTY_A11Y_WINDOW,
+  type MutableA11yWindow,
+  sameCursorWindow,
+  sameView,
+} from "../a11y/window.js";
 import { AxisModel, SAY, UPDATE } from "../axes/axis-model.js";
 import { GRID_NODE_ID } from "../axes/grid.js";
 import type { RenderBackend } from "../gl/backend.js";
@@ -234,6 +242,8 @@ interface Instance {
   viewportDirty: boolean;
   summary: string;
   a11yDirty: boolean;
+  /** E11-S13: the a11y window (E06-D03 D9); kept across the degraded-2d handoff. */
+  readonly a11y: A11yState;
   lod: LodLevels;
   lastFrameAt: number;
   /** Pointer, wheel, touch and key routing plus the glide (E11-S04). */
@@ -277,6 +287,20 @@ const hostTheme = (colors: ThemeLut): HostTheme => ({
   palette: "default",
   convention: "standard",
   colors,
+});
+
+/** Two reused windows (no allocation per frame) and the selected cursor. */
+interface A11yState {
+  readonly next: MutableA11yWindow;
+  readonly posted: MutableA11yWindow;
+  /** The selected cursor, µs; NaN follows the latest bar until E11-S13's data cursor sets it. */
+  cursorTime: number;
+}
+
+const a11yState = (): A11yState => ({
+  next: { ...EMPTY_A11Y_WINDOW },
+  posted: { ...EMPTY_A11Y_WINDOW },
+  cursorTime: Number.NaN,
 });
 
 const summarise = (timeUs: number): string => {
@@ -500,6 +524,30 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       inst.builder.patch(GRID_NODE_ID, gridRange.set("replace", 0, axes.grid.count, 0));
     }
     if ((r & UPDATE.labels) !== 0) inst.axesDirty = true;
+  }
+
+  /**
+   * E11-S13 (E06-D03 D9): posts `a11y` on the frame the hover summary, the cursor window or the
+   * visible range changed (after `viewport`; edge-triggered on bar indices, so <= 1 per frame).
+   * The query surface stays frame-synchronized with the pixels (05 §6.1); a slower cadence, such
+   * as E47-D06 R-6's (at #5443 head 7a9002db, if it merges as is), is the consumer's (PR-2).
+   */
+  function publishA11y(inst: Instance): void {
+    const a = inst.a11y;
+    const vp = inst.viewport;
+    computeA11yWindow(a.next, vp.map, vp, a.cursorTime, inst.lod);
+    if (!inst.a11yDirty && sameCursorWindow(a.next, a.posted) && sameView(a.next, a.posted)) return;
+    inst.a11yDirty = false;
+    copyA11yWindow(a.posted, a.next);
+    deps.post({
+      t: "a11y",
+      id: inst.id,
+      cursorSummary: inst.summary,
+      ...a.posted,
+      origin: "data", // PR-1 has no setCursor: the cursor only follows the data (D6)
+      viewTimeStart: vp.timeStart,
+      viewTimeEnd: vp.timeEnd,
+    });
   }
 
   /** F-13 (BQ-92): no export while the pixels cannot be trusted; the reason, never a stale PNG. */
@@ -980,6 +1028,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         viewportDirty: false,
         summary: "",
         a11yDirty: false,
+        a11y: old?.a11y ?? a11yState(),
         lod: { candles: 0, footprint: 0 },
         lastFrameAt: Number.NEGATIVE_INFINITY,
         gestures: new Gestures(viewport, scene.layout, {
@@ -1179,10 +1228,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         ...(say !== null && { say }),
       });
     }
-    if (inst.a11yDirty) {
-      inst.a11yDirty = false;
-      deps.post({ t: "a11y", id: inst.id, cursorSummary: inst.summary });
-    }
+    publishA11y(inst);
     const end = deps.now();
     const kinds = inst.kinds;
     if (kinds.pending !== null) {

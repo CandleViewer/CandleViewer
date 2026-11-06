@@ -2,6 +2,13 @@
 // runs lazily on the first frame, so the React binding needs no Suspense. Rendering runs in the
 // shared render runtime, in a worker or inline (`ChartOptions.runMode`, src/worker/host.ts); the
 // scene graph and GL backend land in E11-S01 / E11-S02 behind this same surface.
+import {
+  EMPTY_A11Y_WINDOW,
+  readA11yUpdate,
+  sameCursorWindow,
+  sameView,
+  type A11yUpdate,
+} from "../a11y/window.js";
 import { mountSurface, probeRenderProfile } from "../host/mount.js";
 import { type AxisStops, createAxisStops } from "../host/axis-stop.js";
 import { createScaleBadge } from "../host/scale-badge.js";
@@ -24,6 +31,8 @@ import {
 import { createPane, type PaneInternal } from "./pane.js";
 import { checkScaleOptions, createTimeScale } from "./scales.js";
 import type {
+  A11yWindow,
+  A11yWindowListener,
   Chart,
   ChartEvents,
   ChartOptions,
@@ -109,6 +118,9 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
   let lastStats: FrameStats | null = null;
   let lastRange = { from: 0, to: 1 };
   let stops: AxisStops | null = null; // the axis stops (E11-S06), from the first `axes` message
+  // E11-S13: the cache of the last `a11y` message the synchronous getters read (E06-D03 D9).
+  let a11y: A11yUpdate | null = null;
+  const a11yListeners = new Set<A11yWindowListener>();
 
   function emit<E extends keyof ChartEvents>(e: E, payload: ChartEvents[E]): void {
     const set = listeners.get(e);
@@ -205,8 +217,19 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
         });
         stops.update(msg);
         return;
+      case "a11y": {
+        const update = readA11yUpdate(msg);
+        if (update === null) return; // an older worker's summary-only message: keep the cache
+        const prev = a11y?.window;
+        a11y = update;
+        // A hover-only summary change never reaches the window's listeners (E06-D03 D6).
+        const same = prev !== undefined && sameCursorWindow(prev, update.window);
+        if (same && sameView(prev, update.window)) return;
+        for (const cb of [...a11yListeners]) cb(update.window, null, update.origin);
+        return;
+      }
       default:
-      // pick and a11y are the hit-test and live-region layers' (E11-S08 / E11-S13).
+      // pick is the hit-test layer's (E11-S08); the cursor summary's region is E11-S13 PR-3's.
     }
   }
 
@@ -343,14 +366,36 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
     },
     getStats: stats,
     getDomMirrorRoot: () => surface.mirrorRoot,
-    // No data plane yet (E11-T03): nothing is visible or focused until series hold bars.
-    getVisibleWindow: (): VisibleWindow | null => null,
-    getFocusedUnit: (): FocusedUnit | null => null,
+    // E11-S13: engine truth, from the worker's last `a11y` message (null while no bar is loaded).
+    getA11yWindow: (): A11yWindow => a11y?.window ?? EMPTY_A11Y_WINDOW,
+    onA11yWindowChange(cb: A11yWindowListener): Unsubscribe {
+      if (disposed) return () => undefined;
+      a11yListeners.add(cb);
+      return () => {
+        a11yListeners.delete(cb);
+      };
+    },
+    getVisibleWindow(): VisibleWindow | null {
+      if (a11y === null || a11y.window.viewLastBar < a11y.window.viewFirstBar) return null;
+      const w = a11y.window;
+      return {
+        timeStart: a11y.viewTimeStart,
+        timeEnd: a11y.viewTimeEnd,
+        firstBarIndex: w.viewFirstBar,
+        lastBarIndex: w.viewLastBar,
+      };
+    },
+    getFocusedUnit(): FocusedUnit | null {
+      const bar = a11y?.window.cursorBar ?? -1;
+      const pane = panes[0];
+      return bar < 0 || pane === undefined ? null : { kind: "bar", paneId: pane.id, barIndex: bar };
+    },
     dispose(): void {
       if (disposed) return;
       disposed = true;
       for (const pane of [...panes]) pane.remove();
       listeners.clear();
+      a11yListeners.clear();
       detachInput();
       detachSize();
       detachMotion();
