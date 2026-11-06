@@ -1,0 +1,57 @@
+/*
+ * CMP-174 AuditFilterBar (E42-D04 §4 Filters, AL-16, AL-28; `15` CMP-174). Tokens only and static: every control is
+ * a CMP-040 field with its own looks (T2 included). The fields fill their row in as many columns as fit, each at
+ * least 16rem wide (no layout token exists): CMP-047's own basis for a picker with a time, eight control heights
+ * (256 px comfortable), so From and To show the whole day beside the time well and the calendar button (a narrower
+ * track cut the date to a stub, A-5520-02). At 200 % zoom or the in-app text scale they fall to fewer columns and
+ * then one, never scrolling sideways (AL-28); `space.field.gap` between fields and between the bar's rows. The action
+ * chips wrap in a full-width row, `space.inset.xs` apart; Clear filters sits at the end of the last row. The bar's own
+ * T2 notice (a `429` with no host notice) is a `type.ui.caption` line in `color.text.secondary` (§12.1: never dimmed).
+ */
+.cv-audit-filters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-field-gap);
+  min-width: 0;
+  margin: 0;
+}
+
+.cv-audit-filters__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(16rem, 100%), 1fr));
+  gap: var(--space-field-gap);
+  align-items: start;
+}
+
+.cv-audit-filters__fields > * {
+  min-width: 0;
+}
+
+.cv-audit-filters__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-inset-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cv-audit-filters__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cv-audit-filters__notice {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+/* The notice takes CanvasText; every control keeps its own forced rendering. */
+@media (forced-colors: active) {
+  .cv-audit-filters__notice {
+    color: CanvasText;
+  }
+}

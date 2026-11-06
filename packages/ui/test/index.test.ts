@@ -6,6 +6,17 @@ import type {
   AdminLayoutProps,
   AdminStripItem,
   AuditActionTriggerProps,
+  AuditActionOption,
+  AuditDiffModel,
+  AuditDiffProps,
+  AuditGridRow,
+  AuditRowDiffProps,
+  AuditRowGridProps,
+  AuditValue,
+  AuditActorOption,
+  AuditFilterBarProps,
+  AuditFilterField,
+  AuditFilters,
   AuditMarker,
   AuditRowListProps,
   AuditRowProps,
@@ -306,8 +317,15 @@ describe("@candleviewer/ui CMP-099 PrintExportBar (E29-S04)", () => {
 describe("@candleviewer/ui audit log components (E42-S04)", () => {
   it.each([
     ["AuditActionTrigger", Atoms.AuditActionTrigger],
+    ["AuditDiff", Atoms.AuditDiff],
+    ["AuditFilterBar", Atoms.AuditFilterBar],
+    ["AuditRowDiff", Atoms.AuditRowDiff],
     ["CopyableCodeBlock", Atoms.CopyableCodeBlock],
     ["Pagination", Atoms.Pagination],
+    ["auditColumns", Atoms.auditColumns],
+    ["auditDiffModel", Atoms.auditDiffModel],
+    ["auditGridRowKey", Atoms.auditGridRowKey],
+    ["auditGridRows", Atoms.auditGridRows],
     ["auditMarkerText", Atoms.auditMarkerText],
   ])("exports %s from the package entry as a function", (_name, value) => {
     expect(typeof value).toBe("function");
@@ -316,9 +334,23 @@ describe("@candleviewer/ui audit log components (E42-S04)", () => {
   it("exports the marker's copy and each props type (checked by the typechecker)", () => {
     expect(Atoms.AUDIT_MARKER_COPY.recorded).toBe("Recorded in the audit log");
     expect(Atoms.PAGINATION_COPY.nav).toBe("Pagination");
+    expect(Atoms.AUDIT_FILTER_COPY.name).toBe("Filter the audit log");
+    expect(Atoms.AUDIT_DIFF_COPY.secret).toBe("Secret — never recorded");
+    expect(Atoms.AUDIT_GRID_COPY.hidden).toBe("not shown in your view");
     const props:
       | [
           AuditActionTriggerProps,
+          AuditActionOption,
+          AuditDiffModel,
+          AuditDiffProps,
+          AuditGridRow,
+          AuditRowDiffProps,
+          AuditRowGridProps,
+          AuditValue,
+          AuditActorOption,
+          AuditFilterBarProps,
+          AuditFilterField,
+          AuditFilters,
           AuditMarker,
           CopyableCodeBlockProps,
           PaginationLabels,

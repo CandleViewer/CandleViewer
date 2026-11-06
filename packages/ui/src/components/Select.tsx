@@ -390,6 +390,8 @@ export function Select({
             aria-invalid={control.invalid ? true : undefined}
             aria-required={control.required}
             aria-disabled={unavailable ? true : undefined}
+            // T2 is read-only too, as a T2 text field is (`readonly`): nothing it shows can change (E42-D04 §12.1).
+            aria-readonly={reason.gated ? true : undefined}
             onClick={onTriggerClick}
             onKeyDown={refusal.handlers.onKeyDown}
             onBlur={(event) => {

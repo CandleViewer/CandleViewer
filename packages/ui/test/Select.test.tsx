@@ -412,6 +412,16 @@ describe("Select (CMP-009)", () => {
     key(host, "Enter");
     expect(box(host)).toHaveAttribute("aria-expanded", "true");
   });
+
+  // E42-D04 §12.1: a T2 picker is also read-only, as a T2 text field is (`readonly`); only while gated.
+  it("T2 is read-only too (aria-readonly); an enabled or plainly disabled one is not", async () => {
+    const gated = await mount(<Host value="a" disabledReason={REASON} />);
+    expect(box(gated)).toHaveAttribute("aria-readonly", "true");
+    const enabled = await mount(<Host value="a" />);
+    expect(box(enabled)).not.toHaveAttribute("aria-readonly");
+    const disabled = await mount(<Host value="a" disabled />);
+    expect(box(disabled)).not.toHaveAttribute("aria-readonly");
+  });
 });
 
 const MANY = Array.from({ length: 30 }, (_v, i) => ({

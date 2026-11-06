@@ -79,6 +79,16 @@ interface TableColumnBase {
    * narrow column's unit ("uPnL" "(USDT)", E29-D02 §11.5's name and tooltip).
    */
   readonly headerHint?: string;
+  /**
+   * The order the rows are in by this column, which no press changes (E42-D04 D6: the audit log is newest first and
+   * the contract has no sort): the header states it with `aria-sort` and the direction's arrow, and has no button.
+   */
+  readonly order?: TableSortDirection;
+  /**
+   * The header's words name the column for assistive technology only (visually hidden), for a narrow column of
+   * controls whose header would be cut to nothing (CMP-173's 24 px expander column).
+   */
+  readonly headerHidden?: boolean;
 }
 
 /** A text column: the cell truncates with an ellipsis and keeps its full text in the DOM. */
@@ -151,8 +161,9 @@ export interface TableCellOptions {
   /** A number: end-aligned, never wrapped. */
   readonly numeric?: boolean;
   /**
-   * The cell's one control takes focus in its place, as the select box does (CMP-114's row checkbox): the cell takes
-   * no `tabindex`, and the control spreads `grid.tabIndexOf(column)`. Its own keys (Space on a box) act natively.
+   * The cell's one control takes focus in its place, as the select box does (CMP-114's row checkbox, CMP-173's
+   * expander): the cell takes no `tabindex`, and the control spreads `grid.tabIndexOf(column)`. Its own keys (Space on
+   * a box, Enter and Space on a button) act natively.
    */
   readonly widget?: boolean;
   /**
@@ -174,6 +185,13 @@ export interface TableCellOptions {
   /** The cell's description ids (`aria-describedby`). */
   readonly describedBy?: string | undefined;
   readonly className?: string | undefined;
+  /**
+   * The cell holds several controls (CMP-173's diff row: its Copy and disclosures, E42-D04 AL-3). The cell keeps its
+   * stop and its controls leave the Tab order while the grid roves: `→` moves from the cell to its first control and
+   * between them, `←` back, from the first to the cell; `↑` / `↓`, Page Up / Page Down and `Ctrl+Home` / `Ctrl+End` act
+   * from a control as from the cell; `Esc` returns to the cell. A control's other keys are its own.
+   */
+  readonly composite?: boolean;
 }
 
 /** Spread on a custom row's cell (`td`, or `th` for the row's header). */
@@ -197,6 +215,7 @@ export interface TableCellProps {
   readonly "data-pin-start"?: number | undefined;
   /** The pinned trailing column (`stickyLastColumn`). */
   readonly "data-pin-end"?: "" | undefined;
+  readonly "data-cv-composite"?: "" | undefined;
 }
 
 /** Spread on a custom row's `<tr>`. */
@@ -760,28 +779,43 @@ function pageRows(region: HTMLElement | null, cell: HTMLElement): number {
   return Math.max(1, Math.floor(view / rowHeight) - 1);
 }
 
+/** Takes the controls of `table`'s interactive and composite cells out of the Tab order, or gives them back. */
+function tameControls(table: HTMLTableElement, roving: boolean): void {
+  for (const cell of table.querySelectorAll<HTMLElement>(
+    "[data-cv-interactive], [data-cv-composite]",
+  )) {
+    for (const control of cell.querySelectorAll<HTMLElement>(TABBABLE)) {
+      const tamed = control.getAttribute("data-cv-tamed");
+      if (roving && tamed === null) {
+        control.setAttribute("data-cv-tamed", control.getAttribute("tabindex") ?? "");
+        control.tabIndex = -1;
+      } else if (!roving && tamed !== null) {
+        control.removeAttribute("data-cv-tamed");
+        if (tamed === "") control.removeAttribute("tabindex");
+        else control.setAttribute("tabindex", tamed);
+      }
+    }
+  }
+}
+
 /**
- * Takes an `interactive` cell's controls out of the Tab order while the grid roves (one Tab stop), and gives them
- * back their own `tabindex` when it stops (the stacked layout). Runs after every render: a control may mount late.
+ * Takes an `interactive` or `composite` cell's controls out of the Tab order while the grid roves (one Tab stop), and
+ * gives them back their own `tabindex` when it stops (the stacked layout). Runs after every render, and while the grid
+ * roves, on any node added under the table: a control may mount late, from the cell's own state (a disclosure inside
+ * a composite cell, E42-D04 AL-3), with no render of the table (C-5520-05).
  */
 function useTamedControls(table: RefObject<HTMLTableElement | null>, roving: boolean): void {
   useEffect(() => {
     const node = table.current;
-    if (node === null) return;
-    for (const cell of node.querySelectorAll<HTMLElement>("[data-cv-interactive]")) {
-      for (const control of cell.querySelectorAll<HTMLElement>(TABBABLE)) {
-        const tamed = control.getAttribute("data-cv-tamed");
-        if (roving && tamed === null) {
-          control.setAttribute("data-cv-tamed", control.getAttribute("tabindex") ?? "");
-          control.tabIndex = -1;
-        } else if (!roving && tamed !== null) {
-          control.removeAttribute("data-cv-tamed");
-          if (tamed === "") control.removeAttribute("tabindex");
-          else control.setAttribute("tabindex", tamed);
-        }
-      }
-    }
+    if (node !== null) tameControls(node, roving);
   });
+  useEffect(() => {
+    const node = table.current;
+    if (node === null || !roving || typeof MutationObserver === "undefined") return undefined;
+    const observer = new MutationObserver(() => tameControls(node, true));
+    observer.observe(node, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [table, roving]);
 }
 
 interface RowsInViewHandle {
@@ -1526,12 +1560,46 @@ export function Table<T>({
     return Math.max(1, r - Math.max(1, tree.posinset));
   };
 
+  /**
+   * A composite cell's own keys (E42-D04 AL-3): `→` from the cell to its first control and between its controls, `←`
+   * back, from the first control to the cell; `Esc` from a control to the cell. The ends stay. True when it took the
+   * key; the grid's own `←` from the cell, and `→` from a cell with no control, are the grid's.
+   */
+  const onCompositeKey = (event: KeyboardEvent<HTMLElement>, cell: HTMLElement): boolean => {
+    if (event.ctrlKey) return false;
+    const onCell = event.target === cell;
+    if (event.key === "Escape") {
+      if (onCell) return false;
+      event.preventDefault();
+      cell.focus();
+      return true;
+    }
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return false;
+    const controls = [...cell.querySelectorAll<HTMLElement>(TABBABLE)].filter(
+      (control) => !control.matches(":disabled") && control.closest("[hidden]") === null,
+    );
+    const stops = [cell, ...controls];
+    const at = stops.indexOf(event.target as HTMLElement);
+    if (at < 0 || (onCell && (event.key === "ArrowLeft" || controls.length === 0))) return false;
+    event.preventDefault();
+    hideEcho();
+    const next = Math.min(
+      Math.max(at + (event.key === "ArrowRight" ? 1 : -1), 0),
+      stops.length - 1,
+    );
+    stops[next]?.focus();
+    return true;
+  };
+
   const onGridKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
     if (!roving || event.defaultPrevented || event.altKey || event.metaKey || event.shiftKey)
       return;
     const cell = cellOf(tableRef.current, event.target);
     if (cell === null) return;
-    if (event.target !== cell && !cell.hasAttribute("data-cv-widget")) {
+    const composite = cell.hasAttribute("data-cv-composite");
+    if (composite && onCompositeKey(event, cell)) return;
+    // A composite cell's control leaves its row as the cell does: its other keys fall through from the cell's place.
+    if (event.target !== cell && !cell.hasAttribute("data-cv-widget") && !composite) {
       // Focus is inside an interactive cell's control: the control owns its keys, Esc gives focus back to the cell.
       if (event.key === "Escape" && !event.ctrlKey) {
         event.preventDefault();
@@ -1750,11 +1818,12 @@ export function Table<T>({
       const span = Math.max(1, Math.min(Math.trunc(options.span ?? 1), columns.length - index));
       const words = options.echo?.trim();
       const cut = options.cut?.trim();
+      // A widget cell never takes focus itself: its control does, and draws its own ring.
       const widget = options.widget === true;
       return {
         className: cx(
           "cv-table__cell",
-          roving && "cv-focus-ring cv-focus-ring--inset",
+          roving && !widget && "cv-focus-ring cv-focus-ring--inset",
           options.className,
         ),
         ...(options.header === true
@@ -1774,6 +1843,7 @@ export function Table<T>({
               "data-cv-span": span > 1 ? span : undefined,
               "data-cv-widget": widget ? "" : undefined,
               "data-cv-interactive": options.interactive === true ? "" : undefined,
+              "data-cv-composite": options.composite === true ? "" : undefined,
               tabIndex: widget ? undefined : tabFor(r, index, span),
             }
           : {}),
@@ -1923,18 +1993,23 @@ export function Table<T>({
     const { column } = gc;
     const sortable = column.sortable === true && onSortChange !== undefined;
     const direction = sort?.columnId === column.id ? sort.direction : undefined;
+    // A fixed order is stated, never offered (E42-D04 D6): `aria-sort` and its arrow, no button.
+    const fixed = sortable ? undefined : column.order;
     const pending = sortable && sortPending === column.id;
     const gated = sortable ? reasonOf(column) : undefined;
     // A block that ellipsises when the column is narrower than its words; in a grid the echo shows them whole.
     const hint = column.headerHint?.trim();
-    const label = (
-      <span className="cv-table__label" data-cv-cut={column.header}>
-        {column.header}
-        {hint === undefined || hint === "" ? null : (
-          <span className="cv-visually-hidden"> {hint}</span>
-        )}
-      </span>
-    );
+    const label =
+      column.headerHidden === true ? (
+        <span className="cv-visually-hidden">{column.header}</span>
+      ) : (
+        <span className="cv-table__label" data-cv-cut={column.header}>
+          {column.header}
+          {hint === undefined || hint === "" ? null : (
+            <span className="cv-visually-hidden"> {hint}</span>
+          )}
+        </span>
+      );
     const status =
       column.headerStatus === undefined ? null : (
         <span className="cv-table__header-status" data-tone={column.headerStatus.tone}>
@@ -1949,7 +2024,7 @@ export function Table<T>({
         className={`cv-table__header${sortable ? "" : ring}`}
         data-numeric={endAligned(column) ? "" : undefined}
         data-cv-echo={hint === undefined || hint === "" ? undefined : `${column.header} ${hint}`}
-        aria-sort={sortable ? (direction ?? "none") : undefined}
+        aria-sort={sortable ? (direction ?? "none") : fixed}
         {...role("columnheader")}
         {...at(0, c, sortable ? "widget" : "cell")}
         {...pinOf(c)}
@@ -1978,12 +2053,13 @@ export function Table<T>({
             {status}
             <SortGlyph direction={direction} pending={pending} />
           </button>
-        ) : status === null ? (
+        ) : status === null && fixed === undefined ? (
           label
         ) : (
           <span className="cv-table__head">
             {label}
             {status}
+            {fixed === undefined ? null : <SortGlyph direction={fixed} pending={false} />}
           </span>
         )}
       </th>
