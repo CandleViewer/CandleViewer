@@ -3,23 +3,27 @@ extended, not copied, on a `VirtualTimeLoop` (`audit_waits.virtual`, as s1 to s4
 bound, the reconciliation job's 30 s cadence among them, runs on fake seconds (C-13.7). Over the
 world's in-memory order store it adds:
 
-* the venue (`_venue`): the demo `FakeTradingPort` the lane's port is, on the world's wall clock;
+* the venue (`_venue`): the demo `FakeTradingPort` the lane's port is, on the world's wall clock,
+  one per world, held before the runtime starts (`Exchange`), so a process that went down before
+  it can leave the venue a create (`opened(before=)`);
 * an in-memory position store (the world's own refuses every write) and an in-memory
-  `ReconcileReads` and hand-over store, so the runtime composes reconciliation in place of its
-  stand-ins; `World(handover_store=None, reconcile_reads=None)` composes the shipped stand-ins;
+  `ReconcileReads` and hand-over store (`Handovers`, which reads back what it was given), so the
+  runtime composes reconciliation in place of its stand-ins; `World(handover_store=None,
+  reconcile_reads=None)` composes the shipped stand-ins;
 * the account's private stream on `FakeTradingPort.subscribe_private` (`streamed`);
 * the storage tier's outage switch (`Outage.down`) and the named fault doors (`door`): `send`
   (the SEND step's commit), `place` (the venue's create), `ack` (the commit of the create's answer)
   and `commit` (the next commit), each faulted through the store's own `fail_next` or the fake's
-  own `script`, so a failure is reproduced from its scenario's name alone (#1148's design note).
+  own `script`, so a failure is reproduced from its scenario's name alone (#1148's design note);
+* the lane's audit writer, whose write-ahead log can fill (`Wal`);
+* a watch on the account's passes (`passes`), observed and never changed.
 
-Slice 1 drives `place` (s5, s6), `commit` and the outage switch through the real runtime (the
-scenarios and `test_harness_guards.py`). `send` and `ack` are armed by the B1 state their step
-writes (`_STEPS`) and left as they are: slice 2's scenarios (s7 to s13) are their first use, and
-prove that mapping.
+The scenarios drive `place`, `commit` and the outage switch through the real runtime (the
+scenarios and `test_harness_guards.py`).
 
 The submit is the pipeline's (`runtime.submission`), as `placeOrder` reaches it. Demo only, no
-socket (`test_harness_guards.py`)."""
+socket (`test_harness_guards.py`). Nothing asserts on the stream consumer's host time (a row's
+lag, its `ts_ingest`): the runtime binds the consumer to the host's clock."""
 
 from __future__ import annotations
 
@@ -27,22 +31,39 @@ import asyncio
 import functools
 import inspect
 import itertools
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterator, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, NoReturn
 from uuid import UUID
 
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.domain.primitives import TsUs
 from candleviewer.exchange.base.models import FeeRate, RiskLimitTier, Wallet
+from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.oms.fakes import InMemoryOrderStore, InMemorySubmissionStore
 from candleviewer.oms.submit import SubmitOutcome
+from candleviewer.oms_reconcile_wiring import RECONCILE
 from candleviewer.oms_wiring import OmsRuntime, OmsStores
 from candleviewer.statechart.bindings import b19_reconciliation as b19
 from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.repositories.oms_handovers import (
+    AppendOutcome,
+    HandoverKind,
+    HandoverRow,
+    NewHandover,
+)
 from candleviewer.storage.repositories.orders import OrderRow
 from candleviewer.storage.repositories.positions import PositionRow
 from candleviewer.storage.repositories.recorded_stops import LIVE_STOP_STATUSES, RecordedStopRow
@@ -54,7 +75,6 @@ from tests.unit.oms import command_rig as cr
 from tests.unit.oms import stream_world
 from tests.unit.oms import test_oms_runtime as rt
 from tests.unit.oms.submit_rig import Groups, context, entry, instrument
-from tests.unit.oms.test_handovers import _Store
 
 ACCOUNT, SYMBOL, REF = cr.ACCOUNT, cr.SYMBOL, cr.ref()
 PRICE: Final = Decimal(60000)
@@ -122,6 +142,117 @@ class PassReads:
 
 
 @dataclass
+class Handovers:
+    """`oms_handovers` in memory, as `SqlAlchemyHandoverStore` keeps it (21 Sec.3.3.12): one entry
+    per account and order id, or per account and `exec_id`, an empty read counted on the entry
+    held (the first stamped once), read back in append order, decided once, pruned by id. It keeps
+    no bound: the real store's 1,000 entries an account (`HandoverStoreFull` past them) are not
+    modelled."""
+
+    clock: Callable[[], datetime] = wall
+    rows: dict[int, HandoverRow] = field(default_factory=dict)
+    ids: Iterator[int] = field(default_factory=lambda: itertools.count(1))
+
+    async def append(self, entry: NewHandover) -> AppendOutcome:
+        key = (entry.exchange_account_id, entry.kind, entry.exec_id or entry.exchange_order_id)
+        held = [r for r in self.rows.values() if _key(r) == key]
+        now = self.clock()
+        if held and entry.empty_read:
+            [row] = held
+            first = row.first_empty_read_at or now
+            self.rows[row.id] = replace(
+                row, empty_reads=row.empty_reads + 1, first_empty_read_at=first
+            )
+            return "counted"
+        if held:
+            return "held"
+        n = next(self.ids)
+        self.rows[n] = HandoverRow(
+            id=n, exchange_account_id=entry.exchange_account_id, kind=entry.kind,
+            exchange_order_id=entry.exchange_order_id, exec_id=entry.exec_id, source=entry.source,
+            record=entry.record, payload=entry.payload, empty_reads=int(entry.empty_read),
+            first_empty_read_at=now if entry.empty_read else None, decided_at=None, created_at=now,
+        )  # fmt: skip
+        return "added"
+
+    async def pending(self, account_id: UUID, kind: HandoverKind) -> tuple[HandoverRow, ...]:
+        return tuple(
+            r for r in self.rows.values() if (r.exchange_account_id, r.kind) == (account_id, kind)
+        )
+
+    async def decide(self, account_id: UUID, exec_id: str) -> bool:
+        held = [r for r in self.rows.values() if _key(r) == (account_id, "execution", exec_id)]
+        if not held or held[0].decided_at is not None:
+            return False
+        self.rows[held[0].id] = replace(held[0], decided_at=self.clock())
+        return True
+
+    async def prune(self, account_id: UUID, ids: Collection[int]) -> int:
+        gone = [
+            n for n in set(ids) if n in self.rows and self.rows[n].exchange_account_id == account_id
+        ]
+        for n in gone:
+            del self.rows[n]
+        return len(gone)
+
+
+def _key(row: HandoverRow) -> tuple[UUID, str, str]:
+    return row.exchange_account_id, row.kind, row.exec_id or row.exchange_order_id
+
+
+@dataclass
+class Wal(rt.Writer):
+    """The lane's audit writer over its write-ahead log (`audit.writer.AuditWriter`), the runtime's
+    alarm (`alarm`) its fail-closed one: once `full` (Postgres down long enough to fill the log),
+    every append is refused `AuditUnavailable` and the alarm fired, in the writer's own words, as
+    `test_writer_wal_full_with_postgres_down_refuses_never_drops` pins the writer; with `refuses`
+    off, a full log drops what it is given instead (fail open, s13's negative control)."""
+
+    full: bool = False
+    refuses: bool = True
+    alarm: Callable[[str], Awaitable[None]] | None = None
+
+    async def emit(self, action: str, **fields: Any) -> None:
+        if not self.full:
+            await super().emit(action, **fields)
+        elif self.refuses:
+            await self._refused()
+
+    async def emit_keyed(self, action: str, name: str, **fields: Any) -> None:
+        if not self.full:
+            await super().emit_keyed(action, name, **fields)
+        elif self.refuses:
+            await self._refused()
+
+    async def _refused(self) -> NoReturn:
+        cause = "audit WAL unavailable: AuditWalFull"
+        if self.alarm is not None:
+            await self.alarm(cause)
+        raise AuditUnavailable(cause)
+
+
+@dataclass(frozen=True, slots=True)
+class Pass:
+    """One pass a watch saw open (`World.passes`): its trigger, and when, on the loop's clock."""
+
+    trigger: str
+    at: float
+
+
+@dataclass
+class Passes:
+    """The account's passes from the watch on: each one opened, how many have closed, and the most
+    ever open at once."""
+
+    runs: list[Pass] = field(default_factory=list)
+    ended: int = 0
+    peak: int = 0
+
+    def of(self, trigger: str) -> list[Pass]:
+        return [run for run in self.runs if run.trigger == trigger]
+
+
+@dataclass
 class Outage:
     """The storage tier (C-13.6 #10): while `down`, every store call is refused
     `StorageTierUnavailable` before it reaches a table, as a refused connection is; an armed door
@@ -163,11 +294,18 @@ class _Switched:
 
 @dataclass
 class Exchange(rt.Venue):
-    """The adapter's service whose lane port is the chaos venue's (`VenuePort`)."""
+    """The adapter's service whose lane port is the chaos venue's (`VenuePort`): one per world, held
+    from the start, with the adapter's rate governor when one is given (`_venue`)."""
+
+    governor: TokenBucketGovernor | None = None
+    held: VenuePort = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.held = VenuePort(now_us=wall_us, governor=self.governor)
 
     def port(self, env: str) -> VenuePort:
         assert env == "demo", "the chaos suite runs on demo only (C-13.5)"
-        return VenuePort(now_us=wall_us)
+        return self.held
 
 
 @dataclass
@@ -176,7 +314,7 @@ class World(rt.World):
 
     venue: rt.Venue = field(default_factory=Exchange)
     store: InMemoryOrderStore = field(default_factory=lambda: InMemoryOrderStore(wall))
-    handover_store: Any = field(default_factory=_Store)
+    handover_store: Any = field(default_factory=Handovers)
     reconcile_reads: Any = None
     streamed: bool = False
     positions: Positions = field(default_factory=Positions)
@@ -208,9 +346,8 @@ class World(rt.World):
 
     @property
     def port(self) -> VenuePort:
-        [port] = self.venue.ports
-        assert isinstance(port, VenuePort)
-        return port
+        assert isinstance(self.venue, Exchange)
+        return self.venue.held
 
     @functools.cached_property
     def exchange(self) -> Venue:
@@ -228,11 +365,12 @@ class World(rt.World):
 
     # --- Driving it -------------------------------------------------------------------------
 
-    async def submit(self, **over: Any) -> SubmitOutcome:
+    async def submit(self, *, key: int | None = None, **over: Any) -> SubmitOutcome:
         """`placeOrder`'s pipeline: a limit buy entry, its stop and take-profit attached, under a
-        key of its own (`submit_rig.entry`), the world's next."""
+        key of its own (`submit_rig.entry`), the world's next, or `key` (a retry's)."""
+        ref = UUID(int=next(self.refs) if key is None else key)
         outcome: SubmitOutcome = await self.oms.submission.submit(
-            entry(**over), context(client_ref=UUID(int=next(self.refs)))
+            entry(**over), context(client_ref=ref)
         )
         return outcome
 
@@ -251,6 +389,7 @@ class World(rt.World):
         raise AssertionError("the reconciliation job never came to rest")
 
     async def elapse(self, seconds: float) -> None:
+        assert isinstance(asyncio.get_running_loop(), VirtualTimeLoop)  # fake seconds, never real
         await asyncio.sleep(seconds)
         await self.settle()
 
@@ -282,6 +421,45 @@ class World(rt.World):
         )  # fmt: skip
         return sum(found, 0.0)
 
+    def raised(self, severity: str) -> list[str]:
+        """What the pager took at `severity` (a `page`, an `alert`), in order."""
+        took = zip(self.pager.severities, self.pager.calls, strict=True)
+        return [summary for at, summary in took if at == severity]
+
+    def reports(self) -> list[dict[str, Any]]:
+        """Each pass's `oms.reconcile` record as the lane's writer took it (its `after_state`)."""
+        records = self.writer.records
+        return [fields["after_state"] for action, fields in records if action == RECONCILE]
+
+    def passes(self) -> Passes:
+        """A watch on the account's passes from now on: around B19's two services that open and
+        close each one (`ReconcilePhases.fetch` and `report`), each delegated as it is; none over
+        the stand-ins, which compose no pass."""
+        seen, reconcile = Passes(), self.oms._composed().reconcile
+        if reconcile is None:
+            return seen
+        assert self.job() in b19.REST_STATES  # none open now: one would go uncounted
+        phases = reconcile.phases
+        fetch, report = phases.fetch, phases.report
+
+        async def fetched(account_id: str, *, pass_id: str, trigger: str) -> Mapping[str, Any]:
+            seen.runs.append(Pass(trigger, asyncio.get_running_loop().time()))
+            seen.peak = max(seen.peak, len(seen.runs) - seen.ended)
+            try:
+                return await fetch(account_id, pass_id=pass_id, trigger=trigger)
+            except BaseException:  # a failed fetch closes its run: a retry opens one of its own
+                seen.ended += 1
+                raise
+
+        async def reported(account_id: str, **kwargs: Any) -> Mapping[str, Any]:
+            try:
+                return await report(account_id, **kwargs)
+            finally:
+                seen.ended += 1
+
+        vars(phases).update(fetch=fetched, report=reported)
+        return seen
+
     def paged(self, alert: str) -> bool:
         """Whether the pager took a `page` for the order alert `alert`, worded as the notice route
         words it (`OrderNoticesRouter`): among any others it took, so a scenario names its own."""
@@ -306,7 +484,10 @@ class World(rt.World):
         return Truth(orders, tuple(fills), tuple(positions), self.exchange.creates())
 
 
-#: Every world built in the running test; the suite's autouse fixture empties it per test.
+#: Every world built in the running test; the suite's autouse fixture empties it per test. The
+#: suite's one module-level list, and safe: a process runs one test at a time (an xdist worker is a
+#: process of its own), the fixture empties it before and after each, and only `unchecked` reads it
+#: (the fixture, and its guard test), so no world outlives its test here.
 BUILT: list[World] = []
 
 
@@ -316,9 +497,12 @@ def unchecked() -> list[World]:
 
 
 @asynccontextmanager
-async def opened(**over: Any) -> AsyncIterator[World]:
+async def opened(
+    before: Callable[[World], Awaitable[None]] | None = None, **over: Any
+) -> AsyncIterator[World]:
     """A demo world whose runtime is ready, the account's startup pass at rest: the account
-    seeded with its key, its instrument, quote, wallet and fee rate; the runtime started as
+    seeded with its key, its instrument, quote, wallet and fee rate; `before`, a process that ran
+    before this one over the same store and venue; the runtime started as
     `test_oms_runtime.started` starts it, and stopped at the end."""
     world = World(**over)
     InMemorySubmissionStore(world.store).seed_account(REF)
@@ -340,6 +524,8 @@ async def opened(**over: Any) -> AsyncIterator[World]:
     )  # fmt: skip
     for flag in world.flags:
         flag.read()
+    if before is not None:
+        await before(world)
     world.oms = world.runtime(now=wall)
     async with rt.started(world.oms):
         await world.oms.wait_ready()
