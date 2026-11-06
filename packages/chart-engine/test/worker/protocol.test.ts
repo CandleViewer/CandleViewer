@@ -53,6 +53,11 @@ const valid: ToWorker[] = [
     cmd: { k: "setPriceScale", pane: 0, mode: "log", auto: false, marginTop: 0.45 },
   },
   { t: "command", id: 1, cmd: { k: "export", reqId: 1 } },
+  // E11-S09 (BQ-1 to BQ-3): stable pane keys; a share in (0, 1].
+  { t: "command", id: 1, cmd: { k: "addPane", pane: 1, share: 0.25 } },
+  { t: "command", id: 1, cmd: { k: "removePane", pane: 1 } },
+  { t: "command", id: 1, cmd: { k: "setPaneShares", shares: [[0, 0.6]] } },
+  { t: "command", id: 1, cmd: { k: "setPaneCollapsed", pane: 2, collapsed: true } },
   { t: "command", id: 1, cmd: { k: "release" } },
 ];
 
@@ -147,6 +152,25 @@ describe("Scenario: A malformed message cannot kill the worker (validation)", ()
     ).map(([name, f]): [string, object, string] => [
       `a setPriceScale with ${name}`,
       { t: "command", id: 1, cmd: { k: "setPriceScale", pane: 0, ...f } },
+      "malformed command",
+    ]),
+    ...(
+      [
+        ["addPane with a zero share", { k: "addPane", pane: 1, share: 0 }],
+        ["addPane with a negative key", { k: "addPane", pane: -1 }],
+        ["addPane with a key over the bound", { k: "addPane", pane: 0x10000 }],
+        ["removePane with a key over the bound", { k: "removePane", pane: 0x10000 }],
+        ["setPaneShares with a share over 1", { k: "setPaneShares", shares: [[0, 1.5]] }],
+        ["setPaneShares with a bare number", { k: "setPaneShares", shares: [0.5] }],
+        [
+          "setPaneShares over the pane bound",
+          { k: "setPaneShares", shares: Array(65).fill([0, 1]) },
+        ],
+        ["setPaneCollapsed without a boolean", { k: "setPaneCollapsed", pane: 0, collapsed: 1 }],
+      ] as const
+    ).map(([name, c]): [string, object, string] => [
+      `an ${name}`,
+      { t: "command", id: 1, cmd: c },
       "malformed command",
     ]),
     ...(["touch", "wheel", "key"] as const).map((kind): [string, object, string] => [
