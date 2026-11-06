@@ -30,7 +30,7 @@ import types
 import typing
 import warnings
 from collections.abc import Callable, Iterator
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 from typing import Any
 from uuid import UUID
 
@@ -302,6 +302,11 @@ def _api_keys_modules(root: Path) -> Iterator[tuple[Path, ast.Module]]:
             yield path.relative_to(root), tree
 
 
+def _key(rel: PurePath, line: int) -> str:
+    """A finding's `path:line` key, POSIX-separated on every OS (#3531)."""
+    return f"{rel.as_posix()}:{line}"
+
+
 def _prose(tree: ast.Module) -> set[ast.expr]:
     """Bare expression statements (docstrings): prose, not code."""
     return {n.value for n in ast.walk(tree) if isinstance(n, ast.Expr)}
@@ -315,7 +320,7 @@ def _api_keys_sql(root: Path = _PKG) -> list[tuple[str, str]]:
     for rel, tree in _api_keys_modules(root):
         prose = _prose(tree)
         found += [
-            (f"{rel}:{n.lineno}", n.value)
+            (_key(rel, n.lineno), n.value)
             for n in ast.walk(tree)
             if isinstance(n, ast.Constant) and isinstance(n.value, str) and n not in prose
             if "api_keys" in n.value.lower() and _SQL_WRITE.search(n.value)
@@ -445,7 +450,7 @@ def _api_keys_table_uses(root: Path = _PKG, allowed: frozenset[Path] = _TABLE_US
             continue
         skipped = _prose(tree) | (_pinned_keys(tree) if rel == _PRIVILEGE_TABLE else set())
         uses |= {
-            f"{rel}:{line}"
+            _key(rel, line)
             for n in ast.walk(tree)
             if n not in skipped and (line := _api_keys_line(n)) is not None
         }
@@ -762,3 +767,11 @@ def test_writes_to_reads_exactly_the_assigned_columns_whatever_the_expressions(
     sql = f"{head} SET {', '.join(text for _, text in assignments)}{tail}"
     assigned = frozenset(c for columns, _ in assignments for c in columns)
     assert writes_to(sql) == [SqlWrite("update", assigned)]
+
+
+def test_tripwire_keys_are_posix_separated_on_every_os() -> None:
+    """#3531: a Windows path's key is the same `dir/file.py:line` the scans compare against."""
+    assert _key(PureWindowsPath("migrations", "versions", "0001_init.py"), 7) == (
+        "migrations/versions/0001_init.py:7"
+    )
+    assert _key(Path("migrations") / "0001_init.py", 3) == "migrations/0001_init.py:3"
