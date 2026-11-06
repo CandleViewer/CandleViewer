@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "../support/pack";
 import { buildCspPolicy } from "@candleviewer/config/csp-policy";
 import { stubSession } from "../support/api";
 
@@ -28,7 +29,7 @@ async function recordViolations(page: Page): Promise<void> {
 const violations = (page: Page): Promise<Violation[]> =>
   page.evaluate(() => (globalThis as unknown as { cvCspViolations: Violation[] }).cvCspViolations);
 
-test("the built page carries exactly the shared meta policy, strict style-src", async ({
+test("the built page carries exactly the shared meta policy, strict style-src @ga-regression @ga-area-shell", async ({
   page,
 }) => {
   await page.goto("/login");
@@ -40,7 +41,7 @@ test("the built page carries exactly the shared meta policy, strict style-src", 
   expect(meta).toContain("style-src 'self';");
 });
 
-test("the listener is live: an injected inline script and <style> are blocked and reported", async ({
+test("the listener is live: an injected inline script and <style> are blocked and reported @ga-regression @ga-area-shell", async ({
   page,
 }) => {
   await recordViolations(page);
@@ -69,7 +70,7 @@ test("the listener is live: an injected inline script and <style> are blocked an
     });
 });
 
-test("the sign-in screen raises no violation", async ({ page }) => {
+test("the sign-in screen raises no violation @ga-regression @ga-area-shell", async ({ page }) => {
   await recordViolations(page);
   await page.goto("/login");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
@@ -87,7 +88,9 @@ const SCREENS = [
 ] as const;
 
 for (const path of SCREENS) {
-  test(`${path} (owner) raises no securitypolicyviolation`, async ({ page }) => {
+  test(`${path} (owner) raises no securitypolicyviolation @ga-regression @ga-area-shell`, async ({
+    page,
+  }) => {
     await recordViolations(page);
     await stubSession(page, { role: "owner" });
     await page.goto(path);

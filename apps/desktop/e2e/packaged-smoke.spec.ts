@@ -15,7 +15,7 @@ import {
 
 const EXECUTABLE = process.env["CV_PACKAGED_EXECUTABLE"] ?? "";
 
-test("@plan-EL-3 the packaged shell boots over app:// with SR-110, SR-112 and its OS sandbox", async () => {
+test("@plan-EL-3 the packaged shell boots over app:// with SR-110, SR-112 and its OS sandbox @ga-regression @ga-area-shell", async () => {
   expect(EXECUTABLE, "CV_PACKAGED_EXECUTABLE is not set").not.toBe("");
   const shell = await launchShell({ executablePath: EXECUTABLE });
   const { app, win } = shell;

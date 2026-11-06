@@ -7,7 +7,7 @@ import {
 } from "@candleviewer/fixtures/e2e";
 import { ROUTE_MANIFEST } from "../../src/routes/manifest";
 import { stubSession } from "../support/api";
-import { expect, test } from "./fixtures";
+import { expect, test } from "../support/pack";
 
 // The claims `/me` carries for each role: the server's grants (`role_permissions` of the generated
 // RBAC seed, the owner's `*` expanded to every code, as db/seed.py does), so a screen that reads its
@@ -33,7 +33,9 @@ const claims = (role: string): readonly string[] => {
 
 for (const route of ROUTE_MANIFEST)
   for (const role of ROLES)
-    test(`@plan-RM-1 ${route.id} ${route.path} as ${role}`, async ({ page }) => {
+    test(`@plan-RM-1 ${route.id} ${route.path} as ${role} @ga-regression @ga-area-shell`, async ({
+      page,
+    }) => {
       const expected = ROUTE_EXPECTATIONS[route.id]?.[role];
       expect(expected, `${route.id} has no declared outcome for ${role}`).toBeDefined();
       await stubSession(page, { role });

@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./support/pack";
 import AxeBuilder from "@axe-core/playwright";
 import { AXE_GATE_TAGS } from "./a11y/tags";
 import { stubNoViewAs, stubSessionsList } from "./support/api";
@@ -118,7 +119,7 @@ test("not-assessed screens are still placeholders (fails when one ships: audit i
 });
 
 // SCR-002 has no page of its own: SCR-001's password step answered `mfa_required` brings it up in place.
-test("SCR-002 after mfa_required: axe serious/critical in idle, invalid-code and expired-challenge", async ({
+test("SCR-002 after mfa_required: axe serious/critical in idle, invalid-code and expired-challenge @ga-regression @ga-area-auth", async ({
   page,
 }) => {
   await stub(page);
@@ -174,7 +175,9 @@ for (const { scr, path, shipped, marker, scannedIn } of E09_SCREENS) {
 }
 
 for (const { scr, path } of SCANNED_HERE) {
-  test(`${scr}: reflow at 320px, no horizontal scroll (SC 1.4.10)`, async ({ page }) => {
+  test(`${scr}: reflow at 320px, no horizontal scroll (SC 1.4.10) @ga-regression @ga-area-auth`, async ({
+    page,
+  }) => {
     await stub(page);
     await page.setViewportSize({ width: 320, height: 640 });
     await page.goto(path);
@@ -185,7 +188,9 @@ for (const { scr, path } of SCANNED_HERE) {
     expect(overflow).toBeLessThanOrEqual(0);
   });
 
-  test(`${scr}: reduced motion leaves no running animations (SC 2.3.3)`, async ({ page }) => {
+  test(`${scr}: reduced motion leaves no running animations (SC 2.3.3) @ga-regression @ga-area-auth`, async ({
+    page,
+  }) => {
     await stub(page);
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto(path);
@@ -209,7 +214,9 @@ const TITLES: ReadonlyArray<readonly [string, string]> = [
   ["/no-such-page", "Not found - CandleViewer"],
 ];
 
-test("every audited route sets its own page title (SC 2.4.2)", async ({ page }) => {
+test("every audited route sets its own page title (SC 2.4.2) @ga-regression @ga-area-auth", async ({
+  page,
+}) => {
   await stub(page);
   for (const [path, title] of TITLES) {
     await page.goto(path);
@@ -270,12 +277,14 @@ async function walk(page: Page, check: () => Promise<void>): Promise<void> {
   await check();
 }
 
-test("SCR-017 enrolment: axe clean at every wizard step", async ({ page }) => {
+test("SCR-017 enrolment: axe clean at every wizard step @ga-regression @ga-area-auth @US-ONB-003", async ({
+  page,
+}) => {
   await stubWizard(page);
   await walk(page, async () => expect(await seriousAxe(page)).toEqual([]));
 });
 
-test("SCR-017 enrolment: secret and recovery codes are readable text for screen readers", async ({
+test("SCR-017 enrolment: secret and recovery codes are readable text for screen readers @ga-regression @ga-area-auth @US-ONB-003", async ({
   page,
 }) => {
   await stubWizard(page);
@@ -284,7 +293,7 @@ test("SCR-017 enrolment: secret and recovery codes are readable text for screen 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("You are set up");
 });
 
-test("SCR-017 enrolment: TOTP secret is selectable text, not only a QR (SC 1.1.1)", async ({
+test("SCR-017 enrolment: TOTP secret is selectable text, not only a QR (SC 1.1.1) @ga-regression @ga-area-auth @US-ONB-003", async ({
   page,
 }) => {
   await stubWizard(page);
@@ -295,7 +304,7 @@ test("SCR-017 enrolment: TOTP secret is selectable text, not only a QR (SC 1.1.1
   await expect(page.getByText("AAAA")).toBeVisible();
 });
 
-test("SCR-017 SC 3.3.1: rejected password and code are announced via role=alert", async ({
+test("SCR-017 SC 3.3.1: rejected password and code are announced via role=alert @ga-regression @ga-area-auth @US-ONB-003", async ({
   page,
 }) => {
   await stubWizard(page, { reject: true });
@@ -308,7 +317,7 @@ test("SCR-017 SC 3.3.1: rejected password and code are announced via role=alert"
   expect(await seriousAxe(page)).toEqual([]);
 });
 
-test("SCR-017: reflow at 320 px and 200% zoom on every step (SC 1.4.10 / 1.4.4)", async ({
+test("SCR-017: reflow at 320 px and 200% zoom on every step (SC 1.4.10 / 1.4.4) @ga-regression @ga-area-auth @US-ONB-003", async ({
   page,
 }) => {
   await stubWizard(page);
@@ -319,7 +328,7 @@ test("SCR-017: reflow at 320 px and 200% zoom on every step (SC 1.4.10 / 1.4.4)"
   }
 });
 
-test("SCR-017: reduced motion leaves no running animation on any step (SC 2.3.3)", async ({
+test("SCR-017: reduced motion leaves no running animation on any step (SC 2.3.3) @ga-regression @ga-area-auth @US-ONB-003", async ({
   page,
 }) => {
   await stubWizard(page);

@@ -135,6 +135,8 @@
 /apps/desktop/src/main/csp.ts           @CandleViewer/security @CandleViewer/devsecops @basiltt
 /apps/web/index.html                    @CandleViewer/security @CandleViewer/frontend @basiltt
 /apps/web/test/e2e-egress.test.ts       @CandleViewer/security @CandleViewer/frontend @basiltt
+# E49-Q01 (#1335): the include list that runs the e2e egress check above.
+/apps/web/vitest.config.mjs             @CandleViewer/security @CandleViewer/frontend @basiltt
 /tools/ci/electron_hardening_*          @CandleViewer/security @CandleViewer/devsecops @basiltt
 
 # ---------------------------------------------------------------------------
@@ -157,6 +159,8 @@
 /packages/protocol/                     @CandleViewer/architecture @CandleViewer/backend @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
 /packages/config/                       @CandleViewer/devsecops @CandleViewer/frontend @basiltt
+# E49-Q01 (#1335): the loopback pattern the e2e egress guard and its static check trust.
+/packages/fixtures/src/e2e/egress.ts    @CandleViewer/security @CandleViewer/frontend @basiltt
 
 # ---------------------------------------------------------------------------
 # Backend monolith

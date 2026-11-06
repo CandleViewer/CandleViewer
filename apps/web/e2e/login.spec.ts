@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./support/pack";
 import AxeBuilder from "@axe-core/playwright";
 
 // E09-S01 (#1605): SCR-001's states + SCR-004. API mocked at the network layer.
@@ -21,7 +22,9 @@ async function fill(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Sign in" }).click();
 }
 
-test("idle: axe clean, keyboard reachable", async ({ page }) => {
+test("idle: axe clean, keyboard reachable @ga-regression @ga-area-auth @US-ONB-001", async ({
+  page,
+}) => {
   await page.goto("/login");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   expect(await serious(page)).toEqual([]);
@@ -30,7 +33,9 @@ test("idle: axe clean, keyboard reachable", async ({ page }) => {
   await expect(page.getByLabel("Password", { exact: true })).toBeFocused();
 });
 
-test("invalid: uniform message, focus on alert, axe clean", async ({ page }) => {
+test("invalid: uniform message, focus on alert, axe clean @ga-regression @ga-area-auth @US-ONB-001", async ({
+  page,
+}) => {
   await page.route("**/api/v1/auth/login", (r) => r.fulfill(json({}, 401)));
   await page.goto("/login");
   await fill(page);
@@ -41,7 +46,7 @@ test("invalid: uniform message, focus on alert, axe clean", async ({ page }) => 
   expect(await serious(page)).toEqual([]);
 });
 
-test("submitting: fields read-only and submit inert while the request is pending", async ({
+test("submitting: fields read-only and submit inert while the request is pending @ga-regression @ga-area-auth @US-ONB-001", async ({
   page,
 }) => {
   let release: () => void = () => undefined;
@@ -67,7 +72,9 @@ test("submitting: fields read-only and submit inert while the request is pending
   expect(posts).toBe(1);
 });
 
-test("disabled or locked account: the one failure string (SR-014)", async ({ page }) => {
+test("disabled or locked account: the one failure string (SR-014) @ga-regression @ga-area-auth @US-ONB-001", async ({
+  page,
+}) => {
   await page.route("**/api/v1/auth/login", (r) =>
     r.fulfill(json({ code: "unauthenticated" }, 401)),
   );
@@ -78,7 +85,9 @@ test("disabled or locked account: the one failure string (SR-014)", async ({ pag
   );
 });
 
-test("rate-limited: remaining time shown, submit aria-disabled", async ({ page }) => {
+test("rate-limited: remaining time shown, submit aria-disabled @ga-regression @ga-area-auth @US-ONB-001", async ({
+  page,
+}) => {
   await page.route("**/api/v1/auth/login", (r) =>
     r.fulfill(json({}, 429, { "Retry-After": "900" })),
   );
@@ -92,14 +101,16 @@ test("rate-limited: remaining time shown, submit aria-disabled", async ({ page }
   expect(await serious(page)).toEqual([]);
 });
 
-test("server unreachable", async ({ page }) => {
+test("server unreachable @ga-regression @ga-area-auth @US-ONB-001", async ({ page }) => {
   await page.route("**/api/v1/auth/login", (r) => r.abort());
   await page.goto("/login");
   await fill(page);
   await expect(page.getByRole("alert")).toContainText("Cannot reach the server");
 });
 
-test("SCR-004 forced password change", async ({ page }) => {
+test("SCR-004 forced password change @ga-regression @ga-area-auth @US-ONB-001", async ({
+  page,
+}) => {
   await page.route("**/api/v1/auth/password", (r) =>
     r.fulfill({
       status: 200,

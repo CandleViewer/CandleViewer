@@ -1,7 +1,8 @@
 // E17-Q04 (#569), web shell: the two rows 23-ws-protocol.md section 16.4 names (C8 hidden tab, C12 kill switch and
 // shutdown notice). A browser tab is hidden through the page's own visibility API, as a background tab reports it;
 // the Electron copy, which hides the window itself, is the pack's parked row E-1.
-import { expect, test, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "../support/pack";
 import {
   hiddenTabRestoredWithoutSnapshot,
   killSwitchFrameShowsOrderEntryOff,
@@ -30,7 +31,7 @@ async function setVisibility(page: Page, hidden: boolean): Promise<void> {
   }, hidden);
 }
 
-test(`Q04-N01 C8: a hidden then restored tab sends only heartbeats, no new snapshot ${PACK}`, async ({
+test(`Q04-N01 C8: a hidden then restored tab sends only heartbeats, no new snapshot @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("C8", "D02-row-2", "AC-1");
@@ -43,7 +44,7 @@ test(`Q04-N01 C8: a hidden then restored tab sends only heartbeats, no new snaps
   });
 });
 
-test(`Q04-N02 C12: a kill_switch frame turns order entry off, said once, no REST call ${PACK}`, async ({
+test(`Q04-N02 C12: a kill_switch frame turns order entry off, said once, no REST call @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("C12", "D02-row-17", "WS-E06", "AC-1");
@@ -51,7 +52,7 @@ test(`Q04-N02 C12: a kill_switch frame turns order entry off, said once, no REST
   await killSwitchFrameShowsOrderEntryOff({ page, harness });
 });
 
-test(`Q04-N03 C12: a shutdown_notice turns order entry off, said once ${PACK}`, async ({
+test(`Q04-N03 C12: a shutdown_notice turns order entry off, said once @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("C12", "D02-row-8", "AC-1");
@@ -59,7 +60,7 @@ test(`Q04-N03 C12: a shutdown_notice turns order entry off, said once ${PACK}`, 
   await shutdownNoticeShowsOrderEntryOff({ page, harness });
 });
 
-test(`Q04-N04 C12 after a reconnect: the kill switch is what auth_ok says, never the old mirror ${PACK}`, async ({
+test(`Q04-N04 C12 after a reconnect: the kill switch is what auth_ok says, never the old mirror @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("C12", "D02-row-16", "WS-E06", "AC-3");

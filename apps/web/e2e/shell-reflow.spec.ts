@@ -1,10 +1,10 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./support/pack";
 import { stubSession } from "./support/api";
 
 // E10-Q03 (#302) F-6 (SC 1.4.10): 400 % zoom on a 1280 x 1024 window is a 320 x 256 CSS px viewport. The wrapped
 // TopBar and the StatusBar used to leave `main` no height there, so the rail, the workspace and the drawer were
 // all 0 px tall and unreachable; the shell now grows with its content and the page scrolls vertically.
-test("E10-Q03 reflow at 320 x 256 CSS px: rail, workspace and drawer keep a height, no horizontal scroll", async ({
+test("E10-Q03 reflow at 320 x 256 CSS px: rail, workspace and drawer keep a height, no horizontal scroll @ga-regression @ga-area-shell", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 256 });
@@ -77,7 +77,7 @@ test("E10-Q03 normal size 1280 x 800: no page-level scroll (A11Y-F-0035, expecte
 
 // 1280 x 400 is wide but short: it matches useReflow's (max-height: 25rem), so the narrow branch applies. `main` keeps
 // at least the 16rem minimum, nothing is 0 px, and the page (not the canvas) scrolls.
-test("E10-Q03 wide but short 1280 x 400: main keeps its 16rem minimum, the page scrolls, nothing is 0 px", async ({
+test("E10-Q03 wide but short 1280 x 400: main keeps its 16rem minimum, the page scrolls, nothing is 0 px @ga-regression @ga-area-shell", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 400 });

@@ -770,6 +770,15 @@ ran.
   never go over WS matched no specs — either the tag was renamed/removed by
   accident or the harness itself regressed. This must never silently pass;
   restore the tag or the specs it should match.
+- **CI-E2E-003** (GA regression pack map out of step, `apps/web/test/e2e-ga-pack.test.ts` in
+  `unit-frontend`): a Must story of `docs/plan/11-user-stories.md` is neither cited by a pack test nor
+  in `docs/qa/e49-ga-regression-gaps.md`, a gaps row names a covered story or lacks a field, a cited
+  `US-<D>-<nnn>` id is not a heading, the nightly record names no pack test, or the generated table of
+  `docs/qa/e49-ga-regression-pack.md` is stale. Fix the tag or the gaps row it names; for a stale
+  table, run the test with `CV_GA_MAP_WRITE=1` and commit the page.
+- **CI-E2E-004** (GA regression pack tag rule): a test titled `@ga-regression` is `fixme`, `skip`,
+  `fail` or `@flaky`, or lacks exactly one known `@ga-area-<slug>`. Untag a parked or quarantined test
+  (its area row in the map page says why); never tag around the rule.
 - **CI-E2E-005** (e2e egress check failed, `apps/web/test/e2e-egress.test.ts` in
   `unit-frontend`, E49-Q01): an e2e source under `apps/web/e2e` or `apps/desktop/e2e` names a URL
   whose host is not loopback by the `isLocal` pattern (`packages/fixtures/src/e2e/egress.ts`), or a
@@ -777,7 +786,7 @@ ran.
   `apps/web/e2e/support/pack.ts`; a desktop one must launch through `support/shell.ts`). Point the
   URL at loopback or a stub route. A URL the test never fetches (an RFC 7807 problem type id, a
   probe the app must refuse) may take `// e2e-egress: <reason>` alone on the line above it, and only
-  when its host is a reserved name that never resolves (`.invalid`, `.test`, `.example`, `.local`,
+  when its host is a reserved name (`.invalid`, `.test`, `.example`, `.local`,
   `.localhost`, `example.com`/`.net`/`.org`); a real host stays red. A host built by concatenation
   fails. Never add a host to the check's allowlist without the security CODEOWNER (the file has a
   CODEOWNERS line), and never `bybit.com` or `bytick.com`: the check refuses them in a URL or a

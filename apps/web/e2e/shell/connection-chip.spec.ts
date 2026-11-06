@@ -8,7 +8,7 @@
 import { stubSession } from "../support/api";
 import { seriousAxe } from "../support/axe";
 import { installWsHarness } from "../support/wsHarness";
-import { expect, test } from "./fixtures";
+import { expect, test } from "../support/pack";
 
 const DOWN = { kind: "exchange_state", public_ws: "disconnected", private_ws: "connected" };
 const BACK = { kind: "exchange_state", public_ws: "connected", private_ws: "connected" };
@@ -21,7 +21,7 @@ const SATURATED = {
 };
 const ROW = "Exchange feed down — the server is restoring the connection.";
 
-test("FS-1: the exchange's public feed down reads on the chip, and its recovery reads Live", async ({
+test("FS-1: the exchange's public feed down reads on the chip, and its recovery reads Live @ga-regression @ga-area-shell", async ({
   page,
 }) => {
   // Two sockets, a reconnect backoff and two contrast-on axe scans: about 21 s on a loaded host,
@@ -59,7 +59,7 @@ test("FS-1: the exchange's public feed down reads on the chip, and its recovery 
   await expect(polite.filter({ hasText: ROW })).toHaveCount(0); // the row has gone with its condition
 });
 
-test("row 5: a saturated link reads Delayed, and its fill passes axe with colour contrast on", async ({
+test("row 5: a saturated link reads Delayed, and its fill passes axe with colour contrast on @ga-regression @ga-area-shell", async ({
   page,
 }) => {
   await stubSession(page, { role: "owner" });
