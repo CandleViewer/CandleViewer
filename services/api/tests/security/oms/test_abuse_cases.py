@@ -340,18 +340,20 @@ class _Tickers:
         self.held.remove(symbol)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_PER_USER.format(
-    5, "the reference price's demand for new symbols"))  # fmt: skip
+@pytest.mark.xfail(strict=True, raises=(AssertionError, TypeError), reason=(
+    "X02-R5 (#1152): the reference price's budget of new symbols is kept per principal "
+    "(CR-S3E4-02)"))  # fmt: skip
 def test_982_row_2_one_principals_new_symbols_leave_another_principals_demand_admitted() -> None:
     """The row posted on #982 on 2026-10-23 (CR-S3E4-02): the window's budget of new symbols is
     kept per principal, so one principal's cold symbols leave another's market order its price.
-    `asked` names no principal: the pin asks as the runtime does."""
+    Each ask names its principal, as #1152's control must take it: until `asked` takes one, the
+    `TypeError` is the pin's failure mode, as the budget's `AssertionError` is after."""
     tickers = _Tickers()
-    demand = ReferenceDemand(tickers, monotonic=lambda: 0.0)
+    demand: Any = ReferenceDemand(tickers, monotonic=lambda: 0.0)  # `principal` is #1152's
     symbols = [f"COLD{n}USDT" for n in range(REFERENCE_DEMAND_NEW + 1)]
     for symbol in symbols[:-1]:  # one principal's new symbols, the whole window's budget
-        demand.asked(symbol, priced=False)
-    demand.asked(symbols[-1], priced=False)  # another principal's
+        demand.asked(symbol, priced=False, principal="manager-1")
+    demand.asked(symbols[-1], priced=False, principal="manager-2")
     assert tickers.held[-1:] == symbols[-1:], tickers.held
 
 

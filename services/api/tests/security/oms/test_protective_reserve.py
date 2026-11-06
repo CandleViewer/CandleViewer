@@ -23,12 +23,16 @@ import pytest
 
 from candleviewer.exchange.base.errors import RateBudgetExceededError
 from candleviewer.exchange.base.models import RateLane
+from candleviewer.exchange.bybit import trading
 from candleviewer.exchange.bybit.config import EndpointClass
 from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.trading import CRITICAL_WAIT_S, DEFAULT_ENTRY_WAIT_S, POLL_WAIT_S
 
 A, B = "100001", "200002"  # two UIDs of one process's governor
 ORDER: Final = EndpointClass.ORDER
+#: A stop attach as the adapter sends it (`set_trading_stop`: the position class, `critical`), not
+#: as a cancel's order-class call, so #859's slice has the input it keys on (X02-R2).
+ATTACH: Final = trading.ENDPOINTS["set_trading_stop"]
 #: Each case's budget, compressed: a UID's order bucket, or the process's IP bucket.
 UID_BUDGET: Final = {"default_capacity": 2.0, "default_refill_per_s": 1.0}
 IP_BUDGET: Final = {"default_capacity": 100.0, "default_refill_per_s": 100.0, "ip_budget_per_5s": 5}
@@ -59,13 +63,14 @@ def _lane(gov: TokenBucketGovernor, uid: str, lane: RateLane, wait: float, n: in
 
 
 #: What fills the budget ahead of the stop, by case: AC-17 a UID's entries and background polls;
-#: AC-18 its cancels (risk-reducing, so `critical` too); AC-30 another UID's entries, polls and
-#: cancels and a public client's market-data call on the process's IP bucket.
+#: AC-18 its cancels (`critical` too) on the IP bucket the attach shares: its five, then six more,
+#: one a second, past the attach's wait; AC-30 another UID's entries, polls and cancels and a
+#: public client's market-data call on the process's IP bucket.
 CASES: Final[dict[str, tuple[dict[str, Any], str, Traffic]]] = {
     "ac17": (UID_BUDGET, A, lambda g: [
         *_lane(g, A, "entry", DEFAULT_ENTRY_WAIT_S, 2), *_lane(g, A, "poll", POLL_WAIT_S, 6),
     ]),
-    "ac18": (UID_BUDGET, A, lambda g: _lane(g, A, "critical", CRITICAL_WAIT_S, 8)),
+    "ac18": (IP_BUDGET, A, lambda g: _lane(g, A, "critical", CRITICAL_WAIT_S, 11)),
     "ac30": (IP_BUDGET, B, lambda g: [
         *_lane(g, A, "entry", DEFAULT_ENTRY_WAIT_S, 5), *_lane(g, A, "poll", POLL_WAIT_S, 3),
         *_lane(g, A, "critical", CRITICAL_WAIT_S, 2), g.acquire_ip_only(),
@@ -78,6 +83,12 @@ def _governor(case: str) -> tuple[TokenBucketGovernor, Clock]:
     return TokenBucketGovernor(**CASES[case][0], clock=clock.now, sleep=clock.sleep), clock
 
 
+async def _stop(gov: TokenBucketGovernor, case: str) -> None:
+    """The stop's acquisition: AC-18's an attach, the others' a placement on the order class."""
+    uid, kind = (A, ATTACH.endpoint_class) if case == "ac18" else (CASES[case][1], ORDER)
+    await gov.acquire(uid, kind, lane="critical", deadline_s=CRITICAL_WAIT_S)
+
+
 async def _run(case: str, *, stop: bool = True) -> tuple[float | None, Clock]:
     """The case's traffic, queued first, then the stop's acquisition: how long the stop waited on
     the budget's clock, or None when it was refused (nothing would be sent)."""
@@ -87,7 +98,7 @@ async def _run(case: str, *, stop: bool = True) -> tuple[float | None, Clock]:
     async def placement() -> None:
         started = clock.now()
         try:
-            await gov.acquire(CASES[case][1], ORDER, lane="critical", deadline_s=CRITICAL_WAIT_S)
+            await _stop(gov, case)
         except RateBudgetExceededError:
             waited.append(None)
             return
@@ -127,5 +138,5 @@ async def test_the_harness_fills_the_budget_past_the_stops_wait_in_no_real_time(
 @pytest.mark.parametrize("case", list(CASES))
 async def test_the_harness_acquires_a_stop_with_nothing_ahead_at_once(case: str) -> None:
     gov, clock = _governor(case)
-    await gov.acquire(CASES[case][1], ORDER, lane="critical", deadline_s=CRITICAL_WAIT_S)
+    await _stop(gov, case)
     assert (clock.now(), clock.slept) == (0.0, [])

@@ -188,7 +188,9 @@ def _strict_pins() -> Pins:
 
 
 def _pin_reason(test: str, kw: dict[str, Any]) -> str:
-    assert (kw.get("strict"), kw.get("raises")) == (True, AssertionError), test
+    # X02-R5's pin may fail by `TypeError` too: `asked` takes no principal until #1152.
+    raises = (AssertionError, TypeError) if test.startswith("test_982_row_2_") else AssertionError
+    assert (kw.get("strict"), kw.get("raises")) == (True, raises), test
     return str(kw.get("reason"))
 
 
