@@ -501,3 +501,6 @@ export type {
 
 export { FileDrop, formatFileSize } from "./FileDrop.js";
 export type { FileDropAction, FileDropPreview, FileDropProps } from "./FileDrop.js";
+
+export { TreeView } from "./TreeView.js";
+export type { TreeItemActionsContext, TreeNode, TreeViewProps } from "./TreeView.js";
