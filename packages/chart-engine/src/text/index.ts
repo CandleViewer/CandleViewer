@@ -6,4 +6,6 @@ export * from "./atlas-build.js";
 export * from "./atlas-cache.js";
 export * from "./config.js";
 export * from "./glyph-set.js";
-export type * from "./platform.js";
+// Named, not `export type *`: the pinned Semgrep cannot parse that form and its PartialParsing
+// error fails the security gate (CI-SEC-005); see the barrel excludes in .semgrep/cv-engine-*.yml.
+export type { ChartFont, GlyphRaster, KvStore, TextPlatform } from "./platform.js";
