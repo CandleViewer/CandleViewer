@@ -79,6 +79,14 @@ describe("vetUser", () => {
     expect(vetUser([USER])).toBeNull();
   });
 
+  it("caps a name and an address at 320 characters: 321 drops the row or the display name", () => {
+    expect(vetUser({ ...USER, username: "u".repeat(320) })?.username).toHaveLength(320);
+    expect(vetUser({ ...USER, username: "u".repeat(321) })).toBeNull();
+    expect(vetUser({ ...USER, email: "e".repeat(321) })).toBeNull();
+    expect(vetUser({ ...USER, display_name: "d".repeat(320) })?.display_name).toHaveLength(320);
+    expect(vetUser({ ...USER, display_name: "d".repeat(321) })?.display_name).toBeNull();
+  });
+
   it("drops an unreadable sign-in time rather than guess one", () => {
     expect(vetUser({ ...USER, last_login_at: "yesterday" })?.last_login_at).toBeNull();
   });
