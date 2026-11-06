@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from decimal import ROUND_DOWN, ROUND_HALF_UP, Context, Decimal, localcontext
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Context, Decimal, Inexact, localcontext
 from uuid import UUID
 
 import pytest
@@ -357,6 +357,22 @@ def test_the_walk_keeps_every_digit_of_a_numeric_38_18_product() -> None:
             == known(close.avg_entry) * Decimal(qty)
             == Decimal(qty) * Decimal(price)
         )
+
+
+def test_the_walk_raises_rather_than_round_a_sum_past_its_400_digits() -> None:
+    """Every sum is exact, and the walk enforces it: opening fees 401 places apart do not fit."""
+    with pytest.raises(Inexact):
+        run(fill(1, "Buy", "1", "100", fee="1e200"), fill(2, "Buy", "1", "100", fee="1e-201"))
+
+
+def test_a_share_rounds_half_even_at_its_80th_digit() -> None:
+    """Half of opening fees 81 digits long ends in a 5 past the 80th digit: half-even keeps the
+    even 80th digit, where half-up would add 1e-18."""
+    [close] = run(
+        fill(1, "Buy", "1", "100", fee="1e62"), fill(2, "Buy", "1", "100", fee="1e-18"),
+        fill(3, "Sell", "1", "100", closed="1", order=B),
+    ).closes  # fmt: skip
+    assert close.opening_fees == Decimal("5e61")
 
 
 _RECORD = rest("rest/trading-closed-pnl.json")["result"]["list"][0]

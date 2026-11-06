@@ -19,13 +19,16 @@ page's `net_pnl` (`ix_cpr_day`), both serving and counting a provisional item wi
 59, either filtered on the stored `trade_group_id` (`ix_cpr_group`); 56, the records not final
 within the poll's reach by `closed_at`, the order `ix_cpr_pending` gives, with their order rows
 (`ux_orders_exch_id`); 57, a key's confirmed flats from the last before a time, each venue time
-once (`ix_psnap_flat`); and 58, a key's trade fills after a `FillKey` with their order rows
-(`ix_exec_walk`, the `orders` PK).
+once (`ix_psnap_flat`); 58, a key's trade fills after a `FillKey` with their order rows
+(`ix_exec_walk`, the `orders` PK) and the group each row's leg names, through a leg of the
+account alone (the `trade_group_legs` PK); 61, the order rows named, each with its trade fills'
+times (`ix_exec_order`), its walk's start (`ix_psnap_flat`) and its record (`ux_cpr_order`);
+and 62, whether the account holds the symbol in hedge mode (the `positions` key).
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import fields
 from datetime import datetime
 from typing import Any, Final
@@ -35,7 +38,14 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import Insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from candleviewer.db.models import closed_pnl_records, executions, orders, position_snapshots
+from candleviewer.db.models import (
+    closed_pnl_records,
+    executions,
+    orders,
+    position_snapshots,
+    positions,
+    trade_group_legs,
+)
 from candleviewer.storage.repositories.closed_pnl import (
     VENUE_COLUMNS,
     AccountTotals,
@@ -45,6 +55,7 @@ from candleviewer.storage.repositories.closed_pnl import (
     ComposedRecord,
     FillKey,
     ListedClosedPnl,
+    OrderAnchor,
     PendingRecord,
     SettleOutcome,
     VenueRecord,
@@ -57,6 +68,7 @@ from candleviewer.storage.repositories.orders import require_aware, require_limi
 from candleviewer.storage.repositories.orders_sqlalchemy import CappedStore
 
 _C, _O, _X, _S = closed_pnl_records.c, orders.c, executions.c, position_snapshots.c
+_L, _P = trade_group_legs.c, positions.c
 RECORD_COLUMNS: Final = tuple(_C[f.name] for f in fields(ClosedPnlRecordRow))
 #: The composition's columns: always written, and the provisional ones only while unsettled.
 LOCAL: Final = (
@@ -230,7 +242,10 @@ def walk_fills_statement(
     account_id: UUID, symbol: str, position_idx: int, after: FillKey, limit: int
 ) -> sa.Select[Any]:
     """Row 58: the key's trade fills after `after`, in order, with their order rows; a fill with
-    no order row too, which the walk must see."""
+    no order row too, which the walk must see. A row's group is its leg's when the leg is the
+    fill's own account's (C-12.4): another account's leg names none and drops no fill. The order
+    joins by its key alone, the fill's FK: an account term there lets Postgres pick an
+    account-wide index of `orders` and filter the join, where row 58 reads the `orders` PK."""
     later = (
         _X.exec_ts > after.at if after.exec_id is None
         else sa.tuple_(_X.exec_ts, _X.exec_id) > sa.tuple_(after.at, after.exec_id)
@@ -239,16 +254,83 @@ def walk_fills_statement(
     order = (
         _O.position_idx.label("order_position_idx"),
         _O.exchange_order_id.label("order_exchange_id"),
+        _L.trade_group_id.label("order_group_id"),
     )
+    leg = sa.and_(_L.id == _O.trade_group_leg_id, _L.exchange_account_id == _X.exchange_account_id)
     return (
         sa.select(*columns, *order)
-        .select_from(executions.outerjoin(orders, _O.id == _X.order_id))
+        .select_from(
+            executions.outerjoin(orders, _O.id == _X.order_id).outerjoin(trade_group_legs, leg)
+        )
         .where(_X.exchange_account_id == account_id, _symbol(_X.symbol) == symbol)
         .where(_X.exec_type.in_(CLOSING_EXEC_TYPES), later)
         .where(sa.or_(_O.position_idx == position_idx, _O.id.is_(None)))
         .order_by(_X.exec_ts, _X.exec_id)
         .limit(limit)
     )
+
+
+def anchors_statement(
+    account_id: UUID, ids: Collection[UUID], exchange_order_ids: Collection[str]
+) -> sa.Select[Any]:
+    """Row 61: the account's order rows named by id (the `orders` PK) or by venue id
+    (`ux_orders_exch_id`), each once, with its trade fills' first and last times and the last
+    stating a `closedSize` above 0, each read in order from `ix_exec_order`, its key's last
+    confirmed flat before the first, its walk's start (`ix_psnap_flat`), and whether its record
+    is stored (`ux_cpr_order`), every table read in the account (C-12.4). One name at least."""
+    columns = (_O.id, _O.exchange_order_id, _O.symbol, _O.side, _O.position_idx, _O.state)
+
+    def arm(*where: sa.ColumnElement[bool]) -> sa.Select[Any]:
+        return sa.select(*columns).where(_O.exchange_account_id == account_id, *where)
+
+    arms = [arm(_O.id.in_(sorted(set(ids))))] if ids else []
+    if exchange_order_ids:
+        venue = _O.exchange_order_id.in_(sorted(set(exchange_order_ids)))
+        arms.append(arm(_O.exchange_order_id.is_not(None), venue))
+    named = (sa.union(*arms) if len(arms) > 1 else arms[0]).subquery("named")
+
+    def fill(*where: sa.ColumnElement[bool], last: bool = True) -> sa.ScalarSelect[Any]:
+        trade = (_X.exchange_account_id == account_id, _X.order_id == named.c.id)
+        return (
+            sa.select(_X.exec_ts).where(*trade, _X.exec_type.in_(CLOSING_EXEC_TYPES), *where)
+            .order_by(_X.exec_ts.desc() if last else _X.exec_ts).limit(1)
+            .correlate(named).scalar_subquery()
+        )  # fmt: skip
+
+    times = sa.select(
+        fill(last=False).label("first_fill"), fill().label("last_fill"),
+        fill(_X.closed_size > 0).label("last_close"),
+    ).lateral("times")  # fmt: skip
+    start = sa.select(sa.func.max(_S.exchange_updated_ts)).where(
+        _S.exchange_account_id == account_id, _symbol(_S.symbol) == _symbol(named.c.symbol),
+        _S.position_idx == named.c.position_idx, _S.size == sa.literal_column("0"),
+        _S.exchange_updated_ts.is_not(None), _S.exchange_updated_ts < times.c.first_fill,
+    )  # fmt: skip
+    held = sa.exists().where(
+        _C.exchange_account_id == account_id, _C.exchange_order_id.is_not(None),
+        _C.exchange_order_id == named.c.exchange_order_id,
+    )  # fmt: skip
+    return (
+        sa.select(
+            named.c.id.label("order_id"), named.c.exchange_order_id, named.c.symbol,
+            named.c.side, named.c.position_idx, named.c.state, times.c.first_fill,
+            times.c.last_fill, times.c.last_close, start.scalar_subquery().label("start"),
+            held.label("held"),
+        )
+        .select_from(named.join(times, sa.true()))
+        .order_by(named.c.id)
+    )  # fmt: skip
+
+
+def hedge_statement(account_id: UUID, symbol: str) -> sa.Select[Any]:
+    """Row 62: whether the account holds a position of the symbol at `position_idx` 1 or 2, a
+    symbol held in hedge mode (24 Sec.8.13 step 3); a key's row outlives its position, so a symbol
+    once hedged stays so, which errs toward absent figures."""
+    held = (
+        _P.exchange_account_id == account_id, _symbol(_P.symbol) == symbol,
+        _P.position_idx.in_((1, 2)),
+    )  # fmt: skip
+    return sa.select(sa.exists().where(*held).label("hedged"))
 
 
 def record_row(row: Mapping[Any, Any]) -> ClosedPnlRecordRow:
@@ -336,6 +418,18 @@ class SqlAlchemyClosedPnlStore(CappedStore):
             walk_fills_statement(account_id, symbol, position_idx, after, limit)
         )
         return tuple(WalkFill(**{f.name: row[f.name] for f in fields(WalkFill)}) for row in rows)
+
+    async def anchors(
+        self, account_id: UUID, orders: Collection[UUID], exchange_order_ids: Collection[str]
+    ) -> tuple[OrderAnchor, ...]:
+        if not orders and not exchange_order_ids:
+            return ()  # nothing named: no statement
+        rows = await self._rows(anchors_statement(account_id, orders, exchange_order_ids))
+        return tuple(OrderAnchor(**{f.name: r[f.name] for f in fields(OrderAnchor)}) for r in rows)
+
+    async def hedged(self, account_id: UUID, symbol: str) -> bool:
+        rows = await self._rows(hedge_statement(account_id, symbol))
+        return bool(rows[0]["hedged"])
 
     async def _rows(self, stmt: sa.Select[Any]) -> Sequence[Mapping[Any, Any]]:
         async with self._unit_of_work() as uow:
