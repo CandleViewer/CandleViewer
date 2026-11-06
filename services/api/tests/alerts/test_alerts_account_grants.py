@@ -55,7 +55,7 @@ def env() -> Env:
 
 
 # The permission comes first. `test_every_route_forbidden_without_its_permission` checks only the
-# row count after a refused PUT; this checks the stored row itself, and that nothing is recorded.
+# row count after a refused PUT; this checks the stored row itself, and its one record (#5696).
 @pytest.mark.parametrize("op", ["create", "update"])
 def test_write_without_alerts_write_403_nothing_stored(env: Env, op: str) -> None:
     method, path = _target(env, op)
@@ -63,7 +63,7 @@ def test_write_without_alerts_write_403_nothing_stored(env: Env, op: str) -> Non
     env.perms = frozenset({"alerts:read"})
     r = env.c.request(method, path, json=_equity(ACCT_B) | {"name": "renamed"})
     assert r.status_code == 403 and r.json()["required_permissions"] == ["alerts:write"]
-    assert env.repo.rows == before and env.audit.calls[seen:] == []
+    assert env.repo.rows == before and env.audit.actions()[seen:] == ["rbac.denied"]
 
 
 # IDOR: a metric operand names an account outside the caller's grants (create, then update).

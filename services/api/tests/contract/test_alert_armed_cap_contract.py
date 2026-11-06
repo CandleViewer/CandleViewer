@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from candleviewer.api.alerts import armed_cap_message
+from candleviewer.api.drawings_limiter import DrawingsWriteLimiter
 from candleviewer.storage.repositories.alerts import MAX_ARMED_ALERTS
 from tests.alerts._alert_api_env import PRICE_CROSS, Env
 from tests.contract._admin_support import SPEC, example_cases, text, validate_example
@@ -114,8 +115,9 @@ _SHAPE = ("type", "title", "status", "code", "detail", "errors")
 @pytest.fixture(scope="module")
 def at_cap() -> tuple[Env, dict[str, Any]]:
     """The `/alerts` router over the in-memory store of `tests/alerts/`, the caller at the cap
-    with one disarmed alert of its own. Every request below is refused, so none changes it."""
-    env = Env()
+    with one disarmed alert of its own. Every request below is refused, so none changes it. Its
+    write bucket holds a token for each of these writes (#5696's burst is 20)."""
+    env = Env(write_limiter=DrawingsWriteLimiter(burst=MAX_ARMED_ALERTS + 1 + len(ARMING)))
     parked = env.create(name="parked", enabled=False)
     for i in range(MAX_ARMED_ALERTS):
         env.create(name=f"armed-{i}")

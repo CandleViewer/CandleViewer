@@ -8787,7 +8787,11 @@ class AlertInput(BaseModel):
     exchange_account_id: UUID | None = None
     trigger_mode: Literal["once", "every_time", "once_per_bar"] = "once"
     channels: Annotated[
-        list[Literal["in_app", "email", "webhook", "push", "desktop"]], Field(min_length=1)
+        list[Literal["in_app", "email", "webhook", "push", "desktop"]],
+        Field(
+            description="An alert lists each channel once: a repeated channel is `422 validation_failed` (#5696).",
+            min_length=1,
+        ),
     ]
     condition_ir: AlertConditionIr
     message_template: Annotated[

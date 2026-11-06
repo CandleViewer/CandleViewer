@@ -145,7 +145,7 @@ def test_list_notifications_503() -> None:
 
 
 #: The modules whose `Problem(<status>, "<code>", ...)` these operations answer with.
-_ROUTERS = ("alert_deliveries.py", "notifications.py", "alerts_http.py")
+_ROUTERS = ("alert_deliveries.py", "notifications.py", "alerts_http.py", "alert_body.py")
 _PROBLEM = re.compile(r'Problem\(\s*(\d{3}),\s*"([^"]+)"')
 _CALL = re.compile(r"(?<!class )\bProblem\(")
 

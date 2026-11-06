@@ -35,7 +35,8 @@ def test_every_route_is_403_without_its_permission_and_changes_nothing(
     r = env.c.request(method, path.format(id=d.id), json=body)
     assert r.status_code == 403 and r.json()["required_permissions"] == [perm]
     assert env.store.rows[d.id] == d and env.store.rows[sent.id] == sent
-    assert env.audit.calls == []
+    ((action, record),) = env.audit.calls  # the role refusal's record, and nothing else
+    assert (action, record["reason"]) == ("rbac.denied", f"missing_permission:{perm}:self")
 
 
 @pytest.mark.parametrize(("method", "path", "body", "perm"), ROUTES)

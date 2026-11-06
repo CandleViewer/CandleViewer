@@ -175,10 +175,13 @@ class Audit:
 
 class Env:
     """App with two users: `user` is the caller, `perms` its permissions, `granted` its account
-    grants and `owner` whether it holds the Owner role."""
+    grants and `owner` whether it holds the Owner role. *router* goes to the router as is (#5696:
+    `write_limiter`, `denials`); `refused` lists the bounds' refusals by reason and `held` counts
+    the refusal records the budget held."""
 
-    def __init__(self, *, wired: bool = True) -> None:
+    def __init__(self, *, wired: bool = True, **router: Any) -> None:
         self.repo, self.audit = FakeAlertRepo(), Audit()
+        self.refused, self.held = list[str](), list[None]()
         self.user: str | None = USER_A
         self.perms = frozenset({"alerts:read", "alerts:write"})
         self.granted: frozenset[str] = frozenset()  # the caller's account grants
@@ -202,6 +205,9 @@ class Env:
                 on_compile=lambda s, reason: self.compiles.append(reason),
                 clock=lambda: NOW,
                 on_cap_refused=lambda: self.cap_refusals.append(1),
+                on_refused=self.refused.append,
+                on_held=lambda: self.held.append(None),
+                **router,
             )
         )
         self.c = TestClient(app)

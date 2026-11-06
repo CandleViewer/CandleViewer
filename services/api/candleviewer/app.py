@@ -118,7 +118,8 @@ from candleviewer.api.admin_kek import make_admin_kek_router
 from candleviewer.api.admin_ops import make_admin_incident_ack_router, make_admin_ops_router
 from candleviewer.api.admin_overview import make_admin_overview_router
 from candleviewer.api.admin_statecharts import make_statechart_router
-from candleviewer.api.alert_deliveries import make_alert_deliveries_router
+from candleviewer.api.alert_body import REFUSAL_REASONS as ALERT_WRITE_REFUSALS
+from candleviewer.api.alert_deliveries import DenialBudget, make_alert_deliveries_router
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.api.audit_budget import AuditBudgetFlushTask, AuditRecordBudget
 from candleviewer.api.audit_exports import AuditExports, ExportSigning
@@ -3567,6 +3568,16 @@ def create_app(
         if reason is not None:
             _alert_rejects.labels(reason).inc()
 
+    # #5696: the two alert routers share one refusal-record budget per acting user, and count
+    # the refusals of the alert write bounds (catalogue, live; each reason bound at 0 here).
+    _alert_denials = DenialBudget()
+    _alert_write_refused = metrics_facade.get("cv_alert_write_refused_total")
+    _alert_refusal_series = {r: _alert_write_refused.labels(r) for r in ALERT_WRITE_REFUSALS}
+    _alert_records_held = metrics_facade.get("cv_alert_refusal_records_held_total").child()
+
+    def _on_alert_write_refused(reason: str) -> None:
+        _alert_refusal_series.get(reason, NOOP_CHILD).inc()
+
     # E40-T04: the delivery inbox, mounted before the CRUD router (whose `/alerts/{alertId}`
     # would take `GET /alerts/deliveries`), and the unified notification history.
     app.include_router(
@@ -3576,6 +3587,9 @@ def create_app(
             _LazyAuditEmitter(ctx.audit),
             metric=_alert_delivery_sink(metrics_facade),
             on_change=ws_alerts.deliveries_changed,
+            denials=_alert_denials,
+            on_refused=_on_alert_write_refused,
+            on_held=_alert_records_held.inc,
         )
     )
     # E40-T04: the `alerts` topic reads the deliveries on the real backend; on the fake one it
@@ -3607,6 +3621,9 @@ def create_app(
             on_compile=_on_alert_compile,
             on_change=ctx.alerts.on_alert_changed,
             on_cap_refused=_alert_armed_cap.inc,
+            denials=_alert_denials,
+            on_refused=_on_alert_write_refused,
+            on_held=_alert_records_held.inc,
         )
     )
     if resolved.alerts_webhook_enabled:  # refused whatever the evaluator flag (E40-S03)

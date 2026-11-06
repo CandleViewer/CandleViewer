@@ -7,7 +7,10 @@ foreign delivery, or a list filtered on a foreign `alert_id`, is a 404 - and the
 audited (`alert.denied`) before the refusal, so existence is never disclosed by the answer.
 Delivery ids are sequential, so those denial records are budgeted per caller (`DenialBudget`):
 probing other users' ids cannot flood the audit log, and what the budget holds back is carried by
-the caller's next denial record.
+the caller's next denial record. The app hands this router and the `/alerts` CRUD router one
+budget, which also holds their role refusals (`rbac.denied`) and the CRUD router's
+`alert.scope_refused` (`alerts_http.RefusalRecords`, #5696); the desktop report's body is read
+under the alert writes' bounds (`alert_body.read_alert_body`).
 
 - **ack**: only `sent -> acked` is legal. Acking an acked delivery returns it unchanged (same
   `acked_at`); a delivery that never reached `sent` has nothing to acknowledge and is returned
@@ -50,10 +53,18 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from candleviewer.alerts.dispatcher import Metric
-from candleviewer.api.alerts import READ, WRITE
-from candleviewer.api.alerts_http import AuditEmitter, Problem, ProblemRoute, Resolver, caller
+from candleviewer.api.alert_body import OnRefused, read_alert_body
+from candleviewer.api.alerts_http import (
+    READ,
+    WRITE,
+    AuditEmitter,
+    Problem,
+    ProblemRoute,
+    RefusalRecords,
+    Resolver,
+    caller,
+)
 from candleviewer.api.view_as_subject import acting_user
-from candleviewer.audit.models import AuditOutcome
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.rules.manager import Actor
 
@@ -154,7 +165,8 @@ class _Caller:
 
 
 class DenialBudget:
-    """At most `per_window` `alert.denied` records per caller in any `window_s`.
+    """At most `per_window` refusal records per caller in any `window_s` (`alert.denied`; on the
+    alert routes also `rbac.denied` and `alert.scope_refused`, `alerts_http.RefusalRecords`).
 
     Past it a denial is counted, not written, and the caller's next record carries the count
     (`after_state.suppressed_before`), so nothing is dropped while the caller keeps probing; a run
@@ -285,12 +297,16 @@ def make_alert_deliveries_router(
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     on_change: OnChange | None = None,
     denials: DenialBudget | None = None,
+    on_refused: OnRefused,
+    on_held: Callable[[], None],
 ) -> APIRouter:
     """Mount before the `/alerts` CRUD router: its `/alerts/{alertId}` would otherwise take
     `GET /alerts/deliveries` and refuse `deliveries` as a malformed alert id. *metric* is the
-    dispatcher's `cv_alert_delivery_*` sink: a desktop delivery settles here, not there."""
+    dispatcher's `cv_alert_delivery_*` sink: a desktop delivery settles here, not there.
+    *denials* is the refusal-record budget the app shares with the CRUD router; *on_refused*
+    counts a body bound's refusal by its reason, *on_held* a refusal record the budget held."""
     router = APIRouter(tags=["alerts"], route_class=ProblemRoute)
-    budget = DenialBudget() if denials is None else denials
+    records = RefusalRecords(audit, DenialBudget() if denials is None else denials, on_held)
 
     def store() -> AlertDeliveryStore:
         s = store_provider()
@@ -320,20 +336,11 @@ def make_alert_deliveries_router(
     async def _deny(actor: Actor, kind: str, object_id: str, reason: str) -> None:
         """A foreign id: audited within the caller's denial budget (`DenialBudget`), the
         viewer's while viewing (#3085)."""
-        who = acting_user(actor.user_id)
-        carried = budget.admit(who)
-        if carried is None:
-            return
-        extra = {"after_state": {"suppressed_before": carried}} if carried else {}
-        try:
-            await _audit("alert.denied", actor, kind, object_id, outcome=AuditOutcome.DENIED,
-                         reason=reason, **extra)  # fmt: skip
-        except BaseException:  # not written: its slot and its count go back to the budget
-            budget.restore(who, carried)
-            raise
+        await records.write_refusal("alert.denied", actor, reason=reason, kind=kind,
+                                    object_id=object_id)  # fmt: skip
 
-    reader = caller(actor_resolver, READ, LIST_DELIVERIES_QUERY)
-    writer = caller(actor_resolver, WRITE)
+    reader = caller(actor_resolver, READ, LIST_DELIVERIES_QUERY, refused=records.forbidden)
+    writer = caller(actor_resolver, WRITE, refused=records.forbidden)
 
     async def owned(
         deliveryId: Annotated[int, Path(ge=1, le=_INT64_MAX)],
@@ -425,7 +432,7 @@ def make_alert_deliveries_router(
         request: Request, got: Annotated[tuple[Actor, DeliveryView], Depends(owned)]
     ) -> Response:
         actor, row = got
-        body = await _outcome(request)
+        body = await _outcome(request, on_refused)
         if row.channel != "desktop":
             raise Problem(422, "validation_failed", "Invalid report",
                           "Only a desktop delivery takes a desktop outcome.",
@@ -458,9 +465,9 @@ def make_alert_deliveries_router(
     return router
 
 
-async def _outcome(request: Request) -> _DesktopOutcome:
+async def _outcome(request: Request, on_refused: OnRefused) -> _DesktopOutcome:
     try:
-        return _DesktopOutcome.model_validate(await request.json())
+        return _DesktopOutcome.model_validate(await read_alert_body(request, on_refused))
     except ValidationError as exc:
         errs = exc.errors(include_url=False, include_input=False)[:20]
         raise Problem(422, "validation_failed", "Invalid report", "The report body is invalid.",
