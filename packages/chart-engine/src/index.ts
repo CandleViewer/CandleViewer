@@ -8,6 +8,9 @@
 export { createChart } from "./api/chart.js";
 // E12-S06 (BQ-10, additive): the checked price → tick narrowing the data binding must use (F-01).
 export { toTicks } from "./worker/protocol.js";
+// E11-S09 PR 2b (BQ-21, additive): the page's sync registry, passed as `ChartOptions.syncRegistry`.
+export { createSyncRegistry } from "./sync/registry.js";
+export type { SyncRegistry, SyncRegistryOptions } from "./sync/registry.js";
 export type {
   A11yRows,
   A11yWindow,

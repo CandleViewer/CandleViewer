@@ -307,8 +307,8 @@ describe("one message per frame", () => {
     host.input("wheel", [INPUT.wheel, 0, 0, 3, 0, 1]);
     host.resize(10, 10, 1);
     host.resize(30, 20, 2);
-    host.sync("g", [1, 2], null);
-    host.sync("g", [3, 4], 3);
+    host.sync({ t: "sync", groupId: "g", timeRange: [1, 2], crosshair: null });
+    host.sync({ t: "sync", groupId: "g", timeRange: [3, 4], crosshair: 3 });
     settle();
     const inputs = inboxOf(w, "input") as Extract<ToWorker, { t: "input" }>[];
     expect(inputs.map((m) => [m.kind, m.events.length])).toEqual([
@@ -333,9 +333,69 @@ describe("one message per frame", () => {
     host.dispose();
     host.input("pointer", [0, 0, 0, 0, 0, 0]);
     host.resize(1, 1, 1);
-    host.sync("g", [1, 2], null);
+    host.sync({ t: "sync", groupId: "g", crosshair: null });
     host.command({ k: "release" });
     expect(host.exportPng()).resolves.toBeNull();
+  });
+
+  it("test_host_relayed_syncs_go_out_once_per_group_per_frame_with_their_origin", () => {
+    const host = hostOn(workerDoc());
+    settle();
+    const w = lastWorker();
+    const origin = (seq: number) => ({ worker: "w0", chart: 1, seq });
+    for (let seq = 1; seq <= 5; seq += 1) {
+      host.sync({ t: "sync", groupId: "g", crosshair: seq, origin: origin(seq) });
+    }
+    host.sync({ t: "sync", groupId: "h", timeRange: [1, 2], origin: origin(9) });
+    expect(inboxOf(w, "sync")).toEqual([]); // nothing before the frame
+    settle();
+    expect(inboxOf(w, "sync")).toEqual([
+      { t: "sync", groupId: "g", crosshair: 5, origin: origin(5) },
+      { t: "sync", groupId: "h", timeRange: [1, 2], origin: origin(9) },
+    ]);
+    settle();
+    expect(inboxOf(w, "sync")).toHaveLength(2); // nothing pending: nothing more
+    host.dispose();
+  });
+
+  it("test_host_relayed_syncs_in_one_frame_keep_an_earlier_field_the_later_lacks", () => {
+    const host = hostOn(workerDoc());
+    settle();
+    const w = lastWorker();
+    const from = (worker: string, seq: number) => ({ worker, chart: 1, seq });
+    host.sync({ t: "sync", groupId: "g", timeRange: [1, 2], origin: from("w7", 4) });
+    host.sync({ t: "sync", groupId: "g", crosshair: 3, origin: from("w8", 2) });
+    settle();
+    expect(inboxOf(w, "sync")).toEqual([
+      { t: "sync", groupId: "g", timeRange: [1, 2], crosshair: 3, origin: from("w8", 2) },
+    ]);
+    host.dispose();
+  });
+
+  it("test_host_assigns_a_workerId_at_spawn_and_a_new_one_on_respawn", () => {
+    const host = hostOn(workerDoc());
+    settle();
+    const first = lastWorker();
+    const [init] = inboxOf(first, "init") as Extract<ToWorker, { t: "init" }>[];
+    expect(init?.config.workerId).toMatch(/^w\d+$/);
+    expect(host.workerId).toBe(init?.config.workerId);
+    host.command({
+      k: "setSync",
+      groupId: "g",
+      modes: { time: true, crosshair: true, levels: false },
+      relay: true,
+    });
+    first.onerror?.({});
+    vi.advanceTimersByTime(60_000);
+    const second = lastWorker();
+    expect(second).not.toBe(first);
+    const [again] = inboxOf(second, "init") as Extract<ToWorker, { t: "init" }>[];
+    expect(again?.config.workerId).toMatch(/^w\d+$/);
+    expect(again?.config.workerId).not.toBe(init?.config.workerId); // its `seq`s restart at 1
+    expect(host.workerId).toBe(again?.config.workerId);
+    const cmds = inboxOf(second, "command") as Extract<ToWorker, { t: "command" }>[];
+    expect(cmds.map((m) => m.cmd.k)).toContain("setSync"); // the group is rejoined
+    host.dispose();
   });
 
   it("captures pointer (coalesced), wheel and size changes from the container", () => {

@@ -146,6 +146,8 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "SeriesType",
       "SyncId", // E11-S09 PR 2a (BQ-26): in the §8 sketch
       "SyncModes", // E11-S09 PR 2a (BQ-17): in the §8 sketch
+      "SyncRegistry", // E11-S09 PR 2b (BQ-21): in the §8 sketch
+      "SyncRegistryOptions",
       "TextStyle",
       "TextureId",
       "ThemeTokens",
@@ -154,6 +156,7 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "Viewport",
       "VisibleWindow",
       "createChart",
+      "createSyncRegistry", // E11-S09 PR 2b (BQ-21): in the §8 sketch
       "toTicks", // E12-S06 BQ-10: ruled additive
     ]);
   });
@@ -170,8 +173,8 @@ describe("Scenario: The package builds and exports the designed surface", () => 
     expect(outside).toEqual(RULED_ADDITIONS);
   });
 
-  it("has two runtime exports: createChart with the §8 signature, and toTicks (BQ-10)", () => {
-    expect(Object.keys(root).sort()).toEqual(["createChart", "toTicks"]);
+  it("has three runtime exports: createChart (§8 signature), createSyncRegistry and toTicks", () => {
+    expect(Object.keys(root).sort()).toEqual(["createChart", "createSyncRegistry", "toTicks"]);
     expect(surface.print("createChart")).toBe("(opts: ChartOptions) => Chart");
     expect(surface.print("toTicks")).toBe(
       "(price: number, priceOrigin: number, tickSize: number) => number",
