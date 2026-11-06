@@ -1,7 +1,8 @@
 /**
  * The users client over the served routes (E42-S02; `22` tag users, BQ-1, BQ-3, BQ-6). Reads go through the admin
  * read layer (`readAdmin`: one 3 s bound; a `403` is the area denied), and `GET /users` answering `405` reads as not
- * built too, since `POST /users` holds the path until `listUsers` mounts (BQ-1). Writes go through the admin write
+ * built too, since `POST /users` holds the path until `listUsers` mounts (BQ-1); a `404` on a per-user read is a
+ * failed read, `22` declaring `404 NotFound` there. Writes go through the admin write
  * kit: held as first sent, one `Idempotency-Key` per call (a step-up re-send is the held request; a Retry or a
  * renewal calls again, so it is a new attempt; the tier write, whose route ignores the key, sends none), the CSRF
  * header from `apiFetch`, and the first send bounded as the gate bounds the re-send (no answer in time is an
@@ -74,6 +75,13 @@ export const WRITE_TIMEOUT_MS = RESEND_TIMEOUT_MS;
 const notBuiltOn405 = <T>(outcome: ReadOutcome<T>): ReadOutcome<T> =>
   outcome.kind === "failed" && outcome.status === 405 ? { kind: "not_built" } : outcome;
 
+/**
+ * A per-user read's outcome with a `404` read as failed: `22` declares `404 NotFound` for a user that is gone, so it
+ * is no "not built" (`readAdmin` folds `404` and `501` into `not_built`; here both read as a failed `404`).
+ */
+const goneOn404 = <T>(outcome: ReadOutcome<T>): ReadOutcome<T> =>
+  outcome.kind === "not_built" ? { kind: "failed", reason: "status", status: 404 } : outcome;
+
 /** `GET /users`: a page of 50 for `query`, from its first page or from `cursor`. */
 export async function readUserPage(
   query: UsersQuery,
@@ -98,7 +106,7 @@ export async function readGrants(
   signal: AbortSignal,
   timers: ReadTimers,
 ): Promise<ReadOutcome<readonly Grant[]>> {
-  return readAdmin(urlOf("listUserAccountAccess", id), vetGrants, signal, timers);
+  return goneOn404(await readAdmin(urlOf("listUserAccountAccess", id), vetGrants, signal, timers));
 }
 
 /** `GET /users/{id}/sessions`: how many sessions a disable signs out, and nothing else about them. */
@@ -107,7 +115,7 @@ export async function readSessionCount(
   signal: AbortSignal,
   timers: ReadTimers,
 ): Promise<ReadOutcome<number>> {
-  return readAdmin(urlOf("listUserSessions", id), vetSessionCount, signal, timers);
+  return goneOn404(await readAdmin(urlOf("listUserSessions", id), vetSessionCount, signal, timers));
 }
 
 /** `GET /users/{id}/mfa/reset-preview`: whether the reset needs the unknown-positions tick. */
@@ -116,7 +124,7 @@ export async function readMfaPreview(
   signal: AbortSignal,
   timers: ReadTimers,
 ): Promise<ReadOutcome<MfaResetPreview>> {
-  return readAdmin(urlOf("previewMfaReset", id), vetMfaPreview, signal, timers);
+  return goneOn404(await readAdmin(urlOf("previewMfaReset", id), vetMfaPreview, signal, timers));
 }
 
 /** SCR-123's inputs: the server's rules decide (`auth/models.py`: username 3–32 of `[A-Za-z0-9._-]`). */
