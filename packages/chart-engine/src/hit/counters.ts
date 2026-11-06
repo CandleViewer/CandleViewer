@@ -21,6 +21,10 @@ export class HitCounters {
   lastCandidates = 0;
   /** `engine.pick.index_rebuilds`: full O(N) re-insertions (scale drift, `replace`). */
   indexRebuilds = 0;
+  /** E14-T04 (BQ-04): `engine.pick.capped`, picks that ran out of their candidate budget. */
+  capped = 0;
+  /** E14-T04: `engine.pick.selection_size`, a gauge the runtime sets on each selection change. */
+  selectionSize = 0;
   /** `engine.pick.objects_registered{kind}`. */
   readonly registered = Object.fromEntries(PICK_KINDS.map((k) => [k, 0])) as Record<
     PickKind,

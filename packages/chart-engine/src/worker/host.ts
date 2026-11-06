@@ -662,6 +662,8 @@ export function createChartHost(o: ChartHostOptions): ChartHost {
       if (cmd.k === "setTheme") theme = cmd.theme;
       if (cmd.k === "setMotion") reduce = cmd.reduce;
       const key = retainKey(cmd);
+      // A removed drawing is no longer replayed: a restart must not bring it back.
+      if (cmd.k === "removeDrawing") retained.delete(`drawing:${cmd.drawingId}`);
       if (key !== null) {
         retained.delete(key);
         retained.set(key, cmd);

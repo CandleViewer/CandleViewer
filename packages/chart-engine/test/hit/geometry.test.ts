@@ -1,7 +1,9 @@
 // E11-S08 unit: the precise distances against hand-computed cases, and the tolerances (BQ-130).
 import { describe, expect, it } from "vitest";
 import {
+  clipToBox,
   distToCircle,
+  distToEllipse,
   distToRay,
   distToRect,
   distToSegment,
@@ -43,5 +45,33 @@ describe("hit geometry", () => {
     expect([toleranceFor("mouse"), toleranceFor("pen"), toleranceFor("touch")]).toEqual([
       10, 10, 16,
     ]);
+  });
+});
+
+describe("E14-T04 precise tests", () => {
+  const out = new Float64Array(4);
+  const box = [0, 0, 100, 50] as const;
+
+  it("an ellipse is 0 inside, its rim distance outside, never under the true distance", () => {
+    expect(distToEllipse(50, 25, 0, 0, 100, 50)).toBe(0);
+    expect(distToEllipse(110, 25, 0, 0, 100, 50)).toBeCloseTo(10, 12); // on an axis: exact
+    expect(distToEllipse(50, -5, 100, 50, 0, 0)).toBeCloseTo(5, 12); // corners in any order
+    // Off-axis the rim point along the centre ray is on the ellipse: never closer than drawn.
+    const d = distToEllipse(110, 60, 0, 0, 100, 50);
+    expect(d).toBeGreaterThan(0);
+    expect(d).toBeLessThan(Math.hypot(110 - 50, 60 - 25));
+    expect(distToEllipse(5, 3, 0, 0, 10, 0)).toBe(3); // a flat box is its segment
+  });
+
+  it("clips a segment, a ray and an extended line to the box", () => {
+    expect(clipToBox(-50, 25, 150, 25, 0, 1, box, out)).toBe(true);
+    expect([...out]).toEqual([0, 25, 100, 25]);
+    expect(clipToBox(10, 10, 20, 10, 0, Infinity, box, out)).toBe(true); // a ray, to the edge
+    expect([...out]).toEqual([10, 10, 100, 10]);
+    expect(clipToBox(10, 10, 20, 10, -Infinity, Infinity, box, out)).toBe(true);
+    expect([...out]).toEqual([0, 10, 100, 10]);
+    expect(clipToBox(-50, 60, 150, 60, -Infinity, Infinity, box, out)).toBe(false); // above
+    expect(clipToBox(200, 10, 300, 10, 0, Infinity, box, out)).toBe(false); // ray away from it
+    expect(clipToBox(5, 5, 5, 5, -Infinity, Infinity, box, out)).toBe(false); // a point line
   });
 });

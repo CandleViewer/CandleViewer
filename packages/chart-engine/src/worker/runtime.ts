@@ -34,7 +34,9 @@ import { type OpenedBackend, openBackend } from "../gl/open-backend.js";
 import {
   createPickHit,
   createStructuralHit,
+  DrawingAdapter,
   ObjectIndex,
+  Selection,
   StructuralIndex,
   toleranceFor,
   type PickHit,
@@ -253,6 +255,9 @@ interface Instance {
   readonly structural: StructuralIndex;
   readonly hit: PickHit;
   readonly where: StructuralHit;
+  /** E14-T04: the drawings registered in `objects`, and the selection. */
+  readonly drawings: DrawingAdapter;
+  readonly selection: Selection;
   /** The last hover pick posted, (objectId, part, handle): edge-triggered (BQ-134). */
   readonly hover: { id: string | null; part: PickHit["part"]; handle: number };
   readonly elements: Record<StoreId, number>;
@@ -968,9 +973,81 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         }
         return;
       default:
-        // addDrawing: the scene graph that consumes it is E14's.
+        drawingCommand(inst, cmd);
+        postSelection(inst);
         touch(inst);
     }
+  }
+
+  /** E14-T04 (#359): drawing registration and the selection. */
+  function drawingCommand(inst: Instance, cmd: Command): void {
+    const { drawings, selection } = inst;
+    const known = (id: string): boolean => drawings.get(id) !== undefined;
+    switch (cmd.k) {
+      case "addDrawing":
+        // Without anchors the drawing is not pickable yet (pre-T04 callers): nothing registers.
+        if (cmd.anchors === undefined) return;
+        try {
+          drawings.upsert({
+            id: cmd.drawingId,
+            tool: cmd.kind,
+            anchors: cmd.anchors,
+            widthPx: cmd.widthPx ?? 1,
+            zIndex: cmd.zIndex ?? 0,
+            locked: cmd.locked === true,
+            visible: cmd.visible !== false,
+            ...(cmd.levels !== undefined && { levels: cmd.levels }),
+          });
+        } catch (e) {
+          if (!(e instanceof RangeError)) throw e;
+          selection.forget(cmd.drawingId); // the old one was removed with the failed replace
+          fail(inst.id, e.message); // a ceiling or a non-finite anchor: refused, reported
+        }
+        return;
+      case "removeDrawing":
+        drawings.remove(cmd.drawingId);
+        selection.forget(cmd.drawingId);
+        return;
+      case "setSelection":
+        selection.apply(cmd.ids, cmd.op, known);
+        return;
+      case "selectAll": {
+        // One pane until E11-S09 (BQ-45): pane 0 holds every drawing; any other is empty.
+        const ids: string[] = [];
+        if ((cmd.pane ?? 0) === 0) for (const r of drawings.all()) if (r.visible) ids.push(r.id);
+        selection.apply(ids, "replace", known);
+        return;
+      }
+      case "setInteractionMode":
+        selection.setMode(cmd.mode, cmd.readOnly === true);
+        return;
+      case "focusObject": {
+        // A hidden drawing (unregistered, BQ-05) or a handle past its anchors is refused like an
+        // unknown id (nothing stored).
+        const id = cmd.drawingId;
+        const rec = id === null ? undefined : drawings.get(id);
+        const n = id === null ? Infinity : rec?.visible === true ? rec.anchors.length : 0;
+        if (n > 0 && 2 * (cmd.handle ?? -1) < n) selection.focus(id, cmd.handle ?? -1);
+        return;
+      }
+      default:
+    }
+  }
+
+  /** Edge-triggered (BQ-02): one `selection` per change, carrying the mode the rail shows. */
+  function postSelection(inst: Instance): void {
+    const s = inst.selection;
+    if (!s.dirty) return;
+    s.dirty = false;
+    inst.objects.counters.selectionSize = s.size;
+    deps.post({
+      t: "selection",
+      id: inst.id,
+      ids: s.ids(),
+      focused: s.focused,
+      handle: s.handle,
+      mode: s.mode,
+    });
   }
 
   function dispatch(msg: ToWorker): void {
@@ -1009,6 +1086,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         () => prepare(inst),
       );
       scene.layout.setSize(w, h);
+      const objects = old ? old.objects.rebind(viewport) : new ObjectIndex(viewport, 0, "main");
       const inst: Instance = {
         ...scene,
         slot,
@@ -1038,7 +1116,9 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
           say: (code) => (inst.axes.say = code),
         }),
         // G-28: the degraded-2d re-init keeps the registrations, re-placed under the new view.
-        objects: old ? old.objects.rebind(viewport) : new ObjectIndex(viewport, 0, "main"),
+        objects,
+        drawings: old?.drawings ?? new DrawingAdapter(objects),
+        selection: old?.selection ?? new Selection(),
         structural: old
           ? old.structural.rebind(viewport, scene.layout)
           : new StructuralIndex(viewport, scene.layout),

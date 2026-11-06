@@ -581,6 +581,22 @@ describe("Scenario: Worker death is recovered", () => {
     host.dispose();
   });
 
+  it("does not replay a removed drawing after a worker restart", () => {
+    const host = hostOn(workerDoc());
+    settle();
+    host.command({ k: "addDrawing", drawingId: "d1", kind: "trend" });
+    host.command({ k: "addDrawing", drawingId: "d2", kind: "trend" });
+    host.command({ k: "removeDrawing", drawingId: "d1" });
+    lastWorker().kill();
+    vi.advanceTimersByTime(1000);
+    settle();
+    const cmds = (inboxOf(lastWorker(), "command") as Extract<ToWorker, { t: "command" }>[]).map(
+      (m) => m.cmd,
+    );
+    expect(cmds).toEqual([{ k: "addDrawing", drawingId: "d2", kind: "trend" }]);
+    host.dispose();
+  });
+
   it("resolves a pending screenshot null once the worker is lost for good", async () => {
     let calls = 0;
     env = fakeEnv({
