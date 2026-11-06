@@ -9,6 +9,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { generated } from "@candleviewer/protocol";
+import type { SystemUpdate } from "../../../src/lib/ws/protocol/frames";
 import { createAccountSignals } from "../../../src/features/positions/accountSignals";
 import type {
   AccountsOutcome,
@@ -26,7 +27,6 @@ import {
 import {
   APPLY_MEASURE,
   COMMIT_INTERVAL_MS,
-  lockoutChannel,
   MARK_PREFIX,
   MAX_MEASURES,
   POSITIONS_PANE_ID,
@@ -112,8 +112,11 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** No `machines.` topic: B20 has no runtime machine, so its sub is refused and audited (`23` §6.4, §4.3). */
+const machineSubs = (): string[] => ws.subs.filter((ch) => ch.startsWith("machines."));
+
 describe("subscriptions", () => {
-  it("consumes positions and wallet for the directory's accounts, private first, and B20 per account", async () => {
+  it("consumes positions and wallet for the directory's accounts, private first, and no machines topic", async () => {
     start();
     await settle();
     const [positions] = ws.live("positions");
@@ -124,11 +127,7 @@ describe("subscriptions", () => {
       priority: "private",
     });
     expect(ws.live("wallet")[0]?.spec.opts).toEqual({ exchange_account_ids: [MAIN, SUB1, SUB2] });
-    expect(ws.handles.filter((h) => h.ch.startsWith("machines.")).map((h) => h.ch)).toEqual([
-      lockoutChannel(MAIN),
-      lockoutChannel(SUB1),
-      lockoutChannel(SUB2),
-    ]);
+    expect(ws.handles.map((h) => h.ch)).toEqual(["positions", "wallet"]);
     expect(ws.handles.every((h) => h.spec.priority === "private")).toBe(true);
   });
 
@@ -337,6 +336,22 @@ describe("S-02: the snapshot budget and Retry", () => {
     await settle(COMMIT_INTERVAL_MS + 16);
     expect(ws.live("positions")).toHaveLength(1);
   });
+
+  it("a directory read that never answers fails at the budget's end, as Retry's does", async () => {
+    const hung = vi.fn((): Promise<AccountsOutcome> => new Promise(() => undefined));
+    start(fakeApi({ listExchangeAccounts: hung }));
+    await settle(SNAPSHOT_BUDGET_MS - 100);
+    expect(store.getSnapshot().status).not.toBe("snapshot_failed");
+    await settle(200);
+    expect(store.getSnapshot().status).toBe("snapshot_failed");
+    feed?.retry();
+    await settle(COMMIT_INTERVAL_MS + 16);
+    expect(hung).toHaveBeenCalledTimes(2);
+    expect(store.getSnapshot().status).not.toBe("snapshot_failed");
+    await settle(SNAPSHOT_BUDGET_MS);
+    expect(store.getSnapshot().status).toBe("snapshot_failed");
+    expect(ws.handles).toEqual([]);
+  });
 });
 
 describe("the link-down fallback (BQ-18)", () => {
@@ -444,25 +459,38 @@ describe("a narrowing (23 §9.5): the directory names who left (SR-E29-11)", () 
   });
 });
 
-describe("B20 frames reach the signals; stop releases everything", () => {
-  it("the locked chip's state, then stop", async () => {
+describe("no B20 subscription until B20 has a runtime machine (the orchestrator's carry on #911)", () => {
+  it("a mount, a Retry and a narrowing send no machines.risk_lockout sub", async () => {
+    const reads: AccountsOutcome[] = [
+      { kind: "ok", items: accounts },
+      { kind: "ok", items: accounts.filter((a) => a.id !== SUB2) },
+    ];
+    start(fakeApi({ listExchangeAccounts: async () => reads.shift() ?? { kind: "unavailable" } }));
+    await settle(COMMIT_INTERVAL_MS + 16);
+    expect(machineSubs()).toEqual([]); // the mount
+    await settle(SNAPSHOT_BUDGET_MS);
+    expect(store.getSnapshot().status).toBe("snapshot_failed");
+    feed?.retry();
+    await settle(COMMIT_INTERVAL_MS + 16);
+    expect(machineSubs()).toEqual([]); // the Retry
+    positionsHandle()?.push(snap(snapshot));
+    await settle(COMMIT_INTERVAL_MS + 16);
+    positionsHandle()?.push(reset("narrowed"));
+    await settle((COMMIT_INTERVAL_MS + 16) * 2);
+    expect(positionsHandle()?.spec.opts).toEqual({ exchange_account_ids: [MAIN, SUB1] });
+    expect(ws.handles.map((h) => h.ch).filter((ch) => ch.startsWith("machines."))).toEqual([]);
+    expect(machineSubs()).toEqual([]); // the narrowing's re-made subscription
+  });
+});
+
+describe("stop releases everything", () => {
+  it("every handle, the store and the accounts' signals", async () => {
     const signals = createAccountSignals();
     const api = fakeApi();
     start(api, { signals });
     await settle();
-    ws.live(lockoutChannel(SUB2))[0]?.push(
-      snap({
-        machine_kind: "risk_lockout",
-        state: "locked",
-        tags: ["trading_blocked"],
-        degraded: false,
-        machine_hash: "0".repeat(64),
-        environment: "live",
-        updated_at_ms: 1,
-      }),
-    );
-    await settle(COMMIT_INTERVAL_MS + 16);
-    expect(signals.getSnapshot().accounts.get(SUB2)?.lockout).toBe("locked");
+    signals.applyNotice(golden<SystemUpdate>("ws_system_account_notice.json"), 1);
+    expect(signals.getSnapshot().accounts.get(SUB1)?.oms?.state).toBe("reconciling");
     feed?.stop();
     feed?.stop();
     expect(ws.handles.every((h) => h.released)).toBe(true);

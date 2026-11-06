@@ -15,6 +15,15 @@ export const WS_HARNESS_MARKER = "cv-e2e-ws-harness";
 
 export type Frame = Readonly<Record<string, unknown>> & { readonly t: string };
 export type TickerRow = generated.ws.TickerSymbolTicker["tickers"][number];
+/** A `positions` payload (`23` §15.2 `PositionUpdate`). */
+export type PositionsBody = generated.ws.Positions;
+/** One private topic's `sub` as the gateway took it: the accounts it named and those it kept (6.2). */
+export interface PrivateSub {
+  readonly ch: string;
+  readonly named: readonly string[];
+  /** `null`: refused `account_scope_denied`. */
+  readonly kept: readonly string[] | null;
+}
 
 /** 13.3 `welcome.heartbeat` (interval >= 1 000, timeout >= 5 000). Defaults are 9.1's 15 s / 45 s. */
 export type Heartbeat = { readonly interval_ms: number; readonly timeout_ms: number };
@@ -30,6 +39,12 @@ export interface GatewayOptions {
    * consumer's frame age, and the status bar's latency band, can be held (100-249 ms: "slow"). `setFrameAge` moves it.
    */
   readonly ageMs?: number;
+  /**
+   * The caller's granted accounts (6.2): an account-scoped private topic's `sub` is narrowed to them, the kept list in
+   * `sub_ok.effective`, and one naming none of them is refused `account_scope_denied`. Default: whatever a `sub` names
+   * (an Owner's scope).
+   */
+  readonly accountScope?: readonly string[];
 }
 
 export interface WsHarness {
@@ -79,6 +94,13 @@ export interface WsHarness {
    * (6.2.2, 15.8), whose every frame is the whole status.
    */
   sendData(ch: string, p: unknown): void;
+  /**
+   * Every account-scoped private `sub` (6.2) and every account-scoped machine `sub` (6.4's kinds,
+   * `SCOPED_MACHINE`: the harness refuses each), in arrival order. A global `machines.` topic is neither.
+   */
+  privateSubs(): readonly PrivateSub[];
+  /** A `positions` frame (6.2.3): the first a `snap`, then `d`s, as the server sends them. */
+  sendPositions(body: PositionsBody): void;
 }
 
 /** The client frames whose replies `hold` can keep back. */
@@ -114,6 +136,21 @@ export function fixtureTickers(): readonly TickerRow[] {
 
 const EPOCH_MS = 1_792_391_746_229; // the fixture's first frame: server times count up from it
 const HEALTH = { kind: "health", health: "healthy" } as const;
+/** 6.2's account-scoped private families: each `sub` names `exchange_account_ids`. */
+const ACCOUNT_SCOPED = new Set([
+  "orders",
+  "positions",
+  "executions",
+  "wallet",
+  "trade_groups",
+  "rules",
+]);
+/**
+ * 6.4's account-scoped machine kinds, `machines.<kind>:<id>.state`: the harness holds no entity, so it
+ * refuses each such `sub` `account_scope_denied`, as the gateway refuses one with no entry (B20 today).
+ */
+const SCOPED_MACHINE =
+  /^machines\.(order|trade_group|leg|algo|reconciliation|risk_lockout):[^.]+\.state$/;
 const ID = (n: number): string => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
 /** Runs in the page (serialised by Playwright): wraps `SharedWorker` and relays the worker's sockets. */
@@ -200,6 +237,7 @@ export async function startWsHarness(
   const frames: { conn: number; frame: Frame }[] = [];
   const sent: Frame[] = [];
   const clientCloses: { code: number; reason: string }[] = [];
+  const privateSubs: PrivateSub[] = [];
   const tickers = fixtureTickers();
   let tick = 0;
   let opened = 0;
@@ -286,10 +324,11 @@ export async function startWsHarness(
         return;
       }
       case "sub": {
-        const topics = ((p["topics"] ?? []) as ({ ch: string } | string)[]).map((t) =>
-          typeof t === "string" ? t : t.ch,
-        );
-        const results = topics.map((ch) => ({ ch, ok: true, sub_id: `s_${now()}`, effective: {} }));
+        const entries = (
+          (p["topics"] ?? []) as ({ ch: string; opts?: Record<string, unknown> } | string)[]
+        ).map((t) => (typeof t === "string" ? { ch: t, opts: undefined } : t));
+        const topics = entries.map((t) => t.ch);
+        const results = entries.map(({ ch, opts }) => resultOf(ch, opts));
         send(c, { t: "sub_ok", id, ts: now(), p: { results } });
         for (const ch of topics.filter((t) => t.startsWith("ticker.")))
           harness.sendTicker(ch.slice("ticker.".length));
@@ -308,6 +347,31 @@ export async function startWsHarness(
       case "ping":
         return send(c, { t: "pong", id, ts: now(), p: { server_ms: now() } });
     }
+  }
+
+  /** 6.2's narrowing and 6.4's refusal of an entity with no entry, as the gateway answers a `sub`'s topic. */
+  function resultOf(
+    ch: string,
+    opts: Record<string, unknown> | undefined,
+  ): Record<string, unknown> {
+    const refused = {
+      ch,
+      ok: false,
+      error: { code: "account_scope_denied", message: "out of scope" },
+    };
+    if (SCOPED_MACHINE.test(ch)) {
+      privateSubs.push({ ch, named: [], kept: null });
+      return refused;
+    }
+    if (!ACCOUNT_SCOPED.has(ch)) return { ch, ok: true, sub_id: `s_${now()}`, effective: {} };
+    const ids = opts?.["exchange_account_ids"];
+    const named = Array.isArray(ids) ? ids.map(String) : [];
+    const scope = gateway.accountScope;
+    const kept = named.filter((a) => scope === undefined || scope.includes(a));
+    privateSubs.push({ ch, named, kept: kept.length === 0 ? null : kept });
+    if (kept.length === 0) return refused;
+    const effective = { exchange_account_ids: kept };
+    return { ch, ok: true, sub_id: `s_${now()}`, snapshot_pending: true, effective };
   }
 
   const tokens = {
@@ -404,6 +468,14 @@ export async function startWsHarness(
       if (bye !== undefined) send(current, { t: "bye", p: bye });
       void current.route.close({ code, reason });
       current = undefined;
+    },
+    privateSubs: () => privateSubs,
+    sendPositions(body) {
+      if (!current) throw new Error("sendPositions: no live connection");
+      const last = current.seq.get("positions");
+      const [t, meta] =
+        last === undefined ? (["snap", { reason: "initial" }] as const) : (["d"] as const);
+      data(current, t, "positions", body, (last ?? 0) + 1, meta);
     },
     sendTicker(symbol, fields = {}) {
       if (!current) throw new Error("sendTicker: no live connection");

@@ -11,15 +11,24 @@
  * - **Resets.** A `reset` voids the WS baseline (`lib/ws/api.ts`): the rows shown stay as the last
  *   good view until the next `snap` replaces them. `narrowed` and `revoked` drop the accounts' rows
  *   at once from every cache, rows, liquidation state and balances alike (OM-I04, SR-E29-11), and
- *   each withdrawn account gets E29-D05 F-02's "No longer shown" line.
+ *   each withdrawn account gets E29-D05 F-02's "No longer shown" line. The line stands in place of
+ *   the rows (D02 §10.1, board 17) until the account is served again: a `snap` with its rows, a
+ *   `snap` on a subscription whose own `sub_ok` names it (rows or none), or a directory that
+ *   lists it.
  * - **A narrowing** (`23` §9.5) arrives as a bare `reset`: the consumer API carries no
  *   `removed_accounts`, and the handle's `effective` keeps the old list (E17's registry does not
  *   edit it). Its accounts wait as candidates: one the narrowed `snap` serves was kept; the feed
  *   re-reads the directory, and `setAccounts` names the ones it no longer lists (a narrowed
  *   `sub_ok` names them too, when one comes). A REST read never brings a candidate's rows back,
- *   nor a withdrawn or over-cap account's, nor any after a revocation (SR-E29-11).
+ *   nor a withdrawn or over-cap account's, nor any after a revocation (SR-E29-11). Nor does the
+ *   old list take a line down: a subscription made again inherits it (the engine's `inherit`), so
+ *   after a narrowing only a new subscription's own `sub_ok` (after a revocation, or on the next
+ *   link) serves one.
  * - **A removed row stays removed** for the baseline's life: an item stamped at or before its
  *   removal is late (`23` §6.2.3, §15), whichever frame brings it.
+ * - **A contract-breaking item is dropped,** never thrown inside the feed's drain (the
+ *   orchestrator's carry on #911): an item with no account, symbol, stamp or position id (`23`
+ *   §15.2) is skipped, and the store logs it once, structured and naming the field, never a value.
  * - **Commits** are coalesced: inputs only mark the store dirty, and `commit()`, which the feed
  *   calls at most every 100 ms (`wsPositions.ts`), publishes one snapshot (the ticket's 10 Hz tick).
  */
@@ -110,6 +119,8 @@ const MAX_CROSSINGS = 512;
 const MAX_WITHDRAWN = 64;
 /** The removed rows a baseline remembers (C-2.18): past it the oldest is forgotten first. */
 export const MAX_TOMBSTONES = 1_024;
+/** The one warning a store logs for a dropped item: its fields, never the item's values. */
+export const DROPPED_ITEM_WARNING = "[positions] dropped a positions item that breaks 23 §15.2";
 
 const EMPTY: PositionsSnapshot = Object.freeze({
   status: "idle",
@@ -157,6 +168,13 @@ const stampOf = (item: unknown): number | null =>
 const isOpen = (item: unknown): boolean =>
   isRecord(item) && (item["side"] === "long" || item["side"] === "short");
 
+/** A `sub_ok`'s accounts (`effective.exchange_account_ids`, C4), lower-cased; `null` before one. */
+function listedBy(effective: Readonly<Record<string, unknown>>): ReadonlySet<string> | null {
+  const ids = effective["exchange_account_ids"];
+  if (!Array.isArray(ids) || !ids.every(isUuid)) return null;
+  return new Set(ids.map((id) => id.toLowerCase()));
+}
+
 export interface PositionsStore {
   getSnapshot(): PositionsSnapshot;
   subscribe(listener: () => void): () => void;
@@ -178,7 +196,9 @@ export interface PositionsStore {
    * The current subscription's effective options (`TopicHandle.effective`, C4): an account it no
    * longer names leaves every cache with its F-02 line (a narrowed `sub_ok`, SR-E29-11). An
    * over-cap account is never named. A list that still names a narrowing's candidates settles
-   * nothing: after a narrowing it is the old one (E17), so only the directory settles them.
+   * nothing: after a narrowing it is the old one (E17), so only the directory settles them. Once
+   * the subscription has sent a `snap`, with no narrowing since its `sub_ok`, an account it names
+   * is served, rows or none: its S-08 line goes.
    */
   setEffective(effective: Readonly<Record<string, unknown>>): void;
   setLink(up: boolean): void;
@@ -198,7 +218,14 @@ export interface PositionsStore {
   commit(): boolean;
 }
 
-export function createPositionsStore(): PositionsStore {
+export interface PositionsStoreOptions {
+  /** Where the one dropped-item warning goes; defaults to `console.warn`. */
+  readonly warn?: ((message: string, detail: { readonly field: string }) => void) | undefined;
+}
+
+export function createPositionsStore(options: PositionsStoreOptions = {}): PositionsStore {
+  const warn = options.warn ?? ((message, detail): void => console.warn(message, detail));
+  let warned = false;
   let snapshot = EMPTY;
   const listeners = new Set<() => void>();
   let dirty = false;
@@ -220,6 +247,12 @@ export function createPositionsStore(): PositionsStore {
   /** A narrowing's candidates: the accounts whose rows it took, until the directory settles. */
   let pendingNarrowing: Set<string> | null = null;
   let narrowed = false;
+  /**
+   * What the subscription's own `sub_ok` list says of S-08's lines: `served` once it has sent a
+   * `snap`; `stale` from a narrowing, whose list the handle keeps (E17) and a subscription made
+   * again inherits, until the subscription ends (`revoked`) or a new link's answers (`reconnect`).
+   */
+  let scope: "unserved" | "served" | "stale" = "unserved";
   let withdrawn: Withdrawn[] = [];
   let overCap: readonly string[] = [];
   let wallet = new Map<string, Map<string, WalletEntry>>();
@@ -274,6 +307,14 @@ export function createPositionsStore(): PositionsStore {
     }
   }
 
+  /** Keeps the withdrawn lines `keep` accepts; the list changes only when one goes. */
+  function keepWithdrawn(keep: (accountId: string) => boolean): void {
+    const kept = withdrawn.filter((w) => keep(w.accountId));
+    if (kept.length === withdrawn.length) return;
+    withdrawn = kept;
+    touch();
+  }
+
   /** SR-E29-11: an account's rows, liquidation state and balances leave every cache now. */
   function dropAccounts(accountIds: ReadonlySet<string>): void {
     if (accountIds.size === 0) return;
@@ -298,10 +339,20 @@ export function createPositionsStore(): PositionsStore {
     wsBaseline = false;
   }
 
+  /** Logs the first dropped item of this store's life, by field (C-2.18: one line, not one per item). */
+  function dropped(field: string): void {
+    if (warned) return;
+    warned = true;
+    warn(DROPPED_ITEM_WARNING, { field });
+  }
+
   function upsert(item: unknown): void {
     const key = itemKey(item);
     const stamp = stampOf(item);
-    if (key === null || stamp === null) return; // `23` §15.2 requires both: a malformed item is dropped
+    // `23` §15.2 requires each: an item without one breaks the contract and is dropped, never thrown
+    if (key === null) return dropped("key");
+    if (stamp === null) return dropped("updated_at_ms");
+    if (!isUuid(isRecord(item) ? item["id"] : undefined)) return dropped("id");
     const held = ws.get(key);
     if (held !== undefined && stamp < held.updated_at_ms) return; // older: discarded (23 §15)
     // a row removed since the baseline began: an item stamped no later than its removal is late
@@ -347,8 +398,14 @@ export function createPositionsStore(): PositionsStore {
       for (const key of ws.keys()) pendingNarrowing.delete(accountOfKey(key));
       if (pendingNarrowing.size === 0) pendingNarrowing = null;
     }
+    // an account this `snap` serves is in scope again: its "No longer shown" line goes
+    if (withdrawn.length > 0) {
+      const served = new Set([...ws.keys()].map(accountOfKey));
+      keepWithdrawn((accountId) => !served.has(accountId));
+    }
     wsBaseline = true;
     everSnapped = true;
+    if (scope === "unserved") scope = "served"; // its `sub_ok`'s accounts are in the book now
     snapshotFailed = false;
     revoked = false;
     rest = null; // a snap replaces the REST view wholesale (BQ-18)
@@ -369,6 +426,9 @@ export function createPositionsStore(): PositionsStore {
   }
 
   function applyReset(reason: string): void {
+    // the subscription ended, or the next link subscribes again: its `sub_ok` will be its own
+    if (reason === "revoked" || reason === "reconnect") scope = "unserved";
+    else if (reason === "narrowed") scope = "stale";
     if (reason === "narrowed" || reason === "revoked") {
       const held = heldAccounts();
       dropAccounts(held); // every row: which accounts left is not known yet (security first)
@@ -529,6 +589,7 @@ export function createPositionsStore(): PositionsStore {
         revoked = false;
         pendingNarrowing = null;
         narrowed = false;
+        scope = "unserved";
         withdrawn = [];
         overCap = [];
         wallet = new Map();
@@ -546,6 +607,7 @@ export function createPositionsStore(): PositionsStore {
       const next = new Map(accounts.map((a) => [a.id, a]));
       const gone = new Set<string>();
       for (const id of directory?.keys() ?? []) if (!next.has(id)) gone.add(id);
+      keepWithdrawn((accountId) => !next.has(accountId)); // listed again: the line goes
       // a shown account, or a narrowing's candidate, gets its line; labels from the old directory
       const named = new Set([...heldAccounts(), ...(pendingNarrowing ?? [])]);
       noteWithdrawn([...gone].filter((id) => named.has(id)));
@@ -597,11 +659,14 @@ export function createPositionsStore(): PositionsStore {
       if (frames.length > 0) touch();
     },
     setEffective(effective) {
-      const ids = effective["exchange_account_ids"];
-      if (!Array.isArray(ids) || !ids.every(isUuid)) return; // no `sub_ok` yet: nothing narrowed
-      const scope = new Set([...ids.map((id) => id.toLowerCase()), ...overCap]); // never withdrawn
+      const listed = listedBy(effective);
+      if (listed === null) return; // no `sub_ok` yet: nothing narrowed
+      // S-08: a subscription that has sent a `snap` serves every account its own `sub_ok` names
+      if (scope === "served" && withdrawn.length > 0)
+        keepWithdrawn((accountId) => !listed.has(accountId));
+      const inScope = new Set([...listed, ...overCap]); // never withdrawn
       const out = new Set(
-        [...heldAccounts(), ...(pendingNarrowing ?? [])].filter((id) => !scope.has(id)),
+        [...heldAccounts(), ...(pendingNarrowing ?? [])].filter((id) => !inScope.has(id)),
       );
       if (out.size === 0) return;
       noteWithdrawn(out); // a narrowed `sub_ok`, or the accounts a narrowing took (SR-E29-11)

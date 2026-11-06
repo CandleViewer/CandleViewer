@@ -8,7 +8,8 @@
  *
  * Each data-bound span of a string is named in its `params` (D06 §6): `bindDeck` replaces those
  * spans with the caller's values, never the fixture's; a span marked `fixed` stays as written.
- * `D02_TEXT` holds the few strings merged E29-D02 draws and the deck does not key, each with its line.
+ * `D02_TEXT` and `D03_TEXT` hold the few merged E29-D02 and E29-D03 strings the deck does not key,
+ * each with its line.
  */
 
 export interface DeckEntry {
@@ -270,6 +271,7 @@ export const DECK = {
     source: "D02:421",
     key_status: "PROPOSED name",
   },
+  // S-21's chip: its consumer comes with B20's runtime machine (the orchestrator's carry on #911)
   "blotter.ui.lockout_chip": {
     string: "Locked · daily loss limit · until 00:00 UTC · closing and reducing still work",
     screen: "SCR-063",
@@ -593,13 +595,127 @@ export type DeckKey = keyof typeof DECK;
 
 /**
  * Merged E29-D02 strings the deck does not key (each cited; a test finds it at its line): the
- * kill-switch lock's header marker (D02:422) and the totals row's label (D02:142, :209).
+ * kill-switch lock's header marker (D02:422), the totals row's label (D02:142, :209), and the
+ * panel's own words: the five tabs and two placeholders' causes (D02:166), the toolbar (D02:374 to
+ * :376), filter-empty's button (D02:380) and S-02's Retry (D02:389).
  */
 export const D02_TEXT = {
   killLockMarker: { string: "Locked — kill switch", source: "D02:422" },
   liveTotal: { string: "LIVE total", source: "D02:142" },
   demoTotal: { string: "DEMO total", source: "D02:209" },
+  tabPositions: { string: "Positions", source: "D02:166" },
+  tabWorkingOrders: { string: "Working orders", source: "D02:166" },
+  tabFills: { string: "Fills", source: "D02:166" },
+  tabTradeGroups: { string: "Trade groups", source: "D02:166" },
+  tabAlgos: { string: "Algos", source: "D02:166" },
+  tradeGroupsCause: {
+    string: "Grouped orders across accounts will be listed here.",
+    source: "D02:166",
+  },
+  algosCause: { string: "Running algorithms will be listed here.", source: "D02:166" },
+  groupBy: { string: "Group by", source: "D02:374" },
+  groupAccount: { string: "Account", source: "D02:374" },
+  groupSymbol: { string: "Symbol", source: "D02:374" },
+  groupTradeGroup: { string: "Trade group", source: "D02:374" },
+  addFilter: { string: "Filter", source: "D02:375" },
+  chipAccount: { string: "Account", source: "D02:375" },
+  chipSymbol: { string: "Symbol", source: "D02:375" },
+  chipSide: { string: "Side", source: "D02:375" },
+  columns: { string: "Columns", source: "D02:376" },
+  exportCsv: { string: "Export CSV", source: "D02:376" },
+  clearFilters: { string: "Clear filters", source: "D02:380" },
+  retry: { string: "Retry", source: "D02:389" },
+  envLive: { string: "LIVE", source: "D02:238" },
+  envDemo: { string: "DEMO", source: "D02:209" },
 } as const;
+
+/** A string and its data-bound spans: a deck entry, or a merged string the deck does not key. */
+export interface BoundText {
+  readonly string: string;
+  readonly params?: Readonly<Record<string, string>>;
+}
+
+/**
+ * Merged E29-D03 strings the deck does not key (each cited; a test finds it at its line): D03 §5.2
+ * words `acct.announce.stale` by §4.1's variant (D03:329), and the deck keys only the failure one.
+ * No client reads B19, so no lock's cause is known: every role hears the cause-not-shown sentence,
+ * and a stale notice under a covering kill switch the kill-switch sentence (D03 §4.1, RT-07). Both
+ * are assertive, once per episode (D03 §8.3). The deck's gap is routed to E29-D06's owner. D03:329's
+ * conditional ending ("2 open positions have no confirmed exchange-side stop.") is left off: the WS
+ * `positions` row carries no `native_stop_present` (`23`:917), so no client can count them.
+ */
+export const D03_TEXT = {
+  staleAnnounce: {
+    string:
+      "Sub-2 is locked for new orders until the owner resolves it. Closing, cancelling and tightening stops still work.",
+    source: "D03:329",
+    params: { "Sub-2": "account label" },
+  },
+  killLockAnnounce: {
+    string:
+      "Sub-2 is still locked for new orders after the kill switch. Closing, cancelling and tightening stops still work.",
+    source: "D03:329",
+    params: { "Sub-2": "account label" },
+  },
+} as const satisfies Readonly<Record<string, BoundText & { readonly source: string }>>;
+
+/**
+ * PROPOSED words (#911 BQ-15, routed to E29-D03's copy owner through G-W3 and listed in the PR body
+ * for the ledger row): the Working orders and Fills placeholders, which no deck or D02 line draws,
+ * the words the panel composes where no design gives a string (a trade group's name and the
+ * positions with none, the crossing and value announcements, the export's file name), and the
+ * environment words for a session D02 does not draw (TESTNET, the shell badge's PROPOSED word).
+ * `filterEmptyOne` is filter-empty's singular, proposed as `blotter.ui.filter_empty#2`: the deck's
+ * one form reads "No rows match 1 filters" for the commonest case, one Account chip.
+ */
+export const PROPOSED_TEXT = {
+  workingOrdersTitle: "Working orders are not available yet",
+  workingOrdersCause: "Open orders across accounts will be listed here.",
+  fillsTitle: "Fills are not available yet",
+  fillsCause: "Fills across accounts will be listed here.",
+  tradeGroupLabel: "Trade group …{stub}",
+  noTradeGroup: "No trade group",
+  envTestnet: "TESTNET",
+  testnetTotal: "TESTNET total",
+  exportFileName: "candleviewer-positions-{stamp}.csv",
+  filterEmptyOne: "No rows match 1 filter",
+} as const;
+
+/** The values a deck string's data-bound spans take, by the kind its `params` name (D06 §6). */
+export interface DeckValues {
+  readonly label?: string;
+  readonly environment?: string;
+  readonly time?: string;
+  readonly count?: string;
+  readonly figure?: string;
+}
+
+const SPAN_KINDS: Readonly<Record<string, keyof DeckValues>> = {
+  "account label": "label",
+  environment: "environment",
+  "time (UTC)": "time",
+  count: "count",
+  figure: "figure",
+};
+
+/**
+ * `text` with each span bound by its kind ("account label", "environment", ...), so one call fits
+ * every string of a family whatever fixture word it wrote ("Sub-1", "Sub-2"). A span left unbound
+ * throws, as `bindText` does; `name` says whose in the error.
+ */
+export function bindTextKinds(text: BoundText, name: string, values: DeckValues): string {
+  const spans: Record<string, string> = {};
+  for (const [span, kind] of Object.entries(text.params ?? {})) {
+    const field = Object.hasOwn(SPAN_KINDS, kind) ? SPAN_KINDS[kind] : undefined;
+    const value = field === undefined ? undefined : values[field];
+    if (value !== undefined) spans[span] = value;
+  }
+  return bindText(text, name, spans);
+}
+
+/** The deck string of `key`, its spans bound by kind (`bindTextKinds`). */
+export const bindKinds = (key: DeckKey, values: DeckValues): string =>
+  bindTextKinds(DECK[key], key, values);
 
 /** E09-D09 §3.2's verbs for the Viewer's two `rbac.permission` lines, in D02:433's order. */
 export const RBAC_VERBS = {
@@ -608,49 +724,63 @@ export const RBAC_VERBS = {
 } as const;
 
 /**
- * The deck string of `key` with each bound span replaced: `values` maps a span as the deck writes
- * it ("Sub-1", "{account}") to the caller's text. Every span but a `fixed` one must be bound, so a
- * fixture label never reaches the screen.
+ * `text` with each bound span replaced: `values` maps a span as the string writes it ("Sub-1",
+ * "{account}") to the caller's text. Every span but a `fixed` one must be bound, so a fixture label
+ * never reaches the screen; `name` says whose in the error.
  */
-export function bindDeck(key: DeckKey, values: Readonly<Record<string, string>> = {}): string {
-  return bindEntry(key, DECK[key], values);
-}
-
-/**
- * `bindDeck`'s rule for any entry of the deck's shape: a PROPOSED string the deck does not key yet
- * (E29-S02's `orders/copy.ts`) binds the same way, by the spans its `params` name.
- */
-export function bindEntry(
-  key: string,
-  entry: DeckEntry,
+export function bindText(
+  text: BoundText,
+  name: string,
   values: Readonly<Record<string, string>> = {},
 ): string {
-  const spans = Object.entries(entry.params ?? {})
+  const spans = Object.entries(text.params ?? {})
     .filter(([, kind]) => kind !== "fixed")
     .map(([span]) => span);
   const missing = spans.filter((span) => !Object.hasOwn(values, span));
-  if (missing.length > 0) throw new TypeError(`${key}: unbound ${missing.join(", ")}`);
-  // Spans are found in the deck's own string, left to right, so a bound value is never re-read.
+  if (missing.length > 0) throw new TypeError(`${name}: unbound ${missing.join(", ")}`);
+  // Spans are found in the string itself, left to right, so a bound value is never re-read.
   const found = spans
-    .map((span) => ({ span, at: entry.string.indexOf(span) }))
+    .map((span) => ({ span, at: text.string.indexOf(span) }))
     .filter(({ at }) => at >= 0)
     .sort((a, b) => a.at - b.at);
   let out = "";
   let from = 0;
   for (const { span, at } of found) {
     if (at < from) continue; // overlapping spans: the first wins
-    out += entry.string.slice(from, at) + (values[span] ?? span);
+    out += text.string.slice(from, at) + (values[span] ?? span);
     from = at + span.length;
   }
-  return out + entry.string.slice(from);
+  return out + text.string.slice(from);
 }
+
+/** The deck string of `key`, each bound span replaced (`bindText`). */
+export const bindDeck = (key: DeckKey, values: Readonly<Record<string, string>> = {}): string =>
+  bindText(DECK[key], key, values);
+
+/**
+ * `bindDeck`'s rule for any entry of the deck's shape: a PROPOSED string the deck does not key yet
+ * (E29-S02's `orders/copy.ts`) binds the same way, by the spans its `params` name.
+ */
+export const bindEntry = (
+  key: string,
+  entry: DeckEntry,
+  values: Readonly<Record<string, string>> = {},
+): string => bindText(entry, key, values);
+
+export type WritePermission = keyof typeof RBAC_VERBS;
 
 /**
  * The panel-header notice of a read-only role (D02 §10.4, S-22): one `rbac.permission` line per
- * write the session lacks, verbatim. Presentation only: the server enforces (C-12.4).
+ * write the session lacks, verbatim, with the permission it names. Presentation only: the server
+ * enforces (C-12.4).
  */
-export function permissionLines(permissions: readonly string[]): readonly string[] {
-  return (Object.keys(RBAC_VERBS) as (keyof typeof RBAC_VERBS)[])
+export function permissionLines(
+  permissions: readonly string[],
+): readonly { readonly permission: WritePermission; readonly line: string }[] {
+  return (Object.keys(RBAC_VERBS) as WritePermission[])
     .filter((permission) => !permissions.includes(permission))
-    .map((permission) => bindDeck("rbac.permission", { "{verb}": RBAC_VERBS[permission] }));
+    .map((permission) => ({
+      permission,
+      line: bindDeck("rbac.permission", { "{verb}": RBAC_VERBS[permission] }),
+    }));
 }

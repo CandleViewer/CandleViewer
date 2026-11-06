@@ -8,6 +8,7 @@
  * routes this ticket owns (login/logout/403/404/settings-hub redirect)
  * render minimal placeholders.
  */
+import { lazy, Suspense } from "react";
 import { createBrowserRouter, redirect, type RouteObject } from "react-router";
 import { ROUTE_MANIFEST, type ManifestEntry } from "./manifest";
 import { ROUTE_TITLES, type TitleHandle } from "./titles";
@@ -32,6 +33,17 @@ import { SessionsSection } from "../features/session/SessionsSection";
 import { getMeClaims, refreshMeClaims } from "../lib/auth/meCache";
 import { ShellLayout } from "../features/app-shell/ShellLayout";
 import { ScreenRoot } from "../features/app-shell/ScreenRoot";
+
+/**
+ * SCR-063 on R-130 (E29-S01 #911, BQ-16): its own chunk, loaded when the route first renders, so the
+ * panel, its grid and its feed stay out of the first bundle. `React.lazy` sits in the element on
+ * purpose, as for the admin routes (`AdminRouteElement.tsx`): the `import()` runs only after the
+ * route's loader (the session and RBAC guard) has decided, where a route-level `lazy` or a loader
+ * preload ahead of the guard would fetch the chunk beside it.
+ */
+const PositionsPanel = lazy(() =>
+  import("../features/positions/PositionsPanel").then((m) => ({ default: m.PositionsPanel })),
+);
 
 const SETTINGS_ROUTES = new Set(["R-201", "R-202", "R-203", "R-204", "R-205"]);
 
@@ -68,6 +80,12 @@ function innerElementFor(routeId: string, owner: string | null): RouteObject["el
     );
   // E42-S01: each admin route inside CMP-087, its code loaded once the guard let the session in.
   if (isAdminRoute(routeId)) return <AdminRouteElement routeId={routeId} owner={owner} />;
+  if (routeId === "R-130")
+    return (
+      <Suspense fallback={null}>
+        <PositionsPanel />
+      </Suspense>
+    );
   if (routeId === "R-101") {
     // First sign-in lands on /terminal/last -> here; the card is server-gated (401 => renders nothing).
     return (

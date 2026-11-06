@@ -6,24 +6,33 @@
  *   `oms.` family per account is its state; `oms.account_synced` clears it; any other family is an
  *   event and kept for nothing. Mapped by E29-D03 §4.1 (D03:212–219) to the deck's `acct.*` line,
  *   header marker and announcement (RT-11 polite and RT-07 assertive, once per episode).
- * - **The stale lock's cause** is the Owner's alone, and only through B19, which no client reads
- *   yet: an Owner reads `acct.stale.line` (the notice's own meaning, 2 minutes of failure), a
- *   Manager or Viewer `acct.stale.line.nocause`; a stale notice that arrives while the kill switch
- *   covers the account is the kill-switch lock for every role (D03 §4.1).
+ * - **The stale lock's cause** is the Owner's alone, and only through B19 (D03 §4.1), which no
+ *   client reads: the feed subscribes to no `machines.` topic, and the notice carries no cause
+ *   (G17), so "2 minutes of failure" may be false for a fault lock. Every role, the Owner included,
+ *   reads `acct.stale.line.nocause` and hears D03:329's cause-not-shown sentence (`D03_TEXT`); a
+ *   stale notice that arrives while the kill switch covers the account is the kill-switch lock for
+ *   every role, said with D03:329's kill-switch sentence (RT-07).
+ * - **Late mount:** the shell keeps one `account_notice`, its last (`store.ts`), and no frame `ts`
+ *   reaches a feature, so a panel that mounts (a first visit, a route re-entry) knows only the
+ *   accounts that frame names, each "since" the mount; an earlier account's state is unknown until
+ *   its next notice (D03 G15 asks the server to re-send each account's latest reason). The panel
+ *   owns this store for the route's life, so a tab switch keeps every state and its "since".
  * - **The kill switch** comes from `WsState` (`unknown` is never "not killed", WS-E06), its engage
  *   time from the shell's last `system` frame that carries one.
- * - **The risk lockout** comes from the B20 topic `machines.risk_lockout:{id}.state` (`23` §6.4):
- *   `clear`, `warning` or `locked`; a refused or ended subscription reads unknown, never clear.
+ * - **The risk lockout waits for B20** (the orchestrator's carry on #911): B20 has no runtime
+ *   machine (`23` §6.4), so the feed subscribes to no `machines.risk_lockout` topic, and the locks
+ *   an account shows are the two this client is told of: the stale lock and the kill-switch lock,
+ *   both from `account_notice` (D03 §4.1). S-21's chip (`blotter.ui.lockout_chip`, E39-D01 §8.2,
+ *   with its reason and its "until" time) and RT-20 come with B20's runtime machine.
  */
 import { useSyncExternalStore } from "react";
-import type { TopicFrame } from "../../lib/ws/api";
+import type { Politeness } from "../app-shell/announcer";
 import type { SystemUpdate } from "../../lib/ws/protocol/frames";
 import type { KillSwitchView } from "../../lib/ws/state/types";
-import type { DeckKey } from "./copy";
+import { D03_TEXT, DECK, type BoundText, type DeckKey } from "./copy";
 import { isUuid } from "./model/rowMapping";
 
 export type OmsState = "reconciling" | "desync" | "stale";
-export type Lockout = "clear" | "warning" | "locked";
 export type Role = "owner" | "manager" | "viewer";
 
 export interface AccountSignal {
@@ -36,8 +45,6 @@ export interface AccountSignal {
     /** A stale lock that began under the kill switch (D03 §4.1 "Locked — kill switch"). */
     readonly killLock: boolean;
   } | null;
-  /** B20's published state; `null` until one is read, and after the subscription ends. */
-  readonly lockout: Lockout | null;
 }
 
 export interface KillSwitchSignal {
@@ -58,11 +65,10 @@ const OMS_REASONS: Readonly<Record<string, OmsState | "synced">> = {
   "oms.account_stale": "stale",
   "oms.account_synced": "synced",
 };
-const LOCKOUTS: readonly Lockout[] = ["clear", "warning", "locked"];
 /** Bounded (C-2.18): a client names at most a few dozen accounts. */
 const MAX_ACCOUNTS = 256;
 
-const NO_SIGNAL: AccountSignal = Object.freeze({ oms: null, lockout: null });
+const NO_SIGNAL: AccountSignal = Object.freeze({ oms: null });
 const UNKNOWN: KillSwitchSignal = Object.freeze<KillSwitchSignal>({
   view: { state: "unknown" },
   engagedAtMs: null,
@@ -76,15 +82,38 @@ export function killSwitchCovers(view: KillSwitchView, accountId: string): boole
   );
 }
 
+/** An account state's announcement: its words, and the region D03 §8.3 gives it. */
+export interface AccountAnnounce {
+  readonly text: BoundText;
+  /** Its owner's name for the words, for a binding error. */
+  readonly name: string;
+  readonly politeness: Politeness;
+}
+
 export interface AccountLine {
   readonly line: DeckKey;
   /** The header marker: a deck key, or `kill_lock` for D02:422's "Locked — kill switch". */
   readonly marker: DeckKey | "kill_lock";
-  readonly announce: DeckKey | null;
+  readonly announce: AccountAnnounce;
 }
 
-/** E29-D03 §4.1's line, marker and announcement for an account's state, per role. */
-export function accountLine(signal: AccountSignal, role: Role): AccountLine | null {
+const deckAnnounce = (key: DeckKey): AccountAnnounce => ({
+  text: DECK[key],
+  name: key,
+  politeness: DECK[key].announce === "assertive" ? "assertive" : "polite",
+});
+/** RT-07 (D05 §8.1): a lock, either variant, is assertive, once per episode (D03 §8.3). */
+const lockAnnounce = (key: keyof typeof D03_TEXT): AccountAnnounce => ({
+  text: D03_TEXT[key],
+  name: `D03_TEXT.${key}`,
+  politeness: "assertive",
+});
+
+/**
+ * E29-D03 §4.1's line, marker and announcement for an account's state. The same for every role
+ * while no client reads B19: the cause is withheld from all (the "cause not shown" row).
+ */
+export function accountLine(signal: AccountSignal): AccountLine | null {
   const oms = signal.oms;
   if (oms === null) return null;
   switch (oms.state) {
@@ -92,20 +121,26 @@ export function accountLine(signal: AccountSignal, role: Role): AccountLine | nu
       return {
         line: "acct.reconciling.line",
         marker: "acct.marker.checking",
-        announce: "acct.announce.reconciling",
+        announce: deckAnnounce("acct.announce.reconciling"),
       };
     case "desync":
       return {
         line: "acct.desync.line",
         marker: "acct.marker.verifying",
-        announce: "acct.announce.desync",
+        announce: deckAnnounce("acct.announce.desync"),
       };
     case "stale":
-      if (oms.killLock) return { line: "acct.killlock.line", marker: "kill_lock", announce: null };
+      if (oms.killLock) {
+        return {
+          line: "acct.killlock.line",
+          marker: "kill_lock",
+          announce: lockAnnounce("killLockAnnounce"),
+        };
+      }
       return {
-        line: role === "owner" ? "acct.stale.line" : "acct.stale.line.nocause",
+        line: "acct.stale.line.nocause",
         marker: "acct.marker.stale",
-        announce: "acct.announce.stale",
+        announce: lockAnnounce("staleAnnounce"),
       };
   }
 }
@@ -122,8 +157,6 @@ export interface AccountSignalsStore {
   subscribe(listener: () => void): () => void;
   applyNotice(update: SystemUpdate, atMs: number): void;
   setKillSwitch(view: KillSwitchView, engagedAtMs: number | null): void;
-  /** What the account's B20 handle read. */
-  applyLockout(accountId: string, frames: readonly TopicFrame[]): void;
   /** SR-E29-11: a withdrawn account's signals leave too. */
   forget(accountIds: Iterable<string>): void;
   clear(): void;
@@ -131,13 +164,6 @@ export interface AccountSignalsStore {
 
 const isRecord = (v: unknown): v is Readonly<Record<string, unknown>> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
-
-/** The B20 state of a structured `machines` payload (`23` §15.10), or `undefined` for another. */
-function lockoutOf(body: { readonly e: string; readonly p?: unknown }): Lockout | undefined {
-  if (body.e !== "j" || !isRecord(body.p) || body.p["machine_kind"] !== "risk_lockout")
-    return undefined;
-  return LOCKOUTS.find((state) => state === (body.p as Record<string, unknown>)["state"]);
-}
 
 export function createAccountSignals(): AccountSignalsStore {
   let accounts = new Map<string, AccountSignal>();
@@ -155,9 +181,9 @@ export function createAccountSignals(): AccountSignalsStore {
 
   function put(accountId: string, next: AccountSignal): boolean {
     const before = accounts.get(accountId) ?? NO_SIGNAL;
-    if (before.oms === next.oms && before.lockout === next.lockout) return false;
+    if (before.oms === next.oms) return false;
     const copy = new Map(accounts);
-    if (next.oms === null && next.lockout === null) copy.delete(accountId);
+    if (next.oms === null) copy.delete(accountId);
     else if (copy.has(accountId) || copy.size < MAX_ACCOUNTS) copy.set(accountId, next);
     accounts = copy;
     return true;
@@ -208,23 +234,6 @@ export function createAccountSignals(): AccountSignalsStore {
       if (same) return;
       killSwitch = { view, engagedAtMs };
       publish();
-    },
-    applyLockout(accountId, frames) {
-      const id = accountId.toLowerCase();
-      let state = (accounts.get(id) ?? NO_SIGNAL).lockout;
-      for (const frame of frames) {
-        if (frame.kind === "reset") {
-          state = null; // refused (no B20 machine runs yet, 23 §6.4), removed, or void: unknown
-          continue;
-        }
-        const bodies = frame.kind === "snap" ? frame.bodies : [frame.body];
-        for (const body of bodies) {
-          const next = lockoutOf(body);
-          if (next !== undefined) state = next;
-        }
-      }
-      const before = accounts.get(id) ?? NO_SIGNAL;
-      if (put(id, { ...before, lockout: state })) publish();
     },
     forget(accountIds) {
       let changed = false;

@@ -1,7 +1,7 @@
 export { SwatchLegendItem } from "./SwatchLegendItem.js";
 export type { DirectionalSwatchColor, SwatchLegendItemProps } from "./SwatchLegendItem.js";
 
-export { Table } from "./Table.js";
+export { Table, rowsWord } from "./Table.js";
 export type {
   TableCellOptions,
   TableCellProps,
@@ -49,7 +49,7 @@ export type {
 export { FilterBar } from "./FilterBar.js";
 export type { FilterBarProps, FilterChip } from "./FilterBar.js";
 
-export { PnLBadge } from "./PnLBadge.js";
+export { PnLBadge, pnlReading } from "./PnLBadge.js";
 export type { PnLBadgeProps, PnLFormat } from "./PnLBadge.js";
 
 export { PositionModeToggle } from "./PositionModeToggle.js";

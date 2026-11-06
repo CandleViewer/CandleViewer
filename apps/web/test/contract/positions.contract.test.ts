@@ -16,10 +16,10 @@ import {
   type PositionRowModel,
 } from "../../src/features/positions/model/rowMapping";
 import { createPositionsStore } from "../../src/features/positions/positionsStore";
-import { lockoutChannel, startPositionsFeed } from "../../src/features/positions/wsPositions";
+import { startPositionsFeed } from "../../src/features/positions/wsPositions";
 import { sub } from "../../src/lib/ws/protocol/frames";
-import { fakeClient, golden, SUB1, SUB2 } from "../features/positions/support/fakes";
-import { repoFile, validateClientFrame, validatePayload } from "../lib/ws/support/schemaHarness";
+import { fakeClient, golden, SUB1 } from "../features/positions/support/fakes";
+import { validateClientFrame, validatePayload } from "../lib/ws/support/schemaHarness";
 
 type Schemas = generated.rest.components["schemas"];
 type Position = Schemas["Position"];
@@ -140,7 +140,7 @@ describe("WS frames validate against the 23 §15 schemas (fixtures from the ship
     );
   });
 
-  it("the wallet snapshot, the resyncing notice, E29-T06's notices and a B20 machine state", () => {
+  it("the wallet snapshot, the resyncing notice and E29-T06's notices", () => {
     expect(validatePayload("wallet", golden("ws_wallet_snapshot.json"))).toEqual([]);
     expect(validatePayload("system", golden("ws_system_account_notice.json"))).toEqual([]);
     for (const reason of ["oms.account_desync", "oms.account_stale", "oms.account_synced"]) {
@@ -153,27 +153,11 @@ describe("WS frames validate against the 23 §15 schemas (fixtures from the ship
       };
       expect(validatePayload("system", frame)).toEqual([]);
     }
-    const lock = JSON.parse(
-      repoFile("services/api/candleviewer/statechart/machines/machine_hashes.lock"),
-    ) as {
-      machines: Record<string, { hash: string }>;
-    };
-    const hash = lock.machines["risk_lockout"]?.hash ?? ""; // B20's chart hash
-    const machine = {
-      machine_kind: "risk_lockout",
-      state: "locked",
-      tags: ["trading_blocked"],
-      degraded: false,
-      machine_hash: hash,
-      environment: "live",
-      updated_at_ms: 1_793_455_331_000,
-    };
-    expect(validatePayload("machines", machine)).toEqual([]);
   });
 });
 
 describe("the client's sub frame validates (23 §13.5)", () => {
-  it("positions and wallet name the accounts; B20 takes universal options only", async () => {
+  it("positions and wallet name the accounts; no machines topic is asked for (no B20 runtime machine)", async () => {
     const ws = fakeClient();
     const accounts = golden<ListAccounts200>("rest_list_exchange_accounts.json").items ?? [];
     const feed = startPositionsFeed({
@@ -193,9 +177,7 @@ describe("the client's sub frame validates (23 §13.5)", () => {
     const topics = ws.handles.map((h) =>
       h.spec.opts === undefined ? { ch: h.ch } : { ch: h.ch, opts: h.spec.opts },
     );
-    expect(topics.map((t) => t.ch)).toEqual(
-      expect.arrayContaining(["positions", "wallet", lockoutChannel(SUB2)]),
-    );
+    expect(topics.map((t) => t.ch)).toEqual(["positions", "wallet"]);
     const [first, ...rest] = topics;
     expect(first).toBeDefined();
     expect(

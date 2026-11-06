@@ -3,6 +3,7 @@ import { stubAdminReads } from "../support/admin";
 import { stubSession, stubSessionsList } from "../support/api";
 import { stubRecorder } from "../support/recorder";
 import { REFRESH_INVALID } from "../support/contexts";
+import { stubPositions } from "../support/positions";
 import type { A11yScreen } from "./screens";
 
 /**
@@ -19,6 +20,8 @@ const PACE_SAMPLE = 5;
 
 /** Per-screen data stubs, so the collectors audit the populated state, not an error. */
 const SCREEN_STUBS: Readonly<Record<string, (page: Page) => Promise<void>>> = {
+  // SCR-063 positions: the owner's three accounts and the REST book, first paint (E29-S01 #911)
+  "R-130": async (page) => void (await stubPositions(page, { role: "owner" })),
   "R-201": stubSessionsList, // SCR-112 sessions: the table with the current session marked
   "R-300": async (page) => void (await stubAdminReads(page)), // SCR-120: every tile answered
   "R-340": async (page) => {
