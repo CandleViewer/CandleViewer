@@ -1,18 +1,13 @@
 /**
- * SCR-121's page store (E42-S02; BQ-1, BQ-7), in the admin read store's idiom (`overview/readStore.ts`): a factory
- * with injected reads and clock, one store per page mount (nothing is kept after the page goes, so the next visit
- * starts cold), and selectors kept while their JSON is unchanged. The list reads 50 users a page by cursor (Load
- * more); a new filter or search drops the pages and the cursor; an expired cursor (`400`, cursors last an hour)
- * reads again from the first page. A sort orders every user, never only the rows read (`listUsers` has no sort,
- * CG-29): while more pages remain it reads them first, the header busy (`sortPending`), then sorts on the client; a
- * page that fails keeps the rows read so far in the server's order with no sort, until a Retry completes the read.
- * A walk of pages stops at a cursor it has already followed or at `MAX_PAGES`, as a failed page. After a write the
- * list is read again as deep as it was shown (every loaded page, quietly: the rows stay until the last page answers,
- * so a row on a later page and the focus on it stay); a list that is not built reads the invites alone. The pending
- * invites are read once per entry and after each write; grants are read only for active and locked non-owner rows,
- * at most four at once (one call per row, CG-11), and read again once a row's status or eligibility changes (a
- * disable revokes them, an enable never restores them). A `403` on any read withdraws the area (`adminReads.deny`,
- * BQ-8) and asks nothing more. Nothing polls: status changes come from the page's own writes.
+ * SCR-121's page store (E42-S02; BQ-1, BQ-7), in the admin read store's idiom (`overview/readStore.ts`): injected
+ * reads and clock, one store per page mount (nothing kept after it goes). The list reads 50 users a page by cursor
+ * (Load more); a new filter drops the pages; an expired cursor (`400`) reads again from page one, once per walk. A
+ * sort orders every user (`listUsers` has no sort, CG-29): it reads the remaining pages first, the header busy
+ * (`sortPending`); a failed page keeps the rows read in the server's order until a Retry. A walk stops at a cursor
+ * already followed or at `MAX_PAGES`, as a failed page. After a write the list is read again as deep as shown, its
+ * rows kept until the last page answers; an unbuilt list reads the invites alone. Invites are read once per entry;
+ * grants only for active and locked non-owner rows, four at once, again once a row's status changes. A `403` on
+ * any read withdraws the area (`adminReads.deny`, BQ-8). Nothing polls.
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { FailReason, ReadOutcome, ReadTimers } from "../overview/adminReads";
@@ -101,15 +96,9 @@ export interface UsersStore {
   readonly sortBy: (sort: UsersSort | null) => void;
   /** Repeats what failed: the first page, the next page or the sort's remaining pages, and the invites. */
   readonly retry: () => void;
-  /**
-   * A write answered with its user (`PATCH`): the row changes in place and never moves; a changed status reads its
-   * grants again.
-   */
+  /** A write answered with its user (`PATCH`): the row changes in place; a changed status reads its grants again. */
   readonly upsert: (user: VettedUser) => void;
-  /**
-   * After a write whose answer has no user: reads the invites and the list again, every page shown (its rows kept
-   * until the last answers); a list that is not built is not read again.
-   */
+  /** After a write with no user in its answer: reads the invites and every page shown again, rows kept. */
   readonly invalidate: () => void;
   /** Stops every read and keeps nothing; a later query starts cold. */
   readonly release: () => void;
@@ -120,6 +109,8 @@ export const MAX_GRANT_READS = 4;
 
 /** A walk of pages stops here (5,000 users, far past this screen's scale), as at a cursor already followed. */
 export const MAX_PAGES = 100;
+/** Restarts from page one after an expired cursor, at most, in one walk (a cursor refused again fails it). */
+export const MAX_RESTARTS = 1;
 
 const LIST0: UsersListState = Object.freeze({
   phase: "idle",
@@ -220,10 +211,7 @@ export function createUsersStore(deps: UsersStoreDeps): UsersStore {
   let pagesShown = 0;
   /** The cursors this walk of pages has followed (a first page starts a walk): one seen again ends it. */
   let walked = new Set<string>();
-  /**
-   * A quiet re-read of every page shown, after a write: its rows build here and replace the list's once the last
-   * page answers, so nothing shown goes meanwhile.
-   */
+  /** A quiet re-read of every page shown, after a write: its rows replace the list's once the last answers. */
   let refresh: {
     readonly pages: number;
     rows: VettedUser[];
@@ -234,6 +222,8 @@ export function createUsersStore(deps: UsersStoreDeps): UsersStore {
   let refreshFailed: number | null = null;
   /** The sort asked for: applied once every page is read; a Retry completes a read that failed. */
   let wanted: UsersSort | null = null;
+  /** Restarts from page one after an expired cursor, in this walk; a user action starts a new walk. */
+  let restarts = 0;
   /** The invites are read once per entry: the first query of a mount (or after a release). */
   let entered = false;
   /** A `403` withdrew the area: nothing more is asked. */
@@ -349,17 +339,13 @@ export function createUsersStore(deps: UsersStoreDeps): UsersStore {
 
   // ---- the list ----
 
-  /** A walk may follow `next`: a cursor it has not followed, within `MAX_PAGES` (C-1023-04). */
+  /** A walk may follow `next` if not followed yet, within `MAX_PAGES` (C-1023-04). */
   const canFollow = (next: string | null): boolean =>
     next !== null && !walked.has(next) && walked.size < MAX_PAGES - 1;
   /** A walk that cannot go on (a cursor repeated, or `MAX_PAGES` read) ends as a failed page does. */
   const STUCK: UsersFailure = Object.freeze({ reason: "unreadable", status: undefined });
 
-  /**
-   * Reads a page: the first (`first`), shown as loading unless `quiet` keeps the rows, or the next by its cursor
-   * (the re-read's own while one runs). While a sort is wanted, each answer that has more reads on, and the last
-   * applies the sort.
-   */
+  /** Reads the first page (loading, unless `quiet` keeps the rows) or the next by cursor; a wanted sort reads on. */
   function readList(first: boolean, quiet: boolean): void {
     if (withdrawn) return;
     listRead?.abort();
@@ -388,14 +374,14 @@ export function createUsersStore(deps: UsersStoreDeps): UsersStore {
     });
   }
 
-  /** Reads every page shown again, quietly (after a write, or its Retry): the rows stay until the last answers. */
+  /** Reads every page shown again, quietly (after a write, or its Retry). */
   function rereadShown(pages: number): void {
     refresh = { pages: Math.max(1, pages), rows: [], read: 0, next: null };
     refreshFailed = null;
     readList(true, true);
   }
 
-  /** A re-read's page: on to the next until as many as were shown (every one under a sort), then the swap. */
+  /** A re-read's page: on until as many as were shown (every one under a sort), then the swap. */
   function settleRefresh(page: UserPage, first: boolean): void {
     const run = refresh;
     if (run === null) return;
@@ -461,8 +447,9 @@ export function createUsersStore(deps: UsersStoreDeps): UsersStore {
       setList({ ...LIST0, phase: "not_built" });
       return;
     }
-    // An expired cursor: the pages are read again from the first, the rows kept meanwhile.
-    if (!first && outcome.kind === "failed" && outcome.status === 400) {
+    // An expired cursor: read again from the first page, rows kept; refused again, the walk fails (no loop).
+    if (!first && outcome.kind === "failed" && outcome.status === 400 && restarts < MAX_RESTARTS) {
+      restarts += 1;
       readList(true, true);
       return;
     }
@@ -496,6 +483,7 @@ export function createUsersStore(deps: UsersStoreDeps): UsersStore {
       if (withdrawn) return;
       if (state.list.phase !== "idle" && sameJson(query, state.query)) return;
       commit({ ...state, query });
+      restarts = 0;
       refresh = null;
       refreshFailed = null;
       readList(true, false);
@@ -507,6 +495,7 @@ export function createUsersStore(deps: UsersStoreDeps): UsersStore {
     loadMore: () => {
       if (withdrawn || listRead !== null || state.list.phase !== "ok" || !state.list.hasMore)
         return;
+      restarts = 0;
       readList(false, false);
     },
     sortBy: (sort) => {
@@ -525,12 +514,14 @@ export function createUsersStore(deps: UsersStoreDeps): UsersStore {
         setList({ sort, sortPending: null });
         return;
       }
+      restarts = 0;
       readList(false, false);
     },
     retry: () => {
       if (withdrawn) return;
       if (state.invites.phase === "failed") readInvites();
       if (listRead !== null) return;
+      restarts = 0;
       if (state.list.phase === "failed") readList(true, false);
       else if (refreshFailed !== null) rereadShown(refreshFailed);
       else if (state.list.failure !== null) readList(firstRead, true);
@@ -546,6 +537,7 @@ export function createUsersStore(deps: UsersStoreDeps): UsersStore {
     invalidate: () => {
       if (withdrawn || state.list.phase === "idle") return;
       readInvites();
+      restarts = 0;
       if (state.list.phase === "not_built") return; // nothing to read again: no reload, no second report
       if (state.list.phase === "ok") rereadShown(pagesShown);
       else readList(true, false);
@@ -553,6 +545,7 @@ export function createUsersStore(deps: UsersStoreDeps): UsersStore {
     release: () => {
       stopReads();
       wanted = null;
+      restarts = 0;
       entered = false;
       pagesShown = 0;
       walked = new Set();

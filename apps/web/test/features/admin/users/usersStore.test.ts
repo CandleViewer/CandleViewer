@@ -1,13 +1,8 @@
 /**
- * E42-S02 (#1023) BQ-1, BQ-7: SCR-121's page store, in the admin read store's idiom. The list reads 50 users a
- * page by cursor; Load more reads the next; a new filter or search drops the pages and the cursor; an expired
- * cursor (`400`) reads again from the first page. A sort orders every user: while more pages remain it reads them
- * first (the header busy), then sorts; a page that fails keeps the rows read so far in the server's order and the
- * sort waits for a Retry. `404`, `405` and `501` are not built; a `403` on any read withdraws the area (BQ-8). The
- * pending invites are read once per entry and after a write. Grants are read only for active and locked non-owner
- * rows, at most four at once, and read again once a row's status changes. After a write the list is read again as
- * deep as it was shown, its rows kept until the last page answers; a walk of pages stops at a repeated cursor or at
- * `MAX_PAGES`. Nothing polls, and a release aborts every read and keeps nothing.
+ * E42-S02 (#1023) BQ-1, BQ-7: SCR-121's page store. Pages by cursor, Load more, a new filter dropping the cursor,
+ * an expired cursor (`400`) restarting the walk once; a sort over every page (header busy; a failed page waits for
+ * a Retry); not built; a `403` withdrawing the area (BQ-8); invites once per entry; grants for eligible rows, four
+ * at once; a re-read after a write as deep as shown; no polling; release keeping nothing.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ReadOutcome } from "../../../../src/features/admin/overview/adminReads";
