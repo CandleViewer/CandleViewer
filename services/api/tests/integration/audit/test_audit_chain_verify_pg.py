@@ -1,12 +1,7 @@
-"""Integration (E43-T10, #1238 ruling BQ-10): the offline chain check on Postgres 16.
-
-The roles come from the shipped `pg_bootstrap.sql` and the schema is migrated as `cv_owner`, as in
-`test_audit_guard_cv_app.py`; the checked database is a copy of it (`TEMPLATE`) whose name marks
-it for tests, so the corrupted-chain fixture (#962) may load into it. The entry point then runs
-on the `cv_ro` login and must name the fixture's victim; and a write is refused both to `cv_ro`
-itself and to any login on the tool's read-only sessions. Needs Docker (testcontainers) and
-`psql`; CI `integration` runs it.
-"""
+"""Integration (E43-T10, #1238 ruling BQ-10) on Postgres 16: roles from `pg_bootstrap.sql`, the
+schema migrated as `cv_owner`, checked on a test-named `TEMPLATE` copy holding the corrupted-chain
+fixture (#962). The entry point on `cv_ro` names its victim; a write is refused to `cv_ro` and to
+any login on the tool's read-only sessions. Needs Docker and `psql`; CI `integration` runs it."""
 
 from __future__ import annotations
 
@@ -35,6 +30,9 @@ from tests.integration.audit.test_audit_guard_cv_app import (
     _migrate_as_owner,
 )
 
+Cap = pytest.CaptureFixture[str]
+MP = pytest.MonkeyPatch
+
 pytestmark = pytest.mark.integration
 
 _PROBE = "INSERT INTO audit_checkpoints (id, head_id, head_hash, row_count) "
@@ -56,7 +54,7 @@ def pg() -> Iterator[str]:
 
 
 def test_the_entry_point_on_cv_ro_names_the_fixtures_victim(
-    pg: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    pg: str, tmp_path: Path, monkeypatch: MP, capsys: Cap
 ) -> None:
     superuser = pg.replace("postgresql://", "postgresql+asyncpg://", 1)
     victim = asyncio.run(seed_corrupted_chain(superuser, tmp_path))
@@ -70,9 +68,7 @@ def test_the_entry_point_on_cv_ro_names_the_fixtures_victim(
     assert "cv_ro_test_pw" not in out
 
 
-def _check_on_cv_ro(
-    pg: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> tuple[int, str]:
+def _check_on_cv_ro(pg: str, monkeypatch: MP, capsys: Cap) -> tuple[int, str]:
     monkeypatch.setenv("CV_AUDIT_VERIFY_DSN", _as(pg, "cv_ro", "postgresql+asyncpg"))
     status = entry.main(["--check"])
     return status, capsys.readouterr().out
@@ -131,15 +127,37 @@ def _changed(pg: str, change: Sequence[str], restore: Sequence[str]) -> Iterator
             ],
             "FAIL grants: cv_ro on audit_log: extra ['UPDATE'], missing []",
         ),
+        (
+            ["ALTER DATABASE verify_test SET session_replication_role = replica"],
+            ["ALTER DATABASE verify_test RESET session_replication_role"],
+            "FAIL triggers: session_replication_role 'replica' (session)\n"
+            "FAIL triggers: session_replication_role 'replica' (this database, role any)",
+        ),
+        (
+            ["ALTER ROLE cv_app SET session_replication_role = replica"],
+            ["ALTER ROLE cv_app RESET session_replication_role"],
+            "FAIL triggers: session_replication_role 'replica' (all databases, role cv_app)",
+        ),
+        (  # every catalogue read names its schema
+            [
+                "ALTER ROLE cv_ro SET search_path = public, pg_catalog; CREATE VIEW public."
+                "pg_trigger AS SELECT oid, tgrelid, tgname, CAST('O' AS \"char\") AS tgenabled, "
+                "tgisinternal FROM pg_catalog.pg_trigger; GRANT SELECT ON public.pg_trigger TO "
+                "cv_ro; CREATE FUNCTION public.has_table_privilege(oid, oid, text) RETURNS boolean "
+                "LANGUAGE sql AS 'SELECT false'; ALTER TABLE audit_log DISABLE TRIGGER "
+                "trg_audit_append"
+            ],
+            [
+                "ALTER TABLE audit_log ENABLE TRIGGER trg_audit_append; DROP FUNCTION public."
+                "has_table_privilege(oid, oid, text); DROP VIEW public.pg_trigger; ALTER ROLE "
+                "cv_ro RESET search_path"
+            ],
+            "FAIL triggers: trg_audit_append on audit_log: disabled",
+        ),
     ],
 )
 def test_the_live_check_names_every_state_that_does_not_hold(
-    pg: str,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    change: list[str],
-    restore: list[str],
-    lines: str,
+    pg: str, monkeypatch: MP, capsys: Cap, change: list[str], restore: list[str], lines: str
 ) -> None:
     with _changed(pg, change, restore):
         status, out = _check_on_cv_ro(pg, monkeypatch, capsys)
@@ -149,9 +167,7 @@ def test_the_live_check_names_every_state_that_does_not_hold(
     assert status == 0 and "RESULT: PASS (0 FAIL)" in out, out
 
 
-def test_a_guard_trigger_that_always_fires_passes(
-    pg: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_a_guard_trigger_that_always_fires_passes(pg: str, monkeypatch: MP, capsys: Cap) -> None:
     change = ["ALTER TABLE audit_log ENABLE ALWAYS TRIGGER trg_audit_append"]
     restore = ["ALTER TABLE audit_log ENABLE TRIGGER trg_audit_append"]
     with _changed(pg, change, restore):

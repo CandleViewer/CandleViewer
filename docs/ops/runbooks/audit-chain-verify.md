@@ -12,16 +12,13 @@ verify's own code (`AuditQueryService.plan_verify`, `run_verify`: one walk, stat
 
 ## What it checks
 
-| Section           | Pass means                                                                                                                                                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `grants`          | On `audit_log` and `audit_checkpoints`, over all seven table privileges, column-level grants, PUBLIC and every role the login can become included: `cv_app` holds exactly SELECT and INSERT, `cv_ro` exactly SELECT |
-| `triggers`        | The five guard triggers of `0003_audit_log` exist on their tables and fire for an ordinary session: a disabled or replica-only trigger is a finding                                                                 |
-| `fields`          | The deployed `audit_chain()` frames `prev_hash` and then the hashed fields in the order the verifier recomputes them                                                                                                |
-| `chain`           | Every entry from genesis to the head links and recomputes to its stored hash, and every database checkpoint names its entry (SR-063)                                                                                |
-| `checkpoint-file` | With `--checkpoint-file`: every head in the file names an entry with the same hash, and the file's sha256 is the recorded one                                                                                       |
-
-Until slice 2 of #1238 lands, the `fields` section prints `SKIP fields: lands in slice 2`, never a
-pass, and neither `--check` nor `--self-test` checks the field order.
+| Section           | Pass means                                                                                                                                                                                                                                                                       |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grants`          | On `audit_log` and `audit_checkpoints`, over all seven table privileges, column-level grants, PUBLIC and every role the login can become included: `cv_app` holds exactly SELECT and INSERT, `cv_ro` exactly SELECT                                                              |
+| `triggers`        | The five guard triggers of `0003_audit_log` exist on their tables and fire for an ordinary session: a disabled or replica-only trigger, or any `session_replication_role` setting that applies (this session's, each database or role default) other than `origin`, is a finding |
+| `fields`          | The deployed `audit_chain()` frames `prev_hash` and then the hashed fields in the order the verifier recomputes them                                                                                                                                                             |
+| `chain`           | Every entry from genesis to the head links and recomputes to its stored hash, and every database checkpoint names its entry (SR-063)                                                                                                                                             |
+| `checkpoint-file` | With `--checkpoint-file`: every head in the file names an entry with the same hash, and the file's sha256 is the recorded one                                                                                                                                                    |
 
 A break reads `first_bad_id=<id> kind=<kind>` as in `audit_ack_break`; the kinds are
 `prev_hash_mismatch`, `entry_hash_mismatch`, `checkpoint_mismatch`, `checkpoint_missing`,
@@ -30,7 +27,8 @@ every end; the checkpoint file is compared only against an unbroken chain.
 
 ## Run it
 
-1. Log in read-only (`cv_ro`); tool sessions are `default_transaction_read_only` whatever the login.
+1. Log in read-only (`cv_ro`). Whatever the login, tool sessions are `default_transaction_read_only`
+   with `search_path` `pg_catalog, public`.
 2. Set `CV_AUDIT_VERIFY_DSN` without echoing it (say, from the host's secret store for this one
    command). The tool never reads `CV_PG_DSN`; without `CV_AUDIT_VERIFY_DSN` it refuses to run.
 3. Run, on the host or a machine reaching Postgres over the tailnet:
@@ -50,8 +48,9 @@ every end; the checkpoint file is compared only against an unbroken chain.
    `entry_too_large@<id>`, `internal_error`): the result is unknown and never a pass.
 
 `--check` runs only `grants`, `triggers` and `fields`, with no walk. `--self-test` needs no
-database: every section runs on a seeded in-memory chain with a changed, a dropped and a re-ordered
-entry, a widened grant, a disabled guard and a diverging file.
+database: it runs on a seeded chain with a changed, a dropped and a re-ordered entry, a widened
+grant, a disabled guard, a replica default and a diverging file. Until slice 2 of #1238 lands,
+`fields` prints `SKIP fields: lands in slice 2`, never a pass, and nothing checks the field order.
 
 ## When it fails
 
@@ -61,8 +60,9 @@ entry, a widened grant, a disabled guard and a diverging file.
   enforced posture (`04-security-program.md` §8.1); acknowledge per `07-release-and-prr.md`
   (AuditBreakHaltEngaged).
 - `grants`, `triggers` or `fields`: the database no longer holds the append-only guarantee or the
-  hash framing. Re-apply `infra/scripts/pg_bootstrap.sql` and the migrations as `cv_owner`, rerun,
-  and open a security ticket naming the role, privilege or trigger the tool named.
+  hash framing. Re-apply `infra/scripts/pg_bootstrap.sql` and the migrations as `cv_owner` (and
+  reset a named `session_replication_role` default), rerun, and open a security ticket naming the
+  role, privilege, trigger or setting the tool named.
 - A checkpoint-file `sha256` or `line` finding alone: the copy or its record differs. Copy again;
   if it persists, treat the file as suspect and escalate as a break.
 - `3` (stopped): fix the cause the reason line names and rerun; a stop is never a pass.

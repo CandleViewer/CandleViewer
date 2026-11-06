@@ -60,7 +60,7 @@ PING_TIMEOUT_S = 5.0
 class _CliDatabase:
     """What every CLI run shares: its pool, named for the run, the journal's stores and the
     cv-api probe. `cli` is the name's prefix. `read_only` puts `default_transaction_read_only = on`
-    in each session's startup packet: no statement of the run can write, whatever the login."""
+    and `search_path = pg_catalog, public` in each session's startup packet, whatever the login."""
 
     def __init__(self, dsn: str, cli: str, *, read_only: bool = False) -> None:
         suffix = f"{cli}:{os.urandom(4).hex()}"
@@ -79,6 +79,7 @@ class _CliDatabase:
         settings = {**cparams.get("server_settings", {}), "application_name": self.application_name}
         if self._read_only:
             settings["default_transaction_read_only"] = "on"
+            settings["search_path"] = "pg_catalog, public"
         cparams["server_settings"] = settings
 
     async def others_connected(self) -> bool:
@@ -131,32 +132,44 @@ class SqlAlchemyAuditAckDatabase(_CliDatabase):
 #: (role, table, privilege, held) per named role, `public` table and privilege. Held: the role or
 #: any role it is a member of (inherited or by `SET ROLE`) holds it on the table, through PUBLIC
 #: too, or on any of its columns (column grants exist for SELECT, INSERT, UPDATE, REFERENCES only).
+#: Every catalogue relation, function and type of the three reads is named with its schema.
 _HELD: Final = sa.text(
-    "SELECT r.rolname AS role, c.relname AS table_name, p.priv AS privilege, "
-    "EXISTS (SELECT 1 FROM pg_roles m WHERE pg_has_role(r.oid, m.oid, 'MEMBER') AND "
+    "SELECT r.rolname AS role, c.relname AS table_name, p.priv AS privilege, EXISTS (SELECT 1 "
+    "FROM pg_catalog.pg_roles m WHERE pg_catalog.pg_has_role(r.oid, m.oid, 'MEMBER') AND "
     "CASE WHEN p.priv = ANY(ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) "
-    "THEN has_any_column_privilege(m.oid, c.oid, p.priv) "
-    "ELSE has_table_privilege(m.oid, c.oid, p.priv) END) AS held "
-    "FROM pg_roles r CROSS JOIN pg_class c "
-    "JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public' "
-    "CROSS JOIN unnest(CAST(:privileges AS text[])) AS p(priv) "
-    "WHERE r.rolname = ANY(CAST(:roles AS text[])) "
-    "AND c.relname = ANY(CAST(:tables AS name[])) AND c.relkind = 'r' ORDER BY 1, 2, 3"
+    "THEN pg_catalog.has_any_column_privilege(m.oid, c.oid, p.priv) "
+    "ELSE pg_catalog.has_table_privilege(m.oid, c.oid, p.priv) END) AS held "
+    "FROM pg_catalog.pg_roles r CROSS JOIN pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n "
+    "ON n.oid = c.relnamespace AND n.nspname = 'public' "
+    "CROSS JOIN pg_catalog.unnest(CAST(:privileges AS pg_catalog.text[])) AS p(priv) "
+    "WHERE r.rolname = ANY(CAST(:roles AS pg_catalog.text[])) "
+    "AND c.relname = ANY(CAST(:tables AS pg_catalog.name[])) AND c.relkind = 'r' ORDER BY 1, 2, 3"
 )
-#: A trigger fires for an ordinary session only in state 'O' (origin) or 'A' (always): 'D' never
-#: fires and 'R' only under `session_replication_role = replica`.
+#: A trigger fires for an ordinary session only in state 'O' (origin) or 'A' (always), and an 'O'
+#: one only while `session_replication_role` is `origin` (`_REPLICATION`).
 _TRIGGERS: Final = sa.text(
     "SELECT t.tgname AS name, c.relname AS table_name, t.tgenabled IN ('O', 'A') AS enabled "
-    "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
-    "JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public' "
-    "WHERE NOT t.tgisinternal AND c.relname = ANY(CAST(:tables AS name[])) ORDER BY 1"
+    "FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid "
+    "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public' "
+    "WHERE NOT t.tgisinternal AND c.relname = ANY(CAST(:tables AS pg_catalog.name[])) ORDER BY 1"
+)
+#: Every `session_replication_role` value that applies here: this session's (`db` NULL), and each
+#: database or role default for this database (`db` true) or all databases (`db` false).
+_REPLICATION: Final = sa.text(
+    "SELECT NULL AS db, NULL AS role, pg_catalog.current_setting('session_replication_role') "
+    "AS value UNION ALL SELECT s.setdatabase <> 0, r.rolname, pg_catalog.substr(c.cfg, 26) "
+    "FROM pg_catalog.pg_db_role_setting s LEFT JOIN pg_catalog.pg_roles r ON r.oid = s.setrole "
+    "CROSS JOIN pg_catalog.unnest(s.setconfig) AS c(cfg) "
+    "WHERE pg_catalog.lower(c.cfg) LIKE 'session_replication_role=%' AND s.setdatabase IN (0, "
+    "(SELECT d.oid FROM pg_catalog.pg_database d WHERE d.datname = pg_catalog.current_database()))"
 )
 
 
 class SqlAlchemyAuditVerifyDatabase(_CliDatabase):
     """An offline chain check's stores (#1238): `audit_log` with the in-app verify reads and their
-    budgets, and two catalogue reads, all on read-only sessions; tables in schema `public`, never
-    via `search_path`. A failed catalogue read raises `AuditReadFailed`, SQLSTATE only (C-12.6)."""
+    budgets, and three catalogue reads, on read-only sessions; tables in `public`, never via the
+    login's `search_path`. A failed catalogue read raises `AuditReadFailed`, SQLSTATE only (C-12.6).
+    """
 
     def __init__(self, dsn: str, *, statement_timeout_ms: int, max_entry_bytes: int) -> None:
         super().__init__(dsn, "audit-verify", read_only=True)
@@ -178,10 +191,19 @@ class SqlAlchemyAuditVerifyDatabase(_CliDatabase):
                 pair.add(str(row["privilege"]))
         return {pair: frozenset(privileges) for pair, privileges in held.items()}
 
-    async def triggers(self, tables: list[str]) -> dict[str, tuple[str, bool]]:
-        """User trigger on `tables` -> (its table, whether it fires for an ordinary session)."""
+    async def triggers(self, tables: list[str]) -> dict[tuple[str, str], bool]:
+        """(user trigger, its table) on `tables` -> whether its state fires in `origin`."""
         rows = await self._read(_TRIGGERS, {"tables": tables})
-        return {str(r["name"]): (str(r["table_name"]), r["enabled"] is True) for r in rows}
+        return {(str(r["name"]), str(r["table_name"])): r["enabled"] is True for r in rows}
+
+    async def replication_roles(self) -> list[tuple[str, str]]:
+        """(where it is set, value) for each `session_replication_role` setting that applies."""
+        found = []
+        for r in await self._read(_REPLICATION, {}):
+            where = "this database" if r["db"] else "all databases"
+            where = "session" if r["db"] is None else f"{where}, role {r['role'] or 'any'}"
+            found.append((where, str(r["value"])))
+        return found
 
     async def _read(self, statement: sa.TextClause, params: dict[str, Any]) -> list[Any]:
         state: str | None = None
