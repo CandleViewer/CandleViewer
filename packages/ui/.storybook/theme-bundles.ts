@@ -17,6 +17,7 @@ import "../src/components/auditrow.css";
 import "../src/components/avatar.css";
 import "../src/components/avatargroup.css";
 import "../src/components/badge.css";
+import "../src/components/bulkactionbar.css";
 import "../src/components/button.css";
 import "../src/components/callout.css";
 import "../src/components/card.css";
