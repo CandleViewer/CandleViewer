@@ -223,12 +223,23 @@ export function TreeView({
     const row = at === undefined ? undefined : rows[at];
     if (at === undefined || row === undefined) return;
     const id = row.node.id;
+    const key = event.key;
     const ctrl = event.ctrlKey || event.metaKey;
+    // A chord with Alt, Ctrl or Meta is the platform's (Alt/Cmd+←/→ history, Ctrl/Cmd+Home/End, Ctrl+letter
+    // shortcuts) unless the tree declares it: Alt+↑/↓ with `onMove`, Ctrl+Space and Ctrl+A with `multiSelect`.
+    // An undeclared chord is left alone, its default intact.
+    const declared =
+      (event.altKey &&
+        !ctrl &&
+        onMove !== undefined &&
+        (key === "ArrowUp" || key === "ArrowDown")) ||
+      (ctrl && !event.altKey && multiSelect && (key === " " || key.toLowerCase() === "a"));
+    if ((event.altKey || ctrl) && !declared) return;
     const parent = isParent(row.node);
-    switch (event.key) {
+    switch (key) {
       case "ArrowDown":
       case "ArrowUp": {
-        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const delta = key === "ArrowDown" ? 1 : -1;
         if (event.altKey) move(row, delta);
         else go(rows[at + delta], multiSelect && event.shiftKey);
         break;
@@ -268,13 +279,15 @@ export function TreeView({
         onSelect([]);
         break;
       default:
-        if (multiSelect && ctrl && event.key.toLowerCase() === "a") {
+        if (ctrl) {
+          // The only chord left here is the declared Ctrl+A.
           onSelect(row.siblings.map((sibling) => sibling.id));
           break;
         }
-        if (event.key.length !== 1 || event.key === " " || ctrl || event.altKey) return;
-        typeAhead(event.key, at);
+        if (key.length !== 1) return;
+        typeAhead(key, at);
     }
+    // Reached only by a key the tree acts on; every other key returned above with its default intact.
     event.preventDefault();
   };
 
@@ -402,10 +415,9 @@ export function TreeView({
                     true,
                   );
                 }}
-                onBlur={() => {
-                  // Unmounting after Enter or Esc blurs the field too; only a blur elsewhere cancels.
-                  if (!refocus.current) finishRename(node, null, false);
-                }}
+                // A blur elsewhere cancels. The blur a browser fires as Enter or Esc unmounts the field never
+                // arrives: React drops events during its commit, so it cannot clear the refocus flag (tested).
+                onBlur={() => finishRename(node, null, false)}
               />
             ) : null}
             <span className="cv-tree__actions" data-tree-actions="">

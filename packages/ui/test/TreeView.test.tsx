@@ -242,6 +242,82 @@ describe("TreeView: the APG keys", () => {
   });
 });
 
+describe("TreeView: platform chords keep their defaults", () => {
+  /** Fires one key on the item; true when its default survived (`dispatchEvent` returns false once prevented). */
+  const press = async (
+    el: HTMLElement,
+    key: string,
+    init: KeyboardEventInit = {},
+  ): Promise<boolean> => fireEvent.keyDown(el, { key, ...init });
+
+  it("Alt/Cmd+←/→, Ctrl/Cmd+Home/End and Alt+↑/↓ without onMove act on nothing and keep their default", async () => {
+    const s = spies();
+    const host = await mount(<Host spies={s} open={["overlays", "subpanes"]} />);
+    const overlays = item(host, "Overlays");
+    overlays.focus();
+    const chords: [string, KeyboardEventInit][] = [
+      ["ArrowLeft", { altKey: true }],
+      ["ArrowRight", { altKey: true }],
+      ["ArrowLeft", { metaKey: true }],
+      ["ArrowRight", { metaKey: true }],
+      ["Home", { ctrlKey: true }],
+      ["End", { ctrlKey: true }],
+      ["Home", { metaKey: true }],
+      ["End", { metaKey: true }],
+      ["ArrowDown", { altKey: true }],
+      ["ArrowUp", { altKey: true }],
+      ["ArrowDown", { ctrlKey: true }],
+      ["*", { ctrlKey: true }],
+      ["F2", { altKey: true }],
+    ];
+    const kept = [];
+    for (const [key, init] of chords) kept.push(await press(overlays, key, init));
+    expect(kept).toEqual(chords.map(() => true));
+    expect(s.onToggle).not.toHaveBeenCalled();
+    expect(s.onSelect).not.toHaveBeenCalled();
+    expect(overlays).toHaveFocus();
+  });
+
+  it("Ctrl/Alt/Cmd+letter is the platform's shortcut, never type-ahead", async () => {
+    const s = spies();
+    const host = await mount(<Host spies={s} />);
+    const overlays = item(host, "Overlays");
+    overlays.focus();
+    for (const init of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }]) {
+      expect(await press(overlays, "e", init)).toBe(true);
+    }
+    expect(overlays).toHaveFocus();
+    expect(s.onSelect).not.toHaveBeenCalled();
+  });
+
+  it("Ctrl+Space and Ctrl+A belong to multi-select alone: in single-select they keep their default", async () => {
+    const s = spies();
+    const host = await mount(<Host spies={s} />);
+    const ema = item(host, "EMA 21");
+    ema.focus();
+    expect(await press(ema, " ", { ctrlKey: true })).toBe(true);
+    expect(await press(ema, "a", { ctrlKey: true })).toBe(true);
+    expect(s.onSelect).not.toHaveBeenCalled();
+  });
+
+  it("the keys the tree acts on, and its declared chords, are prevented", async () => {
+    const onMove = fn();
+    const s = spies();
+    const host = await mount(<Host spies={s} multiSelect onMove={onMove} />);
+    const ema = item(host, "EMA 50");
+    ema.focus();
+    const kept = [
+      await press(ema, "ArrowDown", { altKey: true }),
+      await press(ema, " ", { ctrlKey: true }),
+      await press(ema, "a", { metaKey: true }),
+      await press(item(host, "EMA 50"), "Home"),
+    ];
+    expect(kept).toEqual([false, false, false, false]);
+    expect(onMove).toHaveBeenCalledWith("ema50", 2);
+    expect(s.onSelect.mock.calls).toEqual([[["ema50"]], [["ema21", "ema50", "vwap"]]]);
+  });
+});
+
 describe("TreeView: SCR-036's multi-select (D22)", () => {
   it("marks the tree multiselectable; arrows move without selecting", async () => {
     const s = spies();
@@ -343,6 +419,28 @@ describe("TreeView: rename and move exist only with their callbacks", () => {
     await userEvent.clear(within(host).getByRole("textbox"));
     await userEvent.keyboard("{Enter}");
     expect(onRename).not.toHaveBeenCalled();
+  });
+
+  it("a blur fired as the field unmounts after Enter keeps focus on the item (Chrome blurs a removed node)", async () => {
+    // jsdom drops focus silently when a node leaves the DOM; Chrome fires `blur` first. Model Chrome's order: the
+    // field's blur must not cancel the saved rename's refocus.
+    const removeChild = Node.prototype.removeChild;
+    const spy = vi.spyOn(Node.prototype, "removeChild").mockImplementation(function <
+      T extends Node,
+    >(this: Node, child: T): T {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && child.contains(focused)) focused.blur();
+      return removeChild.call(this, child) as T;
+    });
+    onTestFinished(() => spy.mockRestore());
+    const onRename = fn();
+    const host = await mount(<Host spies={spies()} onRename={onRename} />);
+    item(host, "EMA 21").focus();
+    await userEvent.keyboard("{F2}");
+    await userEvent.type(within(host).getByRole("textbox"), "x{Enter}");
+    expect(onRename).toHaveBeenCalledWith("ema21", "EMA 21x");
+    expect(within(host).queryByRole("textbox")).toBeNull();
+    expect(item(host, "EMA 21")).toHaveFocus();
   });
 
   it("a blur elsewhere cancels the rename", async () => {
@@ -530,9 +628,25 @@ describe("treeview.css contract (A-8, A-10)", () => {
 });
 
 describe("TreeView stories", () => {
-  it.each(Object.entries(composeStories(stories)))("%s renders one tree", async (_name, Story) => {
-    const host = await mount(<Story />);
-    expect(host.querySelectorAll('[data-cmp="CMP-240"]')).toHaveLength(1);
+  it.each(Object.entries(composeStories(stories)))(
+    "%s renders one tree (Empty: none, D23)",
+    async (name, Story) => {
+      const host = await mount(<Story />);
+      expect(host.querySelectorAll('[data-cmp="CMP-240"]')).toHaveLength(name === "Empty" ? 0 : 1);
+    },
+  );
+
+  it("names every catalogue story that is buildable now (Loading stays TBD in `15`)", () => {
+    expect(Object.keys(composeStories(stories))).toEqual(
+      expect.arrayContaining([
+        "Default",
+        "MultiSelect",
+        "Nested",
+        "InlineRename",
+        "Empty",
+        "LongLabel",
+      ]),
+    );
   });
 
   // The storybook project runs each play in Chromium; here in jsdom too, so a wrong name fails without a browser.
