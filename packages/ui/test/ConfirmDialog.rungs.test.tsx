@@ -463,6 +463,134 @@ describe("ConfirmDialog (CMP-044): the acknowledgement and the validity form (R-
   });
 });
 
+// The ladder composed with #5347's validity props and with T2 (E42-D03 §12/§13, R-2; E16-D04 §1.3; D09 §9.1).
+// With a rung the validity look never applies: the host's `validityReason` is the hint's last step, Confirm
+// natively disabled; `typedReason` is not used (the hint carries the typed instruction). A T2 reason still wins.
+describe("ConfirmDialog (CMP-044): the ladder with the host's rule, the typed reason and T2", () => {
+  const HOST_RULE = "Give a reason of at least 3 characters.";
+  const TYPED = "Type alex exactly to confirm.";
+  const OWNER_ONLY = "Only the owner can manage users.";
+  const polite = (): string =>
+    document.querySelector(".cv-confirm > [role='status']")?.textContent ?? "";
+
+  /** A host whose own field (in `children`) holds a rule until it is met. */
+  function RuleHost(props: Extra): JSX.Element {
+    const [rule, setRule] = useState<string | undefined>(HOST_RULE);
+    return (
+      <Host {...props} validityReason={rule}>
+        <Button onClick={() => setRule(undefined)}>Meet the rule</Button>
+      </Host>
+    );
+  }
+
+  const openRuleHost = async (props: Extra): Promise<void> => {
+    const host = await mount(<RuleHost {...props} />);
+    const opener = within(host).getByRole("button", { name: "Open" });
+    await act(async () => opener.focus());
+    await act(async () => {
+      fireEvent.click(opener);
+    });
+  };
+
+  it("a met rung with the host's rule: natively disabled, the hint is the rule, nothing fires until it clears", async () => {
+    const onConfirm = vi.fn();
+    await openRuleHost({ rung: 1, confirmLabel: "Enable dan", onConfirm });
+    const confirm = confirmButton("Enable dan");
+    expect(confirm).toBeDisabled();
+    expect(confirm).not.toHaveAttribute("aria-disabled");
+    expect(confirm).not.toHaveAttribute("data-unavailable");
+    expect(confirm).toHaveAttribute("data-unmet");
+    expect(visibleTabbables(dialog())).not.toContain(confirm);
+    expect(dialog().querySelector(".cv-confirm__hint")).toHaveTextContent(HOST_RULE);
+    expect(confirm).toHaveAccessibleDescription(HOST_RULE);
+    // Never main's validity look: no reason row under the footer.
+    expect(dialog().querySelector("[data-validity]")).toBeNull();
+    t = 5000;
+    fireEvent.click(confirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+    await userEvent.click(page.getByRole("button", { name: "Meet the rule" }));
+    expect(confirm).toBeEnabled();
+    expect(dialog().querySelector(".cv-confirm__hint")).toBeNull();
+    // The guard rearms as Confirm becomes available; past it, the press confirms.
+    t = 9000;
+    await userEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("the host's rule is the hint's fourth step: after the choice, the tick and the typed value", async () => {
+    await openRuleHost({
+      rung: 3,
+      options: [LEAVE, FLATTEN_T2],
+      withTick: true,
+      typedConfirmValue: "alex",
+    });
+    const confirm = confirmButton();
+    const hint = (): string => dialog().querySelector(".cv-confirm__hint")?.textContent ?? "";
+    expect(hint()).toBe(CHOOSE_FIRST);
+    await userEvent.click(radio(LEAVE.label));
+    expect(hint()).toBe(ACK_FIRST);
+    await userEvent.click(tick());
+    expect(hint()).toBe("Type alex to confirm");
+    await userEvent.type(page.getByRole("textbox", { name: "Type alex to confirm" }), "alex");
+    expect(hint()).toBe(HOST_RULE);
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveAccessibleDescription(HOST_RULE);
+    await userEvent.click(page.getByRole("button", { name: "Meet the rule" }));
+    expect(confirm).toBeEnabled();
+  });
+
+  it("rung 3 ignores typedReason: natively disabled, the hint carries the typed instruction, no look", async () => {
+    const onConfirm = vi.fn();
+    await openHost({
+      rung: 3,
+      options: [LEAVE, FLATTEN_T2],
+      withTick: true,
+      typedConfirmValue: "alex",
+      typedReason: TYPED,
+      onConfirm,
+    });
+    const confirm = confirmButton();
+    await userEvent.click(radio(LEAVE.label));
+    await userEvent.click(tick());
+    expect(confirm).toBeDisabled();
+    expect(confirm).not.toHaveAttribute("aria-disabled");
+    expect(confirm).not.toHaveAttribute("data-unavailable");
+    expect(dialog().querySelector(".cv-confirm__hint")).toHaveTextContent("Type alex to confirm");
+    expect(confirm).toHaveAccessibleDescription("Type alex to confirm");
+    expect(dialog().querySelector("[data-validity]")).toBeNull();
+    expect(page.queryByText(TYPED)).toBeNull();
+    t = 5000;
+    fireEvent.click(confirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(polite()).not.toBe(TYPED);
+    await userEvent.type(page.getByRole("textbox", { name: "Type alex to confirm" }), "alex");
+    expect(confirm).toBeEnabled();
+  });
+
+  it("T2 with an unmet ladder: aria-disabled, a Tab stop, no hint, and a press confirms nothing", async () => {
+    const onConfirm = vi.fn();
+    await openHost({
+      rung: 2,
+      options: [LEAVE, FLATTEN_T2],
+      withTick: true,
+      confirmDisabledReason: OWNER_ONLY,
+      onConfirm,
+    });
+    const confirm = confirmButton();
+    expect(confirm).toBeEnabled();
+    expect(confirm).toHaveAttribute("aria-disabled", "true");
+    expect(confirm).toHaveAttribute("data-gated", "");
+    expect(confirm).not.toHaveAttribute("data-unmet");
+    expect(visibleTabbables(dialog())).toContain(confirm);
+    expect(dialog().querySelector(".cv-confirm__hint")).toBeNull();
+    expect(confirm).toHaveAccessibleDescription(OWNER_ONLY);
+    t = 5000;
+    await userEvent.click(confirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(polite()).toBe(OWNER_ONLY);
+  });
+});
+
 describe("ConfirmDialog (CMP-044): the step-up line and the audit marker", () => {
   const stepUp = (): string | null =>
     dialog().querySelector(".cv-confirm__stepup")?.textContent ?? null;
