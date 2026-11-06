@@ -14,8 +14,8 @@ MINUTE: Final = 60_000_000
 
 #: One valid `(params, source)` per server kernel.
 VALID: Final[Mapping[str, tuple[Mapping[str, ParamValue], str | None]]] = {
-    "sma": ({"n": 20}, "close"),
-    "ema": ({"n": 21}, "close"),
+    "sma": ({"n": 20, "source": "close", "offset": 0}, "close"),
+    "ema": ({"n": 21, "source": "close", "offset": 0}, "close"),
     "rsi": ({"n": 14}, "close"),
     "atr": ({"n": 14}, None),
     "adx": ({"n": 14}, None),

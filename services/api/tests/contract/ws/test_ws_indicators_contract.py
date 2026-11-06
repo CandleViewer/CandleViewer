@@ -109,7 +109,8 @@ def test_contract_indicators_sub_ok_echoes_each_instance_and_a_d_follows_each_cl
         assert result["ok"] and result["effective"]["history"] == 500
         echo = result["effective"]["instances"]
         assert [e["key"] for e in echo] == keys  # every param written out, and its key (§6.1)
-        assert echo[1]["params"] == {"anchor": "session"} and echo[0]["params"] == {"n": 5}
+        assert echo[1]["params"] == {"anchor": "session"}
+        assert echo[0]["params"] == {"n": 5, "source": "close", "offset": 0}  # E13-S02
         snap = c.next_of("snap")
         assert snap["meta"]["reason"] == "initial"
         assert [i["points"] for i in snap["p"]["instances"]] == [[], [], []]
@@ -192,7 +193,7 @@ def test_contract_indicators_ctl_retunes_the_instances_and_re_snapshots() -> Non
         (key,) = [r.key for r in resolve_instances(sma, M1)]
         assert ok["p"]["resnapshot"] is True
         assert ok["p"]["effective"]["instances"] == [
-            {"indicator": "sma", "params": {"n": 2}, "key": key}
+            {"indicator": "sma", "params": {"n": 2, "source": "close", "offset": 0}, "key": key}
         ]
         snap = c.next_of("snap")
         assert snap["meta"]["reason"] == "reconfigure"

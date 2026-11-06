@@ -65,7 +65,7 @@ def test_snapshot_header_names_the_kernel_build_params_source_and_context() -> N
         ("v", 2),
         ("v", True),
         ("indicator", "ema"),
-        ("build_version", 2),
+        ("build_version", 3),
         ("build_version", 1.0),
         ("params", {"n": "21"}),
         ("source", "hlc3"),

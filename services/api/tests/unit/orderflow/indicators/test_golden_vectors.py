@@ -33,9 +33,9 @@ import pytest
 from candleviewer.bars.models import Bar
 from candleviewer.exchange.base.models import KlineEvent
 from candleviewer.exchange.bybit.klines import parse_kline_page
-from candleviewer.orderflow.indicators import KERNELS
 from tests._corpus import rest
 from tests.unit.orderflow.indicators._golden import (
+    ALL_KERNELS,
     GOLDEN,
     HAS_DELTA,
     INPUT_SETS,
@@ -72,8 +72,9 @@ PROVENANCE = {
 }
 PAIRS = [(name, case) for name in INPUT_SETS for case in cases_for(name)]
 PAIR_IDS = [f"{case.case_id}@{name}" for name, case in PAIRS]
-#: Each server kernel's `(build_version, digest of its outputs)`, the digest a sha256 over every
-#: golden case of that kernel on every input set (`_output_digest`). A changed output fails here
+#: Each kernel's (the server ones and E13-S02's test-only `_ma_family`) `(build_version, digest
+#: of its outputs)`, the digest a sha256 over every golden case of that kernel on every input
+#: set (`_output_digest`). A changed output fails here
 #: even after `CV_REGEN_GOLDEN=1`: re-pin it in a reviewed diff that bumps the kernel's
 #: `build_version` (IR-20, ADR-0034 rule 3). A new golden case also moves its kernel's digest,
 #: which needs no bump.
@@ -82,11 +83,17 @@ KERNEL_OUTPUT_PINS: Final = {
     "atr": (1, "8d18df5e9bebe0aa8a04f518f0e4fd2710b9324f5f0e1401233e4fb0fa5f1b15"),
     "cvd": (1, "71bc6bc456ffbe665e39538c49f50db0f501b8c13734b1d18a1a615bd892c8ce"),
     "delta": (1, "7c6e708849f96c0a2427e846ef1a70696c6a64c6412e9a974b98c3abd7caaf3b"),
-    "ema": (1, "59f1660999b6061abe1c90a76189c07e63054490e390e9eb7f85f14b14255729"),
+    "dema": (1, "b1d2a9363b03d19f9790a760bd045f4d54162e4ac9760aeee4e62a55a83e49f7"),
+    "ema": (2, "748ac973f294f9088a45163a4528b97492a01c130826577cce586b51929a804e"),
+    "ma_ribbon": (1, "6942d692da21a18eb56e428828b2ab85ba62513a5783cf4690d3a0b8de79f40e"),
     "rsi": (1, "203288e9e028bc474247ceab750141b550edb693d5fbfaab4f9b8a365cbb8633"),
-    "sma": (1, "43bc481d9e0490ee294209e7b7ff1b3189515be6ac8f2a51876070dee565bb8c"),
+    "sma": (2, "9ee63fc308847bc873dac6a041f8022a8886763c887c5f2a4fc3bfb8f9d0eb04"),
+    "smma": (1, "4a3527d86771d4f243c956a3537156b8a092f40a8c33e288b923c3f1fedd8a4b"),
+    "tema": (1, "61c3041d8824667ff75fe3cb92a4e610a7917c15bfef94542d38ccd0118aadd3"),
     "volume": (1, "c3b326510ca3bd407ba0f4feff395caa28c3e290e5629cc595c0a5af933aa62b"),
     "vwap": (1, "a3b35ef50a9079f34c01d412377541e1974d6efb3bb8c7ff6404b347979c45f8"),
+    "vwma": (1, "a6e51baa8fb26185b814c987ec61d817c99d87bbe4f90239d52295531c1c62ad"),
+    "wma": (1, "b4e61fa6206ae2ed230eab8b5e651ed8e41e2fbbca6e304f51dd777e1140e56a"),
     "zigzag": (1, "1a5c580db9bce361c293f6a9cf9f34c530229ef79b4b2fb0116f8afdab89abe8"),
 }
 
@@ -177,7 +184,7 @@ def test_indicator_matches_reference_to_1e8(name: str, case: Case) -> None:
     live = kernel_columns(case, bars, ctx)
     stored_ref = vector["reference"]
     assert isinstance(stored_ref, list)
-    outputs = KERNELS[case.indicator].outputs
+    outputs = ALL_KERNELS[case.indicator].outputs
     for out, got, want in zip(outputs, live, stored_ref, strict=True):
         bad = [i for i, (k, r) in enumerate(zip(got, want, strict=True)) if not _within(k, r)]
         assert not bad, f"{case.case_id}.{out} differs from the reference at bars {bad[:5]}"
@@ -188,8 +195,8 @@ def test_kernel_outputs_are_bit_exact_with_golden(name: str, case: Case) -> None
     ctx, bars = load_inputs(name)
     vector = _vector(name, case)
     assert kernel_columns(case, bars, ctx) == vector["kernel"]
-    assert vector["build_version"] == KERNELS[case.indicator].build_version
-    assert vector["warmup_bars"] == KERNELS[case.indicator].warmup_bars(case.params)
+    assert vector["build_version"] == ALL_KERNELS[case.indicator].build_version
+    assert vector["warmup_bars"] == ALL_KERNELS[case.indicator].warmup_bars(case.params)
 
 
 @pytest.mark.parametrize("name", INPUT_SETS)
@@ -214,16 +221,16 @@ def _output_digest(indicator: str) -> str:
 
 
 def test_kernel_outputs_are_pinned_beside_their_build_version() -> None:
-    got = {name: (k.build_version, _output_digest(name)) for name, k in sorted(KERNELS.items())}
+    got = {name: (k.build_version, _output_digest(name)) for name, k in sorted(ALL_KERNELS.items())}
     changed = sorted(n for n in got if got[n] != KERNEL_OUTPUT_PINS.get(n))
     assert not changed, f"{changed}: an output changed; bump build_version and re-pin it"
-    assert set(KERNEL_OUTPUT_PINS) == set(KERNELS)
+    assert set(KERNEL_OUTPUT_PINS) == set(ALL_KERNELS)
 
 
 def test_every_server_kernel_has_golden_vectors_on_every_input() -> None:
     for name in INPUT_SETS:
         covered = {v["indicator"] for v in load_vectors(name)}
-        assert covered == set(KERNELS) - (set() if HAS_DELTA[name] else {"cvd", "delta"})
+        assert covered == set(ALL_KERNELS) - (set() if HAS_DELTA[name] else {"cvd", "delta"})
 
 
 def test_manifest_pins_every_file_and_build_version(derived: dict[str, InputSet]) -> None:

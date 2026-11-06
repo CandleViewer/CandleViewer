@@ -19,6 +19,7 @@ from candleviewer.orderflow.indicators import KERNELS
 from candleviewer.orderflow.indicators.catalogue import (
     DELTA,
     EMA,
+    MA_RIBBON,
     SERVER_DEFINITIONS,
     SMA,
     V1_INDICATORS,
@@ -47,7 +48,9 @@ ADR_0034 = (
 
 #: The category and pane per indicator family (the #426 plan's table, section 3.2).
 PLACEMENT = {
-    **dict.fromkeys(("sma", "ema", "wma", "vwma", "smma", "dema", "tema"), ("trend", "price")),
+    **dict.fromkeys(
+        ("sma", "ema", "wma", "vwma", "smma", "dema", "tema", "ma_ribbon"), ("trend", "price")
+    ),
     **dict.fromkeys(("rsi", "macd", "stochastic", "cci", "williams_r"), ("momentum", "sub")),
     **dict.fromkeys(("bollinger", "keltner", "donchian"), ("volatility", "price")),
     **dict.fromkeys(("atr", "adx"), ("volatility", "sub")),
@@ -64,16 +67,16 @@ WARMUP = {
     "bollinger": 20, "keltner": 20, "donchian": 20, "atr": 14, "adx": 28, "rsi": 15, "macd": 26,
     "stochastic": 14, "cci": 20, "williams_r": 14, "supertrend": 10, "zigzag": 11,
     "ichimoku": 9, "psar": 2, "volume": 1, "volume_ma": 20, "obv": 1, "cmf": 20, "mfi": 15,
-    "cvd": 1,
+    "cvd": 1, "ma_ribbon": 200,
 }  # fmt: skip
 
 
-def test_catalogue_holds_the_28_v1_indicators_in_adr_0034_order() -> None:
-    assert [d.id for d in default_catalogue()] == [name for name, _ in ADR_0034]
+def test_catalogue_holds_the_28_adr_0034_indicators_in_order_then_the_ma_ribbon() -> None:
+    assert [d.id for d in default_catalogue()] == [*(name for name, _ in ADR_0034), "ma_ribbon"]
 
 
 def test_catalogue_compute_is_pinned_to_the_adr_0034_table() -> None:
-    assert [(d.id, d.compute) for d in V1_INDICATORS] == list(ADR_0034)
+    assert [(d.id, d.compute) for d in V1_INDICATORS] == [*ADR_0034, ("ma_ribbon", "client_worker")]
     assert sum(d.compute == "server" for d in V1_INDICATORS) == 9
 
 
@@ -108,8 +111,8 @@ def test_catalogue_warmup_at_the_defaults_is_pinned() -> None:
 def test_catalogue_warmup_grows_with_the_period() -> None:
     by_id = {d.id: d for d in V1_INDICATORS}
     params: Mapping[str, Mapping[str, ParamValue]] = {
-        "dema": {"n": 50},
-        "tema": {"n": 50},
+        "dema": {"n": 50, "source": "close", "offset": 0},
+        "tema": {"n": 50, "source": "close", "offset": 0},
         "keltner": {"n": 20, "mult": Decimal(2), "atr_n": 60},
         "macd": {"fast": 40, "slow": 26, "signal": 9},
         "stochastic": {"n": 14, "smooth_k": 3, "smooth_d": 3},
@@ -119,8 +122,32 @@ def test_catalogue_warmup_grows_with_the_period() -> None:
     assert got == {"dema": 99, "tema": 148, "keltner": 60, "macd": 40, "stochastic": 16, "mfi": 51}
 
 
+def test_catalogue_offset_moves_every_moving_average_warmup_by_its_bars() -> None:
+    by_id = {d.id: d for d in V1_INDICATORS}
+    for name in ("sma", "ema", "wma", "vwma", "smma", "dema", "tema"):
+        base = by_id[name].warmup_bars({"n": 9, "source": "hl2", "offset": 0})
+        assert by_id[name].warmup_bars({"n": 9, "source": "hl2", "offset": 7}) == base + 7, name
+
+
+def test_catalogue_ma_ribbon_warmup_is_the_longest_of_its_five_lines() -> None:
+    ribbon = {f"n{i}": n for i, n in enumerate((3, 5, 8, 13, 21), 1)} | {"source": "close"}
+    expected = {"sma": 21, "ema": 21, "wma": 21, "vwma": 21, "smma": 21, "dema": 41, "tema": 61}
+    for ma, warmup in expected.items():
+        assert MA_RIBBON.warmup_bars({**ribbon, "ma": ma}) == warmup, ma
+
+
 def test_catalogue_sma_and_ema_defaults_are_20_and_21() -> None:
-    assert (SMA.defaults(), EMA.defaults()) == ({"n": 20}, {"n": 21})
+    assert SMA.defaults() == {"n": 20, "source": "close", "offset": 0}
+    assert EMA.defaults() == {"n": 21, "source": "close", "offset": 0}
+
+
+def test_catalogue_ma_ribbon_is_one_instance_of_five_outputs_with_the_d02_defaults() -> None:
+    assert [o.id for o in MA_RIBBON.outputs] == [f"ma_{i}" for i in range(1, 6)]
+    assert MA_RIBBON.compute == "client_worker" and MA_RIBBON.kernel is None
+    assert MA_RIBBON.defaults() == {
+        "n1": 10, "n2": 20, "n3": 50, "n4": 100, "n5": 200, "ma": "ema", "source": "close",
+    }  # fmt: skip
+    assert "ma_ribbon" not in SERVER_DEFINITIONS
 
 
 def test_catalogue_every_indicator_is_described_for_screen_readers() -> None:
@@ -173,7 +200,7 @@ def test_catalogue_json_defaults_are_json_numbers_and_tokens() -> None:
 def test_catalogue_default_catalogue_is_fresh_each_time() -> None:
     first, second = default_catalogue(), default_catalogue()
     first.register(replace(SMA, id="sma_custom", kernel=None, warmup=lambda _: 1))
-    assert len(first) == 29 and len(second) == 28
+    assert len(first) == 30 and len(second) == 29
     assert first.get("sma_custom") is not None and second.get("sma_custom") is None
 
 

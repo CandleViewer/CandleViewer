@@ -89,6 +89,12 @@ before commit.
   `CV_REGEN_GOLDEN=1 pytest tests/unit/orderflow/indicators/test_golden_vectors.py` and review
   the diff; a changed kernel output needs that kernel's `build_version` bumped and its output
   digest re-pinned in that test (`KERNEL_OUTPUT_PINS`), which regeneration does not touch.
+  E13-S02 adds, in the same `vectors_*.jsonl` files, the goldens of the five test-only moving
+  average kernels (`wma`, `vwma`, `smma`, `dema`, `tema`) and the `ma_ribbon` fold (five
+  periods), with `sma` / `ema` at build version 2 (`source`, `offset`). Source: the scalar
+  kernels in `services/api/tests/unit/orderflow/indicators/_ma_family.py` (the TS operation
+  order, no production kernel), cross-checked against the exact references to 1e-8 and read bit
+  for bit by the TS plugins (E13-S02 engine slice); same inputs and regeneration command as above.
 - `golden/rule-ir/hash_vectors.json` — E37-T01 rule IR hash vectors: per request body, the server's
   canonical bytes, `ir_hash` and form reasons, or its refusal; the reference for the client mirror
   in `packages/rule-graph`. Sources: `services/api/tests/fixtures/rule_corpus/` (the 30 rules), then

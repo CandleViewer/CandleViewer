@@ -84,7 +84,7 @@ async def _engine(spec: BarSpec = M1, **kw: Any) -> tuple[SeriesStore, Indicator
         ([{"indicator": "ema", "params": {"n": True}}], "Instance 0: n must be a whole number."),
         (
             [{"indicator": "ema", "params": {"evil_param": 1}}],
-            "Instance 0: ema takes only these parameters: n.",
+            "Instance 0: ema takes only these parameters: n, source, offset.",
         ),
         (
             [{"indicator": "zigzag", "params": {"deviation_pct": 0.05}}],

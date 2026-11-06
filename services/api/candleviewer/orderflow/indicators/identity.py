@@ -18,7 +18,8 @@ TS mirror):
   with at most 40 significant digits. Booleans stay JSON booleans and enum values stay strings;
 - `source` is `BAR_SOURCE`, `"tape"`: where the bars come from (bars built from the recorded
   trades), the only bar source in v1. It is not the price a kernel reads (`Kernel.sources`:
-  `close`, `hlc3`), which no identity holds; `v` is the JSON integer `INDICATOR_SPEC_VERSION`.
+  `close`, `hlc3`), which no identity holds, except a moving average's applied price, which is its
+  `source` param (E13-S02); `v` is the JSON integer `INDICATOR_SPEC_VERSION`.
 
 The number rule mirrors `bars.spec.dec_str`, which this module may not import: M15 `rules`
 imports the indicator catalogue and may not reach `bars` (the `rules/ir/canonical.py`

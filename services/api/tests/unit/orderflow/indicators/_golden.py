@@ -28,7 +28,6 @@ from candleviewer.orderflow.indicators import (
     BarInput,
     KernelContext,
     bar_input,
-    compute,
 )
 from candleviewer.orderflow.indicators.identity import (
     BAR_SOURCE,
@@ -36,10 +35,15 @@ from candleviewer.orderflow.indicators.identity import (
     canonical_value,
     compute_spec_hash,
 )
+from candleviewer.orderflow.indicators.kernel import Kernel
 from candleviewer.orderflow.indicators.types import ParamValue
 from tests._corpus import CORPUS_ROOT
+from tests.unit.orderflow.indicators._ma_family import TEST_KERNELS, TestKernel
 from tests.unit.orderflow.indicators.reference import reference
 
+#: The server kernels and E13-S02's test-only client-worker moving averages: both hold golden
+#: vectors, but only the first are production kernels (ADR-0034 rule 1).
+ALL_KERNELS: Final[Mapping[str, type[Kernel] | type[TestKernel]]] = {**KERNELS, **TEST_KERNELS}
 GOLDEN: Final = CORPUS_ROOT.parent / "golden" / "indicators"
 INPUT_SETS: Final = ("kline_gap", "tape_1m", "synthetic_day")
 #: Klines carry no aggressor split, so the delta-based cases (`cvd`, `delta`) skip that set.
@@ -66,9 +70,33 @@ class Case:
         return f"{self.indicator}({args})"
 
 
+def _ma(n: int, source: str = "close", offset: int = 0) -> dict[str, ParamValue]:
+    return {"n": n, "source": source, "offset": offset}
+
+
+def _ribbon(ma: str, *periods: int, source: str = "close") -> dict[str, ParamValue]:
+    params: dict[str, ParamValue] = {f"n{i}": n for i, n in enumerate(periods, 1)}
+    return params | {"ma": ma, "source": source}
+
+
 CASES: Final = (
-    Case("sma", {"n": 20}, "close"),
-    Case("ema", {"n": 21}, "close"),
+    Case("sma", _ma(20), "close"),
+    Case("sma", _ma(9, "hl2", 3), "hl2"),
+    Case("ema", _ma(21), "close"),
+    Case("ema", _ma(9, "hlc3", 3), "hlc3"),
+    Case("wma", _ma(20), "close"),
+    Case("wma", _ma(9, "ohlc4", 3), "ohlc4"),
+    Case("vwma", _ma(20), "close"),
+    Case("vwma", _ma(5, "hl2", 2), "hl2"),
+    Case("smma", _ma(20), "close"),
+    Case("smma", _ma(9, "low", 1), "low"),
+    Case("dema", _ma(20), "close"),
+    Case("dema", _ma(9, "open", 2), "open"),
+    Case("tema", _ma(20), "close"),
+    Case("tema", _ma(5, "high"), "high"),
+    Case("ma_ribbon", _ribbon("ema", 10, 20, 50, 100, 200), "close"),
+    Case("ma_ribbon", _ribbon("wma", 3, 5, 8, 13, 21, source="hlc3"), "hlc3"),
+    Case("ma_ribbon", _ribbon("vwma", 2, 3, 4, 5, 6), "close"),
     Case("rsi", {"n": 14}, "close"),
     Case("atr", {"n": 14}, None),
     Case("adx", {"n": 14}, None),
@@ -174,8 +202,9 @@ def columns[T](rows: Sequence[tuple[T, ...]], width: int) -> list[list[T]]:
 def kernel_columns(
     case: Case, bars: Sequence[BarInput], ctx: KernelContext
 ) -> list[list[str | None]]:
-    rows = compute(case.indicator, bars, case.params, source=case.source, context=ctx)
-    width = len(KERNELS[case.indicator].outputs)
+    kernel = ALL_KERNELS[case.indicator](case.params, source=case.source, context=ctx)
+    rows = kernel.run(bars)
+    width = len(ALL_KERNELS[case.indicator].outputs)
     return [[kernel_text(x) for x in col] for col in columns(rows, width)]
 
 
@@ -183,7 +212,7 @@ def reference_columns(
     case: Case, bars: Sequence[BarInput], ctx: KernelContext
 ) -> list[list[str | None]]:
     rows = reference(case.indicator, bars, dict(case.params), ctx)
-    width = len(KERNELS[case.indicator].outputs)
+    width = len(ALL_KERNELS[case.indicator].outputs)
     return [[reference_text(x) for x in col] for col in columns(rows, width)]
 
 
@@ -192,7 +221,7 @@ def render_vectors(inputs: InputSet) -> str:
     bars = [bar_input(b) for b in inputs.bars]
     lines = []
     for case in inputs.cases():
-        kernel = KERNELS[case.indicator]
+        kernel = ALL_KERNELS[case.indicator]
         lines.append(
             _dump_line(
                 {
@@ -220,10 +249,20 @@ ONE_MINUTE: Final = BarSpec(kind="time", interval_ms=60_000)
 FIVE_MINUTES: Final = BarSpec(kind="time", interval_ms=300_000)
 #: (note, indicator, params, bar spec): every identity hashes the bar source `tape` (24 §7.4).
 SPEC_HASH_CASES: Final[tuple[tuple[str, str, dict[str, ParamValue], BarSpec], ...]] = (
-    ("ema(21) on 1m", "ema", {"n": 21}, ONE_MINUTE),
-    ("ema(21.0): the same identity as ema(21)", "ema", {"n": 21.0}, ONE_MINUTE),
-    ("ema(21) on 5m: another bar spec", "ema", {"n": 21}, FIVE_MINUTES),
-    ("sma(20)", "sma", {"n": 20}, ONE_MINUTE),
+    ("ema(21) on 1m", "ema", {"n": 21, "source": "close", "offset": 0}, ONE_MINUTE),
+    ("ema(21.0): the same identity as ema(21)", "ema",
+     {"n": 21.0, "source": "close", "offset": 0}, ONE_MINUTE),
+    ("ema(21) on 5m: another bar spec", "ema",
+     {"n": 21, "source": "close", "offset": 0}, FIVE_MINUTES),
+    ("sma(20)", "sma", {"n": 20, "source": "close", "offset": 0}, ONE_MINUTE),
+    ("sma(20) on hl2: another source, another identity", "sma",
+     {"n": 20, "source": "hl2", "offset": 0}, ONE_MINUTE),
+    ("sma(20), offset 5: another identity", "sma",
+     {"n": 20, "source": "close", "offset": 5}, ONE_MINUTE),
+    ("wma(20): client_worker", "wma", {"n": 20, "source": "close", "offset": 0}, ONE_MINUTE),
+    ("ma_ribbon(ema 10, 20, 50, 100, 200): client_worker", "ma_ribbon",
+     {"n1": 10, "n2": 20, "n3": 50, "n4": 100, "n5": 200, "ma": "ema", "source": "close"},
+     ONE_MINUTE),
     ("rsi(14)", "rsi", {"n": 14}, ONE_MINUTE),
     ("atr(14)", "atr", {"n": 14}, ONE_MINUTE),
     ("adx(14)", "adx", {"n": 14}, ONE_MINUTE),
@@ -269,7 +308,7 @@ def render_manifest(files: Mapping[str, str], inputs: Sequence[InputSet]) -> str
     doc = {
         "$note": "GENERATED - do not hand-edit. A kernel diff means its operation order changed: "
         "bump that kernel's build_version and regenerate.",
-        "build_versions": {name: k.build_version for name, k in sorted(KERNELS.items())},
+        "build_versions": {name: k.build_version for name, k in sorted(ALL_KERNELS.items())},
         "files": {
             name: hashlib.sha256(text.encode("utf-8")).hexdigest()
             for name, text in sorted(files.items())

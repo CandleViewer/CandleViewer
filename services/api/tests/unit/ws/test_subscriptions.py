@@ -1357,7 +1357,9 @@ def test_an_indicators_series_admitted_at_ten_qty_steps_is_retuned_by_a_ctl() ->
     _sub(conn, {"ch": "indicators.BTCUSDT.volume.10", "opts": _EMA})
     ok = _ctl(conn, "indicators.BTCUSDT.volume.10", _EMA_8)
     assert ok["t"] == "ctl_ok"
-    assert [i["params"] for i in ok["p"]["effective"]["instances"]] == [{"n": 8}]
+    assert [i["params"] for i in ok["p"]["effective"]["instances"]] == [
+        {"n": 8, "source": "close", "offset": 0}
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1373,7 +1375,9 @@ def test_an_indicators_series_is_retuned_after_its_qty_step_changes(later: Decim
     steps["BTCUSDT"] = later  # a floor of 20, or no step at all
     ok = _ctl(conn, "indicators.BTCUSDT.volume.10", _EMA_8)
     assert ok["t"] == "ctl_ok"
-    assert [i["params"] for i in ok["p"]["effective"]["instances"]] == [{"n": 8}]
+    assert [i["params"] for i in ok["p"]["effective"]["instances"]] == [
+        {"n": 8, "source": "close", "offset": 0}
+    ]
     fresh = ConnectionAuthz(_mgr(A), _services(bars=_Bars(), qty_step=steps.get))
     (again,) = _sub(fresh, {"ch": "indicators.BTCUSDT.volume.10", "opts": _EMA})
     assert again["error"]["code"] == "invalid_topic_format"  # control: the change took effect

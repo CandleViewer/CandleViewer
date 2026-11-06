@@ -5,43 +5,103 @@
   "vectors": [
     {
       "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
-      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"ema\",\"params\":{\"n\":\"21\"},\"source\":\"tape\",\"v\":1}",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"ema\",\"params\":{\"n\":\"21\",\"offset\":\"0\",\"source\":\"close\"},\"source\":\"tape\",\"v\":1}",
       "indicator": "ema",
       "note": "ema(21) on 1m",
       "params": {
-        "n": 21
+        "n": 21,
+        "offset": 0,
+        "source": "close"
       },
-      "spec_hash": "fcaadf406c5d0fa04f3eec173561db0a9532c6c1570467b024b23a5a0434a011"
+      "spec_hash": "51cf70fb2414433ea53775f07740b3c031f6efd74344a46781b2f0612bb98034"
     },
     {
       "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
-      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"ema\",\"params\":{\"n\":\"21\"},\"source\":\"tape\",\"v\":1}",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"ema\",\"params\":{\"n\":\"21\",\"offset\":\"0\",\"source\":\"close\"},\"source\":\"tape\",\"v\":1}",
       "indicator": "ema",
       "note": "ema(21.0): the same identity as ema(21)",
       "params": {
-        "n": 21.0
+        "n": 21.0,
+        "offset": 0,
+        "source": "close"
       },
-      "spec_hash": "fcaadf406c5d0fa04f3eec173561db0a9532c6c1570467b024b23a5a0434a011"
+      "spec_hash": "51cf70fb2414433ea53775f07740b3c031f6efd74344a46781b2f0612bb98034"
     },
     {
       "bar_spec_hash": "243a2e966460a213138db11e49fe6b6b2ca7f7c8d994e8f05384c0f6c5bfd88f",
-      "canonical_json": "{\"bar_spec_hash\":\"243a2e966460a213138db11e49fe6b6b2ca7f7c8d994e8f05384c0f6c5bfd88f\",\"indicator\":\"ema\",\"params\":{\"n\":\"21\"},\"source\":\"tape\",\"v\":1}",
+      "canonical_json": "{\"bar_spec_hash\":\"243a2e966460a213138db11e49fe6b6b2ca7f7c8d994e8f05384c0f6c5bfd88f\",\"indicator\":\"ema\",\"params\":{\"n\":\"21\",\"offset\":\"0\",\"source\":\"close\"},\"source\":\"tape\",\"v\":1}",
       "indicator": "ema",
       "note": "ema(21) on 5m: another bar spec",
       "params": {
-        "n": 21
+        "n": 21,
+        "offset": 0,
+        "source": "close"
       },
-      "spec_hash": "26f9e3e723abea1cbe2b84d0ccb1e3ca727056765c0ad926914f29436e4cc23c"
+      "spec_hash": "824f4bff10956baa5fb04f80175e9007dcb2704b1f5358ee4521fd052120923b"
     },
     {
       "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
-      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"sma\",\"params\":{\"n\":\"20\"},\"source\":\"tape\",\"v\":1}",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"sma\",\"params\":{\"n\":\"20\",\"offset\":\"0\",\"source\":\"close\"},\"source\":\"tape\",\"v\":1}",
       "indicator": "sma",
       "note": "sma(20)",
       "params": {
-        "n": 20
+        "n": 20,
+        "offset": 0,
+        "source": "close"
       },
-      "spec_hash": "28f47088f89b99fb64bccc5ebe6edf7507390d8744e538a1ab246e2e21ab7476"
+      "spec_hash": "9217f8aed840c4e26537d780a6b3895830455d088b4c42a1332d54f62403daa4"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"sma\",\"params\":{\"n\":\"20\",\"offset\":\"0\",\"source\":\"hl2\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "sma",
+      "note": "sma(20) on hl2: another source, another identity",
+      "params": {
+        "n": 20,
+        "offset": 0,
+        "source": "hl2"
+      },
+      "spec_hash": "4b26f59e84e55a7ad31ccc23d3115535708ea0afc4cd02ac88b5387b134156e2"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"sma\",\"params\":{\"n\":\"20\",\"offset\":\"5\",\"source\":\"close\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "sma",
+      "note": "sma(20), offset 5: another identity",
+      "params": {
+        "n": 20,
+        "offset": 5,
+        "source": "close"
+      },
+      "spec_hash": "38d7198bf64809d5bd4816fe81af4e44d23507f7d57016a512b2cfd642a74cab"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"wma\",\"params\":{\"n\":\"20\",\"offset\":\"0\",\"source\":\"close\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "wma",
+      "note": "wma(20): client_worker",
+      "params": {
+        "n": 20,
+        "offset": 0,
+        "source": "close"
+      },
+      "spec_hash": "ef86213faf1178c15b882a18887d5bfc1d67a762bfff49687fcba4089ad9bbfe"
+    },
+    {
+      "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",
+      "canonical_json": "{\"bar_spec_hash\":\"a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1\",\"indicator\":\"ma_ribbon\",\"params\":{\"ma\":\"ema\",\"n1\":\"10\",\"n2\":\"20\",\"n3\":\"50\",\"n4\":\"100\",\"n5\":\"200\",\"source\":\"close\"},\"source\":\"tape\",\"v\":1}",
+      "indicator": "ma_ribbon",
+      "note": "ma_ribbon(ema 10, 20, 50, 100, 200): client_worker",
+      "params": {
+        "ma": "ema",
+        "n1": 10,
+        "n2": 20,
+        "n3": 50,
+        "n4": 100,
+        "n5": 200,
+        "source": "close"
+      },
+      "spec_hash": "654e5cb184482f3a461b3448659be3209391967a143735673efddd4d58203e99"
     },
     {
       "bar_spec_hash": "a273d446aff40bd5a18ab5314ed605dbf48161e615518ef5e6637c570d791be1",

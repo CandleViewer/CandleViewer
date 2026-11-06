@@ -222,7 +222,11 @@ def test_swing_metrics_keep_the_24_7_2_swing_and_ema_sma_gain_defaults() -> None
     assert swing_high.params == swing_low.params == {"depth": "5", "deviation_pct": "0"}
     assert swing_high.warmup_bars == swing_low.warmup_bars == 11
     defaults = {m: getattr(reg.get(m), "params", None) for m in ("sma", "ema", "rsi")}
-    assert defaults == {"sma": {"n": "20"}, "ema": {"n": "21"}, "rsi": {"n": "14"}}
+    assert defaults == {
+        "sma": {"n": "20", "source": "close", "offset": "0"},
+        "ema": {"n": "21", "source": "close", "offset": "0"},
+        "rsi": {"n": "14"},
+    }
     assert getattr(reg.get("rsi"), "warmup_bars", None) == 15  # n + 1 closes
 
 
@@ -235,10 +239,10 @@ def test_a_binding_to_an_output_its_indicator_lacks_is_refused_at_import() -> No
 
 def test_rule_eligibility_is_server_placement_and_no_client_worker_name_is_a_metric() -> None:
     """ADR-0034 rule 2 and #426's ruling D3: every server indicator backs a rule metric, and none of
-    the 19 client_worker indicators enters the rule vocabulary."""
+    the 20 client_worker indicators enters the rule vocabulary."""
     assert {i for i, _ in KERNEL_BOUND.values()} == set(SERVER_DEFINITIONS)
     client_worker = {d.id for d in V1_INDICATORS if d.compute == "client_worker"}
-    assert len(client_worker) == 19
+    assert len(client_worker) == 20
     assert client_worker & set(default_registry().names()) == set()
 
 
@@ -386,3 +390,94 @@ def test_recorder_service_recorded_symbols_default_empty() -> None:
     from candleviewer.recorder.service import RecorderService
 
     assert RecorderService().recorded_symbols() == frozenset()
+
+
+# E13-S02 BQ-02 rider (b) / BQ-03 rider (c): `source` and `offset` join sma / ema in the rule
+# vocabulary because it derives them from the catalogue, and a stored rule that names sma or ema
+# without them must keep its canonical IR and ir_hash.
+_STORED_SMA_EMA_HASHES = {
+    "sma_default": "1da04b6e44ca03bbd536a9d6f88e805d75017aa9aa8832e19a687038d5a99fb2",
+    "sma_n": "8ed6dd7d579cd468e6c0fdb69b3f34ed7ad464adaad674a3812074df4a43ee49",
+    "ema_default": "6bbe9941a6056cedae8443414272bde0ae7f0bfe933a398d5d9dcad949b50e44",
+    "ema_n": "4e7f207a4afa794bcdea7d42a0180737bcfd0f7e635202c4b61f56ba898df577",
+    "ema_n50": "64fa55a7426688a13ef6e8ddc06c63ccdb1db5533b3f6e13f5499c9da768c37a",
+}
+_STORED_LEFT: dict[str, dict[str, typing.Any]] = {
+    "sma_default": {"metric": "sma"},
+    "sma_n": {"metric": "sma", "params": {"n": 20}},
+    "ema_default": {"metric": "ema"},
+    "ema_n": {"metric": "ema", "params": {"n": 21}},
+    "ema_n50": {"metric": "ema", "params": {"n": 50}},
+}
+
+
+def _stored_rule(case: str) -> typing.Any:
+    from candleviewer.rules.ir import Rule
+
+    fixture = Path(__file__).parents[1] / "fixtures/rule_ir/form_simple_0.json"
+    raw = json.loads(fixture.read_text(encoding="utf-8"), parse_float=str)
+    raw["conditions"]["left"] = _STORED_LEFT[case]
+    return Rule.model_validate(raw)
+
+
+@pytest.mark.parametrize("case", sorted(_STORED_SMA_EMA_HASHES))
+def test_a_stored_sma_or_ema_rule_keeps_its_ir_hash_and_compiles_to_the_same_ir(case: str) -> None:
+    """The hashes are literals computed on the contract-slice base (95795a705), before the
+    catalogue gained `source` and `offset`; both editors still compile to that exact IR."""
+    from candleviewer.rules.compiler import (
+        compile_form,
+        compile_graph,
+        to_form_model,
+        to_graph_model,
+    )
+    from candleviewer.rules.ir import ir_hash
+    from candleviewer.rules.validator import validate_rule
+
+    rule = _stored_rule(case)
+    expected = _STORED_SMA_EMA_HASHES[case]
+    assert ir_hash(rule) == expected
+    assert ir_hash(compile_graph(to_graph_model(rule), rule.rule_id)) == expected
+    assert ir_hash(compile_form(to_form_model(rule), rule.rule_id)) == expected
+    errors = validate_rule(rule, default_registry()).errors  # the fixture's action is incomplete
+    assert [e for e in errors if e.path.startswith("conditions")] == []
+
+
+def test_source_and_offset_are_rule_vocabulary_params_of_sma_and_ema_only() -> None:
+    reg = default_registry()
+    for name in ("sma", "ema"):
+        params = getattr(reg.get(name), "params", None)
+        assert isinstance(params, dict)
+        assert {"source", "offset"} <= set(params)
+        assert (params["source"], params["offset"]) == ("close", "0")
+    assert set(getattr(reg.get("rsi"), "params", {})) == {"n"}
+
+
+@pytest.mark.parametrize("case", sorted(_STORED_SMA_EMA_HASHES))
+def test_the_validator_accepts_a_stored_bare_sma_or_ema_metric(case: str) -> None:
+    """BQ-02 rider (b): a stored rule that names sma / ema without `source` / `offset` (only the
+    old `n`, or nothing) validates clean in its conditions; the new params are optional."""
+    from candleviewer.rules.validator import validate_rule
+
+    result = validate_rule(_stored_rule(case), default_registry())
+    assert [e for e in result.errors if e.path.startswith("conditions")] == []
+    assert not any(e.code == "unknown_metric" for e in result.errors)
+
+
+def test_the_registry_requires_neither_source_nor_offset_of_sma_or_ema() -> None:
+    from candleviewer.rules.vocabulary.metrics import kernel_params_schema
+
+    for name in ("sma", "ema"):
+        schema = kernel_params_schema(name)
+        assert schema is not None
+        assert {"source", "offset"} <= set(typing.cast(dict[str, typing.Any], schema["properties"]))
+        required = set(typing.cast(list[str], schema.get("required", [])))
+        assert required.isdisjoint({"source", "offset"})
+        assert required == set()
+
+
+def test_the_catalogue_accepts_a_bare_sma_or_ema_param_object() -> None:
+    from candleviewer.orderflow.indicators.catalogue import SERVER_DEFINITIONS, validate_params
+
+    for name in ("sma", "ema"):
+        assert validate_params(SERVER_DEFINITIONS[name], {"n": 20})["offset"] == 0
+        assert validate_params(SERVER_DEFINITIONS[name], {})["source"] == "close"

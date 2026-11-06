@@ -62,11 +62,14 @@ def test_the_first_value_lands_on_the_warmup_boundary(name: str, kline: list[Bar
 def test_period_kernels_warm_up_after_exactly_their_bar_count(
     name: str, n: int, kline: list[BarInput]
 ) -> None:
-    rows = compute(name, kline, {"n": n}, source=VALID[name][1])
-    warmup = KERNELS[name].warmup_bars({"n": n})
+    params = {**VALID[name][0], "n": n}
+    rows = compute(name, kline, params, source=VALID[name][1])
+    warmup = KERNELS[name].warmup_bars(params)
     assert [row[0] for row in rows[: warmup - 1]] == [None] * (warmup - 1)
     assert rows[warmup - 1][0] is not None
 
 
 def test_a_period_longer_than_the_series_stays_none(kline: list[BarInput]) -> None:
-    assert compute("sma", kline, {"n": 5000}, source="close") == [(None,)] * len(kline)
+    assert compute("sma", kline, {**VALID["sma"][0], "n": 5000}, source="close") == [(None,)] * len(
+        kline
+    )

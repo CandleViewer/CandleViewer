@@ -423,7 +423,7 @@ def test_list_indicators_response_conforms_to_the_contract(spec: dict[str, Any])
     assert response.status_code == 200
     schema = _response_schema(spec, "200", "application/json")
     jsonschema.Draft202012Validator(schema).validate(response.json())
-    assert len(response.json()["items"]) == 28
+    assert len(response.json()["items"]) == 29
 
 
 @pytest.mark.parametrize(

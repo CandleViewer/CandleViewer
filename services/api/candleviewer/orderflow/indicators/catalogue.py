@@ -10,7 +10,8 @@ and the rule vocabulary cannot drift.
 - `compute` is derived, never requested (IR-41): `server` exactly when the definition carries
   its backend kernel. ADR-0034 assigns that set by rule eligibility: `sma`, `ema`, `rsi`, `atr`,
   `adx`, `vwap`, `cvd`, `volume` and `zigzag`. The other 19 v1 indicators are `client_worker`
-  and have no Python kernel (#426): E13-S02..S07 build theirs in the chart worker.
+  and have no Python kernel (#426): E13-S02..S07 build theirs in the chart worker. E13-S02's
+  `ma_ribbon` is the 29th entry, an addition to the table (C-6.3), and `client_worker` too.
 - A server definition takes its outputs, `nullable_when` and warmup from its kernel and must
   declare the kernel's parameters, so the descriptor cannot disagree with what is computed.
 - Every parameter has a type, a title and a default; a numeric one also a minimum and a maximum
@@ -54,7 +55,7 @@ from types import MappingProxyType
 from typing import Final, Literal
 
 from candleviewer.orderflow.errors import DuplicateIndicatorError, InvalidParamsError
-from candleviewer.orderflow.indicators.kernel import Kernel, int_param
+from candleviewer.orderflow.indicators.kernel import Kernel, choice_param, int_param
 from candleviewer.orderflow.indicators.kernels import (
     AdxKernel,
     AtrKernel,
@@ -71,9 +72,12 @@ from candleviewer.orderflow.indicators.limits import (
     DEVIATION_PCT_MAX,
     DEVIATION_PCT_MIN,
     DEVIATION_PCT_STEP,
+    MA_SOURCES,
     MULTIPLIER_MAX,
     MULTIPLIER_MIN,
     MULTIPLIER_STEP,
+    OFFSET_MAX,
+    OFFSET_MIN,
     PERIOD_MAX,
     PERIOD_MIN,
     PSAR_ACCELERATION_MAX,
@@ -351,6 +355,16 @@ def _acceleration(name: str, title: str, default: str) -> ParamSpec:
     )
 
 
+def _source() -> ParamSpec:
+    """A moving average's applied price (E13-S02, 24 7.4); the default is the close."""
+    return ParamSpec("source", "Source", "string", MA_SOURCES[0], enum=MA_SOURCES)
+
+
+def _offset() -> ParamSpec:
+    """A moving average's displacement toward the past, in bars (E13-S02, 24 7.4)."""
+    return ParamSpec("offset", "Offset", "integer", 0, OFFSET_MIN, OFFSET_MAX)
+
+
 def _anchor(*choices: str) -> ParamSpec:
     return ParamSpec("anchor", "Reset anchor", "string", choices[0], enum=choices)
 
@@ -365,6 +379,22 @@ def _linear(*names: str, scale: int = 1, offset: int = 0) -> Warmup:
         return scale * sum(int_param(params, name) for name in names) + offset
 
     return warmup
+
+
+def _ma_warmup(scale: int = 1, offset: int = 0) -> Warmup:
+    """A moving average's first value on bar `scale * n + offset` (24 7.4: 2n-1 for DEMA, 3n-2
+    for TEMA), plus its `offset` parameter, the bars its line is displaced."""
+
+    def warmup(params: Mapping[str, ParamValue]) -> int:
+        return scale * int_param(params, "n") + offset + int_param(params, "offset", minimum=0)
+
+    return warmup
+
+
+def _ribbon_warmup(params: Mapping[str, ParamValue]) -> int:
+    """The longest warmup of the ribbon's five lines (`ma_ribbon`, 24 7.4)."""
+    scale, offset = _MA_SHAPE[choice_param(params, "ma", tuple(_MA_SHAPE))]
+    return max(scale * int_param(params, f"n{i}") + offset for i in range(1, 6))
 
 
 def _longest(*names: str) -> Warmup:
@@ -414,52 +444,61 @@ def _server(
     )
 
 
-# --- the 28 v1 indicators, in ADR-0034's table order ----------------------------------------
+#: Each moving average's warmup as `scale * n + offset` bars (24 7.4), for the ribbon's.
+_MA_SHAPE: Final = {
+    "sma": (1, 0), "ema": (1, 0), "wma": (1, 0), "vwma": (1, 0), "smma": (1, 0),
+    "dema": (2, -1), "tema": (3, -2),
+}  # fmt: skip
+_MA_PARAMS: Final = (_period(20), _source(), _offset())
+
+# --- the 29 v1 indicators, in ADR-0034's table order, then E13-S02's `ma_ribbon` -------------
 
 _BANDS = (("upper", "Upper band"), ("middle", "Middle line"), ("lower", "Lower band"))
 
 SMA = _server(
-    SmaKernel, "Simple moving average", "trend", "price", "price", {"sma": "SMA"}, (_period(20),)
+    SmaKernel, "Simple moving average", "trend", "price", "price", {"sma": "SMA"}, _MA_PARAMS
 )
 EMA = _server(
     EmaKernel, "Exponential moving average", "trend", "price", "price", {"ema": "EMA"},
-    (_period(21),),
+    (_period(21), _source(), _offset()),
 )  # fmt: skip
 WMA = IndicatorDef(
     "wma", "Weighted moving average", "trend", "price", "price", _outputs(("wma", "WMA")),
-    (_period(20),),
-    "None until n bars exist; then the mean of the last n closes weighted 1 to n, newest "
-    "heaviest.",
-    _linear("n"),
+    _MA_PARAMS,
+    "None until n bars exist, and for the first offset bars after; then the mean of the last n "
+    "applied prices weighted 1 to n, newest heaviest, offset bars late.",
+    _ma_warmup(),
 )  # fmt: skip
 VWMA = IndicatorDef(
     "vwma", "Volume-weighted moving average", "trend", "price", "price",
     _outputs(("vwma", "VWMA")),
-    (_period(20),),
-    "None until n bars exist, and while the last n bars hold no volume; then the mean of the "
-    "last n closes weighted by volume.",
-    _linear("n"),
+    _MA_PARAMS,
+    "None until n bars exist, for the first offset bars after, and while the last n bars hold "
+    "no volume; then the mean of the last n applied prices weighted by volume, offset bars late.",
+    _ma_warmup(),
 )  # fmt: skip
 SMMA = IndicatorDef(
     "smma", "Smoothed moving average", "trend", "price", "price", _outputs(("smma", "SMMA")),
-    (_period(20),),
-    "None until n bars exist: the first value is the mean of the first n closes, then Wilder "
-    "smoothing.",
-    _linear("n"),
+    _MA_PARAMS,
+    "None until n bars exist, and for the first offset bars after: the first value is the mean "
+    "of the first n applied prices, then Wilder smoothing, offset bars late.",
+    _ma_warmup(),
 )  # fmt: skip
 DEMA = IndicatorDef(
     "dema", "Double exponential moving average", "trend", "price", "price",
     _outputs(("dema", "DEMA")),
-    (_period(20),),
-    "None until 2n-1 bars exist: the EMA of the EMA needs n values of the first EMA.",
-    _linear("n", scale=2, offset=-1),
+    _MA_PARAMS,
+    "None until 2n-1 bars exist, and for the first offset bars after: the EMA of the EMA needs "
+    "n values of the first EMA.",
+    _ma_warmup(2, -1),
 )  # fmt: skip
 TEMA = IndicatorDef(
     "tema", "Triple exponential moving average", "trend", "price", "price",
     _outputs(("tema", "TEMA")),
-    (_period(20),),
-    "None until 3n-2 bars exist: three chained EMAs, each needing n values of the one before.",
-    _linear("n", scale=3, offset=-2),
+    _MA_PARAMS,
+    "None until 3n-2 bars exist, and for the first offset bars after: three chained EMAs, each "
+    "needing n values of the one before.",
+    _ma_warmup(3, -2),
 )  # fmt: skip
 VWAP = _server(
     VwapKernel, "Volume-weighted average price", "volume", "price", "price",
@@ -612,10 +651,21 @@ CVD = _server(
     (_anchor("session", "utc_day"),),
 )  # fmt: skip
 
+MA_RIBBON = IndicatorDef(
+    "ma_ribbon", "Moving average ribbon", "trend", "price", "price",
+    _outputs(*((f"ma_{i}", f"Ribbon line {i}") for i in range(1, 6))),
+    (*(_period(n, f"n{i}", f"Period {i}") for i, n in enumerate((10, 20, 50, 100, 200), 1)),
+     ParamSpec("ma", "Average", "string", "ema", enum=tuple(_MA_SHAPE)), _source()),
+    "Each line is None until its own period's bars exist (n for the SMA, EMA, WMA, VWMA and SMMA, "
+    "2n-1 for the DEMA, 3n-2 for the TEMA) and, for the VWMA, while its last n bars hold no "
+    "volume; then the chosen average of the applied price at that period.",
+    _ribbon_warmup,
+)  # fmt: skip
+
 V1_INDICATORS: Final[tuple[IndicatorDef, ...]] = (
     SMA, EMA, WMA, VWMA, SMMA, DEMA, TEMA, VWAP, BOLLINGER, KELTNER, DONCHIAN, ATR, ADX, RSI,
     MACD, STOCHASTIC, CCI, WILLIAMS_R, SUPERTREND, ZIGZAG, ICHIMOKU, PSAR, VOLUME, VOLUME_MA,
-    OBV, CMF, MFI, CVD,
+    OBV, CMF, MFI, CVD, MA_RIBBON,
 )  # fmt: skip
 
 #: The bar's aggressor delta, which `cvd` sums: a rule metric with a server kernel, but not a v1
@@ -631,7 +681,7 @@ SERVER_DEFINITIONS: Final[Mapping[str, IndicatorDef]] = MappingProxyType(
 
 
 def default_catalogue() -> IndicatorCatalogue:
-    """A fresh catalogue of the 28 v1 indicators, in ADR-0034's table order."""
+    """A fresh catalogue of the 29 v1 indicators: ADR-0034's 28 in table order, then `ma_ribbon`."""
     return IndicatorCatalogue(V1_INDICATORS)
 
 
