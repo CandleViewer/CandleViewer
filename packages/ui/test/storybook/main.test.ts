@@ -17,8 +17,15 @@ describe("Storybook main config", () => {
         "../src/**/*.mdx",
         "../src/**/*.stories.@(ts|tsx)",
         "../../../apps/web/src/features/settings/SettingsNav.stories.tsx",
+        "../../../apps/web/src/features/chart-empty/ChartEmptyState.stories.tsx",
       ]);
     }
+  });
+
+  it("defines a fixed build version for the listed apps/web stories, without reading apps/web", async () => {
+    const { viteFinal } = await mainConfig();
+    const out = await viteFinal?.({ define: { KEEP: "1" } }, { configType: "PRODUCTION" } as never);
+    expect(out?.define).toEqual({ KEEP: "1", __CV_APP_VERSION__: JSON.stringify("storybook") });
   });
 
   it("builds the fixtures alone when the gate self-test sets the switch", async () => {

@@ -136,7 +136,8 @@ export function coverageView(coverage: DataCoverage): CoverageView {
 }
 
 export type CoverageOutcome =
-  | { readonly kind: "ok"; readonly view: CoverageView }
+  /** `coverage` is the body as read, for SCR-047's gap facts (E16-S05: one reader, never a second). */
+  | { readonly kind: "ok"; readonly view: CoverageView; readonly coverage: DataCoverage }
   /** 422: not Trading (CR-13), or the server holds no catalogue yet. The host reads it by the contract band (§11.3). */
   | { readonly kind: "refused_422" }
   | { readonly kind: "forbidden" }
@@ -163,7 +164,9 @@ export async function fetchCoverage(
     if (!isCoverage(answer.body)) return { kind: "failed", status: answer.status };
     const view = coverageView(answer.body);
     // An unreadable body is the band's failure ("Couldn't load recorded coverage."), never "no data".
-    return view.unreadable ? { kind: "failed", status: answer.status } : { kind: "ok", view };
+    return view.unreadable
+      ? { kind: "failed", status: answer.status }
+      : { kind: "ok", view, coverage: answer.body };
   }
   if (answer.status === 422) return { kind: "refused_422" };
   if (answer.status === 403) return { kind: "forbidden" };

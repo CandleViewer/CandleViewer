@@ -4,6 +4,10 @@ import type { StorybookConfig } from "@storybook/react-vite";
 // globs never reach `.storybook/__fixtures__/`, so no fixture is built or published.
 const fixturesOnly = process.env["CV_STORYBOOK_A11Y_FIXTURES"] === "1";
 
+// The listed apps/web stories reach its HTTP client, whose WS frames read the build's version define
+// (apps/web/vite.config.ts). A package never reads an app (C-3.5), so Storybook defines a fixed value.
+const storybookVersion = "storybook";
+
 // Story-level lazy compilation: the Vite builder imports each story file on demand and Vite
 // transforms modules on request (`lazyCompilation` is the webpack builder's switch).
 const config: StorybookConfig = {
@@ -14,6 +18,8 @@ const config: StorybookConfig = {
         "../src/**/*.stories.@(ts|tsx)",
         // CMP-086 lives in apps/web (router-coupled); its one story file is listed here, not globbed.
         "../../../apps/web/src/features/settings/SettingsNav.stories.tsx",
+        // SCR-047 / SCR-151's recorder empty states (E16-S05) compose CMP-026 in apps/web: listed, not globbed.
+        "../../../apps/web/src/features/chart-empty/ChartEmptyState.stories.tsx",
       ],
   // The E05-T03 addon set: docs pages, the a11y panel and its gate, and the Vitest addon that runs
   // every story's play function and axe check. Controls, toolbars and interactions are core.
@@ -24,6 +30,10 @@ const config: StorybookConfig = {
     name: "@storybook/react-vite",
     options: {},
   },
+  viteFinal: (vite) => ({
+    ...vite,
+    define: { ...vite.define, __CV_APP_VERSION__: JSON.stringify(storybookVersion) },
+  }),
   core: {
     // Telemetry and what's-new notices are off once this file loads; the scripts also pass
     // --disable-telemetry (errors before it loads) and dev's --no-version-updates (update check).
