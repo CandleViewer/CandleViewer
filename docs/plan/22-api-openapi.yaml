@@ -24640,8 +24640,74 @@ components:
             imbalance_ratio: { type: number }
             min_stack: { type: integer }
             value_area_pct: { type: number }
-            big_trade_threshold_mode: { type: string, enum: [absolute, relative, zscore] }
-            big_trade_k: { type: number }
+            big_trade_threshold_mode:
+              {
+                type: string,
+                enum: [absolute, relative, zscore],
+                description: "The metrics z-score detector's mode, not the big-trade engine's: the tape's per-symbol threshold is `bigtrade.threshold_mode` (E22-S02, #715).",
+              }
+            big_trade_k:
+              {
+                type: number,
+                description: "The metrics z-score detector's factor, not the big-trade engine's: the tape's per-symbol threshold is `bigtrade.threshold_value` (E22-S02, #715).",
+              }
+        bigtrade:
+          type: object
+          description: >
+            The big-trade threshold per symbol (E22-S02, #715; E22-D05 section 5): each leaf is one
+            row whose value is the whole symbol-keyed object, so a `PATCH` of a leaf replaces its
+            object and the client sends the full map, one leaf per patch. At most 200 symbols a
+            leaf (`THRESHOLD_SYMBOLS_PER_USER_MAX`, SR-E22-11), each key a `Symbol`: the key pattern
+            sits in `then`, which the generated model does not carry, so the server checks it on
+            every patch (a map with any other key is refused whole, `string_pattern_mismatch`,
+            the key never echoed) and never serves a stored map that breaks it. The worst-case
+            200-symbol map of each leaf fits the 16 KiB patch body. The 200 is per leaf today and
+            each key's check is its shape only: SR-E22-11's 200 symbols per user across the three
+            leaves and its unknown symbol `400` are deferred to #715's store slice. The values are
+            the engine's vocabulary and bounds (`BigTradeConfig`, 24 section 2.10). The web takes
+            these bounds from a bounds module generated from this schema, never from literals;
+            until that module exists, the server's `422` is the only check. A saved value
+            is the user's; the threshold the tape flags against is the engine's, which
+            `sub_ok.effective` and every `TradesBatch` carry (23 section 6.1), never this one.
+          properties:
+            threshold_mode:
+              type: object
+              description: "The engine's mode per symbol; the design default is `notional`."
+              maxProperties: 200
+              # `then` holds what the generated model cannot take: a `propertyNames` pattern
+              # becomes a `constr` key, which `mypy --strict` refuses.
+              if: true
+              then:
+                propertyNames: { pattern: "^[A-Z0-9]{2,20}USDT$" }
+              additionalProperties: { type: string, enum: [absolute_size, notional, percentile] }
+            threshold_value:
+              type: object
+              description: >
+                The threshold per symbol in its mode's unit: base units for `absolute_size`, USDT
+                for `notional`, a percentile for `percentile`, where it must also lie strictly
+                between 0 and 100. That bound reads the symbol's `threshold_mode`, another leaf, so
+                no schema holds it: the engine's `BigTradeConfig` refuses a value outside it, and
+                #715's settings slice adds the patch-time check against the stored mode. The
+                design default is 250000 USDT.
+              maxProperties: 200
+              if: true
+              then:
+                propertyNames: { pattern: "^[A-Z0-9]{2,20}USDT$" }
+              additionalProperties:
+                {
+                  type: string,
+                  maxLength: 24,
+                  pattern: "^[0-9]{1,15}([.][0-9]{1,8})?$",
+                  description: "A non-negative decimal string (convention C6).",
+                }
+            percentile_window_ms:
+              type: object
+              description: "The trailing percentile window per symbol, read in `percentile` mode."
+              maxProperties: 200
+              if: true
+              then:
+                propertyNames: { pattern: "^[A-Z0-9]{2,20}USDT$" }
+              additionalProperties: { type: integer, minimum: 60000, maximum: 86400000 }
         trading:
           type: object
           properties:

@@ -2078,6 +2078,22 @@ export interface TradesSymbol {
    * Arbitrary-precision decimal as a string; never a JSON number.
    */
   big_trade_threshold: string;
+  /**
+   * The engine's over-flagging cap is in force for the symbol (24 §2.10; E22-S02, #715): level state, on every frame while capped, and absent or false otherwise (§6.1). A kind-3 body has no slot for it (§3.4).
+   */
+  cap_active?: boolean;
+  /**
+   * While capped: the flagged share of the trailing window's prints at the latest threshold refresh, a decimal string from 0 to 1. The engine re-tests the cap at every refresh with no hysteresis, so the share is above 0.2 at every refresh that keeps the cap (24 §2.10).
+   */
+  flagged_fraction?: string;
+  /**
+   * While capped: the advisory's suggested value, in the configured mode's unit (24 §2.10 `BigTradeAdvisoryEvent.suggested_value`). In `absolute_size` and `notional` modes it is the trailing window's p80, which would flag at most 20 %. In `percentile` mode it is the configured percentile, unchanged, because raising it does not end the over-flagging; the cap is the remedy. A non-negative decimal string.
+   */
+  suggested_value?: string;
+  /**
+   * While capped: the engine's threshold before the cap, absolute, as the advisory's `threshold_abs` (24 §2.10). In `absolute_size` and `notional` modes it is the configured value; in `percentile` mode it is the estimated level of the configured percentile. It sits beside the effective `big_trade_threshold`, in the same unit: a non-negative decimal string.
+   */
+  threshold_abs?: string;
   coalesced?: boolean;
   /**
    * Source batches this frame appended (§8.6).

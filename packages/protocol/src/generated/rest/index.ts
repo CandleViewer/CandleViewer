@@ -12388,6 +12388,21 @@ export interface components {
         /** @enum {string} */
         theme?: "dark" | "light" | "system";
       };
+      /** @description The big-trade threshold per symbol (E22-S02, #715; E22-D05 section 5): each leaf is one row whose value is the whole symbol-keyed object, so a `PATCH` of a leaf replaces its object and the client sends the full map, one leaf per patch. At most 200 symbols a leaf (`THRESHOLD_SYMBOLS_PER_USER_MAX`, SR-E22-11), each key a `Symbol`: the key pattern sits in `then`, which the generated model does not carry, so the server checks it on every patch (a map with any other key is refused whole, `string_pattern_mismatch`, the key never echoed) and never serves a stored map that breaks it. The worst-case 200-symbol map of each leaf fits the 16 KiB patch body. The 200 is per leaf today and each key's check is its shape only: SR-E22-11's 200 symbols per user across the three leaves and its unknown symbol `400` are deferred to #715's store slice. The values are the engine's vocabulary and bounds (`BigTradeConfig`, 24 section 2.10). The web takes these bounds from a bounds module generated from this schema, never from literals; until that module exists, the server's `422` is the only check. A saved value is the user's; the threshold the tape flags against is the engine's, which `sub_ok.effective` and every `TradesBatch` carry (23 section 6.1), never this one. */
+      bigtrade?: {
+        /** @description The trailing percentile window per symbol, read in `percentile` mode. */
+        percentile_window_ms?: {
+          [key: string]: number;
+        };
+        /** @description The engine's mode per symbol; the design default is `notional`. */
+        threshold_mode?: {
+          [key: string]: "absolute_size" | "notional" | "percentile";
+        };
+        /** @description The threshold per symbol in its mode's unit: base units for `absolute_size`, USDT for `notional`, a percentile for `percentile`, where it must also lie strictly between 0 and 100. That bound reads the symbol's `threshold_mode`, another leaf, so no schema holds it: the engine's `BigTradeConfig` refuses a value outside it, and #715's settings slice adds the patch-time check against the stored mode. The design default is 250000 USDT. */
+        threshold_value?: {
+          [key: string]: string;
+        };
+      };
       chart?: {
         bar_close_countdown?: boolean;
         crosshair_sync?: boolean;
@@ -12411,8 +12426,12 @@ export interface components {
         webhook_url?: string | null;
       };
       orderflow?: {
+        /** @description The metrics z-score detector's factor, not the big-trade engine's: the tape's per-symbol threshold is `bigtrade.threshold_value` (E22-S02, #715). */
         big_trade_k?: number;
-        /** @enum {string} */
+        /**
+         * @description The metrics z-score detector's mode, not the big-trade engine's: the tape's per-symbol threshold is `bigtrade.threshold_mode` (E22-S02, #715).
+         * @enum {string}
+         */
         big_trade_threshold_mode?: "absolute" | "relative" | "zscore";
         heatmap_ask_colour?: string;
         heatmap_bid_colour?: string;

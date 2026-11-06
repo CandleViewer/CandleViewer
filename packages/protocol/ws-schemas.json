@@ -4063,10 +4063,46 @@
       "$id": "cv://ws/v1/trades.schema.json",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "flagged_fraction"
+              ]
+            },
+            {
+              "required": [
+                "suggested_value"
+              ]
+            },
+            {
+              "required": [
+                "threshold_abs"
+              ]
+            }
+          ]
+        }
+      },
+      "if": {
+        "properties": {
+          "cap_active": {
+            "const": true
+          }
+        },
+        "required": [
+          "cap_active"
+        ]
+      },
       "properties": {
         "big_trade_threshold": {
           "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal",
           "description": "The engine's current effective big-trade threshold for the symbol, absolute: base units in `absolute_size` mode, USDT in `notional` and `percentile` (§6.1). Every frame of the `trades` publisher (E22-T02, #654) carries it. A kind-3 body has no slot for it (§3.4): a binary client keeps the value from `sub_ok.effective` and the latest structured frame."
+        },
+        "cap_active": {
+          "default": false,
+          "description": "The engine's over-flagging cap is in force for the symbol (24 §2.10; E22-S02, #715): level state, on every frame while capped, and absent or false otherwise (§6.1). A kind-3 body has no slot for it (§3.4).",
+          "type": "boolean"
         },
         "coalesced": {
           "default": false,
@@ -4082,8 +4118,23 @@
           "minimum": 0,
           "type": "integer"
         },
+        "flagged_fraction": {
+          "description": "While capped: the flagged share of the trailing window's prints at the latest threshold refresh, a decimal string from 0 to 1. The engine re-tests the cap at every refresh with no hysteresis, so the share is above 0.2 at every refresh that keeps the cap (24 §2.10).",
+          "pattern": "^(0([.][0-9]+)?|1([.]0+)?)$",
+          "type": "string"
+        },
+        "suggested_value": {
+          "description": "While capped: the advisory's suggested value, in the configured mode's unit (24 §2.10 `BigTradeAdvisoryEvent.suggested_value`). In `absolute_size` and `notional` modes it is the trailing window's p80, which would flag at most 20 %. In `percentile` mode it is the configured percentile, unchanged, because raising it does not end the over-flagging; the cap is the remedy. A non-negative decimal string.",
+          "pattern": "^[0-9]+([.][0-9]+)?$",
+          "type": "string"
+        },
         "symbol": {
           "$ref": "cv://ws/v1/common.schema.json#/$defs/symbol"
+        },
+        "threshold_abs": {
+          "description": "While capped: the engine's threshold before the cap, absolute, as the advisory's `threshold_abs` (24 §2.10). In `absolute_size` and `notional` modes it is the configured value; in `percentile` mode it is the estimated level of the configured percentile. It sits beside the effective `big_trade_threshold`, in the same unit: a non-negative decimal string.",
+          "pattern": "^[0-9]+([.][0-9]+)?$",
+          "type": "string"
         },
         "trades": {
           "items": {
@@ -4148,6 +4199,13 @@
         "trades",
         "big_trade_threshold"
       ],
+      "then": {
+        "required": [
+          "flagged_fraction",
+          "suggested_value",
+          "threshold_abs"
+        ]
+      },
       "title": "trades.{symbol}",
       "type": "object"
     },

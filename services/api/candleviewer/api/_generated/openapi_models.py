@@ -5530,9 +5530,62 @@ class Orderflow(BaseModel):
     imbalance_ratio: StrictFloat | None = None
     min_stack: JsonInt | None = None
     value_area_pct: StrictFloat | None = None
-    big_trade_threshold_mode: Literal["absolute", "relative", "zscore"] | None = None
-    big_trade_k: StrictFloat | None = None
+    big_trade_threshold_mode: Annotated[
+        Literal["absolute", "relative", "zscore"] | None,
+        Field(
+            description="The metrics z-score detector's mode, not the big-trade engine's: the tape's per-symbol threshold is `bigtrade.threshold_mode` (E22-S02, #715)."
+        ),
+    ] = None
+    big_trade_k: Annotated[
+        StrictFloat | None,
+        Field(
+            description="The metrics z-score detector's factor, not the big-trade engine's: the tape's per-symbol threshold is `bigtrade.threshold_value` (E22-S02, #715)."
+        ),
+    ] = None
     __null_refused = field_validator("heatmap_bid_colour", "heatmap_ask_colour", "imbalance_ratio", "min_stack", "value_area_pct", "big_trade_threshold_mode", "big_trade_k", mode="before")(_refuse_null)
+
+
+ThresholdValueAdditionalProperty = TypeAliasType(
+    "ThresholdValueAdditionalProperty",
+    Annotated[
+        str,
+        Field(
+            description="A non-negative decimal string (convention C6).",
+            max_length=24,
+            pattern="^[0-9]{1,15}([.][0-9]{1,8})?$",
+        ),
+    ],
+)
+
+
+PercentileWindowMsAdditionalProperty = TypeAliasType(
+    "PercentileWindowMsAdditionalProperty", Annotated[JsonInt, Field(ge=60000, le=86400000)]
+)
+
+
+class Bigtrade(BaseModel):
+    threshold_mode: Annotated[
+        dict[str, Literal["absolute_size", "notional", "percentile"]] | None,
+        Field(
+            description="The engine's mode per symbol; the design default is `notional`.",
+            max_length=200,
+        ),
+    ] = None
+    threshold_value: Annotated[
+        dict[str, ThresholdValueAdditionalProperty] | None,
+        Field(
+            description="The threshold per symbol in its mode's unit: base units for `absolute_size`, USDT for `notional`, a percentile for `percentile`, where it must also lie strictly between 0 and 100. That bound reads the symbol's `threshold_mode`, another leaf, so no schema holds it: the engine's `BigTradeConfig` refuses a value outside it, and #715's settings slice adds the patch-time check against the stored mode. The design default is 250000 USDT.\n",
+            max_length=200,
+        ),
+    ] = None
+    percentile_window_ms: Annotated[
+        dict[str, PercentileWindowMsAdditionalProperty] | None,
+        Field(
+            description="The trailing percentile window per symbol, read in `percentile` mode.",
+            max_length=200,
+        ),
+    ] = None
+    __null_refused = field_validator("threshold_mode", "threshold_value", "percentile_window_ms", mode="before")(_refuse_null)
 
 
 class Trading(BaseModel):
@@ -5584,11 +5637,17 @@ class Settings(BaseModel):
     ] = None
     chart: Chart | None = None
     orderflow: Orderflow | None = None
+    bigtrade: Annotated[
+        Bigtrade | None,
+        Field(
+            description="The big-trade threshold per symbol (E22-S02, #715; E22-D05 section 5): each leaf is one row whose value is the whole symbol-keyed object, so a `PATCH` of a leaf replaces its object and the client sends the full map, one leaf per patch. At most 200 symbols a leaf (`THRESHOLD_SYMBOLS_PER_USER_MAX`, SR-E22-11), each key a `Symbol`: the key pattern sits in `then`, which the generated model does not carry, so the server checks it on every patch (a map with any other key is refused whole, `string_pattern_mismatch`, the key never echoed) and never serves a stored map that breaks it. The worst-case 200-symbol map of each leaf fits the 16 KiB patch body. The 200 is per leaf today and each key's check is its shape only: SR-E22-11's 200 symbols per user across the three leaves and its unknown symbol `400` are deferred to #715's store slice. The values are the engine's vocabulary and bounds (`BigTradeConfig`, 24 section 2.10). The web takes these bounds from a bounds module generated from this schema, never from literals; until that module exists, the server's `422` is the only check. A saved value is the user's; the threshold the tape flags against is the engine's, which `sub_ok.effective` and every `TradesBatch` carry (23 section 6.1), never this one.\n"
+        ),
+    ] = None
     trading: Trading | None = None
     notifications: Notifications | None = None
     data: Data | None = None
     field_meta: Annotated[FieldMeta | None, Field(alias="_meta")] = None
-    __null_refused = field_validator("appearance", "accessibility", "chart", "orderflow", "trading", "notifications", "data", "field_meta", mode="before")(_refuse_null)
+    __null_refused = field_validator("appearance", "accessibility", "chart", "orderflow", "bigtrade", "trading", "notifications", "data", "field_meta", mode="before")(_refuse_null)
 
 
 class SettingsPatch(BaseModel):
