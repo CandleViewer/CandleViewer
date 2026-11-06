@@ -36,6 +36,9 @@ export function BulkActionBar({ count, actions, onClear }: BulkActionBarProps): 
   if (count <= 0) return null;
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    if (!(event.target instanceof HTMLElement) || event.target.dataset["bulkIndex"] === undefined)
+      return;
     const keys: Record<string, number> = {
       ArrowRight: (active + 1) % total,
       ArrowLeft: (active - 1 + total) % total,
