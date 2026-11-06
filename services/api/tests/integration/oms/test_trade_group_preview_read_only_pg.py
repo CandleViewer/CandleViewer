@@ -57,6 +57,7 @@ from candleviewer.oms_wiring import (
     ReferencePricesBinding,
     TradingAccountsBinding,
 )
+from candleviewer.risk.day_boundary import DayBoundary
 from candleviewer.storage.repositories.account_profiles_sqlalchemy import (
     SqlAlchemyAccountProfileStore,
 )
@@ -77,6 +78,7 @@ from candleviewer.storage.repositories.trading_accounts_sqlalchemy import (
 )
 from tests.integration import _refused
 from tests.unit.accounts.test_sizer import instrument
+from tests.unit.risk.test_day_boundary import Policy
 
 pytestmark = pytest.mark.integration
 
@@ -233,7 +235,8 @@ def _figures(
     peek of them through the account binding over `reads`: by default, rows that give each account
     a key, as no seed row has."""
     kept = DayRiskFigures("demo", port_for=venue.port_for, tiers=LISTED.risk_limit_tiers,
-                          now=lambda: NOW, monotonic=lambda: 100.0)  # fmt: skip
+                          days=DayBoundary(Policy()), now=lambda: NOW,
+                          monotonic=lambda: 100.0)  # fmt: skip
     rows = (TradingAccountRow(a, "demo", "928", False, UUID(KEY)) for a in (A, B, C, D))
     keyed = InMemoryTradingAccountReads(*rows) if reads is None else reads
     return PreviewFigures(TradingAccountsBinding(keyed, environment="demo"), kept), kept

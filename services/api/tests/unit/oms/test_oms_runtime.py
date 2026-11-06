@@ -110,6 +110,7 @@ from tests.unit.oms import command_rig as cr
 from tests.unit.oms import order_rig
 from tests.unit.oms.order_rig import ACCOUNT, GATES, Pager, order_of
 from tests.unit.oms.submit_rig import REGISTRY, Profiles, ReadOnly, context, entry, instrument
+from tests.unit.risk.test_day_boundary import Policy
 
 T0 = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
 INTERIMS = ("stop_resolver", "risk_gate", "arm_records", "atr", "kill_switch")
@@ -573,6 +574,8 @@ class World:
     hub: Hub = field(default_factory=Hub)
     #: The clock each position store the stores built was given (S8b, CG14).
     position_clocks: list[Callable[[], datetime]] = field(default_factory=list)
+    #: The day boundary's column the one resolver reads (E29-S06 #981 slice 4), offset 0.
+    policy: Policy = field(default_factory=Policy)
 
     def __post_init__(self) -> None:
         self.writer.log = self.lock.log = self.venue.log = self.log
@@ -613,8 +616,8 @@ class World:
             anchors=store.anchors, stops=store.stops, groups=cast(GroupStores, None),
             unclaimed=unclaimed, positions=positions,
             accounts=InMemoryTradingAccountReads(*self.accounts), sweep=store, audit=audit,
-            sink=sink, lock=self.lock, release=release, handovers=self.handover_store,
-            reconcile=self.reconcile_reads,
+            sink=sink, lock=self.lock, release=release, risk_policy=self.policy,
+            handovers=self.handover_store, reconcile=self.reconcile_reads,
         )  # fmt: skip
 
     def runtime(
