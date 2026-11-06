@@ -91,6 +91,23 @@ describe("IndicatorChips (CMP-224)", () => {
     );
   });
 
+  it.each([
+    ["error", "warning"],
+    ["stale", "warning"],
+    ["computing", "pending"],
+    ["hidden", "hide"],
+  ] as const)(
+    "the %s suffix draws the %s glyph, decorative, in a wrapper that carries its hue hook",
+    async (kind, glyph) => {
+      await mount(<IndicatorChips count={4} suffix={{ kind, n: 1 }} onOpen={fn()} />);
+      const wrapper = page.getByRole("button").querySelector(".cv-indicator-chips__glyph");
+      expect(wrapper).toHaveAttribute("data-kind", kind);
+      const svg = wrapper?.querySelector("svg[data-icon]");
+      expect(svg).toHaveAttribute("data-icon", glyph);
+      expect(svg).toHaveAttribute("aria-hidden", "true");
+    },
+  );
+
   it("opens SCR-036 on Enter and on Space", async () => {
     const onOpen = fn();
     await mount(<IndicatorChips count={4} onOpen={onOpen} />);
