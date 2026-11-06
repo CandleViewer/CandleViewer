@@ -1,0 +1,103 @@
+/*
+ * CMP-240 TreeView (E13-D02 §10 G-1; `15` CMP-240 Tokens, E36-D05 §C A-8). Item text `color.text.primary`, the
+ * disclosure ink `color.text.tertiary`, the keyboard ring `color.focus.ring` (CMP-039's geometry, drawn inset on the
+ * row so a scrolling host never clips it). Each `aria-level` indents one `space.inset.lg` step (SCR-088;
+ * `space.rulegroup.indent` is PROPOSED and not yet a token). A row is `size.row.height` (24 / 32 px by density).
+ * The selected row is `color.surface.selected` plus the check glyph, never the fill alone (D22). Tokens only;
+ * nothing animates: a reorder repositions instantly in every motion mode (E13-D02 §11.6; A-10).
+ */
+.cv-tree,
+.cv-tree__group {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cv-tree__item {
+  outline: none;
+}
+
+.cv-tree__row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  min-block-size: var(--size-row-height);
+  padding-inline: calc(var(--cv-tree-depth, 0) * var(--space-inset-lg) + var(--space-inset-xs))
+    var(--space-inset-xs);
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+  cursor: default;
+}
+
+.cv-tree__row:hover {
+  background: var(--color-surface-hover);
+}
+
+.cv-tree__row[data-selected] {
+  background: var(--color-surface-selected);
+}
+
+/* CMP-039 on the item's own row: the item takes focus, its row shows the ring, never a descendant item's row. */
+.cv-tree__item:focus-visible > .cv-tree__row {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-focus) * 1px * -1);
+}
+
+.cv-tree__handle,
+.cv-tree__disclosure,
+.cv-tree__check {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--size-icon);
+  block-size: var(--size-icon);
+  color: var(--color-text-tertiary);
+}
+
+.cv-tree__handle {
+  cursor: grab;
+}
+
+.cv-tree__check {
+  color: var(--color-text-primary);
+}
+
+/* A label wraps rather than clip (`05` §5 item 7): the row grows to hold it. */
+.cv-tree__label {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.cv-tree__row > .cv-field-root {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+.cv-tree__actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  margin-inline-start: auto;
+}
+
+/* Forced colours: the selection and the ring keep system colours; the check glyph already carries the state. */
+@media (forced-colors: active) {
+  .cv-tree__row[data-selected] {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .cv-tree__row[data-selected] .cv-tree__check,
+  .cv-tree__row[data-selected] .cv-tree__disclosure {
+    color: HighlightText;
+  }
+
+  .cv-tree__item:focus-visible > .cv-tree__row {
+    outline-color: Highlight;
+  }
+}
