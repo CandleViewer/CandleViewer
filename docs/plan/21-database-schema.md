@@ -2455,6 +2455,15 @@ The unique `(exchange_account_id, exec_id)` is the **dedup key** — the private
 
 `order_events` and `executions` carry the `audit_log` guards of §3.10.1 beside their row triggers (C-5.7; [main-orchestrator ruling recorded on #845](https://github.com/CandleViewer/CandleViewer/issues/845#issuecomment-6220571436)): a `BEFORE TRUNCATE` statement trigger and no `UPDATE`, `DELETE` or `TRUNCATE` grant for `cv_app` or `cv_ro`, revoked by the migration wherever the role exists.
 
+**The walk's inputs (E29-S06, #981).** E29-S06's migration slice adds `closed_size`, the venue's `closedSize`, the size a fill closed, where its source states it: the private stream's fills do, and a REST-recovered fill's `""` stays NULL. From its store slices every writer also sets `position_idx` from the fill's order row, as the venue's fills carry none, and a fill with no order row keeps 0. The walk of `24-internal-schemas.md` §8.13 reads `closed_size` and keys a fill by its order row's `position_idx`. No row is backfilled, as a stored fill never changes (`trg_exec_append`); `ex_closed` is added `NOT VALID`, then validated (C-5.6), and the column takes the `PII:` comment every `numeric(38,18)` column here has (§12). The walk reads a key's fills in its order through `ix_exec_walk` (§13.1 row 58), a plain `CREATE INDEX` in the revision's transaction under `lock_timeout` (5 s), not `CONCURRENTLY`: a concurrent build waits for every older snapshot of the database, and a second API process booting meanwhile holds one while it waits for the migration advisory lock (`migrations/boot.py`), so the two boots would wait on each other (`0034_order_vocabulary`); §9.3 rule 3 (C-5.6) asks for a concurrent build over 1 M rows, and `executions` is far below that (§11.3).
+
+```sql
+ALTER TABLE executions ADD COLUMN closed_size numeric(38,18);
+ALTER TABLE executions ADD CONSTRAINT ex_closed CHECK (closed_size IS NULL OR closed_size BETWEEN 0 AND exec_qty) NOT VALID;
+ALTER TABLE executions VALIDATE CONSTRAINT ex_closed;
+CREATE INDEX ix_exec_walk ON executions (exchange_account_id, symbol, exec_ts, exec_id);
+```
+
 #### 3.3.7 `positions` — latest snapshot + history
 
 Two tables: a current-state table keyed by (account, symbol, position_idx), and an append-only snapshot history used by the risk dashboard and journal reconstruction.
@@ -2521,6 +2530,14 @@ CREATE INDEX ix_psnap_sym_time  ON position_snapshots (symbol, snap_ts DESC);
 `ix_pos_no_sl` backs the same safety invariant as `ix_tgl_no_sl` but at exchange-truth level: an open position with no exchange-side stop is a `critical` system event.
 
 **Writes (E29-T01).** Rows are written only through the position store (`storage/repositories/positions_sqlalchemy.py`, behind the OMS's `PositionRepository` and `PositionSnapshotRepository`). Its upsert is `ON CONFLICT (exchange_account_id, symbol, position_idx) DO UPDATE`: the row takes the exchange's state and `recv_ts` and `updated_at` become `now()`, but only when the stored or the new `exchange_updated_ts` is NULL or the stored one is not later. A stale snapshot (a REST read that raced a newer push) changes nothing and the upsert returns the stored row, so `list_unprotected` cannot lose a newer position that has no stop-loss (C-2.6). An `exchange_updated_ts` more than 5 s ahead of the store's injected clock (the future skew of the ingest window, `24-internal-schemas.md` §14.2 rule 10) is a parse or unit error, not a push: the upsert refuses it (`FutureDatedPositionError`) and writes nothing, and a stored time that far ahead no longer wins the comparison, so the next write heals the row instead of one bad time freezing it. The refusal is a clock or parse fault, never a push to drop quietly, and the position stays as stored: the writers (E29-T05's `PositionProjection.take`, E29-T06's reconciliation) must log it with the account and symbol, count it, raise a critical clock-fault alert and apply the update again once the clock is back in sync (E29-T06 reads the position from the exchange again), and until then `list_unprotected` reads the last stored state. So the store's clock must be exchange-synchronised, the wall clock plus the offset of the `ClockSyncEvent` (`24-internal-schemas.md` §2.8), which E29-T04's composition root passes: a clock that lags the exchange by more than 5 s refuses newer pushes and lets an older write replace a newer stored row, because the stored time then lies beyond the lagging horizon. A write without an exchange time still applies, so the OMS must still apply an account's position updates in exchange order (`24-internal-schemas.md` §8.2 S5; E29-T05, E29-T06). A `take_profit`, `stop_loss` or `trailing_stop` of 0 or less is stored as NULL: Bybit's `"0"` means none, and a stored 0 would hide an unprotected position from `ix_pos_no_sl` (C-2.6). `list_unprotected` (an account's open positions with no stop-loss) and `list_open` render `size > 0` with a literal 0, so the planner matches `ix_pos_no_sl` and `ix_pos_open`.
+
+**A flat the venue confirmed (E29-S06, #981).** E29-S06's migration slice adds `exchange_updated_ts` to `position_snapshots`: the reading's own time at the venue (`Position.updated_at`), which the stream's and reconciliation's appends set from its store slice on, older rows keeping NULL. No writer stores a flat of its own, as the orchestrator decided on 2026-11-03 (22:40Z): a key's first reading is its anchor, a size 0 the venue reports is a confirmed flat and a reported position is none, so a key first read holding a position has no walk until the venue reports it flat. A row at `size` 0 with it set is a flat the venue confirmed, where the walk of `24-internal-schemas.md` §8.13 starts (§13.1 row 57); `ix_psnap_flat` is a plain `CREATE INDEX` in the revision's transaction under `lock_timeout` (5 s), not `CONCURRENTLY`, as `ix_exec_walk` is (§3.3.6): a concurrent build would wait on the snapshot a second booting API process holds (`0034_order_vocabulary`), and `position_snapshots` is far below the 1 M rows over which §9.3 rule 3 (C-5.6) asks for one (§11.3). The 90-day prune (§7) keeps each key's latest such row, one per `(exchange_account_id, symbol, position_idx)`, so a position held longer keeps its walk's start; a key with none has no walk (24 §8.13).
+
+```sql
+ALTER TABLE position_snapshots ADD COLUMN exchange_updated_ts timestamptz;
+CREATE INDEX ix_psnap_flat ON position_snapshots (exchange_account_id, symbol, position_idx, exchange_updated_ts)
+  WHERE size = 0 AND exchange_updated_ts IS NOT NULL;
+```
 
 #### 3.3.8 `wallet_balances`
 
@@ -2964,6 +2981,72 @@ CREATE TRIGGER trg_oh_guard BEFORE UPDATE ON oms_handovers
   FOR EACH ROW EXECUTE FUNCTION oh_guard();
 ALTER TABLE oms_handovers ENABLE ALWAYS TRIGGER trg_oh_guard;
 ```
+
+#### 3.3.13 `closed_pnl_records` — the venue's closed-PnL records and their composition (E29-S06)
+
+The store of `24-internal-schemas.md` §8.13 (E29-S06, #981): one row per closing order's record, keyed by its account and the venue's `orderId`, written provisional from the stored closing fills, settled in place when the venue's record is read and frozen once final; `22` `listClosedPnl` reads it. E29-S06's migration slice creates it with the two columns §3.3.6 and §3.3.7 add, and its revision joins §9.4 then, re-parented per merge order (C-5.3).
+
+```sql
+CREATE TABLE closed_pnl_records (
+  id                  uuid PRIMARY KEY,         -- uuid5 (24 §8.13): one id, provisional to settled
+  exchange_account_id uuid NOT NULL REFERENCES exchange_accounts(id) ON DELETE RESTRICT,
+  exchange_order_id   text,                     -- the closing order's venue id; NULL: the venue wrote none
+  symbol              symbol_code NOT NULL,
+  side                text NOT NULL,            -- the closed position's
+  position_idx        smallint,                 -- the walk's key, its order rows'; NULL when nothing local composes it
+  trade_group_id      uuid REFERENCES trade_groups(id) ON DELETE RESTRICT, -- the position's group (24 §8.13); NULL: none or several
+  qty                 numeric(38,18),           -- the size closed: the closing fills' while provisional
+  avg_entry_price     numeric(38,18),
+  avg_exit_price      numeric(38,18),
+  leverage            numeric(10,2),            -- the venue's; NULL while provisional
+  closed_pnl          numeric(38,18),           -- the venue's figure; NULL while provisional
+  gross_pnl           numeric(38,18),           -- the local composition (24 §8.13); NULL: not composed
+  fee_pnl             numeric(38,18),
+  funding_pnl         numeric(38,18),
+  opened_at           timestamptz,              -- the walk's, never the venue's createdTime
+  closed_at           timestamptz NOT NULL,     -- the venue's updatedTime once read, else the last closing fill's
+  venue_created_at    timestamptz,              -- the venue's createdTime: the closing order's creation
+  settled_at          timestamptz,              -- the venue's record stored; NULL: provisional
+  final_at            timestamptz,              -- the record final (24 §8.13): the venue's columns frozen
+  divergent           boolean NOT NULL DEFAULT false,
+  audited_local_net   numeric(38,18),           -- the pair pnl.divergence_detected last recorded
+  audited_closed_pnl  numeric(38,18),
+  updated_at          timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT cpr_side    CHECK (side IN ('long','short')),
+  CONSTRAINT cpr_posidx  CHECK (position_idx IS NULL OR position_idx IN (0,1,2)),
+  CONSTRAINT cpr_order   CHECK (exchange_order_id IS NULL OR char_length(exchange_order_id) BETWEEN 1 AND 64),
+  CONSTRAINT cpr_settled CHECK (CASE WHEN settled_at IS NULL
+                                THEN exchange_order_id IS NOT NULL AND closed_pnl IS NULL AND leverage IS NULL
+                                     AND venue_created_at IS NULL
+                                ELSE closed_pnl IS NOT NULL AND qty IS NOT NULL AND avg_entry_price IS NOT NULL
+                                     AND avg_exit_price IS NOT NULL AND leverage IS NOT NULL
+                                     AND venue_created_at IS NOT NULL END),
+  CONSTRAINT cpr_final   CHECK (final_at IS NULL OR (settled_at IS NOT NULL AND exchange_order_id IS NOT NULL
+                                AND final_at >= settled_at)),
+  CONSTRAINT cpr_qty     CHECK (qty IS NULL OR qty > 0),
+  CONSTRAINT cpr_pair    CHECK ((audited_local_net IS NULL) = (audited_closed_pnl IS NULL)
+                                AND (NOT divergent OR (settled_at IS NOT NULL AND audited_closed_pnl IS NOT NULL))),
+  CONSTRAINT cpr_numbers CHECK (NOT ('NaN'::numeric IN (qty, avg_entry_price, avg_exit_price, leverage, closed_pnl,
+                                gross_pnl, fee_pnl, funding_pnl, audited_local_net, audited_closed_pnl)))
+);
+CREATE UNIQUE INDEX ux_cpr_order ON closed_pnl_records (exchange_account_id, exchange_order_id)
+  WHERE exchange_order_id IS NOT NULL;
+CREATE INDEX ix_cpr_day     ON closed_pnl_records (exchange_account_id, closed_at, id);
+CREATE INDEX ix_cpr_pending ON closed_pnl_records (exchange_account_id, closed_at)
+  WHERE final_at IS NULL AND exchange_order_id IS NOT NULL;
+CREATE INDEX ix_cpr_group   ON closed_pnl_records (exchange_account_id, trade_group_id, closed_at)
+  WHERE trade_group_id IS NOT NULL;
+CREATE TRIGGER trg_cpr_no_delete BEFORE DELETE ON closed_pnl_records
+  FOR EACH ROW EXECUTE FUNCTION forbid_mutation();
+CREATE TRIGGER trg_cpr_no_truncate BEFORE TRUNCATE ON closed_pnl_records
+  FOR EACH STATEMENT EXECUTE FUNCTION audit_refuse_truncate();
+ALTER TABLE closed_pnl_records ENABLE ALWAYS TRIGGER trg_cpr_no_delete;
+ALTER TABLE closed_pnl_records ENABLE ALWAYS TRIGGER trg_cpr_no_truncate;
+```
+
+- **Writes.** Only through the store, behind the OMS's port, account-scoped (C-12.4), each statement under `CV_OMS_STATEMENT_TIMEOUT_MS` as the order store's are (§3.3.5). The composition upserts by `id` and writes the local figures, `trade_group_id`, and the provisional `qty`, prices and `closed_at`; settling sets the venue's columns, `venue_created_at` and `settled_at`; a later read that differs replaces the venue's columns until the record is final, when `final_at` is set (24 §8.13). `trg_cpr_guard` (BEFORE UPDATE, `ENABLE ALWAYS`, SQLSTATE 23514) refuses any change to `id`, `exchange_account_id`, `exchange_order_id`, `symbol` or `side`, a `settled_at` or `final_at` that changes once set, and, once `final_at` is set, any change to the venue's columns (`qty`, the prices, `leverage`, `closed_pnl`, `closed_at`, `venue_created_at`): a later read that differs is then logged, never applied. `trg_cpr_no_delete` (`forbid_mutation()`) and `trg_cpr_no_truncate` (0003's `audit_refuse_truncate()`), both `ENABLE ALWAYS`, refuse a DELETE or a TRUNCATE by any role, as `executions`' guards do (§3.3.6). The local figures may change after settling, as a late fill composes them again, and so may `trade_group_id`, the composition's alone (24 §8.13): settling never writes it, and `trg_cpr_guard` refuses no change to it, the record final or not; `divergent` is set only with the pair its `pnl.divergence_detected` record names, written after that record, and cleared only by a later comparison within the tolerance, so a composition that compares nothing leaves it and its pair (24 §8.13).
+- **Readers.** `listClosedPnl`'s pages and totals (`ix_cpr_day`, §13.1 row 55) and its `trade_group_id` filter (`ix_cpr_group`, row 59), the sync's poll of the records not yet final within its reach (`ix_cpr_pending`, row 56) and its upsert by order (`ux_cpr_order`). A page reads each account on its own (`LATERAL` over the accounts): at most the page's `limit` rows past the cursor, in `(closed_at, id)` order either way, which it then merges, so no read sorts every matching row, as `listOrders` and `listExecutions` read (`storage/repositories/oms_reads_sqlalchemy.py`, #4997); the totals sum each account's window. The filter matches the stored `trade_group_id`, so a record whose `trade_group_id` is NULL is in no group's page or totals (24 §8.13).
+- **Grants, class and retention.** `cv_app` keeps INSERT, SELECT and UPDATE; DELETE and TRUNCATE are revoked where the role exists (the 0024 idiom), as a record is never removed: it is kept for ever, as `executions` is (§7). There is no row-level security, as scope is the OMS's and the route's (C-12.4), and a row binds its account's environment (`exchange_accounts.env`, C-2.11). Every `numeric` column is the account's financial data, class P1 with a `PII:` comment (§12, C-5.9); no column holds a credential, a name, an email or an IP. `trade_group_id`, an id, is class P0 with no comment; it references its group `ON DELETE RESTRICT`, as `idempotency_anchors.trade_group_id` does (§3.3.10), and no index serves that reference, as a group is never deleted (§7, §3.3.3a).
 
 ### 3.4 Rules engine
 
@@ -4358,6 +4441,11 @@ INSERT INTO kill_switch_state (id, scope, engaged) VALUES (gen_random_uuid(), 'g
   RK-T06 lists 0 as a way to switch enforcement off. Until D-5 is decided (#2701), E39-S02 reads 0 as the restrictive
   interim, a lockout only a person ends (`NULL`), never as no lockout; if the Owner adopts D-5's recommendation (0
   refused server-side), a later revision may tighten `rp_lockout` to match.
+- **The day boundary (E29-S06, #981).** `day_boundary_utc_offset_minutes` is the ticket key
+  `risk.day_boundary_utc_offset`: the offset, in minutes east of UTC, whose 00:00 starts the trading day, so +180
+  (UTC+3) starts it at 21:00Z, and `rp_day` bounds it to UTC−12..UTC+14. One resolver reads it for the daily-loss
+  figure and the closed-PnL window (24 §8.13), so both days start at one instant, and a change never moves the day in
+  progress (24 §8.13); E39-K01 (#880) confirms the reading.
 - **Three release shapes.** `rl_release` admits an active row (nothing set), a person's release (`released_at`,
   `released_by` and `release_reason` together) and a clock release (`released_at` at or after a stored `until`, no
   releaser), so an early or unattributed release cannot pass for an expiry. `released_at` is written when the release
@@ -5005,10 +5093,11 @@ Defaults seeded into `retention_policies` (scope `default`). "Hot" = QuestDB, "C
 | `recorded_stops` (PG)                 | ∞                  | —                                      | ∞             | —                            | The stops each position was protected with (SR-E29-06, §3.3.11)                   |
 | `order_events` (PG)                   | 24 mo live         | 7 y                                    | 7 y           | archive_parquet              | Monthly partitions detached                                                       |
 | `executions` (PG)                     | ∞                  | 7 y mirror                             | ∞             | archive_parquet              | Financial record                                                                  |
+| `closed_pnl_records` (PG)             | ∞                  | —                                      | ∞             | —                            | Financial record; the journal's source (§3.3.13)                                  |
 | `trade_groups`, `trade_group_legs`    | ∞                  | —                                      | ∞             | —                            | Trading history; the replay anchor answers at any age (SR-E29-07)                 |
 | `trade_group_definitions` (+members)  | ∞                  | —                                      | ∞             | —                            | Configuration; definitions are soft-deleted                                       |
 | `positions` (PG, current)             | ∞                  | —                                      | ∞             | —                            | Single row per account/symbol                                                     |
-| `position_snapshots` (PG)             | 90 d               | 24 mo                                  | 24 mo         | archive_parquet              |                                                                                   |
+| `position_snapshots` (PG)             | 90 d               | 24 mo                                  | 24 mo         | archive_parquet              | The latest flat the venue confirmed per key stays past 90 d (§3.3.7)              |
 | `wallet_balances` (PG)                | 180 d              | 7 y                                    | 7 y           | archive_parquet              |                                                                                   |
 | `rule_runs` matched (PG)              | 24 mo              | 7 y                                    | 7 y           | archive_parquet              |                                                                                   |
 | `rule_runs` unmatched/simulate (PG)   | 7 d                | —                                      | 7 d           | drop                         | Volume control                                                                    |
@@ -5631,6 +5720,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `oms_handovers`                                        | `record`, `payload`                     | P1         | jsonb, `payload` redacted before insert         | An order's or a fill's money values: `payload` passes `redact_exchange_payload()` before insert, as `order_events.payload`; not logged          |
 | `recorded_stops`                                       | monetary columns                        | P1         | plaintext                                       | Financial personal data, as `positions`: the stops a position was protected with (§3.3.11); `PII:` comments; never sent to third parties        |
 | `recorded_stops`                                       | `actor_user_id`                         | P0         | plaintext                                       | A user id (0043), never a name, email or IP; `ON DELETE RESTRICT` keeps the attribution, as `trade_groups.created_by`                           |
+| `closed_pnl_records`                                   | monetary columns                        | P1         | plaintext                                       | Financial personal data, as `executions`: the venue's and the local figures (§3.3.13); `PII:` comments; never sent to third parties             |
 | `system_events`                                        | `details`                               | P0         | jsonb                                           | Same redaction serializer as audit                                                                                                              |
 | `system_events` (`dms_hook_owed` rows)                 | `details`                               | P0         | jsonb                                           | Only the closed `from_state` and `reason` codes (E27-T04, §3.10.2); any other value is refused, so these rows need no redaction serializer      |
 | `system_events` (`profile_relaxed` rows)               | `details`                               | P0         | jsonb                                           | Ids, profile column names and one flag only (#906 D2, §3.10.2); any other value is refused, so these rows need no redaction serializer          |
@@ -5748,6 +5838,11 @@ Each row: the screen/job that issues the query, the query shape, the serving ind
 | 52  | Reconciliation's hand-overs   | `oms_handovers WHERE exchange_account_id = $1 AND kind = $2 ORDER BY id`               | `ix_oh_account`                                                         | < 10 ms for 1,000 entries             |
 | 53  | Order lookup by key (#2303)   | caller's `placeOrder` anchors by `client_ref = ANY($2)`, then their `orders` in scope  | `ux_ia_principal_ref`, then `orders` PK                                 | < 5 ms for 20 keys                    |
 | 54  | Order lookup by link (#2303)  | `orders WHERE order_link_id = ANY($1)`, in scope                                       | `ux_orders_link`                                                        | < 5 ms for 20 ids                     |
+| 55  | Closed-PnL pages and totals   | per account (`LATERAL`): `closed_at` in the window, `LIMIT` past the cursor, both ways | `ix_cpr_day`, merged: never a sort of every match (`oms_reads`, #4997)  | < 20 ms for a day's records           |
+| 56  | Closed-PnL settle poll        | `closed_pnl_records WHERE exchange_account_id = $1`, not final, `closed_at` in reach   | `ix_cpr_pending` (partial); `ux_orders_exch_id` finds the order row     | < 2 ms                                |
+| 57  | Closed-PnL walk's flats       | the key's `position_snapshots` at `size` 0, by venue time, from the last before a time | `ix_psnap_flat` (partial)                                               | < 2 ms                                |
+| 58  | Closed-PnL walk's fills       | the key's `executions` after its start, in `(exec_ts, exec_id)` order, with order rows | `ix_exec_walk` and the `orders` PK                                      | < 10 ms for a position's fills        |
+| 59  | Closed-PnL group filter       | row 55's read and totals with `trade_group_id = ANY($2)`, which a NULL never matches   | `ix_cpr_group` (partial); 2 to 32 groups: a sort of only their records  | < 5 ms for a group's records          |
 
 **Why partial indexes dominate:** the hot predicates in this system are almost all "the small live subset of a large historical table" (open orders, open positions, unacked alerts, unprocessed outbox, live recordings, in-flight submits). Partial indexes keep those indexes a few pages large and permanently cache-resident, which is what makes the 1 s safety loop and the per-tick rule scheduler affordable. Full indexes are reserved for time-ordered history browsing (`*_time` descending) where the planner needs a backwards scan.
 

@@ -663,7 +663,7 @@ def test_8_12_says_the_runtime_runs_the_consumer_and_logs_it_as_19_51() -> None:
     consumer's re-sync now runs, bounded; and an account its disable closed (#898 B3b2) waits for
     health's next tracking read, told apart by its set object, keyed on that status alone."""
     head = "### 8.12 The private-stream consumer (E29-T05)"
-    section = _words(_INTERNAL_DOC.split(head, 1)[1].split("\n---\n", 1)[0])
+    section = _words(_INTERNAL_DOC.split(head, 1)[1].split("\n### 8.13 ", 1)[0])
     assert "contract first: nothing runs it yet" not in section
     assert not _missing(
         section,
@@ -713,7 +713,7 @@ def test_8_12_names_the_wallet_clock_the_stand_ins_signals_and_the_holds_windows
     name its two windows, a carry on #848. The stand-in's and account health's docstrings say the
     same. Its section 19 entry is found by its title, whatever number it lands as."""
     head = "### 8.12 The private-stream consumer (E29-T05)"
-    section = _words(_INTERNAL_DOC.split(head, 1)[1].split("\n---\n", 1)[0])
+    section = _words(_INTERNAL_DOC.split(head, 1)[1].split("\n### 8.13 ", 1)[0])
     skew = f"{MAX_FUTURE_SKEW.total_seconds():g} s"
     assert "not dated ahead of the host clock" not in section
     assert "oms_reconciliation_unavailable" not in section
