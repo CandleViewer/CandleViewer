@@ -501,3 +501,12 @@ export type {
 
 export { FileDrop, formatFileSize } from "./FileDrop.js";
 export type { FileDropAction, FileDropPreview, FileDropProps } from "./FileDrop.js";
+
+export { ChartLegend } from "./ChartLegend.js";
+export type {
+  ChartLegendItem,
+  ChartLegendOutput,
+  ChartLegendProps,
+  LegendMarker,
+  SlotToken,
+} from "./ChartLegend.js";
