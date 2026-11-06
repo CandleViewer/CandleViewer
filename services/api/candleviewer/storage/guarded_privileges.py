@@ -52,6 +52,7 @@ GUARDED_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
         "audit_signing_keys": frozenset({"DELETE"}),  # 0046
         "auth_keys": frozenset({"DELETE"}),  # 0030
         "backups": frozenset({"DELETE"}),  # 0032
+        "closed_pnl_records": frozenset({"DELETE", "TRUNCATE"}),  # 0070
         "exchange_accounts": frozenset({"DELETE"}),  # 0044
         "executions": frozenset({"DELETE", "TRUNCATE", "UPDATE"}),  # 0029
         "idempotency_anchors": frozenset({"DELETE", "TRUNCATE"}),  # 0043

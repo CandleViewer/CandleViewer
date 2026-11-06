@@ -311,6 +311,11 @@
       "path": "services/api/candleviewer/migrations/versions/0064_orders_origin.py",
       "sha256": "1de769f3e21c2d1277e88339602dacff4e28bc696500cd8c01b289669918f2de",
       "down_revision": "0063_rule_version_account_refs"
+    },
+    "0070_closed_pnl_records": {
+      "path": "services/api/candleviewer/migrations/versions/0070_closed_pnl_records.py",
+      "sha256": "a1d8a47c9de76745aef56ba14fda512984645a41637d77efa910ce3e40407682",
+      "down_revision": "0064_orders_origin"
     }
   }
 }

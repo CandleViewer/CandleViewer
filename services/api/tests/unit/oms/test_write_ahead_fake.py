@@ -230,13 +230,14 @@ class TestInMemoryStore(WriteAheadContract):
 
 
 #: The CHECKs the fake leaves to the types, by the name Postgres reports: a value outside its
-#: column's `Literal`, or a column only the store writes (`oe_seq`).
+#: column's `Literal`, a column only the store writes (`oe_seq`), or a column no port writes yet
+#: (`ex_closed`: `executions.closed_size` stays NULL until the fills carry it).
 _LEFT_TO_TYPES: Final = {
     "orders": {
         "ord_idem", "ord_posidx", "ord_provenance", "ord_side", "ord_tif", "ord_tpslmode",
         "ord_trigby", "ord_trigdir", "ord_type",
     },
-    "executions": {"ex_posidx", "ex_side", "ex_type"},
+    "executions": {"ex_closed", "ex_posidx", "ex_side", "ex_type"},
     "order_events": {"oe_seq", "oe_source"},
 }  # fmt: skip
 
