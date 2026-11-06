@@ -6,7 +6,9 @@
 // and a vertical plot drag pans price only while locked. Two touches pinch about their midpoint.
 // Only a one-pointer plot drag coasts. Keys go through the navigator (PR 2, BQ-106 to BQ-109); a
 // reduced-motion release never coasts (BQ-104). E11-S06: a key row's target sends it to an axis
-// stop's keys (BQ-194). DOM-free and allocation-free per row.
+// stop's keys (BQ-194). E11-S09 PR 1b: a pointer-down in a splitter's 24 px band drags the
+// boundary (D02 §8). DOM-free and allocation-free per row.
+import { SPLITTER_BAND_PX } from "../scene/layout-engine.js";
 import { DEFAULT_BAR_SPACING, type ChartViewport } from "../viewport/Viewport.js";
 import { INPUT, INPUT_STRIDE, KEY } from "../worker/protocol.js";
 import { Momentum } from "./momentum.js";
@@ -24,10 +26,12 @@ export interface GestureSink {
   animate(m: Momentum): void;
   /** An axis key changed the view (E11-S06): its `SAY` announcement code. */
   say?(code: number): void;
+  /** E11-S09 PR 1b: a splitter drag moved the boundary under row `row` by `dy` CSS px. */
+  split?(row: number, dy: number): void;
 }
 
-const Drag = { none: 0, pan: 1, spacing: 2, price: 3 } as const;
-/** The price-axis stop's pane: slot 0's until PR 1b ships a stop per pane (G-S09a). */
+const Drag = { none: 0, pan: 1, spacing: 2, price: 3, splitter: 4 } as const;
+/** The price-axis stop's pane: slot 0's until a stop per pane ships (G-S09a). */
 const AXIS_STOP_PANE = 0;
 
 export class Gestures {
@@ -45,6 +49,8 @@ export class Gestures {
    */
   pane = 0;
   private drag: number = Drag.none;
+  /** The row above the splitter a drag holds. */
+  private row = -1;
   private dragX = 0;
   private dragY = 0;
   /** A price-axis drag zooms about the y it started at. */
@@ -125,6 +131,20 @@ export class Gestures {
     return ps[i]?.collapsed === true ? -1 : i;
   }
 
+  /**
+   * E11-S09 PR 1b (D02 §8): the row above the boundary whose band holds y, or -1. The band takes
+   * only the pointer-down that starts a drag; hover and the crosshair pass through it.
+   */
+  private splitterAt(y: number): number {
+    const ps = this.size.panes ?? [];
+    for (let i = 0; i < ps.length - 1; i += 1) {
+      const r = ps[i]?.rect;
+      if (r !== undefined && Math.abs(y - (r[1] ?? 0) - (r[3] ?? 0)) <= SPLITTER_BAND_PX / 2)
+        return i;
+    }
+    return -1;
+  }
+
   private down(touch: boolean, x: number, y: number, id: number): void {
     const slot = Number.isNaN(this.ids[0] as number) ? 0 : 1;
     if (touch && !Number.isNaN(this.ids[slot] as number)) return; // a third finger is ignored
@@ -140,14 +160,17 @@ export class Gestures {
     }
     const r = this.region(x, y);
     this.pane = this.paneAt(y);
+    this.row = this.splitterAt(y);
     this.drag =
-      r === REGION.plot
-        ? Drag.pan
-        : r === REGION.time
-          ? Drag.spacing
-          : r === REGION.price
-            ? Drag.price
-            : Drag.none;
+      this.row >= 0
+        ? Drag.splitter
+        : r === REGION.plot
+          ? Drag.pan
+          : r === REGION.time
+            ? Drag.spacing
+            : r === REGION.price
+              ? Drag.price
+              : Drag.none;
     this.dragX = x;
     this.dragY = y;
     this.anchorY = y;
@@ -175,6 +198,8 @@ export class Gestures {
       this.velocity.sample(dx, dt);
     } else if (this.drag === Drag.spacing) {
       this.sink.moved(vp.zoomAt(vp.plotWidth, axisDragFactor(dx)));
+    } else if (this.drag === Drag.splitter && dy !== 0) {
+      this.sink.split?.(this.row, dy); // the layout's: never the time strip or the gutters
     } else if (this.drag === Drag.price && dy !== 0) {
       this.sink.moved(vp.zoomPrice(this.pane, this.anchorY, priceDragFactor(dy))); // locks
     }

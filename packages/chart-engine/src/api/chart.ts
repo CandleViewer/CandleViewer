@@ -11,6 +11,7 @@ import {
 } from "../a11y/window.js";
 import { mountSurface, probeRenderProfile } from "../host/mount.js";
 import { type AxisStops, createAxisStops } from "../host/axis-stop.js";
+import { createPaneChrome, type PaneChrome, paneLabel } from "../host/pane-chrome.js";
 import { createScaleBadge } from "../host/scale-badge.js";
 import { readReducedMotion, watchMotion } from "../host/motion.js";
 import { watchSize } from "../host/resize.js";
@@ -126,6 +127,10 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
   // E11-S13: the cache of the last `a11y` message the synchronous getters read (E06-D03 D9).
   let a11y: A11yUpdate | null = null;
   const a11yListeners = new Set<A11yWindowListener>();
+  /** E11-S09 PR 1b: splitters, stubs and regions, from the first `layout` message. */
+  let chrome: PaneChrome | null = null;
+  /** BQ-15: each key's label (`PaneOptions.label`; "Price pane" first, then "Pane N"). */
+  const labels = new Map<number, string>();
 
   function emit<E extends keyof ChartEvents>(e: E, payload: ChartEvents[E]): void {
     const set = listeners.get(e);
@@ -218,6 +223,16 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
           pane?.observeShare(row.share, row.collapsed);
           pane?.observeSlot(i);
         }
+        chrome ??= createPaneChrome(
+          opts.container,
+          surface.mirrorRoot,
+          host,
+          (key) => labels.get(key) ?? "Price pane",
+          theme.colors,
+          { now: () => env.now(), setTimer: (cb, ms) => env.setTimer(cb, ms) },
+          () => density !== "comfortable",
+        );
+        chrome.update(msg);
         return;
       case "dataState":
         emit("dataState", { state: msg.state }); // BQ-9: SCR-047 is the app's
@@ -340,9 +355,13 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
           const i = panes.findIndex((p) => p.id === id);
           if (i >= 0) panes.splice(i, 1);
           keys.delete(id);
+          labels.delete(key);
           if (!disposed) host.command({ k: "removePane", pane: key });
         },
       });
+      // BQ-15: trimmed, whitespace collapsed, capped at 64 characters; else the default.
+      const fallback = panes.length === 0 ? "Price pane" : `Pane ${panes.length + 1}`;
+      labels.set(key, paneLabel(paneOpts.label, fallback));
       panes.push(pane);
       keys.set(pane.id, key);
       const share = paneOpts.heightRatio;
@@ -365,6 +384,7 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
       host.command({ k: "setTheme", theme: next.colors });
       badge.setTheme(next.colors);
       stops?.setTheme(next.colors);
+      chrome?.setTheme(next.colors);
     },
     setDensity(d: Density): void {
       if (disposed) return;
@@ -428,6 +448,7 @@ export function openChart(opts: ChartOptions, bench: boolean): Chart {
       detachMotion();
       badge.dispose();
       stops?.dispose();
+      chrome?.dispose();
       host.dispose();
       surface.unmount();
     },
