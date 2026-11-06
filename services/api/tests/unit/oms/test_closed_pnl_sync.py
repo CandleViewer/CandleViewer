@@ -21,12 +21,14 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from structlog.testing import capture_logs
 
+from candleviewer.domain.order_entry import OrderEntryRefusal, RefusalReason
 from candleviewer.domain.primitives import Environment
 from candleviewer.exchange.base.models import AccountRef, ClosedPnl, Position, RateLane
 from candleviewer.exchange.bybit import private_parse as pp
 from candleviewer.exchange.bybit import trading_parse as tp
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.closed_pnl_sync import FETCH_SECONDS, ClosedPnlSync, merged
+from candleviewer.oms.errors import AccountScopeDenied, OrderEntryRefused, StoreUnavailable
 from candleviewer.oms.ports import RateReading
 from candleviewer.storage.repositories.closed_pnl import (
     VENUE_COLUMNS,
@@ -198,8 +200,11 @@ class Store:
 @dataclass
 class Accounts:
     named: Any = None  # the account every resolve answers, when set; else the one asked
+    failures: list[Exception] = field(default_factory=list)  # the next resolves', in order
 
     async def trading_account(self, account_id: Any) -> AccountRef:
+        if self.failures:
+            raise self.failures.pop(0)
         return account(self.named or account_id)
 
 
@@ -209,6 +214,7 @@ class Rig:
     store: Store
     metrics: Metrics
     sync: ClosedPnlSync
+    told: list[str]  # each end `on_ended` was told of
 
     def times(self) -> list[float]:
         return [round(at, 6) for at, _, _ in self.venue.reads]
@@ -217,14 +223,23 @@ class Rig:
         seen = self.metrics.snapshot([FETCH_SECONDS])
         return {k: seen.get(f"{FETCH_SECONDS}_count{{result={k}}}", 0) for k in ("ok", "failed")}
 
+    def crossed(self) -> float:
+        """The crossings between accounts, counted apart from `failed` (`other_account`)."""
+        return self.metrics.snapshot([FETCH_SECONDS]).get(
+            f"{FETCH_SECONDS}_count{{result=other_account}}", 0
+        )
 
-def rig(at: datetime = T0, resolve: Any = None, **venue: Any) -> Rig:
+
+def rig(at: datetime = T0, resolve: Any = None, unresolved: Any = (), **venue: Any) -> Rig:
     v, store, metrics, loop = Venue(**venue), Store(), Metrics("demo"), asyncio.get_running_loop()
+    told = list[str]()
     sync = ClosedPnlSync(
-        accounts=Accounts(resolve), router=v, records=store, closes=store, snapshots=store,
+        accounts=Accounts(resolve, list(unresolved)), router=v, records=store, closes=store,
+        snapshots=store,
         metrics=metrics, now=lambda: at + timedelta(seconds=loop.time()),
+        on_ended=lambda: told.append("ended"),
     )  # fmt: skip
-    return Rig(v, store, metrics, sync)
+    return Rig(v, store, metrics, sync, told)
 
 
 # --- triggers, the poll and its end (24 Sec.8.13 "The sync") -------------------------------------
@@ -294,6 +309,44 @@ async def test_a_failed_read_keeps_the_poll_until_one_succeeds() -> None:
     assert r.times() == [0, 60, 120] and r.counted() == {"ok": 1, "failed": 2}
     failed = [e["kind"] for e in logs if e["event"] == "closed_pnl_read_failed"]
     assert failed == ["ConnectionError", "TimeoutError"]
+    await r.sync.stop()
+
+
+def _refusal(reason: RefusalReason) -> OrderEntryRefused:
+    return OrderEntryRefused(OrderEntryRefusal(reason, "Order entry is not available."))
+
+
+@pytest.mark.parametrize(
+    "refusal", [AccountScopeDenied(), _refusal("no_active_key")], ids=["deleted", "keyless"]
+)
+@virtual
+async def test_an_account_the_binding_refuses_is_not_polled_until_its_next_trigger(
+    refusal: Exception,
+) -> None:
+    """A refusal outright (deleted, missing or another environment's, or keyless) ends the
+    account's poll, the wait its stored fill keeps too, rather than resolving it every
+    `SETTLE_POLL_S` until a restart; its next trigger asks again."""
+    r = rig(unresolved=[refusal] * 2)
+    r.sync.start([])
+    r.sync.stored(_fill(Decimal("0.5")))  # it comes in by a fill, whose wait would poll it
+    await asyncio.sleep(600)
+    assert r.counted() == {"ok": 0, "failed": 1}
+    r.sync.reconnected(ACCOUNT_A)
+    await asyncio.sleep(600)
+    assert r.counted() == {"ok": 0, "failed": 2} and r.venue.reads == []
+    await r.sync.stop()
+
+
+@pytest.mark.parametrize(
+    "failure", [TimeoutError(), StoreUnavailable(), _refusal("maintenance")],
+    ids=["timeout", "store", "another_refusal"],
+)  # fmt: skip
+@virtual
+async def test_a_resolve_that_fails_otherwise_keeps_the_poll(failure: Exception) -> None:
+    r = rig(unresolved=[failure] * 2)
+    r.sync.start([ACCOUNT_A])
+    await asyncio.sleep(600)
+    assert r.counted() == {"ok": 1, "failed": 2} and r.times() == [120]
     await r.sync.stop()
 
 
@@ -398,12 +451,74 @@ async def test_stop_ends_the_task_and_a_later_request_reads_nothing() -> None:
     assert r.times() == [0] and r.sync.fault is None and not r.sync.start([ACCOUNT_A])
 
 
+@pytest.mark.parametrize("end", ["raises", "returns", "cancelled"])
+@virtual
+async def test_a_task_that_ends_unasked_is_logged_and_told_once(
+    end: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Any end other than by `stop()`, an error or a return its loop never makes, or a cancel no
+    stop made (as the order lane's death makes one), is a fault, logged at ERROR by its kind and
+    told to `on_ended` once (the runtime's page); a second start and the later stop add none."""
+
+    async def ended(self: ClosedPnlSync) -> None:
+        if end == "raises":
+            raise RuntimeError("the sync's task")
+        if end == "cancelled":
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(ClosedPnlSync, "_run", ended)
+    r = rig()
+    with capture_logs() as logs:
+        assert r.sync.start([ACCOUNT_A])
+        await asyncio.sleep(1)
+        if end == "cancelled":
+            task = r.sync._task
+            assert task is not None and (r.sync.fault, r.told) == (None, [])
+            task.cancel()  # not through its stop
+            await asyncio.sleep(1)
+        assert r.sync.fault is not None and r.told == ["ended"]
+        assert not r.sync.start([ACCOUNT_A])
+        await r.sync.stop()
+    kind = {"raises": "RuntimeError", "returns": "returned", "cancelled": "CancelledError"}[end]
+    kinds = [(e["kind"], e["log_level"]) for e in logs if e["event"] == "closed_pnl_sync_ended"]
+    assert (kinds, r.told) == ([(kind, "error")], ["ended"])
+
+
+@pytest.mark.parametrize("on_cancel", ["ends", "raises"])
+@virtual
+async def test_a_stop_it_was_asked_for_is_told_to_no_one(
+    on_cancel: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A requested `stop()` never pages: its cancel ends the task, and a task that raises as it
+    ends is logged, never told."""
+
+    async def run(self: ClosedPnlSync) -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            if on_cancel == "raises":
+                raise RuntimeError("its cancel") from None
+            raise
+
+    monkeypatch.setattr(ClosedPnlSync, "_run", run)
+    r = rig()
+    with capture_logs() as logs:
+        r.sync.start([ACCOUNT_A])
+        await asyncio.sleep(1)
+        await r.sync.stop()
+        await asyncio.sleep(0)  # the task's callbacks have run
+    ended = [e["kind"] for e in logs if e["event"] == "closed_pnl_sync_ended"]
+    assert (r.told, ended) == ([], ["RuntimeError"] if on_cancel == "raises" else [])
+    assert r.sync.fault is None
+
+
 @virtual
 async def test_a_resolve_naming_another_account_fails_the_read_before_any_venue_call() -> None:
     r = rig(resolve=ACCOUNT_B, records=[_record()], readings=[_reading()])
     assert not await r.sync.read(ACCOUNT_A)
     assert (r.venue.lanes, r.venue.reads, r.venue.position_reads) == ([], [], 0)
-    assert r.store.rows == {} and r.store.snapshots == [] and r.counted() == {"ok": 0, "failed": 1}
+    assert r.store.rows == {} and r.store.snapshots == []
+    assert (r.counted(), r.crossed()) == ({"ok": 0, "failed": 0}, 1)  # a crossing, apart
 
 
 @virtual
@@ -411,7 +526,23 @@ async def test_a_record_naming_another_account_fails_the_read_and_keeps_nothing(
     r = rig(records=[_record()], readings=[_reading()], records_of=ACCOUNT_B)
     assert not await r.sync.read(ACCOUNT_A)
     assert r.store.rows == {} and r.store.snapshots == [] and r.venue.position_reads == 0
-    assert r.counted() == {"ok": 0, "failed": 1}
+    assert (r.counted(), r.crossed()) == ({"ok": 0, "failed": 0}, 1)
+
+
+@virtual
+async def test_another_accounts_record_after_the_accounts_own_fails_the_whole_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r = rig(readings=[_reading()])
+    theirs = _record(exchange_order_id="b-order").model_copy(update={"account_id": ACCOUNT_B})
+
+    async def closed_pnl(account: AccountRef, start: int, end: int) -> list[ClosedPnl]:
+        return [_record(), theirs]  # the asked account's own record first
+
+    monkeypatch.setattr(r.venue, "closed_pnl", closed_pnl)
+    assert not await r.sync.read(ACCOUNT_A)
+    assert r.store.rows == {} and r.venue.position_reads == 0
+    assert (r.counted(), r.crossed()) == ({"ok": 0, "failed": 0}, 1)
 
 
 # --- the seed (the orchestrator's ruling, 2026-11-04 15:51Z) --------------------------------------
@@ -423,7 +554,7 @@ async def test_the_seed_stores_a_flat_only_from_a_venue_size_0_reading() -> None
     (the transcribed row with `size` changed), a missing one (SOLUSDT) and one dated past the skew
     store none."""
     ahead = _reading(symbol="XRPUSDT").model_copy(update={"updated_at": _us(T0) + 6_000_000})
-    readings = [_reading(), _reading(symbol="ETHUSDT", size="0.4"), ahead]
+    readings = [_reading(symbol="ETHUSDT", size="0.4"), _reading(), ahead]  # each skip goes on
     r = rig(readings=readings)
     r.sync.start([ACCOUNT_A])
     await asyncio.sleep(1)
@@ -437,13 +568,15 @@ async def test_the_seed_stores_a_flat_only_from_a_venue_size_0_reading() -> None
 
 @virtual
 async def test_a_key_holding_a_confirmed_flat_gets_no_second_seed_and_an_account_one_read() -> None:
-    r = rig(readings=[_reading()])
+    """A non-zero ETH, BTC holding its flat, then a fresh size 0 SOL: SOL alone is seeded."""
+    readings = [_reading(symbol="ETHUSDT", size="0.4"), _reading(), _reading(symbol="SOLUSDT")]
+    r = rig(readings=readings)
     r.store.flats[("BTCUSDT", 2)] = (T0 - timedelta(days=1),)
     r.sync.start([ACCOUNT_A])
     await asyncio.sleep(1)
     r.sync.reconnected(ACCOUNT_A)
     await asyncio.sleep(1)
-    assert r.store.snapshots == [] and r.venue.position_reads == 1
+    assert [s.symbol for s in r.store.snapshots] == ["SOLUSDT"] and r.venue.position_reads == 1
     await r.sync.stop()
 
 
@@ -461,10 +594,11 @@ async def test_a_seed_that_fails_is_tried_again_and_the_records_are_kept_meanwhi
 
 @virtual
 async def test_a_flat_the_venue_states_during_a_slow_positions_read_is_seeded() -> None:
-    """The skew runs from the clock read after the positions read: 8 s into a 10 s one is in it."""
-    r = rig(readings=[_reading().model_copy(update={"updated_at": _us(T0) + 8_000_000})], pause=10)
+    """The skew runs from the clock read after the positions read: 12 s into a 10 s one is within
+    its 5 s, past the clock itself."""
+    r = rig(readings=[_reading().model_copy(update={"updated_at": _us(T0) + 12_000_000})], pause=10)
     assert await r.sync.read(ACCOUNT_A)
-    assert [s.exchange_updated_ts for s in r.store.snapshots] == [T0 + timedelta(seconds=8)]
+    assert [s.exchange_updated_ts for s in r.store.snapshots] == [T0 + timedelta(seconds=12)]
 
 
 @virtual
@@ -488,7 +622,34 @@ async def test_a_seed_reading_of_another_account_fails_the_seed_and_the_records_
     assert r.store.snapshots == [] and r.venue.position_reads == 2
     assert set(r.store.rows) == {record_id(ACCOUNT_A, XID)}
     failed = [e["kind"] for e in logs if e["event"] == "closed_pnl_flat_seed_failed"]
-    assert failed == ["_OtherAccount"] * 2
+    assert failed == ["_OtherAccount"] * 2  # and counted as crossings, never a WARNING alone
+    assert (r.counted(), r.crossed()) == ({"ok": 2, "failed": 0}, 2)
+
+
+@virtual
+async def test_another_accounts_reading_after_the_accounts_own_fails_the_whole_seed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r, walks = rig(records=[_record()]), list[str]()
+    theirs = _reading(symbol="ETHUSDT").model_copy(update={"account_id": ACCOUNT_B})
+    walk = r.store.walk_flats
+
+    async def positions(account: AccountRef) -> list[Position]:
+        return [_reading(), theirs]  # the asked account's own reading first
+
+    async def walk_flats(account_id: UUID, symbol: str, *rest: Any) -> tuple[datetime, ...]:
+        walks.append(symbol)
+        return await walk(account_id, symbol, *rest)
+
+    monkeypatch.setattr(r.venue, "positions", positions)
+    monkeypatch.setattr(r.store, "walk_flats", walk_flats)
+    with capture_logs() as logs:
+        assert await r.sync.read(ACCOUNT_A)
+    assert (r.store.snapshots, walks) == ([], [])
+    assert set(r.store.rows) == {record_id(ACCOUNT_A, XID)}
+    failed = [e["kind"] for e in logs if e["event"] == "closed_pnl_flat_seed_failed"]
+    assert failed == ["_OtherAccount"]
+    assert (r.counted(), r.crossed()) == ({"ok": 1, "failed": 0}, 1)
 
 
 # --- the merge (24 Sec.8.13: several records under one orderId) ---------------------------------
@@ -554,7 +715,7 @@ def test_a_fill_the_store_took_before_the_start_asks_for_nothing(
     store = Store()
     sync = ClosedPnlSync(
         accounts=Accounts(), router=Venue(), records=store, closes=store, snapshots=store,
-        metrics=Metrics("demo"), now=lambda: T0,
+        metrics=Metrics("demo"), now=lambda: T0, on_ended=lambda: None,
     )  # fmt: skip
     sync.stored(_fill(closed_size))
     sync.reconnected(ACCOUNT_A)

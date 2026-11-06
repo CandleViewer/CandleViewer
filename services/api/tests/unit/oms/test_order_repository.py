@@ -500,6 +500,37 @@ async def test_a_step_logs_its_ids_and_state(
     assert logs == [line]
 
 
+@pytest.mark.parametrize(
+    ("call", "fill", "answer", "told"),
+    [("insert", FILL, True, ["E1"]), ("insert", FILL, False, []),
+     ("commit_fill", _FILLED, _DONE, ["E1"]), ("commit_fill", _FILLED, None, [])],
+)  # fmt: skip
+async def test_each_fill_a_write_stores_is_reported_once_and_a_held_one_never(
+    call: str, fill: object, answer: object, told: list[str]
+) -> None:
+    """E29-S06 (24 Sec.8.13): either write path reports a fill once its store answered that it
+    stored it, to what the composition bound; an `exec_id` already held is no new fill."""
+    reported: list[str] = []
+    fills = ExecutionRepository(cast(Any, _AnyStore(answer)))
+    fills.bind_stored(lambda execution: reported.append(execution.exec_id))
+    assert await getattr(fills, call)(fill) is answer
+    assert reported == told
+
+
+async def test_a_report_that_raises_is_logged_by_its_class_and_the_fill_stands() -> None:
+    def broken(execution: NewExecution) -> None:
+        raise RuntimeError("the report")
+
+    fills = ExecutionRepository(cast(Any, _AnyStore(_DONE)))
+    fills.bind_stored(broken)
+    with capture_logs() as logs:
+        assert await fills.commit_fill(_FILLED) is _DONE
+    ids = {"exec_id": "E1", "account_id": str(ACCOUNT)}
+    assert [e for e in logs if e["event"] == "oms_fill_report_failed"] == [
+        {"event": "oms_fill_report_failed", "log_level": "error", "error": "RuntimeError", **ids}
+    ]
+
+
 async def test_the_execution_and_position_reads_pass_the_account_through() -> None:
     store = _AnyStore(rows := object())
     got: list[object] = [

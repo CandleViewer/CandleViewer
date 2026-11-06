@@ -274,11 +274,29 @@ class OrderEventRepository:
 
 
 class ExecutionRepository:
-    """`executions`, append-only and deduplicated on `ux_exec_id`, through an `ExecutionStore`."""
+    """`executions`, append-only and deduplicated on `ux_exec_id`, through an `ExecutionStore`.
+    Once bound (`bind_stored`, E29-S06), each fill a write stores is reported."""
 
     def __init__(self, store: ExecutionStore, timer: WriteTimer = _UNTIMED) -> None:
         self._store = store
         self._timer = timer
+        self._on_stored: Callable[[NewExecution], None] | None = None
+
+    def bind_stored(self, on_stored: Callable[[NewExecution], None]) -> None:
+        """From now on each fill a write stores, `insert`'s or `commit_fill`'s, goes to `on_stored`
+        once its transaction has committed, before the write answers (24 Sec.8.13: the closed-PnL
+        sync's `stored`). Synchronous, so it must only enqueue (C-2.20), and contained: what it
+        raises is logged by its class and the fill's ids, never raised, as the fill stands."""
+        self._on_stored = on_stored
+
+    def _report(self, execution: NewExecution) -> None:
+        if self._on_stored is None:
+            return
+        try:
+            self._on_stored(execution)
+        except Exception as exc:  # the report is its reader's; the fill is the order's
+            ids = {"exec_id": execution.exec_id, "account_id": str(execution.exchange_account_id)}
+            _log().error("oms_fill_report_failed", error=type(exc).__name__, **ids)
 
     async def insert(self, execution: NewExecution) -> bool:
         """Store a fill once whatever source reports it (24 Sec.8.2 S4): True when this call
@@ -295,6 +313,7 @@ class ExecutionRepository:
         }
         if stored:
             _log().info("oms_execution_stored", **ids)
+            self._report(execution)
         else:
             _log().debug("oms_execution_duplicate", **ids)
         return stored
@@ -310,6 +329,7 @@ class ExecutionRepository:
             _log().debug("oms_execution_duplicate", **ids)
         else:
             _log_step("oms_order_filled", done, exec_id=execution.exec_id)
+            self._report(execution)
         return done
 
     async def get(self, account_id: UUID, exec_id: str) -> ExecutionRow | None:

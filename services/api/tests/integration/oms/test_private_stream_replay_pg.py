@@ -67,6 +67,7 @@ from tests.unit.oms import command_rig as cr
 from tests.unit.oms.order_rig import Pager
 from tests.unit.oms.stream_world import RESYNCING, opened
 from tests.unit.oms.submit_rig import REGISTRY, STOP, Profiles, ReadOnly
+from tests.unit.oms.test_closed_pnl_sync import _record, _us
 from tests.unit.oms.test_e29_t05_acceptance import (
     FEE_RATE,
     FILLS,
@@ -452,6 +453,57 @@ async def test_a_private_session_replayed_across_a_mid_sequence_disconnect_misse
     assert (refused, parts.pager.calls) == (0.0, [])  # each request taken: nothing paged
     assert _passes(parts.writer) == [("startup", "clean"), ("reconnect", "clean")]
     assert "oms.no_intent_detected" not in [action for action, _ in parts.writer.actions]
+
+
+def _fetched(metrics: Metrics) -> float:
+    """The closed-PnL sync's reads the venue answered (`oms_closed_pnl_fetch_seconds`)."""
+    labels = {"env": "demo", "result": "ok"}
+    return metrics.registry.get_sample_value("oms_closed_pnl_fetch_seconds_count", labels) or 0.0
+
+
+async def _kept(dsn: str, account: UUID) -> list[tuple[Any, ...]]:
+    """The account's closed-PnL records once the lane has kept one, read on a worker thread so
+    this loop stays free for the stream; the bound only turns a hang into a failure."""
+    query = "SELECT exchange_order_id, qty FROM closed_pnl_records WHERE exchange_account_id = %s"
+    async with asyncio.timeout(BOUND_S):
+        while not (rows := await asyncio.to_thread(c6._sql, dsn, query, account)):
+            continue
+    return rows
+
+
+async def test_the_composed_closed_pnl_sync_reads_on_a_resync_and_keeps_the_record(
+    pg_dsn: str, tmp_path: Path
+) -> None:
+    """E29-S06 #981 slice 3b: `pg_stores` composes the closed-PnL sync, which reads the account
+    once ready. A record the venue holds only after that read is read when the stream resyncs,
+    the sync told ahead of reconciliation's request, in the `poll` lane, and kept in
+    `closed_pnl_records` through the OMS pool's store; nothing pages."""
+    account, clock = c6._trading_account(pg_dsn), c6.Clock(c6._db_now(pg_dsn))
+    parts = SimpleNamespace(
+        health=Tracked(accounts=frozenset({account})), hub=Hub(), writer=Writer(), pager=Pager(),
+        metrics=Metrics("demo"),
+    )  # fmt: skip
+    venue = ReplayVenue(uid=c6._uid(account), now_us=clock.us)
+    closed = _us(c6._db_now(pg_dsn) - timedelta(hours=1))
+    record = _record(account_id=account, exchange_order_id="o-sync", created_at=closed - 5_000)
+    record = record.model_copy(update={"closed_at": closed})
+    rig = cast(c6.Rig, SimpleNamespace(account=account, clock=clock))
+    async with started(_runtime(rig, pg_dsn, tmp_path, venue, parts)) as runtime:
+        await asyncio.wait_for(runtime.wait_ready(), BOUND_S)
+        await asyncio.wait_for(venue.opened.wait(), BOUND_S)
+        await _until(lambda: _fetched(parts.metrics) >= 1)  # its read at the start, before it
+        port = venue.ports[-1]
+
+        async def written() -> None:
+            port.seed_closed_pnl(record)
+
+        await runtime._composed().lane.call(written())
+        status = {"account_id": account, "state": "resyncing", "reason": "reconnected"}
+        venue.session.put(PrivateStreamStatus.model_validate(status | {"epoch": 1, "ts": closed}))
+        kept = await _kept(pg_dsn, account)
+    assert [(xid, Decimal(qty)) for xid, qty in kept] == [("o-sync", record.qty)]
+    assert {c.lane for c in port.calls if c.method == "closed_pnl"} == {"poll"}
+    assert (_fetched(parts.metrics), parts.pager.calls) == (2.0, [])
 
 
 @dataclass
