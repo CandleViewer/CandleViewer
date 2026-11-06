@@ -1399,8 +1399,8 @@ async def test_a_fill_rebuilt_from_its_row_resnapshots_its_account_once(
 async def test_a_place_ack_rebuilt_from_its_row_resnapshots_its_account_once(
     told: tuple[Rig, _Told],
 ) -> None:
-    """#5952 (U2): the place ack's write meets a row that moved on (`StaleOrderState`): the
-    order is rebuilt from it and its account told once, before the held fill applies."""
+    """#5952 (U2): the place ack's write is cut (it committed, its answer lost): the order is
+    rebuilt from its row and its account told once, before the held fill applies."""
     rig, hook = told
     order = order_of()
     hook.order = order.id
@@ -1415,6 +1415,37 @@ async def test_a_place_ack_rebuilt_from_its_row_resnapshots_its_account_once(
         (ACCOUNT, ("submitted", "not_required"))
     ]
     assert rig.context(order)["seen_exec_ids"] == ["e1"]
+
+
+async def test_a_step_meeting_a_row_another_writer_moved_resnapshots_its_account_once(
+    told: tuple[Rig, _Told],
+) -> None:
+    """#5952 (U2b), S7: a step that meets a row which moved on under the machine
+    (`StaleOrderState`) rebuilds the order from its events, and its account is told once."""
+    rig, hook = told
+    order = await rig.submitted()
+    hook.order = order.id
+    pushed = NewOrderEvent(
+        kind="exchange_push", source="ws_private", event_ts=T0, payload={"updated_time": 5}
+    )
+    moved = OrderTransition(
+        account_id=ACCOUNT,
+        order_id=order.id,
+        from_state="accepted",
+        to_state="triggered",
+        event=pushed,
+        lifecycle_state="triggered",
+    )
+    await rig.store.transition(moved)
+    with pytest.raises(OrderStepUnknown, match="CANCEL is not known: StaleOrderState"):
+        await rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user")
+    await rig.quiet()
+    assert [(account, state) for account, state, _ in hook.calls] == [
+        (ACCOUNT, ("triggered", "not_required"))
+    ]
+    assert await rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user") == "cancel_pending"
+    await rig.quiet()
+    assert len(hook.calls) == 1
 
 
 async def _refused(*_args: Any) -> str:

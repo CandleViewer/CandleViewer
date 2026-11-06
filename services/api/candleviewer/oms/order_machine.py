@@ -1770,7 +1770,7 @@ class OrderMachines:
         old machine held pass to the new one, or, with none (a final order, or a history the
         rebuild refused), to `_orphaned`. Once the rebuild completes, with a machine or without
         one, and before the successor's held steps settle, the order's account is re-snapshotted
-        (`_unpublished`, 23 Sec.6.2.3): the cut step's frames were never built."""
+        (`_resnapshot_rebuilt`, 23 Sec.6.2.3): the cut step's frames were never built."""
         o.resync, o.resynced = False, True
         self._resyncing[o.order_id] = o
         link = o.view.get("order_link_id")
@@ -1782,7 +1782,7 @@ class OrderMachines:
             except Exception as exc:  # a refused history is logged and paged by `_hydrate` itself
                 error = type(exc).__name__
                 logger().error("oms_resync_not_hydrated", order_link_id=link, error=error)
-            self._unpublished(o)
+            self._resnapshot_rebuilt(o)
             n = o.successor = self._orders.get(o.order_id)
             if n is None:
                 await self._orphaned(o)
@@ -1797,7 +1797,7 @@ class OrderMachines:
         finally:
             self._resyncing.pop(o.order_id, None)  # a nested resync's entry went before it
 
-    def _unpublished(self, o: _Order) -> None:
+    def _resnapshot_rebuilt(self, o: _Order) -> None:
         """The rebuilt order's account to `rebuilt`, when one is set, so its `orders`, `executions`
         and `positions` subscriptions re-snapshot with `upstream_desync` (23 Sec.6.2.3, #5952): the
         missed step is never published item by item. What it raises is logged by its class and
