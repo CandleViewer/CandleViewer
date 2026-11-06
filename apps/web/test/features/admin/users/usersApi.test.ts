@@ -247,6 +247,37 @@ describe("writes", () => {
     });
   });
 
+  it("a 403 step_up_required on a users write holds the first send, and its re-send reads through the vet", async () => {
+    const challenge = {
+      code: "step_up_required",
+      action_class: "users",
+      challenge_id: "0c9b8a7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d",
+      challenge_expires_at: "2026-11-02T10:05:00Z",
+      action_summary: "Disable user 'alex'",
+      target: null,
+    };
+    const s = server(() => json(403, challenge));
+    const res = await usersApi.disable(ALEX);
+    expect(res).toMatchObject({ ok: false, status: 403, code: "step_up_required" });
+    expect(res.stepUp).not.toBeNull();
+    const held = res.stepUp?.held;
+    const first = s.call();
+    expect(held?.method).toBe("PATCH");
+    expect(held?.url).toBe(first.url);
+    expect(held?.body).toBe(String(first.init.body));
+    expect(JSON.parse(held?.body ?? "")).toEqual({ status: "disabled" });
+    const key = first.headers.get("Idempotency-Key");
+    expect(key).toMatch(UUID4);
+    expect(held?.headers).toContainEqual(["Idempotency-Key", key]);
+    // the re-send's answer goes through the same vet: an unknown status reads unknown, a stray field is dropped
+    const again = await res.stepUp?.read(
+      json(200, { ...USER, status: "weird", password_hash: "x" }),
+    );
+    expect(again?.data).toMatchObject({ id: ALEX, status: "unknown" });
+    expect(again?.data).not.toHaveProperty("password_hash");
+    expect((await res.stepUp?.read(json(200, { id: "bad" })))?.data).toBeNull();
+  });
+
   it("records the sub-account tier with a PUT and no step-up of its own", async () => {
     const s = server(() => json(200, { status: "ok", tier: "regular", cap: 5, used: 3 }));
     const res = await usersApi.setTier("business_kyc");
