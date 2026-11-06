@@ -4250,6 +4250,7 @@ export interface paths {
     /**
      * Effective rate-limit and risk-cap budget for the caller
      * @description Per-account rate budget (20-architecture.md section 4.3) and the risk caps that currently apply to the caller, so the order ticket can show remaining headroom before a submission is attempted.
+     *     `accounts` holds only the caller's granted accounts: the scope is applied when the query is built, never by filtering a wider read (E39-X01 SR-E39-14, E39-S01). The rows are read from the risk service's in-memory counters and the rate router's headroom, with no per-request aggregation over executions.
      */
     get: operations["getMyLimits"];
     put?: never;
@@ -8858,7 +8859,8 @@ export interface components {
         orders_per_minute_used?: number;
         rate_budget_pct_used?: number;
       }[];
-      risk_caps?: components["schemas"]["RiskCaps"];
+      /** @description The caps of the account profile, as a profile stores them. E39-S01 moved it from `RiskCaps` (now deprecated, 24-internal-schemas.md section 19) while no route served this operation and no client read it. */
+      risk_caps?: components["schemas"]["ProfileRiskCaps"];
     };
     /** @description The deployment's configured egress IP (`CV_EGRESS_IP`), the one address a key's IP whitelist may hold; `null` while none is configured. It comes from configuration, never from a request header. It is the address the Owner adds to the key's whitelist at the exchange when the exchange refused the egress IP or `ip_whitelist_matches_egress` is false (US-ACCT-003). Confidential: served only to a caller holding `keys:manage` or `keys:read`, and never written to an audit record or used as a metric label. */
     EgressIp: null | string;
@@ -11232,6 +11234,7 @@ export interface components {
        */
       size_mode: "profile";
     };
+    /** @description Deprecated: no operation references it since E39-S01 (#954); kept for the E39-D02 records and retired with them. */
     RiskCaps: {
       /** @default 60 */
       lockout_minutes_after_breach: number;
@@ -11260,7 +11263,11 @@ export interface components {
           until?: string | null;
         } | null;
         open_positions?: number;
+        /** @description `realised_pnl_today_usd` holds fees or funding not yet settled by the exchange, at their pessimistic bound (E39-K01 BQ-5); it turns false when the settled figure confirms it (E39-S01). */
+        provisional: boolean;
         realised_pnl_today_usd?: components["schemas"]["Decimal"];
+        /** @description The account's risk state cannot be read fresh (E39-S01): its counters are being rebuilt, its private stream is older than E39-T01's `risk_state_max_age_seconds` (the one staleness bound), or a mark price it needs is stale. Its figures are then the last ones read, or absent, never a clean 0, and an opening order on it is refused `503 risk_state_unavailable`. */
+        stale: boolean;
         unrealised_pnl_usd?: components["schemas"]["Decimal"];
       }[];
       environment?: components["schemas"]["Environment"];
@@ -11271,9 +11278,11 @@ export interface components {
         equity_usd?: components["schemas"]["Decimal"];
         gross_notional_usd?: components["schemas"]["Decimal"];
         open_positions?: number;
-        /** @description MUST be zero in steady state; any non-zero value is a violation of the native-stop safety invariant and is surfaced as a critical banner. */
+        /** @description MUST be zero in steady state; any non-zero value is a violation of the native-stop safety invariant and is surfaced as a critical banner. It counts the accounts whose position state was read; an account whose position or counter state cannot be read is reported `stale` and is never counted as a clean 0 (C-2.6; no flag hides a violation, E39-X01 G-6). */
         positions_without_native_stop?: number;
         realised_pnl_today_usd?: components["schemas"]["Decimal"];
+        /** @description True when any covered account is `stale` (E39-S01): every figure above then leaves that account out and is shown as incomplete, never as a clean total. */
+        stale: boolean;
         unrealised_pnl_usd?: components["schemas"]["Decimal"];
       };
     };

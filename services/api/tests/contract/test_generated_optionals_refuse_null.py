@@ -34,6 +34,11 @@ _USER = {"id": _GRANT["exchange_account_id"], "username": "u", "email": "u@x", "
 _USER |= {"status": "active"}
 
 
+#: Schemas kept in 22 that no operation reaches, so no generated model pairs with them; named here
+#: and read only by the pairing test below.
+_KEPT_UNREFERENCED = {"RiskCaps": "kept for the E39-D02 records; retired with them"}
+
+
 def _models() -> dict[str, type[BaseModel]]:
     """Every generated model but a `RootModel`, by name, as the module holds it now."""
     found = {n: c for n, c in vars(api).items() if isinstance(c, type) and issubclass(c, BaseModel)}
@@ -56,7 +61,8 @@ def test_the_proof_pairs_every_generated_model_and_probes_each_optional_member()
     """Each generated model pairs with a contract schema, and the proof probes every optional
     member: 248 of the request models (G2b) and 1,109 more that a response reaches (#4237)."""
     assert sorted(m.__name__ for m in UNPAIRED_ANY) == []
-    assert sorted(set(_models()) - {m.__name__ for m in MODELS}) == []
+    unpaired = set(_models()) - {m.__name__ for m in MODELS}
+    assert sorted(unpaired - set(_KEPT_UNREFERENCED)) == []
     probed = {(m.__name__, n) for m in MODELS for n in _optionals(m)}
     assert len(probed) >= 1_350
     refused = {(m, n) for m, n in probed if not model_accepts(getattr(api, m), n, None)}

@@ -14128,6 +14128,11 @@ paths:
         Per-account rate budget (20-architecture.md section 4.3) and the risk caps that
         currently apply to the caller, so the order ticket can show remaining headroom
         before a submission is attempted.
+
+        `accounts` holds only the caller's granted accounts: the scope is applied when the
+        query is built, never by filtering a wider read (E39-X01 SR-E39-14, E39-S01). The
+        rows are read from the risk service's in-memory counters and the rate router's
+        headroom, with no per-request aggregation over executions.
       x-rbac: { permissions: [settings:read], scope: self }
       responses:
         "200":
@@ -20647,6 +20652,9 @@ components:
           }
     RiskCaps:
       type: object
+      description: >
+        Deprecated: no operation references it since E39-S01 (#954); kept for the E39-D02 records and
+        retired with them.
       additionalProperties: false
       properties:
         max_daily_loss_usd: { $ref: "#/components/schemas/Decimal" }
@@ -25035,7 +25043,12 @@ components:
     EffectiveLimits:
       type: object
       properties:
-        risk_caps: { $ref: "#/components/schemas/RiskCaps" }
+        risk_caps:
+          $ref: "#/components/schemas/ProfileRiskCaps"
+          description: >
+            The caps of the account profile, as a profile stores them. E39-S01 moved it from
+            `RiskCaps` (now deprecated, 24-internal-schemas.md section 19) while no route
+            served this operation and no client read it.
         accounts:
           type: array
           items:
@@ -25832,13 +25845,38 @@ components:
               type: integer
               description: >
                 MUST be zero in steady state; any non-zero value is a violation of the
-                native-stop safety invariant and is surfaced as a critical banner.
+                native-stop safety invariant and is surfaced as a critical banner. It counts
+                the accounts whose position state was read; an account whose position or
+                counter state cannot be read is reported `stale` and is never counted as a
+                clean 0 (C-2.6; no flag hides a violation, E39-X01 G-6).
+            stale:
+              type: boolean
+              description: >
+                True when any covered account is `stale` (E39-S01): every figure above then
+                leaves that account out and is shown as incomplete, never as a clean total.
+          required: [stale]
         accounts:
           type: array
           items:
             type: object
+            required: [stale, provisional]
             properties:
               exchange_account_id: { type: string, format: uuid }
+              stale:
+                type: boolean
+                description: >
+                  The account's risk state cannot be read fresh (E39-S01): its counters are
+                  being rebuilt, its private stream is older than E39-T01's
+                  `risk_state_max_age_seconds` (the one staleness bound), or a
+                  mark price it needs is stale. Its figures are then the last ones read, or
+                  absent, never a clean 0, and an opening order on it is refused
+                  `503 risk_state_unavailable`.
+              provisional:
+                type: boolean
+                description: >
+                  `realised_pnl_today_usd` holds fees or funding not yet settled by the
+                  exchange, at their pessimistic bound (E39-K01 BQ-5); it turns false when
+                  the settled figure confirms it (E39-S01).
               label: { type: string }
               equity_usd: { $ref: "#/components/schemas/Decimal" }
               unrealised_pnl_usd: { $ref: "#/components/schemas/Decimal" }
