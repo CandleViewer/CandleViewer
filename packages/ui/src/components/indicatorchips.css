@@ -28,9 +28,10 @@
   min-height: var(--size-control-compact);
 }
 
-/* Pressed while the drawer is open: the border takes the primary text colour (an instant flip). */
+/* Pressed while the drawer is open: the house pressed-segment fill (E11-D02 "neutral pressed
+   segment", color.surface.selected), an instant flip. CMP-224 names no pressed token: PROPOSED. */
 .cv-indicator-chips[aria-pressed="true"] .cv-indicator-chips__pill {
-  border-color: var(--color-text-primary);
+  background: var(--color-surface-selected);
 }
 
 /* The hue rides the glyph only (motion.duration.instant: a state flip has no transition). */
