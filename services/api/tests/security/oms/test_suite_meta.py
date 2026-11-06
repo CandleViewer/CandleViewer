@@ -19,14 +19,21 @@ the rows of the reviewed-exceptions table of `docs/plan/security/ci-gates-e29.md
 enclosing definition, `reason=`), as `tools/ci/check_drawings_exception_sites.py` holds the
 drawings rules' sites: a marker moved, added or dropped fails here (S1's n-6).
 
-(c) Scan coverage (BQ-9 as amended). Covered: gitleaks runs its default pack and the Bybit rules
-over the whole tree, the recorded fixtures included, and no allowlist path covers a fixture of
+(c) Scan coverage (BQ-9 as amended). Covered: gitleaks runs its whole default pack (no rule of it
+disabled) and the Bybit rules over the whole tree, the recorded fixtures included, and no allowlist
+path covers a fixture of
 `packages/fixtures` (its scanner's own tests excepted, which plant fake keys on purpose) or this
 suite, nor is there another allowlist for one to sit in (an `[[allowlists]]` table or a rule's
 own); the suite writes nothing outside pytest's temporary directory (no module of it opens or
 makes a file, and its world keeps the bars builders' state there). Manual, on the E29-X03
 checklist (#1152): the ticket's "test artefacts" read as anything CI uploads beyond the lanes'
 coverage data, and a capture that has not been recorded yet (O-1, E29-K01 #843).
+
+(d) The PR-path budget (the ticket's performance note, BQ-9's "Add (missed)"): the suite's own
+items stay within five minutes, held by `conftest.py` in CPU seconds; it waits on no real clock
+(no `time.sleep`, no `asyncio.sleep` but a bare yield), every property run is bounded, and each
+`TokenBucketGovernor` it builds runs on an injected clock and sleep, the reserve's compressed
+bucket included.
 
 And the live guard is E28-X03's, a fixture of every test of this suite.
 """
@@ -49,6 +56,7 @@ from tests.contract.rbac.rbac_harness import ACTORS, HTTP
 from tests.security.e28.conftest import live_target_refusal
 from tests.security.oms import _cells as cells
 from tests.security.oms._world import OmsWorld
+from tests.security.oms.conftest import BUDGET_S
 
 _HERE: Final = Path(__file__).parent
 _ROOT: Final = Path(__file__).resolve().parents[5]
@@ -236,7 +244,7 @@ def test_the_oms_markers_are_exactly_the_reviewed_exceptions_of_the_rule_doc() -
 
 def test_no_gitleaks_allowlist_path_covers_a_recorded_fixture_or_this_suite() -> None:
     config = tomllib.loads((_ROOT / ".gitleaks.toml").read_text("utf-8"))
-    assert config["extend"]["useDefault"] is True
+    assert config["extend"] == {"useDefault": True}, "the default pack is not whole"
     assert {"bybit-api-key", "bybit-hmac-signature"} <= {r["id"] for r in config["rules"]}
     assert "allowlists" not in config, "an [[allowlists]] table, which this test does not read"
     scoped = [r["id"] for r in config["rules"] if {"allowlist", "allowlists"} & set(r)]
@@ -286,3 +294,30 @@ def test_every_test_of_the_suite_runs_behind_the_guard(request: pytest.FixtureRe
     assert mine, "no item of the suite collected"
     unguarded = [i.nodeid for i in mine if "_live_guard" not in getattr(i, "fixturenames", ())]
     assert not unguarded, unguarded
+
+
+def _named(call: ast.Call) -> str:
+    """A call's dotted name as written (`asyncio.sleep`, `settings`), or empty."""
+    return ast.unparse(call.func) if isinstance(call.func, ast.Name | ast.Attribute) else ""
+
+
+def _keywords(call: ast.Call) -> dict[str, ast.expr]:
+    return {k.arg: k.value for k in call.keywords if k.arg is not None}
+
+
+def test_the_suite_keeps_the_pr_path_budget_on_injected_clocks_and_bounded_runs() -> None:
+    assert BUDGET_S == 5 * 60  # the ticket's performance note, held by conftest.py
+    calls = [
+        (module.name, node) for module in sorted(_HERE.glob("*.py"))
+        for node in ast.walk(ast.parse(module.read_text("utf-8"))) if isinstance(node, ast.Call)
+    ]  # fmt: skip
+    waits = [(m, _named(c), ast.unparse(c)) for m, c in calls if _named(c).endswith("sleep")]
+    real = [w for w in waits if w[1] != "asyncio.sleep" or w[2] != "asyncio.sleep(0)"]
+    assert not real, f"a real wait: {real}"
+    runs = [(m, _keywords(c).get("max_examples")) for m, c in calls if _named(c) == "settings"]
+    bound = [(m, n.value if isinstance(n, ast.Constant) else None) for m, n in runs]
+    unbounded = [m for m, n in bound if not (isinstance(n, int) and n <= 25)]
+    assert runs and not unbounded, f"a property run with no bound of 25 examples: {unbounded}"
+    built = [(m, _keywords(c)) for m, c in calls if _named(c) == "TokenBucketGovernor"]
+    real_clock = [m for m, kw in built if not {"clock", "sleep"} <= set(kw)]
+    assert built and not real_clock, f"a governor on the real clock: {real_clock}"
