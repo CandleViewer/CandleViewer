@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { afterEach, describe, it, vi } from "vitest";
@@ -92,6 +92,45 @@ describe("ChartLegend (CMP-199)", () => {
     expect(live()).toBe("EMA 21 hidden");
   });
 
+  it("lets Space activate the focused control: Remove removes, the eye is not toggled", async () => {
+    const p = props();
+    await mount(<ChartLegend {...p} />);
+    page.getByRole("button", { name: "Remove EMA 21" }).focus();
+    await userEvent.keyboard(" ");
+    expect(p.onRemove).toHaveBeenCalledWith("ema-21");
+    expect(p.onToggleVisible).not.toHaveBeenCalled();
+  });
+
+  it("moves focus to the neighbouring row when a row is removed", async () => {
+    const Host = (): JSX.Element => {
+      const [items, setItems] = useState(ITEMS);
+      return (
+        <ChartLegend
+          {...props({ items, onRemove: (id) => setItems((is) => is.filter((i) => i.id !== id)) })}
+        />
+      );
+    };
+    await mount(<Host />);
+    await userEvent.click(page.getByRole("button", { name: "Remove EMA 21" }));
+    expect(page.getByRole("button", { name: "Remove ETHUSDT 5m" })).toHaveFocus();
+  });
+
+  it("names the value button by what it edits", async () => {
+    await mount(<ChartLegend {...props({ items: [row("ema-21", { label: "EMA 21" })] })} />);
+    expect(
+      page.getByRole("button", { name: "Edit primary parameter (per descriptor) for EMA 21" }),
+    ).toBeTruthy();
+  });
+
+  it("applies the row cap after a collapsed legend is expanded", async () => {
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(24);
+    const items = Array.from({ length: 13 }, (_, i) => row(`ema-${i}`, { label: `EMA ${i}` }));
+    await mount(<ChartLegend {...props({ items, collapsed: true })} />);
+    await userEvent.click(page.getByRole("button", { name: "Expand Price" }));
+    expect(page.getAllByRole("button", { name: /visible$/ })).toHaveLength(7);
+  });
+
   it("never announces a value: values reach the legend only through props (BQ-07)", async () => {
     const host = document.body.appendChild(document.createElement("div"));
     const root = createRoot(host);
@@ -173,6 +212,7 @@ describe("ChartLegend (CMP-199)", () => {
     expect(field).toHaveAttribute("aria-describedby", "n");
     // The lock leads the field's label and badges the Remove icon (2b).
     expect(page.getAllByRole("img", { name: "Not available" })).toHaveLength(2);
+    expect(field).toHaveAttribute("readonly");
     await userEvent.type(field, "34{Enter}");
     expect(p.onQuickEdit).not.toHaveBeenCalled();
     expect(field.closest("li")?.querySelector(".cv-chart-legend__detail")).toHaveTextContent(
