@@ -1,32 +1,13 @@
-// Shared fixtures for the rule-builder-graph a11y tests: a port oracle built from
-// @candleviewer/rule-graph's own NODE_PORTS / PORT_COMPAT (via `portsOf`, which applies a
-// comparison's arity), never a hand copy (BQ-12 (d), record 6563473726), and a seeded PRNG.
-import { NODE_PORTS, PORT_COMPAT, portsOf, type PortType } from "@candleviewer/rule-graph";
+// Shared fixtures for the rule-builder-graph tests: the production port oracle (E37-S01's
+// `model/portOracle.ts`, built from @candleviewer/rule-graph's own `portsOf` / `canConnect`, never a
+// hand copy: BQ-12 (d), record 6563473726), node and edge builders, and a seeded PRNG.
 import type {
   A11yGraph,
   GraphEdge,
   GraphNode,
-  PortOracle,
 } from "../../../src/features/rule-builder-graph/a11y/graph.js";
 
-const kindOf = (node: GraphNode): string =>
-  node.type === "condition" ? String(node.data["kind"]) : node.type;
-
-/** The node's ports, or none for a kind rule-graph does not know. */
-const portsFor = (node: GraphNode) =>
-  Object.hasOwn(NODE_PORTS, kindOf(node)) ? portsOf(node) : { output: null, inputs: [] };
-
-const isPortType = (type: string): type is PortType => Object.hasOwn(PORT_COMPAT, type);
-
-export const oracle: PortOracle = {
-  outputOf: (node) => portsFor(node).output,
-  inputsOf: (node) => portsFor(node).inputs,
-  canConnect: (from, to) => {
-    const cell = isPortType(from) && isPortType(to) ? PORT_COMPAT[from][to] : "Unknown port type.";
-    return cell === true ? { ok: true } : { ok: false, reason: cell };
-  },
-  acceptsMany: (port) => port === "in",
-};
+export { portOracle as oracle } from "../../../src/features/rule-builder-graph/model/portOracle.js";
 
 export const node = (
   id: string,

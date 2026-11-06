@@ -22,7 +22,8 @@ export interface PortOracle {
   readonly outputOf: (node: GraphNode) => string | null;
   /** The node's input ports and their types, in port order. */
   readonly inputsOf: (node: GraphNode) => readonly (readonly [port: string, type: string])[];
-  /** Whether an output of type `from` may feed an input of type `to`, else why not. */
+  /** Whether an output of type `from` may feed an input of type `to`, else why not; it throws on
+   * a string that is not a port type (the production oracle: rule-graph's SCHEMA_VIOLATION). */
   readonly canConnect: (from: string, to: string) => ConnectVerdict;
   /** Whether the input takes several edges (rule-graph's list port `in`). */
   readonly acceptsMany: (port: string) => boolean;
