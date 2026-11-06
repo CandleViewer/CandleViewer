@@ -44,6 +44,11 @@ export function GateNoticeProvider({
   return <GateNoticeContext.Provider value={notice}>{children}</GateNoticeContext.Provider>;
 }
 
+/** The enclosing gate notice, or null: a composite (CMP-199's quick-edit commit) gated by its host's notice. */
+export function useGateNotice(): GateNotice | null {
+  return useContext(GateNoticeContext);
+}
+
 /** The notice id when `reason` is the enclosing gate notice's sentence, else undefined. */
 export function useGateNoticeFor(reason: string | undefined): string | undefined {
   const notice = useContext(GateNoticeContext);
