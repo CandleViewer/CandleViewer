@@ -151,6 +151,7 @@ describe("Scenario: The package builds and exports the designed surface", () => 
       "Unsubscribe",
       "Viewport",
       "VisibleWindow",
+      "VolumeOptions", // E12-S08 PR 1 (BQ-11): the addVolume option shape, additive
       "createChart",
       "toTicks", // E12-S06 BQ-10: ruled additive
     ]);
