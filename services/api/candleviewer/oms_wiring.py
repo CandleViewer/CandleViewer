@@ -3314,6 +3314,7 @@ class OmsRuntime:
                 metrics=metrics, pager=self._pager,
                 latch=ChainTripLatch() if bundle is None else bundle.latch,
                 now_us=self._now_us, registry=self._registry, max_machines=self._max,
+                rebuilt=None if published is None else published.resnapshot,
             )  # fmt: skip
             if published is not None:  # a position waits for the fills held before their bind
                 published.bind(machines.held_fills)

@@ -144,6 +144,21 @@ async def test_the_lanes_snapshot_reads_are_scoped_to_the_process_environment() 
         assert [item["id"] for item in view.items] == [str(SENDING.id)]
 
 
+async def test_a_rebuilt_orders_account_is_resnapshotted_through_the_step_publisher() -> None:
+    """23 Sec.6.2.3, #5952 as composed: the facade is handed the step publisher's `resnapshot`,
+    so an order it rebuilds from its row re-snapshots its account's three topics, never fewer."""
+    world, topics = World(), Topics()
+    await crashed(world)
+    async with started(world.runtime(topics=topics)) as runtime:
+        for flag in world.flags:
+            flag.read()
+        await until(lambda: runtime.state == "ok")
+        told = runtime._composed().machines._rebuilt
+        assert told is not None and getattr(told, "__func__", None) is wt.StepPublisher.resnapshot
+        told(cr.ACCOUNT)
+        await until(lambda: (cr.ACCOUNT, wt.FAMILIES) in topics.resyncs)
+
+
 async def test_without_topics_nothing_is_published_or_read() -> None:
     world = World()
     await crashed(world)
@@ -152,7 +167,7 @@ async def test_without_topics_nothing_is_published_or_read() -> None:
             flag.read()
         await until(lambda: runtime.state == "ok")
         parts = runtime._composed()
-        assert parts.topic_reads is None
+        assert parts.topic_reads is None and parts.machines._rebuilt is None
         with pytest.raises(OmsNotReady):
             await OnLaneTopicReads(parts).read("orders", cr.ACCOUNT)
 

@@ -193,10 +193,12 @@ def build_rig(
     registry: Registry | None = None,
     submissions: SubmissionRepository | None = None,
     on_commit: Callable[[CommittedOrderStep], None] | None = None,
+    rebuilt: Callable[[UUID], None] | None = None,
 ) -> Rig:
     """A facade over *store* (a new one by default), the place and attach answered at once; the
     step writer takes E29-T04's first persists through *submissions* when given, and reports each
-    committed step to *on_commit* (E29-T13's step publisher) when given."""
+    committed step to *on_commit* (E29-T13's step publisher) when given; the facade tells
+    *rebuilt* the account of each order it rebuilds from its row (#5952) when given."""
     store = store or InMemoryOrderStore(clock=lambda: T0)
     orders, events = OrderRepository(store), OrderEventRepository(store)
     fills = InMemoryExecutionStore(store)
@@ -210,8 +212,9 @@ def build_rig(
     ports = OrderMachinePorts(writer, orders, commands, audit, publish, notices, sink, events)
     metrics = Metrics("dev")
     facade = OrderMachines(
-        ports, metrics=metrics, pager=pager, now_us=lambda: NOW_US, registry=registry
-    )
+        ports, metrics=metrics, pager=pager, now_us=lambda: NOW_US, registry=registry,
+        rebuilt=rebuilt,
+    )  # fmt: skip
     return Rig(
         facade, orders, store, commands, audit, publish, notices, pager, metrics, fills, events
     )
