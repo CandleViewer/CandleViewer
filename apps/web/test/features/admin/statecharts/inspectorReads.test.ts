@@ -244,6 +244,62 @@ describe("one read, one outcome", () => {
     expect(sent).toBeLessThan(20);
   });
 
+  it("test_read_403_with_a_body_over_the_cap_is_denied_without_its_ref_and_not_parsed", async () => {
+    const instance = "urn:cv:req:0a000000-0000-4000-8000-000000000001";
+    const padded = JSON.stringify({ instance, pad: "x".repeat(MAX_BODY_BYTES) });
+    serve(() => new Response(padded, { status: 403 }));
+    expect(await readList({ latchedOnly: false }, signal(), TIMERS)).toEqual({
+      kind: "denied",
+      refId: undefined,
+    });
+    // Streamed with no declared length, the same cap holds.
+    const blank = new TextEncoder().encode(" ".repeat(64 * 1024));
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull: (sink) => {
+        if (sent > 32) sink.close();
+        else sink.enqueue(blank);
+        sent += 1;
+      },
+    });
+    serve(() => new Response(stream, { status: 403 }));
+    expect(await readList({ latchedOnly: false }, signal(), TIMERS)).toEqual({
+      kind: "denied",
+      refId: undefined,
+    });
+    expect(sent).toBeLessThan(20);
+  });
+
+  it("test_read_aborted_mid_body_is_a_timeout_or_network_never_unreadable", async () => {
+    vi.useFakeTimers();
+    // A 200 whose body sends one chunk, then stalls until the request's signal aborts.
+    const stall = (init: RequestInit = {}): Response => {
+      const aborted = init.signal as AbortSignal;
+      const stream = new ReadableStream<Uint8Array>({
+        start: (sink) => {
+          sink.enqueue(new TextEncoder().encode('{"items":'));
+          aborted.addEventListener("abort", () =>
+            sink.error(new DOMException("aborted", "AbortError")),
+          );
+        },
+      });
+      return new Response(stream, { status: 200 });
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => stall(init)),
+    );
+    const slow = readList({ latchedOnly: false }, signal(), TIMERS);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(await slow).toEqual({ kind: "failed", reason: "timeout" });
+    const caller = new AbortController();
+    const stopped = readList({ latchedOnly: false }, caller.signal, TIMERS);
+    await vi.advanceTimersByTimeAsync(10);
+    caller.abort();
+    expect(await stopped).toEqual({ kind: "failed", reason: "network" });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("test_read_settled_lets_go_of_its_callers_signal", async () => {
     const wire = serve(() => json(200, DEGRADED_ORDER_LIST));
     const caller = new AbortController();
