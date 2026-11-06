@@ -36,7 +36,7 @@ from types import SimpleNamespace
 from typing import Any, Final, Literal
 from uuid import UUID
 
-from candleviewer.domain.primitives import TsUs
+from candleviewer.domain.primitives import AccountId, TsUs
 from candleviewer.exchange.base.models import FeeRate, RiskLimitTier, Wallet
 from candleviewer.oms.fakes import InMemoryOrderStore, InMemorySubmissionStore
 from candleviewer.oms.submit import SubmitOutcome
@@ -315,6 +315,39 @@ def unchecked() -> list[World]:
     return [world for world in BUILT if not world.checked]
 
 
+def listed(ingestion: Any) -> None:
+    """The ingestion reads a submit needs, on `ingestion` (`test_oms_runtime.World`'s): `SYMBOL`
+    listed with one risk-limit tier, and its ticker quoted at `PRICE`, never stale. Set before the
+    runtime is built, which binds them (#982's AC-19 world reuses it)."""
+    tiers = (RiskLimitTier(
+        tier_id=1, risk_limit_value=Decimal(2_000_000), maintenance_margin_rate=Decimal("0.005"),
+        initial_margin_rate=Decimal("0.01"), max_leverage=Decimal(100),
+    ),)  # fmt: skip
+    held = {SYMBOL: instrument()}
+    ingestion.instruments = SimpleNamespace(
+        snapshot=lambda: SimpleNamespace(get=held.get, risk_limit_tiers=lambda _s: tiers)
+    )
+    quote = SimpleNamespace(bid1_price=PRICE, ask1_price=PRICE, last_price=PRICE)
+    ingestion.tickers = SimpleNamespace(
+        latest=lambda _s: quote, is_stale=lambda _s: False,
+        acquire=lambda _c, _s: None, release=lambda _c, _s: None,
+    )  # fmt: skip
+
+
+def funded(port: Any, account_id: AccountId) -> None:
+    """The venue reads a submit needs for `account_id` on the lane's `port`: a wallet of 100 000
+    USDT, all of it free, and `SYMBOL`'s fee rate."""
+    port.set_wallet(Wallet(
+        account_id=account_id, equity=Decimal(100_000), wallet_balance=Decimal(100_000),
+        available_to_withdraw=None, available_margin=Decimal(100_000),
+        used_margin=Decimal(0), unrealised_pnl=Decimal(0), cum_realised_pnl=Decimal(0),
+        account_im_rate=Decimal(0), account_mm_rate=Decimal(0), updated_at=0,
+    ))  # fmt: skip
+    taker = Decimal("0.00055")
+    port.set_fee_rate(account_id, FeeRate(
+        symbol=SYMBOL, maker=Decimal("0.0002"), taker=taker, fetched_at=0))  # fmt: skip
+
+
 @asynccontextmanager
 async def opened(**over: Any) -> AsyncIterator[World]:
     """A demo world whose runtime is ready, the account's startup pass at rest: the account
@@ -325,32 +358,12 @@ async def opened(**over: Any) -> AsyncIterator[World]:
     world.accounts.append(TradingAccountRow(ACCOUNT, "demo", REF.uid, False, rt.KEY))
     if world.streamed:
         world.tracked.accounts = frozenset({ACCOUNT})
-    tiers = (RiskLimitTier(
-        tier_id=1, risk_limit_value=Decimal(2_000_000), maintenance_margin_rate=Decimal("0.005"),
-        initial_margin_rate=Decimal("0.01"), max_leverage=Decimal(100),
-    ),)  # fmt: skip
-    listed = {SYMBOL: instrument()}
-    world.ingestion.instruments = SimpleNamespace(
-        snapshot=lambda: SimpleNamespace(get=listed.get, risk_limit_tiers=lambda _s: tiers)
-    )
-    quote = SimpleNamespace(bid1_price=PRICE, ask1_price=PRICE, last_price=PRICE)
-    world.ingestion.tickers = SimpleNamespace(
-        latest=lambda _s: quote, is_stale=lambda _s: False,
-        acquire=lambda _c, _s: None, release=lambda _c, _s: None,
-    )  # fmt: skip
+    listed(world.ingestion)
     for flag in world.flags:
         flag.read()
     world.oms = world.runtime(now=wall)
     async with rt.started(world.oms):
         await world.oms.wait_ready()
-        world.port.set_wallet(Wallet(
-            account_id=ACCOUNT, equity=Decimal(100_000), wallet_balance=Decimal(100_000),
-            available_to_withdraw=None, available_margin=Decimal(100_000),
-            used_margin=Decimal(0), unrealised_pnl=Decimal(0), cum_realised_pnl=Decimal(0),
-            account_im_rate=Decimal(0), account_mm_rate=Decimal(0), updated_at=0,
-        ))  # fmt: skip
-        taker = Decimal("0.00055")
-        fee = FeeRate(symbol=SYMBOL, maker=Decimal("0.0002"), taker=taker, fetched_at=0)
-        world.port.set_fee_rate(ACCOUNT, fee)
+        funded(world.port, ACCOUNT)
         await world.settle()
         yield world
