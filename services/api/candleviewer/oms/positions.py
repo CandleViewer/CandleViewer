@@ -456,7 +456,7 @@ class PositionProjection:
                 exchange_account_id=p.account_id, symbol=p.symbol, size=p.qty, reason="ws_push",
                 position_idx=p.position_idx, avg_price=p.avg_entry_price, mark_price=p.mark_price,
                 unrealised_pnl=p.unrealised_pnl, cum_realised_pnl=p.cum_realised_pnl,
-                liq_price=p.liq_price,
+                liq_price=p.liq_price, exchange_updated_ts=_stamp(p),
             )  # fmt: skip
             await self._bounded(self._snapshots.append(snap), PORT_TIMEOUT_S, until)
         except Exception as exc:

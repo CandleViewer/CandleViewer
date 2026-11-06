@@ -158,7 +158,7 @@ def test_exec_payload_carries_the_rows_ids_and_the_fill_exactly() -> None:
         "order_id": str(ROW_ID), "order_link_id": ROW_LINK, "account_id": str(ACCOUNT_A),
         "symbol": "BTCUSDT", "side": "sell", "qty": "0.5", "price": "95900.1",
         "fee": "26.3725275", "fee_rate": "0.00055", "fee_currency": "USDT", "closed_pnl": "0.05",
-        "exec_type": "trade", "is_maker": False, "ts_exec": 1746270400353000,
+        "closed_size": "0.5", "exec_type": "trade", "is_maker": False, "ts_exec": 1746270400353000,
         "ts_ingest": NOW_US, "seq": 140612148849382,
     }  # fmt: skip
 

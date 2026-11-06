@@ -305,7 +305,7 @@ class PositionsTruth:
             reason="rest_reconcile", position_idx=position.position_idx,
             avg_price=position.avg_entry_price, mark_price=position.mark_price,
             unrealised_pnl=position.unrealised_pnl, cum_realised_pnl=position.cum_realised_pnl,
-            liq_price=position.liq_price,
+            liq_price=position.liq_price, exchange_updated_ts=state.exchange_updated_ts,
         )  # fmt: skip
         try:
             await self._snapshots.append(snap)

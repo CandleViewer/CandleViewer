@@ -146,6 +146,7 @@ def exec_payload(execution: Execution, *, order_id: UUID, order_link_id: str) ->
         "qty": money_text(execution.qty), "price": money_text(execution.price),
         "fee": money_text(execution.fee), "fee_rate": money_text(execution.fee_rate),
         "closed_pnl": None if execution.closed_pnl is None else money_text(execution.closed_pnl),
+        "closed_size": None if execution.closed_size is None else money_text(execution.closed_size),
         "exec_type": execution.exec_type, "is_maker": execution.is_maker,
         "ts_exec": execution.ts_exec, "ts_ingest": execution.ts_ingest, "seq": execution.seq,
     }  # fmt: skip

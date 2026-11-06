@@ -102,6 +102,7 @@ from candleviewer.exchange.bybit.trading_parse import (
     OrderReply,
     PositionPage,
     WalletPage,
+    count_orderless,
     envelope_ms,
     kept,
     normalised_link,
@@ -814,7 +815,8 @@ class BybitTradingPort:
         so it can list a USDC perpetual (its documented example) or a dated future. A row of a
         contract whose name does not end in the settle coin is set aside before the strict
         parse and counted (`not_usdt`), never read as USDT and never failing the read on a
-        field of its own (24 §14.2 rule 12)."""
+        field of its own (24 §14.2 rule 12). A row whose `orderId` is empty is returned with
+        `exchange_order_id` None and counted (`no_order_id`), never refused (24 §8.13)."""
         self._check_environment(account)
         check_window(start, end)
         params = {"category": "linear", "limit": _PAGE_LIMIT["closed_pnl"]}
@@ -826,7 +828,8 @@ class BybitTradingPort:
                 if (other := other_contract(raw, _SETTLE)) is not None:
                     refuse_row("not_usdt", "", symbol=other)
                     continue
-                usdt.append(to_closed_pnl(parse(ClosedPnlRow, raw, "closed-pnl"), account))
+                record = to_closed_pnl(parse(ClosedPnlRow, raw, "closed-pnl"), account)
+                usdt.append(count_orderless(record))  # kept: the day's loss still sums it
             return usdt, page.nextPageCursor
 
         records: list[ClosedPnl] = []

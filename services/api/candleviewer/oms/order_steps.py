@@ -70,6 +70,7 @@ from candleviewer.storage.repositories.executions import (
     FillTotals,
     NewExecution,
     OrderFill,
+    stated_closed_size,
 )
 from candleviewer.storage.repositories.orders import (
     AMENDABLE,
@@ -568,6 +569,7 @@ def _fill(step: Step, move: OrderTransition) -> OrderFill:
     totals the machine computed (`apply_execution`), and the step."""
     p, ctx = cast(Mapping[str, Any], _execution(step)), step.context
     qty, price, closed = _decimal(p.get("qty")), _decimal(p.get("price")), p.get("closed_pnl")
+    size = p.get("closed_size")
     execution = NewExecution(
         exchange_account_id=move.account_id,
         exec_id=str(p.get("exec_id")),
@@ -585,6 +587,7 @@ def _fill(step: Step, move: OrderTransition) -> OrderFill:
         fee_rate=_decimal(p.get("fee_rate")),
         fee_currency=str(p.get("fee_currency") or "USDT"),
         closed_pnl=None if closed is None else _decimal(closed),
+        closed_size=stated_closed_size(None if size is None else _decimal(size), qty),
         is_paper=move.event.source == "paper",
     )
     totals = FillTotals(

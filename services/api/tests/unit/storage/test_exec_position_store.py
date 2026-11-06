@@ -84,16 +84,11 @@ _PORTS: list[tuple[Callable[..., object], type, Table, set[str]]] = [
 ]
 
 
-#: E29-S06's migration slice adds these two (21 Sec.3.3.6, Sec.3.3.7); its writer slice adds them to
-#: the ports, which until then never write or read them.
-_S06_COLUMNS = {"executions": {"closed_size"}, "position_snapshots": {"exchange_updated_ts"}}
-
-
 @pytest.mark.parametrize(("new", "row", "table", "assigned"), _PORTS)
 def test_rows_hold_every_column_and_inputs_all_but_what_is_assigned(
     new: Callable[..., object], row: type, table: Table, assigned: set[str]
 ) -> None:
-    columns = {c.name for c in table.columns} - _S06_COLUMNS.get(table.name, set())
+    columns = {c.name for c in table.columns}
     assert {f.name for f in fields(row)} == columns
     assert columns - {f.name for f in fields(cast(Any, new()))} == assigned
 
@@ -121,7 +116,10 @@ def test_every_numeric_column_takes_its_own_scale_and_refuses_what_it_would_roun
             new(**{column.name: bad})
 
 
-@pytest.mark.parametrize(("new", "name"), [(_fill, "exec_ts"), (_state, "exchange_updated_ts")])
+@pytest.mark.parametrize(
+    ("new", "name"),
+    [(_fill, "exec_ts"), (_state, "exchange_updated_ts"), (_snap, "exchange_updated_ts")],
+)
 def test_a_naive_exchange_time_is_refused(new: Callable[..., object], name: str) -> None:
     with pytest.raises(ValueError, match=f"^{name} must be a timezone-aware"):
         new(**{name: datetime(2026, 10, 16)})
@@ -146,6 +144,7 @@ _STATEMENTS: dict[Any, dict[str, Any]] = {
         "insert_statement": ex.insert_statement(_fill(order_id=ORDER)),
         "get_statement": ex.get_statement(ACCOUNT, "E1"),
         "list_recent_statement": ex.list_recent_statement(ACCOUNT, 100),
+        "closed_size_statement": ex.closed_size_statement(ACCOUNT, ORDER),
     },
     pos: {
         "upsert_statement": pos.upsert_statement(_state(), _HORIZON),
@@ -173,7 +172,22 @@ def test_an_execution_insert_dedupes_on_ux_exec_id_and_scopes_its_order() -> Non
     assert sql.endswith(conflict + " RETURNING executions.order_id")
     owned = "WHERE orders.exchange_account_id = $1::UUID AND orders.id = $2::UUID), $3::UUID, "
     assert "VALUES (gen_random_uuid(), (SELECT orders.id \nFROM orders \n" + owned in sql
+    # E29-S06 (21 Sec.3.3.6): the key is the order row's, in its account; else the value given
+    key = "coalesce((SELECT orders.position_idx \nFROM orders \nWHERE orders.exchange_account_id"
+    assert key + " = $1::UUID AND orders.id = $2::UUID), $21::INTEGER)" in sql
     assert "SELECT" not in _sql(ex.insert_statement(_fill()))  # no order: NULL, as asked
+
+
+def test_the_closed_size_read_sums_an_orders_trade_fills_only_when_each_states_one() -> None:
+    """E29-S06's final rule (24 Sec.8.13): the order's fills of a trade type, in its account; NULL
+    when one states none, as a REST-recovered fill does, or when none is stored."""
+    sql = _sql(ex.closed_size_statement(ACCOUNT, ORDER))
+    assert sql.startswith(
+        "SELECT CASE WHEN (count(*) > $1::INTEGER AND count(executions.closed_size) = count(*)) "
+        "THEN sum(executions.closed_size) END AS closed_size \nFROM executions \n"
+        "WHERE executions.exchange_account_id = $2::UUID AND executions.order_id = $3::UUID AND "
+        "executions.exec_type IN ("
+    )
 
 
 def test_the_recent_fills_read_is_an_accounts_order_fills_newest_first_bounded() -> None:

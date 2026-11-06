@@ -90,7 +90,11 @@ from candleviewer.exchange.base.models import (
     RateLane,
 )
 from candleviewer.statechart.bindings import b01_order as b01
-from candleviewer.storage.repositories.executions import ExecType, NewExecution
+from candleviewer.storage.repositories.executions import (
+    ExecType,
+    NewExecution,
+    stated_closed_size,
+)
 from candleviewer.storage.repositories.orders import (
     NewOrder,
     OrderRow,
@@ -875,6 +879,7 @@ def new_execution(execution: Execution) -> NewExecution:
         fee_rate=execution.fee_rate,
         fee_currency=execution.fee_currency or "USDT",
         closed_pnl=execution.closed_pnl,
+        closed_size=stated_closed_size(execution.closed_size, execution.qty),
     )
 
 

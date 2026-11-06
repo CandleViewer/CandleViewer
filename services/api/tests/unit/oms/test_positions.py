@@ -60,7 +60,7 @@ async def test_take_applied_push_upserts_the_mapped_state_then_one_ws_push_snaps
             exchange_account_id=ACCOUNT, symbol="BTCUSDT", size=Decimal("0.4"), reason="ws_push",
             avg_price=Decimal("61000.5"), mark_price=Decimal("61010"),
             unrealised_pnl=Decimal("4.2"), cum_realised_pnl=Decimal("-1.25"),
-            liq_price=Decimal("50000"),
+            liq_price=Decimal("50000"), exchange_updated_ts=stamp(NOW_US + 123_456),
         )
     ]  # fmt: skip
     assert rig.calls == ["upsert", "protecting", "take_reading", "live_for_key", "append"]

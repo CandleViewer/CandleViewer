@@ -188,6 +188,8 @@ async def test_positions_truth_applies_a_read_that_changed_it_and_snapshots_it()
     assert (state.size, state.side) == (Decimal("0.1"), "Buy")
     [snap] = p.snapshots
     assert (snap.reason, snap.size) == ("rest_reconcile", Decimal("0.1"))
+    # E29-S06 (21 Sec.3.3.7): the reading's own venue time, as the upsert stores it
+    assert snap.exchange_updated_ts == state.exchange_updated_ts is not None
 
 
 async def test_positions_truth_answers_none_for_an_equal_or_older_read() -> None:

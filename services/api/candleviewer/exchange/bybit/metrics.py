@@ -46,7 +46,8 @@ bybit_rate_limited_total = Counter(
 
 bybit_rows_refused_total = Counter(
     "bybit_rows_refused_total",
-    "Trading-read rows set aside, by reason (env, account, no fill, unmapped type, not USDT).",
+    "Trading-read rows set aside, by reason (env, account, no fill, unmapped type, not USDT), "
+    "and closed-PnL rows kept without an order id (no_order_id).",
     ["reason"],
 )
 
