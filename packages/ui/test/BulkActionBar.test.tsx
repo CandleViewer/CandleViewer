@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { useState, type JSX } from "react";
+import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { describe, expectTypeOf, it } from "vitest";
 import * as Entry from "../src/index.js";
 import {
@@ -108,6 +109,44 @@ describe("BulkActionBar: actions, Clear and the keyboard", () => {
     ).toEqual([0, -1, -1]);
     await userEvent.tab();
     expect(button("After")).toHaveFocus();
+  });
+
+  it("a key from a descendant that is not a button (the count) is left alone: no roving, default intact", async () => {
+    const host = await mount(<BulkActionBar count={3} actions={actions()} onClear={fn()} />);
+    const bar = toolbar(host);
+    const count = within(bar).getByText("3 selected");
+    const kept = [];
+    for (const key of ["ArrowRight", "End", "ArrowLeft", "Home"]) {
+      kept.push(await fireEvent.keyDown(count, { key }));
+    }
+    expect(kept).toEqual([true, true, true, true]);
+    expect(within(bar).getByRole("button", { name: "Disarm" })).not.toHaveFocus();
+    expect(
+      within(bar)
+        .getAllByRole("button")
+        .map((b) => b.tabIndex),
+    ).toEqual([0, -1, -1]);
+  });
+
+  it("when the actions shrink under the roving stop, the stop clamps to the last button: one Tab stop stays", async () => {
+    function Shrinking(): JSX.Element {
+      const [list, setList] = useState(actions);
+      return (
+        <BulkActionBar count={2} actions={list} onClear={() => setList((now) => now.slice(1))} />
+      );
+    }
+    const host = await mount(<Shrinking />);
+    await userEvent.click(within(host).getByRole("button", { name: "Clear" }));
+    const stops = (): [string | null, number][] =>
+      within(toolbar(host))
+        .getAllByRole("button")
+        .map((b) => [b.textContent, b.tabIndex]);
+    expect(stops()).toEqual([
+      ["Export", -1],
+      ["Clear", 0],
+    ]);
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(within(host).getByRole("button", { name: "Export" })).toHaveFocus();
   });
 
   it("Enter and Space press the roving button", async () => {
