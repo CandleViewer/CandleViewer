@@ -247,7 +247,13 @@ export function ChartLegend({
   const ring = useFocusRing();
   const notice = useGateNotice();
   const root = useRef<HTMLDivElement>(null);
-  const pendingFocus = useRef<string | null>(null);
+  /** A focus hand-off armed by Remove: consumed only once the removed row is gone, dropped on any other items change. */
+  const pendingFocus = useRef<{
+    readonly nav: string;
+    readonly removedId: string;
+    readonly items: readonly ChartLegendItem[];
+  } | null>(null);
+  const pendingRestore = useRef<string | null>(null);
   const [isCollapsed, setCollapsed] = useState(collapsed);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -318,9 +324,16 @@ export function ChartLegend({
     });
   };
   useEffect(() => {
-    if (pendingFocus.current === null) return;
-    focusNav(pendingFocus.current);
+    const restore = pendingRestore.current;
+    if (restore !== null) {
+      pendingRestore.current = null;
+      focusNav(restore);
+    }
+    const pending = pendingFocus.current;
+    if (pending === null || pending.items === items) return;
     pendingFocus.current = null;
+    // A host that ignored or delayed the removal must not have focus stolen later.
+    if (!items.some((item) => item.id === pending.removedId)) focusNav(pending.nav);
   });
 
   const toggle = (item: ChartLegendItem): void => {
@@ -336,7 +349,7 @@ export function ChartLegend({
     });
   const closeEdit = (id: string, restoreFocus: boolean): void => {
     setEditingId(null);
-    if (restoreFocus) pendingFocus.current = navId(id, "value");
+    if (restoreFocus) pendingRestore.current = navId(id, "value");
   };
 
   // On each control, not the group (a `group` is not interactive): events from the quick-edit field never arrive.
@@ -469,10 +482,14 @@ export function ChartLegend({
               const near =
                 rows[at + 1]?.key === "more" ? rows[at - 1] : (rows[at + 1] ?? rows[at - 1]);
               const control = near?.controls[near.controls.length - 1];
-              pendingFocus.current =
-                near === undefined || control === undefined
-                  ? navId(PANE, "chevron")
-                  : navId(near.key, control);
+              pendingFocus.current = {
+                nav:
+                  near === undefined || control === undefined
+                    ? navId(PANE, "chevron")
+                    : navId(near.key, control),
+                removedId: item.id,
+                items,
+              };
               onRemove(item.id);
             }}
             {...nav("remove")}

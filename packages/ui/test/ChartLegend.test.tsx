@@ -124,11 +124,34 @@ describe("ChartLegend (CMP-199)", () => {
 
   it("applies the row cap after a collapsed legend is expanded", async () => {
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
-    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(24);
+    // The pane row is 0 high (collapsed-state measure would use it); only the series rows measure 24.
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.classList.contains("cv-chart-legend__pane") ? 0 : this.matches("li") ? 24 : 0;
+    });
     const items = Array.from({ length: 13 }, (_, i) => row(`ema-${i}`, { label: `EMA ${i}` }));
     await mount(<ChartLegend {...props({ items, collapsed: true })} />);
     await userEvent.click(page.getByRole("button", { name: "Expand Price" }));
     expect(page.getAllByRole("button", { name: /visible$/ })).toHaveLength(7);
+  });
+
+  it("does not steal focus later when the host ignored the removal", async () => {
+    const Host = (): JSX.Element => {
+      const [items, setItems] = useState(ITEMS);
+      return (
+        <>
+          <button type="button" onClick={() => setItems([...ITEMS])}>
+            refresh
+          </button>
+          <ChartLegend {...props({ items, onRemove: () => undefined })} />
+        </>
+      );
+    };
+    await mount(<Host />);
+    await userEvent.click(page.getByRole("button", { name: "Remove EMA 21" }));
+    await userEvent.click(page.getByRole("button", { name: "refresh" }));
+    expect(page.getByRole("button", { name: "refresh" })).toHaveFocus();
   });
 
   it("never announces a value: values reach the legend only through props (BQ-07)", async () => {
