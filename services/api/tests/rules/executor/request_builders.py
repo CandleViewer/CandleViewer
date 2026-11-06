@@ -1,15 +1,23 @@
-"""Builders for the dispatch envelope (24 §11.9), and the executor's ports in memory (E35-T09), for
-the rules tests that need them."""
+"""Builders for the dispatch envelope (24 §11.9), and the executor's ports in memory (E35-T09,
+E35-T10), for the rules tests that need them."""
 
 from __future__ import annotations
 
+import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 from candleviewer.observability.metrics import Metrics
 from candleviewer.rules.executor.metrics import ExecutorMetrics
-from candleviewer.rules.executor.ports import ActionAuditFields, EventRow, RunRow, RunStatus
+from candleviewer.rules.executor.ports import (
+    ActionAuditFields,
+    EventRow,
+    PrincipalView,
+    RunRow,
+    RunStatus,
+)
 from candleviewer.rules.ir.models import Action, RuleScope
 from candleviewer.rules.scope import ActionRequest, ScopeInstanceRef
 
@@ -33,6 +41,57 @@ def action_request(
         "armed_by": str(owner),
     }
     return ActionRequest(**(fields | over))
+
+
+@dataclass
+class Switches:
+    """`RuleSwitches` in memory (E35-T10), open unless a test closes one: B18 is engaged on each
+    account of `engaged`, and on every account (the global verdict) once it holds `None`."""
+
+    enabled: bool = True
+    order_entry: bool = False
+    engaged: set[uuid.UUID | None] = field(default_factory=set)
+    rollout: bool = True
+
+    def rules_enabled(self) -> bool:
+        return self.enabled
+
+    def order_entry_killed(self) -> bool:
+        return self.order_entry
+
+    def kill_switch_engaged(self, account_id: uuid.UUID | None) -> bool:
+        return None in self.engaged or account_id in self.engaged
+
+    def oms_actions(self) -> bool:
+        return self.rollout
+
+
+#: A user's principal snapshot as `Principals` serves it: active, role, Owner, admitted accounts.
+Facts = tuple[bool, str | None, bool, frozenset[uuid.UUID]]
+
+
+@dataclass
+class Principals:
+    """`PrincipalReads` in memory (E35-T10): every user an active Owner admitting `accounts`, read
+    now on `clock`, unless a test gives a user other facts (`facts`), an age in seconds (`ages`),
+    or leaves the user unread (`missing`)."""
+
+    accounts: frozenset[uuid.UUID] = frozenset()
+    facts: dict[uuid.UUID, Facts] = field(default_factory=dict)
+    ages: dict[uuid.UUID, float] = field(default_factory=dict)
+    missing: set[uuid.UUID] = field(default_factory=set)
+    clock: Callable[[], float] = time.monotonic
+
+    def principal(self, user_id: uuid.UUID) -> PrincipalView | None:
+        if user_id in self.missing:
+            return None
+        active, role, is_owner, accounts = self.facts.get(
+            user_id, (True, "owner", True, self.accounts)
+        )
+        return PrincipalView(
+            user_id=user_id, active=active, role=role, is_owner=is_owner, trade_accounts=accounts,
+            read_at=self.clock() - self.ages.get(user_id, 0.0),
+        )  # fmt: skip
 
 
 class Records:

@@ -4,13 +4,16 @@ Reads are synchronous (the evaluator hot path never awaits); the snapshot per ow
 refreshed from a `ScopeSource` before each API authorization and on auth/account events
 (`invalidate`). Fail closed: an owner never loaded has no grants and cannot arm live.
 A grant's freeze is read per (owner, account): one owner's refresh never changes another's answer.
-`exchange_accounts` (E27) does not exist yet, so an account's environment is the process
-environment; E27/E34 replace `account()`/`live_gate_open` bodies, not the port.
+Each granted account's own environment is read with the grants, from `exchange_accounts.env`
+(E35-T10, BQ-3): an account whose environment was not read has none, which the action re-check
+refuses (`environment`, fail closed). E34 replaces the `live_gate_open` body, not the port.
+A refresh publishes only if no `invalidate` of the owner ran while it read: a grant revoked
+meanwhile never comes back with a read that started before it.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol
 from uuid import UUID
@@ -32,38 +35,47 @@ class GrantRow:
 class ScopeSource(Protocol):
     async def load_grants(self, owner: UUID) -> list[tuple[UUID, bool, bool]]: ...
     async def load_permissions(self, owner: UUID) -> frozenset[str]: ...
+    async def load_account_environments(self, account_ids: Sequence[UUID]) -> Mapping[UUID, str]:
+        """Each live account's `exchange_accounts.env`; an account it does not name is unread."""
 
 
 class SnapshotScopeState:
     def __init__(
-        self,
-        source: ScopeSource,
-        environment: str,
-        live_gate_open: Callable[[], bool] = lambda: False,
+        self, source: ScopeSource, live_gate_open: Callable[[], bool] = lambda: False
     ) -> None:
         self._source = source
-        self._env = environment
         self._live_gate = live_gate_open
+        self._generation: dict[UUID, int] = {}  # per owner: bumped by each `invalidate`
         self._grants: dict[UUID, dict[UUID, GrantRow]] = {}
         self._perms: dict[UUID, frozenset[str]] = {}
         self._accounts: dict[UUID, AccountState] = {}  # account-level fields only, no freeze
+        self._envs: dict[UUID, str | None] = {}  # each granted account's environment, as read
 
     async def refresh(self, owner: UUID) -> None:
+        generation = self._generation.get(owner, 0)
         rows = [GrantRow(*t) for t in await self._source.load_grants(owner) if t[1]]
         perms = await self._source.load_permissions(owner)
+        ids = [r.account_id for r in rows]
+        envs = await self._source.load_account_environments(ids) if ids else {}
+        if self._generation.get(owner, 0) != generation:
+            return  # invalidated while it read: the next refresh reads again
         # Load first, publish once: no await below, so a reader sees the old snapshot or the new.
         self._grants[owner] = {r.account_id: r for r in rows}
         self._perms[owner] = perms
+        self._envs.update({a: envs.get(a) for a in ids})
         self._sync_accounts()
 
     def invalidate(self, owner: UUID) -> None:
+        self._generation[owner] = self._generation.get(owner, 0) + 1
         self._grants.pop(owner, None)
         self._perms.pop(owner, None)
         self._sync_accounts()
 
     def _sync_accounts(self) -> None:
         # An account stays while any loaded owner holds a live grant on it; a revoked one goes.
-        self._accounts = {a: AccountState(self._env) for g in self._grants.values() for a in g}
+        self._accounts = {
+            a: AccountState(self._envs.get(a)) for g in self._grants.values() for a in g
+        }
 
     def granted_accounts(self, owner: UUID) -> frozenset[UUID]:
         return frozenset(self._grants.get(owner, {}))

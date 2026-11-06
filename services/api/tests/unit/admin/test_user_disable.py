@@ -768,7 +768,7 @@ async def test_disable_disarms_the_users_armed_rules_through_b9_and_closes_their
         return await real(rule_id, *args, **kwargs)
 
     monkeypatch.setattr(engine.manager, "set_mode", refuse_busy)
-    state = SnapshotScopeState(source, "demo")
+    state = SnapshotScopeState(source)
     await state.refresh(_TARGET)
     assert state.can_arm_live(_TARGET)
     source.disabled = True  # what the store answers once the disable has committed

@@ -18,6 +18,8 @@ from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
 from candleviewer.admin.flags import LIVE_ENABLED, MAINTENANCE_MODE, StoredFlag
+from candleviewer.admin.flags.catalogue import RULES_ENABLED
+from candleviewer.admin.flags.maintenance import KILL_ORDER_ENTRY
 from candleviewer.flags_wiring import FeatureFlagsRuntime, FlagView
 from tests.unit.admin.test_flag_wiring import _OWNER, _runtime
 
@@ -248,3 +250,49 @@ async def test_a_view_poll_dead_before_the_stop_is_still_counted_once() -> None:
     assert view() is False and _stopped() - stopped == 1
     (line,) = [log for log in logs if log["event"] == "flag_view_poll_dead"]
     assert (line["error"], line["cv_page"], line["key"]) == ("returned", True, _LIVE)
+
+
+# --- The rule executor's two switch views (E35-T10, 24 Sec.11.5 checks 2 and 3; BQ-2) -----------
+
+
+async def test_the_rule_switch_views_read_their_fail_closed_values_while_unread_and_latched() -> (
+    None
+):
+    """`rules.enabled` reads off and `killswitch.order_entry` engaged until the store answers; a
+    poll that dies latches each to that value, which no later write's hook, apply or refresh
+    reopens, counted by its key and logged CRITICAL."""
+    runtime = _runtime()
+    enabled, killed = runtime.rules_enabled, runtime.order_entry_killed
+    assert (enabled(), killed()) == (False, True)  # unread: closed
+    enabled._apply(StoredFlag(True))
+    killed._apply(StoredFlag(False))
+    assert (enabled(), killed()) == (True, False)  # read: the stored values
+    gone = {key: _stopped(key) for key in (RULES_ENABLED, KILL_ORDER_ENTRY)}
+    release = asyncio.Event()
+    for view in (enabled, killed):
+
+        async def run(view: FlagView = view) -> None:
+            await release.wait()
+            raise RuntimeError(_ERROR_TEXT)
+
+        view.run = run  # type: ignore[method-assign]  # the fake poll replaces it
+    await runtime.start()
+    polls = [t for t in runtime._view_polls if t.get_name().endswith(("rules.enabled", "_entry"))]
+    assert len(runtime._view_polls) == 5 and len(polls) == 2
+    with capture_logs() as logs:
+        release.set()
+        await asyncio.wait(polls)
+    try:
+        assert (enabled(), killed()) == (False, True)  # latched to their fail-closed values
+        for view, stored in ((enabled, True), (killed, False)):
+            await view.on_change(view.key, None, StoredFlag(stored))
+            view._apply(StoredFlag(stored))
+            await view.refresh()
+        assert (enabled(), killed()) == (False, True)
+        assert {key: _stopped(key) - gone[key] for key in gone} == {
+            RULES_ENABLED: 1, KILL_ORDER_ENTRY: 1,
+        }  # fmt: skip
+        dead = sorted(line["key"] for line in logs if line["event"] == "flag_view_poll_dead")
+        assert dead == sorted((RULES_ENABLED, KILL_ORDER_ENTRY)) and _ERROR_TEXT not in repr(logs)
+    finally:
+        await runtime.stop()

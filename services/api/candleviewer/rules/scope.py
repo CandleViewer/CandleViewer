@@ -40,7 +40,7 @@ EvaluableMode = Literal["simulate", "armed"]
 
 @dataclass(frozen=True, slots=True)
 class AccountState:
-    environment: str
+    environment: str | None  # `exchange_accounts.env`; None while it was not read (E35-T10)
     enabled: bool = True
     frozen: bool = False  # the reading owner's own grant is frozen: per (owner, account)
     allowed_symbols: frozenset[str] | None = None  # None = no profile restriction (E28)
@@ -164,6 +164,11 @@ class ScopeResolver:
             reason = "grant_revoked"
         else:
             reason = self._account_reason(owner, instance.account_id, instance.symbol)
+            acct = self._state.account(owner, instance.account_id)
+            if reason is None and (acct is None or acct.environment != environment):
+                # C-2.11, BQ-3 (E35-T10): another environment's account, or one whose
+                # environment was not read, is refused before the OMS (fail closed).
+                reason = "environment"
         if reason is None and _outside_scope(scope, instance):
             reason = "out_of_scope"  # action targets an account/symbol outside the rule's scope
         if reason is None:
@@ -320,13 +325,18 @@ ActionSink = Callable[[ActionRequest], Awaitable[None]]
 
 
 class ScopedActionEmitter:
-    """Single evaluator-output boundary: every action passes the scope gate BEFORE the sink."""
+    """Single evaluator-output boundary: every action passes the scope gate BEFORE the sink.
+    `emit_checked` answers the gate's refusal reason, or `None` once the action has gone to the
+    sink (E35-T10: the executor records its own `blocked_by` from it); `emit` is its bool."""
 
     def __init__(self, resolver: ScopeResolver, audit: AuditSink, sink: ActionSink) -> None:
         self._resolver, self._audit, self._sink = resolver, audit, sink
         self.denied_total = 0  # rule_action_scope_denied_total
 
     async def emit(self, req: ActionRequest) -> bool:
+        return await self.emit_checked(req) is None
+
+    async def emit_checked(self, req: ActionRequest) -> Reason | None:
         reason = self._resolver.check_action(
             req.rule_scope, req.owner, req.environment, req.instance
         )
@@ -343,16 +353,17 @@ class ScopedActionEmitter:
                     "scope_before": req.rule_scope.model_dump_json(),
                 },
             )
-            return False
+            return reason
         await self._sink(req)
-        return True
+        return None
 
-    async def binding_skipped(self, req: ActionRequest) -> bool:
+    async def binding_skipped(self, req: ActionRequest) -> str:
         """The one record of an episode of evaluations skipped because the instance may not read
         a metric ref the rule names (`BINDING_CAUSE`): its cause and the instance it names, never
         a metric value or another account (so not the rule's scope either). Nothing is sent and
         no action is refused: the rule was not evaluated. Not counted in `denied_total`, which
-        counts the gate's refusals."""
+        counts the gate's refusals. It answers `BINDING_CAUSE`, never `None`, which
+        `emit_checked` answers only once an action has gone to the sink."""
         await self._audit(
             "rule_action_scope_denied",
             {
@@ -363,4 +374,4 @@ class ScopedActionEmitter:
                 "symbol": str(req.instance.symbol),
             },
         )
-        return False
+        return BINDING_CAUSE
