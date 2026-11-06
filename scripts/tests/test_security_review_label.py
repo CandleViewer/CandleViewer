@@ -61,6 +61,11 @@ SECURITY = [
     "apps/web/src/features/admin/write/writeCall.ts",
     "apps/web/src/features/admin/write/stepUpHost.tsx",
     "apps/web/src/features/admin/write/idempotency.ts",
+    # and the users client, which sends every users write's target, body and flags and hands the
+    # created invite's link to its caller alone (S-1023-01), with the vetting of its answers: the
+    # UUID check behind each target and the invite link's path rule (S-1023-d03)
+    "apps/web/src/features/admin/users/usersApi.ts",
+    "apps/web/src/features/admin/users/vet.ts",
     "apps/web/src/features/sessions/SessionsScreen.tsx",  # a future slice, before the list names it
     "apps/web/src/lib/session/store.ts",
     "package.json",
