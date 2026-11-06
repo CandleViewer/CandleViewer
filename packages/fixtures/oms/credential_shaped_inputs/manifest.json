@@ -1,0 +1,47 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "credential_shaped_inputs",
+  "origin": "threat model AC-15",
+  "description": "AC-15 (OM-I05) templates. Every secret-shaped value is a `{{slot}}` placeholder, filled from a seed at test time (`render(seed)`) and never committed: the file parses as it stands and holds nothing a scanner reads as a credential. The inputs are an error text that echoes `X-BAPI-API-KEY`, `X-BAPI-SIGN`, the timestamp and receive-window headers (create); one that echoes a signed URL (cancel); one that echoes a letters-only key (amend); a refused `auth` reply that echoes the `auth` frame and the key in its message and a connection id; and an execution push with a letters-only key and a symbol-shaped key under two fields of its row the redactor does not know.",
+  "environment": "demo",
+  "evidence": "derived",
+  "rules": [],
+  "cases": ["E29-TC-653", "E29-TC-801"],
+  "rest": {
+    "POST /v5/order/create": { "payload": "echo_headers.json" },
+    "POST /v5/order/cancel": { "payload": "echo_url.json" },
+    "POST /v5/order/amend": { "payload": "echo_letters.json" }
+  },
+  "ws": { "private": ["frames.jsonl"] },
+  "slots": {
+    "api_key": { "shape": "alnum", "length": 18 },
+    "signature": { "shape": "hex", "length": 64 },
+    "timestamp": { "shape": "digits", "length": 13 },
+    "expires": { "shape": "digits", "length": 13 },
+    "letters_key": { "shape": "letters", "length": 20 },
+    "symbol_key": { "shape": "symbol", "length": 20 }
+  },
+  "files": {
+    "echo_headers.json": {
+      "derived_from": ["../bybit/2026-10-05/rest/trading-error-110072.json"],
+      "derivation": "The transcribed `110072` row with its message text followed by an echo of four request headers, three of them placeholders and the receive window 5000. The code is unchanged."
+    },
+    "echo_url.json": {
+      "derived_from": ["../bybit/2026-10-05/rest/trading-error-110001.json"],
+      "derivation": "The transcribed `110001` row with its message text followed by a signed URL whose key, timestamp and signature are placeholders. The code is unchanged."
+    },
+    "echo_letters.json": {
+      "derived_from": ["../bybit/2026-10-05/rest/trading-error-110001.json"],
+      "derivation": "The transcribed `110001` row with its message text followed by a placeholder letters-only key. The code is unchanged."
+    },
+    "frames.jsonl": {
+      "derived_from": [
+        "../bybit/2026-10-05/ws/private-auth-ok.jsonl",
+        "../bybit/2026-10-05/ws/private-execution.jsonl"
+      ],
+      "derivation": "Line 1: the transcribed `auth` reply with `success` false, its message an echo of a key, a signature and an `auth` frame (all placeholders) and a letters-only key, and its connection id a placeholder. Line 2: the transcribed execution push with two values changed, `blockTradeId` a placeholder letters-only key and `tradeIv` a placeholder symbol-shaped key. No key is added or dropped."
+    }
+  },
+  "expected": "None of the inputs appears in `order_events`, `include_events`, diagnostics, audit rows or logs; a key-shaped token the exchange echoes is masked by the store, and a masked echo still reads as the row it is (AC-15, OM-I05).",
+  "consumers": ["E29-X02", "E29-Q02"]
+}

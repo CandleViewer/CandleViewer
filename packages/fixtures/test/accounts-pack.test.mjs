@@ -410,7 +410,7 @@ describe("the accounts pack", () => {
   it("is inside the package redaction gate, and the gate passes over the whole package", () => {
     const { files, findings } = verifyDirectories(SCAN_DIRS, KEY_SHAPE_DIRS);
     expect(findings).toEqual([]);
-    expect(KEY_SHAPE_DIRS).toEqual([ACCOUNTS_DIR]);
+    expect(KEY_SHAPE_DIRS).toEqual([ACCOUNTS_DIR, join(packageRoot, "oms")]); // E29-Q01 joined
     expect(files).toContain(join(ACCOUNTS_DIR, "compliant", "manifest.json"));
     expect(files).toContain(join(ACCOUNTS_DIR, "_base", "query_api.json"));
   });
@@ -446,6 +446,7 @@ describe("planted failures on a copy of the pack", () => {
     cpSync(ACCOUNTS_DIR, pack(), { recursive: true });
     const corpus = join("bybit", "2026-10-05", "rest");
     cpSync(join(packageRoot, corpus), join(sandbox, corpus), { recursive: true });
+    cpSync(join(packageRoot, "oms"), join(sandbox, "oms"), { recursive: true }); // E29-Q01's checks
   };
 
   afterEach(() => rmSync(sandbox, { recursive: true, force: true }));

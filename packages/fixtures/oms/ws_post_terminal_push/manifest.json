@@ -1,0 +1,22 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "ws_post_terminal_push",
+  "origin": "ticket",
+  "description": "A BTCUSDT limit buy of 0.1 at 95900.1 filled in full (an execution, then `Filled`), then four pushes after it ended: a `Cancelled` row, a `Filled` echo, a `New` echo and a late fill of 0.01 (derived frames, in that order).",
+  "environment": "demo",
+  "evidence": "derived",
+  "rules": ["S6"],
+  "cases": ["E29-TC-454", "E29-TC-554"],
+  "ws": { "private": ["frames.jsonl"] },
+  "files": {
+    "frames.jsonl": {
+      "derived_from": [
+        "../bybit/2026-10-05/ws/private-order.jsonl",
+        "../bybit/2026-10-05/ws/private-execution.jsonl"
+      ],
+      "derivation": "Order rows: the transcribed option order push with these values changed and no key added or dropped: symbol and category (BTCUSDT, linear), order and link ids, side, order type, time in force, price, quantity, status, executed quantity, value and fee, remaining quantity and value, average price, created and updated times, and the push id and creation time. Execution pushes: the transcribed linear execution push with these values changed and no key added or dropped: order and link ids, execution id, side, order type, quantity, price, value, fee, order price and quantity, remaining quantity, closed size and execution PnL (an opening fill: zero), times and sequence, and the push id and creation time. Order ids are UUID-shaped fabrications; link ids are of the `OUR_ID` form (24 section 8.3) for trade group 0f8e2b6c-3d4a-4b5c-9e7f-1a2b3c4d5e6f and account a1000000-0000-4000-8000-000000000001, the fixture ids of `tests/unit/oms/stream_world.py`; times count from 1746270400000 ms. Frame 2 also changes the cancel type to `CancelByUser`, a value the strict order model reads."
+    }
+  },
+  "expected": "The order and its `events[]` stay as they were: one `oms.reconcile_anomaly` record (`POST_TERMINAL_PUSH`) per push that moves a state is audited and an alert is raised; a `Filled` or `New` echo maps to no event, so it is no anomaly (E29-T03, \"Terminal state is immutable\"; E29-T05, \"A push after the order ended is an anomaly\").",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

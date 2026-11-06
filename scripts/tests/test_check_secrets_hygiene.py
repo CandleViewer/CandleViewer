@@ -931,6 +931,7 @@ def test_leaky_job_output_fails_log_scan_and_ci_wires_it(tmp_path: Path) -> None
 # E27-Q01 (#833): the bare key-shape rule over the accounts fault-injection pack. Tokens are
 # built at run time, so no key-shaped literal sits in this file.
 PACK = "packages/fixtures/accounts"
+OMS_PACK = "packages/fixtures/oms"  # E29-Q01 (#844) joined the rule
 
 
 def _alnum(n: int) -> str:
@@ -1000,7 +1001,22 @@ def test_key_shape_rule_scans_every_pack_file_even_test_named_ones(tmp_path: Pat
     assert len(h.check_fixtures(tmp_path)) == 2
 
 
-def test_key_shape_rule_is_scoped_to_the_accounts_pack(tmp_path: Path) -> None:
+def test_bare_key_shape_in_the_oms_pack_fails_without_echoing_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    token = _alnum(20)
+    _write(tmp_path, f"{OMS_PACK}/x/manifest.json", f'{{"expected": "echoes {token} here"}}')
+    assert h.check_fixtures(tmp_path) == [
+        (
+            f"{OMS_PACK}/x/manifest.json: bare api-key-shaped token (20 chars at offset 21);"
+            " the token is never printed (E27-Q01)"
+        )
+    ]
+    assert h.main(["fixtures", "--root", str(tmp_path)]) == 1
+    assert token not in capsys.readouterr().err
+
+
+def test_key_shape_rule_is_scoped_to_the_two_packs(tmp_path: Path) -> None:
     _write(tmp_path, "packages/fixtures/bybit/x.json", f'{{"note": "{_alnum(20)}"}}')
     assert h.check_fixtures(tmp_path) == []
 
@@ -1012,3 +1028,8 @@ def test_the_rule_matches_the_pack_checks_in_the_js_lane() -> None:
     ).read_text(encoding="utf-8")
     assert f"export const MIXED_CASE_MIN = {h._MIXED_CASE_MIN};" in js
     assert "const TOKEN = /[A-Za-z0-9_-]+/g;" in js
+    verify = (
+        Path(__file__).resolve().parents[2] / "packages/fixtures/scripts/verify.mjs"
+    ).read_text(encoding="utf-8")  # the JS gate lists the same two packs, by name
+    assert "const KEY_SHAPE_PACKS = [PACK_DIR, OMS_PACK_DIR];" in verify
+    assert h._KEY_SHAPE_DIRS == (PACK, OMS_PACK)

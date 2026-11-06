@@ -6,9 +6,10 @@ whole: the REST stubs, the private-WS frames, the faults laid over them. The cor
 delivers are read through `tests._corpus`, the one door every test uses to the shared corpus.
 
 Offline and deterministic by construction: the loader opens files and nothing else (no socket, no
-clock, no randomness, no cache), so two loads of one scenario are byte-identical (`canonical()`).
-Everything is the pack's own data; no value here is a venue fact: what a scenario's evidence class
-means is in the pack's README.
+clock, no cache), so two loads of one scenario are byte-identical (`canonical()`). The one draw is a
+template's: `render(seed)` fills its slots from the seed alone, so a seed always gives the same
+values (the AC-15 templates, README). Everything is the pack's own data; no value here is a venue
+fact: what a scenario's evidence class means is in the pack's README.
 """
 
 from __future__ import annotations
@@ -16,8 +17,10 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-from collections.abc import Mapping
-from dataclasses import dataclass
+import re
+import string
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Final
 
@@ -30,12 +33,15 @@ __all__ = [
     "EVIDENCE_RANK",
     "MANIFEST",
     "PACK_ROOT",
+    "PLACEHOLDER",
     "SCHEMA",
     "Injection",
     "PackError",
+    "Rendered",
     "RestReply",
     "Scenario",
     "UnstubbedCall",
+    "generate",
     "load",
     "manifest",
     "path_of",
@@ -50,6 +56,18 @@ SCHEMA: Final = "manifest.schema.json"
 EVIDENCE_RANK: Final = {"derived": 0, "docs-transcribed": 1, "recorded": 2}
 WS_FAULTS: Final = frozenset({"drop", "duplicate", "reorder"})
 REST_FAULTS: Final = frozenset({"timeout", "http_5xx"})
+#: A template's slot as a delivered file writes it: `{{name}}`.
+PLACEHOLDER: Final = re.compile(r"\{\{([a-z][a-z0-9_]*)\}\}")
+#: What a slot's `shape` draws from, and the shortest value that shows each shape.
+ALPHABETS: Final = {
+    "alnum": string.ascii_letters + string.digits,
+    "letters": string.ascii_letters,
+    "symbol": string.ascii_uppercase + string.digits,
+    "hex": "0123456789abcdef",
+    "digits": string.digits,
+}
+SHAPE_MIN: Final = {"alnum": 2, "letters": 12, "symbol": 5, "hex": 1, "digits": 1}
+SYMBOL_SUFFIX: Final = "USDT"
 
 
 class PackError(ValueError):
@@ -129,6 +147,60 @@ class Scenario:
         }
         return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
+    def render(self, seed: str) -> Rendered:
+        """The delivered frames and every reply body with each slot filled by a value drawn in
+        memory from `seed` alone (the README's AC-15 templates); no slots, no change."""
+        slots = self.manifest.get("slots", {})
+        values = {n: generate(seed, n, s["shape"], s["length"]) for n, s in slots.items()}
+
+        def fill(text: str) -> str:
+            return PLACEHOLDER.sub(lambda m: values[m[1]], text)
+
+        replies = {
+            call: dataclasses.replace(r, body=json.loads(fill(json.dumps(r.body))))
+            for call, r in self.replies.items()
+        }
+        return Rendered(self.name, tuple(map(fill, self.delivered_frames())), replies, values)
+
+
+@dataclass(frozen=True)
+class Rendered:
+    """A rendered template. Its text and values are out of `repr`, and `leaks` names slots, so a
+    failing test never prints a generated value."""
+
+    name: str
+    frames: tuple[str, ...] = field(repr=False)
+    replies: Mapping[str, RestReply] = field(repr=False)
+    values: Mapping[str, str] = field(repr=False)
+
+    def leaks(self, *texts: str) -> list[str]:
+        """The slots whose generated value is in any of `texts`: names only, never a value."""
+        return sorted(n for n, v in self.values.items() if any(v in t for t in texts))
+
+
+def _draws(seed: str, slot: str) -> Iterator[int]:
+    """An endless run of bytes fixed by the seed and the slot's name alone."""
+    block = 0
+    while True:
+        yield from hashlib.sha256(f"{seed}/{slot}/{block}".encode()).digest()
+        block += 1
+
+
+def generate(seed: str, slot: str, shape: str, length: int) -> str:
+    """One slot's value: `length` characters of `shape`, drawn from `seed` and `slot` alone. An
+    `alnum` value holds a letter and a digit; a `letters` one starts with six capitals and six
+    small letters; a `symbol` one ends `USDT`; a `digits` one has no leading zero."""
+    pool, draw = ALPHABETS[shape], _draws(seed, slot)
+    body = length - len(SYMBOL_SUFFIX) if shape == "symbol" else length
+    chars = [pool[next(draw) % len(pool)] for _ in range(body)]
+    if shape == "alnum":
+        chars[0], chars[1] = string.ascii_letters[next(draw) % 52], string.digits[next(draw) % 10]
+    elif shape == "letters":
+        chars[:12] = [c.upper() if i < 6 else c.lower() for i, c in enumerate(chars[:12])]
+    elif shape == "digits":
+        chars[0] = "123456789"[next(draw) % 9]
+    return "".join(chars) + (SYMBOL_SUFFIX if shape == "symbol" else "")
+
 
 def schema(root: Path = PACK_ROOT) -> dict[str, Any]:
     data: dict[str, Any] = json.loads((root / SCHEMA).read_text(encoding="utf-8"))
@@ -181,6 +253,7 @@ class _Reader:
         self.root = root
         self.manifest = manifest(name, root)
         self.files: dict[str, str] = {}
+        self.own: dict[str, str] = {}  # the text of each file of the scenario's own directory
 
     def scenario(self) -> Scenario:
         self._schema()
@@ -194,6 +267,7 @@ class _Reader:
         if not replies and not frames:
             raise PackError(f"{self.name}: delivers nothing (no rest stub, no ws frame)")
         self._evidence(replies, m.get("ws", {}).get("private", []))
+        self._slots()
         injections = self._injections(replies, len(frames))
         return Scenario(self.name, m, frames, replies, injections, dict(self.files))
 
@@ -217,9 +291,12 @@ class _Reader:
         raw = path.read_bytes()
         self.files[ref] = hashlib.sha256(raw).hexdigest()
         try:
-            return raw.decode("utf-8")
+            text = raw.decode("utf-8")
         except UnicodeDecodeError as error:
             raise self._fail(f"{ref} is not UTF-8") from error
+        if "/" not in ref:
+            self.own[ref] = text
+        return text
 
     def _declared(self, declared: Mapping[str, Any]) -> None:
         """Every file of the directory is declared, delivered and derived from files that exist."""
@@ -262,6 +339,25 @@ class _Reader:
             except ValueError as error:
                 raise self._fail(f"{ref} line {number} is not JSON ({error})") from error
         return lines
+
+    def _slots(self) -> None:
+        """A template's placeholders and its `slots` agree: every placeholder a file of the
+        scenario writes is a declared slot, every slot is used, and no `{{` or `}}` is left
+        over. Only slot names are ever named here, never a value."""
+        slots: Mapping[str, Any] = self.manifest.get("slots", {})
+        used: set[str] = set()
+        for ref, text in self.own.items():
+            used |= set(PLACEHOLDER.findall(text))
+            if "{{" in (rest := PLACEHOLDER.sub("", text)) or "}}" in rest:
+                raise self._fail(f"{ref} holds a placeholder that is not {{{{name}}}}")
+        for slot in sorted(used - slots.keys()):
+            raise self._fail(f"the placeholder {{{{{slot}}}}} has no entry under `slots`")
+        for slot in sorted(slots.keys() - used):
+            raise self._fail(f"the slot {slot!r} is declared but no file uses it")
+        for slot, entry in slots.items():
+            shape, length = entry["shape"], entry["length"]
+            if length < SHAPE_MIN[shape] or (shape == "symbol" and length > 20):
+                raise self._fail(f"the slot {slot!r} cannot hold a {shape} value of {length}")
 
     def _evidence(self, replies: Mapping[str, RestReply], ws: list[str]) -> None:
         """The declared class is the weakest class of what the scenario delivers."""

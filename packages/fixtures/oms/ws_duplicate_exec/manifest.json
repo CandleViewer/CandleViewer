@@ -6,7 +6,7 @@
   "environment": "demo",
   "evidence": "derived",
   "rules": ["S4"],
-  "cases": [],
+  "cases": ["E29-TC-202", "E29-TC-255", "E29-TC-453", "E29-TC-553"],
   "ws": { "private": ["frames.jsonl"] },
   "files": {
     "frames.jsonl": {

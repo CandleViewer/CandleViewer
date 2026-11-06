@@ -1,0 +1,15 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "rest_position_list",
+  "origin": "ticket",
+  "description": "The position read, `GET /v5/position/list`: the transcribed reply, one inverse BTCUSD short (the corpus holds no linear position row, so the adapter's linear page refuses it). Nothing is derived. Docs-transcribed: K01's flatten reads replace it.",
+  "environment": "demo",
+  "evidence": "docs-transcribed",
+  "rules": [],
+  "cases": ["E29-TC-602", "E29-TC-604", "E29-TC-702"],
+  "rest": {
+    "GET /v5/position/list": { "payload": "../bybit/2026-10-05/rest/trading-position-list.json" }
+  },
+  "expected": "Exchange truth wins and is explained: a position the exchange reports smaller than the local one reads as the exchange's, with one `oms.account_desync` notice for the pass; a position with no exchange-side stop is repaired from a recorded stop or paged, never given a stop the OMS has no record for (E29-T06, \"Exchange truth wins and is explained\", \"A naked position is repaired\"; E29-T08, \"A naked position is detected within the deadline\").",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

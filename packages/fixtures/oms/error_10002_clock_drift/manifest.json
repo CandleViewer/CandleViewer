@@ -1,0 +1,16 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "error_10002_clock_drift",
+  "origin": "ticket",
+  "description": "The documented `10002` shape (`rest/error_10002.json`, built by the corpus builder from the documentation on a kline route) answering a read, `GET /v5/order/realtime`, and a create, `POST /v5/order/create`. The two routes are the scenario's choice: no order route answers `10002` in the corpus. Nothing is derived.",
+  "environment": "demo",
+  "evidence": "derived",
+  "rules": [],
+  "cases": ["E29-TC-804"],
+  "rest": {
+    "GET /v5/order/realtime": { "payload": "../bybit/2026-10-05/rest/error_10002.json" },
+    "POST /v5/order/create": { "payload": "../bybit/2026-10-05/rest/error_10002.json" }
+  },
+  "expected": "A `10002` is retried exactly once, then raises a clock-drift error; order entry halts system-wide until a measurement younger than the trip is healthy, and a create whose own answer is `10002` is `rejected` and starts the halt (the R3 fixture class \"clock skew\").",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

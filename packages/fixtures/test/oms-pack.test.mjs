@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertSupportedSchema, validateSchema } from "../scripts/accounts-pack.mjs";
-import { SCAN_DIRS, verifyDirectories } from "../scripts/verify.mjs";
+import { KEY_SHAPE_DIRS, SCAN_DIRS, runVerify, verifyDirectories } from "../scripts/verify.mjs";
 
 // E29-Q01: the OMS scenario pack (packages/fixtures/oms/) is inside the package redaction gate.
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -35,6 +35,28 @@ describe("the OMS scenario pack in the redaction gate", () => {
       const { findings } = verifyDirectories([pack]);
       expect(findings).toEqual([{ file: leak, pattern: "Bybit-style api key/secret field" }]);
       expect(JSON.stringify(findings)).not.toContain(value);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a bare key-shaped token planted in a copy of the pack, by file and shape, never the token", () => {
+    expect(KEY_SHAPE_DIRS).toContain(OMS_DIR);
+    const sandbox = mkdtempSync(join(tmpdir(), "oms-pack-"));
+    try {
+      const pack = join(sandbox, "oms");
+      cpSync(OMS_DIR, pack, { recursive: true });
+      expect(verifyDirectories([pack], [pack]).findings).toEqual([]);
+      const token = "aB3".repeat(7).slice(0, 20); // 20 letters and digits: a key's shape
+      const leak = join(pack, "ws_duplicate_exec", "notes.txt");
+      writeFileSync(leak, `a retMsg that echoes ${token} in prose`);
+      const { findings } = verifyDirectories([pack], [pack]);
+      expect(findings).toEqual([{ file: leak, pattern: "bare api-key-shaped token at offset 21" }]);
+      expect(JSON.stringify(findings)).not.toContain(token);
+      // the gate the lint script runs reads its own list, not only the export: plant under a root
+      const root = join(sandbox, "root");
+      cpSync(pack, join(root, "oms"), { recursive: true });
+      expect(runVerify(root).findings.map((f) => f.pattern)).toEqual([findings[0].pattern]);
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }

@@ -1,0 +1,15 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "rest_order_realtime",
+  "origin": "ticket",
+  "description": "The open-order read, `GET /v5/order/realtime`: the transcribed reply, one open ETHUSDT limit order with TP/SL under a foreign link id and a next-page cursor that the port's walk refuses to see twice. Nothing is derived. Docs-transcribed: K01's recorded read replaces it.",
+  "environment": "demo",
+  "evidence": "docs-transcribed",
+  "rules": ["S1", "S9"],
+  "cases": ["E29-TC-600", "E29-TC-603"],
+  "rest": {
+    "GET /v5/order/realtime": { "payload": "../bybit/2026-10-05/rest/trading-order-realtime.json" }
+  },
+  "expected": "A found order that passes the full match is adopted with no second create, and an order that matches no row is stored `untracked`: listed by REST, absent from the WS snapshot and never managed (E29-T06, \"Unknown resolves without resubmission\", \"Manual exchange orders are adopted, not managed\").",
+  "consumers": ["E29-Q02", "E29-Q04", "E29-X02"]
+}

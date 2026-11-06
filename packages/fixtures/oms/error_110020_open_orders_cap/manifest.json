@@ -1,0 +1,15 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "error_110020_open_orders_cap",
+  "origin": "ticket",
+  "description": "The transcribed error-table row `110020` (code and text only) answering `POST /v5/order/create`, the call this corpus labels it with. Nothing is derived. It is not recordable (it needs 500 open orders), so it stays transcribed (ruling BQ-4).",
+  "environment": "demo",
+  "evidence": "docs-transcribed",
+  "rules": [],
+  "cases": ["E29-TC-809"],
+  "rest": {
+    "POST /v5/order/create": { "payload": "../bybit/2026-10-05/rest/trading-error-110020.json" }
+  },
+  "expected": "`110020` is rejected, not retried (the R3 fixture class \"rejections\").",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

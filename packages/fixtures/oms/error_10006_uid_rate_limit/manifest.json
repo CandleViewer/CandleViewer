@@ -1,0 +1,15 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "error_10006_uid_rate_limit",
+  "origin": "ticket",
+  "description": "The transcribed error-table row `10006` (code and text only) answering `POST /v5/order/create`, the call this corpus labels it with: the table names none, and a per-UID limit can answer any. Nothing is derived. A per-UID burst is unsafe to provoke, so it stays transcribed (ruling BQ-4).",
+  "environment": "demo",
+  "evidence": "docs-transcribed",
+  "rules": [],
+  "cases": ["E29-TC-805"],
+  "rest": {
+    "POST /v5/order/create": { "payload": "../bybit/2026-10-05/rest/trading-error-10006.json" }
+  },
+  "expected": "`10006` feeds the token bucket and backs off with jitter; a create the per-UID budget refuses is `rejected` with `RATE_BUDGET_EXCEEDED`, answered `429 exchange_rate_limited` and never `unknown` (the R3 fixture class \"`10018` rate-limit\").",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

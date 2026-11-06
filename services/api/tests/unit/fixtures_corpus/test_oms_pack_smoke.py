@@ -2,16 +2,20 @@
 
 Every scenario directory of `packages/fixtures/oms/` is checked by name, so a scenario added later
 is covered with no edit here: its manifest meets the schema, every file it reads parses, every
-derived file names sources that exist, its evidence class is the corpus's, two loads of it are
-byte-identical, and loading it touches no network. Derived files are outside the corpus drift
-check (`tests/contract/bybit/test_contract_trading_drift.py`), so this is the only parse check they
-get. The loader's own rules are driven on planted scenarios in a temporary pack.
+derived file names sources that exist and keeps their shape, its evidence class is the corpus's,
+it names the plan's cases, two loads of it are byte-identical, and loading it touches no network.
+Derived files are outside the corpus drift check
+(`tests/contract/bybit/test_contract_trading_drift.py`), so this is the only parse check they
+get. A template's slots (the AC-15 inputs) fill from a seed and leak no value. The loader's own
+rules are driven on planted scenarios in a temporary pack.
 """
 
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
+import re
 import shutil
 import socket
 from pathlib import Path
@@ -23,6 +27,7 @@ from jsonschema import Draft202012Validator
 from tests import _oms_fixtures as pack
 from tests._corpus import CORPUS_ROOT
 from tests._oms_fixtures import PackError, UnstubbedCall, load, path_of, scenario_names
+from tests.contract.bybit.test_contract_trading_drift import disagreements
 
 NAMES = scenario_names()
 CORPUS = f"../{CORPUS_ROOT.name}/2026-10-05"
@@ -70,6 +75,30 @@ def test_a_derived_file_names_sources_that_exist(name: str) -> None:
         assert entry["derived_from"], ref
         for source in entry["derived_from"]:
             assert path_of(name, source).is_file(), f"{ref} is derived from {source}"
+
+
+def kind(frame: dict[str, Any]) -> str:
+    """What a frame is of: its topic, its reply `op`, or `body` (a REST reply)."""
+    return str(frame.get("topic") or frame.get("op") or "body")
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_a_derived_file_keeps_the_shape_of_the_corpus_file_of_its_kind(name: str) -> None:
+    """Never invent a payload shape (README): each derived frame or body has the field paths and
+    JSON types of its source's frame of the same kind: values changed, no key added or dropped."""
+    for ref, entry in pack.manifest(name).get("files", {}).items():
+        texts = [path_of(name, s).read_text(encoding="utf-8") for s in entry["derived_from"]]
+        sources = [json.loads(line) for text in texts for line in text.splitlines()]
+        for line in path_of(name, ref).read_text(encoding="utf-8").splitlines():
+            frame = json.loads(line)
+            [source] = [s for s in sources if kind(s) == kind(frame)]
+            assert disagreements(source, frame) == [], f"{name}/{ref}"
+
+
+def test_the_pack_loads_byte_identically_in_any_order() -> None:
+    forward = {name: load(name).canonical() for name in NAMES}
+    backward = {name: load(name).canonical() for name in reversed(NAMES)}
+    assert forward == backward
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -390,3 +419,93 @@ def test_a_scenario_with_faults_loads_byte_identically(root: Path) -> None:
     frames_scenario(root, "faulty", FRAMES, inject=faults)
     assert load("faulty", root).canonical() == load("faulty", root).canonical()
     assert [json.loads(f)["n"] for f in load("faulty", root).delivered_frames()] == [1, 1, 0, 2, 3]
+
+
+# -- the AC-15 templates: slots, a seed and no leaked value -------------------------------------
+
+TEMPLATE = "credential_shaped_inputs"
+SHAPES = {
+    "alnum": r"(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9]+",
+    "letters": r"[A-Z]{6}[a-z]{6}[A-Za-z]*",
+    "symbol": r"[A-Z0-9]+USDT",
+    "hex": r"[0-9a-f]+",
+    "digits": r"[1-9][0-9]*",
+}
+
+
+def test_a_template_s_slots_are_the_placeholders_of_its_files_and_draw_their_shape() -> None:
+    scenario = load(TEMPLATE)
+    slots = scenario.manifest["slots"]
+    texts = [path_of(TEMPLATE, f).read_text(encoding="utf-8") for f in scenario.manifest["files"]]
+    assert {m for text in texts for m in pack.PLACEHOLDER.findall(text)} == set(slots)
+    for name, slot in slots.items():
+        for seed in range(60):  # a leading zero or a missing digit shows for some seeds only
+            value = pack.generate(f"s{seed}", name, slot["shape"], slot["length"])
+            assert len(value) == slot["length"] and re.fullmatch(SHAPES[slot["shape"]], value), name
+
+
+def test_a_short_alnum_value_still_holds_a_letter_and_a_digit() -> None:
+    values = [pack.generate(f"s{n}", "k", "alnum", 2) for n in range(40)]
+    assert all(re.fullmatch(SHAPES["alnum"], value) for value in values)
+
+
+def test_a_rendered_template_is_fixed_by_its_seed_and_leaks_no_value() -> None:
+    scenario = load(TEMPLATE)
+    one, again, other = (scenario.render(s) for s in ("seed-one", "seed-one", "seed-two"))
+    parts = ((r.frames, r.replies, r.values) for r in (one, again, other))
+    d_one, d_again, d_other = (hashlib.sha256(repr(p).encode()).digest() for p in parts)
+    assert d_one == d_again and d_one != d_other  # hashes: a failing run prints no value
+    assert one.values.keys() == other.values.keys()
+    distinct, slots = len(set(one.values.values())), len(one.values)
+    assert distinct == slots  # the slot's name is in the draw: no two slots share a value
+    text = "".join(one.frames) + json.dumps([r.body for r in one.replies.values()])
+    assert "{{" not in text and "}}" not in text  # every placeholder is filled
+    assert all(isinstance(json.loads(frame), dict) for frame in one.frames)
+    committed = [p.read_text(encoding="utf-8") for p in (pack.PACK_ROOT / TEMPLATE).iterdir()]
+    assert (one.leaks(text), one.leaks(*committed)) == (sorted(one.values), [])
+    assert one.leaks(f"seen {one.values['api_key']}") == ["api_key"]  # the name, never the value
+    assert not any(value in repr(one) for value in one.values.values())
+
+
+def test_a_scenario_without_slots_renders_as_it_is() -> None:
+    scenario = load("ws_duplicate_exec")
+    assert (scenario.render("any").frames, scenario.render("any").values) == (
+        scenario.delivered_frames(),
+        {},
+    )
+
+
+HEX = {"one": {"shape": "hex", "length": 8}}
+
+
+def template(root: Path, name: str, text: str, slots: dict[str, Any]) -> None:
+    """Scenario `name` delivering one derived `reply.json` holding `text`, its `slots` named."""
+    derived = {"derived_from": [TRANSCRIBED_REST], "derivation": "planted"}
+    own: dict[str, Any] = {"evidence": "derived", "files": {"reply.json": derived}, "slots": slots}
+    plant(root, name, {"reply.json": text}, rest={CREATE: {"payload": "reply.json"}}, **own)
+
+
+@pytest.mark.parametrize(
+    ("text", "slots", "rule"),
+    [
+        ('{"n":"{{one}}"}\n', {}, r"the placeholder \{\{one\}\} has no entry under `slots`"),
+        ('{"n":"x"}\n', HEX, "the slot 'one' is declared but no file uses it"),
+        ('{"n":"{{One}}"}\n', {}, "holds a placeholder that is not"),
+        ('{"n":"}} {{one}}"}\n', HEX, "holds a placeholder that is not"),
+        ('{"n":"{{one}}"}\n', {"one": {"shape": "letters", "length": 8}}, "cannot hold a letters"),
+        ('{"n":"{{one}}"}\n', {"one": {"shape": "symbol", "length": 21}}, "cannot hold a symbol"),
+    ],
+)
+def test_a_template_whose_placeholders_and_slots_disagree_is_refused(
+    root: Path, text: str, slots: dict[str, Any], rule: str
+) -> None:
+    template(root, "bad", text, slots)
+    refused(root, "bad", rule)
+
+
+def test_a_template_with_its_slots_loads_as_committed_and_renders_filled(root: Path) -> None:
+    slots = HEX | {"two": {"shape": "digits", "length": 5}}
+    template(root, "good", '{"n":"{{one}}-{{two}}-{{one}}"}\n', slots)
+    one, two = (load("good", root).render("s").values[k] for k in ("one", "two"))
+    assert load("good", root).render("s").replies[CREATE].body == {"n": f"{one}-{two}-{one}"}
+    assert load("good", root).replies[CREATE].body == {"n": "{{one}}-{{two}}-{{one}}"}

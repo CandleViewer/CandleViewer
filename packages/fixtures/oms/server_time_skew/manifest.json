@@ -1,0 +1,21 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "server_time_skew",
+  "origin": "plan",
+  "description": "The venue's clock 30 s ahead of the documented instant: `rest/server_time.json` (a documented shape built by the corpus builder) with its three time fields moved 30 s later, answering `GET /v5/market/time`. The harness holds the host's fake clock at the documented instant, 1700000000000 ms. No recording exists: the public capture the orchestrator approved was refused (the plan's section 10).",
+  "environment": "demo",
+  "evidence": "derived",
+  "rules": [],
+  "cases": ["E29-TC-804"],
+  "rest": {
+    "GET /v5/market/time": { "payload": "venue_ahead.json" }
+  },
+  "files": {
+    "venue_ahead.json": {
+      "derived_from": ["../bybit/2026-10-05/rest/server_time.json"],
+      "derivation": "The documented server-time reply with `timeSecond`, `timeNano` and `time` each moved 30 s (30000 ms) later: 1700000030, 1700000030123456789 and 1700000030000. No key is added or dropped."
+    }
+  },
+  "expected": "A measurement older than the halt's trip never clears it: order entry stays halted, `503 clock_drift` with `Retry-After`, until a measurement younger than the trip is healthy, and a re-trip restarts the wait (the R3 fixture class \"clock skew\").",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

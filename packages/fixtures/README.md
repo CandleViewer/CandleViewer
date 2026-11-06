@@ -21,14 +21,16 @@ TypeScript and Python test suites (CONSTITUTION.md C-13.5, `.claude/rules/40-tes
 - `scripts/verify.mjs` — the redaction gate: fails if any file under `raw/`,
   `golden/`, `bybit/`, `accounts/`, `oms/` or `webhook/` contains a credential-shaped string (API
   key, signature, `Authorization` header, PEM key block), or a bare
-  key-shaped token under `accounts/`, and runs the accounts pack checks. Every
+  key-shaped token under `accounts/` or `oms/`, and runs the accounts pack checks. Every
   new fixture must pass this before being committed (E02-X01 threat:
   "recorded fixture leaks credentials").
 - `scripts/accounts-pack.mjs` — the accounts pack's schema and structure checks,
   and its comparison with the E27 test plan's section 9.3 table
   (`qa/plans/e27-accounts-test-plan.md`).
-- `turbo.json` — makes every data file and that plan an input of `lint` and the
-  tests, so a data-only change can never be answered from a cached run.
+- `scripts/oms-pack.mjs` — the OMS pack's comparison with the E29 test plan's
+  section 9 table (`docs/qa/e29-oms-test-plan.md`).
+- `turbo.json` — makes every data file and the two plans an input of `lint` and
+  the tests, so a data-only change can never be answered from a cached run.
 
 ## `e2e` subpath: shared Playwright support (E10-Q02)
 

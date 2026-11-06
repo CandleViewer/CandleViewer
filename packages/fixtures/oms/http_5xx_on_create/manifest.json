@@ -1,0 +1,19 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "http_5xx_on_create",
+  "origin": "ticket",
+  "description": "A create that meets HTTP 503: the stub is the corpus's gateway answer (`rest/error_503.json`, an empty object built by the corpus builder on a kline route) with status 503, and the `http_5xx` fault names the same call so a harness that applies the listed faults finds it. Nothing is derived.",
+  "environment": "demo",
+  "evidence": "derived",
+  "rules": ["S1"],
+  "cases": ["E29-TC-503", "E29-TC-807"],
+  "rest": {
+    "POST /v5/order/create": {
+      "payload": "../bybit/2026-10-05/rest/error_503.json",
+      "http_status": 503
+    }
+  },
+  "inject": [{ "kind": "http_5xx", "call": "POST /v5/order/create" }],
+  "expected": "The create's outcome is unknown: `202` with the order `unknown`, never re-sent; only a connect error, a connect timeout or a pool timeout proves nothing left, and that create is retried under the same id; the 5xx body never leaks (the R3 fixture class \"exchange 5xx\").",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

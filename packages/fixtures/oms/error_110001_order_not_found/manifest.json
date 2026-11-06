@@ -1,0 +1,15 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "error_110001_order_not_found",
+  "origin": "ticket",
+  "description": "The transcribed error-table row `110001` (code and text only) answering `POST /v5/order/cancel`. Nothing is derived. Docs-transcribed: a follow-up capture can force it (ruling BQ-4).",
+  "environment": "demo",
+  "evidence": "docs-transcribed",
+  "rules": ["S1", "S3"],
+  "cases": ["E29-TC-104", "E29-TC-809"],
+  "rest": {
+    "POST /v5/order/cancel": { "payload": "../bybit/2026-10-05/rest/trading-error-110001.json" }
+  },
+  "expected": "`110001` on a cancel parks the order `unknown` as `already_terminal` and the cancel is never re-sent; reconciliation then ends the order with the exchange's state (E29-S02, \"Cancel that lost the race\"; the R3 fixture class \"rejections\").",
+  "consumers": ["E29-Q02", "E29-Q04"]
+}

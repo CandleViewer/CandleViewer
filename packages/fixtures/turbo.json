@@ -11,7 +11,8 @@
         "accounts/**",
         "oms/**",
         "webhook/**",
-        "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md"
+        "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md",
+        "$TURBO_ROOT$/docs/qa/e29-oms-test-plan.md"
       ]
     },
     "test": {
@@ -30,7 +31,8 @@
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.node.json",
         "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
-        "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md"
+        "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md",
+        "$TURBO_ROOT$/docs/qa/e29-oms-test-plan.md"
       ]
     },
     "test:cov": {
@@ -49,7 +51,8 @@
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.node.json",
         "$TURBO_ROOT$/packages/config/vitest.preset.mjs",
-        "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md"
+        "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md",
+        "$TURBO_ROOT$/docs/qa/e29-oms-test-plan.md"
       ],
       "outputs": ["coverage/**"]
     }
