@@ -26,6 +26,7 @@ import {
   Pagination,
   RadioGroup,
   RecorderStatusRow,
+  SafetyInvariantNotice,
   SearchBox,
   SegmentedControl,
   Select,
@@ -329,6 +330,14 @@ describe("organisms carry their catalogue id", () => {
   it.each(organisms)("%s marks exactly one root with data-cmp", async (id, render) => {
     const host = await mount(render());
     expect(host.querySelectorAll(`[data-cmp="${id}"]`)).toHaveLength(1);
+  });
+});
+
+describe("E37-S02's rule-editor notice carries its catalogue id", () => {
+  it("CMP-158 marks exactly one root with data-cmp, over one CMP-028 callout", async () => {
+    const host = await mount(<SafetyInvariantNotice lead="Lead." clause="Clause." />);
+    expect(host.querySelectorAll('[data-cmp="CMP-158"]')).toHaveLength(1);
+    expect(host.querySelectorAll('[data-cmp="CMP-028"]')).toHaveLength(1);
   });
 });
 
