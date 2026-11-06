@@ -28,6 +28,11 @@
   min-height: var(--size-control-compact);
 }
 
+/* Pressed while the drawer is open: the border takes the primary text colour (an instant flip). */
+.cv-indicator-chips[aria-pressed="true"] .cv-indicator-chips__pill {
+  border-color: var(--color-text-primary);
+}
+
 /* The hue rides the glyph only (motion.duration.instant: a state flip has no transition). */
 .cv-indicator-chips__glyph {
   display: inline-flex;

@@ -18,6 +18,8 @@ export const WithError: Story = { args: { suffix: { kind: "error", n: 1 } } };
 export const WithComputing: Story = { args: { suffix: { kind: "computing", n: 1 } } };
 export const WithStale: Story = { args: { suffix: { kind: "stale", n: 2 } } };
 export const AtCap: Story = { args: { count: 20 } };
+/** SCR-036 is open: the chip is `aria-pressed`. */
+export const PressedDrawerOpen: Story = { args: { open: true } };
 /** Keyboard focus shows the ring; `Enter` opens SCR-036. */
 export const Focused: Story = {
   args: { suffix: { kind: "hidden", n: 1 } },

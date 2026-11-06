@@ -16,6 +16,8 @@ export interface IndicatorChipsProps {
   readonly count: number;
   /** The one state suffix; pick it with `pickIndicatorSuffix` (error first). */
   readonly suffix?: IndicatorSuffix;
+  /** SCR-036 is open for this chart: the chip reads as pressed (`aria-pressed`), the name is unchanged. */
+  readonly open?: boolean;
   /** Opens SCR-036 for this chart. */
   readonly onOpen: () => void;
 }
@@ -55,7 +57,7 @@ const suffixWords = ({ kind, n }: IndicatorSuffix): string =>
  * (E11-D02 A-14; E13-D02 D29). Per-indicator toggle, settings and remove live on CMP-199's rows. No live region of
  * its own; a change of the count or the suffix is an instant state flip (E13-D04 M9).
  */
-export function IndicatorChips({ count, suffix, onOpen }: IndicatorChipsProps): JSX.Element {
+export function IndicatorChips({ count, suffix, open, onOpen }: IndicatorChipsProps): JSX.Element {
   const ring = useFocusRing();
   const words = suffix === undefined || suffix.n <= 0 ? undefined : suffixWords(suffix);
   const name = `Indicators: ${count} on this chart${words === undefined ? "" : `, ${words}`} — open the object manager`;
@@ -65,6 +67,7 @@ export function IndicatorChips({ count, suffix, onOpen }: IndicatorChipsProps): 
       className={cx("cv-indicator-chips", ring.className)}
       data-cmp="CMP-224"
       aria-label={name}
+      aria-pressed={open === undefined ? undefined : open}
       onClick={onOpen}
     >
       <span className="cv-indicator-chips__pill">
