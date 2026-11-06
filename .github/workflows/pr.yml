@@ -354,6 +354,7 @@ jobs:
               # e2e-electron fetches the Electron binary with the postinstall runner (#1819).
               - 'tools/ci/run-allowed-postinstall.mjs'
               - 'tools/ci/allowed-postinstall.json'
+              - 'tools/ci/registry_retry.py' # #5955: that fetch runs through it
             rules:
               - 'services/api/candleviewer/rules/ir/**'
               - 'services/api/candleviewer/rules/compiler/**'

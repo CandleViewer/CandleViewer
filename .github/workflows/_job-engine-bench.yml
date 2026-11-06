@@ -78,7 +78,10 @@ jobs:
           node-version-file: ".nvmrc"
       - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
       - run: python3 tools/ci/registry_retry.py --registry npm --attempts 2 --timeout 120 -- pnpm install --frozen-lockfile --ignore-scripts
-      - run: node tools/ci/run-allowed-postinstall.mjs
+      - name: Install allowlisted postinstall builds (no Electron download, #5955)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1" # this job never launches Electron (#5955)
+        run: node tools/ci/run-allowed-postinstall.mjs
       - name: Wall-clock perf budgets (vitest perf project, no coverage)
         run: pnpm --filter @candleviewer/chart-engine test:perf
       - name: CVWB decode perf budgets, 23 section 16.3 (E17-T02, no coverage)

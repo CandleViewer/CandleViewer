@@ -97,6 +97,8 @@ def _run(
     pnpm.write_text(f"#!/bin/sh\necho \"$@\" >> '{calls}'\n", encoding="utf-8")
     pnpm.chmod(0o755)
     env = {**os.environ, "PATH": f"{stand_in}{os.pathsep}{os.environ.get('PATH', '')}"}
+    # A case sets the variable through extra_env; it never inherits the runner's own.
+    env.pop("ELECTRON_SKIP_BINARY_DOWNLOAD", None)
     env.update(extra_env or {})
     proc = subprocess.run(
         ["node", str(root / "tools" / "ci" / RUNNER.name)],
@@ -126,6 +128,59 @@ def test_runner_rebuilds_esbuild_and_runs_electrons_pinned_bin_in_its_package(
     assert _marker(root).read_text(encoding="utf-8") == str(package.resolve())
     assert "running electron@45.0.0's install-electron bin" in proc.stdout
     assert "electron@45.0.0's install-electron bin done in " in proc.stdout
+
+
+SKIP = {"ELECTRON_SKIP_BINARY_DOWNLOAD": "1"}
+
+
+@needs_posix
+def test_runner_skips_only_electron_when_the_skip_variable_is_one(tmp_path: Path) -> None:
+    root = _repo(tmp_path, [ELECTRON, ESBUILD])
+    proc, calls = _run(root, tmp_path, SKIP)
+    assert proc.returncode == 0, proc.stderr
+    assert not _marker(root).exists()
+    assert calls == ["rebuild --no-ignore-scripts esbuild"]  # other entries are unaffected
+    assert "skipping electron@45.0.0's install-electron bin: ELECTRON_SKIP_BINARY_DOWNLOAD=1" in (
+        proc.stdout
+    )
+    assert "running electron@" not in proc.stdout
+
+
+@needs_posix
+def test_runner_runs_electron_when_the_skip_variable_is_unset(tmp_path: Path) -> None:
+    root = _repo(tmp_path, [ELECTRON, ESBUILD])
+    proc, _ = _run(root, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert _marker(root).is_file()
+    assert "skipping" not in proc.stdout
+
+
+@needs_posix
+@pytest.mark.parametrize("value", ["", "0", "true", "yes", " 1"])
+def test_runner_ignores_and_reports_any_skip_value_but_one(tmp_path: Path, value: str) -> None:
+    root = _repo(tmp_path, [ELECTRON])
+    proc, _ = _run(root, tmp_path, {"ELECTRON_SKIP_BINARY_DOWNLOAD": value})
+    assert proc.returncode == 0, proc.stderr
+    assert _marker(root).is_file()
+    assert ('is not "1": ignored' in proc.stdout) == (value != "")
+
+
+@needs_posix
+def test_runner_still_refuses_a_bad_allowlist_when_skipping(tmp_path: Path) -> None:
+    bad = {**ELECTRON, "run": {"bin": "install-electron", "from": "apps/desktop", "x": "y"}}
+    proc, calls = _run(_repo(tmp_path, [bad, ESBUILD]), tmp_path, SKIP)
+    assert proc.returncode == 1
+    assert "run must have exactly bin and from" in proc.stderr
+    assert calls == []
+
+
+@needs_posix
+def test_runner_still_refuses_an_unusable_pinned_bin_when_skipping(tmp_path: Path) -> None:
+    root = _repo(tmp_path, [ELECTRON], bins={"electron": "cli.js"})
+    proc, _ = _run(root, tmp_path, SKIP)
+    assert proc.returncode == 1
+    assert 'has no "install-electron" in its package.json bin map' in proc.stderr
+    assert "skipping" not in proc.stdout
 
 
 @needs_posix

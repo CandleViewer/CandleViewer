@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """#5113 (E03-T14), CI-INFRA-002/003: run a registry-fetching install with bounded retries.
 
-    python3 tools/ci/registry_retry.py --registry {pypi,npm,ghcr} [--attempts N] [--timeout S]
-        [--backoff "S S ..."] -- COMMAND [ARG...]
+    python3 tools/ci/registry_retry.py --registry {pypi,npm,ghcr,github} [--attempts N]
+        [--timeout S] [--backoff "S S ..."] -- COMMAND [ARG...]
 
 Runs COMMAND up to N times (default 3). Each attempt is bounded to S seconds (default 300): on
 expiry its whole process group is killed and CI-INFRA-003 names the registry and the attempt.
@@ -35,6 +35,7 @@ REGISTRIES: Mapping[str, str] = {
     "pypi": "PyPI (pypi.org)",
     "npm": "npm (registry.npmjs.org)",
     "ghcr": "GHCR (ghcr.io)",
+    "github": "GitHub releases (github.com)",
 }
 DEFAULT_ATTEMPTS = 3
 DEFAULT_TIMEOUT = 300.0
