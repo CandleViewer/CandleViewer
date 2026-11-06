@@ -57,6 +57,8 @@ E02-T13 (#5181) serves the frozen `getSettings` and `updateSettings`: 73, frozen
 E21-T03 (#606) serves the frozen `getHeatmap`: 72, frozen 69.
 E35-T14's contract PR (#5006) adds the contract-first `listRuleConfirmations`, `confirmRuleFire`
 and `rejectRuleFire`, three entries within the cap of 72: no raise.
+E29-T06's routes (#914) serve those two: 69, set from the code (#5255 had served the frozen
+`refreshInstruments` with no line here, leaving 71, frozen 68).
 Keep both caps tight: a contract PR that
 adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, measured against current
 ``main`` with CI re-run there (two parallel raises merge cleanly yet both under-count); a PR that
@@ -88,7 +90,7 @@ from candleviewer.statechart.registry import Registry
 PKG = Path(bindings_pkg.__file__).resolve().parents[2]
 API_DIR = PKG / "api"
 MAIN_TREE = ast.parse((PKG / "main.py").read_text(encoding="utf-8"))
-PENDING_BASELINE = 71
+PENDING_BASELINE = 69
 FROZEN_BASELINE = 68
 BASELINE_TICKET = "E49-K01-F4-baseline"
 REAL_TICKET = re.compile(r"^#\d+$|^E\d\d-[A-Z]\d\d$")

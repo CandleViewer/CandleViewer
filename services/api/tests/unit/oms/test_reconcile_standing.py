@@ -21,6 +21,7 @@ from candleviewer.oms.reconcile_report import STALE_NOTICE, Notice
 from candleviewer.oms.reconcile_standing import (
     STALE_AFTER_S,
     STALE_DETAIL,
+    UNSTARTED_DETAIL,
     FailureTracker,
     ReconcileStanding,
 )
@@ -80,6 +81,24 @@ def test_the_standing_is_rebuilt_from_the_restored_state(state: str, stale: bool
     assert standing.is_stale(ACCOUNT) is stale
 
 
+def test_a_held_standing_refuses_every_account_until_released() -> None:
+    """24 Sec.8.5 (#914's security look, Low 2): while the jobs could not start, no account's
+    standing was rebuilt, so every account is refused; a release lifts the hold and leaves an
+    account's own lock in place."""
+    standing = ReconcileStanding()
+    standing.mark_stale(ACCOUNT)
+    standing.hold()
+    standing.hold()  # idempotent
+    held = OrderEntryRefusal("account_stale", UNSTARTED_DETAIL)
+    assert standing.held and standing.refusal(OTHER) == held
+    assert standing.refusal(UUID(int=0xF0)) == held  # an account no job has seen yet
+    assert standing.refusal(ACCOUNT) == OrderEntryRefusal("account_stale", STALE_DETAIL)
+    standing.release()
+    assert not standing.held and standing.refusal(OTHER) is None
+    assert standing.refusal(ACCOUNT) == OrderEntryRefusal("account_stale", STALE_DETAIL)
+    assert standing.stale_count == 1  # the hold counts no account: the start's page says it
+
+
 def test_stale_accounts_is_one_copy_of_the_locks_held_now() -> None:
     """E29-S07 (23 Sec.15.9): the replay reads the locks as one frozen copy, which a later lock or
     unlock on the order lane leaves as it was."""
@@ -126,6 +145,78 @@ def test_a_listener_that_raises_is_logged_and_the_lock_stands(error: type[Except
     assert [(log["event"], log["error"]) for log in logs] == [
         ("reconcile_standing_listener_failed", error.__name__)
     ]
+
+
+def test_a_starts_premark_refuses_entry_unheard_and_unreplayed_until_its_open() -> None:
+    """24 Sec.8.5 (#5233 on #5584's listener): the start's pre-mark refuses entry as a lock does,
+    with the same code and text, but it is no lock: the listener never hears it and the replay
+    never reads it. The open (`restored`) lifts it, a lock gained over it is heard once, and an
+    Owner's unlock (`clear`) lifts both."""
+    standing = ReconcileStanding()
+    heard: list[AccountId] = []
+    standing.listen(heard.append)
+    standing.premark(ACCOUNT)
+    standing.premark(OTHER)
+    standing.premark(OTHER)  # idempotent
+    stale = OrderEntryRefusal("account_stale", STALE_DETAIL)
+    assert (standing.refusal(ACCOUNT), standing.refusal(OTHER)) == (stale, stale)
+    assert (standing.is_stale(ACCOUNT), standing.stale_count) == (True, 2)
+    assert (heard, standing.stale_accounts()) == ([], frozenset())
+    standing.restored(ACCOUNT, "idle")  # its open: no lock, nothing heard
+    assert (standing.refusal(ACCOUNT), heard) == (None, [])
+    standing.mark_stale(OTHER)  # a real lock over the pre-mark: heard, once
+    standing.mark_stale(OTHER)
+    assert (heard, standing.stale_accounts()) == ([OTHER], frozenset({OTHER}))
+    standing.clear(OTHER)
+    assert (standing.refusal(OTHER), standing.stale_count) == (None, 0)
+
+
+def test_a_restored_lock_over_a_premark_is_heard_once() -> None:
+    """E29-S07: a restored `stale_lockout` is a gain even where the start pre-marked the account."""
+    standing = ReconcileStanding()
+    heard: list[AccountId] = []
+    standing.listen(heard.append)
+    standing.premark(ACCOUNT)
+    standing.restored(ACCOUNT, "stale_lockout")
+    standing.restored(ACCOUNT, "stale_lockout")
+    assert heard == [ACCOUNT] and standing.stale_accounts() == frozenset({ACCOUNT})
+
+
+class _Probed(set[AccountId]):
+    """A standing's set that records `refusal(ACCOUNT)` after each of its writes."""
+
+    def __init__(self, standing: ReconcileStanding, seen: list[OrderEntryRefusal | None]) -> None:
+        super().__init__()
+        self._standing, self._seen = standing, seen
+
+    def add(self, account: AccountId) -> None:
+        super().add(account)
+        self._seen.append(self._standing.refusal(ACCOUNT))
+
+    def discard(self, account: object) -> None:
+        super().discard(account)
+        self._seen.append(self._standing.refusal(ACCOUNT))
+
+
+@pytest.mark.parametrize("promote", ["restored", "mark_stale"])
+def test_a_lock_over_a_premark_refuses_entry_at_every_write(promote: str) -> None:
+    """C-2.21 (#5233's verify, Minor 1): a lock gained over the start's pre-mark (a restored
+    `stale_lockout`, or `mark_stale`) holds before the pre-mark lifts, so a read on the serving
+    loop never finds the account in neither set: `refusal` refuses after every write."""
+    standing = ReconcileStanding()
+    seen: list[OrderEntryRefusal | None] = []
+    heard: list[OrderEntryRefusal | None] = []
+    standing.listen(lambda account: heard.append(standing.refusal(account)))
+    standing._stale = _Probed(standing, seen)
+    standing._premarked = _Probed(standing, seen)
+    standing.premark(ACCOUNT)
+    if promote == "restored":
+        standing.restored(ACCOUNT, "stale_lockout")
+    else:
+        standing.mark_stale(ACCOUNT)
+    stale = OrderEntryRefusal("account_stale", STALE_DETAIL)
+    assert len(seen) == 3 and seen == [stale] * 3  # premark, the lock's add, the pre-mark's lift
+    assert heard == [stale] and standing.stale_accounts() == frozenset({ACCOUNT})
 
 
 def test_protective_paths_never_consult_the_standing() -> None:

@@ -69,7 +69,7 @@ import yaml
 from candleviewer.api.step_up import HANDLER_GATED_ROUTES, dangerous_action_class
 from candleviewer.auth.step_up import NO_GRACE_ACTION_CLASSES, SINGLE_USE_WINDOW
 from tests.contract.rbac.rbac_harness import MATRIX_PATH, fill_path, user_id_of
-from tests.security.admin._world import SIGNED_IN, UNAUTHENTICATED, AdminWorld, denials
+from tests.security.admin._world import SIGNED_IN, TOTP_STEP, UNAUTHENTICATED, AdminWorld, denials
 
 STATES = ("none", "stale", "fresh")
 ADMIN_PREFIXES = ("/admin", "/users")
@@ -185,6 +185,12 @@ GATE_REQUESTS: dict[str, dict[str, Any]] = {
     },
     "POST /admin/audit/export": {
         "json": {"from": "2026-10-01T00:00:00Z", "to": "2026-10-02T00:00:00Z"},
+    },
+    # E29-T06 (#914): the resolve checks its key and body before its no-grace `accounts` gate
+    # (22), so a cell sends a valid request; past the gate the CI app has no accounts store (503).
+    "POST /admin/reconciliation/{accountId}/resolve": {
+        "json": {"reason": "E42-X03 RBAC cell"},
+        "headers": {"Idempotency-Key": "00000000-0000-4000-8000-00000000914a"},
     },
 }
 #: The class a handler-gated cell demands, where its route has several (`setFeatureFlag`).
@@ -453,6 +459,15 @@ def _body(resp: httpx.Response) -> dict[str, Any]:
     return doc if isinstance(doc, dict) else {}
 
 
+#: How far past its step-up a stale cell moves the clock before it sends again: the grant's lapse.
+_LAPSE = SINGLE_USE_WINDOW + timedelta(seconds=1)
+
+
+def _retry_span(state: str) -> timedelta:
+    """How far `_bound_retry` moves the clock in `state`, which `observe` reserves first."""
+    return TOTP_STEP + (_LAPSE if state == "stale" else timedelta(0))
+
+
 def _bound_retry(
     world: AdminWorld, op: Op, actor: str, state: str, request: dict[str, Any], refused: str
 ) -> httpx.Response:
@@ -462,7 +477,7 @@ def _bound_retry(
     granted = world.step_up(actor, challenge_id=refused)
     assert granted.status_code == 200, granted.text
     if state == "stale":
-        world.tick(SINGLE_USE_WINDOW + timedelta(seconds=1))
+        world.tick(_LAPSE)
     return world.send(actor, op.method, op.target, request)
 
 
@@ -492,16 +507,18 @@ def observe(world: AdminWorld, op: Op, actor: str, state: str, *, cell: str = ""
     if cell in world.observed:
         cached: Observed = world.observed[cell]
         return cached
+    bound = state != "none" and op.gate is not None and not op.gate.grace
+    if bound:  # its exchange moves the shared clock: no session may age out within it
+        world.reserve(_retry_span(state))
     request = resolved_request(world, op)
     mark, before = len(world.audit.records), denials(op.permission)
     ip = source_ip(op) if actor not in SIGNED_IN else "127.0.0.1"
     resp = world.send(actor, op.method, op.target, request, source_ip=ip)
     body = _body(resp)
-    if state != "none" and op.gate is not None and not op.gate.grace:
-        if body.get("code") == "step_up_required":
-            challenge = str(body["challenge_id"])
-            resp = _bound_retry(world, op, actor, state, request, challenge)
-            body = _body(resp)
+    if bound and body.get("code") == "step_up_required":
+        challenge = str(body["challenge_id"])
+        resp = _bound_retry(world, op, actor, state, request, challenge)
+        body = _body(resp)
     code = body.get("code")
     seen = Observed(
         resp.status_code,

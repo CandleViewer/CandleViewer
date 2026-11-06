@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ast
 import configparser
+import importlib
 import warnings
 from collections.abc import Iterator
 from pathlib import Path
@@ -200,3 +201,47 @@ def test_the_handover_table_writer_is_composed_only_by_the_runtime_and_reconcili
         if "StoreHandovers" in path.read_text(encoding="utf-8")
     }
     assert naming == {"oms/handovers.py", "oms_wiring.py", "oms_reconcile_wiring.py"}
+
+
+#: E45-T01's marker (#914, BQ-2; 24 Sec.8.12): the registration and the set it fills.
+_CARRY_NAMES = frozenset({"register_reconciliation_carry", "_CARRIES_REGISTERED"})
+
+
+def _carry_uses(path: Path) -> list[tuple[int, str]]:
+    """Each use of the marker in a module: a call of the registration anywhere, and, outside
+    `oms/ports.py`, which defines both, any name, attribute or string naming either."""
+    defining = path.relative_to(PACKAGE).as_posix() == "oms/ports.py"
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(_parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            if name == "register_reconciliation_carry":
+                found.append((node.lineno, f"call {name}"))
+        if defining:
+            continue
+        if isinstance(node, ast.Name) and node.id in _CARRY_NAMES:
+            found.append((node.lineno, node.id))
+        elif isinstance(node, ast.Attribute) and node.attr in _CARRY_NAMES:
+            found.append((node.lineno, node.attr))
+        elif isinstance(node, ast.Constant) and node.value in _CARRY_NAMES:
+            found.append((node.lineno, str(node.value)))
+    return found
+
+
+def test_no_module_registers_a_reconciliation_carry_before_e45_t01() -> None:
+    """#914's security look on its wiring (a nit): a live start stays refused until E45-T01's
+    four carries register their marker, each at its own module's import (BQ-2, 24 Sec.8.12).
+    Until then no module of `candleviewer` calls `register_reconciliation_carry` or reaches the
+    set it fills, and once the app's modules are imported every carry is still missing, so a
+    stray registration fails here, not in a live start. E45-T01 replaces this pin with its own."""
+    uses = {
+        rel: found
+        for path in sorted(PACKAGE.rglob("*.py"))
+        if (found := _carry_uses(path)) and (rel := path.relative_to(PACKAGE).as_posix())
+    }
+    assert uses == {}
+    importlib.import_module("candleviewer.app")  # every module the app composes, imported
+    from candleviewer.oms.ports import RECONCILIATION_CARRIES, reconciliation_carries_missing
+
+    assert reconciliation_carries_missing() == RECONCILIATION_CARRIES
