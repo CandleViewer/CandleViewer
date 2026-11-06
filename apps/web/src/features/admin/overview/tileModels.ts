@@ -228,20 +228,49 @@ export function usersTile(s: AdminReadState): TileModel {
   };
 }
 
-/** The capacity line and when its read answered: its own time, printed after it (C-5330-11). */
-interface CapacityLine {
-  note?: string;
-  asOf?: number | undefined;
-  retry: ReadId[];
+/** The capacity line's states (E42-D03 §7, board 91's seven), with the read's own loading and not built. */
+export type CapacityState =
+  | "loading"
+  | "not_built"
+  | "recorded"
+  | "at_capacity"
+  | "over"
+  | "unrecorded"
+  | "tier_unavailable"
+  | "used_unavailable"
+  | "down";
+
+/**
+ * The capacity line as data (E42-S01's Accounts tile line; E42-S02's SCR-121 line). `line` is `cap.*`; at capacity
+ * `detail` adds `cap.at_capacity`'s two sentences and the tone turns warning (AC5); the meter is drawn only when
+ * `used` and `cap` were both read (D10's value text); `action` is the line's own button.
+ */
+export interface CapacityModel {
+  readonly state: CapacityState;
+  readonly line?: string | undefined;
+  readonly detail?: readonly string[] | undefined;
+  /** At capacity and over it: the warning tone (the host adds its glyph and word, never colour alone). */
+  readonly tone?: "warning" | undefined;
+  readonly meter?:
+    { readonly value: number; readonly max: number; readonly valueText: string } | undefined;
+  /** [Change] a recorded tier, [Record tier] an unrecorded one, [Retry] a read that failed. */
+  readonly action?: "change" | "record" | "retry" | undefined;
+  /** When the capacity read answered: its own time, printed after the line (C-5330-11). */
+  readonly asOf?: number | undefined;
+  /** The reads its Retry repeats. */
+  readonly retry: readonly ReadId[];
 }
 
-/** The capacity line (`cap.*`) from `SubaccountCapacity`; its [Change] and [Record tier] are S02's. */
-function capacityLine(s: AdminReadState): CapacityLine {
+/** The capacity line (`cap.*`) from `SubaccountCapacity`, as SCR-120's tile and SCR-121 both draw it. */
+export function capacityModel(s: AdminReadState): CapacityModel {
   const entry = s.capacity;
-  if (entry.phase === "idle") return { retry: [] };
-  if (entry.phase === "not_built") return { note: COPY.cap.notBuilt, retry: [] }; // C-5330-04
+  if (entry.phase === "idle") return { state: "loading", retry: [] };
+  if (entry.phase === "not_built")
+    return { state: "not_built", line: COPY.cap.notBuilt, retry: [] }; // C-5330-04
   if (entry.phase !== "ok") {
-    return { note: COPY.cap.down, retry: entry.phase === "failed" ? ["capacity"] : [] };
+    return entry.phase === "failed"
+      ? { state: "down", line: COPY.cap.down, action: "retry", retry: ["capacity"] }
+      : { state: "down", line: COPY.cap.down, retry: [] };
   }
   const sub = entry.data?.subaccounts as Fields | undefined;
   const used = num(sub?.["used"]);
@@ -251,17 +280,60 @@ function capacityLine(s: AdminReadState): CapacityLine {
   // What the read served below is asked once per entry: each line prints that read's own time.
   const asOf = entry.okAt;
   if (sub?.["tier_source"] === "unrecorded" && used !== undefined) {
-    return { note: COPY.cap.unrecorded(used), asOf, retry: [] };
+    return {
+      state: "unrecorded",
+      line: COPY.cap.unrecorded(used),
+      action: "record",
+      asOf,
+      retry: [],
+    };
   }
   if (tier !== undefined && cap !== undefined) {
-    if (used === undefined) return { note: COPY.cap.usedUnavailable(tier, cap), asOf, retry: [] };
-    if (used > cap) return { note: COPY.cap.over(used, cap, tier), asOf, retry: [] };
+    if (used === undefined) {
+      return {
+        state: "used_unavailable",
+        line: COPY.cap.usedUnavailable(tier, cap),
+        asOf,
+        retry: [],
+      };
+    }
+    const meter = { value: used, max: cap, valueText: COPY.cap.valueText(used, cap) };
+    if (used > cap) {
+      const line = COPY.cap.over(used, cap, tier);
+      return { state: "over", tone: "warning", line, meter, action: "change", asOf, retry: [] };
+    }
     const recorded = timeOf(sub?.["recorded_at"]);
-    const date = recorded === undefined ? null : ymd(recorded);
-    return { note: COPY.cap.recorded(used, cap, tier, date), asOf, retry: [] };
+    const line = COPY.cap.recorded(used, cap, tier, recorded === undefined ? null : ymd(recorded));
+    return used === cap
+      ? {
+          state: "at_capacity",
+          tone: "warning",
+          line,
+          detail: COPY.cap.atCapacity(cap, used),
+          meter,
+          action: "change",
+          asOf,
+          retry: [],
+        }
+      : { state: "recorded", line, meter, action: "change", asOf, retry: [] };
   }
-  if (used !== undefined) return { note: COPY.cap.tierUnavailable(used), asOf, retry: [] };
-  return { note: COPY.cap.down, retry: [] };
+  if (used !== undefined) {
+    return { state: "tier_unavailable", line: COPY.cap.tierUnavailable(used), asOf, retry: [] };
+  }
+  return { state: "down", line: COPY.cap.down, retry: [] };
+}
+
+/** The capacity line and when its read answered: its own time, printed after it (C-5330-11). */
+interface CapacityLine {
+  note?: string | undefined;
+  asOf?: number | undefined;
+  retry: ReadId[];
+}
+
+/** The Accounts tile's capacity line: the model's line alone ([Change] and [Record tier] are SCR-121's). */
+function capacityLine(s: AdminReadState): CapacityLine {
+  const model = capacityModel(s);
+  return { note: model.line, asOf: model.asOf, retry: [...model.retry] };
 }
 
 /** Accounts and keys: the `accounts` slice, the capacity line, the withdrawal line (not mounted). */

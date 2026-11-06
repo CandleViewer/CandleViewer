@@ -110,6 +110,14 @@ export const OVERVIEW_COPY = {
     usedUnavailable: (tier: string, cap: number): string =>
       `${tier} tier allows ${cap} · sub-accounts in use: unavailable right now`,
     down: "Sub-account capacity unavailable right now",
+    /** PROPOSED (E42-D03 §14 `cap.at_capacity`): under the line at capacity (AC5), two sentences. */
+    atCapacity: (cap: number, used: number): readonly string[] => [
+      `Bybit allows ${cap} sub-accounts on your tier — you've used ${used}.`,
+      "To add another, complete Business KYC verification with Bybit (cap 20), then record the new tier " +
+        "here — or share an existing sub-account and accept that its users are not isolated from each other.",
+    ],
+    /** `cap.valuetext` (E42-D03 §14, D10): the meter's `aria-valuetext`. */
+    valueText: (used: number, cap: number): string => `${used} of ${cap} sub-accounts used`,
     /** PROPOSED: a capacity read answered `404` or `501`: its name, then `tile.not_built`. */
     notBuilt: "Sub-account capacity: Unavailable — not built yet",
     tiers: { regular: "Regular", business_kyc: "Business KYC" } as Readonly<Record<string, string>>,
