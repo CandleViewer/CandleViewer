@@ -20,8 +20,15 @@ verify's own code (`AuditQueryService.plan_verify`, `run_verify`: one walk, stat
 | `chain`           | Every entry from genesis to the head links and recomputes to its stored hash, and every database checkpoint names its entry (SR-063)                                                                                                                                             |
 | `checkpoint-file` | With `--checkpoint-file`: every head in the file names an entry with the same hash, and the file's sha256 is the recorded one                                                                                                                                                    |
 
+`triggers` also pins each guard's shape as `0003_audit_log` gives it: its `tgtype` bits, its
+schema-qualified function, no WHEN clause and no `UPDATE OF` column list; any other shape is a
+finding.
+
 The `fields` section runs on every run, `--check` and `--self-test` included: a deployed
-`audit_chain()` the reader does not understand is a finding, never a pass.
+`audit_chain()` the reader does not understand is a finding, never a pass. It reads strictly and
+fails closed: any `--` or `/*` comment anywhere in the function, or a lower-case `new.`, is a
+finding. A fix-forward migration that adds a comment to `audit_chain()` therefore makes every run
+FAIL until the reader is updated in the same change.
 
 A break reads `first_bad_id=<id> kind=<kind>` as in `audit_ack_break`; the kinds are
 `prev_hash_mismatch`, `entry_hash_mismatch`, `checkpoint_mismatch`, `checkpoint_missing`,
