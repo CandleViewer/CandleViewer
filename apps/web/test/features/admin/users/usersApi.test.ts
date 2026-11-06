@@ -89,6 +89,19 @@ describe("reads", () => {
     expect(await readUserPage({}, undefined, signal(), TIMERS)).toEqual({ kind: "not_built" });
   });
 
+  it("reads a 404 on a per-user read as failed, not as not built (22: 404 NotFound)", async () => {
+    server(() => json(404, { code: "not_found" }));
+    const failed = { kind: "failed", reason: "status", status: 404 };
+    expect(await readGrants(ALEX, signal(), TIMERS)).toEqual(failed);
+    expect(await readSessionCount(ALEX, signal(), TIMERS)).toEqual(failed);
+    expect(await readMfaPreview(ALEX, signal(), TIMERS)).toEqual(failed);
+  });
+
+  it("keeps a 404 on the invites read as not built (the list's route may not be mounted)", async () => {
+    server(() => json(404, { code: "not_found" }));
+    expect(await readPendingInvites(signal(), TIMERS)).toEqual({ kind: "not_built" });
+  });
+
   it("reads a 403 as the area denied, with its Ref", async () => {
     server(() => json(403, { code: "forbidden", instance: "urn:cv:req:7" }));
     expect(await readUserPage({}, undefined, signal(), TIMERS)).toEqual({
