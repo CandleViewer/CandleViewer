@@ -138,6 +138,7 @@ export function TreeView({
   const dragged = useRef<string | null>(null);
   /** Set when the item must take focus back after the host re-renders (a move, the end of a rename). */
   const refocus = useRef(false);
+  const [, bump] = useState(0);
 
   // The focused item: the last one focused while it is visible, else its nearest visible ancestor (a parent closed
   // over it), else the first selected item, else the first item.
@@ -190,6 +191,8 @@ export function TreeView({
     const index = row.index + delta;
     if (onMove === undefined || index < 0 || index >= row.siblings.length) return;
     refocus.current = true;
+    // Guarantees a render (and so one effect pass that consumes the flag) even when the host ignores the move.
+    bump((n) => n + 1);
     onMove(row.node.id, index);
   };
   const finishRename = (node: TreeNode, value: string | null, keepFocus: boolean): void => {

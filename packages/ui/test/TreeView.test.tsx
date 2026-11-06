@@ -360,6 +360,39 @@ describe("TreeView: rename and move exist only with their callbacks", () => {
     expect(onRename).not.toHaveBeenCalled();
   });
 
+  it("a move the host ignores does not pull focus back on a later render, when focus is on an item action", async () => {
+    const onMove = fn();
+    function Ticking(): JSX.Element {
+      const [ticks, setTicks] = useState(0);
+      return (
+        <Host
+          spies={spies()}
+          onMove={onMove}
+          itemActions={(_node, { tabIndex }) => (
+            <IconButton
+              icon="copy"
+              label={`Copy path ${String(ticks)}`}
+              variant="ghost"
+              tabIndex={tabIndex}
+              onClick={() => setTicks((n) => n + 1)}
+            />
+          )}
+        />
+      );
+    }
+    const host = await mount(<Ticking />);
+    const ema = item(host, "EMA 21");
+    ema.focus();
+    await userEvent.keyboard("{Alt>}{ArrowDown}{/Alt}");
+    expect(onMove).toHaveBeenCalledTimes(1);
+    await userEvent.tab();
+    const copy = within(host).getAllByRole("button", { name: /^Copy path/ })[1];
+    expect(copy).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    expect(copy).toHaveFocus();
+    expect(ema).not.toHaveFocus();
+  });
+
   it("Alt+↑/↓ asks to move the item within its group, never past either end", async () => {
     const onMove = fn();
     const host = await mount(<Host spies={spies()} onMove={onMove} />);
