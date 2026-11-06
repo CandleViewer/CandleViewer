@@ -22,10 +22,10 @@ from candleviewer.account_fixture_wiring import (
     build_account_fixture,
 )
 from candleviewer.exchange.base import Ticker, Trade, TradeSide
-from candleviewer.ingestion.service import IngestionService
+from candleviewer.ingestion.service import PUMP_YIELD_EVERY, IngestionService
 from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.oms_wiring import ReferencePricesBinding
-from candleviewer.settings import FeedMode, Settings
+from candleviewer.settings import Environment, FeedMode, Settings
 from cvdev.account_fixture import synthetic_ticker as st
 from cvdev.account_fixture import wiring
 from tests.unit.cvdev.test_fixture_wiring import _dev, _one_process, state  # noqa: F401  fixtures
@@ -41,6 +41,13 @@ def _tick(symbol: str = "BTCUSDT", bid: str = "100.0", ask: str = "100.2") -> Ti
         ask_price=Decimal(ask),
         ts=TS,
     )
+
+
+class _Door:
+    """A door whose armed state a test sets by hand."""
+
+    def __init__(self, armed: object | None = None) -> None:
+        self.armed = armed
 
 
 class _Clock:
@@ -122,6 +129,35 @@ def test_the_dev_side_refuses_a_live_feed_a_foreign_handle_or_a_second_stream(
         st.attach(live, door, IngestionService())
 
 
+@pytest.mark.parametrize(
+    ("environment", "key_variable", "match"),
+    [
+        (Environment.LIVE, None, "unless CV_ENVIRONMENT=demo"),
+        (Environment.TESTNET, None, "unless CV_ENVIRONMENT=demo"),
+        (Environment.DEMO, "CV_BYBIT_API_KEY", "any CV_BYBIT_API_\\* variable is set"),
+    ],
+)
+def test_the_dev_side_re_checks_the_fixture_refusal(
+    state: Path,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    environment: Environment,
+    key_variable: str | None,
+    match: str,
+) -> None:
+    """The settings were valid at load; the dev side reads the refusal again at attach, before
+    the feed and the stream checks, which these settings would all pass."""
+    settings = _dev(state)
+    door = build_account_fixture(settings)
+    assert isinstance(door, wiring.FixtureDoor)
+    if key_variable is not None:
+        monkeypatch.setenv(key_variable, "placeholder-name-only")
+    changed = settings.model_copy(update={"environment": environment})
+    ingestion = IngestionService()
+    with pytest.raises(AccountFixtureRefused, match=match):
+        st.attach(changed, door, ingestion)
+    assert ingestion.tickers is None
+
+
 async def test_unarmed_it_prices_nothing_and_stays_idle(
     state: Path,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
@@ -137,6 +173,7 @@ async def test_unarmed_it_prices_nothing_and_stays_idle(
         await stream.stop()
 
     assert stream.latest("BTCUSDT") is None
+    assert stream.phase("BTCUSDT") is None and not stream.is_listed("BTCUSDT")  # offer's check
     assert await ReferencePricesBinding(stream).reference_price("BTCUSDT") is None
     idle = [e for e in logs if e["event"] == "ingestion.synthetic_ticker_idle"]
     assert [(e["source"], e["reason"]) for e in idle] == [("synthetic", "fixture_not_armed")]
@@ -174,6 +211,7 @@ async def test_armed_the_reference_price_is_the_synthetic_mid(
     assert reading.mid == Decimal("100.1") and reading.last == Decimal("100.1")
     event = stream.latest("BTCUSDT")
     assert event is not None and event.mark_price == event.index_price == Decimal("100.1")
+    assert event.source == "synthetic"
     assert (stream.phase("BTCUSDT"), stream.phase("ETHUSDT")) == ("live", None)
     assert stream.is_listed("BTCUSDT") and not stream.is_listed("ETHUSDT")
     ours = [e for e in logs if str(e["event"]).startswith("ingestion.synthetic_ticker")]
@@ -239,3 +277,51 @@ async def test_a_malformed_record_is_skipped_and_the_next_one_still_prices(
     refused = [e for e in logs if e["event"] == "ingestion.synthetic_ticker_record_refused"]
     assert [e["source"] for e in refused] == ["synthetic"]
     assert all("None" not in str(v) for e in refused for v in e.values())
+
+
+def test_latest_answers_nothing_once_the_door_is_unarmed() -> None:
+    """`latest`'s own armed check: a reading taken while armed is not served once unarmed."""
+    door = _Door(armed=object())
+    stream = st.SyntheticTickerStream(door, lambda: None, env="demo")
+    stream.offer(_tick())
+    assert stream.latest("BTCUSDT") is not None
+
+    door.armed = None
+
+    assert stream.phase("BTCUSDT") == "live" and stream.is_listed("BTCUSDT")
+    assert stream.latest("BTCUSDT") is None
+
+
+async def test_the_drain_gives_the_loop_a_turn_every_pump_yield_every_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A burst already queued never suspends `queue.get()`; the drain yields on its own, once
+    per `PUMP_YIELD_EVERY` records, so another task runs between the blocks."""
+    burst = 3 * PUMP_YIELD_EVERY + 5
+    queue: st.FeedQueue = asyncio.Queue(maxsize=burst)
+    for _ in range(burst):
+        queue.put_nowait(_tick())
+    stream = st.SyntheticTickerStream(_Door(armed=object()), lambda: queue, env="demo")
+    turns = 0
+    seen_at: list[int] = []
+    monkeypatch.setattr(stream, "offer", lambda _record: seen_at.append(turns))
+
+    async def _other() -> None:
+        nonlocal turns
+        while True:
+            turns += 1
+            await asyncio.sleep(0)
+
+    other = asyncio.create_task(_other())
+    await stream.start()
+    for _ in range(4 * burst):
+        if len(seen_at) == burst:
+            break
+        await asyncio.sleep(0)
+    await stream.stop()
+    other.cancel()
+    await asyncio.gather(other, return_exceptions=True)
+
+    assert len(seen_at) == burst
+    changed = [i for i in range(1, burst) if seen_at[i] != seen_at[i - 1]]
+    assert changed == [PUMP_YIELD_EVERY * k for k in (1, 2, 3)]

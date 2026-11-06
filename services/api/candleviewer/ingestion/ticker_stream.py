@@ -21,7 +21,7 @@ from typing import Protocol
 
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import QueuePolicy, Topic, TopicPattern
-from candleviewer.domain.events import uuid7  # re-exported in __all__ for its importers
+from candleviewer.domain.events import EventSource, uuid7  # uuid7 re-exported in __all__
 from candleviewer.domain.primitives import EventId
 from candleviewer.exchange.base.models import TickerEvent
 from candleviewer.exchange.base.ticker_delta import TICKER_FIELDS, TickerDelta
@@ -89,17 +89,23 @@ class TickerMerger:
 
 
 def ticker_event(
-    symbol: str, state: Mapping[str, Decimal | int], *, ts_event_us: int, ts_ingest_us: int
+    symbol: str,
+    state: Mapping[str, Decimal | int],
+    *,
+    ts_event_us: int,
+    ts_ingest_us: int,
+    source: EventSource = "live",
 ) -> TickerEvent:
     """A fully-populated `TickerEvent` of `state` (`is_delta=False`; a field it lacks is `None`):
-    the merger's, and each row of the venue-wide snapshot's (`ticker_bulk`, E08-T08)."""
+    the merger's, and each row of the venue-wide snapshot's (`ticker_bulk`, E08-T08), both
+    `live`; the dev fixture stack's synthetic ticker passes `synthetic` (E29-Q03)."""
     values: dict[str, Decimal | int | None] = {f: state.get(f) for f in TICKER_FIELDS}
     return TickerEvent.model_validate(
         {
             "event_id": EventId(uuid7(ts_event_us // 1000)),
             "ts_event": ts_event_us,
             "ts_ingest": ts_ingest_us,
-            "source": "live",
+            "source": source,
             "symbol": symbol,
             "is_delta": False,
             **values,
