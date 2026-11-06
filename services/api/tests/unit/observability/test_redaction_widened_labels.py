@@ -108,6 +108,13 @@ def test_a_key_shaped_value_under_a_label_keeps_the_label_and_its_marker() -> No
     assert redact_text(f"api_key={key}") == f"api_key={_KEY_MARK}"
 
 
+def test_the_baselines_added_names_are_new_and_complete_the_live_key_list() -> None:
+    """#5954 review: `ADDED_SINCE` holds only names the frozen `KEY_FORMS` lacked, and the two
+    together are the live list, so the baseline can neither grow nor shrink silently."""
+    assert before.ADDED_SINCE.isdisjoint(before.KEY_FORMS)
+    assert before.KEY_FORMS | before.ADDED_SINCE == redaction._REDACT_KEY_FORMS
+
+
 def test_the_shape_check_reads_the_label_rule_before_4713() -> None:
     assert redaction._LABELLED_VALUE_BEFORE_4713.pattern == before.LABELLED_VALUE.pattern
     assert redaction._LABELLED_VALUE_BEFORE_4713.flags == before.LABELLED_VALUE.flags
