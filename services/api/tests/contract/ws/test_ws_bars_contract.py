@@ -319,6 +319,9 @@ def _rest_item(bar: dict[str, Any], bar_type: str, *, flow: bool) -> dict[str, A
         item["close_t_ms"] = _ms(bar["close_time"])
     for name in _DECIMALS[: 6 + 3 * flow]:
         item[name] = Decimal(bar[name])
+    for name in ("gap_before", "partial", "tape_gap"):  # #5396: each named only when true
+        if bar.get(name) is True:
+            item[name] = True
     return item
 
 

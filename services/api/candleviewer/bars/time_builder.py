@@ -12,7 +12,8 @@ For time bars `open_time`/`close_time` are the bucket boundaries, which `BarSeri
 relies on.
 
 Edge cases:
-- Empty intervals emit nothing; the next real bar has `gap_before=True`.
+- Empty intervals emit nothing; the next real bar has `gap_before=True` (a discontinuity, not
+  data loss). An unrecovered tape gap (`mark_gap`, #529) sets `tape_gap` instead (#5396).
 - `on_clock(now)` closes the open bar once `now >= close_time` (dead market, §3.3b).
 - A late trade whose bucket matches a closed bar is applied to it and re-emits `close` with
   `amended=True`, as long as the bar closed no more than 60 s ago, measured against the
@@ -118,6 +119,7 @@ class _Draft:
         "open_time",
         "partial",
         "sell",
+        "tape_gap",
         "turnover",
     )
 
@@ -129,7 +131,7 @@ class _Draft:
         self.buy = self.sell = self.delta = self.turnover = _ZERO
         self.min_d = self.max_d = _ZERO
         self.count = 0
-        self.partial = self.gap_before = False
+        self.partial = self.gap_before = self.tape_gap = False
         self.first_ts = self.first_seq = self.last_ts = self.last_seq = 0
 
     def apply(self, t: TradeEvent) -> None:
@@ -195,6 +197,7 @@ class _Draft:
             closed=closed,
             partial=self.partial,
             gap_before=self.gap_before,
+            tape_gap=self.tape_gap,
             synthetic=False,
         )
 
@@ -204,12 +207,86 @@ class _Draft:
     @classmethod
     def load(cls, row: list[Any]) -> _Draft:
         d = cls.__new__(cls)
+        d.tape_gap = False  # not in the row: `restore_tape_gaps` sets it from the blob's own key
         for n, v in zip(_SLOTS, row, strict=True):
             setattr(d, n, v if n in _INT_SLOTS else Decimal(v))
         return d
 
 
-_SLOTS: Final = _Draft.__slots__
+#: The row layout of a draft in a `STATE_VERSION` 1 blob. `tape_gap` (#5396) is not in it: the
+#: blob carries the indexes of the drafts holding it under its own `tape_gap` key, which an older
+#: reader ignores and an older blob lacks (no flag), so the layout and its version are unchanged.
+_SLOTS: Final = tuple(n for n in _Draft.__slots__ if n != "tape_gap")
+
+
+def with_tape_gaps(doc: dict[str, Any], drafts: Sequence[_Draft | None]) -> dict[str, Any]:
+    """`doc` with a `tape_gap` key naming the `index` of each draft that holds it (#5396); the key
+    is always written, empty when none does. A blob without it is a legacy one (`gap_before` may
+    also have marked a tape gap); a reader before #5396 ignores the extra key."""
+    return {**doc, "tape_gap": [d.index for d in drafts if d is not None and d.tape_gap]}
+
+
+def restore_tape_gaps(
+    doc: dict[str, Any],
+    drafts: Sequence[_Draft | None],
+    *,
+    legacy_gap_is_tape: bool = False,
+    legacy_gap_ambiguous: bool = False,
+) -> None:
+    """Set `tape_gap` on the drafts a blob's `tape_gap` key names. A blob without the key was
+    written before #5396 (new code always writes it), when `mark_gap` set `gap_before`: where
+    `gap_before` can mean nothing else (`legacy_gap_is_tape`: tick, volume, delta, renko) every
+    draft holding it is a tape gap, moved to `tape_gap`; for range (`legacy_gap_ambiguous`) a
+    price jump may also have set it, so it keeps `gap_before` and also takes `tape_gap`."""
+    if legacy_gap_is_tape and "tape_gap" not in doc:
+        for d in drafts:
+            if d is not None and d.gap_before:
+                d.tape_gap, d.gap_before = True, False
+        return
+    if legacy_gap_ambiguous and "tape_gap" not in doc:
+        for d in drafts:
+            if d is not None and d.gap_before:
+                d.tape_gap = True
+        return
+    marks = doc.get("tape_gap", [])
+    if not isinstance(marks, list) or not all(type(i) is int for i in marks):
+        raise BarsError("The builder state's tape-gap marks are corrupt.")
+    for d in drafts:
+        if d is not None and d.index in marks:
+            d.tape_gap = True
+
+
+def restore_legacy_time_gaps(
+    doc: dict[str, Any], cur: _Draft | None, closed: Sequence[_Draft]
+) -> None:
+    """A blob without a `tape_gap` key predates #5396 (new code always writes it, empty or not),
+    when `gap_before` also marked a tape gap. An empty interval leaves a draft's `open_time` after
+    the previous bar's `close_time`; the first bar has no previous one. So a `gap_before` draft
+    that starts exactly at the previous bar's `close_time` (or is the first) can only be a tape
+    gap: it moves to `tape_gap`. The previous bar's close is the closed predecessor's, or for the
+    open draft the blob's `last_close` once the predecessor is pruned. Any other `gap_before`
+    draft (an empty interval precedes it, and a tape gap may too) is ambiguous: it keeps
+    `gap_before` and also takes `tape_gap`, so data loss is never under-reported."""
+    if "tape_gap" in doc:
+        return
+    by_index = {d.index: d for d in closed}
+    for d in [*closed, *([cur] if cur is not None else [])]:
+        if not d.gap_before:
+            continue
+        prev = by_index.get(d.index - 1)
+        prev_close: int | None = None
+        if prev is not None:
+            prev_close = prev.close_time
+        elif d is cur:  # defensive: only the open draft can lack a closed predecessor
+            prev_close = doc.get("last_close")
+        if (d.index == 0 and prev is None) or (
+            prev_close is not None and prev_close == d.open_time
+        ):
+            d.tape_gap, d.gap_before = True, False
+        else:
+            d.tape_gap = True
+
+
 #: Slots stored as JSON ints/bools; every other slot is a Decimal rendered as a string.
 _INT_SLOTS: Final = frozenset(
     {
@@ -278,7 +355,7 @@ class TimeBarBuilder:
         cur = self._cur
         if cur is not None and cur.open_time <= ts < cur.close_time:
             if self._gap_pending and ts > self._gap_floor:
-                cur.gap_before, self._gap_pending = True, False
+                cur.tape_gap, self._gap_pending = True, False
             cur.apply(t)
             return (self._emit("update", cur, closed=False),)
         floor = cur.open_time if cur is not None else self._last_close
@@ -290,7 +367,8 @@ class TimeBarBuilder:
         d = _Draft(self._next_index, start, end, t.price)
         d.partial = self._next_index == 0
         post_hole = self._gap_pending and ts > self._gap_floor
-        d.gap_before = post_hole or (self._last_close is not None and self._last_close != start)
+        d.tape_gap = post_hole  # data loss (#5396); an empty interval is the discontinuity below
+        d.gap_before = self._last_close is not None and self._last_close != start
         if post_hole:
             self._gap_pending = False
         self._next_index += 1
@@ -302,7 +380,8 @@ class TimeBarBuilder:
     def mark_gap(self, floor_us: int) -> None:
         """An unrecovered tape gap (#529): the bar taking the first print with `ts_event >
         floor_us` (the last print published before the hole, `GapEvent.start_us`) carries
-        `gap_before` on every later emission (trade, clock close, snapshot). The test is on the
+        `tape_gap` (#5396; `gap_before` stays the empty-interval discontinuity) on every later
+        emission (trade, clock close, snapshot). The test is on the
         print's own time, so a queued pre-hole print or an out-of-order straggler never takes it.
 
         The pending flag is not snapshotted: a gap drained at `stop()`, or with no post-hole
@@ -317,7 +396,7 @@ class TimeBarBuilder:
                     # The clock closed it before the post-hole print landed. A straggler from
                     # before the hole (`ts` at or under the floor) amends without touching it.
                     if self._gap_pending and ts > self._gap_floor:
-                        d.gap_before, self._gap_pending = True, False
+                        d.tape_gap, self._gap_pending = True, False
                     d.apply(t)
                     self._amended.inc()
                     return (self._emit("close", d, closed=True, amended=True),)
@@ -359,6 +438,7 @@ class TimeBarBuilder:
             "last_close": self._last_close,
             "watermark": self._watermark,
         }
+        doc = with_tape_gaps(doc, [self._cur, *self._closed])
         return BuilderState(
             spec_hash=self._hash,
             symbol=self.symbol,
@@ -378,4 +458,6 @@ class TimeBarBuilder:
         self._next_index = doc["next_index"]
         self._last_close = doc["last_close"]
         self._watermark = doc["watermark"]
+        restore_legacy_time_gaps(doc, self._cur, self._closed)
+        restore_tape_gaps(doc, [self._cur, *self._closed])
         self._last_seq = state.last_trade_seq

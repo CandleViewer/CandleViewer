@@ -56,7 +56,7 @@ def _first_index_after(spec: BarSpec, tape: list[TradeEvent], hole: int) -> int:
 async def _backlogged(
     spec: BarSpec, tape: list[TradeEvent], hole: int, *, recovered: bool
 ) -> list[int]:
-    """Indices flagged `gap_before` when every print queues behind a held lane lock."""
+    """Indices flagged `tape_gap` when every print queues behind a held lane lock."""
     with tempfile.TemporaryDirectory() as root:
         bus, sink = Bus(), RecordingSink()
         s = _make(Path(root), bus, sink)
@@ -71,7 +71,7 @@ async def _backlogged(
             await asyncio.sleep(0)
         await settle(bus, s)
         await s.stop()
-        return sorted({b.index for _, _, b in sink.bars if b.gap_before})
+        return sorted({b.index for _, _, b in sink.bars if b.tape_gap})
 
 
 @pytest.mark.parametrize("name", list(SPECS))

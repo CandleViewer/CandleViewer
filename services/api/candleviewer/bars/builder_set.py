@@ -26,10 +26,11 @@ no catalogue lifecycle (B1-B20), so lease state is plain bookkeeping in `leases.
   every later emission of that bar (trade, clock close, snapshot) has it and the sink's last
   write keeps it. A bar already open across the hole is that bar, and so is a clock-closed bar
   the first post-hole print then amends (time bars); if `tick()` closes the pre-hole bar and no
-  post-hole print falls in it, the next bar is the flagged one. Consumer: the chart's gap
-  marker for `gap_before` (E12-D06 §8.2, the renderer draws a visual gap before a flagged bar,
-  24 §3.2). Only the value of the existing field changes. The pending flag is in memory (the
-  flagged open bar's own state is snapshotted), so a restart never re-flags a later bar;
+  post-hole print falls in it, the next bar is the flagged one. The flag is `tape_gap`, the
+  per-bar data-loss marker (#5396, ruling 2 on it): `gap_before` stays the discontinuity marker
+  (an empty interval, a range price jump) and is not set by a tape gap. The pending flag is in
+  memory (the flagged open bar's own state is snapshotted, its `tape_gap` under the blob's own
+  key), so a restart never re-flags a later bar;
   replayed trades never carry it. Loss window: a gap drained at `stop()`, or with no post-hole
   trade before a crash, is not carried across a restart. The gap queue is drained before every
   trade (the gap was queued first) and at `stop()`, and `bars_gap_detected_total{reason}`

@@ -52,7 +52,8 @@ KLINES_SCHEMA = TableSchema(
 )
 
 _BAR_TAG_COLUMNS = ("symbol", "bar_param", "source")
-_BAR_BOOL_COLUMNS = ("is_closed",)
+# `gap_before` / `partial` / `tape_gap`: QuestDB 0008 BOOLEAN columns (#5396, 21 Sec.4.8).
+_BAR_BOOL_COLUMNS = ("is_closed", "gap_before", "partial", "tape_gap")
 
 
 def _bar_schema(name: str, *, has_open_source_ts: bool = False) -> TableSchema:

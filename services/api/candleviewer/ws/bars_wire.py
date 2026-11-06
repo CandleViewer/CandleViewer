@@ -20,6 +20,10 @@ Heikin-ashi values are averages, not traded prices: an HA producer must quantise
 instrument tick before they reach this module, or the contract must give HA its own rounding rule.
 A merged window has only its bars' items, so `item_frames` reads them back (`item_bar`) into what
 kind 4 encodes, and builds the frames `bars_frames` would for the bars themselves (#3353).
+
+**Bar flags (#5396, §3.4, §14.3).** `gap_before`, `partial` and `tape_gap` are kind-4 `flags`
+bit1, bit2 and bit3 beside bit0 `confirm`, always written. The item names each only when true:
+absent reads `false`, so an unflagged item is unchanged and both twins decode to the same flags.
 """
 
 from __future__ import annotations
@@ -59,6 +63,8 @@ _INTS: Final = (("generation", _FIELD_MAX["generation"]), ("index", _FIELD_MAX["
 #: `heikin_ashi` is a wire name only (§6.1): no builder produces it yet.
 TIME_KINDS: Final[frozenset[WireBarType]] = frozenset({"time", "heikin_ashi"})
 _CONFIRM: Final = 0b1
+#: The bar flags and their kind-4 `flags` bits (§3.4; bits 4-7 reserved, sent as 0).
+FLAG_BITS: Final = (("gap_before", 0b10), ("partial", 0b100), ("tape_gap", 0b1000))
 #: Exact arithmetic whatever the caller's context: every field explicit, no rounding below the
 #: maximum precision, no traps. Its flags accumulate and are never read. Only for
 #: `scaleb`/`normalize`/`to_integral_value`: never for division or powers, where `MAX_PREC` would
@@ -97,6 +103,9 @@ class ItemBar:
     delta: Decimal
     trade_count: int
     closed: bool
+    gap_before: bool = False
+    partial: bool = False
+    tape_gap: bool = False
     synthetic: ClassVar[bool] = False  # `bar_item` never sends a `densify()` filler
 
 
@@ -213,6 +222,9 @@ def bar_item(
         item["close_t_ms"] = bar.close_time // 1000
     if amended:
         item["amended"] = True
+    for name, _ in FLAG_BITS:  # only when true: absent reads false (§14.3)
+        if getattr(bar, name):
+            item[name] = True
     if include_delta:
         item["delta"] = _dec(bar.delta, bar, generation, "delta")
         item["min_delta"] = _dec(bar.min_delta, bar, generation, "min_delta")
@@ -244,12 +256,21 @@ def bar_record(
         _scaled(bar.turnover, qty_scale, bar, g, "turnover", exact=False),
         bar.trade_count,
         _scaled(bar.delta, qty_scale, bar, g, "delta") if include_delta else 0,
-        _CONFIRM if bar.closed else 0,
+        _flags(bar),
     )
     for (name, (low, high)), value in zip(_BOUNDS, record, strict=True):
         if not low <= value <= high:
             raise _refuse(bar, g, name, value, f"is outside [{low}, {high}]")
     return record
+
+
+def _flags(bar: BarFields) -> int:
+    """The kind-4 `flags` byte: bit0 `confirm`, then `FLAG_BITS`."""
+    out = _CONFIRM if bar.closed else 0
+    for name, bit in FLAG_BITS:
+        if getattr(bar, name):
+            out |= bit
+    return out
 
 
 def bars_frames(
@@ -314,6 +335,9 @@ def item_bar(item: Mapping[str, Any], *, include_delta: bool) -> ItemBar:
         delta=_value(item, "delta") if include_delta else Decimal(0),
         trade_count=int(item["trades"]),
         closed=bool(item["confirm"]),
+        gap_before=item.get("gap_before") is True,
+        partial=item.get("partial") is True,
+        tape_gap=item.get("tape_gap") is True,
     )
 
 

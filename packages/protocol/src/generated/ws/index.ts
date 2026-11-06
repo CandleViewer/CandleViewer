@@ -392,6 +392,10 @@ export interface SnapMeta {
    */
   stale?: boolean;
   /**
+   * bars snapshots: true when a bar sent was built below the running builder version or has no recorded one (NULL, unknown provenance); REST `BarsMeta.stale_build` with the same meaning (22, §6.1, #5396). The forming bar counts as the running build. Unrelated to `stale`. Repeated on every chunk of a chunked set (§3.6). Absent means false. Never on a d.
+   */
+  stale_build?: boolean;
+  /**
    * bars snapshots: the ranges within the snapshot's span that the server could not serve, listed so a client never reads that span as complete (§6.1, #5396). The same key and item shape as REST `DataMeta.coverage_holes` (22). Sorted, at most 12 entries: past that the oldest are joined into one range, which may cover bars sent. Repeated on every chunk of a chunked set (§3.6). Absent means none recorded. Never on a d.
    */
   coverage_holes?: {
@@ -618,6 +622,10 @@ export interface SnapMeta {
    * snapshots: true when the topic's state may be behind the live market (§7.2). Absent means false. Never on a d.
    */
   stale?: boolean;
+  /**
+   * bars snapshots: true when a bar sent was built below the running builder version or has no recorded one (NULL, unknown provenance); REST `BarsMeta.stale_build` with the same meaning (22, §6.1, #5396). The forming bar counts as the running build. Unrelated to `stale`. Repeated on every chunk of a chunked set (§3.6). Absent means false. Never on a d.
+   */
+  stale_build?: boolean;
   /**
    * bars snapshots: the ranges within the snapshot's span that the server could not serve, listed so a client never reads that span as complete (§6.1, #5396). The same key and item shape as REST `DataMeta.coverage_holes` (22). Sorted, at most 12 entries: past that the oldest are joined into one range, which may cover bars sent. Repeated on every chunk of a chunked set (§3.6). Absent means none recorded. Never on a d.
    */

@@ -153,7 +153,9 @@ class Bar(BaseModel):
     vwap: Px
     closed: bool
     partial: bool
-    gap_before: bool
+    gap_before: bool  # a discontinuity precedes the bar (§3.3): not data loss
+    #: A recorded-tape gap affects the bar (§3.1, #5396): the per-bar data-loss marker.
+    tape_gap: bool = False
     synthetic: bool = False
 
 

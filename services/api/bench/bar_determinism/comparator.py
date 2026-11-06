@@ -16,6 +16,9 @@ from candleviewer.bars.models import Bar
 
 FIELDS: tuple[str, ...] = tuple(Bar.model_fields)
 OHLCV: tuple[str, ...] = ("open", "high", "low", "close", "volume")
+#: Fields the row names only when true (#5396, as the wires send them): a golden written before
+#: one existed stays byte-identical, and a bar that sets one is a difference.
+WHEN_TRUE: frozenset[str] = frozenset({"tape_gap"})
 
 
 def row(b: Bar) -> dict[str, str]:
@@ -23,6 +26,8 @@ def row(b: Bar) -> dict[str, str]:
     out: dict[str, str] = {}
     for f in FIELDS:
         v = getattr(b, f)
+        if f in WHEN_TRUE and v is False:
+            continue
         out[f] = str(v) if isinstance(v, Decimal) else json.dumps(v)
     return out
 
@@ -67,7 +72,10 @@ def compare(
                 )
             )
             continue
-        diffs.extend(Diff(i, index, f, e[f], a[f]) for f in fields if e[f] != a[f])
+        for f in fields:  # a `WHEN_TRUE` field the row leaves out is "false"
+            x, y = e.get(f, "false"), a.get(f, "false")
+            if x != y:
+                diffs.append(Diff(i, index, f, x, y))
     return diffs
 
 

@@ -389,7 +389,7 @@ class BarReader:
         if spec.kind == "time":
             rows, cursor = _tape_over_kline(raw, rows, cursor)
         current = BUILD_VERSIONS[spec.kind]
-        stale = any(int(str(r.get("build_version") or 0)) < current for r in rows)
+        stale = any((build_version_of(r) or 0) < current for r in rows)
         if stale:
             bars_stale_build_version_total.inc()
             await self._rebuilds.request(symbol, spec.spec_hash, from_us, to_us)
@@ -482,7 +482,7 @@ class BarReader:
         raw = await self._conn.fetch(sql, *params)
         current = BUILD_VERSIONS[spec.kind]
         bars: list[tuple[int, Bar]] = []
-        builds: dict[BuildKey, int] = {}
+        builds: dict[BuildKey, int | None] = {}
         dropped = skipped = malformed = 0
         error = ""
         for n, row in enumerate(reversed(raw)):
@@ -493,7 +493,7 @@ class BarReader:
                 continue
             try:
                 got = _tail_bar(row, spec)
-                built = max(1, int(str(row.get("build_version") or 0)))  # NULL: a pre-0003 v1 row
+                built = build_version_of(row)
             except (ArithmeticError, ValueError, TypeError, BarPersistError) as exc:
                 malformed, error = malformed + 1, error or type(exc).__name__
                 continue
@@ -502,7 +502,7 @@ class BarReader:
                 continue
             bars.append(got)
             gen, bar = got
-            if built < current:
+            if built is None or built < current:  # None: unknown provenance (24 §3.1)
                 builds[gen, bar.index, bar.open_time] = built
         if malformed:
             _log().warning(
@@ -538,9 +538,11 @@ class BarTail:
 
     bars: list[tuple[int, Bar]]
     skipped: int = 0
-    #: `BuildKey -> build_version` of the rows built below the running code (§6.1
-    #: `meta.build_version` is the lowest among the bars a snapshot sends).
-    builds: dict[BuildKey, int] = field(default_factory=dict)
+    #: `BuildKey -> build_version` of the rows built below the running code, or None for a row
+    #: with no recorded version (NULL, or below 1): unknown provenance, stale as `read_bars` reads
+    #: it (24 §3.1, #5396 ruling 5). §6.1 `meta.build_version` is the lowest recorded among the
+    #: bars a snapshot sends, so a None stays out of it; `meta.stale_build` counts both.
+    builds: dict[BuildKey, int | None] = field(default_factory=dict)
     dropped: int = 0
     #: Where the read stopped: its start (µs, see `bounded`) and the rows the query returned, before
     #: drops and skips. `fetched` below the limit: every builder row from `since_us` on was
@@ -559,6 +561,16 @@ class BarTail:
     def integrity_degraded(self) -> bool:
         return self.dropped > 0
 
+    @property
+    def unknown_builds(self) -> int:
+        """Bars served with no recorded `build_version`: unknown provenance (`builds`)."""
+        return sum(v is None for v in self.builds.values())
+
+    @property
+    def stale_build(self) -> bool:
+        """A bar served was built below the running version or has no recorded one (24 §3.1)."""
+        return bool(self.builds)
+
 
 #: The stored columns a tail bar takes as data: a NULL in any of them skips the row.
 _TAIL_VALUES: Final = (
@@ -569,7 +581,7 @@ _TAIL_VALUES: Final = (
 
 def _tail_bar(row: dict[str, object], spec: BarSpec) -> tuple[int, Bar] | None:
     """A tape-built closed row as `(generation, Bar)`, in the REST row semantics of `stored_bar`
-    (turnover is `vwap * volume`); `partial`/`gap_before` are not stored and read as False.
+    (turnover is `vwap * volume`), its flags as stored (a pre-0008 row reads them False).
     None for any other row, or one with a NULL in `_TAIL_VALUES`: nothing is invented."""
     if any(row.get(c) is None for c in _TAIL_VALUES):
         return None
@@ -584,7 +596,8 @@ def _tail_bar(row: dict[str, object], spec: BarSpec) -> tuple[int, Bar] | None:
         buy_volume=_dec(row["buy_volume"]), sell_volume=_dec(row["sell_volume"]),
         delta=_dec(row["delta"]), min_delta=_dec(row["min_delta"]),
         max_delta=_dec(row["max_delta"]), trade_count=s.trades, turnover=Decimal(s.turnover),
-        vwap=_dec(row["vwap"]), closed=True, partial=False, gap_before=False,
+        vwap=_dec(row["vwap"]), closed=True, partial=s.partial, gap_before=s.gap_before,
+        tape_gap=s.tape_gap,
     )  # fmt: skip
     return s.generation, bar
 
@@ -619,6 +632,12 @@ class StoredBar:
     index: int | None = None  # NULL on kline-sourced `bars_time` rows (no builder index)
     generation: int | None = None
     checksum: int | None = None  # the row's `row_checksum`: the version served (#5396)
+    #: The bar flags as stored (0008, #5396): False on a pre-0008 row and on a kline row.
+    gap_before: bool = False
+    partial: bool = False
+    tape_gap: bool = False
+    #: None when the row records no version (NULL, or below 1): unknown provenance (24 §3.1).
+    build_version: int | None = None
 
     @property
     def tape_built(self) -> bool:
@@ -628,6 +647,21 @@ class StoredBar:
 
 def _num(v: object) -> str:
     return repr(float(str(v)))
+
+
+def build_version_of(row: dict[str, object]) -> int | None:
+    """A row's `build_version`, or None for unknown provenance: NULL, or below 1, which no
+    writer stores (24 §3.1, #5396 ruling 5)."""
+    value = row.get("build_version")
+    if value is None:
+        return None
+    built = int(str(value))
+    return built if built >= 1 else None
+
+
+def _flag(row: dict[str, object], name: str, *, flow: bool) -> bool:
+    """A stored flag: True only when the column holds true on a tape-built row (21 §4.8)."""
+    return flow and row.get(name) is True
 
 
 def stored_bar(row: dict[str, object]) -> StoredBar:
@@ -648,6 +682,8 @@ def stored_bar(row: dict[str, object]) -> StoredBar:
         index=None if idx is None else int(str(idx)),
         generation=None if gen is None else int(str(gen)),
         checksum=None if row.get("row_checksum") is None else int(str(row["row_checksum"])),
+        gap_before=_flag(row, "gap_before", flow=flow), partial=_flag(row, "partial", flow=flow),
+        tape_gap=_flag(row, "tape_gap", flow=flow), build_version=build_version_of(row),
     )  # fmt: skip
 
 

@@ -8209,14 +8209,14 @@ export interface components {
       turnover?: components["schemas"]["Decimal"];
       v: components["schemas"]["Decimal"];
     };
-    /** @description `DataMeta` extended with the build provenance of the bars served (SR-E12-14). `spec_hash` and `build_version` are named and bounded as the WS `bars` snapshot `meta` names them (23 §6.1, §13 `snapMeta`); `stale_build` is REST's own and is unrelated to the WS snapshot's `meta.stale` (a feed behind the live market), which REST does not carry. Every member added here is optional and additive (C-6.3): an answer without them is read as `stale_build: false` with its build provenance unknown. */
+    /** @description `DataMeta` extended with the build provenance of the bars served (SR-E12-14). `spec_hash` and `build_version` are named and bounded as the WS `bars` snapshot `meta` names them (23 §6.1, §13 `snapMeta`), and so is `stale_build`, one key with one meaning on both. `stale_build` is unrelated to the WS snapshot's `meta.stale` (a feed behind the live market), which REST does not carry. A page that serves exchange klines and no stored bar carries the running `build_version` and `stale_build: false`: nothing on it was built, so nothing is stale, and its provenance is known (the exchange), not NULL. Every member added here is optional and additive (C-6.3): an answer without them is read as `stale_build: false` with its build provenance unknown. */
     BarsMeta: components["schemas"]["DataMeta"] & {
       /** @description The lowest bar builder version among the bars served, by the WS `bars` snapshot rule (23 §6.1): a served bar is never traced to newer code than the code that built it. Rows with a NULL `build_version` do not count toward the minimum; if every bar served has none, `build_version` is absent (and `stale_build` is true). A page with no bar carries the running version. */
       build_version?: number;
       /** @description The served series' bar spec hash (24 §3.1), the WS `bars` snapshot's `meta.spec_hash` for the same series. */
       spec_hash?: string;
       /**
-       * @description True when a bar served was built below the running builder version, or has no recorded build version: a NULL `build_version` is unknown provenance and serves `stale_build: true` on every read path (24 §3.1). A later read may serve such a window rebuilt. Absent means `false`.
+       * @description True when a bar served was built below the running builder version, or has no recorded build version: a NULL `build_version` is unknown provenance and serves `stale_build: true` on every read path (24 §3.1). An exchange kline is no built bar and never sets it. The WS `bars` snapshot's `meta.stale_build` is the same flag for the bars it sends (23 §6.1). A later read may serve such a window rebuilt. Absent means `false`.
        * @default false
        */
       stale_build: boolean;

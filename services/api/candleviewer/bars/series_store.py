@@ -226,13 +226,17 @@ _READ_SLOTS: Final = _ReadSlots(MAX_CONCURRENT_TAIL_READS)
 class Latest(NamedTuple):
     """`latest`: the series' change counter and generation (None before an emission or a read
     names one), its closed bars in index order, the forming bar, and the lowest `build_version`
-    among those bars when below the running code (None: all current; §6.1 `meta.build_version`)."""
+    among those bars when below the running code (None: all current or unknown; §6.1
+    `meta.build_version`). `stale_build`: one of those bars was built below the running code or
+    has no recorded version (§6.1 `meta.stale_build`, #5396); the forming bar is the running
+    build."""
 
     version: int
     generation: int | None
     closed: list[Bar]
     forming: Bar | None
     oldest_build: int | None
+    stale_build: bool = False
 
 
 class Hold:
@@ -320,7 +324,8 @@ class _Series:
     #: index -> `build_version` of the held bars built below the running code: a read sets its
     #: rows', a re-read carries each held bar's own, and a live re-close, the bar leaving the
     #: window or a reset drops one. Its indexes are always among `closed`'s.
-    stale: dict[int, int] = field(default_factory=dict)
+    #: None marks a bar with no recorded version: unknown provenance (`BarTail.builds`).
+    stale: dict[int, int | None] = field(default_factory=dict)
     #: Closes seen while a read is in flight (the oldest shed past `MAX_HISTORY`), folded over
     #: its rows.
     replay: deque[Close] | None = None
@@ -709,8 +714,9 @@ class SeriesStore:
         n = max(0, history - (forming is not None))
         closed = list(itertools.islice(reversed(s.closed.values()), n))
         closed.reverse()
-        oldest = min((s.stale[b.index] for b in closed if b.index in s.stale), default=None)
-        return Latest(s.version, s.generation, closed, forming, oldest)
+        marks = [s.stale[b.index] for b in closed if b.index in s.stale]
+        oldest = min((m for m in marks if m is not None), default=None)
+        return Latest(s.version, s.generation, closed, forming, oldest, stale_build=bool(marks))
 
     async def _settle(self, s: _Series, symbol: str, spec: BarSpec) -> None:
         """Wait for the read in flight (its own `timeout_s` bounds it), then read when one is
@@ -842,9 +848,9 @@ class SeriesStore:
             rows.sort(key=lambda r: (r[1].open_time, r[1].index))  # stable: a row, then its twin
         for g, bar in rows:
             _apply(s, _update("close", bar), gaps=False)
-            built = tail.builds.get((g, bar.index, bar.open_time))
-            if built is not None:
-                s.stale[bar.index] = built
+            key = (g, bar.index, bar.open_time)
+            if key in tail.builds:  # a None build is unknown provenance: stale, no minimum
+                s.stale[bar.index] = tail.builds[key]
         last = next(reversed(s.closed.values()), None)
         end = None if last is None else (last.open_time, last.index)
         for b in held:  # each keeps its own build mark; storage may still lack them

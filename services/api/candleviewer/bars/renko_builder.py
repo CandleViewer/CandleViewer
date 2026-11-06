@@ -43,7 +43,13 @@ from candleviewer.bars.metrics import (
     bars_print_rejected_total,
 )
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate, BuilderState, check_renko_bounds
-from candleviewer.bars.time_builder import _NONE, _Draft, bars_built_total
+from candleviewer.bars.time_builder import (
+    _NONE,
+    _Draft,
+    bars_built_total,
+    restore_tape_gaps,
+    with_tape_gaps,
+)
 from candleviewer.domain.primitives import TsUs
 from candleviewer.exchange.base.models import TradeEvent
 
@@ -113,14 +119,14 @@ class RenkoBarBuilder:
         if (
             self._gap_pending and t.ts_event > self._gap_floor
         ):  # the run taking the first post-hole print
-            d.gap_before, self._gap_pending = True, False
+            d.tape_gap, self._gap_pending = True, False
         d.apply(t)
         out = self._bricks(d, self._anchor, t.price - self._anchor)
         self._lat.observe(time.perf_counter() - t0)
         return out
 
     def mark_gap(self, floor_us: int) -> None:
-        """An unrecovered tape gap precedes the next trade: its first brick carries `gap_before`."""
+        """An unrecovered tape gap precedes the next trade: its first brick carries `tape_gap`."""
         self._gap_floor, self._gap_pending = floor_us, True
 
     def _bricks(self, d: _Draft, c: Decimal, diff: Decimal) -> Sequence[BarUpdate]:
@@ -199,6 +205,7 @@ class RenkoBarBuilder:
                     "close": c,
                     "partial": idx == 0,
                     "gap_before": d.gap_before and idx == d.index,
+                    "tape_gap": d.tape_gap and idx == d.index,
                     "vwap": src.vwap if vol else o,
                 }
             )
@@ -224,6 +231,7 @@ class RenkoBarBuilder:
             closed=True,
             partial=idx == 0,
             gap_before=d.gap_before and idx == d.index,
+            tape_gap=d.tape_gap and idx == d.index,
             synthetic=False,
         )
 
@@ -239,6 +247,7 @@ class RenkoBarBuilder:
             "dir": self._dir,
             "width": str(self._w),
         }
+        doc = with_tape_gaps(doc, [self._cur])
         return BuilderState(
             spec_hash=self._hash,
             symbol=self.symbol,
@@ -260,6 +269,7 @@ class RenkoBarBuilder:
             w = Decimal(width)
             a = None if anchor is None else Decimal(anchor)
             d = None if cur is None else _Draft.load(cur)
+            restore_tape_gaps(doc, [d], legacy_gap_is_tape=True)
         except (KeyError, TypeError, ValueError, ArithmeticError) as e:  # JSON/Decimal errors
             raise BarsError("The renko builder state is incomplete or corrupt.") from e
         if w != self._w:  # ADR-0033: a tick-size change starts a new epoch
