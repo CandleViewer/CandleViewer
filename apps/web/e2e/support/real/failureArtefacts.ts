@@ -10,7 +10,7 @@ import {
   type TestInfo,
 } from "@playwright/test";
 import { REFRESH_COOKIE } from "./cookies";
-import { realStack, type FixtureUser, type RealStack } from "./stack";
+import { realStack, type FixtureRole, type FixtureUser, type RealStack } from "./stack";
 
 // E09-Q02 (#293) PR 2 (#2490): the real lane's test fixture. Every test gets `lane`: the stack, a
 // fresh fixture user per `lane.user()`, and a record of the `X-Correlation-Id` of every API answer
@@ -47,8 +47,8 @@ export type AuditRow = Readonly<Record<string, unknown>>;
 
 export interface Lane {
   readonly stack: RealStack;
-  /** Claims a fixture user for this test; its audit rows join the failure artefacts. */
-  user(): FixtureUser;
+  /** Claims a fixture user of `role` (an owner by default); its audit rows join the artefacts. */
+  user(role?: FixtureRole): FixtureUser;
   /**
    * Another browser for this test (its own cookie jar and shared worker), recorded as the test's
    * own `context` is, and closed by the fixture once its refreshes are counted.
@@ -374,8 +374,8 @@ export const test = base.extend<{ lane: Lane }>({
       watch(context);
       await use({
         stack,
-        user: () => {
-          const user = stack.claimUser();
+        user: (role) => {
+          const user = stack.claimUser(role);
           users.push(user.username);
           return user;
         },

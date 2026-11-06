@@ -11,6 +11,12 @@ import { serverClock, type ServerClock } from "../serverClock";
 //   server's time.
 // No value leaves this module except through a function a spec calls when it needs it: no object
 // here prints a password, seed or code if a spec logs it.
+// E42-Q02 (#1215) part 1: an entry may name its `role` (`seed_fixture_user.py --role`); without
+// one it is an owner, so E09's users file reads as before. A claim takes a user of one role.
+
+/** The roles `seed_fixture_user.py --role` seeds. */
+export const FIXTURE_ROLES = ["owner", "manager", "viewer"] as const;
+export type FixtureRole = (typeof FIXTURE_ROLES)[number];
 
 /** A seeded fixture user: one per test, so no two tests share a lockout counter or a TOTP step. */
 export interface FixtureUser {
@@ -24,8 +30,8 @@ export interface RealStack {
   readonly password: () => string;
   /** The API's test clock: `totpAt` makes a code at the server's time. */
   readonly clock: ServerClock;
-  /** A fixture user no other test of this run has claimed, across workers. */
-  readonly claimUser: () => FixtureUser;
+  /** A fixture user of `role` (an owner by default) no other test of this run has claimed. */
+  readonly claimUser: (role?: FixtureRole) => FixtureUser;
   /** The run's refresh ledger, shared by every worker (`failureArtefacts.ts`). */
   readonly refreshLedger: string;
 }
@@ -40,22 +46,49 @@ function required(name: string): string {
   return value;
 }
 
+/** A users file entry; `role` only when the file names one. */
+export interface UserEntry {
+  readonly username: string;
+  readonly totpFile: string;
+  readonly role?: FixtureRole;
+}
+
+const isRole = (value: unknown): value is FixtureRole =>
+  (FIXTURE_ROLES as readonly unknown[]).includes(value);
+
 /** The users file's entries, refused whole if one is malformed (the message names no value). */
-export function parseUsers(text: string): readonly { username: string; totpFile: string }[] {
+export function parseUsers(text: string): readonly UserEntry[] {
   const parsed: unknown = JSON.parse(text);
   if (!Array.isArray(parsed) || parsed.length === 0) {
     throw new Error("the users file must be a non-empty JSON array");
   }
   return parsed.map((entry: unknown, index) => {
-    const { username, totp_file: totpFile } = (entry ?? {}) as Record<string, unknown>;
+    const { username, totp_file: totpFile, role } = (entry ?? {}) as Record<string, unknown>;
     if (typeof username !== "string" || !USERNAME.test(username)) {
       throw new Error(`users file entry ${index}: username is not a seeded fixture name`);
     }
     if (typeof totpFile !== "string" || !isAbsolute(totpFile)) {
       throw new Error(`users file entry ${index}: totp_file is not an absolute path`);
     }
-    return { username, totpFile };
+    if (role !== undefined && !isRole(role)) {
+      throw new Error(`users file entry ${index}: role is not one of ${FIXTURE_ROLES.join(", ")}`);
+    }
+    return role === undefined ? { username, totpFile } : { username, totpFile, role };
   });
+}
+
+/**
+ * The users of `role` and the folder their claims go to: an owner's in `claims`, as E09's lane
+ * has always claimed, the other roles' each in a folder of its own, so the indexes never meet.
+ */
+export function roleClaims(
+  users: readonly UserEntry[],
+  role: FixtureRole,
+  claims: string,
+): { users: readonly UserEntry[]; claims: string } {
+  const mine = users.filter((user) => (user.role ?? "owner") === role);
+  if (mine.length === 0) throw new Error(`the users file has no ${role}: the lane must seed one`);
+  return { users: mine, claims: role === "owner" ? claims : `${claims}-${role}` };
 }
 
 /**
@@ -89,8 +122,9 @@ export function realStack(): RealStack {
   cached = {
     password: () => password,
     clock: serverClock(required("CV_TEST_CLOCK_FILE")),
-    claimUser: () => {
-      const { username, totpFile } = claimFrom(users, claims);
+    claimUser: (role = "owner") => {
+      const pool = roleClaims(users, role, claims);
+      const { username, totpFile } = claimFrom(pool.users, pool.claims);
       return { username, seed: () => readFileSync(totpFile, "ascii").trim() };
     },
     refreshLedger: join(dirname(usersFile), "refresh-ledger"),
