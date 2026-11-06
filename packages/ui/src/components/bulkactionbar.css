@@ -29,22 +29,3 @@
   overflow: visible;
   text-overflow: clip;
 }
-
-/* The universal reduce pair for animations (as theme.css applies it), kept here so the file is self-contained. */
-:root[data-motion="reduce"] *,
-:root[data-motion="reduce"] *::before,
-:root[data-motion="reduce"] *::after {
-  animation-duration: 0.01ms !important;
-  animation-delay: 0s !important;
-  animation-iteration-count: 1 !important;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :root:not([data-motion]) *,
-  :root:not([data-motion]) *::before,
-  :root:not([data-motion]) *::after {
-    animation-duration: 0.01ms !important;
-    animation-delay: 0s !important;
-    animation-iteration-count: 1 !important;
-  }
-}

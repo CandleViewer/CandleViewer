@@ -70,6 +70,17 @@ describe("BulkActionBar: actions, Clear and the keyboard", () => {
     expect(outside).toHaveFocus();
   });
 
+  it("leaves modified arrows and Home / End to the browser", async () => {
+    const host = await mount(<BulkActionBar count={3} actions={actions()} onClear={fn()} />);
+    await userEvent.tab();
+    const first = within(host).getByRole("button", { name: "Disarm" });
+    expect(first).toHaveFocus();
+    await userEvent.keyboard(
+      "{Alt>}{ArrowRight}{/Alt}{Control>}{End}{/Control}{Meta>}{ArrowLeft}{/Meta}",
+    );
+    expect(first).toHaveFocus();
+  });
+
   it("is one Tab stop: → / ← rove with wrap, Home / End jump, Tab leaves", async () => {
     const host = await mount(
       <div>
