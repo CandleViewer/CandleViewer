@@ -3,7 +3,7 @@ import { concretePath } from "@candleviewer/fixtures/e2e";
 import { ROUTE_MANIFEST } from "../../src/routes/manifest";
 import { json, stubSession } from "../support/api";
 import { REFRESH_INVALID } from "../support/contexts";
-import { focused, heading, test, type SessionLog } from "./harness";
+import { heading, tabSweep, test, type SessionLog } from "./harness";
 
 // E49-Q02 (#1336) run 1: the first exploratory session on what main has built, against a fresh
 // `dist/` on recorded-shape stubs (no backend, no exchange). Oracles are the charters' own ids
@@ -204,40 +204,6 @@ test.describe("keyboard-only segment (03 §12)", () => {
         await page.route("**/api/v1/auth/refresh", (r) => r.fulfill(REFRESH_INVALID));
       else await stubSession(page, { role: s.role });
       await land(page, s.path);
-      const seen: string[] = [];
-      let stuck = 0;
-      for (let i = 0; i < 60; i += 1) {
-        await page.keyboard.press("Tab");
-        const f = await focused(page);
-        if (f === seen.at(-1)) stuck += 1;
-        seen.push(f);
-        if (seen.length > 3 && f === seen[0]) break; // wrapped round
-      }
-      const unique = new Set(seen);
-      const noRing = [...unique].filter((f) => f.endsWith("(no ring)"));
-      log.note({
-        step: "focus order",
-        route: s.path,
-        role: s.role ?? "anonymous",
-        oracle: "none",
-        result: "info",
-        note: seen.join(" > ").slice(0, 2000),
-      });
-      log.note({
-        step: `Tab x${seen.length}`,
-        route: s.path,
-        role: s.role ?? "anonymous",
-        oracle: "O-KB.1",
-        result: stuck > 2 || unique.size < 2 ? "suspect" : "ok",
-        note: `${unique.size} stops, ${stuck} repeats, body ${seen.filter((f) => f === "body").length}x`,
-      });
-      log.note({
-        step: "visible focus at each stop",
-        route: s.path,
-        role: s.role ?? "anonymous",
-        oracle: "O-KB.2",
-        result: noRing.length > 0 ? "suspect" : "ok",
-        note: noRing.length > 0 ? `no ring: ${noRing.slice(0, 3).join(" | ")}` : "all stops ringed",
-      });
+      await tabSweep(page, 60, { log, route: s.path, role: s.role ?? "anonymous" });
     });
 });
