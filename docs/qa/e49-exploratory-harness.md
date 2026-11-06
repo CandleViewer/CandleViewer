@@ -15,7 +15,9 @@
 | Session log (`log.note`)                    | Append-only JSONL per session: charter, step, route, role, oracle id, result (`ok`, `suspect`, `info`), note. Never fails on an observation.                                                                   |
 | Page-error and API-status capture           | Every uncaught page error and console error is a `suspect` note (O-ALL.1; the count is raw, one repeated console line counts per page); every `/api/` answer of 400 or above is an `info` note (path, status). |
 | Focus probe (`focused`)                     | The focused element per Tab press, numbered per element, with a visible-focus check: the keyboard-only segment (03 §12).                                                                                       |
-| Recording                                   | Playwright video, trace and a final screenshot for every session (`trace`, `video`, `screenshot`: `on`), in the git-ignored `apps/web/test-results/explore/`.                                                  |
+| Tab sweep (`tabSweep(page, max)`)           | Tabs up to `max` times and notes the cycle back to the first stop, any trap (focus held, or a loop without the first stop) and stops without a ring, as `O-KB.1` and `O-KB.2`.                                 |
+| Socket stub (`ws`, opt-in)                  | `test.use({ stubRole })` and a session that names `ws` gets a stub-signed-in page with the e2e socket gateway (`support/wsHarness.ts`), so the shell is live, not "Reconnecting" (run 1, E49-R1-04).           |
+| Recording                                   | Playwright video, trace and a final screenshot for every tier A session (`trace`, `video`, `screenshot`: `on`); tier B turns all three off (§2), in the git-ignored `apps/web/test-results/explore/`.          |
 
 The lane is separate by file name: sessions end in `.explore.ts`, which the PR lane (`*.spec.ts`), the
 a11y collectors (`*.collect.ts`) and the real-backend lane (`*.real.ts`) never match. The PR lane's
@@ -71,6 +73,18 @@ tools/qa/explore_stack.sh [--bind 127.0.0.1] [--api-port 8000] [--preview-port 4
   camera. Before anything from a tier B run is attached to the epic, run the repo's artefact secrets
   checker (`security/zap/check_artefact_secrets.py`) over it.
 - Tier A recording (§1) is unchanged: it holds stub values only.
+- The `@tier-b` sessions (run 2 on) run from `apps/web` in a second shell while the stack is up
+  (`CV_EXPLORE_PORT` too if `--preview-port` moved):
+
+```sh
+CV_EXPLORE_RUN_DIR=<run directory, absolute> CV_EXPLORE_USER_PREFIX=explore-<suffix> \
+  pnpm exec playwright test -c e2e/exploratory/playwright.explore.config.ts
+```
+
+- With `CV_EXPLORE_RUN_DIR` set the config runs only `@tier-b` sessions, turns `trace`, `video` and
+  `screenshot` off and starts no preview of its own; unset, it runs only tier A. A session reads the
+  password and TOTP seeds from the run directory when it signs in and puts them only into the sign-in
+  form (`seededStack.ts`); privileged calls go from the page, and only statuses are noted.
 
 ## §3 Writing a session
 
@@ -84,7 +98,8 @@ test.describe("C7 …", () => {
 });
 ```
 
-- Notes are neutral and short; no body, token or header is ever logged (only paths and statuses).
+- Notes are neutral and short: no request body, token or header is logged, only paths and statuses; the
+  one free text is a console or page error's first 200 characters, which can come from a real page on tier B.
 - An observation is never an `expect`: the triage of the run record decides what it is.
 
 ## §4 From log to run record

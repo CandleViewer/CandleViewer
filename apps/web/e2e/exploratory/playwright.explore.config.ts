@@ -6,6 +6,11 @@ import { defineConfig } from "@playwright/test";
 // (docs/qa/e49-exploratory-harness.md). Build first: `vite preview` serves whatever `dist/` holds.
 const port = process.env["CV_EXPLORE_PORT"] ?? "4174";
 const origin = `http://127.0.0.1:${port}`;
+// Tier B (docs/qa/e49-exploratory-harness.md §2): `CV_EXPLORE_RUN_DIR` names the run directory
+// `tools/qa/explore_stack.sh` made, whose preview is already up. Only `@tier-b` sessions run, and
+// nothing is recorded: those pages hold real session values. Unset, only tier A sessions run.
+const tierB = (process.env["CV_EXPLORE_RUN_DIR"] ?? "") !== "";
+const recording = tierB ? "off" : "on";
 
 export default defineConfig({
   testDir: ".",
@@ -17,20 +22,24 @@ export default defineConfig({
   forbidOnly: true,
   outputDir: "../../test-results/explore",
   reporter: [["list"]],
+  ...(tierB ? { grep: /@tier-b/u } : { grepInvert: /@tier-b/u }),
   use: {
     baseURL: origin,
-    // The session's recording (ticket: charters are screen-recorded). Stub values only: no real
-    // session, key or password is ever on these pages, and the output dir is git-ignored.
-    trace: "on",
-    video: "on",
-    screenshot: "on",
+    // The session's recording (ticket: charters are screen-recorded). Tier A: stub values only, no
+    // real session or password is ever on these pages, and the output dir is git-ignored.
+    trace: recording,
+    video: recording,
+    screenshot: recording,
   },
-  webServer: {
-    command: `npx vite preview --port ${port} --host 127.0.0.1 --strictPort`,
-    url: origin,
-    // Never another process's server: it may serve another build.
-    reuseExistingServer: false,
-    cwd: "../..",
-    timeout: 120_000,
-  },
+  // Tier B serves the SPA from explore_stack.sh (its preview proxies the API on one origin).
+  webServer: tierB
+    ? []
+    : {
+        command: `npx vite preview --port ${port} --host 127.0.0.1 --strictPort`,
+        url: origin,
+        // Never another process's server: it may serve another build.
+        reuseExistingServer: false,
+        cwd: "../..",
+        timeout: 120_000,
+      },
 });
