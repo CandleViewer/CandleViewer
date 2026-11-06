@@ -416,9 +416,10 @@ that no row carries a webhook URL, and records it for the R4 and R5 gates.
 
 - one hardened client that ignores ambient proxy, netrc and cookie configuration, with resolution pinned for the
   connection, TLS that verifies the URL's host name under the pinned address, and redirects refused;
-- a name compared after one normalisation (IDNA mapping, lower case, one trailing dot removed); the metadata and
-  tailnet control names, `localhost` and `*.localhost` refused before any lookup; a name that does not resolve, or
-  a resolver that fails, refused;
+- a name compared after one normalisation (ASCII only, with no IDNA mapping: a host holding any non-ASCII character
+  is `malformed_url` at the `url` step, and an internationalised endpoint is allow-listed in its punycode form; then
+  lower case, one trailing dot removed); the metadata and tailnet control names, `localhost` and `*.localhost`
+  refused before any lookup; a name that does not resolve, or a resolver that fails, refused;
 - `https` only, except to an address inside the tailnet's CIDR;
 - refused targets: loopback in every encoding, link-local and metadata addresses, RFC 1918 and other private ranges
   outside the tailnet, the tailnet's own control and DNS addresses, and the host's own services;
@@ -744,3 +745,6 @@ they concern changes, and at Part C.
   lookup at the local resolver for a name that is not on the allow-list, the corpus's step order standing (the ruling
   on #1400, BQ-04 (3)); SR-E40-15 gains a line on transport text in the log (§5, §10), and E40-S03's row of §11 the
   matching test.
+- 2026-11-05: the egress policy reads a host as ASCII only, with no IDNA mapping and no `idna` dependency (the
+  orchestrator's ruling on #1400): §5's normalisation bullet, the SSRF corpus's header, and the three corpus entries
+  whose outcome depended on a mapping (SSRF-62, SSRF-63, SSRF-84), which now expect `malformed_url`.
