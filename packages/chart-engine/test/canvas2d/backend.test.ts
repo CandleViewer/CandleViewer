@@ -2,10 +2,11 @@
 // disclosed skips, and the scenario gates S4 (colour-only cells) and S5 (O(buckets) ops).
 import { describe, expect, it } from "vitest";
 import { Degraded2dPanBench } from "../../bench/scenes/degraded-2d-pan.js";
-import { Canvas2DBackend, MAX_BUCKETS } from "../../src/canvas2d/backend.js";
+import { Canvas2DBackend, FONT_2D, MAX_BUCKETS } from "../../src/canvas2d/backend.js";
 import { asCtx2D } from "../../src/canvas2d/ctx2d.js";
 import type { RetainedBatch } from "../../src/scene/batch-builder.js";
 import { PROGRAM } from "../../src/scene/instance-layout.js";
+import { TextBatch } from "../../src/text/text-batch.js";
 import {
   ChartViewport,
   createPaneUniforms,
@@ -227,6 +228,57 @@ describe("hostile instance data (non-finite or huge) never throws or draws NaN g
     backend.attach("l", { data: line, head: 0, stride: 9 });
     backend.submit([batch("l", PROGRAM.line, 2)], 1, 400, 200);
     expect(ctx.paths.filter((p) => p.op === "stroke").map((p) => p.lineWidth)).toEqual([3, 1 / 16]);
+  });
+});
+
+describe("degraded-2d label text (E11-S11 PR B, C-104)", () => {
+  it("a label batch paints its strings with fillText; cell text stays in the reduced list", () => {
+    const { ctx, backend } = setup(1);
+    const ink = { rgba: new Float32Array(4), css: "#848e9c" };
+    const axis = new TextBatch("axis");
+    const cells = new TextBatch("cells", PROGRAM.sdfTextOutline);
+    axis.mode = cells.mode = "labels";
+    for (const t of [axis, cells]) {
+      t.begin(2, 200);
+      t.label("64,050.5", 100, 20, 1, 0, ink);
+      t.label("14 Oct", 50, 190, 1, 0.5, ink);
+      backend.attach(t.id, t);
+    }
+    backend.submit(
+      [batch("axis", PROGRAM.sdfText, 2), batch("cells", PROGRAM.sdfTextOutline, 2)],
+      2,
+      400,
+      200,
+    );
+    expect(ctx.texts).toEqual([
+      `64,050.5 200 40 22px ${FONT_2D} left #848e9c`,
+      `14 Oct 100 380 22px ${FONT_2D} center #848e9c`,
+    ]);
+    expect([backend.trace.draws, backend.trace.skipped]).toEqual([1, 1]);
+  });
+
+  it("the text state is put back after the labels; a context without fillText counts them", () => {
+    const { ctx, backend } = setup(1);
+    ctx.font = "10px serif";
+    ctx.textAlign = "start";
+    ctx.textBaseline = "alphabetic";
+    const axis = new TextBatch("axis");
+    axis.mode = "labels";
+    axis.begin(2, 200);
+    axis.label("64,050.5", 100, 20, 1, 0, { rgba: new Float32Array(4), css: "#848e9c" });
+    backend.attach(axis.id, axis);
+    backend.submit([batch("axis", PROGRAM.sdfText, 1)], 1, 400, 200);
+    expect(ctx.texts).toHaveLength(1);
+    expect([ctx.font, ctx.textAlign, ctx.textBaseline]).toEqual([
+      "10px serif",
+      "start",
+      "alphabetic",
+    ]);
+    const bare = setup(1);
+    Object.defineProperty(bare.ctx, "fillText", { value: undefined });
+    bare.backend.attach(axis.id, axis);
+    bare.backend.submit([batch("axis", PROGRAM.sdfText, 1)], 1, 400, 200);
+    expect(bare.backend.labelsSkipped).toBe(1);
   });
 });
 

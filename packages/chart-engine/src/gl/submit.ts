@@ -35,6 +35,8 @@ export function submitDrawList(
     trace: DrawTrace;
     paneUniforms?: PaneUniformSource | null;
     batchUniforms?: BatchUniformSource | null;
+    /** The text programs' `u_text` and outline colour (E11-S11 PR B), set once per switch. */
+    textUniforms?: Float32Array;
   },
 ): void {
   const { programs, textures, buffers, trace } = parts;
@@ -55,6 +57,7 @@ export function submitDrawList(
       if (b.program !== program) {
         programs.bind(b.program);
         program = b.program;
+        if (parts.textUniforms !== undefined) programs.setText(program, parts.textUniforms);
         trace.programSwitches += 1;
         block = null;
       }

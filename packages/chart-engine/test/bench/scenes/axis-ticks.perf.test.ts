@@ -1,6 +1,7 @@
 // Wall-clock half of the `axis-ticks` scene (E11-S06, BQ-204), run ONLY by `vitest --project
 // perf` (engine-bench, no coverage): both axes rebuilt in ≤ 1 ms a frame, the ticket's ≤ 0.5 ms
-// per axis (median of 5 runs), in UTC and in a zone with DST.
+// per axis (median of 5 runs), in UTC and in a zone with DST; and `axis-render` (E11-S06 PR 3):
+// the same with both axes' labels written into the SDF batch.
 import { describe, expect, it } from "vitest";
 import { AxisTicksBench, DAILY, MINUTE, WEEKLY } from "../../../bench/scenes/axis-ticks.js";
 import { percentile } from "../../../bench/stats.mjs";
@@ -8,20 +9,22 @@ import { budget, why } from "@candleviewer/config/perf-calibration";
 
 describe("perf budgets: the axes on a pan frame", () => {
   // America/New_York (DST) and Asia/Singapore (+8): non-UTC zones, whose offsets come from the
-  // clock's constant-offset runs; DAILY and WEEKLY take the day and month loops (BQ-203).
+  // clock's constant-offset runs; DAILY and WEEKLY take the day and month loops (BQ-203). The
+  // "MINUTE labels" case is `axis-render`: both axes' labels written into the SDF batch too.
   it.each([
-    ["UTC", "MINUTE", MINUTE, 5_000],
-    ["America/New_York", "MINUTE", MINUTE, 5_000],
-    ["America/New_York", "DAILY", DAILY, 4_000],
-    ["America/New_York", "WEEKLY", WEEKLY, 4_000],
-    ["Asia/Singapore", "DAILY", DAILY, 4_000],
-    ["Asia/Singapore", "WEEKLY", WEEKLY, 4_000],
+    ["UTC", "MINUTE", MINUTE, 5_000, false],
+    ["America/New_York", "MINUTE", MINUTE, 5_000, false],
+    ["America/New_York", "DAILY", DAILY, 4_000, false],
+    ["America/New_York", "WEEKLY", WEEKLY, 4_000, false],
+    ["Asia/Singapore", "DAILY", DAILY, 4_000, false],
+    ["Asia/Singapore", "WEEKLY", WEEKLY, 4_000, false],
+    ["UTC", "MINUTE labels", MINUTE, 5_000, true],
   ] as const)(
     "%s %s: rebuilds both axes in <= 1 ms (0.5 ms per axis, median of 5 runs)",
-    (zone, _, shape, n) => {
+    (zone, _, shape, n, text) => {
       const perFrame: number[] = [];
       for (let r = -1; r < 5; r += 1) {
-        const bench = new AxisTicksBench(n, zone, shape);
+        const bench = new AxisTicksBench(n, zone, shape, text);
         const start = performance.now();
         for (let f = 0; f < 300; f += 1) bench.step();
         if (r >= 0) perFrame.push((performance.now() - start) / 300); // run -1 warms up

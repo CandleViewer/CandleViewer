@@ -1,6 +1,6 @@
 // The counted half of the `axis-ticks` scene (E11-S06, BQ-204); timing is the .perf.test.ts.
 import { describe, expect, it } from "vitest";
-import { AxisTicksBench, DAILY, WEEKLY } from "../../../bench/scenes/axis-ticks.js";
+import { AxisTicksBench, DAILY, MINUTE, WEEKLY } from "../../../bench/scenes/axis-ticks.js";
 
 describe("perf scene: the axes rebuild on every pan frame (counted)", () => {
   it("300 pans rebuild both axes each frame with a bounded grid and labels", () => {
@@ -37,5 +37,17 @@ describe("perf scene: the axes rebuild on every pan frame (counted)", () => {
     expect(clock.reads - reads).toBe(0);
     expect(bench.rebuilt).toBe(1200);
     expect(bench.axes.timeLabels.length).toBeGreaterThan(3);
+  });
+
+  it("axis-render (E11-S06 PR 3): every kept label of both axes in the one text batch", () => {
+    const bench = new AxisTicksBench(5_000, "UTC", MINUTE, true);
+    const { axes } = bench;
+    bench.step();
+    const grown = axes.text.grown;
+    for (let f = 0; f < 300; f += 1) bench.step();
+    const chars = [...axes.priceLabels, ...axes.timeLabels].join("").replaceAll(" ", "");
+    expect(axes.text.count).toBe(chars.length);
+    expect(axes.text.grown).toBe(grown); // the ring is warm: no growth on a pan
+    expect(axes.gutter.remeasures).toBe(1); // measured with the atlas metrics, once
   });
 });

@@ -9,6 +9,7 @@ Except `hit-pick.ts`: E11-S08 production bench code over `src/hit`, driven by Vi
 Except `atlas-build.ts`: E11-S11 production bench code over `src/text`, driven by Vitest (BQ-275).
 Except `candle-ring.ts` and `candle-series.ts`: E12-S06 production bench code over `src/layers`, `src/model` and `src/gl`, driven by Vitest.
 Except `lut-gen.ts`: E11-T04 production bench code over `src/theme`, driven by Vitest (BQ-T04-09).
+Except `text-batch.ts`: E11-S11 PR B production bench code over `src/text`, driven by Vitest (BQ-275).
 Except `resize-drag.ts`: E11-S10 production bench code over `src/worker`, driven by Vitest (BQ-154).
 Except `axis-ticks.ts`: E11-S06 production bench code over `src/axes`, driven by Vitest (BQ-204).
 Except `a11y-window.ts`: E11-S13 production bench code over `src/a11y` and the render runtime, driven by Vitest (BQ-S13-01).
