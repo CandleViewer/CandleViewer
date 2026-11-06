@@ -53,23 +53,21 @@ export function LoginScreen(): JSX.Element {
 
   useEffect(() => {
     if (state !== "rate_limited") return;
-    const timer = setInterval(() => {
-      setRemaining((r) => {
-        if (r <= 1) {
-          clearInterval(timer);
-          setState("idle");
-          setAnnounce("You can try signing in again.");
-          // the focused lockout line unmounts with the lockout: keep focus on the form's action,
-          // but never take it from a control the user moved to
-          const at = document.activeElement;
-          if (at === rateLimitLine.current || at === document.body) submitButton.current?.focus();
-          return 0;
-        }
-        return r - 1;
-      });
-    }, 1000);
+    const timer = setInterval(() => setRemaining((r) => Math.max(0, r - 1)), 1000);
     return () => clearInterval(timer);
   }, [state]);
+  // the lockout ends when the count reaches zero: the state change and the sentence are effects of
+  // that, not side effects of a state updater (which React may run twice)
+  useEffect(() => {
+    if (state === "rate_limited" && remaining === 0) {
+      setState("idle");
+      setAnnounce("You can try signing in again.");
+      // the focused lockout line unmounts with the lockout: keep focus on the form's action,
+      // but never take it from a control the user moved to
+      const at = document.activeElement;
+      if (at === rateLimitLine.current || at === document.body) submitButton.current?.focus();
+    }
+  }, [state, remaining]);
 
   useEffect(() => {
     if (state === "invalid" || state === "unreachable" || fieldError) {
