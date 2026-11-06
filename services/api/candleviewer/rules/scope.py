@@ -7,13 +7,19 @@ State comes from an in-memory snapshot (grants/accounts/freeze) behind ``ScopeSt
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Container, Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from types import MappingProxyType
+from typing import Final, Literal, Protocol
 from uuid import UUID
 
 from candleviewer.rules.errors import ScopeForbiddenError
-from candleviewer.rules.evaluator.engine import parse_instance, scope_instance
+from candleviewer.rules.evaluator.engine import (
+    BEFORE_SCOPE_GATE,
+    EvaluationResult,
+    parse_instance,
+    scope_instance,
+)
 from candleviewer.rules.ir.models import Action, RuleScope
 
 SKIPPED_REASON = "scope"
@@ -33,6 +39,16 @@ Reason = Literal[
 #: evaluation skip, not a refusal by the scope gate, so it is not one of the `Reason`s.
 BINDING_CAUSE = "metric_ref_binding"
 EntityKind = Literal["open_position", "pending_order", "account"]
+#: The entity a scope instance stands for, by its rule's `applies_to` (#5817): the open positions
+#: or the pending orders on the instance's symbol and account, or else the account itself.
+_INSTANCE_ENTITY: Final[Mapping[str, EntityKind]] = MappingProxyType(
+    {
+        "open_positions": "open_position",
+        "pending_orders": "pending_order",
+        "account": "account",
+        "any": "account",
+    }
+)
 #: The modes the evaluator runs a rule in (`rules.manager` imports it from here). A rule's mode is
 #: its stored row's, never the IR's own `mode` field, which can be stale (E35-S03, BQ-12).
 EvaluableMode = Literal["simulate", "armed"]
@@ -152,11 +168,20 @@ class ScopeResolver:
         owner: UUID,
         environment: str,
         instance: ScopeInstanceRef,
-        entity: EntityKind = "account",
+        entity: EntityKind | None = None,
         *,
         is_algo_child: bool = False,
     ) -> Reason | None:
-        """Second resolution, before each action. None = allowed, else suppression reason."""
+        """Second resolution, before each action. None = it passes, else the suppression reason.
+
+        `entity` is the kind of entity the action touches, judged against `applies_to`: an entity
+        is always judged. A check that names none (`None`) judges the entity the scope instance
+        stands for (`instance_entity`): the tick's gate, which runs before the rule has an action,
+        and the re-checks of an action's instance before its dispatch and before its retry. So an
+        instance of the rule is never refused for its own `applies_to`, and a named entity
+        outside it is (#5817)."""
+        if entity is None:
+            entity = instance_entity(scope)
         reason: Reason | None
         if not self._env_ok(scope, owner, environment):
             reason = "live_gate" if environment == "live" else "environment"
@@ -224,6 +249,12 @@ def _applies(applies_to: str, entity: EntityKind) -> bool:
     }[applies_to]
 
 
+def instance_entity(scope: RuleScope) -> EntityKind:
+    """The entity a scope instance of `scope` stands for, which its `applies_to` names: the one a
+    check judges when it resolves no entity of its own (`ScopeResolver.check_action`)."""
+    return _INSTANCE_ENTITY[scope.applies_to]
+
+
 def summarize_scope(scope: RuleScope, *, account_count: int | None = None) -> str:
     """Server-derived header chip, e.g. ``2 accounts · BTCUSDT · open positions only · demo``."""
     n = len(scope.account_ids) if scope.account_ids else account_count
@@ -280,13 +311,14 @@ async def fire_scoped(
     instance: ScopeInstanceRef,
     dispatch: ActionDispatch,
     *,
-    entity: EntityKind = "account",
+    entity: EntityKind | None = None,
     is_algo_child: bool = False,
 ) -> FireOutcome:
     """Action-dispatch gate: the second resolution runs immediately before EVERY action.
 
     A live trigger for an instance whose scope no longer holds (revoked grant, freeze, closed
     live gate...) is skipped with ``skipped_reason="scope"`` and counted; nothing is dispatched.
+    `entity` is the kind the action touches; `None` is the instance's own (`check_action`).
     """
     reason = resolver.check_action(
         scope, owner, environment, instance, entity, is_algo_child=is_algo_child
@@ -317,6 +349,69 @@ class ActionRequest:
 
 
 ActionSink = Callable[[ActionRequest], Awaitable[None]]
+#: An emitter's `emit` (`ScopedActionEmitter.emit`): whether the action passed its re-check.
+_Emit = Callable[[ActionRequest], Awaitable[bool]]
+
+
+class DenialEpisodes:
+    """The tick gate's refusals of each (rule, instance), recorded once per episode (#5817).
+
+    A refusal opens an episode, which its first evaluation records; the same refusal on the
+    instance's later evaluations holds it: counted as every refusal is, and not recorded again. A
+    refusal for another reason, or under another version of the rule, opens a new episode. An
+    episode ends when the gate passes the instance, when its rule leaves the work list (`retain`),
+    or when its record job is shed, its write fails or its re-check passes (`forget`): the next
+    evaluation that holds the refusal then opens one and records it. A skip decided before the gate
+    (`BEFORE_SCOPE_GATE`) neither opens nor ends one. One map per running evaluator
+    (`RulesService._start_evaluator`), holding the open episodes of the rules on its work list."""
+
+    def __init__(self) -> None:
+        #: (rule id, instance) -> (rule version, reason) of its open episode.
+        self._open: dict[tuple[str, str], tuple[int, str]] = {}
+
+    def first(self, result: EvaluationResult) -> bool:
+        """Whether `result` opens an episode of the gate's refusals, so its refusal is recorded."""
+        if result.skipped_reason in BEFORE_SCOPE_GATE:
+            return False
+        key = (result.rule_id, result.scope_instance)
+        if result.scope_refusal is None:
+            self._open.pop(key, None)  # the gate passed the instance: its episode ends
+            return False
+        episode = (result.rule_version, result.scope_refusal)
+        if self._open.get(key) == episode:
+            return False
+        self._open[key] = episode
+        return True
+
+    def forget(self, result: EvaluationResult) -> None:
+        """Ends the episode `result` opened while it still holds: its records were shed or not
+        written, so the next evaluation that holds the refusal records it."""
+        key = (result.rule_id, result.scope_instance)
+        if self._open.get(key) == (result.rule_version, result.scope_refusal):
+            del self._open[key]
+
+    def retain(self, rule_ids: Container[str]) -> None:
+        """Ends the episodes of every rule outside `rule_ids`, the work list's: a rule that leaves
+        it keeps none, and records its refusal again if it returns."""
+        for key in [key for key in self._open if key[0] not in rule_ids]:
+            del self._open[key]
+
+    def ending_on_failure(self, result: EvaluationResult, emit: _Emit) -> _Emit:
+        """`emit` for the record job of the episode `result` opened: a write that raises, or that
+        a timeout or a stop cuts short, ends the episode (`forget`), and so does an emit that
+        answers passed, which writes no record."""
+
+        async def emitting(req: ActionRequest) -> bool:
+            try:
+                passed = await emit(req)
+            except BaseException:  # re-raised: the record is not written, so its episode ends
+                self.forget(result)
+                raise
+            if passed:  # its re-check passed: no record is written, so its episode ends
+                self.forget(result)
+            return passed
+
+        return emitting
 
 
 class ScopedActionEmitter:
