@@ -2453,6 +2453,41 @@ the order's instrument (`RiskOrder.instrument`), the one matcher of the order va
 an empty allow-list without `all_symbols` admits nothing. An entry on either list that is not the profile layer's `SymbolPattern` (`^\*?[A-Z0-9]{4,20}$`) refuses every symbol, fail closed on both lists. The instrument's status and product type are the order validator's fence, not the gate's: the gate reads them only for a pattern's match. An order that is reduce-only and opens neither exposure nor a
 position skips every check, these refusals included (SR-E39-02).
 
+`evaluate(…, extra_loss_usd=…)` takes an override's loss allowance (E39-X01 D-4, default 0), validated by E39-S02
+within `risk_policy.override_extra_loss_max_usd`: it raises the daily-loss USD cap of the overriding actor's account
+only (`loss ≥ limit + extra_loss_usd`), so a released lockout is not refused again by the cap the override lifted, and
+it moves no other cap; the cap's warn threshold stays at its own value, so the warning still fires during the override
+(SR-E39-11). A negative or non-finite allowance refuses `risk_state_unavailable`. Nothing in `risk/` bounds the
+allowance (BQ-3): slice 3's `RiskService` refuses closed one above `risk_policy.override_extra_loss_max_usd` (E39-S02),
+and `admit` (`risk/ledger.py`) states that caller duty.
+
+**The measured figures (E39-T01, `risk/inputs.py` `RiskFigures`, `risk/counters.py`).** `RiskFigures` is the one
+source of the measured value shown beside each limit (SCR-134, E39-D02, `RiskSummary`), so the display and the check
+share one base. Notional is a position's size at a fresh mark (the cached public mark, else the private push's
+`markPrice`, at most 10 s old, else `risk_state_unavailable`); "after the order" adds the order's notional.
+
+- **Daily loss:** `max(0, −daily_figure)`, the K01 §5 blocking figure (E39-K01 at `518b55ee6`): today's closes at their
+  bound or venue record plus the open positions' unrealised loss, never an unrealised gain. In percent, over
+  `day_start_equity`.
+- **Held cost** (K01 §5 item 2 at `518b55ee6`): a held cost is never 0 for being unknown; while an open position has
+  crossed a funding settlement since its open and its paid funding is unknown, the account answers
+  `risk_state_unavailable` on every path. Slice 3 binds the daily counter to `RiskGate` only once the `Funding` rows are
+  stored (K01 follow-up 1); until then the gate answers `risk_state_unavailable` for such an account.
+- **Drawdown:** `max(0, day_peak_figure − daily_figure)` in percent of `day_start_equity`, where `day_peak_figure` is
+  the blocking figure's high in the day key (it starts at 0).
+- **Leverage:** the gross open notional after the order (every symbol's notional plus the order's) over `equity`.
+- **Position percent** (`max_position_pct_equity`): the symbol's notional after the order over `equity`, in percent.
+- **Concentration** (`per_symbol_concentration_pct`): the symbol's notional after the order over the resolved
+  `max_total_notional_usd`, in percent: the blocking total only, never a policy warn total; with no blocking total a
+  blocking concentration cap refuses closed (E39-T01 BQ addendum 2). This is a
+  recorded deviation (BQ-4 amendment; no owner document defines the base): a share of the total cap is looser than a
+  share of the current exposure whenever the exposure is below that cap. The SCR-134 legend and help text (E39-S05)
+  say "of the max total notional", and the measured value in `RiskSummary` uses the same base.
+- **Slice 3's duties** (`RiskService`, beside the bounds above): the gate refuses `risk_state_unavailable` while the
+  injected `now` runs ahead of the exchange time of the account's latest private-stream event by more than a bound it
+  states; and a backfill of missed executions routes each through `ReservationLedger.on_fill` with its `exec_id`, as a
+  released reservation's unconverted notional is cleared only there and `on_fill`, like the counters, dedupes by it.
+
 ### 8.12 The private-stream consumer (E29-T05)
 
 _Added for E29-T05 (#848); as built since its wiring slice (S8b): the OMS runtime runs it._ The consumer reads each account's private stream (§14.1 `subscribe_private`, §14.2 rule 13) and drives what it reports into the OMS: order and execution rows into the order's B1 machine through the one facade (`OrderMachines`, §8.2), position rows into the position projection, wallet rows into E27-T04's wallet cache, and each status into account health, reconciliation and the key standing. The stream, never the REST acknowledgement, is the source of truth for an order's fills and end (ADR-0006, §8.4). The client topics that publish this truth (`orders`, `executions`, `positions`) are E29-T13's (#4207; `23-ws-protocol.md` §6.2.3, `oms/ws_topics.py`). They are published from the steps as they commit, not from the facade's machine-state publish, which skips a view that did not change, as a second partial fill leaves it: the step writer reports each committed step with the row as it then stands (`OrderStepWriter`'s `on_commit`), the projection's position store each row it applied (`PublishedPositions`), and the facade names the fills it holds before their bind (`OrderMachines.held_fills`, a plain-view read), which a position waits for. How it starts and stops is `20-architecture.md` §6.2's. The consumer's dead-man's-switch window opens at its start, where the OMS runtime sets `ready`, not at boot, with that section's backstop for an OMS that never becomes ready, and `CV_ACCOUNT_DOWN_S` stays the window.

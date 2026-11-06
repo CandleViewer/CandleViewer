@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta
-from decimal import localcontext
+from decimal import Decimal, localcontext
 from typing import Any
 
 import pytest
@@ -159,6 +159,8 @@ def test_evaluate_reduce_only_close_passes_lockout_and_every_cap() -> None:  # G
         {"opens_exposure": True, "opens_position": True},  # a flip through flat
         {"opens_exposure": True, "opens_position": False},
         {"opens_exposure": False, "opens_position": True},  # inconsistent effect: not exempt
+        # PF-E03: hedge mode, a reduce-only order on the other side opens that side's position
+        pytest.param({"opens_exposure": True, "opens_position": True}, id="hedge-other-side"),
     ],
 )
 def test_a_reverse_counts_as_opening(effect: dict[str, bool]) -> None:  # SR-E39-02
@@ -457,3 +459,38 @@ def test_evaluate_ratio_figures_are_reported_at_28_digits() -> None:
 
 def test_evaluate_exempt_close_skips_malformed_figures() -> None:  # SR-E39-02
     assert run(close_order(), figures(equity=D("NaN"), open_orders=-1)).decision.allowed
+
+
+def test_override_allowance_lifts_only_the_daily_loss_usd_cap() -> None:  # BQ-3, D-4
+    c = caps(prof={"max_daily_loss_usd": D(100), "max_daily_loss_pct": D(1)})
+    locked = figures(daily_figure=D(-100))
+    assert run(f=locked, c=c).decision.cap == "max_daily_loss_usd"
+    assert evaluate(order(), locked, c, now=NOW, extra_loss_usd=D(50)).decision.allowed
+    deeper = figures(daily_figure=D(-150))  # a measured loss is refused at the lifted cap
+    assert evaluate(order(), deeper, c, now=NOW, extra_loss_usd=D(50)).decision.cap == (
+        "max_daily_loss_usd"
+    )
+    # never another cap: the percent cap (1 % of 100 000) still refuses past 1 000
+    past = figures(daily_figure=D(-1000))
+    result = evaluate(order(), past, c, now=NOW, extra_loss_usd=D(10_000))
+    assert result.decision.cap == "max_daily_loss_pct"
+
+
+@pytest.mark.parametrize(("loss", "warned"), [(150, True), (100, True), (99, False)])
+def test_override_allowance_leaves_the_daily_loss_usd_warn_in_place(
+    loss: int, warned: bool
+) -> None:  # l16: the override lifts the blocking cap only; the notice still fires
+    c = caps(
+        pol={"max_daily_loss_usd": D(100), "breach_behaviour": {"max_daily_loss_usd": "warn"}},
+        prof={"max_daily_loss_usd": D(200)},
+    )
+    result = evaluate(order(), figures(daily_figure=D(-loss)), c, now=NOW, extra_loss_usd=D(100))
+    assert result.decision.allowed
+    warning = (RiskWarning("max_daily_loss_usd", D(100), D(loss)),)
+    assert result.warnings == (warning if warned else ())
+
+
+@pytest.mark.parametrize("extra", [D(-1), D("NaN"), D("Infinity")])
+def test_override_allowance_malformed_refuses_closed(extra: Decimal) -> None:
+    result = evaluate(order(), figures(), caps(), now=NOW, extra_loss_usd=extra)
+    assert result.decision.code is RiskRefusal.RISK_STATE_UNAVAILABLE
