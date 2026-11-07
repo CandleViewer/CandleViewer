@@ -55,6 +55,9 @@ import type {
   IconButtonProps,
   InfoPanelProps,
   MenuProps,
+  MetricCategory,
+  MetricPickerComboboxProps,
+  MetricPickerOption,
   NumericStepperInputProps,
   PageHeaderProps,
   RadioGroupProps,
@@ -331,6 +334,23 @@ describe("@candleviewer/ui audit log components (E42-S04)", () => {
           PaginationProps,
         ]
       | null = null;
+    expect(props).toBeNull();
+  });
+});
+
+describe("@candleviewer/ui rule-engine components (E37-S02)", () => {
+  it("exports CMP-157 MetricPickerCombobox, its categories in group order and its types (the typechecker checks them)", () => {
+    expect(typeof Atoms.MetricPickerCombobox).toBe("function");
+    expect(Atoms.METRIC_CATEGORIES).toEqual([
+      "price",
+      "orderflow",
+      "book",
+      "derivatives",
+      "position",
+      "account",
+      "replay",
+    ]);
+    const props: [MetricCategory, MetricPickerComboboxProps, MetricPickerOption] | null = null;
     expect(props).toBeNull();
   });
 });

@@ -328,6 +328,14 @@ export type {
   MenuTriggerProps,
 } from "./Menu.js";
 
+// E37-S02's metric picker (CMP-157), the rule editors' shared picker.
+export { METRIC_CATEGORIES, MetricPickerCombobox } from "./MetricPickerCombobox.js";
+export type {
+  MetricCategory,
+  MetricPickerComboboxProps,
+  MetricPickerOption,
+} from "./MetricPickerCombobox.js";
+
 export { NotFoundState } from "./NotFoundState.js";
 export type { NotFoundStateProps, TryRoute } from "./NotFoundState.js";
 

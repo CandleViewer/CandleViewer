@@ -1,0 +1,100 @@
+/*
+ * CMP-157 MetricPickerCombobox (E37-S02 on E36-D02 §7 and E36-D03's `15` row): CMP-048's well and popup
+ * (fields.css, combobox.css) with CMP-009's option rows (select.css). This file adds the category groups, the
+ * words after the label, the description line and the Start recording stop. Tokens only; every rule that sets a
+ * colour has a forced-colours twin with the same selector, later in the file (the popup adjusts none).
+ */
+
+/* A category's heading with its count: a caption above its options, never an option itself. */
+.cv-metricpicker__head {
+  padding: var(--space-inset-xs) var(--space-inset-sm) 0;
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+/* Line 1 flows as one sentence: the label, " · unit", the estimated word, the clause and its stop wrap as words. */
+.cv-metricpicker__line {
+  min-width: 0;
+}
+
+/* An unavailable option is reached and explained, never chosen; its stop keeps the pointer of an action. */
+.cv-metricpicker__row[data-unavailable] {
+  cursor: not-allowed;
+}
+
+/* The estimated word and the unavailable clause: words in the secondary colour, never a colour alone. */
+.cv-metricpicker__word {
+  color: var(--color-text-secondary);
+}
+
+/* Line 2: the served description. */
+.cv-metricpicker__desc {
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+/* Start recording: an action inside the clause, underlined, so it reads as one without a colour. */
+.cv-metricpicker__record {
+  color: var(--color-text-primary);
+  text-decoration: underline;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+/* The active stop carries CMP-039's ring on the hover fill, as an active row does (select.css). */
+.cv-metricpicker__record[data-active] {
+  background: var(--color-surface-hover);
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-focus) * 1px);
+}
+
+/* T2 (E09-D09 §2.2): the lock leads the full label, both tertiary; no underline, since a press does nothing. */
+.cv-metricpicker__record[data-gated] {
+  color: var(--color-text-tertiary);
+  text-decoration: none;
+  cursor: not-allowed;
+}
+
+.cv-metricpicker__record .cv-select__optlock {
+  margin-inline-end: var(--space-inset-xs);
+  vertical-align: middle;
+}
+
+@media (forced-colors: active) {
+  .cv-metricpicker__head {
+    color: CanvasText;
+  }
+
+  .cv-metricpicker__word {
+    color: CanvasText;
+  }
+
+  .cv-metricpicker__desc {
+    color: CanvasText;
+  }
+
+  .cv-metricpicker__record {
+    color: LinkText;
+  }
+
+  /* T2 is not greyed: its lock and label stay CanvasText (conventions 29), so it still reads apart from GrayText. */
+  .cv-metricpicker__record[data-gated] {
+    color: CanvasText;
+  }
+
+  /* After the twins, at equal weight: the active stop is Highlight with HighlightText, gated or not. */
+  .cv-metricpicker__record[data-active] {
+    background: Highlight;
+    color: HighlightText;
+    outline-color: HighlightText;
+  }
+
+  /* An active row's Highlight fill needs HighlightText on every word in it, its stop included. */
+  .cv-select__row[data-active] .cv-metricpicker__word,
+  .cv-select__row[data-active] .cv-metricpicker__desc,
+  .cv-select__row[data-active] .cv-metricpicker__record {
+    color: HighlightText;
+  }
+}

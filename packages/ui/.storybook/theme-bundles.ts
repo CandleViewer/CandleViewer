@@ -56,6 +56,7 @@ import "../src/components/keyvaluerow.css";
 import "../src/components/link.css";
 import "../src/components/maskedvalue.css";
 import "../src/components/menu.css";
+import "../src/components/metricpicker.css";
 import "../src/components/pageheader.css";
 import "../src/components/pagination.css";
 import "../src/components/pnlbadge.css";
