@@ -84,6 +84,32 @@
         "cursor announcement": ["text"],
         "aggregation chip": ["text"]
       }
+    },
+    "node-type": {
+      "surfaces": {
+        "node card": ["pattern", "glyph", "text"],
+        "palette entry": ["glyph", "text"],
+        "node-list row": ["glyph", "text"]
+      }
+    },
+    "port-type": {
+      "surfaces": {
+        "port": ["glyph", "text"],
+        "connect picker row": ["text"]
+      }
+    },
+    "edge-validity": {
+      "surfaces": {
+        "edge": ["pattern", "glyph", "text"],
+        "port target": ["glyph", "text"]
+      }
+    },
+    "graph-diagnostic": {
+      "surfaces": {
+        "node badge": ["glyph", "text"],
+        "CMP-234 entry": ["text", "glyph"],
+        "node-list row": ["glyph", "text"]
+      }
     }
   }
 }

@@ -40,6 +40,29 @@ const TRADING_SET: Readonly<Record<string, readonly [string, 16?]>> = {
 };
 
 /**
+ * The rule graph's port and badge glyphs, E37-D03 §9.4's GL-1, GL-2, GL-4, GL-5, GL-7 and GL-8 as
+ * its table gives them: the source (four Lucide glyphs, `bolt` being Lucide's `zap`; two drawn for
+ * E37-S01) and the registry sentence, verbatim.
+ */
+const RULE_GRAPH_SET: Readonly<Record<string, readonly [string, string]>> = {
+  circle: ["lucide/circle", "Boolean port: a true / false value."],
+  hash: ["lucide/hash", "Number port: a plain numeric value."],
+  "arrow-left-right": [
+    "lucide/arrow-left-right",
+    "Side port: buy or sell (the base set has `arrow-up-down` only).",
+  ],
+  bolt: ["lucide/zap", "Action port: runs an action."],
+  "graph-only": [
+    "custom/E37-S01",
+    "Graph-only: authored in the graph editor, read-only in the form.",
+  ],
+  "round-trip-mismatch": [
+    "custom/E37-S01",
+    "Round-trip mismatch: the form and the graph compile to different rules.",
+  ],
+};
+
+/**
  * The base set: E05-D02's 47 `icon/{name}` glyphs, with `locked` named `lock` as the merged specs
  * name it, and `unlock`, which the interface slice added.
  */
@@ -95,8 +118,20 @@ const BASE_SET = [
 ];
 
 describe("the icon registry (src/icons/registry.ts)", () => {
-  it("registers the whole base set and the 13 trading glyphs, and no other name", () => {
-    expect(NAMES).toEqual([...BASE_SET, ...Object.keys(TRADING_SET)].sort());
+  it("registers the whole base set, the 13 trading glyphs and the 6 rule-graph ones, and no other", () => {
+    expect(NAMES).toEqual(
+      [...BASE_SET, ...Object.keys(TRADING_SET), ...Object.keys(RULE_GRAPH_SET)].sort(),
+    );
+  });
+
+  it("registers E37-D03 §9.4's rule-graph glyphs as its table gives them", () => {
+    for (const [name, [source, description]] of Object.entries(RULE_GRAPH_SET)) {
+      expect(ICONS[name as IconName], name).toEqual({
+        category: "rule-graph",
+        source,
+        description,
+      });
+    }
   });
 
   it("registers each trading glyph as CandleViewer's own, as E05-D02 §7.12's table gives it", () => {
@@ -107,7 +142,7 @@ describe("the icon registry (src/icons/registry.ts)", () => {
       });
       expect(entry(name as IconName).minimumPx, name).toBe(minimumPx);
     }
-    const custom = NAMES.filter((name) => ICONS[name].source.startsWith("custom/"));
+    const custom = NAMES.filter((name) => ICONS[name].source.startsWith("custom/E05-T06"));
     expect(custom).toEqual(Object.keys(TRADING_SET));
     // "16 px minimum" marks a trading glyph only: no base glyph carries the mark.
     const marked = NAMES.filter((name) => "minimumPx" in entry(name));

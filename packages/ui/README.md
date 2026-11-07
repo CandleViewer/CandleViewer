@@ -180,8 +180,9 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
 
 `src/icons/` is the icon set of [`16-design-system-brief.md` §5](../../docs/plan/16-design-system-brief.md).
 Code draws a glyph by name with CMP-019 `<Icon name size decorative label>`, never by raw SVG. The
-registry holds 61 glyphs, each listed in §5: the base set's 48, vendored from Lucide (ISC), and the
-13 trading glyphs CandleViewer draws from E05-D02 §7.12.
+registry holds 67 glyphs, each listed in §5: the base set's 48 and 4 rule-graph port glyphs,
+vendored from Lucide (ISC), the 13 trading glyphs CandleViewer draws from E05-D02 §7.12, and 2
+rule-graph badge glyphs drawn for E37-S01 (E37-D03 §9.4).
 
 - `registry.ts`: each icon's canonical name (the `IconName` union), group, glyph source and
   one-sentence meaning, sorted by name: the code twin of the Penpot icon page, compared by diff.
@@ -196,13 +197,13 @@ registry holds 61 glyphs, each listed in §5: the base set's 48, vendored from L
   its registry name, beside their licence, `source/lucide/LICENSE` (ISC, plus the MIT notice of
   the Feather-derived glyphs); the version, its checksum and the owner are in the vendored-code
   register, [`35-dependency-freeze-policy.md` §7](../../docs/plan/35-dependency-freeze-policy.md).
-- `source/custom/`: the 13 trading glyphs of E05-D02 §7.12, CandleViewer's own, so a custom
-  source carries no `@license` line (the generator fails on one). Each draws its §7.12 motif as
-  an outline on a root with the grid's stroke (1.5, round caps and joins), with no dash, fill or
-  transform, its paths in absolute `M`, `L`, `H`, `V`, `C`, `A` and `Z` only (each arc circular
-  and unrotated), so `test/icons/glyphs.test.ts` reads every point. Every point, Bezier control
-  points and arc bulges included, stays in [1.75, 22.25]: the 1-unit clear margin plus half the
-  stroke.
+- `source/custom/`: the 13 trading glyphs of E05-D02 §7.12 and the 2 rule-graph badges of E37-D03
+  §9.4, CandleViewer's own, so a custom source carries no `@license` line (the generator fails on
+  one). Each draws its motif as an outline on a root with the grid's stroke (1.5, round caps and
+  joins), with no dash, fill or transform, its paths in absolute `M`, `L`, `H`, `V`, `C`, `A` and
+  `Z` only (each arc circular and unrotated), so `test/icons/glyphs.test.ts` reads every point.
+  Every point, Bezier control points and arc bulges included, stays in [1.75, 22.25]: the 1-unit
+  clear margin plus half the stroke.
 - `<name>.sm.svg` beside a source is its reduced form (E05-D02 §6 J24): a second drawing of the
   name, never a name of its own, that `Icon` draws at `size="sm"` in place of the 24-unit master.
   The generator gives it a module and an entry in `ICON_FORMS`, internal like the rest of

@@ -20,6 +20,10 @@ describe("no-hue-alone registry", () => {
     expect(gate.validate(registry)).toEqual([]);
     for (const n of gate.REQUIRED_ENCODINGS) expect(registry.encodings[n]).toBeDefined();
   });
+  it("requires the rule graph's four encodings (E37-D03 §9.4, EN-1 to EN-4)", () => {
+    const graph = ["node-type", "port-type", "edge-validity", "graph-diagnostic"];
+    expect(gate.REQUIRED_ENCODINGS).toEqual(expect.arrayContaining(graph));
+  });
   it("a surface declaring no channel fails naming surface and encoding", () => {
     const bad = structuredClone(registry);
     bad.encodings.pnl.surfaces["positions table"] = [];
