@@ -84,6 +84,15 @@ from candleviewer.ws.metrics import (
     cv_ws_subscribe_granted_unaudited_total,
     cv_ws_subscribe_narrowed_total,
 )
+from candleviewer.ws.quota import (
+    FREE,
+    MESSAGES,
+    SPEC_CAP_REASONS,
+    Charge,
+    ConnectionQuota,
+    UserQuota,
+    charge_of,
+)
 from candleviewer.ws.rebuild_budget import RebuildBudget, UserRebuilds, topic_key
 from candleviewer.ws.rebuild_budget import Scope as BudgetScope
 from candleviewer.ws.revocation import (
@@ -326,6 +335,8 @@ class SubscriptionServices:
     span_ids: Callable[[], str] | None = None
     #: #3476 (§7.5): the rebuild limit per user, which every connection's budget draws on too.
     user_rebuilds: UserRebuilds = field(default_factory=UserRebuilds)
+    #: E21-X02 (§16.2): the subscription quota per user, which every connection charges too.
+    user_quota: UserQuota = field(default_factory=UserQuota)
     #: §9.5 (E27-S04, #898): whether an account is closed to new subscriptions, its account
     #: disabled or its last signable key revoked (`KeyStandings.closed`, synchronous, bound late
     #: by the app); `None` closes none.
@@ -418,6 +429,10 @@ class Subscription:
     #: #3476: `_admit` holds one of its user's draws, which its start draws (`handle_sub`) or
     #: its end lets go (`_drop`): its draw comes after an await, so the check is not enough.
     rebuild_held: bool = False
+    #: E21-X02 (§16.2): what it is charged of the quota (`_quota_refusal`, a `ctl` that moves it),
+    #: given back once by `_drop`: its points, and a `heatmap.*` one's spec.
+    quota_points: int = 0
+    quota_spec: HeatmapSpec | None = None
     #: #2521 (E40-T04): the server-side owner of a SELF-scoped subscription (`alerts`), the
     #: principal's user id recorded at admit, never a client value; None for every other scope.
     #: Its snapshot is built for this user alone and its deltas reach it only when they name this
@@ -561,6 +576,12 @@ class ConnectionAuthz:
         #: and its user's, which all of the user's connections share (#3476).
         user = (self.services.user_rebuilds, self.actor_user_id)
         self.rebuilds = RebuildBudget(self.services.clock if clock is None else clock, user=user)
+        #: E21-X02 (§16.2): the connection's subscription quota, and its acting user's (§9.6).
+        self.quota = ConnectionQuota(
+            self.services.user_quota,
+            self.actor_user_id,
+            clock=self.services.clock if clock is None else clock,
+        )
         #: §6.4: the internal reason (`role`, `unknown`, `foreign` or `unscoped`) of the last
         #: `admit` that refused a `machines` entity, else `None`. `handle_sub` reads it right
         #: after that `admit`, for the audit row only; it never reaches the client.
@@ -942,6 +963,10 @@ class ConnectionAuthz:
             if refused is not None:
                 self._drop(sub)
                 return refused
+        # E21-X02 (§16.2): the quota, live and replay alike, before anything is held or awaited.
+        if (refused := self._quota_refusal(sub)) is not None:
+            self._drop(sub)
+            return refused
         if sub.replay_session_id is not None or sub.topic.family.private:
             return None
         consumer, user, symbol = self._consumer(sub), str(self.actor_user_id), sub.topic.symbol
@@ -974,7 +999,8 @@ class ConnectionAuthz:
         except TopicError as exc:  # E22-T02: a `trades` bound (SR-E22-03/06/07)
             self._drop(sub)
             return _fail(sub.ch, exc.code, exc.message, exc.field)
-        except HeatmapSpecCapError as exc:  # E21-T02 G-02, naming the cap
+        except HeatmapSpecCapError as exc:  # E21-T02 G-02 and E21-X02's points, naming the cap
+            self.quota.refused(SPEC_CAP_REASONS[exc.cap], sub.ch, self.connection_id)
             self._drop(sub)
             return _fail(sub.ch, "subscription_limit", str(exc))
         except SpecCapExceeded:
@@ -992,6 +1018,21 @@ class ConnectionAuthz:
         except BarsError:
             self._drop(sub)
             return _fail(sub.ch, "invalid_topic_format", "This bar series is not available.")
+        return None
+
+    def _quota_refusal(self, sub: Subscription) -> dict[str, Any] | None:
+        """E21-X02 (§16.2): charge `sub` its weight, from its validated effective options, to the
+        connection and its acting user, or refuse it `subscription_limit` with nothing charged
+        (counted and logged, `quota.refused`). One synchronous step: no other `sub` or `ctl` can
+        pass a budget between the check and the charge, which `_drop` gives back."""
+        new = charge_of(sub.topic, sub.effective)
+        if new == FREE:
+            return None
+        if (reason := self.quota.refusal(new)) is not None:
+            self.quota.refused(reason, sub.ch, self.connection_id)
+            return _fail(sub.ch, "subscription_limit", MESSAGES[reason])
+        self.quota.charge(new)
+        sub.quota_points, sub.quota_spec = new.points, new.spec
         return None
 
     def _indicators(
@@ -1061,6 +1102,7 @@ class ConnectionAuthz:
         }
         cap = self.services.max_deep_book_subs
         if (symbol, depth, sub.replay_session_id) not in held and len(held) >= cap:
+            self.quota.refused("deep_book_connection", sub.ch, self.connection_id)  # E21-X02
             return _fail(
                 sub.ch,
                 "subscription_limit",
@@ -1106,6 +1148,10 @@ class ConnectionAuthz:
         if sub.rebuild_held:  # #3476: it never started, so no draw; before a release can raise
             sub.rebuild_held = False
             self.rebuilds.unhold()
+        if sub.quota_points or sub.quota_spec is not None:  # E21-X02: once, before a raise below
+            charged = Charge(sub.quota_points, sub.quota_spec)
+            sub.quota_points, sub.quota_spec = 0, None
+            self.quota.credit(charged)
         hold, sub.series_hold = sub.series_hold, None
         if hold is not None:  # first: a lease release below can raise (#2735)
             # A lease never taken (refused, or the connection ended mid-subscribe): no grace.
@@ -1152,8 +1198,9 @@ class ConnectionAuthz:
         session of the envelope `rs`, else (no `rs`) the live one, never a replay one. Returns
         (`effective`, resnapshot, the subscription retuned) or raises `TopicError`, in this order:
         `invalid_options` for a non-null `ch` that is no topic name (#2572) or a malformed `rs`,
-        `not_subscribed`, `invalid_options` for the options; or `resync_rate_limited` for a
-        re-snapshot past the rebuild budget, which changes nothing (SR-193)."""
+        `not_subscribed`, `invalid_options` for the options; `subscription_limit` past a spec cap
+        or a subscription quota (E21-X02), or `resync_rate_limited` for a re-snapshot past the
+        rebuild budget, each of which changes nothing (SR-193)."""
         if ch is not None and not is_topic_name(ch):
             raise TopicError("invalid_options", "ch must be a topic name.", "ch")
         sub = self.named(ch, rs)
@@ -1181,6 +1228,7 @@ class ConnectionAuthz:
         moved = self._retune_trades(sub, opts) if "min_size" in changes else None
         respec = self._retune_heatmap(sub, opts) if _HEATMAP_SPEC.intersection(changes) else None
         effective = effective_options(sub.topic, opts)
+        requota = self._quota_retune(sub, effective)  # E21-X02: before the rebuild budget draws
         if sub.topic.family.family == "indicators":  # the canonical echo, never the raw entries
             effective["instances"] = sub.effective.get("instances") if retune is None else retune[2]
         # #2517: a pause holds until a ctl lifts it (`opts` never holds it, so carry it over).
@@ -1204,6 +1252,9 @@ class ConnectionAuthz:
             self._hold_instances(sub, retune[0], retune[1])
         if respec is not None and self.services.heatmap is not None:  # E21-T02: after the budget
             sub.heatmap_lease = self.services.heatmap.retune(respec[0], respec[1])
+        if requota is not None:  # E21-X02: the charge moves in the step that applies the `ctl`
+            self.quota.charge(requota, Charge(sub.quota_points, sub.quota_spec))
+            sub.quota_points, sub.quota_spec = requota.points, requota.spec
         if sub.topic.family.family == "trades":  # E22-T02: the threshold echo stays (§6.1)
             if moved is not None and self.services.trades is not None:
                 sub.trades_lease = self.services.trades.retune(moved[0], moved[1])
@@ -1257,8 +1308,23 @@ class ConnectionAuthz:
         try:
             heatmap.check_retune(lease, spec)
         except HeatmapSpecCapError as exc:
+            self.quota.refused(SPEC_CAP_REASONS[exc.cap], sub.ch, self.connection_id)  # E21-X02
             raise TopicError("subscription_limit", str(exc)) from None
         return lease, spec
+
+    def _quota_retune(self, sub: Subscription, effective: Mapping[str, Any]) -> Charge | None:
+        """E21-X02 (§5.4, §16.2): the charge a `ctl` would leave `sub` with, from the options it
+        would leave in force (a spec option or `throttle_ms`), checked against each quota less
+        `sub`'s own charge; None when it does not change. Past a quota: `subscription_limit`,
+        counted and logged, and the `ctl` changes nothing."""
+        old = Charge(sub.quota_points, sub.quota_spec)
+        new = charge_of(sub.topic, effective)
+        if new == old:
+            return None
+        if (reason := self.quota.refusal(new, old)) is not None:
+            self.quota.refused(reason, sub.ch, self.connection_id)
+            raise TopicError("subscription_limit", MESSAGES[reason])
+        return new
 
     def _retune(
         self, sub: Subscription, raw: list[dict[str, Any]]

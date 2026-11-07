@@ -292,6 +292,38 @@ def corpus_seeds() -> list[tuple[str, str, bytes]]:
             "malformed",
             _h(HEATMAP_COLUMN, _U32_MAX) + hm + bytes(32),
         ),
+        # E21-X02 (#652, AC-HM-04): the grid's 512 rows and a positive step, on both decoders.
+        ("heatmap-row-count-0", "ok", _h(HEATMAP_COLUMN, 1) + struct.pack("<IqqI", 0, 0, 1, 0)),
+        (
+            "heatmap-row-count-fit-plus-1",
+            "malformed",
+            _h(HEATMAP_COLUMN, 1) + struct.pack("<IqqI", 0, 0, 1, 3) + bytes(32),
+        ),
+        (
+            "heatmap-row-count-512",
+            "ok",
+            _h(HEATMAP_COLUMN, 1) + struct.pack("<IqqI", 0, 0, 1, 512) + bytes(512 * 16),
+        ),
+        (
+            "heatmap-row-count-513",
+            "malformed",
+            _h(HEATMAP_COLUMN, 1) + struct.pack("<IqqI", 0, 0, 1, 513) + bytes(513 * 16),
+        ),
+        (
+            "heatmap-price-step-0",
+            "malformed",
+            _h(HEATMAP_COLUMN, 1) + struct.pack("<IqqI", 0, 0, 0, 2) + bytes(32),
+        ),
+        (
+            "heatmap-price-step-negative",
+            "malformed",
+            _h(HEATMAP_COLUMN, 1) + struct.pack("<IqqI", 0, 0, -5, 2) + bytes(32),
+        ),
+        (  # the step is checked whatever the row count, none included
+            "heatmap-price-step-0-no-rows",
+            "malformed",
+            _h(HEATMAP_COLUMN, 1) + struct.pack("<IqqI", 0, 0, 0, 0),
+        ),
         (
             "footprint-cell-count-body-plus-1",
             "malformed",

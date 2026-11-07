@@ -553,6 +553,8 @@ export interface DecodedHeatmapColumn {
 const HM = K.heatmapColumn;
 const HEATMAP_COLUMN_PREFIX_BYTES = HM.bodyPrefix.bytes;
 const HEATMAP_ROW_BYTES = HM.record.bytes;
+/** 24 §6.1 `rows` (23 §3.4, §16.2): the most rows a heatmap column holds (E21-X02, #652). */
+export const HEATMAP_MAX_ROWS = 512;
 
 /** Decodes a `body_kind: 6` (heatmap_column) binary frame body. */
 export function decodeHeatmapColumn(buf: ArrayBufferView): DecodedHeatmapColumn {
@@ -578,6 +580,15 @@ export function decodeHeatmapColumn(buf: ArrayBufferView): DecodedHeatmapColumn 
   const rowCount = view.getUint32(cursor + HM.bodyPrefix.offsets.rowCount, true);
   cursor += HEATMAP_COLUMN_PREFIX_BYTES;
   assertFits(rowCount, HEATMAP_ROW_BYTES, view.byteLength - cursor, "heatmap rows");
+  // E21-X02 (§3.4): the grid's row bound and a positive step, before any row is read.
+  if (rowCount > HEATMAP_MAX_ROWS) {
+    throw new BinaryFrameError(
+      `heatmap column row_count=${rowCount} is above the grid's ${HEATMAP_MAX_ROWS} rows`,
+    );
+  }
+  if (priceStep <= 0n) {
+    throw new BinaryFrameError("heatmap column price_step is not positive");
+  }
   const rows: HeatmapRow[] = [];
   for (let i = 0; i < rowCount; i += 1) {
     if (cursor + HEATMAP_ROW_BYTES > view.byteLength) {

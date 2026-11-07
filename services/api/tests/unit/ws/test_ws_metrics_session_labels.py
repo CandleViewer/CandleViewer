@@ -42,6 +42,7 @@ from candleviewer.ws.metrics import (
 from candleviewer.ws.outbound import LadderEvent
 from candleviewer.ws.pacing import ConnectionClass
 from candleviewer.ws.pipeline import CLOSE_FLUSH_DEADLINE
+from candleviewer.ws.quota import REASONS as QUOTA_REASONS
 from candleviewer.ws.revocation import RevokedReason
 from candleviewer.ws.sequencing import COUNTED_SNAP_REASONS, PUBLISH_DENIED_FAMILIES
 from candleviewer.ws.topics import FAMILIES, MACHINE_KINDS
@@ -103,6 +104,7 @@ _CLOSED: Final[dict[str, dict[str, frozenset[str]]]] = {
     "cv_ws_frames_emitted_total": {"topic": _TOPIC_FAMILIES},
     "cv_ws_tape_prints_dropped_total": {"reason": TAPE_DROP_REASONS},
     "cv_ws_trades_subscribe_rejected_total": {"reason": TRADES_REJECT_REASONS},
+    "cv_ws_subscription_quota_rejections_total": {"reason": frozenset(QUOTA_REASONS)},
     "cv_ws_upstream_consumers_in_use": {"topic": _TOPIC_FAMILIES},
     "cv_machine_ws_publish_total": {"entity_kind": frozenset(MACHINE_KINDS)},
     "cv_machine_ws_scope_missing_total": {"entity_kind": frozenset(MACHINE_KINDS)},

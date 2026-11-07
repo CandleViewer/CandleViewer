@@ -132,8 +132,8 @@ def test_msgpack_maps_nested_to_depth_100_are_refused_past_the_depth_cap_within_
 def _claim(noise: bytes, kind: Kind) -> bytes:
     """`noise` with a header valid for `kind` whose counts claim `ROWS` records the buffer holds:
     the header's `record_count` (as the encoder writes it: one group for a footprint, one column
-    for a heatmap), the body prefix's `row_count` and the first group's `cell_count`. A frame of
-    an exact length rule is cut to its records."""
+    for a heatmap), the body prefix's `row_count` and the first group's `cell_count`, a column's
+    `price_step` positive. A frame of an exact length rule is cut to its records."""
     data = bytearray(noise)
     data[HEADER.offsets["format_version"]] = kind.format_version
     data[HEADER.offsets["body_kind"]] = kind.id
@@ -142,6 +142,9 @@ def _claim(noise: bytes, kind: Kind) -> bytes:
     for prefix, name in ((kind.body_prefix, "row_count"), (kind.group_prefix, "cell_count")):
         if prefix is not None:
             struct.pack_into("<I", data, HEADER.size + prefix.offsets[name], ROWS)
+    if kind.body_prefix is not None and "price_step" in kind.body_prefix.offsets:
+        step = HEADER.size + kind.body_prefix.offsets["price_step"]
+        struct.pack_into("<q", data, step, 1)  # E21-X02 (§3.4): a column's step is positive
     if kind.length_rule == "exact":
         del data[HEADER.size + ROWS * kind.record.size :]
     return bytes(data)

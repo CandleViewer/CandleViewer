@@ -69,8 +69,9 @@ def frames(draw: st.DrawFn) -> Frame:
     records = tuple(draw(st.lists(rec, max_size=6)))
     if kind == BOOK_SNAPSHOT:
         return Frame(kind, records, flags, ps, qs, ts, trailer=draw(st.tuples(U64, U64)))
-    if kind == HEATMAP_COLUMN:
-        return Frame(kind, records, flags, ps, qs, ts, prefix=draw(st.tuples(U32, I64, I64)))
+    if kind == HEATMAP_COLUMN:  # E21-X02 (§3.4): a column's step is positive
+        column = draw(st.tuples(U32, I64, st.integers(1, 2**63 - 1)))
+        return Frame(kind, records, flags, ps, qs, ts, prefix=column)
     return Frame(kind, records, flags, ps, qs, ts)
 
 

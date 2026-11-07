@@ -257,7 +257,9 @@ def test_ruled_numbers_match_06_and_23() -> None:
     k6 = _k6()
     assert k6["tol"] == 1.05 and "by **more than 5%**" in DOC_06[178]  # 06 line 179, section 7.4
     assert k6["read"] == 150 and "<150ms p95 for read endpoints" in DOC_06[36]  # 06 row 13
-    assert k6["throttle"] == 500 and "`wallet`" in DOC_23[860] and "500 ms" in DOC_23[860]
+    # 23's topic table: the `wallet` row, found by its cells rather than its line number.
+    (wallet,) = [r for r in DOC_23 if r.startswith("| `wallet`") and "exchange_account_ids" in r]
+    assert k6["throttle"] == 500 and "500 ms" in wallet
     assert k6["probe"] == "p(95)<=126"
 
 

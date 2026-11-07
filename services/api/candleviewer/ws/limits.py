@@ -27,6 +27,8 @@ Single home for every bound the gateway enforces. Overflow policy:
   `invalid_options` (`field: topics`) before any entry is read; nothing is unsubscribed (#2875).
 - A subscription that would grow a connection past `MAX_SUBSCRIPTIONS` ->
   rejected per-topic with `subscription_limit`; the set never grows past it.
+- A `sub` entry or a `ctl` that would take a connection or its user past the subscription quota
+  (`ws/quota.py`, §16.2) -> `subscription_limit`; nothing is charged, held or changed (E21-X02).
 - No successful `auth` within `AUTH_TIMEOUT_S` -> `bye auth_timeout` + close `4401`.
 - An `auth` call past `AUTH_CALL_TIMEOUT_S` -> `bye internal_error` + close `1011` (#2155).
 - A socket past `MAX_UNAUTHENTICATED_SOCKETS` awaiting auth -> `bye server_shedding_load` + `1013`.
@@ -107,6 +109,49 @@ MAX_BARS_SUBSCRIPTIONS = 16
 MAX_DEEP_BOOK_SUBSCRIPTIONS = 4
 #: The depth from which a `book` subscription counts against that cap.
 DEEP_BOOK_MIN_DEPTH = 200
+#: E21-X02 (#652; 23 §16.2, G-01 and G-02's user leg): the subscription quota, in points
+#: (`orderflow.heatmap.QUOTA_ROWS_PER_POINT` wire rows a second each). Every value here is a §16.2
+#: row, interim for the Owner to ratify; `test_quota.py` pins each, so a change is a reviewed diff.
+#: A connection's points and its user's, across the user's connections, the user being the acting
+#: one (§9.6). Past either: `subscription_limit`.
+QUOTA_POINTS_PER_CONNECTION = 200
+QUOTA_POINTS_PER_USER = 400
+#: Held `heatmap.*` subscriptions per connection and per user, live and replay alike.
+MAX_HEATMAP_SUBSCRIPTIONS = 8
+MAX_HEATMAP_SUBSCRIPTIONS_PER_USER = 16
+#: Distinct heatmap specs (`orderflow.heatmap.spec_of`) a user's subscriptions hold (SR-E12-03 gives
+#: a user's bar series the same 8), and of one symbol; subscriptions to one spec count it once.
+MAX_HEATMAP_SPECS_PER_USER = 8
+MAX_HEATMAP_SPECS_PER_USER_SYMBOL = 2
+#: A deep `book.*` (depth 200 or 500) weighs ⌈rows x `DEEP_BOOK_PUBLISHES_PER_S` ÷ the point⌉, rows
+#: being this many levels at `DEEP_BOOK_MEASURED_DEPTH`, scaled by depth for depth 500 (an
+#: extrapolation: no depth-500 capture exists): the mean count of levels one depth-200 publish
+#: changes on the recorded BTCUSDT capture, taken up to a whole row (the capture is
+#: documented-shape, exception #1778 A). `tests/unit/book/test_deep_book_weight.py` measures it and
+#: pins the band.
+DEEP_BOOK_ROWS_PER_PUBLISH = 5
+DEEP_BOOK_MEASURED_DEPTH = 200
+#: The book publisher's window at depth 200 and 500 is 100 ms (`book/ws_topic.WINDOW_S`).
+DEEP_BOOK_PUBLISHES_PER_S = 10
+#: A `heatmap.*` subscription whose effective `encoding` is `structured` weighs this many times its
+#: binary points in the connection's and the user's ledgers: G-03's per-row bound ratio (§6.1), a
+#: structured row's bound to a binary row's (`orderflow.heatmap.STRUCTURED_ROW_BYTES` ÷ `ROW_BYTES`,
+#: which `test_quota.py` pins it to), and so does one whose window cannot hold its depth
+#: (`heatmap_window_cannot_hold`), whatever its encoding. The server's spec points do not change.
+STRUCTURED_HEATMAP_WEIGHT = 3
+#: A `heatmap.*` column's window holds this many rows a side of the mid: the grid's `rows`
+#: (`orderflow.heatmap.ROWS`, which `test_quota.py` pins it to) centred on it (24 §6.3).
+HEATMAP_WINDOW_ROWS_A_SIDE = 256
+
+
+def heatmap_window_cannot_hold(depth: int, price_grouping: int) -> bool:
+    """23 §16.2: whether a `heatmap.*` spec's window cannot hold its `depth` levels a side, at
+    `price_grouping` ticks a row; such a subscription weighs at `STRUCTURED_HEATMAP_WEIGHT`."""
+    # The edge, `depth == HEATMAP_WINDOW_ROWS_A_SIDE * price_grouping`, counts as held only while no
+    # accepted depth (`topics.DEPTHS`) sits on it; a `DEPTHS` change there moves this test to `>=`.
+    return depth > HEATMAP_WINDOW_ROWS_A_SIDE * price_grouping
+
+
 #: SR-E12-07 (§8.4): the share, in percent of each limit of a connection's outbound
 #: budget, that its queued `bars.*` frames may hold, so `book` and `trades` are not starved.
 BARS_SHARE_PCT = 50

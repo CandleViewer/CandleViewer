@@ -179,6 +179,9 @@ rules:
       # reason, also (E35-T09, #5000, rule_actions_blocked_total): what stopped a rule action, the
       #   closed 16 of `rules/executor/results.BlockedBy` (24 Sec.11.9), never an identifier;
       #   max_series=16.
+      # reason, also (E21-X02, #652, cv_ws_subscription_quota_rejections_total): the limit of the
+      #   subscription quota family that refused a `sub` entry or a `ctl` (`ws/quota.REASONS`, ten,
+      #   each bound at import); never a user, a connection or a symbol; max_series=10.
       - metavariable-regex:
           metavariable: $LABEL
           regex: "^(?!(action|blocked_type|bucket|builtin|cap|cause|class|code|depth|directive|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|generation|history|indicator|kind|method|operation|outcome|permission|port|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger|trigger_mode|type|version|where|wire)$).*$"
