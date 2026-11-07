@@ -1,4 +1,72 @@
 {
+ "allLiquidation": {
+  "": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "data": {
+   "types": [
+    "array"
+   ],
+   "required": true
+  },
+  "data[]": {
+   "types": [
+    "object"
+   ],
+   "required": true
+  },
+  "data[].S": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "data[].T": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "data[].p": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "data[].s": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "data[].v": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "topic": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  },
+  "ts": {
+   "types": [
+    "number"
+   ],
+   "required": true
+  },
+  "type": {
+   "types": [
+    "string"
+   ],
+   "required": true
+  }
+ },
  "execution": {
   "": {
    "types": [

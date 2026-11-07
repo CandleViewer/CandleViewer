@@ -111,6 +111,7 @@ E08_BUS_PAYLOADS: Final = frozenset(
     | {BookStatus, GapEvent, FeedHealthEvent}  # E08's control events (drift D1)
     | {InstrumentUpdatedEvent}  # 24 §2.8, from the catalogue refresh
     | {BestQuoteEvent, BookDesyncEvent}  # 24 §2.8, from the book stream (E21-T01, #604)
+    | {LiquidationEvent}  # 24 §2.5, from the allLiquidation stream (E24-T03, #667)
 )
 C6_FIELDS: Final = ("schema_version", "event_id", "ts_event", "ts_ingest")
 # (domain, detail) of every bus topic E08 publishes -> how 24 §2.9 "As shipped" spells it.
@@ -123,6 +124,7 @@ E08_BUS_TOPICS: Final[Mapping[tuple[str, str], str]] = {
     ("instruments", "updated"): "`{env}.instruments.{symbol}.updated`",
     ("md", "quote"): "`{env}.md.{symbol}.quote`",  # E21-T01 (#604)
     ("health", "book_desync"): "`{env}.health.{symbol}.book_desync`",
+    ("md", "liquidation"): "`{env}.md.{symbol}.liquidation`",  # E24-T03 (#667)
 }
 E08_DOMAINS: Final = frozenset(domain for domain, _ in E08_BUS_TOPICS)
 # (domain, detail) of a derived market-data topic another module publishes (24 §2.9's table, the
@@ -139,6 +141,7 @@ E08_FED_FAMILIES: Final = {
     "book": "books",
     "ticker": "tickers",
     "heatmap": "books",  # E21-T02 (#605): the heatmap samples the book's tier
+    "liquidations": "liquidations",  # E24-T03 (#667): the allLiquidation stream's demand
 }
 
 
@@ -485,7 +488,7 @@ def test_c_every_market_data_topic_another_module_uses_is_one_e08_publishes() ->
 
 def test_c_the_ws_families_e08_feeds_lease_its_ingestion_streams() -> None:
     """23 §6.1 families (the registry, held to the table by the registry test) -> E08 streams."""
-    streams = {"trades": object(), "books": object(), "tickers": object()}
+    streams = {"trades": object(), "books": object(), "tickers": object(), "liquidations": object()}
     ctx: Any = SimpleNamespace(ingestion=SimpleNamespace(**streams))  # only `.ingestion` is read
     resolve = ingestion_streams(ctx)
 

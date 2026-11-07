@@ -40,9 +40,11 @@ TICKERS_SCHEMA = TableSchema(
     timestamp_field_columns=("next_funding_ts",),
 )
 
+# E24-T03 (#667): `recv_ts` is a TIMESTAMP column (0001), so it is written as one, never a LONG.
 LIQUIDATIONS_SCHEMA = TableSchema(
     name="liquidations",
     tag_columns=("symbol", "side", "stream"),
+    timestamp_field_columns=("recv_ts",),
 )
 
 KLINES_SCHEMA = TableSchema(
