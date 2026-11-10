@@ -21,8 +21,9 @@ then its plan, then its report) in memory, one pass per account, as B19 runs one
   it only as B19's `OPERATOR_RESOLVED` arm ends (BQ-5), `stale` pages the Owner and hands on
   `oms.account_stale`, the metrics are counted, and a retry is asked of the driver's host timer.
 
-Unwired: nothing composes it yet (PR 2b). The notices are handed to `ReconcileNotices`, which the
-wiring binds to the `system` topic; publishing is not this module's.
+`oms_reconcile_wiring` composes it into the OMS runtime. The notices are handed to
+`ReconcileNotices`, which that wiring binds to the `system` topic; publishing is not this
+module's.
 """
 
 from __future__ import annotations

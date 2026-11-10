@@ -11,13 +11,17 @@
 - Shown in memory: the suite fails against an unguarded admin route, against an admin route whose
   audit entry is missing, and against an `admin_router` guard whose permission drifts from the
   contract. Each change to the module-scoped world is undone, so the tests hold in any order.
+- A cell whose exchange moves the shared clock never meets a session aged out: the world signs
+  every actor in again, in its state, before a span its sessions cannot serve. It never signs in
+  over a session something other than the clock changed: it refuses, naming the actor.
 """
 
 from __future__ import annotations
 
 import inspect
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -27,8 +31,11 @@ from fastapi.routing import APIRoute
 from candleviewer.admin.http import admin_area
 from candleviewer.api.step_up import HANDLER_GATED_ROUTES
 from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.session_service import is_live_session
+from candleviewer.auth.totp import TOTP_SKEW_STEPS, generate_code, time_step_for
+from candleviewer.statechart.bindings import b16_session
 from tests.security.admin import _cells as cells
-from tests.security.admin._world import SIGNED_IN, AdminWorld
+from tests.security.admin._world import PW, SIGNED_IN, AdminWorld, open_admin_world
 
 STATE = "none"
 _ENTER = f"{admin_area.__qualname__}.<locals>.enter"
@@ -219,3 +226,101 @@ def test_a_guard_permission_that_drifts_from_the_contract_fails_the_suite(
     finally:
         cell.cell_contents = kept
     _assert_guards_match_the_contract(world)  # and holds again once restored
+
+
+@pytest.mark.parametrize("state", ["stale", "fresh"])
+def test_a_clock_moving_exchange_never_meets_a_session_aged_out(
+    state: str, monkeypatch: pytest.MonkeyPatch, b16_audit: object
+) -> None:
+    """`AdminWorld.reserve`, in a world of its own: a span the sessions still serve changes
+    nothing; a span they cannot serve signs every actor in again, in the same state, for at least
+    that span. With E29-T06's no-grace resolve, a stale module's four exchanges outlasted one
+    access token (12 minutes), and the cells from the fourth on met expired tokens."""
+    classes = cells.GRACE_CLASSES[:1]  # one class shows the state entered again, at less cost
+    with open_admin_world(monkeypatch) as admin:
+        b16_session.set_audit_sink(admin.audit)  # as the `admin` fixture of the abuse cases
+        admin.settle(state, classes)
+        admin.tick()  # one TOTP step of age, so a newly signed-in session outlives these
+        kept = {name: actor.session_id for name, actor in admin.actors.items()}
+        span = admin.serves_until() - admin.clock.now  # all the life they have left
+        admin.reserve(span - timedelta(seconds=1))
+        assert {name: actor.session_id for name, actor in admin.actors.items()} == kept
+        admin.reserve(span)
+        end = admin.clock.now + span  # the exchange's last request
+        portal = admin.client.portal
+        assert portal is not None
+        for name, actor in admin.actors.items():
+            assert actor.session_id != kept[name], name
+            row = portal.call(admin.auth.sessions.peek_access_token, actor.token)
+            assert row is not None, name
+            serves = is_live_session(row, now=end)  # a bool, so a failure prints no session row
+            assert serves, f"{name}'s new session ends within the span"
+            windows = [row.step_up_elevations[c] for c in classes]
+            if state == "fresh":  # each window outlives the span
+                assert all(until > end for until in windows), (name, windows)
+            else:  # each window was opened and has lapsed
+                assert all(until <= admin.clock.now for until in windows), (name, windows)
+
+
+def _sign_out(admin: AdminWorld, actor: str) -> None:
+    """`POST /auth/logout`: the session is revoked."""
+    out = admin.client.post("/auth/logout", headers=admin.headers(actor))
+    assert out.status_code == 204, out.text
+
+
+def _strike_out(admin: AdminWorld, actor: str) -> None:
+    """Three wrong codes at `POST /auth/step-up`: the third downgrades the session to read-only
+    and ends every elevation it held."""
+    step, seed = time_step_for(admin.clock.now.timestamp()), admin.actors[actor].seed
+    good = {generate_code(seed, step + d) for d in range(-TOTP_SKEW_STEPS, TOTP_SKEW_STEPS + 1)}
+    wrong = next(c for c in (str(d) * 6 for d in range(10)) if c not in good)
+    body = {"code": wrong, "password": PW, "action_class": admin.classes[0]}
+    headers = admin.headers(actor)
+    sent = [admin.client.post("/auth/step-up", headers=headers, json=body) for _ in range(3)]
+    assert [a.status_code for a in sent] == [401, 401, 403], [a.text for a in sent]
+
+
+def _open_window(admin: AdminWorld, actor: str) -> None:
+    """A step-up naming a grace class: a live window on a stale session."""
+    opened = admin.step_up(actor, action_class=admin.classes[0])
+    assert opened.status_code == 200, opened.text
+
+
+@pytest.mark.parametrize(
+    ("state", "damage", "actor", "why"),
+    [
+        pytest.param("stale", _sign_out, "owner", "is revoked", id="revoked"),
+        pytest.param("fresh", _strike_out, "owner", "is read-only", id="read-only"),
+        pytest.param(
+            "stale", _open_window, "manager_with_grant", "holds a live grace window", id="window"
+        ),
+    ],
+)
+def test_a_damaged_session_is_refused_and_never_renewed_over(
+    state: str,
+    damage: Callable[[AdminWorld, str], None],
+    actor: str,
+    why: str,
+    monkeypatch: pytest.MonkeyPatch,
+    b16_audit: object,
+) -> None:
+    """`AdminWorld.reserve` renews time alone. A session a route revoked, downgraded or elevated
+    is refused before anyone signs in again, naming its actor: a renewal would erase the damage,
+    and the cells after that route would pass over it. The fresh downgrade also took every window,
+    which `serves_until` refuses too, never reading it as a deadline. Each damage is a real flow:
+    a sign-out, three wrong step-up codes, a step-up naming a grace class."""
+    with open_admin_world(monkeypatch) as admin:
+        b16_session.set_audit_sink(admin.audit)  # as the `admin` fixture of the abuse cases
+        admin.settle(state, cells.GRACE_CLASSES[:1])
+        admin.tick()  # as above: a span a renewal would serve, so only the damage can refuse it
+        kept = {name: a.session_id for name, a in admin.actors.items()}
+        span = admin.serves_until() - admin.clock.now  # all the life left: `reserve` renews
+        damage(admin, actor)
+        at = admin.clock.now
+        with pytest.raises(RuntimeError, match=f"^{actor}'s session {why}:"):
+            admin.reserve(span)
+        assert {name: a.session_id for name, a in admin.actors.items()} == kept
+        assert admin.clock.now == at
+        if state == "fresh":
+            with pytest.raises(RuntimeError, match=f"^{actor}'s session holds no "):
+                admin.serves_until()

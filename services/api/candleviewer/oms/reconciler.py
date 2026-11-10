@@ -1,8 +1,9 @@
 """The reconciliation pass (E29-T06 #914 PR 2a; 24-internal-schemas.md Sec.8.5; the orchestrator's
 ruling of record on #914, BQ-1 to BQ-18). Plain code: B19 (`statechart/bindings/
 b19_reconciliation.py`) records the job, and its services call this module's phases through
-`ReconcilePhases`; nothing here builds, sends to or queries an interpreter. Unwired: no composition
-root binds any of it yet (PR 2b), so nothing here runs in production.
+`ReconcilePhases`; nothing here builds, sends to or queries an interpreter. `oms_reconcile_wiring`
+binds it into the OMS runtime, where a live process still refuses to start until E45-T01's
+carries land (24 Sec.8.5).
 
 **The phases (BQ-18, 24 Sec.8.5's phase table).**
 

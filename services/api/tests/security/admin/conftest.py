@@ -1,21 +1,20 @@
 """One admin world per test module, in the elevation state the module names (`STATE`).
 
 Module scope is deliberate: a world costs one `create_app()`, four enrolments and, for the fresh
-and stale states, one step-up per actor and grace class. Its patches are applied through an
-explicit `MonkeyPatch` undone at module teardown, so none outlives the module (C-13.7).
+and stale states, one step-up per actor and grace class, again whenever a cell's exchange would
+outlive the sessions (`AdminWorld.reserve`). Its patches are applied through an explicit
+`MonkeyPatch` undone at module teardown, so none outlives the module (C-13.7).
 """
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from datetime import timedelta
 from typing import Any
 
 import httpx
 import pytest
 
-from candleviewer.auth.step_up import GRACE_WINDOW
 from candleviewer.statechart.bindings import b16_session
 from tests.security.admin._cells import GRACE_CLASSES, STATES
 from tests.security.admin._world import AdminWorld, open_admin_world
@@ -28,10 +27,7 @@ def admin_world(request: pytest.FixtureRequest) -> Iterator[AdminWorld]:
     mp = pytest.MonkeyPatch()
     try:
         with open_admin_world(mp) as world:
-            if state != "none":
-                world.elevate(GRACE_CLASSES)
-            if state == "stale":
-                world.tick(GRACE_WINDOW + timedelta(seconds=1))  # past every window
+            world.settle(state, GRACE_CLASSES)
             yield world
     finally:
         mp.undo()

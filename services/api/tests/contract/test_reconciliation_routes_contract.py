@@ -3,8 +3,8 @@ reconciliation contract before its code (C-6.1). The two Owner routes, `reconcil
 on-demand pass, `SWEEP_DUE` with `trigger: manual`) and `resolveReconciliation` (the operator's
 `OPERATOR_RESOLVED`, step-up `accounts`), their RBAC, idempotency, statuses, schemas and examples;
 the `account_stale` refusal reason in the contract, the generated model and 24's closed table;
-and 23's three `account_notice` rows. Neither route is mounted yet (the RBAC matrix row is
-`not_mounted`), so no provider case runs until E29-T06's wiring serves them."""
+and 23's three `account_notice` rows. The routes' PR (#914) mounts both, so their RBAC matrix rows
+are `executed`; `test_reconciliation_routes_provider.py` holds their answers to 22."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def test_each_route_is_owner_only_idempotent_and_declares_exactly_its_statuses(
     matrix = yaml.safe_load(_MATRIX.read_text(encoding="utf-8"))["operations"]
     row = matrix[f"POST {where[0]}"]
     assert (row["permissions"], row["state"], row["outcomes"]) == (
-        ["admin:write"], "not_mounted", OWNER_ONLY,
+        ["admin:write"], "executed", OWNER_ONLY,
     )  # fmt: skip
 
 
