@@ -18,6 +18,9 @@ sprint spot-check), 4 VoiceOver + Electron on macOS (P1).
 
 - **Next re-pin due (PROPOSED):** 2027-01-04. 05 §8.1 fixes only "quarterly (or on a forcing major)"; the first-Monday day rule is a proposal for the Accessibility role to confirm.
 - The "2024.x (latest stable at freeze)" wording in 05 §8.1 is not changed here; the Accessibility role decides.
+- **Pin wording question for the Accessibility role (E47-Q02 BQ-05):** 05 §8.1 says "NVDA 2024.x" and "JAWS 2024.x", but the
+  pass is run in 2026-11. The role rules whether the standard's wording is amended, or the pins-table row above simply
+  records the installed version and the drift is a dated changelog entry (the default). No agent pins a version.
 
 ### Re-pin Chore text (drafted; no issue is filed, so this is a carried row)
 
@@ -64,6 +67,15 @@ The S01 to S03 rows are listed from their ticket scope; the owner or the orchest
 - The Accessibility-role sign-off of every record (`approved:` stays `pending`).
 - The second-person dry run of each script (`dry_run: pending`).
 - The recurring re-pin Chore (text above; no issue filed).
+- E47-Q02 #1355 human rows: the three full passes (rows 1, 2 and 4), the NVDA Chromium spot-check (row 3), the pass by a
+  daily screen-reader user, the two-tester calibration on task 3 (`records/_calibration-template.md`), the OWNER FILL pin
+  cells, the NVDA "2024.x" wording ruling, and the Accessibility-role sign-off of the summary. The task scripts ORD, FLT,
+  LIV and ADA stay `SURFACE PENDING` until their tickets mount.
+- E47-Q02 #1355 carried row (BQ-08 ruling): the SCR-075 badge-change announcement after a completed Demo to Live switch. Script LIV
+  stops at the typed confirmation (Cancel); the owner must name a safe target before this step is written or run.
+- E47-Q02 #1355 closing rows, after the human passes: committing the transcripts under `qa/evidence/e47/sr/<at>-<date>/`;
+  writing the calibration's clarified expected results back into E47-Q01; handing the pass summary to E47-T06 and
+  E47-Q09; and posting it to the release-candidate checklist in `docs/plan/07-release-and-prr.md`.
 - The ticket's "Remediation has landed" is **false today**: E47-S01, S02 and S03 are only partly merged, and E18-S11,
   E21-S01, E21-S02, E36-S02, E37-S01 and E37-S05 are unbuilt, so those scripts stay `SURFACE PENDING`.
 
