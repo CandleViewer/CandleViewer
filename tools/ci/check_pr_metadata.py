@@ -56,7 +56,12 @@ Rules
          `docs` title, CHANGELOG.md the only changed file, and does not delete it). Any other PR that changes it fails,
          with no allowance for a security fix: its line is a `Changelog-Security:` footer in the
          body, rendered by the sync; every other PR's line is its title or a `Changelog:` footer
-         (CI-REL-001).
+         (CI-REL-001). One more shape (#3099, 07 §4.1), judged on the head's files, not on the
+         label: a release-prep PR, titled `chore(infra-devops): prepare release X.Y.Z`, changes
+         only CHANGELOG.md and version.txt, deletes neither, and its version.txt and topmost
+         `## X.Y.Z — date` heading both equal the title's version. That title on any other shape
+         fails, and version.txt changes in no other PR. The `type/release` label is informational;
+         the release run's `prepare_release.py --verify` stays the guarantee.
   C-16.4 every `C-x.y` cited in title/body is declared in CONSTITUTION.md. The declaration loader
          is reused from scripts/check_rule_refs.py (GOV-002; scans tracked files, not PR text) -
          C-16.5, no second implementation.
@@ -357,22 +362,63 @@ def check_label_provenance(events, comments, allowed: set[str]) -> list[str]:
 
 #: #4435: the generated file, which only a changelog sync PR changes (07 §3).
 CHANGELOG_PATH = "CHANGELOG.md"
+#: #3099: the released version, which only a release-prep PR changes (07 §4.1).
+VERSION_PATH = "version.txt"
+PREP_PATHS = frozenset({CHANGELOG_PATH, VERSION_PATH})
+PREP_TITLE_RE = re.compile(r"^chore\(infra-devops\): prepare release (?P<version>\d+\.\d+\.\d+)$")
+_TOP_HEADING_RE = re.compile(r"^## (?P<version>\d+\.\d+\.\d+) — \d{4}-\d{2}-\d{2}$", re.MULTILINE)
 _TITLE_RE = re.compile(r"^(?P<type>[a-z]+)(?:\((?P<scope>[^)\s]+)\))?(?P<bang>!)?: (?P<subj>\S.*)$")
 
 
-def changelog_edit_errors(
-    title: str, paths: list[str], deleted: frozenset[str] = frozenset()
+def prep_shape_errors(
+    version: str, paths: list[str], deleted: frozenset[str], head_files: dict[str, str]
 ) -> list[str]:
-    """PR-CHANGELOG-001 (module docstring): a PR that changes CHANGELOG.md is a sync PR (a `docs`
-    title, CHANGELOG.md its only changed file, not deleted) or fails."""
-    if CHANGELOG_PATH not in paths:
-        return []
-    m = _TITLE_RE.match(title)
-    if m and m["type"] == "docs" and set(paths) == {CHANGELOG_PATH} and CHANGELOG_PATH not in deleted:
+    """PR-CHANGELOG-001's release-prep shape (module docstring); [] when the PR has it."""
+    outside = sorted(set(paths) - PREP_PATHS)
+    gone = sorted(PREP_PATHS & deleted)
+    found = (head_files.get(VERSION_PATH) or "").strip()
+    top = _TOP_HEADING_RE.search(head_files.get(CHANGELOG_PATH) or "")
+    heading = top["version"] if top else "none"
+    if not outside and not gone and found == version == heading:
         return []
     return [
+        f"PR-CHANGELOG-001 C-15.6: a release-prep PR (title `chore(infra-devops): prepare release "
+        f"{version}`) changes only CHANGELOG.md and version.txt, deletes neither, and its "
+        f"version.txt and topmost `## X.Y.Z — date` heading equal the title's version (07 §4.1, "
+        f"#3099). Found: other files {outside[:5]}, deleted {gone}, version.txt {found or 'none'!r}"
+        f", top heading {heading}. Re-run the prepare command (AGENTS.md §4) on a fresh base."
+    ]
+
+
+def changelog_edit_errors(
+    title: str,
+    paths: list[str],
+    deleted: frozenset[str] = frozenset(),
+    head_files: dict[str, str] | None = None,
+) -> list[str]:
+    """PR-CHANGELOG-001 (module docstring): a PR that changes CHANGELOG.md is a sync PR (a `docs`
+    title, CHANGELOG.md its only changed file, not deleted) or a release-prep PR (judged on
+    `head_files`, the head's CHANGELOG.md and version.txt), or fails; version.txt changes only in
+    a release-prep PR."""
+    prep = PREP_TITLE_RE.match(title)
+    if prep:
+        return prep_shape_errors(prep["version"], paths, deleted, head_files or {})
+    errors: list[str] = []
+    if VERSION_PATH in paths:
+        errors.append(
+            "PR-CHANGELOG-001 C-15.6: this PR changes version.txt, which only a release-prep PR "
+            "(`chore(infra-devops): prepare release X.Y.Z`, CHANGELOG.md and version.txt only) "
+            "changes (07 §4.1, #3099). Drop the edit; the release owner prepares releases."
+        )
+    if CHANGELOG_PATH not in paths:
+        return errors
+    m = _TITLE_RE.match(title)
+    if m and m["type"] == "docs" and set(paths) == {CHANGELOG_PATH} and CHANGELOG_PATH not in deleted:
+        return errors
+    return errors + [
         "PR-CHANGELOG-001 C-15.6: this PR changes CHANGELOG.md, which only a changelog sync PR "
-        "edits (a `docs` title, CHANGELOG.md its only changed file; 07 §3, #4435). Drop the edit: "
+        "edits (a `docs` title, CHANGELOG.md its only changed file; 07 §3, #4435), besides a "
+        "release-prep PR (07 §4.1). Drop the edit: "
         "your conventional title is your changelog line, or add a `Changelog: <one-line "
         "user-facing summary>` footer to the PR body. A security fix adds a `Changelog-Security: "
         "<impact-only summary>` footer instead; the sync renders it under Security."
@@ -399,6 +445,7 @@ def check(
     merge_base_state: AttrState | None = None,
     closing_online: list[str] | None = None,
     deleted_paths: frozenset[str] = frozenset(),
+    head_files: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
     title = pr.get("title") or ""
     body = pr.get("body") or ""
@@ -498,7 +545,7 @@ def check(
         errors.append("PR-BODY-001 C-4.7: body needs `Closes #N` (or `Fixes #N`) outside code/comments")
 
     paths = [path for _a, _d, path in rows]
-    errors += changelog_edit_errors(title, paths, deleted_paths)
+    errors += changelog_edit_errors(title, paths, deleted_paths, head_files)
 
     for rid in sorted(set(rule_id_re.findall(f"{title}\n{body}")) - declared):
         errors.append(f"PR-RULE-001 C-16.4: {rid} is cited but not declared in CONSTITUTION.md")
@@ -636,6 +683,9 @@ def main(
             fixed.append((add, dele, path))
         rows = fixed
         paths = [r[2] for r in rows]
+        head_files = {}  # PR-CHANGELOG-001's prep shape is judged on the head's files (data)
+        if PREP_TITLE_RE.match(pr.get("title") or ""):
+            head_files = {p: _show(root, head, p) for p in sorted(PREP_PATHS)}
         rr = _load_rule_refs(root)  # root is the BASE worktree in CI
         with tempfile.TemporaryDirectory() as tmp:  # head CONSTITUTION: data only, never executed
             (Path(tmp) / "CONSTITUTION.md").write_text(
@@ -662,6 +712,7 @@ def main(
             merge_base_state=attr_state(root, merge_base, paths),
             closing_online=online,
             deleted_paths=frozenset(deleted),
+            head_files=head_files,
         )
     except ConfigError as exc:
         print(f"::error title=pr-metadata::{exc}", file=sys.stderr)

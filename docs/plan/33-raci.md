@@ -151,7 +151,7 @@ Scope reminder: web app only (React + custom WebGL engine + Electron shell), own
 | Spike (any) | C | **A** | R | R | R | C | C | C | C | C | C | C | C |
 | Bug fix | I | | R | R | R | **A** | C | C | | | | | C |
 | Chore / dependency bump | I | | R | R | | C | **A** | C | | | | | |
-| Hotfix to a release branch | C | **A** | R | R | R | R | R | C | | | | | |
+| Hotfix (roll-forward from `main`, 01 §8) | C | **A** | R | R | R | R | R | C | | | | | |
 
 ---
 
@@ -194,7 +194,7 @@ Scope reminder: web app only (React + custom WebGL engine + Electron shell), own
 | Activity | OWN | ARC | BEL | FEL | CEL | QAL | DSO | SEC | CDO | UXR | PDS | DST | A11Y |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Release-train scope decision | **A** | R | C | C | C | C | C | C | C | | | | |
-| Release branch cut (`release/<semver>`) | I | **A** | C | C | | C | R | | | | | | |
+| Release cut (prep PR + release run) | I | **A** | C | C | | C | R | | | | | | |
 | Changelog accuracy | I | C | R | R | R | C | **A** | | | | | | |
 | Staging soak monitoring | I | C | R | R | | R | **A** | C | | | | | |
 | PRR ceremony & go/no-go | C | **A**/R | C | C | C | R | R | R | | | | | |
@@ -273,7 +273,7 @@ So that "nobody waives a gate" is auditable rather than rhetorical, each gate be
 | Gate | Defined in | Declared met by (A) | Vetoes available to |
 |---|---|---|---|
 | Pre-cut checks on `main` | `07-release-and-prr.md` §4.1 | DSO | QAL, SEC |
-| Release branch cut & staging soak | `07-release-and-prr.md` §4.2 | DSO (soak monitoring), ARC (cut) | QAL |
+| Release cut (prep PR + release run) & staging soak | `07-release-and-prr.md` §4.2 | DSO (soak monitoring), ARC (cut) | QAL |
 | PRR go/no-go | `07-release-and-prr.md` §4.3, §5 | ARC | DSO, SEC, QAL — any one may veto |
 | Observability readiness | `07-release-and-prr.md` §5.1 | DSO | ARC |
 | Runbooks present & rehearsed | `07-release-and-prr.md` §5.2 | DSO | ARC, QAL |
