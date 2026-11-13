@@ -61,6 +61,7 @@ import type {
   NumericStepperInputProps,
   PageHeaderProps,
   RadioGroupProps,
+  SafetyInvariantNoticeProps,
   SearchBoxProps,
   SegmentedControlProps,
   SelectProps,
@@ -220,6 +221,14 @@ describe("@candleviewer/ui watchlist components (E08-S08)", () => {
           WatchlistRowProps,
         ]
       | null = null;
+    expect(props).toBeNull();
+  });
+});
+
+describe("@candleviewer/ui rule-editor notice (E37-S02)", () => {
+  it("exports CMP-158 SafetyInvariantNotice and its props type (the typechecker checks it)", () => {
+    expect(typeof Atoms.SafetyInvariantNotice).toBe("function");
+    const props: SafetyInvariantNoticeProps | null = null;
     expect(props).toBeNull();
   });
 });

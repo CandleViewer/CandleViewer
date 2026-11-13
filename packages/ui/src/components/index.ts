@@ -403,6 +403,10 @@ export type { RbacGateChild, RbacGateForm, RbacGateIconChild, RbacGateProps } fr
 export { RBAC_REASONS, formatRbacReason } from "./rbacReasons.js";
 export type { RbacReasonArgs, RbacReasonFills, RbacReasonKey } from "./rbacReasons.js";
 
+// E37-S02's rule-editor variant of CMP-158; the ticket, arming, held and draft variants are their owners'.
+export { SafetyInvariantNotice } from "./SafetyInvariantNotice.js";
+export type { SafetyInvariantNoticeProps } from "./SafetyInvariantNotice.js";
+
 export { SearchBox } from "./SearchBox.js";
 export type { SearchBoxProps } from "./SearchBox.js";
 

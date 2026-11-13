@@ -68,6 +68,7 @@ import "../src/components/printexportbar.css";
 import "../src/components/progress.css";
 import "../src/components/radio.css";
 import "../src/components/recorderstatusrow.css";
+import "../src/components/safetynotice.css";
 import "../src/components/searchbox.css";
 import "../src/components/segmented.css";
 import "../src/components/select.css";
