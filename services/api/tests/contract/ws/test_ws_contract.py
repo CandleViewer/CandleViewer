@@ -504,6 +504,29 @@ def test_integration_replay_finish_emits_revoked_replay_session_ended_per_topic(
         assert {f["p"]["reason"] for f in revoked} == {"replay_session_ended"}
 
 
+def test_integration_replay_destroy_emits_revoked_replay_session_ended_per_topic() -> None:
+    """§11, §9.5 (#2811): a destroyed session (`on_ended`, by its client or the idle reclaim)
+    ends each replayed topic with one schema-valid `revoked replay_session_ended` naming its
+    replay stream; the socket's live twin stays. Reaching `to` is the xfail row above (#628)."""
+    w = World()
+    topics = [entry("trades", ("symbol",)), entry("ticker", ("symbol",))]
+    with connect(w) as c:
+        c.sub("trades.BTCUSDT")
+        c.drain(1)
+        c.send({"t": "sub", "id": "r", "p": {"topics": topics, "replay_session_id": RS}})
+        c.next_of("sub_ok")
+        c.drain(2)
+        assert w.call(w.registry.replay_session_ended, RS, USER) == 1
+        revoked = c.drain(2)
+        for frame in revoked:
+            check_schema("cv://ws/v1/revoked.schema.json", frame["p"], "replay_session_ended")
+        assert sorted((f["t"], f["ch"], f["rs"], f["p"]["reason"]) for f in revoked) == [
+            ("revoked", "ticker.BTCUSDT", RS, "replay_session_ended"),
+            ("revoked", "trades.BTCUSDT", RS, "replay_session_ended"),
+        ]
+        assert w.call(w.registry.replay_session_ended, RS, USER) == 0  # once only
+
+
 def test_integration_replay_end_revoked_frame_shape_is_schema_valid() -> None:
     """The frame §11 says closes a finished session, built by the real authz path. How it is
     triggered (E26) is out of reach today; its shape is not."""

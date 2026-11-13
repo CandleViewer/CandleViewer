@@ -395,6 +395,19 @@ def test_deployed_app_hands_one_feed_to_the_modules_that_own_a_machine(
     assert ctx.auth._machine_feed is feed and ctx.replay.sessions._feed is feed
 
 
+def test_deployed_app_wires_replay_session_ends_to_the_ws_revocation(
+    deployed: SimpleNamespace,
+) -> None:
+    """#2811 (23 §11): `create_app` hands the replay sessions' `on_ended` to the deployed
+    `WsEvents`, so a destroyed session's subscriptions are revoked on the app's registry. A bound
+    method is a fresh object on each access, so it is compared by `==` (same function, same
+    `WsEvents`), never `is`."""
+    state = deployed.app.state
+    on_ended = state.app_context.replay.sessions._on_ended
+    assert on_ended == state.ws_events.replay_session_ended
+    assert state.ws_events.registry is state.ws_registry
+
+
 def test_a_replay_session_created_on_the_deployed_app_is_snapped_and_updated_over_the_socket(
     deployed: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:

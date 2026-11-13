@@ -1460,6 +1460,22 @@ class ConnectionAuthz:
         self._withdraw(affected, set())
         return [change, *revoked]
 
+    def end_replay_session(self, rs: str, now_ms: int) -> list[dict[str, Any]]:
+        """23 §11 (#2811): replay session `rs` (canonical) was destroyed. Each of its
+        subscriptions ends, its queued frames discarded first, and gets one `revoked`
+        `replay_session_ended` (`resubscribe_allowed: false`), in `ch` order; the live twin and
+        other sessions' subscriptions stay. Nothing when it holds none, so a repeat is a no-op."""
+        ended = sorted(
+            (s for s in self.by_id.values() if s.replay_session_id == rs),
+            key=lambda s: (s.ch, s.sub_id),
+        )
+        if not ended:
+            return []
+        for sub in ended:
+            self._drop(sub)
+        self._withdraw(ended, set())
+        return [self._revoked(sub, "replay_session_ended", now_ms) for sub in ended]
+
     def _withdraw(self, affected: list[Subscription], viewed: set[str]) -> None:
         """#415: a grant or a permission withdrawn alike, one rule at the sending boundary
         (C-12.4): the affected subscriptions' queued frames are discarded first (§9.5), then a
@@ -1959,22 +1975,53 @@ class ConnectionRegistry:
         (`ValueError`) before anything changes."""
         if reason not in ACCOUNT_REVOKED_REASONS:
             raise ValueError("not an account revocation reason")
+        entries = [e for group in list(self._conns.values()) for e in group]
+        return await self._revoke_on(
+            entries,
+            lambda authz, now_ms: authz.revoke_account(account_id, reason, now_ms),
+            "ws account revocation failed; socket evicted",
+        )
+
+    async def replay_session_ended(self, replay_session_id: str, user_id: uuid.UUID) -> int:
+        """23 §11 (#2811, #624): replay session `replay_session_id` of `user_id` was destroyed,
+        whatever the reason (`client`, `idle_reclaim` or `max_lifetime`: the same frames for
+        each). On each of that user's sockets every subscription of the session ends with one
+        `revoked` `replay_session_ended` per topic (`ConnectionAuthz.end_replay_session`), sent
+        as an account revocation's are, then its
+        `ws.subscription.revoked` rows. Another user's sockets are not read. Returns how many
+        sockets got frames: 0 for an id that is not a uuid or a session already ended here."""
+        rs = parse_replay_session_id(replay_session_id)
+        if rs is None:
+            return 0
+        return await self._revoke_on(
+            list(self._conns.get(user_id, ())),
+            lambda authz, now_ms: authz.end_replay_session(rs, now_ms),
+            "ws replay session revocation failed; socket evicted",
+        )
+
+    async def _revoke_on(
+        self,
+        entries: list[tuple[ConnectionAuthz, Any, Any]],
+        change: Callable[[ConnectionAuthz, int], list[dict[str, Any]]],
+        failure: str,
+    ) -> int:
+        """`change` each socket of `entries` synchronously before any send; a socket whose change
+        raises is half changed, so it is evicted (`failure` logged) as a failed swap is
+        (`_swap_or_evict`), and closed before any send. Then each changed socket gets its frames,
+        each bounded by `send_timeout_s`: one that stalls or breaks is evicted (C-2.18). The
+        `ws.subscription.revoked` rows are written after the sends, on any exit. Returns how many
+        sockets got frames."""
         rows: list[_AuditRow] = []
+        changed: list[tuple[ConnectionAuthz, Any, Any, list[dict[str, Any]]]] = []
         try:
             now_ms = self._clock_ms()
-            entries = [e for group in list(self._conns.values()) for e in group]
-            changed: list[tuple[ConnectionAuthz, Any, Any, list[dict[str, Any]]]] = []
             evicted: list[Any] = []
             for authz, send, close in entries:  # every socket changes before any I/O
                 try:
-                    frames = authz.revoke_account(account_id, reason, now_ms)
+                    frames = change(authz, now_ms)
                 except Exception:  # half changed: evicted as a failed swap is (`_swap_or_evict`)
                     with contextlib.suppress(Exception):
-                        _log().error(
-                            "ws account revocation failed; socket evicted",
-                            connection_id=authz.connection_id,
-                            exc_info=True,
-                        )
+                        _log().error(failure, connection_id=authz.connection_id, exc_info=True)
                     self.unregister(authz)
                     evicted.append(close)
                     continue

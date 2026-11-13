@@ -417,6 +417,7 @@ from candleviewer.replay.sessions_service import LANE as REPLAY_LANE
 from candleviewer.replay.sessions_service import (
     ReplayLimits,
     ReplaySessionService,
+    SessionEnded,
     WindowCoverage,
 )
 from candleviewer.retention_wiring import (
@@ -779,6 +780,7 @@ def _build_replay_sessions(
     audit: AuditHandle,
     feed: MachineStatePort | None = None,
     persistence: StatechartPersistence | None = None,
+    on_ended: SessionEnded | None = None,
 ) -> ReplaySessionService:
     """E26-T01: the B12 session lifecycle. Paper-account grants and source handles are ports
     E26-T05/E36 wire: until then a paper-trading session is refused (fail closed). E50-T63: with
@@ -803,6 +805,7 @@ def _build_replay_sessions(
         snapshots=persistence.snapshots if persistence else None,
         restorer=persistence.restorer(REPLAY_LANE) if persistence else None,
         persister=persistence.persister if persistence else None,
+        on_ended=on_ended,
     )
 
 
@@ -813,11 +816,15 @@ def _attach_replay_sessions(
     coverage: CoverageService | None,
     feed: MachineStatePort | None = None,
     persistence: StatechartPersistence | None = None,
+    on_ended: SessionEnded | None = None,
 ) -> None:
     """Replay sessions need Postgres and the recorded-coverage service (real backend only);
-    without them the module stays scaffold-only and nothing is attached."""
+    without them the module stays scaffold-only and nothing is attached. `on_ended` (#2811):
+    the WS side that revokes a destroyed session's subscriptions."""
     if pg is not None and coverage is not None:
-        sessions = _build_replay_sessions(settings, pg, coverage, ctx.audit, feed, persistence)
+        sessions = _build_replay_sessions(
+            settings, pg, coverage, ctx.audit, feed, persistence, on_ended
+        )
         ctx.replay.attach_sessions(sessions)
 
 
@@ -2409,7 +2416,13 @@ def create_app(
     )
     app.state.statechart_persistence = persistence
     _attach_replay_sessions(
-        ctx, resolved, _kb_pg, coverage_service, feed=machine_feed, persistence=persistence
+        ctx,
+        resolved,
+        _kb_pg,
+        coverage_service,
+        feed=machine_feed,
+        persistence=persistence,
+        on_ended=ws_events.replay_session_ended,  # #2811: 23 §11 `replay_session_ended`
     )  # supervised
     # E08-T06: serve the declared ingestion/adapter series on the scraped
     # registry with consistent `env` + `exchange` labels (the venue name is
