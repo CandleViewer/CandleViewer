@@ -34,6 +34,9 @@ TRADING_OMS_ENABLED = "trading.oms_enabled"
 #: E28-T05 (#909): the definition writes and the preview, never a read; read as the OMS flag is.
 #: Seeded on in demo (`ENVIRONMENT_SEEDS`) with the preview's audited refusals (S3c, ruling 6).
 TRADING_TRADE_GROUPS = "trading.trade_groups"
+#: E35-T10 (#5002; 24 Sec.16.2): the permanent master switch of rule actions, kill-switch class,
+#: engaged at `false` (the value that is not its default), which is also its fail-closed value.
+RULES_ENABLED = "rules.enabled"
 #: Ruling Q3: the value the insert-only `ensure` gives a flag with no row in a process of an
 #: environment, where it is not the flag's default (21 10.7), so an Owner's later write sticks.
 #: Never a kill switch or the live gate (C-4.14): `flags_wiring._seeds` ignores such a seed, and
@@ -118,6 +121,16 @@ FLAGS: tuple[FlagSpec, ...] = (
         _ALL,
         is_killswitch=True,
         restrictive=True,
+    ),
+    FlagSpec(
+        RULES_ENABLED,
+        _B,
+        "Master switch of rule actions; off while unread.",
+        _KILL,
+        True,
+        _ALL,
+        is_killswitch=True,
+        restrictive=False,
     ),
     FlagSpec(
         MAINTENANCE_KEEP_RECORDER,

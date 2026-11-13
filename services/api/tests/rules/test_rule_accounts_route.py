@@ -9,6 +9,7 @@ The answer is the caller's own view grants that are not frozen, sorted; any othe
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -39,6 +40,13 @@ class _Source:
 
     async def load_permissions(self, owner: uuid.UUID) -> frozenset[str]:
         return frozenset({"rules:read"})
+
+    async def load_account_environments(
+        self, account_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        """E35-T10 (BQ-3): each account the rig's grants list, in the environment it wires."""
+        listed = {account for rows in self.grants.values() for account, _, _ in rows}
+        return {account: "demo" for account in account_ids if account in listed}
 
 
 class _Principal:

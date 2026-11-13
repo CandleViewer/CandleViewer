@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import re
 import uuid
 from collections.abc import Sequence
@@ -16,15 +17,19 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from candleviewer.accounts.trade_groups import TradeGroupDraft, group_values
 from candleviewer.audit.writer import KEYED_ACTIONS
+from candleviewer.rules.executor.engine import _status
 from candleviewer.rules.executor.keys import (
     RULE_ACTION_NAMESPACE,
     client_ref,
     dedupe_key,
     request_sha256,
 )
+from candleviewer.rules.executor.results import OUTCOMES, ActionResult, Outcome
 from tests.unit.accounts.test_trade_groups import _DRAFT_BASE
 
 RULE = uuid.UUID("5f0c8a52-3a4e-4c1b-9d6e-2b7f1a9c0e41")
@@ -129,3 +134,69 @@ def test_request_sha256_changes_with_every_field_and_never_with_key_order() -> N
     for bad in unhashable:
         with pytest.raises(TypeError):
             request_sha256(bad)
+
+
+#: The six fields of a fire key, any value each may hold.
+_FIRE_FIELDS = st.fixed_dictionaries(
+    {
+        "rule_id": st.uuids(),
+        "version": st.integers(min_value=1, max_value=10**6),
+        "scope_instance": st.text(min_size=1, max_size=24),
+        "node_id": st.text(min_size=1, max_size=12),
+        "run_id": st.uuids(),
+        "account_id": st.none() | st.uuids(),
+    }
+)
+
+
+def _result(outcome: Outcome) -> ActionResult:
+    """A result with `outcome`, its `blocked_by` as the model admits it."""
+    return ActionResult(
+        node_id="a1", action_type="place_order", account_id=None, resolved_accounts=(),
+        outcome=outcome, blocked_by="cap" if outcome == "blocked" else None,
+        dedupe_key="0" * 64, duration_us=0,
+    )  # fmt: skip
+
+
+@settings(max_examples=150, deadline=None)
+@given(
+    fire=_FIRE_FIELDS,
+    other=_FIRE_FIELDS,
+    qty=st.decimals(min_value="0.001", max_value="1000", places=3),
+    outcomes=st.lists(st.sampled_from(OUTCOMES), min_size=1, max_size=6),
+    order=st.randoms(use_true_random=False),
+)
+def test_the_fire_key_the_fingerprint_and_the_close_hold_for_any_fire(
+    fire: dict[str, Any],
+    other: dict[str, Any],
+    qty: Decimal,
+    outcomes: list[Outcome],
+    order: random.Random,
+) -> None:
+    """For any fire (24 §11.9, BQ-9): the fire key is a function of its six fields, and each field
+    changes it, the resolved account too (E35-T10 keys each account); the fingerprint holds the
+    request's value, never its spelling (key order, a decimal's trailing zeros), and changes with
+    the value; and the run row's close is `error` once any result failed or is unknown, else `ok`
+    when each took effect or was simulated, else `aborted`, whatever the results' order."""
+    key = dedupe_key(**fire)
+    assert key == dedupe_key(**dict(fire)) and len(key) == 64
+    for name, value in other.items():
+        if value != fire[name]:
+            assert dedupe_key(**(fire | {name: value})) != key, name
+    request = {"symbol": "BTCUSDT", "qty": qty, "account": fire["account_id"]}
+    digest = request_sha256(request)
+    spelt = {"account": fire["account_id"], "qty": Decimal(f"{qty}000"), "symbol": "BTCUSDT"}
+    assert request_sha256(spelt) == digest
+    assert request_sha256(request | {"qty": qty + Decimal("0.001")}) != digest
+    results = [_result(outcome) for outcome in outcomes]
+    shuffled = list(results)
+    order.shuffle(shuffled)
+    close = _status(results)
+    assert _status(shuffled) == close
+    seen = set(outcomes)
+    if seen & {"failed", "unknown"}:
+        assert close == "error"
+    elif seen <= {"ok", "simulated"}:
+        assert close == "ok"
+    else:
+        assert close == "aborted"

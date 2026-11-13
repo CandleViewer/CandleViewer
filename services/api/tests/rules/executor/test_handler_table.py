@@ -3,8 +3,8 @@
 Each type declares `idempotent` or the guard it relies on (24 R6, US-RULE-003's NFR), whether it
 places orders and the capability it needs. The three flags have one owner, the catalogue's
 `ActionSpec`; the table adds the guard's name, the capability, the ticket that binds the handler
-and the handler, unbound everywhere in E35-T09, so every type blocks `unavailable` but `widen_stop`,
-refused for good as `native_sl` (24 §8.8 rule 5).
+and the handler, unbound everywhere in E35-T09, so check 2 blocks every type `unavailable` but
+`widen_stop`, which check 8 refuses for good as `native_sl` (24 §8.8 rule 5; E35-T10).
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from typing import Any, get_args
 
 import pytest
 
+from candleviewer.rules.executor.gates import Gates
 from candleviewer.rules.executor.handlers import (
     BINDINGS,
     HANDLERS,
@@ -27,11 +28,18 @@ from candleviewer.rules.executor.handlers import (
     Prepared,
     build_handlers,
     prepared,
-    refusal,
 )
 from candleviewer.rules.executor.keys import request_sha256
-from candleviewer.rules.ir.models import ActionType
+from candleviewer.rules.executor.results import BlockedBy
+from candleviewer.rules.ir.models import ActionType, RuleScope
+from candleviewer.rules.scope import ScopeInstanceRef
 from candleviewer.rules.vocabulary.catalogue import ACTIONS, RETIRED_ACTIONS
+from tests.rules.executor.request_builders import Switches, action_request
+
+#: Any request: check 8 refuses `widen_stop` by its type, whatever the request names.
+_REQ = action_request(
+    RuleScope(level="account"), uuid.UUID(int=0xA1), ScopeInstanceRef("*@*", None, None)
+)
 
 ACCOUNT = uuid.UUID(int=0xB1)
 
@@ -63,10 +71,17 @@ _UNDECLARED: tuple[dict[str, Any], ...] = (
 )  # fmt: skip
 
 
+def refusal(spec: HandlerSpec) -> BlockedBy | None:
+    """What the checks that read the table refuse (E35-T10): check 2 (`unavailable` while no
+    handler is bound, the rollout port on, no stand-in), then check 8 (a type refused for good)."""
+    gates = Gates(switches=Switches(rollout=True))
+    return gates.before_scope(spec, None, stand_in=False) or gates.stop_check(spec, _REQ, None)
+
+
 class _Bound:
     """A handler that a later slice would bind: here only to show the table's refusal goes."""
 
-    def prepare(self, req: Any, account_id: Any) -> Prepared:
+    def prepare(self, req: Any, account_id: Any, *, max_notional_usd: Any = None) -> Prepared:
         raise AssertionError("never reached")
 
     async def send(self, prepared: Prepared, *, client_ref: str) -> HandlerAnswer:
@@ -154,8 +169,12 @@ def test_no_order_placing_handler_is_bound_before_its_slice() -> None:
 
 def test_widen_stop_is_refused_as_native_sl_never_unavailable() -> None:
     """`widen_stop` only loosens a stop (24 §8.8 rule 5): retired, refused for good as
-    `native_sl`, never `unavailable`, which would read as an action still to come."""
+    `native_sl`, never `unavailable`, which would read as an action still to come; check 2 lets it
+    through and check 8 refuses it by type (E35-T10)."""
     spec = HANDLERS["widen_stop"]
+    gates = Gates(switches=Switches(rollout=False))  # the rollout port off: still never unavailable
+    assert gates.before_scope(spec, None, stand_in=False) is None
+    assert gates.stop_check(spec, _REQ, None) == "native_sl"
     assert refusal(spec) == "native_sl"
     assert refusal(replace(spec, handler=_Bound())) == "native_sl"  # a binding changes nothing
     assert (spec.places_orders, spec.capability, spec.bound_by) == (False, "none", None)
