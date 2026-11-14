@@ -1,36 +1,171 @@
 import type { Locator, Page } from "@playwright/test";
+import { VIEW_CHART, VIEW_GROUP, VIEW_TABLE } from "../../../src/chart/a11y/copy";
 
-// E12-Q03 chartProbe page-object. Specs read chart state only through the SCR-045 data-table
-// alternative, the SCR-046 diagnostics JSON island and the CMP-199 legend, never canvas pixels.
-// None of those surfaces ship in apps/web yet (blocked: E12-S07, E12-D09/CMP-220/222, E11-S14,
-// E11-T07, E46-S01), so the selectors below are the PROPOSED contract and every spec using them
-// is test.fixme until those land; adjust selectors in this one file then.
+// E12-Q03 (#419) chartProbe page-object. Specs read chart state only through the SCR-045 data table,
+// the SCR-046 diagnostics island and the CMP-199 legend, never canvas pixels. Every locator is a role
+// plus an accessible name; each name is imported from the feature's copy module where one ships on
+// `main` (SCR-045, E47-S01), and is otherwise the E12-D12 copy-deck string, cited by its deck id, in
+// `COPY` below, so a copy change is a one-line edit here and never in a spec.
 export const PROBE_VERSION = 1;
 
-export class ChartProbe {
-  constructor(private readonly page: Page) {}
+/**
+ * E12-D12 copy-deck strings for surfaces with no copy module on `main` yet. Each entry names its deck
+ * id; when the feature ships its own copy module, the entry becomes an import of it.
+ */
+export const COPY = {
+  /** d04:S-1 — SCR-041's dialog name for the first chart. */
+  quickSwitcher: /^Change symbol and interval, Chart 1$/u,
+  /** d05:W-1 — the CMP-222 group on the chart toolbar. */
+  chartType: "Chart type",
+  /** d05:W-1 — CMP-220's bar-mode control. */
+  barMode: "Bar mode",
+  /**
+   * d05:W-2 — the nine CMP-222 options, in toolbar order: one radio group, Heikin-Ashi among them
+   * (the #419 BQ-4 ruling), never a checkbox.
+   */
+  seriesTypes: [
+    "Candles",
+    "Bars (OHLC)",
+    "Hollow candles",
+    "Line",
+    "Area",
+    "Baseline",
+    "Heikin-Ashi",
+    "Equi-volume",
+    "Delta-volume",
+  ] as const,
+  heikinAshi: "Heikin-Ashi",
+  /** CMP-222's footprint overlay: the one `aria-pressed` toggle beside the group (`15` CMP-222). */
+  footprint: /^Footprint/u,
+  /** d03:C-33 — the partial-history marker's sentence head. */
+  recordingStart: /^Bars start where recording started/u,
+  /** d03:C-22 — the message line after a cancelled build. */
+  buildCancelled: /^Build of .+ cancelled at \d+ %; showing .+\.$/u,
+  /** d05:W-5 — the CMP-028 callout for Heikin-Ashi with footprint, D02:279 verbatim. */
+  haFootprint:
+    "Footprint needs a real-price bar type. Heikin-Ashi recomputes each bar's open and close, so footprint cells would not line up with traded prices.",
+  /** d05:W-5 — "Keep {current type}", the safe default. */
+  keepType: (type: string) => `Keep ${type}`,
+  haTurnFootprintOff: "Use Heikin-Ashi, turn footprint off",
+  /** d05:W-6 — the same callout for Heikin-Ashi on a non-time bar mode. */
+  haTimeOnly: "Heikin-Ashi is drawn on time bars only.",
+  switchToTime: "Switch to time bars",
+  /** d05:W-6 — "Keep {mode}". */
+  keepMode: /^Keep /u,
+  /** d08:W-3 — SCR-047 naming the first available timestamp. */
+  historyStarts: /^History starts \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC — recording began then\.$/u,
+  /** d08:W-13 — SCR-048's data-feed cause. */
+  feedFailed: /^Couldn't load BTCUSDT 1m from the exchange feed\.$/u,
+  retry: /^Retry/u,
+} as const;
 
-  get dataTable(): Locator {
-    return this.page.getByRole("table", { name: /chart data/i });
+/**
+ * SCR-046's probe island, v1 as the #419 BQ-8 ruling sets it (PROPOSED; carried by E11-T07 #523,
+ * if its head merges as is): test builds only, compiled out of production.
+ */
+export interface Diagnostics {
+  readonly version: number;
+  readonly glContextId: string;
+  readonly visibleRange: { readonly fromUs: number; readonly toUs: number };
+}
+
+export class ChartProbe {
+  constructor(
+    private readonly page: Page,
+    /** The panel's region name: SCR-045's caption head, e.g. "BTCUSDT 1m". */
+    readonly title: string,
+  ) {}
+
+  /** The chart panel (`ChartTablePanel`): a region named by its heading. */
+  get panel(): Locator {
+    return this.page.getByRole("region", { name: this.title, exact: true });
   }
-  get dataRows(): Locator {
+  get viewGroup(): Locator {
+    return this.panel.getByRole("group", { name: VIEW_GROUP });
+  }
+  get chartButton(): Locator {
+    return this.viewGroup.getByRole("button", { name: VIEW_CHART, exact: true });
+  }
+  get tableButton(): Locator {
+    return this.viewGroup.getByRole("button", { name: VIEW_TABLE, exact: true });
+  }
+  /** SCR-045: a grid named by its caption, "<title> — N bars loaded". */
+  get dataTable(): Locator {
+    return this.panel.getByRole("grid", { name: new RegExp(`^${escape(this.title)} — `, "u") });
+  }
+  /** The grid's rows in the window it renders (the header row first). */
+  get rows(): Locator {
     return this.dataTable.getByRole("row");
   }
-  get legend(): Locator {
-    return this.page.getByRole("group", { name: /chart legend/i });
+  /** The row of the bar opening at `time`, as SCR-045's time column writes it. */
+  barRow(time: string): Locator {
+    return this.rows.filter({ has: this.page.getByRole("rowheader", { name: time }) });
   }
+  get legend(): Locator {
+    return this.panel.getByRole("group", { name: /chart legend/iu });
+  }
+  get chartType(): Locator {
+    return this.page.getByRole("radiogroup", { name: COPY.chartType });
+  }
+  seriesType(name: string): Locator {
+    return this.chartType.getByRole("radio", { name, exact: true });
+  }
+  get heikinAshi(): Locator {
+    return this.seriesType(COPY.heikinAshi);
+  }
+  get footprint(): Locator {
+    return this.page.getByRole("button", { name: COPY.footprint });
+  }
+  get quickSwitcher(): Locator {
+    return this.page.getByRole("dialog", { name: COPY.quickSwitcher });
+  }
+  /** SCR-046's versioned JSON island (test builds only; `probe-absent.spec.ts` guards production). */
   get diagnosticsIsland(): Locator {
     return this.page.getByTestId("chart-diagnostics-json");
   }
-  async diagnostics(): Promise<{ version: number; glContextId: string }> {
-    return JSON.parse((await this.diagnosticsIsland.textContent()) ?? "{}");
+
+  /** The bar count the caption states ("N bars loaded"), not the windowed row count. */
+  async barsLoaded(): Promise<number> {
+    const name = (await this.dataTable.getAttribute("aria-label")) ?? (await captionOf(this));
+    const m = /— ([\d,]+) bars loaded$/u.exec(name);
+    if (m?.[1] === undefined) throw new Error(`no bar count in the SCR-045 caption: ${name}`);
+    return Number(m[1].replaceAll(",", ""));
   }
-  /** Fail-fast helper: records every kline/bar request so specs can assert absence. */
-  trackMarketRequests(): string[] {
-    const seen: string[] = [];
-    this.page.on("request", (r) => {
-      if (/\/market\/(klines|bars)/.test(r.url())) seen.push(r.url());
-    });
-    return seen;
+
+  /** Opens SCR-045 from the keyboard (Alt+T, `chart.table_toggle`) with focus in the panel. */
+  async openTableByKey(): Promise<void> {
+    await this.tableButton.focus();
+    await this.page.keyboard.press("Alt+T");
   }
+
+  async diagnostics(): Promise<Diagnostics> {
+    const raw: unknown = JSON.parse((await this.diagnosticsIsland.textContent()) ?? "null");
+    if (!isDiagnostics(raw)) throw new Error("SCR-046 island is not the v1 probe shape");
+    if (raw.version !== PROBE_VERSION) {
+      throw new Error(`SCR-046 probe v${raw.version}; this suite reads v${PROBE_VERSION}`);
+    }
+    return raw;
+  }
+}
+
+async function captionOf(probe: ChartProbe): Promise<string> {
+  return (await probe.dataTable.locator("caption").textContent()) ?? "";
+}
+
+function isDiagnostics(v: unknown): v is Diagnostics {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  const range = o["visibleRange"];
+  if (typeof range !== "object" || range === null) return false;
+  const r = range as Record<string, unknown>;
+  return (
+    typeof o["version"] === "number" &&
+    typeof o["glContextId"] === "string" &&
+    typeof r["fromUs"] === "number" &&
+    typeof r["toUs"] === "number"
+  );
+}
+
+function escape(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
