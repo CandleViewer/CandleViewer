@@ -222,6 +222,7 @@ from candleviewer.oms_stream_wiring import (
     build_stream_consumer,
 )
 from candleviewer.oms_streams import LaneStreams
+from candleviewer.risk.day_boundary import DayBoundary, RiskPolicyReads
 from candleviewer.settings import (
     OMS_CONSUMER_STOP_S,
     OMS_INFLIGHT_STUCK_MAX_S,
@@ -284,6 +285,7 @@ from candleviewer.storage.repositories.recorded_stops_sqlalchemy import (
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from candleviewer.storage.repositories.risk_policy_sqlalchemy import SqlAlchemyRiskPolicyReads
 from candleviewer.storage.repositories.session_lock_sqlalchemy import SqlAlchemySessionLock
 from candleviewer.storage.repositories.statechart_sqlalchemy import SqlAlchemyEventStore
 from candleviewer.storage.repositories.submissions import (
@@ -1725,6 +1727,9 @@ class OmsStores:
     unclaimed: Callable[[], int]
     lock: EnvironmentLock
     release: Callable[[], Coroutine[Any, Any, None]]
+    #: E29-S06 #981 slice 4: the day boundary's column (21 Sec.3.11), which the one resolver reads
+    #: for the cap and the closed-PnL sync alike (24 Sec.8.13); no composition goes without it.
+    risk_policy: RiskPolicyReads
     #: E29-T06 #914: `oms_handovers` (21 Sec.3.3.12) and the pass's own reads and watermark;
     #: a composition without them binds `NoHandoverStore` and `NoReconciliation`.
     handovers: OmsHandoverStore | None = None
@@ -1883,6 +1888,7 @@ def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
             timeout_s=ENVIRONMENT_LOCK_TIMEOUT_S,
         ),
         release=pool.dispose,
+        risk_policy=SqlAlchemyRiskPolicyReads(pool, statement_timeout_ms=cap_ms),
         handovers=SqlAlchemyHandoverStore(pool, statement_timeout_ms=cap_ms),
         reconcile=SqlAlchemyReconcileStore(pool, statement_timeout_ms=cap_ms),
         closed_pnl=SqlAlchemyClosedPnlStore(pool, statement_timeout_ms=cap_ms),
@@ -3321,11 +3327,16 @@ class OmsRuntime:
             audit = OmsAudit(writer, environment=env)
             notices = OrderNoticesRouter(self._pager)
             accounts = TradingAccountsBinding(stores.accounts, environment=env)
+            # E29-S06 #981 (24 Sec.8.13): the one day-boundary resolver, the cap's and the sync's,
+            # each handing it instants from one clock, the exchange-synced one (CG14) the position
+            # store and the consumer read too
+            wall = ExchangeWallClock(ingestion.clock_offset_snapshot_ms)
+            days = DayBoundary(stores.risk_policy)
             # the size step's figures (24 Sec.9.3.6): on live, none, so every entry is refused
             # nosemgrep: cv-oms-env-branch reason=live-no-day-figures owner=@CandleViewer/security review=2027-02-04  # noqa: E501 - semgrep marker format is fixed
             figures = NoDayFigures() if env not in _NOT_LIVE else DayRiskFigures(
-                env, port_for=router.port_for, tiers=_tiers(ingestion.instruments),
-                now=self._now, monotonic=self._monotonic,
+                env, port_for=router.port_for, tiers=_tiers(ingestion.instruments), days=days,
+                now=wall, monotonic=self._monotonic,
             )  # fmt: skip
             announce_interim_port("risk_figures", figures, metrics=metrics)
             clock = None if ingestion.clock is None else ServedClock(ingestion.clock, serving)
@@ -3408,7 +3419,6 @@ class OmsRuntime:
             # carries register (#914, BQ-2; the reconciliation is E29-T06's) and, for the paging
             # foreign-order lockout, until E39-T04 (the security sign-off on #848, M1): the
             # runtime fails closed, never ready.
-            wall = ExchangeWallClock(ingestion.clock_offset_snapshot_ms)
             positions = stores.positions(wall)
             stored_positions = _published(PositionRepository(positions, timer), published)
             snapshot_rows = PositionSnapshotRepository(positions, timer)
@@ -3443,7 +3453,7 @@ class OmsRuntime:
             # E29-S06 #981 (24 Sec.8.13): the closed-PnL sync, read-only to the venue, its reads in
             # the `poll` lane behind the governor's headroom, never the reserve (C-12.7), its
             # records and seeds on this pool, its clock the exchange-synced one (the seed's skew),
-            # its day UTC's until E29-S06's resolver; started once `ready`. Each fill either write
+            # its day the cap's resolver's (`days`); started once `ready`. Each fill either write
             # path stores asks it for a read, and so does each `resyncing`, ahead of the jobs'
             # request; a stand-in stays bare, so still announced. No flag (C-4.13): it writes only
             # records nothing serves yet. Its task, ended other than by its stop, is paged once and
@@ -3455,7 +3465,7 @@ class OmsRuntime:
                 sync = ClosedPnlSync(
                     accounts=accounts, router=router, records=stores.closed_pnl,
                     closes=stores.executions, snapshots=snapshot_rows, metrics=metrics, now=wall,
-                    on_ended=ended,
+                    on_ended=ended, day_start=days.day_start,
                 )  # fmt: skip
                 fills.bind_stored(sync.stored)
                 if requests is not None:
