@@ -28,15 +28,19 @@ stated `closed_size` above 0) within `DEBOUNCE_S`, so the fills of one close in 
 read once. A read is made again `SETTLE_POLL_S` after the last one started while that read failed,
 while the account holds a record within the reach that is not final and whose order has a row
 (21 Sec.13.1 row 56), or while a stored fill waits for a read that starts `SETTLE_POLL_S` after it
-and succeeds. A record with no `orderId`, or whose order has no row, keeps no poll.
+and succeeds. A record with no `orderId`, or whose order has no row, keeps no poll. A read the
+account binding refuses outright (`_refused`: the account missing, deleted, another environment's
+or holding no active key) ends both the failed read's poll and the fills' wait, so the account is
+not resolved every `SETTLE_POLL_S` until a restart: its next stored fill or reconnect asks again.
 
-**Placement.** One owned task (`start`, `stop`; `fault` once it ends unasked) on the loop that
-makes every call, reading the due accounts one at a time: one read is in flight per account, and a
-request made meanwhile is folded into the account's next read. The requests are a queue of at most
-`MAX_ACCOUNTS` accounts, one coalesced entry each: a request that would add an account past it is
-dropped and logged at ERROR, as no process trades that many (C-2.18). Every external await is
-bounded and a cancel is never swallowed. Each read is timed in `oms_closed_pnl_fetch_seconds`.
-Logs carry ids and kinds only, never a figure (C-12.6).
+**Placement.** One owned task (`start`, `stop`; `fault` once it ends unasked, which `on_ended` is
+told once) on the loop that makes every call, reading the due accounts one at a time: one read is
+in flight per account, and a request made meanwhile is folded into the account's next read. The
+requests are a queue of at most `MAX_ACCOUNTS` accounts, one coalesced entry each: a request that
+would add an account past it is dropped and logged at ERROR, as no process trades that many
+(C-2.18). Every external await is bounded and a cancel is never swallowed. Each read is timed in
+`oms_closed_pnl_fetch_seconds` by `result` (`FETCH_RESULTS`), and a crossing between accounts, a
+read's or a seed's, apart. Logs carry ids and kinds only, never a figure (C-12.6).
 """
 
 from __future__ import annotations
@@ -62,6 +66,7 @@ from candleviewer.storage.repositories.executions import NewExecution
 from candleviewer.storage.repositories.oms_reads import CLOSING_EXEC_TYPES, TERMINAL_STATES
 from candleviewer.storage.repositories.positions import MAX_FUTURE_SKEW, NewPositionSnapshot
 
+from .errors import AccountScopeDenied, OrderEntryRefused
 from .ports import RateReading, TradingAccounts
 
 #: 24 Sec.8.13, both PROPOSED there: the poll's period, and how far before the day's start a read
@@ -76,6 +81,12 @@ READ_TIMEOUT_S: Final = 30.0  # one read, all its pages, as reconciliation's fet
 PENDING_LIMIT: Final = 200  # the records one poll reads (row 56); the rest wait for the next
 MAX_ACCOUNTS: Final = 256
 FETCH_SECONDS: Final = "oms_closed_pnl_fetch_seconds"
+#: Its `result`s: a read's `ok` or `failed`, and apart from them a crossing between accounts, the
+#: resolve, a record or a seed's position reading naming another (`_OtherAccount`, C-2.11), which
+#: the ticket `OmsClosedPnlAccountCrossing` reads (20 Sec.12.5).
+FETCH_RESULTS: Final = ("ok", "failed", "other_account")
+#: The order-entry gate's reason for an account with no usable key, as `commands` reads it.
+_NO_ACTIVE_KEY: Final = "no_active_key"
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _ANY_FLAT: Final = datetime.max.replace(tzinfo=UTC)  # row 57's bound that finds a key's last flat
 #: The merge's sums are exact here; its one division rounds to the columns' 18 places.
@@ -133,6 +144,14 @@ def utc_day_start(at: datetime) -> datetime:
     """00:00 UTC of `at`'s day: offset 0, the instant the order path reads until E29-S06's resolver
     slice wires `risk_policy.day_boundary_utc_offset_minutes` (24 Sec.8.13, Sec.9.3.6)."""
     return at.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _refused(error: Exception) -> bool:
+    """The account binding's refusal outright (`TradingAccountsBinding`): the account missing,
+    soft-deleted or another environment's (`AccountScopeDenied`), or holding no active key."""
+    if isinstance(error, OrderEntryRefused):
+        return error.reason == _NO_ACTIVE_KEY
+    return isinstance(error, AccountScopeDenied)
 
 
 def merged(records: Iterable[ClosedPnl]) -> list[ClosedPnl]:
@@ -227,16 +246,19 @@ class _Account:
 
 class ClosedPnlSync:
     """`now` is the wall clock a read's window takes; `day_start` the day's start for an instant,
-    00:00 UTC until E29-S06's resolver slice passes its own."""
+    00:00 UTC until E29-S06's resolver slice passes its own; `on_ended` what is told, once, on the
+    task's loop, that the task ended other than by `stop()` (the runtime's page): it must not
+    raise."""
 
     def __init__(
         self, *, accounts: TradingAccounts, router: ReadRouter, records: ClosedPnlRecords,
         closes: StoredCloses, snapshots: SnapshotWrites, metrics: Metrics,
-        now: Callable[[], datetime], day_start: Callable[[datetime], datetime] = utc_day_start,
+        now: Callable[[], datetime], on_ended: Callable[[], None],
+        day_start: Callable[[datetime], datetime] = utc_day_start,
     ) -> None:  # fmt: skip
         self._accounts, self._router, self._records = accounts, router, records
         self._closes, self._snapshots = closes, snapshots
-        self._now, self._day_start = now, day_start
+        self._now, self._day_start, self._on_ended = now, day_start, on_ended
         spec = next(spec for spec in CATALOGUE if spec.name == FETCH_SECONDS)
         self._seconds = metrics.histogram(
             spec.name, spec.help, spec.labels, buckets=spec.buckets or (),
@@ -257,7 +279,7 @@ class ClosedPnlSync:
         for account_id in accounts:
             self._ask(account_id, 0.0)
         self._task = spawn(self._run(), name="oms-closed-pnl-sync")
-        self._task.add_done_callback(_ended)
+        self._task.add_done_callback(self._ended)
         return True
 
     async def stop(self, timeout_s: float = PORT_TIMEOUT_S) -> None:
@@ -275,6 +297,19 @@ class ClosedPnlSync:
         task = self._task
         ended = task is not None and task.done() and not self._stopped
         return "the closed-PnL sync task ended" if ended else None
+
+    def _ended(self, task: asyncio.Task[None]) -> None:
+        """Any end `stop()` did not ask for, by an error, a return or a cancel (as the order lane's
+        death cancels what is left on it), is a fault: logged at ERROR by its kind and told to
+        `on_ended` once, as a task ends once. An end a stop asked for is told to no one, and is
+        logged unless it is that stop's cancel. The error is retrieved either way."""
+        error = asyncio.CancelledError() if task.cancelled() else task.exception()
+        if self._stopped and task.cancelled():
+            return
+        kind = "returned" if error is None else type(error).__name__
+        _log().error("closed_pnl_sync_ended", kind=kind)
+        if not self._stopped:
+            self._on_ended()
 
     def stored(self, execution: NewExecution) -> None:
         """A fill the store took: one of a trade type keeps the poll until a read that starts
@@ -332,10 +367,12 @@ class ClosedPnlSync:
         state.due = None  # a request made from here on is the next read's
         try:
             state.keep = await self._pass(account_id, state)
-        except Exception as exc:  # a failed read keeps the poll until one succeeds
+        except Exception as exc:  # a failed read keeps the poll until one succeeds, a refusal not
             _log().warning("closed_pnl_read_failed", account_id=str(account_id),
                            kind=type(exc).__name__)  # fmt: skip
-            state.keep, ok = True, False
+            state.keep, ok = not _refused(exc), False
+            if not state.keep:  # nor the fills' wait: its next stored fill or `resyncing` asks
+                state.fills_until = None
         else:
             ok = True
             if state.fills_until is not None and started >= state.fills_until:
@@ -382,21 +419,25 @@ class ClosedPnlSync:
             records = await _bounded(read, READ_TIMEOUT_S)
             if any(r.account_id != account_id for r in records):
                 raise _OtherAccount
-        except Exception:
-            self._seconds.labels("failed").observe(clock() - began)
+        except Exception as exc:  # a crossing between accounts is counted apart (`FETCH_RESULTS`)
+            crossed = isinstance(exc, _OtherAccount)
+            self._seconds.labels("other_account" if crossed else "failed").observe(clock() - began)
             raise
         self._seconds.labels("ok").observe(clock() - began)
         return account, records
 
     async def _seed(self, account: AccountRef) -> None:
         """The ruled seed (module docstring): each key the venue states at size 0 and that holds
-        no confirmed flat gets that reading stored as one, dated by its `updatedTime`."""
+        no confirmed flat gets that reading stored as one, dated by its `updatedTime`. A reading
+        of another account is timed as a crossing (`other_account`), as a read's is."""
         if not self._router.headroom(account, LANE).available:
             raise _NoHeadroom
-        port = self._router.port_for(account.environment)
+        port, clock = self._router.port_for(account.environment), asyncio.get_running_loop().time
+        began = clock()
         readings = await _bounded(port.positions(account), READ_TIMEOUT_S)
         horizon, account_id = self._now() + MAX_FUTURE_SKEW, account.account_id  # after the read
         if any(p.account_id != account_id for p in readings):
+            self._seconds.labels("other_account").observe(clock() - began)
             raise _OtherAccount  # the seed fails, as a record fails the read, and is tried again
         for p in readings:
             at = _at(p.updated_at)
@@ -438,8 +479,3 @@ class ClosedPnlSync:
         if await _bounded(closed, PORT_TIMEOUT_S) != row.qty:
             return False
         return await _bounded(self._records.finalize(account_id, row.id), PORT_TIMEOUT_S)
-
-
-def _ended(task: asyncio.Task[None]) -> None:
-    if not task.cancelled() and (exc := task.exception()) is not None:
-        _log().error("closed_pnl_sync_ended", kind=type(exc).__name__)
