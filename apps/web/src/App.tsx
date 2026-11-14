@@ -4,6 +4,7 @@ import { ThemeProvider } from "@candleviewer/ui";
 import { WsErrorHost } from "./lib/ws/WsErrorHost";
 import { startTelemetry } from "./lib/telemetry/aggregator";
 import { KeymapHost } from "./keymap/KeymapHost";
+import { installKeymapExposureGuard } from "./features/reconciliation/newExposure";
 import { SessionLockHost } from "./features/session/SessionLockHost";
 import { PreferencesProvider } from "./features/a11y-preferences/PreferencesContext";
 import { usePublishEngineFlags } from "./features/a11y-preferences/consumers";
@@ -26,6 +27,9 @@ export function App(): JSX.Element {
   useEffect(() => startTelemetry().stop, []);
   // D-01 (WCAG 2.4.2): every route sets its own page title.
   useEffect(() => syncDocumentTitle(router), []);
+  // E29-S07 (#1028): the keymap's new-exposure guard lives as long as the app, so no UI slot's
+  // placement (a floating window, CMP-215) decides the safety default; StrictMode-safe (it stops).
+  useEffect(() => installKeymapExposureGuard(), []);
   const publishFlags = usePublishEngineFlags();
   return (
     <ThemeProvider options={APP_THEME_OPTIONS}>
