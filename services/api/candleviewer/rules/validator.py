@@ -29,6 +29,7 @@ from candleviewer.rules.ir.models import MAX_NUMBER_TEXT
 from candleviewer.rules.issues import Issue
 from candleviewer.rules.limits import above_cap, cap_message
 from candleviewer.rules.vocabulary.catalogue import ACTIONS, OPERATORS, RETIRED_ACTIONS
+from candleviewer.rules.vocabulary.params_check import param_defects
 from candleviewer.rules.vocabulary.registry import MetricRegistry
 
 #: What a save, validate and compile say to a text constant past the bound (`22-api-openapi.yaml`
@@ -110,6 +111,12 @@ def _const_unit(c: Literal_) -> str:
             return "enum"
         return _UNKNOWN  # a decimal serialised as a string: fits any numeric unit
     return "bool" if isinstance(v, bool) else _UNKNOWN  # bare numbers fit any numeric unit
+
+
+def _framed(i: int, title: str, text: str) -> str:
+    """A param defect's message, `Action <n> (<title>): <text>`; `text` is `params_check`'s, from
+    the schema alone, so no message carries the value."""
+    return f"Action {i + 1} ({title}): {text}"
 
 
 class _Validator:
@@ -209,9 +216,19 @@ class _Validator:
             if spec is None:
                 self.err(base, "schema_error", f"Unknown action '{a.type}'.", "syntax")
                 continue
-            for req in spec.params_schema.get("required", []):
-                if a.params.get(req) is None:
-                    self.err(f"{base}.params.{req}", "missing_action_param", f"Action {i + 1} ({spec.title}) is missing '{req}'.")  # fmt: skip
+            # #5963: the params against their published bounds (`params_check`), never echoing a
+            # value. `only_tighten` on a stop action is the loosening check's to answer, and a
+            # place_order's native stop (C-2.6) the native-stop check's: an empty, a null or a
+            # removed stop keeps its refusal, and a stop off its shape is refused alike.
+            shape = None
+            for d in param_defects(spec.params_schema, a.params):
+                at = f"{base}.params.{d.param}" if d.param else f"{base}.params"
+                if a.type == "place_order" and d.param == "stop_loss":
+                    shape = shape or _framed(i, spec.title, f"{d.text}; every order keeps its native exchange stop-loss.")  # fmt: skip
+                elif d.missing:
+                    self.err(at, "missing_action_param", f"Action {i + 1} ({spec.title}) is missing '{d.param}'.")  # fmt: skip
+                elif not (a.type in _STOP_ACTIONS and d.param == "only_tighten"):
+                    self.err(at, "schema_error", _framed(i, spec.title, f"{d.text}."), "syntax")
             if a.type in _STOP_ACTIONS and a.params.get("only_tighten", True) is not True:
                 self.loosens(f"{base}.params.only_tighten", i)
             if (a.type in _STOP_ACTIONS and (a.params.get("remove") or a.params.get("cancel"))) or (
@@ -220,6 +237,8 @@ class _Validator:
                      or a.params.get("require_native_stop") is False)
             ):  # fmt: skip
                 self.err(base, "native_stop_violation", f"Action {i + 1} would leave a position without its native exchange stop-loss, which is never allowed.", "safety")  # fmt: skip
+            elif shape:
+                self.err(base, "native_stop_violation", shape, "safety")
             self.feedback(a, base)
 
     def loosens(self, path: str, i: int) -> None:

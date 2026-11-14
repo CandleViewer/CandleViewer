@@ -4,7 +4,9 @@ Every `ActionType` / `TriggerType` / `ComparisonOp` literal in the IR must be
 described here; the completeness tests enforce it. Permissions are advisory
 for the UI - the authoritative check happens at execution time (E35-S03/S04).
 The exception is `RETIRED_ACTIONS`: the IR still parses them, nothing here
-offers them, and the validator refuses them for every caller.
+offers them, and the validator refuses them for every caller. Each
+`params_schema` is a bound, not a hint: the validator checks every action's
+params against it at save, in the closed subset of `params_check` (#5963).
 
 The naming rule (G-6) binds every `params_schema` property. A param that names
 an account, by any word this domain or the exchange uses for one (account, acct,
@@ -29,6 +31,34 @@ _PCT = {"type": "number", "exclusiveMinimum": 0, "maximum": 100}
 _STOP_MODE = {
     "type": "string",
     "enum": ["absolute", "offset_from_entry", "offset_from_price", "atr", "structure"],
+}
+#: A stop's or a move's `value`: a level or a distance, never signed (#5963).
+_POSITIVE = {"type": "number", "exclusiveMinimum": 0}
+#: 22 `OffsetUnit` and `BarType`, mirrored in 22's order (`rules` imports neither `oms` nor
+#: `bars`); `test_catalogue_native_stop_mirrors_22_offset` pins both, and `_NATIVE_STOP`, to 22.
+OFFSET_UNITS = ["ticks", "percent", "r_multiple", "atr", "price"]
+BAR_TYPES = ["time", "tick", "volume", "range", "delta", "renko", "pnf", "heikin_ashi"]
+#: `place_order`'s native stop (C-2.6): 22's `Offset`, member for member. Its `value`, 22's
+#: `Decimal`, is a number or decimal text above zero. The validator answers a stop breaking it
+#: `native_stop_violation`.
+_NATIVE_STOP = {
+    "type": "object",
+    "description": "A distance expressed in one of several units; resolved server-side to a price.",
+    "required": ["unit", "value"],
+    "properties": {
+        "unit": {"type": "string", "enum": OFFSET_UNITS},
+        "value": _POSITIVE,
+        "atr_period": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 200,
+            "default": 14,
+            "description": "Used when `unit=atr`.",
+        },
+        "atr_bar_type": {"type": "string", "enum": BAR_TYPES},
+        "atr_param": {"type": "string", "maxLength": 24},
+    },
+    "additionalProperties": False,
 }
 
 
@@ -58,7 +88,7 @@ _STOP_PARAMS = _obj(
     ["mode", "value"],
     {
         "mode": _STOP_MODE,
-        "value": {"type": "number"},
+        "value": _POSITIVE,
         "only_tighten": {"type": "boolean", "default": True},
     },
 )
@@ -70,7 +100,7 @@ ARM_LIVE_PERMISSION = "rules:arm_live"
 #: contract is a 24 §19.26 follow-up. A stored rule holding it still parses and keeps its hash.
 RETIRED_ACTIONS = frozenset({"widen_stop"})
 ACTIONS: tuple[ActionSpec, ...] = (
-    ActionSpec("place_order", "Place order", _obj(["side", "order_type", "qty_mode"], {"side": _SIDE, "order_type": _ORDER_TYPE, "qty_mode": {"type": "string"}, "qty": _QTY, "profile": {"type": "string"}, "price": {"type": "number"}, "stop_loss": {"type": "object"}, "take_profits": {"type": "array"}, "algo": {"type": "object"}}), _OW, True, False, True, "Full trade-group path including sizing and native SL."),
+    ActionSpec("place_order", "Place order", _obj(["side", "order_type", "qty_mode"], {"side": _SIDE, "order_type": _ORDER_TYPE, "qty_mode": {"type": "string"}, "qty": _QTY, "profile": {"type": "string"}, "price": {"type": "number"}, "stop_loss": _NATIVE_STOP, "take_profits": {"type": "array"}, "algo": {"type": "object"}}), _OW, True, False, True, "Full trade-group path including sizing and native SL."),
     ActionSpec("modify_stop_loss", "Modify stop loss", _STOP_PARAMS, _OW, False, True, True, "Never loosens: only_tighten=false is refused."),
     ActionSpec("modify_take_profit", "Modify take profit", _STOP_PARAMS, _OW, False, True, True),
     ActionSpec("move_to_breakeven", "Move stop to breakeven", _obj([], {"offset_ticks": {"type": "integer", "default": 2}}), _OW, False, True, True, "Never loosens."),

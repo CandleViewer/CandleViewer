@@ -27,9 +27,10 @@ from candleviewer.api.rule_body import MAX_RULE_BODY_BYTES, read_object
 from candleviewer.domain.text import UNSTORABLE_TEXT
 from candleviewer.rules.compiler import compile_graph, to_graph_model
 from candleviewer.rules.compiler.common import MAX_DEPTH, MAX_ITEMS, check_bounds
-from candleviewer.rules.ir import ir_hash
+from candleviewer.rules.ir import Rule, ir_hash
 from candleviewer.rules.issues import RuleCompileError
 from candleviewer.rules.manager import RuleError, is_reserved_name
+from tests.rules.roundtrip.test_corpus_gate import OFF_VOCABULARY
 from tests.rules.test_rules_manager import OWNER, _mgr
 from tests.rules.test_rules_routes import A1, A2, _Env, _ir, _scoped
 from tests.rules.test_scope_crud import A, C, _setup
@@ -287,12 +288,15 @@ async def test_create_over_a_bound_and_schema_invalid_answers_the_bounds_first()
 @pytest.mark.parametrize("name", sorted(RULES))
 async def test_save_corpus_rule_within_the_bounds_keeps_its_golden_hash(name: str) -> None:
     """No `ir_hash` moves: the step every save runs, bounds first, hashes each corpus rule to its
-    golden, and each one the reserved names allow is stored."""
+    golden, and each one the reserved names allow is stored. The rules the validator refuses
+    keep their golden hash too: rule 20 and the params outside their bounds (#5963)."""
     doc, (m, _, _) = RULES[name], _mgr()
-    if name == LOOSENS:  # refused by the validator for every role, never by the bounds
-        with pytest.raises(RuleError) as refused:
+    refused = {LOOSENS: [("actions[0].type", "stop_loosening")], **OFF_VOCABULARY}
+    if name in refused:  # refused by the validator for every role, never by the bounds
+        with pytest.raises(RuleError) as refusal:
             m._validated(doc, doc["rule_id"])
-        assert [e["rule"] for e in refused.value.extra["errors"]] == ["stop_loosening"]
+        assert _errors(refusal.value.extra["errors"]) == refused[name]
+        assert ir_hash(Rule.model_validate(doc)) == GOLDEN[name]
         return
     assert m._validated(doc, doc["rule_id"])[1] == GOLDEN[name]
     if not is_reserved_name(doc["name"]):
