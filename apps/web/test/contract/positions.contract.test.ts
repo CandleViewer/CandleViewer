@@ -57,6 +57,7 @@ const POSITION_KEYS = [
   "trade_group_id",
   "r_multiple",
   "updated_at",
+  "funding_estimate",
 ] as const satisfies readonly (keyof Position)[];
 /** The generated type's required members: `is_paper` too, which has a default (openapi-typescript). */
 const POSITION_REQUIRED = [
