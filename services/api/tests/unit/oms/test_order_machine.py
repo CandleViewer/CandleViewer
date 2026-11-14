@@ -1342,6 +1342,196 @@ async def test_a_place_ack_whose_write_outcome_is_unknown_converges_with_one_cre
     assert rig.pager.calls.count("oms_step_outcome_unknown") == 1
 
 
+# --- #5952: an order rebuilt from its row re-snapshots its account (23 Sec.6.2.3) ---------------
+
+
+class _Told:
+    """The facade's `rebuilt` hook: each account it is told, with what the watched order's machine
+    showed then (its state, and how many of its steps had been published), so a test sees that
+    the call came once the rebuild completed and before the rebuilt machine's next step."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[UUID, tuple[str, str] | None, int]] = []
+        self.rig: Rig | None = None
+        self.order: UUID | None = None
+        self.raises: Exception | None = None
+
+    def __call__(self, account: UUID) -> None:
+        assert self.rig is not None and self.order is not None
+        state = self.rig.facade.state(self.order)
+        self.calls.append((account, state, len(self.rig.publish.calls)))
+        if self.raises is not None:
+            raise self.raises
+
+
+@pytest.fixture
+async def told(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[tuple[Rig, _Told]]:
+    monkeypatch.setattr(b01, "_ATTEMPTS", OrderedDict())
+    hook = _Told()
+    out = build_rig(rebuilt=hook)
+    hook.rig = out
+    yield out, hook
+    await out.facade.stop()
+
+
+async def test_a_fill_rebuilt_from_its_row_resnapshots_its_account_once(
+    told: tuple[Rig, _Told],
+) -> None:
+    """23 Sec.6.2.3, #5952 (U1): the cut fill's frames were never built, so once the rebuild
+    completes the facade tells `rebuilt` the order's account, once: the machine it shows then is
+    the rebuilt one, and none of its later steps had been published yet."""
+    rig, hook = told
+    order = await rig.submitted()
+    hook.order = order.id
+    rig.store.fail_next(TimeoutError(_CUT_OFF), committed=True)
+    with pytest.raises(OrderStepUnknown, match="EXEC"):
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+    await rig.quiet()
+    [(account, state, published)] = hook.calls
+    assert (account, state) == (ACCOUNT, ("partially_filled", "sl_pending"))  # its stop not read
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
+    assert len(rig.publish.calls) > published  # the rebuilt machine's steps came after
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.6"))
+    await rig.quiet()
+    assert len(hook.calls) == 1
+
+
+async def test_a_place_ack_rebuilt_from_its_row_resnapshots_its_account_once(
+    told: tuple[Rig, _Told],
+) -> None:
+    """#5952 (U2): the place ack's write is cut (it committed, its answer lost): the order is
+    rebuilt from its row and its account told once, before the held fill applies."""
+    rig, hook = told
+    order = order_of()
+    hook.order = order.id
+    gate, rig.commands.on_place = gated({"ok": True, "exchange_order_id": "x1"})
+    await rig.start(order)
+    await rig.facade.command(ACCOUNT, order.id, "SEND", actor="user")
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))  # held: unbound
+    rig.store.fail_next(TimeoutError(_CUT_OFF), committed=True)
+    gate.set()
+    await rig.quiet()
+    assert [(account, state) for account, state, _ in hook.calls] == [
+        (ACCOUNT, ("submitted", "not_required"))
+    ]
+    assert rig.context(order)["seen_exec_ids"] == ["e1"]
+
+
+async def test_a_step_meeting_a_row_another_writer_moved_resnapshots_its_account_once(
+    told: tuple[Rig, _Told],
+) -> None:
+    """#5952 (U2b), S7: a step that meets a row which moved on under the machine
+    (`StaleOrderState`) rebuilds the order from its events, and its account is told once."""
+    rig, hook = told
+    order = await rig.submitted()
+    hook.order = order.id
+    pushed = NewOrderEvent(
+        kind="exchange_push", source="ws_private", event_ts=T0, payload={"updated_time": 5}
+    )
+    moved = OrderTransition(
+        account_id=ACCOUNT,
+        order_id=order.id,
+        from_state="accepted",
+        to_state="triggered",
+        event=pushed,
+        lifecycle_state="triggered",
+    )
+    await rig.store.transition(moved)
+    with pytest.raises(OrderStepUnknown, match="CANCEL is not known: StaleOrderState"):
+        await rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user")
+    await rig.quiet()
+    assert [(account, state) for account, state, _ in hook.calls] == [
+        (ACCOUNT, ("triggered", "not_required"))
+    ]
+    assert await rig.facade.command(ACCOUNT, order.id, "CANCEL", actor="user") == "cancel_pending"
+    await rig.quiet()
+    assert len(hook.calls) == 1
+
+
+async def _refused(*_args: Any) -> str:
+    raise OrderHistoryRefused("the order's events do not rebuild its row (OM-T03)")
+
+
+@pytest.mark.parametrize("cause", ["killed_row_landed", "history_refused"])
+async def test_a_rebuild_that_leaves_no_machine_still_resnapshots_its_account(
+    told: tuple[Rig, _Told], monkeypatch: pytest.MonkeyPatch, cause: str
+) -> None:
+    """#5952 (U3): a rebuild with no machine left (a final row landed, or a history the rebuild
+    refused) still tells `rebuilt` the account once: the row may hold the unpublished step."""
+    rig, hook = told
+    order = await rig.submitted()
+    hook.order = order.id
+    if cause == "killed_row_landed":
+        rig.store.fail_next(TimeoutError(_CUT_OFF), committed=True)
+        assert await rig.facade.kill("kill switch engaged") == (order.id,)
+    else:
+        monkeypatch.setattr(rig.facade, "_hydrate", _refused)
+        rig.store.fail_next(TimeoutError(_CUT_OFF), committed=True)
+        with pytest.raises(OrderStepUnknown, match="EXEC"):
+            await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+    await rig.quiet()
+    assert [(account, state) for account, state, _ in hook.calls] == [(ACCOUNT, None)]
+    assert rig.facade.state(order.id) is None
+
+
+async def test_a_resnapshot_that_raises_never_undoes_the_rebuild(
+    told: tuple[Rig, _Told],
+) -> None:
+    """#5952 (U4), C-12.6: what `rebuilt` raises is logged by its class and the order's ids and
+    never raised: the rebuild completes and the next fill applies."""
+    rig, hook = told
+    order = await rig.submitted()
+    hook.order, hook.raises = order.id, RuntimeError("the view refused the account")
+    rig.store.fail_next(TimeoutError(_CUT_OFF), committed=True)
+    with capture_logs() as logs:
+        with pytest.raises(OrderStepUnknown, match="EXEC"):
+            await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+        await rig.quiet()
+    failed = [e for e in logs if e["event"] == "oms_resync_resnapshot_failed"]
+    assert failed == [
+        {
+            "event": "oms_resync_resnapshot_failed",
+            "log_level": "error",
+            "error": "RuntimeError",
+            "account_id": str(ACCOUNT),
+            "order_id": str(order.id),
+            "order_link_id": order.order_link_id,
+        }
+    ]
+    assert rig.facade.state(order.id) == ("partially_filled", "sl_present")
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.6"))
+    await rig.quiet()
+    row = await rig.orders.get(ACCOUNT, order.id)
+    assert row is not None and (row.state, row.cum_exec_qty) == ("filled", Decimal(1))
+
+
+async def test_no_rebuild_no_resnapshot(
+    told: tuple[Rig, _Told], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#5952 (U5): a fill that commits, a step refused with nothing written, and a restart's
+    hydration rebuild nothing from a cut write, so `rebuilt` is never told."""
+    rig, hook = told
+    order = await rig.submitted()
+    hook.order = order.id
+    await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e1", "0.4"))
+    await rig.quiet()
+    rig.store.fail_next(StorageTierUnavailable(_LOST))
+    with pytest.raises(OrderStepRefused, match="StorageTierUnavailable"):
+        await rig.facade.push(ACCOUNT, order.id, "EXEC", fill_of(order, "e2", "0.3"))
+    await rig.quiet()
+    await rig.facade.stop()
+    monkeypatch.setattr(b01, "_ATTEMPTS", OrderedDict())
+    again = build_rig(rig.store, rebuilt=hook)
+    hook.rig = again
+    try:
+        await again.facade.hydrate(ACCOUNT, order.id, environment="demo")
+        await again.quiet()
+        assert again.facade.state(order.id) == ("partially_filled", "sl_present")
+    finally:
+        await again.facade.stop()
+    assert hook.calls == []
+
+
 async def test_a_row_another_writer_moved_is_read_again(rig: Rig) -> None:
     """S7: a step that meets a row which moved on under the machine (`StaleOrderState`) rolls
     back; the machine was behind its row, so it is rebuilt from the order's events, and the order

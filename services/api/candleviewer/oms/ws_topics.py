@@ -50,7 +50,9 @@ never silently misses one:
 - a fill whose read fails sends its order's frame alone and re-snapshots `executions`;
 - a full queue drops the account's queue and re-snapshots all three topics;
 - a step or position row whose frames cannot be built is dropped and re-snapshots all three
-  topics, and the account's later steps still go (the drain's guard).
+  topics, and the account's later steps still go (the drain's guard);
+- an order the OMS facade rebuilds from its row re-snapshots its account's three topics once the
+  rebuild completes (`OrderMachines(rebuilt=...)`, #5952): the step it cut was never published.
 Hot-path rule (C-2.20): plain code; nothing queries an interpreter.
 """
 

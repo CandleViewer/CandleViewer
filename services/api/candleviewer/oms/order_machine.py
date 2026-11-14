@@ -631,6 +631,7 @@ class OrderMachines:
         now_us: Callable[[], int],
         registry: Registry | None = None,
         max_machines: int = MAX_MACHINES,
+        rebuilt: Callable[[UUID], None] | None = None,
     ) -> None:
         if b01.ports_wired():
             raise RuntimeError("an OMS facade holds B1's ports already: one per process (C-2.11)")
@@ -644,6 +645,9 @@ class OrderMachines:
         self._hash = self._registry.hash(MACHINE)
         self._now_us = now_us
         self._max = max_machines
+        #: Told an order's account once a resync rebuilt the order from its row (#5952): the step
+        #: it cut was never published, so the account's topics re-snapshot (23 Sec.6.2.3).
+        self._rebuilt = rebuilt
         # E50-T63: the order path's one gate is this facade's latch (`_admit`), so its gateway
         # admits everything.
         self._gateway = Gateway(pager=self._pager, admission=ALWAYS_ADMIT)
@@ -1764,7 +1768,9 @@ class OrderMachines:
         finds the order by the closed machine (`_resyncing`) and waits on its lock; it then
         follows the order to the rebuilt one (`successor`). The pushes, notices and refusals the
         old machine held pass to the new one, or, with none (a final order, or a history the
-        rebuild refused), to `_orphaned`."""
+        rebuild refused), to `_orphaned`. Once the rebuild completes, with a machine or without
+        one, and before the successor's held steps settle, the order's account is re-snapshotted
+        (`_resnapshot_rebuilt`, 23 Sec.6.2.3): the cut step's frames were never built."""
         o.resync, o.resynced = False, True
         self._resyncing[o.order_id] = o
         link = o.view.get("order_link_id")
@@ -1776,6 +1782,7 @@ class OrderMachines:
             except Exception as exc:  # a refused history is logged and paged by `_hydrate` itself
                 error = type(exc).__name__
                 logger().error("oms_resync_not_hydrated", order_link_id=link, error=error)
+            self._resnapshot_rebuilt(o)
             n = o.successor = self._orders.get(o.order_id)
             if n is None:
                 await self._orphaned(o)
@@ -1789,6 +1796,23 @@ class OrderMachines:
                 await self._settle(n)
         finally:
             self._resyncing.pop(o.order_id, None)  # a nested resync's entry went before it
+
+    def _resnapshot_rebuilt(self, o: _Order) -> None:
+        """The rebuilt order's account to `rebuilt`, when one is set, so its `orders`, `executions`
+        and `positions` subscriptions re-snapshot with `upstream_desync` (23 Sec.6.2.3, #5952): the
+        missed step is never published item by item. What it raises is logged by its class and
+        the order's ids, never raised: the topics are a view, and the rebuild stands (C-12.6)."""
+        if self._rebuilt is None:
+            return
+        try:
+            self._rebuilt(o.account_id)
+        except Exception as exc:  # the re-snapshot is a view's; the rebuild is the order's
+            ids = {
+                "account_id": str(o.account_id),
+                "order_id": str(o.order_id),
+                "order_link_id": o.view.get("order_link_id"),
+            }
+            logger().error("oms_resync_resnapshot_failed", error=type(exc).__name__, **ids)
 
     async def _orphaned(self, o: _Order) -> None:
         """What a resynced order left with no machine: each held push goes as an evicted order's
