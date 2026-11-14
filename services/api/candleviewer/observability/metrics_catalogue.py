@@ -4207,12 +4207,13 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("reason",),
         "Metric pushes the producer bridge refused, by reason: unregistered (a name outside the "
         "registry or the producer's set), undemanded (no evaluable rule reads it), demand_cap "
-        "(past 4096 bound refs), lease (a bar-series lease the caps refused) or params (a "
-        "parameter set the producer cannot read).",
+        "(past 4096 bound refs), lease (a bar-series lease the caps refused), lease_timeout (a "
+        "bar-series lease still building past its bound) or params (a parameter set the "
+        "producer cannot read).",
         "dashboard only",
         _L,
         "E35",
-        max_series=5,
+        max_series=6,
     ),
     _s(
         "rule_metrics_in_warmup",

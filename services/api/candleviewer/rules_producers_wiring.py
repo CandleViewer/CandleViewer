@@ -4,6 +4,27 @@ Only the composition root sees the bars, the book, the bus and the rules togethe
 producer here reads one shipped market path and writes through its own `PushSink` (the bridge,
 `rules/producers.py`), never the source. Market-scope metrics only (#1204 Part B's binding rule).
 
+* Bars: `BarFieldProducer` is a `BarSink` on the bars emit path (`wire_bars(extra_sinks=)`, after
+  the indicator engine, before the writer). Its `emit` never awaits (the atomicity rule in the
+  `bars_wiring` docstring): for each closed, non-synthetic time bar of a demanded
+  ``(symbol, timeframe)`` it pushes the bar's own `Decimal` fields, then submits one
+  ``on_bar_close`` tick per symbol and timeframe (push, then tick: E2). An amended close re-pushes
+  and submits nothing. A close older than one interval, or than `LIVE_CLOSE_GRACE_MS` for an
+  interval past a minute, is history, a restored series' catch-up replaying its tape through the
+  same emit path (`bars/builder_set.py` "Emit"; `BarEmission` carries no replay flag): it pushes
+  and ticks nothing, so a rule never fires on an old close. A close at or before the newest one
+  ticked for its series never ticks again, nor one before it pushes, so a rule never fires twice
+  for one bar. It keeps one bar-series lease (consumer ``rules``, `user=None`: a system
+  consumer, `bars/leases.py`) per demanded ``(symbol, time spec)``, dropped with the demand; a
+  refused lease is counted, logged once per key, leaves the metric ``warmup`` and is tried again
+  after `LEASE_RETRY_S`. A registration still running `LEASE_TIMEOUT_S` after it took its slot
+  (one of `LEASE_CONCURRENCY`; the wait for one is not counted) is never cancelled: it is
+  counted ``lease_timeout``, never started again while it runs, and adopted when it ends;
+  should it then fail, its key waits a backoff doubling per timeout, up to
+  `LEASE_BACKOFF_MAX_S`. Only the chart's own intervals (`bars/spec.TIME_INTERVALS`, up to 1 d) are
+  leased, at most `MAX_RULE_LEASES` in all, handed out round-robin across rules and at most
+  `MAX_RULE_LEASES_PER_RULE` a rule, so no rule author can use up the bar service's shared caps
+  that chart users draw on, nor one rule the rules' share.
 * Quotes and the ticker: `QuoteProducer` (``{env}.md.*.quote``) and `TickerProducer`
   (``{env}.md.*.ticker``) are wildcard bus consumers built as `ingestion/ticker_topic.py` is:
   `INVALIDATE_ON_FULL` on a bounded queue (the bus's `CONFLATE_LATEST` keeps one event across
@@ -19,22 +40,32 @@ producer here reads one shipped market path and writes through its own `PushSink
   the shallower wants; `book_staleness_ms` needs no view. It holds no book tier.
   `BookTicks` keeps ``on_book_update`` to one tick per symbol per window across both producers.
 
-The bar producer, the lost-feed watch and the composition (`build_bridge`) are E35-T15's next
-slice; nothing here is composed by the app yet, so nothing is built, spliced or subscribed.
+`build_bridge` composes them; the composition root calls it only with `rules_evaluator_enabled`
+on, so with the flag off nothing here is built, spliced or subscribed (C-4.13).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
+import itertools
 import math
+import re
 import time
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from decimal import Decimal
-from typing import Any, Final, Protocol
+from functools import lru_cache
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 import structlog
 
+from candleviewer.bars.emit import BarEmission
+from candleviewer.bars.limits import CAP_GLOBAL
+from candleviewer.bars.models import Bar, BarSpec
+from candleviewer.bars.spec import TIME_INTERVALS
+from candleviewer.bars.time_builder import MAX_INTERVAL_MS, MIN_INTERVAL_MS
 from candleviewer.book.models import BestQuoteEvent
 from candleviewer.book.ws_topic import WINDOW_S as BOOK_WINDOWS_S
 from candleviewer.bus import Bus, QueuePolicy, StreamInvalidated, Subscription, TopicPattern
@@ -44,10 +75,55 @@ from candleviewer.exchange.base.models import BookLevel, TickerEvent
 from candleviewer.ingestion.ticker_topic import BUS_QUEUE_MAX, MAX_SYMBOLS
 from candleviewer.ingestion.ticker_topic import WINDOW_S as TICKER_WINDOW_S
 from candleviewer.observability import spawn
+from candleviewer.observability.metrics import Metrics
 from candleviewer.orderbook_wiring import BookView
 from candleviewer.rules.evaluator.snapshot import Value
-from candleviewer.rules.producers import LOST_AFTER_S, PushSink, Want
+from candleviewer.rules.producers import (
+    ANY_SYMBOL,
+    LOST_AFTER_S,
+    MetricProducer,
+    ProducerBridge,
+    PushSink,
+    Want,
+)
+from candleviewer.rules.vocabulary import default_registry
 
+if TYPE_CHECKING:  # typing only: the manager reaches the statechart (C-2.20 hot path)
+    from candleviewer.rules.manager import EvaluableRule
+
+#: The IR's timeframe grammar (`rules/validator.py` ``_TF``), bounded so the product stays small.
+_TIMEFRAME: Final = re.compile(r"^([1-9][0-9]{0,6})([smhdw])$")
+_UNIT_MS: Final = {"s": 1_000, "m": 60_000, "h": 3_600_000, "d": 86_400_000, "w": 604_800_000}
+#: The bar metrics bound from the bar (24 §7.2.2): `delta` and `bar_volume` until E13-S08.
+BAR_METRICS: Final = ("delta", "bar_volume", "min_delta", "max_delta", "buy_sell_ratio")
+#: The intervals a lease may take: the chart's wire table, within what the time builder builds.
+LEASABLE_MS: Final = frozenset(
+    ms for ms in TIME_INTERVALS.values() if MIN_INTERVAL_MS <= ms <= MAX_INTERVAL_MS
+)
+#: The lease consumer: one per `(symbol, spec_hash)`, so a second `register` is idempotent.
+LEASE_CONSUMER: Final = "rules"
+#: Leases the rules hold in all (`bars/leases.py` caps 32 a symbol, 512 a process): the rest
+#: is the chart users'. Past it a lease is refused, counted, and its metric stays ``warmup``.
+MAX_RULE_LEASES: Final = 64
+#: Leases one rule may hold (`Want.owners`), so four rules at least share the pool.
+MAX_RULE_LEASES_PER_RULE: Final = 16
+#: The lease keeper's period, and the bound on one registration (a cold build replays the tape);
+#: registrations run concurrently (`LEASE_CONCURRENCY` at once), so one slow build never delays
+#: the others.
+LEASE_S: Final = 1.0
+LEASE_TIMEOUT_S: Final = 30.0
+#: A refused lease is tried again after this long (a cap freed, a stopping service back).
+LEASE_RETRY_S: Final = 60.0
+#: A key whose registration outran `LEASE_TIMEOUT_S` waits `LEASE_RETRY_S` doubled per timeout
+#: in a row, at most this long, before it is registered again.
+LEASE_BACKOFF_MAX_S: Final = 960.0
+#: Registrations in flight at once (each may cold-build a series off the tape).
+LEASE_CONCURRENCY: Final = 8
+#: How late a close may be emitted and still be live: one interval, at most this. A longer
+#: interval's close replayed minutes later by a catch-up is history, never a fire.
+LIVE_CLOSE_GRACE_MS: Final = 60_000
+#: Series whose newest ticked close is kept (the bar service builds no more, `bars/limits.py`).
+MAX_TICKED_SERIES: Final = CAP_GLOBAL
 #: 24 §11.6 ``on_book_update`` at 10 Hz: the book publisher's window at depth 200.
 BOOK_WINDOW_S: Final = BOOK_WINDOWS_S[200]
 BOOK_CADENCE_MS: Final = round(BOOK_WINDOW_S * 1000)
@@ -67,6 +143,343 @@ PRICE_SOURCES: Final = {"last": "last_price", "mark": "mark_price", "index": "in
 def _log() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
+
+
+@lru_cache(maxsize=256)
+def timeframe_spec(timeframe: str | None) -> BarSpec | None:
+    """The time `BarSpec` an IR timeframe (``1m``, ``4h``) names, with the defaults `from_wire`
+    builds, so a lease joins the chart's series (one `spec_hash`); None for a string it cannot map
+    or an interval outside the chart's table (`LEASABLE_MS`): never leased, the metric stays
+    ``warmup``. Pure."""
+    if timeframe is None or (match := _TIMEFRAME.fullmatch(timeframe)) is None:
+        return None
+    ms = int(match[1]) * _UNIT_MS[match[2]]
+    if ms not in LEASABLE_MS:
+        return None
+    return BarSpec(kind="time", interval_ms=ms)
+
+
+class LeaseHolder(Protocol):
+    """The slice of `BarBuilderSet` the lease keeper needs."""
+
+    async def register(
+        self, spec: BarSpec, symbol: str, consumer: str, user: str | None = None
+    ) -> None: ...
+
+    def release(self, spec_hash: str, symbol: str, consumer: str) -> None: ...
+
+
+class BarFieldProducer:
+    """Bar fields of closed time bars into the rules' source; a `MetricProducer` and a `BarSink`.
+
+    Built before `wire_bars` (it is one of its `extra_sinks`) and attached to the bridge later;
+    until attached `emit` does nothing. `builders` returns the set to lease from (None: not
+    composed), `qty_step` the catalogue's step of a symbol (None: not listed, so
+    `buy_sell_ratio` is not pushed), `now_us` the bars' own UTC wall clock (what tells a live
+    close from history), `clock` the monotonic one of the lease retries."""
+
+    def __init__(
+        self,
+        builders: Callable[[], LeaseHolder | None],
+        qty_step: Callable[[str], Decimal | None],
+        *,
+        now_us: Callable[[], int] = lambda: time.time_ns() // 1000,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        self.name = "bar_fields"
+        self.metrics = frozenset(BAR_METRICS)
+        self.feeds = frozenset({"trades"})
+        self._builders, self._qty_step, self._sleep = builders, qty_step, sleep
+        self._now_us, self._clock = now_us, clock
+        self._sink: PushSink | None = None
+        self._task: asyncio.Task[None] | None = None
+        self._by_spec: dict[str, tuple[str, ...]] = {}
+        self._by_spec_of: tuple[PushSink, int] | None = None
+        self._held: dict[tuple[str, str], BarSpec] = {}
+        self._refused: dict[tuple[str, str], float] = {}  # key -> when it was refused
+        self._refused_at = -1
+        self._leasing = asyncio.Semaphore(LEASE_CONCURRENCY)
+        #: Registrations running (each its own task, never cancelled by the keeper's bound).
+        self._pending: dict[tuple[str, str], asyncio.Task[bool]] = {}
+        self._late: set[tuple[str, str]] = set()  # pending past `LEASE_TIMEOUT_S`, counted
+        #: key -> when its registration took a `_leasing` slot (loop time): its bound starts there.
+        self._began: dict[tuple[str, str], float] = {}
+        self._timeouts: dict[tuple[str, str], int] = {}  # key -> timeouts in a row (backoff)
+        self._logged: set[tuple[str, str]] = set()  # keys whose refusal is logged
+        #: (symbol, spec_hash) -> the newest close ticked (us), least recently ticked first.
+        self._ticked: dict[tuple[str, str], int] = {}
+
+    # -- the bridge's side ---------------------------------------------------------------------
+    def attach(self, sink: PushSink) -> None:
+        self._sink = sink
+        if self._task is None:
+            self._task = spawn(self._keeping(), name="rule-producers-bar-leases")
+
+    async def detach(self) -> None:
+        """Stop pushing, stop the keeper and every registration in flight (a cancelled one gives
+        its lease back), then release every lease held."""
+        self._sink = None
+        task, self._task = self._task, None
+        if task is not None:
+            task.cancel()
+            await asyncio.wait({task})
+        pending, self._pending = self._pending, {}
+        for registering in pending.values():
+            registering.cancel()
+        if pending:
+            await asyncio.wait(pending.values())
+        builders = self._builders()
+        held, self._held = self._held, {}
+        self._refused.clear()
+        self._ticked.clear()
+        self._late.clear()
+        self._began.clear()
+        self._timeouts.clear()
+        self._logged.clear()
+        if builders is not None:
+            for key in held:
+                self._release(builders, key)
+
+    # -- the bars emit path --------------------------------------------------------------------
+    async def emit(self, emission: BarEmission) -> None:
+        """Synchronous body: never awaits, so the emit path's atomicity holds (`bars_wiring`)."""
+        sink = self._sink
+        if sink is not None and emission.spec.kind == "time":
+            sink.guard(self._take, sink, emission)
+
+    def _take(self, sink: PushSink, emission: BarEmission) -> None:
+        timeframes = self._timeframes(sink).get(emission.spec.spec_hash)
+        if not timeframes:
+            return
+        cadence_ms, now_ms = emission.spec.interval_ms or 0, self._now_us() // 1000
+        grace_ms, spec_hash = min(cadence_ms, LIVE_CLOSE_GRACE_MS), emission.spec.spec_hash
+        ticks: dict[tuple[str, str], None] = {}  # ordered, one tick per (symbol, timeframe)
+        for update in emission.updates:
+            bar = update.bar
+            if update.kind != "close" or not bar.closed or bar.synthetic:
+                continue
+            ts_ms = bar.close_time // 1000
+            if now_ms - ts_ms >= grace_ms:
+                continue  # history (a catch-up replay): never pushed or ticked as live
+            series = (bar.symbol, spec_hash)
+            newest = self._ticked.get(series, -1)
+            if bar.close_time < newest:
+                continue  # an older bar than one ticked: never written over the newer
+            values, fresh = self._values(bar), not update.amended and bar.close_time > newest
+            for timeframe in timeframes:
+                hit = False
+                for metric, value in values:
+                    for want in sink.wanted(metric, bar.symbol, timeframe):
+                        hit = sink.push(want, bar.symbol, value, ts_ms, cadence_ms) or hit
+                if hit and fresh:
+                    ticks[(bar.symbol, timeframe)] = None
+                    self._newest(series, bar.close_time)
+        for symbol, timeframe in ticks:
+            sink.tick("on_bar_close", symbol, timeframe)
+
+    def _newest(self, series: tuple[str, str], close_us: int) -> None:
+        """Record `series`' newest ticked close, least recently ticked first; past
+        `MAX_TICKED_SERIES` the least recent goes (its next repeat could tick once more)."""
+        self._ticked.pop(series, None)
+        if len(self._ticked) >= MAX_TICKED_SERIES:
+            del self._ticked[next(iter(self._ticked))]
+        self._ticked[series] = close_us
+
+    def _values(self, bar: Bar) -> tuple[tuple[str, Value], ...]:
+        """The bar's own fields: `delta` and `bar_volume` are what the kernels pass through
+        (`orderflow/indicators/kernels/volume.py`), not a second formula."""
+        step = self._qty_step(bar.symbol)
+        ratio = None if step is None or step <= 0 else bar.buy_volume / max(bar.sell_volume, step)
+        return (
+            ("delta", bar.delta), ("bar_volume", bar.volume), ("min_delta", bar.min_delta),
+            ("max_delta", bar.max_delta), ("buy_sell_ratio", ratio),
+        )  # fmt: skip
+
+    def _timeframes(self, sink: PushSink) -> dict[str, tuple[str, ...]]:
+        """`spec_hash` -> the demanded timeframes mapping to it, rebuilt on a demand change."""
+        if self._by_spec_of != (sink, sink.demand_version):
+            by_spec: dict[str, dict[str, None]] = {}
+            for want in sink.demanded():
+                spec = timeframe_spec(want.timeframe)
+                if spec is not None and want.timeframe is not None:
+                    by_spec.setdefault(spec.spec_hash, {})[want.timeframe] = None
+            self._by_spec = {h: tuple(tfs) for h, tfs in by_spec.items()}
+            self._by_spec_of = (sink, sink.demand_version)
+            self._ticked = {k: t for k, t in self._ticked.items() if k[1] in self._by_spec}
+        return self._by_spec
+
+    # -- the leases ----------------------------------------------------------------------------
+    def lease_targets(self, sink: PushSink) -> dict[tuple[str, str], BarSpec]:
+        """``(symbol, spec_hash)`` -> spec to lease, in fair order: round-robin across the rules
+        reading each (`Want.owners`), every rule's first before any rule's second, at most
+        `MAX_RULE_LEASES_PER_RULE` a rule and `MAX_RULE_LEASES` in all. A rule that lists no
+        symbol leases nothing (it reads the series others hold)."""
+        return self._plan(sink)[0]
+
+    def _plan(self, sink: PushSink) -> tuple[dict[tuple[str, str], BarSpec], int]:
+        """`lease_targets`, and how many demanded targets the budgets leave out."""
+        per_rule: dict[str, dict[tuple[str, str], BarSpec]] = {}
+        for want in sink.demanded():
+            if (spec := timeframe_spec(want.timeframe)) is None:
+                continue
+            for symbol, owners in want.owners.items():
+                if symbol is not None and symbol != ANY_SYMBOL:
+                    for owner in owners:
+                        per_rule.setdefault(owner, {})[(symbol, spec.spec_hash)] = spec
+        queues = [sorted(q.items())[:MAX_RULE_LEASES_PER_RULE] for _, q in sorted(per_rule.items())]
+        targets: dict[tuple[str, str], BarSpec] = {}
+        for item in itertools.chain.from_iterable(itertools.zip_longest(*queues)):
+            if item is not None and len(targets) < MAX_RULE_LEASES:
+                targets.setdefault(*item)
+        return targets, len({k for q in per_rule.values() for k in q}) - len(targets)
+
+    async def sync(self) -> None:
+        """One keeper pass: release the leases no longer targeted, then take the new ones
+        concurrently, each awaited at most `LEASE_TIMEOUT_S`. A refusal (a cap, a budget, an
+        unbuildable spec, a stopping service) is counted and tried again after `LEASE_RETRY_S`,
+        or at once when the demand changes; a key still registering is never started again, and
+        one that timed out waits its backoff (`retry_s`) whatever the demand does."""
+        sink, builders = self._sink, self._builders()
+        if sink is None or builders is None:
+            return
+        targets, dropped = self._plan(sink)
+        if self._refused_at != sink.demand_version:
+            self._refused = {k: t for k, t in self._refused.items() if k in self._timeouts}
+            self._refused_at = sink.demand_version
+            for _ in range(len(self.unleasable(sink)) + dropped):
+                sink.lease_refused()
+        for key in [k for k in self._held if k not in targets]:
+            del self._held[key]
+            self._release(builders, key)
+        self._logged.intersection_update(targets)
+        self._timeouts = {k: n for k, n in self._timeouts.items() if k in targets}
+        now, room = self._clock(), MAX_RULE_LEASES - len(self._pending)
+        new = [
+            (key, spec) for key, spec in targets.items()
+            if key not in self._held and key not in self._pending
+            and now - self._refused.get(key, -math.inf) >= self.retry_s(key)
+        ][: max(room, 0)]  # fmt: skip
+        if new:  # each registration its own task: a cancelled pass leaves them running
+            await asyncio.gather(*(self._lease(sink, builders, key, spec) for key, spec in new))
+
+    def retry_s(self, key: tuple[str, str]) -> float:
+        """How long after a refusal `key` is registered again: `LEASE_RETRY_S`, doubled per
+        timeout in a row, at most `LEASE_BACKOFF_MAX_S`."""
+        return min(LEASE_RETRY_S * (1 << min(self._timeouts.get(key, 0), 16)), LEASE_BACKOFF_MAX_S)
+
+    async def _lease(
+        self, sink: PushSink, builders: LeaseHolder, key: tuple[str, str], spec: BarSpec
+    ) -> None:
+        if self._sink is not sink:  # detached meanwhile: start no build
+            return
+        task = spawn(self._register(sink, builders, key, spec), name="rule-producers-bar-lease")
+        self._pending[key] = task
+        task.add_done_callback(functools.partial(self._registered, sink, builders, key, spec))
+        done, _ = await asyncio.wait({task}, timeout=LEASE_TIMEOUT_S)
+        began = self._began.get(key)
+        if done or began is None or asyncio.get_running_loop().time() - began < LEASE_TIMEOUT_S:
+            return  # ended (`_registered` took it), or queued or started late: its timer counts
+        self._overdue(sink, key, task)
+
+    def _overdue(
+        self, sink: PushSink, key: tuple[str, str], task: asyncio.Task[Any] | None
+    ) -> None:
+        """`key`'s registration ran `LEASE_TIMEOUT_S` past taking its slot: counted once, never
+        cancelled, adopted when it ends."""
+        if self._pending.get(key) is not task or self._sink is not sink or key in self._late:
+            return
+        self._late.add(key)
+        self._timeouts[key] = self._timeouts.get(key, 0) + 1
+        sink.lease_timed_out()
+        self._refusal_logged(key, "TimeoutError")
+
+    async def _register(
+        self, sink: PushSink, builders: LeaseHolder, key: tuple[str, str], spec: BarSpec
+    ) -> bool:
+        """Register `key`'s lease; False (nothing to give back) if detached before it began."""
+        async with self._leasing:  # `LEASE_CONCURRENCY` registering at once
+            if self._sink is not sink:
+                return False
+            loop = asyncio.get_running_loop()
+            self._began[key] = loop.time()  # the bound starts with the slot, not in the queue
+            timer = loop.call_later(
+                LEASE_TIMEOUT_S, self._overdue, sink, key, asyncio.current_task()
+            )
+            try:
+                await builders.register(spec, key[0], LEASE_CONSUMER, None)
+            finally:
+                timer.cancel()
+            return True
+
+    def _registered(
+        self,
+        sink: PushSink,
+        builders: LeaseHolder,
+        key: tuple[str, str],
+        spec: BarSpec,
+        task: asyncio.Task[bool],
+    ) -> None:
+        """A registration ended: hold its lease, give it back (detached meanwhile), or count
+        the refusal (not again for one already counted as timed out)."""
+        if self._pending.get(key) is task:
+            del self._pending[key]
+            self._began.pop(key, None)
+        late = key in self._late
+        self._late.discard(key)
+        if task.cancelled():
+            return  # stopped by `detach`: it gave its lease back
+        if (exc := task.exception()) is not None:  # the metric stays warmup, tried again later
+            self._refused[key] = self._clock()
+            if not late:
+                sink.lease_refused()
+            self._refusal_logged(key, type(exc).__name__)
+            return
+        if not task.result():
+            return  # detached before it began: nothing registered
+        if self._sink is not sink:  # detached meanwhile: give it back at once
+            self._release(builders, key)
+            return
+        self._held[key] = spec
+        self._refused.pop(key, None)
+        self._timeouts.pop(key, None)
+        self._logged.discard(key)
+
+    def _refusal_logged(self, key: tuple[str, str], error: str) -> None:
+        """Log a refused or timed-out lease once per key until it is held or no longer wanted."""
+        if key not in self._logged:
+            self._logged.add(key)
+            _log().warning("rules.bar_lease_refused", error=error)
+
+    @staticmethod
+    def _release(builders: LeaseHolder, key: tuple[str, str]) -> None:
+        """One release; one that raises (a lease the set does not hold) never strands the rest."""
+        try:
+            builders.release(key[1], key[0], LEASE_CONSUMER)
+        except Exception as exc:
+            _log().warning("rules.bar_lease_release_failed", error=type(exc).__name__)
+
+    @staticmethod
+    def unleasable(sink: PushSink) -> frozenset[str]:
+        """The demanded timeframes no lease can take (outside `LEASABLE_MS`)."""
+        return frozenset(
+            w.timeframe for w in sink.demanded()
+            if w.timeframe is not None and timeframe_spec(w.timeframe) is None
+        )  # fmt: skip
+
+    @property
+    def held(self) -> frozenset[tuple[str, str]]:
+        return frozenset(self._held)
+
+    async def _keeping(self) -> None:
+        while True:  # sleep first: at attach the bridge has not read the demand yet
+            await self._sleep(LEASE_S)
+            sink = self._sink
+            try:
+                await self.sync()
+            except Exception as exc:  # the keeper outlives one bad pass
+                if sink is not None:
+                    sink.failed(exc)
 
 
 # --- quotes, the ticker, the book -------------------------------------------------------------
@@ -519,3 +932,29 @@ class BookDepthProducer:
             except Exception as exc:  # the timer outlives one bad pass
                 if (sink := self._sink) is not None:
                     sink.failed(exc)
+
+
+def build_bridge(
+    bus: Bus,
+    env: str,
+    rules: Callable[[], Awaitable[Sequence[EvaluableRule]]],
+    *,
+    bars: BarFieldProducer | None,
+    books: Callable[[], BookReader | None],
+    metrics: Metrics | None = None,
+) -> ProducerBridge:
+    """The bridge with its four producers, for `RulesService.bind`.
+    Called by the composition root only with `rules_evaluator_enabled` on (C-4.13): nothing here
+    subscribes before the bridge attaches at `RulesService.start`. `bars` is the producer
+    already spliced into `wire_bars` (None: the bar fields stay unproduced)."""
+    scopes = MappingProxyType({d.name: d.scope for d in default_registry()})
+    bridge = ProducerBridge(rules, scopes, metrics=metrics)
+    ticks = BookTicks()
+    producers: tuple[MetricProducer | None, ...] = (
+        bars, QuoteProducer(bus, env, ticks, books=books), TickerProducer(bus, env),
+        BookDepthProducer(books, ticks),
+    )  # fmt: skip
+    for producer in producers:
+        if producer is not None:
+            bridge.add(producer)
+    return bridge
