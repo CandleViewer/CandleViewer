@@ -72,7 +72,7 @@ export function IndicatorChips({
 }: IndicatorChipsProps): JSX.Element {
   const ring = useFocusRing();
   const words = suffix === undefined || suffix.n <= 0 ? undefined : suffixWords(suffix);
-  const name = `Indicators: ${count} on this chart${words === undefined ? "" : `, ${words}`} — open the object manager`;
+  const name = `Indicators: Ind ${count}${words === undefined ? "" : `, ${words}`} on this chart — open the object manager`;
   return (
     <button
       type="button"

@@ -25,7 +25,7 @@ describe("IndicatorChips (CMP-224)", () => {
   it("reads the count and the suffix as words, with the catalogue's name", async () => {
     await mount(<IndicatorChips count={4} suffix={{ kind: "hidden", n: 1 }} onOpen={fn()} />);
     const chip = page.getByRole("button", {
-      name: "Indicators: 4 on this chart, 1 hidden — open the object manager",
+      name: "Indicators: Ind 4, 1 hidden on this chart — open the object manager",
     });
     expect(chip).toHaveTextContent("Ind 4·1 hidden");
   });
@@ -37,10 +37,10 @@ describe("IndicatorChips (CMP-224)", () => {
         <IndicatorChips count={6} suffix={{ kind: "error", n: 2 }} onOpen={fn()} />
       </>,
     );
-    expect(page.getByRole("button", { name: /^Indicators: 0 on this chart — / })).toHaveTextContent(
-      "Ind 0",
-    );
-    expect(page.getByRole("button", { name: /6 on this chart, 2 errors/ })).toBeTruthy();
+    expect(
+      page.getByRole("button", { name: /^Indicators: Ind 0 on this chart — / }),
+    ).toHaveTextContent("Ind 0");
+    expect(page.getByRole("button", { name: /Ind 6, 2 errors on this chart/ })).toBeTruthy();
   });
 
   it("names the stale and computing suffixes and the singular error, as a plain button", async () => {
@@ -51,12 +51,12 @@ describe("IndicatorChips (CMP-224)", () => {
         <IndicatorChips count={5} suffix={{ kind: "error", n: 1 }} onOpen={fn()} />
       </>,
     );
-    expect(page.getByRole("button", { name: /3 on this chart, 2 stale —/ })).toHaveAttribute(
+    expect(page.getByRole("button", { name: /Ind 3, 2 stale on this chart/ })).toHaveAttribute(
       "type",
       "button",
     );
-    expect(page.getByRole("button", { name: /2 on this chart, 1 computing —/ })).toBeTruthy();
-    expect(page.getByRole("button", { name: /5 on this chart, 1 error —/ })).toBeTruthy();
+    expect(page.getByRole("button", { name: /Ind 2, 1 computing on this chart/ })).toBeTruthy();
+    expect(page.getByRole("button", { name: /Ind 5, 1 error on this chart/ })).toBeTruthy();
   });
 
   it("is a disclosure opener: aria-expanded tracks the drawer, never aria-pressed", async () => {
@@ -68,7 +68,7 @@ describe("IndicatorChips (CMP-224)", () => {
       </>,
     );
     const chip = (n: number): HTMLElement =>
-      page.getByRole("button", { name: new RegExp(`^Indicators: ${n} `) });
+      page.getByRole("button", { name: new RegExp(`^Indicators: Ind ${n} `) });
     expect(chip(1)).toHaveAttribute("aria-expanded", "true");
     expect(chip(2)).toHaveAttribute("aria-expanded", "false");
     expect(chip(3)).not.toHaveAttribute("aria-expanded");
@@ -82,11 +82,11 @@ describe("IndicatorChips (CMP-224)", () => {
         <IndicatorChips count={2} open={false} onOpen={fn()} />
       </>,
     );
-    expect(page.getByRole("button", { name: /^Indicators: 1 / })).toHaveAttribute(
+    expect(page.getByRole("button", { name: /^Indicators: Ind 1 / })).toHaveAttribute(
       "aria-controls",
       "scr-036",
     );
-    expect(page.getByRole("button", { name: /^Indicators: 2 / })).not.toHaveAttribute(
+    expect(page.getByRole("button", { name: /^Indicators: Ind 2 / })).not.toHaveAttribute(
       "aria-controls",
     );
   });

@@ -21,8 +21,20 @@ export const AtCap: Story = { args: { count: 20 } };
 /** SCR-036 is open: the chip is `aria-expanded` and `aria-controls` the drawer, with the pressed fill. */
 export const PressedDrawerOpen: Story = {
   args: { open: true, drawerId: "scr-036-drawer" },
+  beforeEach: () => {
+    let mock = document.getElementById("scr-036-drawer");
+    if (!mock) {
+      mock = document.createElement("div");
+      mock.id = "scr-036-drawer";
+      mock.hidden = true;
+      document.body.appendChild(mock);
+    }
+    return () => {
+      mock?.remove();
+    };
+  },
   play: async ({ canvasElement }) => {
-    const chip = within(canvasElement).getByRole("button", { name: /^Indicators: 4 / });
+    const chip = within(canvasElement).getByRole("button", { name: /^Indicators: Ind 4 / });
     await expect(chip).toHaveAttribute("aria-expanded", "true");
     await expect(chip).toHaveAttribute("aria-controls", "scr-036-drawer");
     await expect(chip).not.toHaveAttribute("aria-pressed");
@@ -34,7 +46,7 @@ export const Focused: Story = {
   play: async ({ args, canvasElement }) => {
     await userEvent.tab();
     const chip = within(canvasElement).getByRole("button", {
-      name: "Indicators: 4 on this chart, 1 hidden — open the object manager",
+      name: "Indicators: Ind 4, 1 hidden on this chart — open the object manager",
     });
     await expect(chip).toHaveFocus();
     await userEvent.keyboard("{Enter}");
