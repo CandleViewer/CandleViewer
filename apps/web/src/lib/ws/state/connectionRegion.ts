@@ -38,6 +38,13 @@ export interface ConnectionRegionView {
 export interface RegionExtras {
   /** §6 row 5 R5: past the 10 s hand-over, the shell store's `degraded.privateHandedOver` (SCR-153 row 9). */
   readonly privateFeedDown?: boolean;
+  /**
+   * E29-S07 (#1028; BQ-11 of the ruling of record 6575172489, BQ-7 ruled (6610918411)): whether
+   * every account in scope is synced and its last REST read showed every open position with a
+   * confirmed exchange-side stop. Only `true` keeps the stops clause in the lines and
+   * announcements; `false` or absent drops it (fail closed: a caller that does not judge it claims nothing).
+   */
+  readonly stopsConfirmed?: boolean;
 }
 
 const ORDERS_OFF = "New orders off; cancel and close remain available, confirmed over the server.";
@@ -59,6 +66,10 @@ const FATAL: Readonly<Record<number, string>> = {
  * 4401, which §6's `offline` row lands here until G12 routes it to `session-ended`.
  */
 const FATAL_UNKNOWN = "Can't connect. Copy details and report a bug.";
+/** BQ-7 ruled (6610918411): the same lines with the stops clause dropped, nothing else changed. */
+const RULES_PAUSED = "App-managed rules are paused.";
+const SESSION_NO_STOPS = "App-managed rules are paused — sign in again to cancel or close.";
+const R1_NO_STOPS = "Cancel and close still work; app-managed rules are paused.";
 const SESSION_STOPS =
   "Exchange-side stops still protect open positions; app-managed rules are paused — sign in again to cancel or close.";
 /** §10 F, a bare 4403 (no `bye` reason reaches the client until G12). */
@@ -131,10 +142,13 @@ export function connectionRegion(
   extras: RegionExtras = {},
 ): ConnectionRegionView | null {
   const { link, outage } = ws;
+  const keep = extras.stopsConfirmed === true; // BQ-7: kept only after the REST gate passed
+  const stops = keep ? STOPS : RULES_PAUSED;
   if (link.kind === "up") {
     const reason = readOnlyReason(ws, extras);
     if (reason === null) return null;
-    const [title, stillWorks] = READ_ONLY[reason];
+    const [title, works] = READ_ONLY[reason];
+    const stillWorks = !keep && reason === "R1-shutdown" ? R1_NO_STOPS : works;
     return view("read-only", reason, title, [stillWorks], ["details"]);
   }
   // Never up: nothing to freeze (§11 row 15), and a failed session start, a fatal or 4403 one
@@ -148,12 +162,12 @@ export function connectionRegion(
   const timing = { lastDataAgo, notifyDue, ageEmphasis: outageMs >= T4_STEP_MS };
   if (link.kind === "offline" && link.cause === "fatal") {
     if (link.closeCode === 4403) {
-      const lines = [`${ACCESS_REMOVED}.`, SESSION_STOPS];
+      const lines = [`${ACCESS_REMOVED}.`, keep ? SESSION_STOPS : SESSION_NO_STOPS];
       return view("session-ended", "session", "Session ended", lines, ["sign-in", "details"]);
     }
     const l1 = (link.closeCode === undefined ? undefined : FATAL[link.closeCode]) ?? FATAL_UNKNOWN;
     // PROPOSED (§10 B4): L2 is E17-D01's two safety sentences on one line.
-    const lines = [l1, `${ORDERS_OFF} ${STOPS}`];
+    const lines = [l1, `${ORDERS_OFF} ${stops}`];
     return view("offline", "fatal", "Offline — retry stopped", lines, RETRY, { notifyDue });
   }
   const escalated = outageMs >= T4_ESCALATE_MS;
@@ -168,12 +182,12 @@ export function connectionRegion(
     // B1b's L2 says cancel and close "remain available", but §6's `reconnecting` row makes them T2
     // with a shell cause (REST is unreachable too). The conservative §6 reading wins (owner item).
     const l1 = lastDataAgo === null ? `${cause}.` : `${cause} — last data ${lastDataAgo} ago.`;
-    return view(state, "disconnected", title, [l1, STOPS], RETRY, timing);
+    return view(state, "disconnected", title, [l1, stops], RETRY, timing);
   }
   // PROPOSED: with no data this session, L1 drops its "Last data … ago." sentence.
   const l1 = lastDataAgo === null ? ORDERS_OFF : `Last data ${lastDataAgo} ago. ${ORDERS_OFF}`;
   const disconnected = (more: Partial<ConnectionRegionView>) =>
-    view(state, "disconnected", title, [l1, STOPS], RETRY, { ...timing, ...more });
+    view(state, "disconnected", title, [l1, stops], RETRY, { ...timing, ...more });
   // `connecting`: the attempt's socket is opening, "Connecting…" (PROPOSED, §10 A).
   if (link.kind !== "reconnecting") return disconnected({ countdown: "Connecting…" });
   const countdownS = Math.max(1, Math.ceil((link.nextAttemptAtMs - nowMs) / 1000));
@@ -187,9 +201,9 @@ export interface RegionAnnouncement {
 }
 
 const EPISODE: ReadonlySet<RegionReason> = new Set(["disconnected", "fatal", "session"]);
+const SPOKEN_STOPS = " Exchange-side stops still protect open positions.";
 const SPOKEN: Partial<Record<RegionReason, string>> = {
-  disconnected:
-    "Disconnected. New orders off. Cancel and close still work, confirmed over the server. Exchange-side stops still protect open positions.",
+  disconnected: `Disconnected. New orders off. Cancel and close still work, confirmed over the server.${SPOKEN_STOPS}`,
   fatal:
     "Offline — retry stopped. New orders off. Cancel and close still work, confirmed over the server.",
   session: `${ACCESS_REMOVED}.`,
@@ -210,5 +224,8 @@ export function regionAnnouncement(
   // A retry after a stop is no new episode.
   if (next.reason === "disconnected" && prev !== null && EPISODE.has(prev.reason)) return null;
   const title = next.title.endsWith(".") ? next.title : `${next.title}.`;
-  return { politeness: "assertive", text: SPOKEN[next.reason] ?? [title, ...next.lines].join(" ") };
+  const said = SPOKEN[next.reason] ?? [title, ...next.lines].join(" ");
+  // BQ-7 ruled (6610918411): a view drawn without the stops clause never says it either
+  const dropped = next.reason === "disconnected" && !next.lines.includes(STOPS);
+  return { politeness: "assertive", text: dropped ? said.replace(SPOKEN_STOPS, "") : said };
 }

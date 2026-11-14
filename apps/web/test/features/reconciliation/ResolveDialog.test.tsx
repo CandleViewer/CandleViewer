@@ -140,7 +140,9 @@ describe("the Owner's dialog", () => {
     expect(
       await screen.findByRole("alertdialog", { name: /Confirm with two-factor/ }),
     ).toBeVisible();
-    expect(screen.queryByRole("dialog", { name: "Resolve the lock" })).toBeNull();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Resolve the lock" })).toBeNull();
+    });
   });
 
   it("a retry after no answer re-sends the same request and key; a new reason is a new decision (m2)", async () => {

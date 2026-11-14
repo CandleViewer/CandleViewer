@@ -39,6 +39,8 @@ export interface GatewayOptions {
    * consumer's frame age, and the status bar's latency band, can be held (100-249 ms: "slow"). `setFrameAge` moves it.
    */
   readonly ageMs?: number;
+  /** When true, sends an empty snapshot on positions sub (E29-S07 #1028). Default false. */
+  readonly snapPositionsOnSub?: boolean;
   /**
    * The caller's granted accounts (6.2): an account-scoped private topic's `sub` is narrowed to them, the kept list in
    * `sub_ok.effective`, and one naming none of them is refused `account_scope_denied`. Default: whatever a `sub` names
@@ -332,6 +334,10 @@ export async function startWsHarness(
         send(c, { t: "sub_ok", id, ts: now(), p: { results } });
         for (const ch of topics.filter((t) => t.startsWith("ticker.")))
           harness.sendTicker(ch.slice("ticker.".length));
+        // 6.2.3: the private `positions` topic answers its `sub` with a snapshot, which usually
+        // beats a REST read started at the same time (E29-S07's reassurance retry, #1028)
+        if (gateway.snapPositionsOnSub && topics.includes("positions"))
+          data(c, "snap", "positions", { positions: [] }, 1);
         return;
       }
       case "resync": {
