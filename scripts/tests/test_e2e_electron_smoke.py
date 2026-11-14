@@ -19,6 +19,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 SUITE = "pnpm run e2e --retries=1"
 RUNNER = "node tools/ci/run-allowed-postinstall.mjs"
+#: #5955: a job that launches Electron fetches the binary through the retry wrapper.
+RETRIED = f"python3 tools/ci/registry_retry.py --registry github --attempts 2 -- {RUNNER}"
 WORKFLOWS = ROOT / ".github" / "workflows"
 Steps = list[dict[str, Any]]
 
@@ -56,7 +58,7 @@ def test_e2e_electron_fetches_the_electron_binary_right_after_its_install() -> N
     steps = _steps()
     runs = [str(step.get("run", "")) for step in steps]
     install = runs.index("pnpm install --frozen-lockfile")
-    assert runs.index(RUNNER) == install + 1
+    assert runs.index(RETRIED) == install + 1
     assert "working-directory" not in steps[install + 1]
 
 
@@ -72,9 +74,11 @@ def test_every_job_that_launches_electron_runs_the_allowlist_runner_after_its_in
                 continue
             launching.append((workflow.name, name))
             # #5113: an install may run through the registry retry wrapper (CI-INFRA-002/003).
-            bare = [re.sub(r"^python3 tools/ci/registry_retry\.py .*? -- ", "", run) for run in runs]
+            bare = [
+                re.sub(r"^python3 tools/ci/registry_retry\.py .*? -- ", "", run) for run in runs
+            ]
             installs = [i for i, run in enumerate(bare) if run.startswith("pnpm install")]
-            fetches = [i for i, run in enumerate(runs) if run == RUNNER]
+            fetches = [i for i, run in enumerate(runs) if run == RETRIED]
             where = f"{workflow.name} {name}"
             assert installs and fetches, f"{where}: no pnpm install or no allowlist runner step"
             assert max(installs) < min(fetches) and max(fetches) < min(launches), where
@@ -83,3 +87,40 @@ def test_every_job_that_launches_electron_runs_the_allowlist_runner_after_its_in
         ("_job-js.yml", "build"),
         ("perf-engine-matrix.yml", "electron"),
     ]
+
+
+def test_only_jobs_that_launch_electron_download_it_and_those_retry_the_download() -> None:
+    """#5955: every runner step skips the Electron binary unless its job launches Electron, and
+    a launching job wraps the runner in the GitHub-releases retry."""
+    seen = 0
+    for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        doc = yaml.safe_load(workflow.read_text(encoding="utf-8"))
+        for name, job in (doc.get("jobs") or {}).items():
+            steps = job.get("steps") or []
+            # Heuristic: a job launches Electron iff a step runs it under xvfb-run. A future
+            # launching job without xvfb-run would be classed non-Electron and fail this guard.
+            launches = any("xvfb-run" in str(step.get("run", "")) for step in steps)
+            for step in steps:
+                run = str(step.get("run", ""))
+                if "run-allowed-postinstall.mjs" not in run:
+                    continue
+                seen += 1
+                skip = (step.get("env") or {}).get("ELECTRON_SKIP_BINARY_DOWNLOAD")
+                where = f"{workflow.name} {name}"
+                if launches:
+                    assert skip is None and run == RETRIED, where
+                else:
+                    assert skip == "1" and run == RUNNER, where
+    assert seen >= 9
+
+
+def test_runbook_says_two_attempts_and_names_the_allowlist_refusal_case() -> None:
+    text = (
+        Path(__file__)
+        .resolve()
+        .parents[2]
+        .joinpath("docs/ci-runbook.md")
+        .read_text(encoding="utf-8")
+    )
+    assert "Two attempts: a second consecutive failure is reported as CI-INFRA-002" in text
+    assert "`run-allowed-postinstall:` refusal line" in text

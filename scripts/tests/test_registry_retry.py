@@ -120,6 +120,25 @@ def test_retry_every_attempt_times_out_fails_naming_registry() -> None:
     assert seen == [120.0] * 3 and clock.waits == [10.0, 30.0]
 
 
+def test_retry_names_github_releases_in_both_failure_messages() -> None:
+    runner, _ = scripted([rr.TIMED_OUT, 1])
+    err = io.StringIO()
+    assert (
+        rr.retry(
+            "github",
+            ["node", "x"],
+            rr.Policy(attempts=2, timeout=5.0, backoff=(0.0,)),
+            runner=runner,
+            sleep=FakeClock().sleep,
+            err=err,
+        )
+        == 1
+    )
+    out = err.getvalue()
+    assert "CI-INFRA-003: GitHub releases (github.com): attempt 1" in out
+    assert "CI-INFRA-002: install from GitHub releases (github.com) failed after 2 attempts" in out
+
+
 def test_retry_last_backoff_repeats_and_reports_exit_status() -> None:
     runner, _ = scripted([2] * 4)
     clock, err = FakeClock(), io.StringIO()
