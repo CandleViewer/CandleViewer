@@ -264,13 +264,14 @@ _DERIV = {
     "liq_mode": ["bars", "heatmap"],  # 6612964585 Q1, with the next two
     "liq_min_notional_usd": "decimal",
     "zones_enabled": None,
+    "liq_by_price": None,  # #782 (24 §19.123); the recorded layer's own leaf
 }
 _NOTIONAL_PATTERN = r"^((0|[1-9][0-9]{0,8})(\.[0-9]{1,2})?|1000000000(\.0{1,2})?)$"
 
 
 def test_settings_gain_the_deriv_group() -> None:
     """G1: eight of D02 section 10's nine keys (6618708569, 6612480577, 6612964585 Q1), one level
-    deep, closed; `basis_annualised` is the one dropped."""
+    deep, closed; `basis_annualised` is the one dropped. #782 adds `liq_by_price` (24 §19.123)."""
     group = _SCHEMAS["Settings"]["properties"]["deriv"]
     assert group["additionalProperties"] is False
     assert (
