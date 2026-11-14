@@ -22,7 +22,7 @@ from candleviewer.api.step_up import request_elevation
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.auth.step_up import ACTION_CLASSES, NO_GRACE_ACTION_CLASSES
-from tests.unit.api.test_step_up_router import _H, _build, _code, _modal_body
+from tests.unit.api.test_step_up_router import _H, _build, _code, _modal_body, _rotated
 
 
 class _Owner:
@@ -90,7 +90,7 @@ async def test_one_instruments_step_up_admits_the_refresh_inside_its_window() ->
     assert ok.status_code == 200 and ok.json()["action_class"] == "instruments"
     assert ok.json()["single_use"] is False  # a grace class
     clock.now += timedelta(minutes=3)
-    r = c.post("/instruments/refresh", headers=_H)
+    r = c.post("/instruments/refresh", headers=_rotated(ok))
     assert r.status_code == 202 and jobs.get(r.json()["job_id"]) is not None
     assert audit.actions[0] == "instruments.refresh.requested"
     assert "auth.step_up_granted" in em.actions()
