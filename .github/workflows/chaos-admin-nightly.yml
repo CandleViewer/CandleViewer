@@ -1,0 +1,97 @@
+name: chaos-admin-nightly
+
+# E42-Q03 (#1216): the admin chaos scenarios' server halves (services/api/tests/chaos/admin,
+# catalogue in its SCENARIOS.md), every night on main and on demand. The scenarios carry `chaos`
+# and `harness`: they need Docker (a loopback Postgres 16 testcontainer per module), so the PR
+# lanes deselect them and this run is where they execute; the suite's pure helper tests run in the
+# PR `py` lane as well. Faults are injected in process (tests/chaos/admin/_relay.py), never by
+# `tc netem` or a proxy container. After the suite, promtool tests the alert inputs the scenarios
+# wrote (the counter, gauges and age they scraped) against the real rule files: the pages
+# AuditChainVerificationFailed and AuditBreakHaltEngaged and the BackupLastSuccessStale ticket.
+# Not a required check (C-9.1 is unchanged), but a red night blocks the next release (C-9.2,
+# C-13.6). One pytest call; its own `-m` replaces addopts', so `not flaky` repeats the C-9.3
+# quarantine. No retries. `--no-cov`: addopts' floor is the lanes'. `-rA` puts what each scenario
+# measured in the job log. A red night comments on, or opens, the `chaos-admin` signal's issue
+# (_nightly-issue.yml); it pages no one, as CI has no path into Alertmanager. No workflow-level
+# concurrency group (#3449). Offline but for the image pulls: loopback only, no exchange egress
+# (C-13.5).
+on:
+  schedule:
+    - cron: "47 3 * * *"
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  chaos-admin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45 # the step caps (3 + 3 + 5 + 20 + 25 + 3 + 3) less overlap, plus set-up
+    env:
+      CV_ENV: test
+      CV_CI_ALLOWED_HOSTS: "" # SR-140: loopback only (the network guard reads this)
+      PYTHONIOENCODING: utf-8
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 3
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+      - name: Install uv (cache keyed on uv.lock)
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        timeout-minutes: 3
+        with:
+          version: "0.9.x"
+          enable-cache: true
+          cache-dependency-glob: "services/api/uv.lock"
+          python-version: "3.12"
+      - name: uv sync --frozen (fails if pyproject.toml drifted from uv.lock)
+        timeout-minutes: 5
+        run: uv sync --frozen --all-groups
+      - name: Pre-pull postgres:16-alpine (CI-INFRA-001; testcontainers never pulls mid-test)
+        timeout-minutes: 20
+        working-directory: .
+        run: tools/ci/prepull_images.sh postgres
+      - name: Admin chaos suite (the scenarios and the helper tests)
+        # A hang ends as a failed step, which the report job files; the job's own limit would
+        # cancel the job, which it does not file.
+        timeout-minutes: 25
+        env:
+          CV_ADMIN_CHAOS_ALERTS_DIR: ${{ runner.temp }}/chaos-admin-alerts
+        run: |
+          uv run pytest tests/chaos/admin -m "chaos and not flaky" --no-cov -p no:randomly \
+            -p no:cacheprovider -rA --durations=20 --junitxml=chaos-admin-junit.xml
+      - name: promtool over the alert inputs the scenarios wrote
+        # Digest as _job-py.yml's promtool step (which mirrors infra/compose/docker-compose.yml).
+        timeout-minutes: 3
+        working-directory: .
+        env:
+          ALERTS_DIR: ${{ runner.temp }}/chaos-admin-alerts
+        run: |
+          P=prom/prometheus:v2.54.1@sha256:f6639335d34a77d9d9db382b92eeb7fc00934be8eae81dbc03b31cfe90411a94
+          suites=$(cd "$ALERTS_DIR" && printf "/t/%s " *.test.yml)
+          case "$suites" in *"*"*) echo "no alert input was written: scenarios 4 and 5 did not run" >&2; exit 1 ;; esac
+          docker run --rm --network none --entrypoint promtool -v "$PWD/infra/prometheus:/p:ro" \
+            -v "$ALERTS_DIR:/t:ro" "$P" test rules $suites
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        timeout-minutes: 3
+        with:
+          name: chaos-admin-junit
+          path: |
+            services/api/chaos-admin-junit.xml
+            ${{ runner.temp }}/chaos-admin-alerts/
+          if-no-files-found: warn
+          retention-days: 14
+
+  chaos-admin-issue:
+    needs: chaos-admin
+    if: ${{ always() && needs.chaos-admin.result == 'failure' }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_nightly-issue.yml
+    with:
+      signal: chaos-admin
+      title-prefix: "chaos: admin nightly failed"
+      labels: qa,area/backend-platform,priority/p1
+      body: "chaos-admin-nightly (E42-Q03, #1216: the admin chaos scenarios' server halves, C-13.6) failed, and a red night blocks the next release (C-9.2). Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Artifact: chaos-admin-junit (the JUnit report and the promtool inputs). Catalogue: services/api/tests/chaos/admin/SCENARIOS.md. Quarantine a flaky test per C-9.3; never re-run until green."

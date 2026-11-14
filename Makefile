@@ -136,3 +136,10 @@ bench-journal:
 # summary, exits 1 if goldens would change) unless WRITE=1 CV_GOLDEN_REASON="why" (WRITE=1 only). Refused under CI.
 golden-update:
 	cd services/api && uv run python -m bench.bar_determinism.regen_goldens --suite all $(if $(filter 1,$(WRITE)),--write,)
+
+# E42-Q03 (#1216): the admin chaos scenarios' server halves (services/api/tests/chaos/admin,
+# SCENARIOS.md). Needs Docker (a loopback Postgres testcontainer per module); the nightly is
+# chaos-admin-nightly.yml, which also runs promtool over the alert inputs the scenarios write.
+.PHONY: admin-chaos
+admin-chaos:
+	cd services/api && uv run pytest tests/chaos/admin -m "chaos and not flaky" --no-cov -rA -p no:randomly
