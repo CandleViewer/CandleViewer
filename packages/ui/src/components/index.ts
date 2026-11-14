@@ -512,3 +512,10 @@ export type {
 
 export { FileDrop, formatFileSize } from "./FileDrop.js";
 export type { FileDropAction, FileDropPreview, FileDropProps } from "./FileDrop.js";
+
+export { INDICATOR_SUFFIX_ORDER, IndicatorChips, pickIndicatorSuffix } from "./IndicatorChips.js";
+export type {
+  IndicatorChipsProps,
+  IndicatorSuffix,
+  IndicatorSuffixKind,
+} from "./IndicatorChips.js";
