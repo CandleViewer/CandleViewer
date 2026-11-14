@@ -283,9 +283,11 @@ describe("StepUpDialog (SCR-006, E09-D06)", () => {
   });
 
   it("its scrim stacks above the dialog that hosts it, whose later footer would else paint over it (A-5347-01)", () => {
-    // A host's typed confirm renders SCR-006 inline among its notes, ahead of its own footer in the DOM: the fixed
-    // scrim's own stacking level is what lets a pointer reach the gate's Confirm rather than the host's (#2725).
-    render(
+    // A host's typed confirm renders SCR-006 among its notes, ahead of its own footer in the React tree. The scrim
+    // goes to a layer of its own at the end of `body` (#5561), after the host's footer in the document: with no
+    // z-index on either (CMP-043 stacks by document order), it paints, and takes the pointer, over that footer, so a
+    // pointer reaches the gate's Confirm rather than the host's (#2725).
+    const view = render(
       <div style={{ position: "relative" }}>
         <StepUpDialog {...base} />
         <footer style={{ position: "relative" }}>
@@ -294,7 +296,11 @@ describe("StepUpDialog (SCR-006, E09-D06)", () => {
       </div>,
     );
     const scrim = screen.getByRole("alertdialog").parentElement as HTMLElement;
+    const footer = screen.getByRole("button", { name: "Keep ETHUSDT data forever" });
     expect(getComputedStyle(scrim).position).toBe("fixed");
-    expect(getComputedStyle(scrim).zIndex).toBe("1");
+    expect(view.container).not.toContainElement(scrim);
+    expect(footer.compareDocumentPosition(scrim) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(scrim.parentElement?.parentElement).toBe(document.body);
+    expect(document.body.lastElementChild).toBe(scrim.parentElement);
   });
 });

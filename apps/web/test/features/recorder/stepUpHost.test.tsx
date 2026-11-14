@@ -78,7 +78,7 @@ function Page({ readBack = () => undefined }: { readonly readBack?: () => unknow
         Open
       </button>
       {open ? (
-        <div role="dialog" aria-label="Keep BTCUSDT data forever?">
+        <div role="dialog" aria-modal="true" aria-label="Keep BTCUSDT data forever?">
           <button type="button" onClick={() => void send()}>
             Send
           </button>
@@ -98,6 +98,20 @@ const dialog = (): HTMLElement | null =>
 const challenge = (): HTMLElement | null =>
   screen.queryByRole("alertdialog", { name: "Confirm with two-factor" });
 const click = (name: string): void => void fireEvent.click(screen.getByRole("button", { name }));
+/**
+ * The open dialog's SCR-006 is on top of it (#5561): its layer is the last in `body`, after the dialog, so it
+ * paints and takes the pointer over it; it is live with the focus on its Password, and the dialog under it is
+ * inert and still open.
+ */
+function expectHeldOver(host: HTMLElement | null, gate: HTMLElement | null): void {
+  if (host === null || gate === null) throw new Error("the dialog and its SCR-006 are both up");
+  const layers = document.querySelectorAll("body > [data-cv-layer]");
+  expect(layers[layers.length - 1]).toContainElement(gate);
+  expect(host.compareDocumentPosition(gate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(gate.closest("[inert]")).toBeNull();
+  expect(host).toHaveAttribute("inert");
+  expect(screen.getByLabelText("Password")).toHaveFocus();
+}
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"], now: NOW });
@@ -150,7 +164,7 @@ describe("the step-up host's guard (S-5353-01; H22)", () => {
     expect(said).toEqual(["Not sent"]);
   });
 
-  it("a challenge for the open dialog's write is held there, as before: SCR-006 opens inside it", async () => {
+  it("a challenge for the open dialog's write is held there, as before: SCR-006 opens over it", async () => {
     const release = deferred();
     render(<Page />);
     click("Open");
@@ -158,8 +172,7 @@ describe("the step-up host's guard (S-5353-01; H22)", () => {
     await settle();
     release(json(403, stepUpRequired));
     await settle();
-    expect(challenge()).not.toBeNull();
-    expect(dialog()?.contains(challenge())).toBe(true);
+    expectHeldOver(dialog(), challenge());
     expect(said).toEqual([]);
   });
 
@@ -179,8 +192,7 @@ describe("the step-up host's guard (S-5353-01; H22)", () => {
     expect(said).toEqual(["Not sent"]);
     release(1, json(403, stepUpRequired));
     await settle();
-    expect(challenge()).not.toBeNull();
-    expect(dialog()?.contains(challenge())).toBe(true);
+    expectHeldOver(dialog(), challenge());
     expect(said).toEqual(["Not sent"]);
     expect(keys()).toHaveLength(2);
   });
