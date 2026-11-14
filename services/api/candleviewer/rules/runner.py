@@ -160,5 +160,21 @@ class PushedMetricSource:
     def push(self, ref: MetricRef, value: Value, ts_ms: int, cadence_ms: int = 0) -> None:
         self._values[metric_key(ref)] = MetricValue(value, ts_ms, cadence_ms)
 
+    def push_key(self, key: str, value: Value, ts_ms: int, cadence_ms: int) -> None:
+        """`push` for a key the caller computed once as ``metric_key(ref)`` (the producers'
+        sink, `rules/producers.py`): one dict write and one `MetricValue`, no key per push."""
+        self._values[key] = MetricValue(value, ts_ms, cadence_ms)
+
+    def mark(self, ref: MetricRef, reason: str) -> None:
+        """Mark `ref` unavailable for `reason` (e.g. ``source_degraded``, the alert evaluator's
+        loud disarm, `alerts/evaluator.SOURCE_LOST_REASONS`); the next push overwrites it. Stamped
+        at 0, so it reads stale at once: a rule never evaluates its None (``none_of`` would fire,
+        E7), and the alert evaluator reads the reason before staleness."""
+        self._values[metric_key(ref)] = MetricValue(None, 0, 0, reason)
+
+    def discard(self, key: str) -> None:
+        """Forget a key no rule demands any more, so the source stays bounded by the demand."""
+        self._values.pop(key, None)
+
     def read(self, ref: MetricRef) -> MetricValue:
         return self._values.get(metric_key(ref)) or MetricValue(None, 0, 0, "warmup")
