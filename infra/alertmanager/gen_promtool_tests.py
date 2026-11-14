@@ -290,6 +290,10 @@ _FIRST_ROW = "_x5 1+0x700"
 _CROSSINGS = 'oms_closed_pnl_fetch_seconds_count{env="live",result="other_account"}'
 _FAILED_READS = 'oms_closed_pnl_fetch_seconds_count{env="live",result="failed"}'
 
+# #981 (E29-S06): the closed-PnL divergence records, one every 10 minutes from 6 min (sustained),
+# one alone at 6 min, and the sustained run ending at 40 min.
+_DIVERGED = 'oms_closed_pnl_divergence_total{env="live"}'
+_STEADY, _LONE, _ENDED = "0+0x5 0+0.1x120", "0+0x5 1+0x120", "0+0x5 0+0.1x34 3.5+0x80"
 
 def _closes(fast: int, under_5: int, slow: int) -> dict[str, str]:
     """#3415: revocations at 6 min whose closes were initiated in at most 2.5 s (`fast`), in 2.5 to
@@ -448,6 +452,15 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("6m", True, {_CROSSINGS: _FIRST_ROW}),
         ("6m", False, {_FAILED_READS: _RISE}),
         ("11h", False, {_CROSSINGS: _FLAT}),
+    ),
+    # #981 (E29-S06): a sustained rate fires once it has held 30 minutes and resolves when it
+    # ends; a lone record, an old count and the run's first 30 minutes are silent.
+    "OmsClosedPnlDivergence": (
+        ("45m", True, {_DIVERGED: _STEADY}),
+        ("30m", False, {_DIVERGED: _STEADY}),
+        ("45m", False, {_DIVERGED: _LONE}),
+        ("45m", False, {_DIVERGED: _FLAT}),
+        ("70m", False, {_DIVERGED: _ENDED}),
     ),
     # #837: the same; resolved between two daily counts (20 h), fired again by the next (24 h 7 m).
     "KeyRotationOverdue": (
