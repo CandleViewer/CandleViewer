@@ -55,7 +55,7 @@ describe("ProgramCache", () => {
     expect(cache.stats.compiles).toBe(0);
     const a = cache.use(PROGRAM.sdfText);
     expect(cache.use(PROGRAM.sdfText)).toBe(a);
-    expect(Object.keys(a.uniforms)).toEqual(["u_viewport", "u_atlas", "u_color"]);
+    expect(Object.keys(a.uniforms)).toEqual(["u_viewport", "u_atlas", "u_text"]);
     expect(cache.stats).toEqual({ compiles: 1, compileMs: 2 });
     expect(live(gl, "Shader")).toBe(0); // shaders are deleted once linked
     expect(() => cache.use(99)).toThrow(ProgramCompileError);

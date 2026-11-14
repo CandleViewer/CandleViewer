@@ -26,8 +26,8 @@ import {
   sameCursorWindow,
   sameView,
 } from "../a11y/window.js";
-import { AxisModel, SAY, UPDATE } from "../axes/axis-model.js";
-import { GRID_NODE_ID } from "../axes/grid.js";
+import { AXIS_TEXT_ID, AxisModel, LABEL_CLASS, SAY, UPDATE } from "../axes/axis-model.js";
+import { GRID_NODE_ID, parseHex } from "../axes/grid.js";
 import type { RenderBackend } from "../gl/backend.js";
 import { ContextLoss, type LossDetails } from "../gl/context-loss.js";
 import { type OpenedBackend, openBackend } from "../gl/open-backend.js";
@@ -54,10 +54,13 @@ import type { BatchUniforms } from "../gl/submit.js";
 import { type BarBatch, BarStore } from "../model/BarStore.js";
 import { ModelRejection, type MutationRange, RangeSlot } from "../model/counters.js";
 import { plotWidthOf } from "../interaction/wheel.js";
+import { PROGRAM } from "../scene/instance-layout.js";
 import * as scene from "../scene/index.js";
 import { performanceStageMarker, type PerformanceTimeline } from "../scene/stage-marks.js";
 import { AtlasService, type AtlasCounters, type AtlasDetails } from "../text/atlas.js";
+import { AtlasMetrics } from "../text/glyph-runs.js";
 import type { ChartFont, TextPlatform } from "../text/platform.js";
+import { TextBatch } from "../text/text-batch.js";
 import {
   AutoScaler,
   ChartViewport,
@@ -158,6 +161,8 @@ export interface RenderRuntime {
   dataRejected(id: ChartId): Readonly<Record<string, number>> | undefined;
   /** Internal (E12-S06, BQ-9): a chart's scene graph, read by tests (the hidden grid layer). */
   graph(id: ChartId): scene.SceneGraph | undefined;
+  /** Internal (E11-S11 PR B, BQ-272): a chart's glyphs in its text batches, and replacements. */
+  textCounters(id: ChartId): { glyphs: number; replacedGlyphs: number } | undefined;
   /** Internal (E12-S07): the series-kind metrics, per chart. */
   seriesMetrics(id: ChartId): Readonly<SeriesMetrics> | undefined;
 }
@@ -188,6 +193,15 @@ export interface SeriesEntry {
   /** A bar pick's `objectId` (`series.<id>`), made once. */
   readonly pickId: string;
 }
+
+/** The cell-text and drawing-text batches' node ids (BQ-268; the axis batch is the axes'). */
+export const CELL_TEXT_ID = "main/cell-text";
+export const DRAWING_TEXT_ID = "main/drawing-text";
+/** E11-D05's requested outline slot (G-83); until it lands, the interim constants below. */
+export const OUTLINE_TOKEN = "color.footprint.text.outline";
+/** `palette.neutral.0` at 80 % on a dark chart, white at 80 % on a light one (E06-D01 §5). */
+export const INTERIM_OUTLINE = { dark: "#0B0E11CC", light: "#FFFFFFCC" } as const;
+export const OUTLINE_PX = 1;
 
 /** `engine.resize.*` (BQ-153): backing-store reallocations and DPR changes, per chart. */
 export interface ResizeCounters {
@@ -277,6 +291,13 @@ interface Instance {
   dataState: "empty" | "ready" | null;
   readonly barHit: BarHit;
   readonly kinds: SeriesMetrics;
+  /** Cell text (outline program) and drawing text: the E18 / E14 producers write them (BQ-268). */
+  readonly cellText: TextBatch;
+  readonly drawingText: TextBatch;
+  /** `no-font` was told for this chart (its first text with no `fonts` at all, BQ-259). */
+  noFontSaid: boolean;
+  /** The theme the text uniforms were last written for. */
+  textTheme: ThemeLut | null;
 }
 
 /** The ObjectIndex's rebuild after the main series is removed (a `replace` of nothing). */
@@ -323,6 +344,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
   let report: CapabilityReport | null = null;
   /** One CPU atlas per runtime, uploaded into each chart's context (BQ-277). */
   let atlas: AtlasService | null = null;
+  /** The ready atlas's runs and metrics, shared by every chart (BQ-271, BQ-277). */
+  let metrics: AtlasMetrics | null = null;
+  /** Scratch for the background's RGBA in `textUniforms` (no per-call allocation). */
+  const bg = new Float32Array(4);
+  const textRange = new RangeSlot();
 
   const fail = (id: ChartId | null, message: string): void => {
     deps.post({ t: "error", id, code: ENGINE_DECODE_ERROR, message, recoverable: true });
@@ -347,6 +373,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     const graph = new scene.SceneGraph();
     graph.addPane("main");
     graph.addNode("main", "background", axes.grid);
+    graph.addNode("main", "foreground", axes.text);
     const layout = new scene.LayoutEngine(graph);
     layout.addPane("main");
     const builder = new scene.BatchBuilder(graph, {
@@ -389,7 +416,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       now: () => deps.now(),
       setTimer: (cb, ms) => deps.setTimer(cb, ms),
       // A lost context takes the rows as its CPU copy and uploads them once restored (BQ-266).
-      ready: (img) => charts.forEach((inst) => inst.gpu.backend?.uploadAtlas(img)),
+      ready: (img) => {
+        // The slot order and spread are the table the service built the image with (deps.config).
+        metrics = new AtlasMetrics(img, atlas?.cfg);
+        charts.forEach(applyAtlas);
+      },
       emit: (code, message, recoverable, details) =>
         deps.post({
           t: "error",
@@ -401,6 +432,41 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         }),
     });
     void atlas.start(fonts);
+  }
+
+  /** The batches of a chart's text: the axes', the cells' and the drawings'. */
+  const texts = (inst: Instance): TextBatch[] => [inst.axes.text, inst.cellText, inst.drawingText];
+
+  /** A WebGL2 chart takes the ready atlas: the texture, the glyph mode, the atlas metrics. */
+  function applyAtlas(inst: Instance): void {
+    const backend = inst.gpu.backend;
+    const img = atlas?.image;
+    if (backend === undefined || backend.drawsIn2d || metrics === null || !img) return;
+    // A lost context takes the rows as its CPU copy and uploads them once restored (BQ-266).
+    backend.uploadAtlas(img);
+    for (const t of texts(inst)) {
+      t.mode = "glyphs";
+      t.metrics = metrics;
+    }
+    inst.textTheme = null; // the text uniforms are written with the next frame
+    inst.axes.setMeasure(metrics.measureFor(LABEL_CLASS)); // one source for gutter and draw
+    touch(inst);
+  }
+
+  /** The text programs' frame uniforms, once per theme, DPR or atlas (BQ-267, G-83). */
+  function textUniforms(inst: Instance, backend: RenderBackend): void {
+    if (inst.textTheme === inst.theme || metrics === null) return;
+    inst.textTheme = inst.theme; // a DPR change resets it too (the outline is 1 px x DPR)
+    const u = backend.textUniforms;
+    u[0] = OUTLINE_PX * inst.dpr;
+    u[1] = metrics.cfg.families[0]?.spread ?? 1;
+    u[2] = metrics.image.width;
+    u[3] = metrics.image.height;
+    // The background's luminance picks the interim outline; it is read into scratch, not u[4..].
+    parseHex(inst.theme[BACKGROUND_TOKEN], bg, 0);
+    const light = 0.2126 * (bg[0] ?? 0) + 0.7152 * (bg[1] ?? 0) + 0.0722 * (bg[2] ?? 0) > 0.5;
+    const interim = light ? INTERIM_OUTLINE.light : INTERIM_OUTLINE.dark;
+    parseHex(inst.theme[OUTLINE_TOKEN] ?? interim, u, 4);
   }
 
   /** Re-requests a frame a park held back, or wakes the scheduler. */
@@ -432,10 +498,17 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
           : atlas?.failure;
       if (failure) post(ENGINE_ATLAS_GENERATION_FAILED, failure.message, false, failure.details);
     }
-    if (atlas?.image) backend.uploadAtlas(atlas.image);
     backend.setBatchUniforms((b) => inst.blocks.get(b.nodeId) ?? null); // E12-S06
     for (const c of inst.candles) attachCandle(backend, c);
     backend.attach(GRID_NODE_ID, inst.axes.grid); // the grid is its own instance ring
+    for (const t of texts(inst)) backend.attach(t.id, t);
+    if (backend.drawsIn2d) {
+      // C-104: axis and drawing labels paint with fillText; cell text stays in the reduced list.
+      inst.axes.text.mode = "labels";
+      inst.drawingText.mode = "labels";
+      inst.axes.invalidate();
+      touch(inst);
+    } else applyAtlas(inst);
     if (degraded !== null) {
       const { reason, message, reducedCapabilities } = degraded;
       post(ENGINE_NO_WEBGL2, message, true, { reducedCapabilities, reason }); // BQ-90
@@ -522,6 +595,10 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     if ((r & UPDATE.grid) !== 0) {
       inst.graph.markData(GRID_NODE_ID);
       inst.builder.patch(GRID_NODE_ID, gridRange.set("replace", 0, axes.grid.count, 0));
+      const t = axes.text;
+      inst.graph.markData(AXIS_TEXT_ID);
+      const n = t.mode === "labels" ? t.labels : t.count;
+      inst.builder.patch(AXIS_TEXT_ID, textRange.set("replace", 0, n, 0));
     }
     if ((r & UPDATE.labels) !== 0) inst.axesDirty = true;
   }
@@ -594,6 +671,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
       inst.resizes.lastDpr = dpr;
       inst.graph.markResize();
       inst.graph.markTheme();
+      inst.textTheme = null; // the outline width is 1 px x DPR: rewritten with the next frame
       // A throwing listener fails its own chart, recoverably, as a frame does; it never stops
       // the other listeners or the resize (E11-T02).
       for (const cb of inst.dprListeners) {
@@ -965,6 +1043,7 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
         if (charts.size === 0) {
           atlas?.dispose(); // the faces leave the font set; a build in flight stops
           atlas = null;
+          metrics = null;
         }
         return;
       default:
@@ -1071,7 +1150,13 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
           pending: null,
           pendingAt: 0,
         },
+        cellText: new TextBatch(CELL_TEXT_ID, PROGRAM.sdfTextOutline),
+        drawingText: new TextBatch(DRAWING_TEXT_ID),
+        noFontSaid: false,
+        textTheme: null,
       };
+      scene.graph.addNode("main", "series", inst.cellText);
+      scene.graph.addNode("main", "drawings", inst.drawingText);
       // BQ-53: the DataModel is kept; its rings now patch the fresh scene's batches.
       for (const [sid, s] of inst.series) {
         s.ring.sink = inst.builder;
@@ -1174,6 +1259,22 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
           plot.plotTop,
           plot.plotTop + plot.plotHeight,
         );
+      }
+      textUniforms(inst, backend);
+      // BQ-259 (PR A deviation 1): a WebGL2 chart given no fonts at all tells, once, at its
+      // first text; that text is skipped. With fonts, text waits for the atlas (and F-03).
+      if (
+        !in2d &&
+        !inst.noFontSaid &&
+        inst.fonts === undefined &&
+        inst.axes.text.mode === "off" && // another chart's fonts may have given this one the atlas
+        inst.axes.priceLabels.length > 0
+      ) {
+        inst.noFontSaid = true;
+        const message = "No chart fonts were given; chart text is not drawn";
+        const details = { atlasReason: "no-font" as const };
+        const code = ENGINE_ATLAS_GENERATION_FAILED;
+        deps.post({ t: "error", id: inst.id, code, message, recoverable: false, details });
       }
       const { drawList, drawCount } = inst.builder;
       const f = backend.submit(drawList, drawCount, width, height, backing.width, backing.height);
@@ -1327,5 +1428,11 @@ export function createRenderRuntime(deps: RuntimeDeps): RenderRuntime {
     dataRejected: (id) => charts.get(id)?.dataRejected,
     seriesMetrics: (id) => charts.get(id)?.kinds,
     graph: (id) => charts.get(id)?.graph,
+    textCounters(id) {
+      const inst = charts.get(id);
+      if (inst === undefined) return undefined;
+      const glyphs = texts(inst).reduce((n, t) => n + t.count, 0);
+      return { glyphs, replacedGlyphs: metrics?.counters.replacedGlyphs ?? 0 };
+    },
   };
 }
