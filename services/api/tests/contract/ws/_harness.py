@@ -824,3 +824,17 @@ def all_private(c: Client, *fams: str) -> None:
     res = c.sub(*[{"ch": f, "opts": {"exchange_account_ids": [str(ACC_A)]}} for f in fams])
     assert all(r["ok"] for r in res["p"]["results"]), res
     c.drain(len(fams))
+
+
+BARRIER: Final = "ticker.BTCUSDT"  # the topic `flushed` reads its barrier through
+
+
+def flushed(c: Client) -> None:
+    """Returns once every frame queued for `c` so far has been received, read through the snapshot
+    of a topic it subscribes to now: the normal lane is FIFO and the new snapshot is its last frame
+    (the priority lane's `pong` would overtake a normal-lane frame)."""
+    c.send({"t": "sub", "id": "barrier", "p": {"topics": [{"ch": BARRIER}]}})
+    while (frame := c.recv())["t"] != "snap" or frame["ch"] != BARRIER:
+        pass
+    c.send({"t": "unsub", "id": "barrier", "p": {"topics": [BARRIER]}})
+    c.next_of("unsub_ok")
