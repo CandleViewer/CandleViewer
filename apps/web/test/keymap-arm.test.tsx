@@ -180,6 +180,10 @@ describe("the wired host: E30 injects the session's arm with setArmPort", () => 
     window.localStorage.clear();
     vi.resetModules();
     m = await load();
+    // E29-S07 (#1028): `App` installs the new-exposure guard; these tests are about the arm, so an
+    // open guard stands in (its own tests are `features/reconciliation/newExposure.test.ts`) and
+    // the cold import stays the keymap's alone
+    m.setExposureGuard({ allows: () => true, refusal: () => null });
   });
   const toast = (): HTMLElement => screen.getByRole("region", { name: "Notifications" });
   /** Ctrl+Enter from the focused ticket; false when the host took the key (`preventDefault`). */
