@@ -120,6 +120,24 @@ async def test_target_round_trips_and_each_seal_is_fresh() -> None:
     assert one[:4] == webhook.MAGIC and int.from_bytes(one[4:8], "big") == 1
 
 
+@pytest.mark.parametrize("field", ["url", "secret"])
+async def test_a_seal_wraps_under_the_current_kek_while_the_previous_is_held(field: str) -> None:
+    """Amendment 9: the current KEK is the first held; a seal during a rotation window (new and
+    old both held) carries the new version, and opens with the new KEK alone."""
+    old, new = kek(KEK_V1, 1), kek(KEK_V2, 2)
+    sealer = webhook.sealer(_Keks(new, old))
+    blob = await (
+        sealer.seal_target(URL, ALERT) if field == "url" else sealer.seal_secret(SECRET, ALERT)
+    )
+    assert blob[4:8] == new.version.to_bytes(4, "big") == (2).to_bytes(4, "big")
+    only_new = _Keks(new)
+    if field == "url":
+        assert await webhook.opener(only_new).open_target(blob, ALERT) == URL
+    else:
+        sig = await webhook.signer(only_new).sign_delivery(blob, ALERT, 1, 2, DIGEST)
+        assert verify(SECRET, 2, 1, b'{"event":"alert.fired"}', sig)
+
+
 async def test_another_alerts_id_does_not_open_the_blob() -> None:
     sealer, opener, signer = _caps(_Keks(kek()))
     target, secret = await sealer.seal_target(URL, ALERT), await sealer.seal_secret(SECRET, ALERT)
@@ -157,6 +175,36 @@ async def test_a_damaged_blob_is_refused(damage: Callable[[bytes], bytes]) -> No
     sealer, opener, _ = _caps(_Keks(kek()))
     blob = damage(await sealer.seal_target(URL, ALERT))
     assert await _refused(opener.open_target(blob, ALERT)) == "webhook_seal_invalid"
+
+
+#: Blobs of the wrong shape: each is refused by `_wh_blob` before any KEK is resolved.
+MALFORMED: dict[str, Callable[[bytes], Any]] = {
+    "magic": lambda b: b"cvw0" + b[4:],
+    "version0": lambda b: b[:4] + (0).to_bytes(4, "big") + b[8:],
+    "short": lambda b: b[: webhook._WH_MIN_BLOB - 1],
+    "empty": lambda b: b"",
+    "text": lambda b: b.hex(),
+    "view": memoryview,
+    "subclass": lambda b: _Bytes(b),
+}
+
+
+@pytest.mark.parametrize("damage", MALFORMED.values(), ids=list(MALFORMED))
+async def test_a_malformed_blob_is_refused_before_any_kek_is_resolved(
+    damage: Callable[[bytes], Any],
+) -> None:
+    old, new = kek(KEK_V1, 1), kek(KEK_V2, 2)
+    sealer = webhook.sealer(_Keks(old))
+    target, secret = await sealer.seal_target(URL, ALERT), await sealer.seal_secret(SECRET, ALERT)
+    keks = _Keks(new, old)
+    opener, signer = webhook.opener(keks), webhook.signer(keks)
+    assert await _refused(opener.open_target(damage(target), ALERT)) == "webhook_seal_invalid"
+    signing = signer.sign_delivery(damage(secret), ALERT, 1, 1, DIGEST)
+    assert await _refused(signing) == "webhook_seal_invalid"
+    with pytest.raises(WebhookCapabilityRefused) as info:
+        webhook.rewrap(keks, damage(target), ALERT, "url")
+    assert info.value.reason == "webhook_seal_invalid"
+    assert keks.calls == 0  # the shape is read before `keks()`, so no KEK was resolved
 
 
 async def test_a_bytearray_copy_of_a_blob_opens() -> None:
