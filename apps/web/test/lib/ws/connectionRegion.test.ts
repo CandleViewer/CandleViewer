@@ -26,7 +26,7 @@ const down = (cause: OfflineCause, closeCode?: number, lost = LOST): EngineEvent
 /** Up, then lost at `T0` with data 12 s before; the first attempt is due 4 s later. */
 const dropped = (...more: EngineEvent[]) => up(retry(LOST), ...more);
 const at = (ws: WsState, ms = 0, privateFeedDown = false) =>
-  R.connectionRegion(ws, T0 + ms, { privateFeedDown });
+  R.connectionRegion(ws, T0 + ms, { privateFeedDown, stopsConfirmed: true });
 const ORDERS_OFF = "New orders off; cancel and close remain available, confirmed over the server.";
 const STOPS = "Exchange-side stops still protect open positions; app-managed rules are paused.";
 
@@ -39,6 +39,13 @@ describe("connectionRegion", () => {
     const never = [retry(LOST), down("offline"), down("fatal", 1002), down("fatal", 4403)];
     for (const e of never) expect(at(run(connecting, e), 400_000)).toBeNull();
     expect(R.regionAnnouncement(null, null)).toBeNull();
+  });
+
+  it("a caller that does not judge the stops clause claims none: only `stopsConfirmed: true` keeps it (BQ-7)", () => {
+    const view = R.connectionRegion(dropped(), T0, { privateFeedDown: false });
+    expect(view?.lines.join(" ")).not.toContain("Exchange-side stops");
+    expect(view?.lines.join(" ")).toContain("App-managed rules are paused.");
+    expect(at(dropped())?.lines).toContain(STOPS); // the helper passes `true`
   });
 
   it("B1: the counter, the age and the countdown, verbatim", () => {

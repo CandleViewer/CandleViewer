@@ -332,6 +332,9 @@ export async function startWsHarness(
         send(c, { t: "sub_ok", id, ts: now(), p: { results } });
         for (const ch of topics.filter((t) => t.startsWith("ticker.")))
           harness.sendTicker(ch.slice("ticker.".length));
+        // 6.2.3: the private `positions` topic answers its `sub` with a snapshot, which usually
+        // beats a REST read started at the same time (E29-S07's reassurance retry, #1028)
+        if (topics.includes("positions")) data(c, "snap", "positions", { positions: [] }, 1);
         return;
       }
       case "resync": {
