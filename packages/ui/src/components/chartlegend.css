@@ -1,0 +1,207 @@
+/* CMP-199 ChartLegend: the per-pane overlay legend (E11-D02 D12; E13-D02 §7; E13-D04 §5.1). */
+.cv-chart-legend {
+  /* The 8 x 8 swatch: two thirds of size.icon.sm (12). */
+  --cv-legend-swatch-size: calc(var(--size-icon-sm) * 2 / 3);
+
+  color: var(--color-text-primary);
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+}
+
+.cv-chart-legend__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Rows 24 / 32 per density (size.control.*); a row add fades in at motion.duration.fast (M7), instant reduced. */
+.cv-chart-legend__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  min-height: var(--size-control-height);
+  padding-inline: var(--space-inset-xs);
+  animation: var(--cv-recipe-edge-in);
+}
+
+.cv-chart-legend__row[data-child] {
+  padding-inline-start: var(--size-control-height);
+}
+
+/* The 2 px pane-focus bar (E11-D02 D12), drawn while focus is in the legend. */
+.cv-chart-legend__pane {
+  border-inline-start: calc(var(--border-thick) * 1px) solid transparent;
+}
+
+.cv-chart-legend:focus-within .cv-chart-legend__pane {
+  border-inline-start-color: var(--color-action-primary-default);
+}
+
+.cv-chart-legend__pane-label {
+  font-weight: var(--type-ui-body-strong-font-weight);
+}
+
+.cv-chart-legend__summary,
+.cv-chart-legend__detail,
+.cv-chart-legend__edit-label {
+  color: var(--color-text-secondary);
+}
+
+.cv-chart-legend__detail {
+  flex-basis: 100%;
+  padding-inline-start: var(--space-inset-md);
+}
+
+/* The 8 x 8 shape swatch in the slot hue: the shape is the series kind, so colour is never alone (E13-D04 §3). */
+.cv-chart-legend__swatch {
+  box-sizing: border-box;
+  flex: none;
+  width: var(--cv-legend-swatch-size);
+  height: var(--cv-legend-swatch-size);
+  background: linear-gradient(var(--cv-slot), var(--cv-slot)) center / 100%
+    calc(var(--border-thick) * 1px) no-repeat;
+}
+
+.cv-chart-legend__swatch[data-marker="thin"] {
+  background-size: 100% calc(var(--border-hairline) * 1px);
+}
+
+.cv-chart-legend__swatch[data-marker="bold"] {
+  background-size: 100% calc(var(--border-thick) * 2px);
+}
+
+.cv-chart-legend__swatch[data-marker="dash"],
+.cv-chart-legend__swatch[data-marker="dash-dot"] {
+  background: none;
+  border-block-start: calc(var(--border-thick) * 1px) dashed var(--cv-slot);
+  height: calc(var(--border-thick) * 1px);
+}
+
+.cv-chart-legend__swatch[data-marker="dash-dot"] {
+  border-block-start-style: dotted;
+}
+
+.cv-chart-legend__swatch[data-marker="bar"] {
+  background: var(--cv-slot);
+}
+
+.cv-chart-legend__swatch[data-marker="bar-narrow"] {
+  background-size: 50% 100%;
+}
+
+.cv-chart-legend__swatch[data-marker="bar-outline"] {
+  background: none;
+  border: calc(var(--border-hairline) * 1px) solid var(--cv-slot);
+}
+
+.cv-chart-legend__swatch[data-marker="band"] {
+  background: none;
+  border-block: calc(var(--border-hairline) * 1px) solid var(--cv-slot);
+}
+
+.cv-chart-legend__swatch[data-marker="glyph"] {
+  background: var(--cv-slot);
+  transform: rotate(45deg) scale(0.8);
+}
+
+.cv-chart-legend__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.cv-chart-legend__value,
+.cv-chart-legend__output {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.cv-chart-legend__value-button,
+.cv-chart-legend__more {
+  min-height: var(--size-control-height);
+  padding: 0 var(--space-inset-xs);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.cv-chart-legend__word {
+  color: var(--color-text-primary);
+}
+
+.cv-chart-legend__error-glyph {
+  display: inline-flex;
+  color: var(--color-status-danger-strong);
+}
+
+/* Hidden, stale and rebuilding rows: the label or the frozen value in text.tertiary; the T2 label too. */
+.cv-chart-legend__row[data-hidden] .cv-chart-legend__label,
+.cv-chart-legend [data-frozen],
+.cv-chart-legend__edit[data-gated] .cv-chart-legend__edit-label {
+  color: var(--color-text-tertiary);
+}
+
+.cv-chart-legend__edit {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-xs);
+}
+
+.cv-chart-legend__field {
+  box-sizing: border-box;
+  width: 6ch;
+  min-height: var(--size-control-height);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-text-tertiary);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-raised);
+  color: var(--color-text-primary);
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+}
+
+.cv-chart-legend__field:focus-visible {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+}
+
+.cv-chart-legend__field[aria-invalid="true"] {
+  border-color: var(--color-status-danger-strong);
+}
+
+/* Reduced motion: the edge-in recipe resolves to `none` (M7 instant). The universal reduce pair, as theme.css
+   applies it, kept here so the file is self-contained. */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) *,
+  :root:not([data-motion]) *::before,
+  :root:not([data-motion]) *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+@media (forced-colors: active) {
+  /* The key must match the WebGL chart, so the swatch keeps its colour. */
+  .cv-chart-legend__swatch {
+    forced-color-adjust: none;
+  }
+
+  .cv-chart-legend__error-glyph {
+    color: CanvasText;
+  }
+}
