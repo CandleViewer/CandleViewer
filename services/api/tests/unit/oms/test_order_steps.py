@@ -274,6 +274,24 @@ async def test_a_fill_commits_with_its_execution(
     assert (await _events(db))[-1][1:3] == ("partial_fill", "ws_private")
 
 
+@pytest.mark.parametrize(
+    ("stated", "stored"),
+    [("0.4", Decimal("0.4")), ("0", Decimal(0)), (None, None), ("0.5", None), ("-0.1", None)],
+    ids=["closes", "opens", "unstated", "past_the_fill", "negative"],
+)
+async def test_a_fill_stores_the_size_it_states_it_closed_within_its_own(
+    writer: OrderStepWriter, db: InMemoryOrderStore, stated: str | None, stored: Decimal | None
+) -> None:
+    """E29-S06 (24 Sec.8.13 step 3): `closed_size` as the fill states it; a figure outside 0 to
+    the fill's own size, which B1's schema admits, is stored as none, never refusing the fill
+    (`ex_closed`, OM-T04). The order row's `position_idx` keys it (21 Sec.3.3.6)."""
+    await _submitted(writer)
+    payload = EXECUTION | {"closed_size": stated}
+    assert await writer(_step("submitted", "partially_filled", "EXEC", payload, **FILLED)) == 3
+    fill = await InMemoryExecutionStore(db).get(ACCOUNT, "e1")
+    assert fill is not None and (fill.closed_size, fill.position_idx) == (stored, 0)
+
+
 async def test_an_exec_the_row_holds_already_finds_the_row_moved_on(
     writer: OrderStepWriter, db: InMemoryOrderStore
 ) -> None:
@@ -383,6 +401,7 @@ _ADMISSIBLE = st.fixed_dictionaries(
         "fee": st.one_of(st.just("0"), _MONEY),
         "fee_rate": st.one_of(st.sampled_from(("0.0002", "-0.0001")), _MONEY),
         "closed_pnl": st.one_of(st.none(), _MONEY),
+        "closed_size": st.one_of(st.none(), _MONEY),  # E29-S06: stored within the fill, or none
         "ts_exec": st.integers(min_value=0, max_value=b01.MAX_EXCHANGE_US),
         "exec_id": st.one_of(st.just("e1"), _TEXT),
         "fee_currency": st.one_of(st.just("USDT"), _TEXT),

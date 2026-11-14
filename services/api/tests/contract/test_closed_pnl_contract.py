@@ -850,3 +850,24 @@ def test_contract_21_reads_a_page_per_account_and_never_sorts_every_match() -> N
 )
 def test_contract_24_change_log_records_this_slice(claim: str) -> None:
     assert claim in _between(_doc("24-internal-schemas.md"), "### 19.105 ", "\n### 19.")
+
+
+def test_contract_24_states_the_final_rule_as_the_sync_builds_it_and_21_its_read() -> None:
+    """The S3 security review's m2: the rule as built sums the stated `closed_size` of the order's
+    trade fills (21 §13.1 row 60), and E29-S06's composition slice completes it with the walk."""
+    assert _row(_doc("21-database-schema.md"), 60) == [
+        "60", "Closed-PnL final rule",
+        "the order's trade `executions` in its account: `sum(closed_size)`, NULL if one is NULL",
+        "`ix_exec_order`, the account and the trade types filtered on its rows",
+        "< 2 ms for an order's fills",
+    ]  # fmt: skip
+    assert not _missing(
+        _s813(),
+        "As the sync builds it, that size is the sum of the `closed_size` its order's stored fills "
+        "of a trade type state (21 §13.1 row 60), so the record is final when the order's row is "
+        "terminal and that sum is its `qty`; a fill that states none, such as a REST-recovered "
+        "one, keeps it open, polled within the reach, until E29-S06's composition slice gives "
+        "such a fill the walk's `c` (step 3).",
+    )
+    log = _between(_doc("24-internal-schemas.md"), "### 19.129 ", "\n### 19.")
+    assert "which 21 §13.1's new row 60 reads over `ix_exec_order`" in log
