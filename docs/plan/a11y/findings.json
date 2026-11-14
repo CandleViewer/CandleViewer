@@ -3413,8 +3413,8 @@
     {
       "id": "SCR-045",
       "name": "Chart data-table alternative (a11y)",
-      "coverage": "unreachable: not built",
-      "coverageReason": "BQ-02 lists it built-not-mounted, but the base has no SCR-045 component: ChartErrorSurface.tsx:319-320 says 'SCR-045 / SCR-046 / SCR-118 have no route yet: their actions are omitted, not disabled, until each lands'; no data-table component exists in apps/web/src or packages/ui/src",
+      "coverage": "partial",
+      "coverageReason": "partial: E47-S01 built the shell after this register's base (apps/web/src/chart/a11y/ChartDataTable.tsx, ChartTablePanel.tsx), still not mounted on a route; E12-Q07 PR 1 audited it offline (RTL on jsdom, synthetic fixture rows, heuristic) and recorded A11Y-F-0036; the axe sweep and the layout criteria wait for a route (E12-Q07 record section 0)",
       "owningTicket": "E11-S14 #521",
       "ownerResolution": "BQ-04 amended: rule step 3 (of the candidates naming it, the one whose title names it); ticket open",
       "deepPassListed": true,
@@ -3422,25 +3422,30 @@
         {
           "name": "default",
           "source": "derived",
-          "status": "unreachable",
-          "reason": "not built"
+          "status": "covered",
+          "reason": "E12-Q07 PR 1 offline leg: time-bar fixture rows on jsdom (heuristic)"
         },
         {
           "name": "per-bar footprint cell list expanded",
           "source": "derived (type line)",
-          "status": "unreachable",
-          "reason": "not built"
+          "status": "not run",
+          "reason": "the offline leg expands a fixture bar only to count nodes; the per-mode rows are #521's"
         }
       ],
       "evidence": {
         "automated": {
-          "verdict": "unreachable (not built)"
+          "verdict": "not run (AC 1's axe sweep: not mounted; the jsdom axe runs are supplementary)",
+          "scope": "built part (the E47-S01 shell, ChartDataTable and ChartTablePanel, and its polite writer, audited offline on jsdom by E12-Q07 PR 1; not mounted on a route; the per-mode rows are #521's)",
+          "ref": "docs/qa/a11y/e12-q07-bars-v1.md#31-the-suites-already-at-the-pin"
         },
         "keyboard": {
-          "verdict": "unreachable (not built)"
+          "verdict": "not run (no mounted tab pass; the RTL key journeys pass offline, supplementary)",
+          "scope": "built part (the E47-S01 shell, ChartDataTable and ChartTablePanel, and its polite writer, audited offline on jsdom by E12-Q07 PR 1; not mounted on a route; the per-mode rows are #521's)",
+          "ref": "docs/qa/a11y/e12-q07-bars-v1.md#31-the-suites-already-at-the-pin"
         },
         "deep": {
-          "verdict": "deferred (deep pass deferred to #1323's next runs: not built)"
+          "verdict": "deferred (deep pass deferred to #1323's next runs: not mounted)",
+          "scope": "built part (the E47-S01 shell, ChartDataTable and ChartTablePanel, and its polite writer, audited offline on jsdom by E12-Q07 PR 1; not mounted on a route; the per-mode rows are #521's)"
         },
         "sr": {
           "owner": "E47-T04"
@@ -3448,25 +3453,26 @@
       },
       "wcag22": {
         "2.4.11": {
-          "verdict": "unreachable (not built)"
+          "verdict": "unreachable (built, not mounted: needs a laid-out surface on a route, E12-Q07 record section 3.7)"
         },
         "2.5.7": {
-          "verdict": "unreachable (not built)"
+          "verdict": "unreachable (built, not mounted: needs a laid-out surface on a route, E12-Q07 record section 3.7)"
         },
         "2.5.8": {
-          "verdict": "unreachable (not built)"
+          "verdict": "unreachable (built, not mounted: needs a laid-out surface on a route, E12-Q07 record section 3.7)"
         },
         "3.2.6": {
-          "verdict": "unreachable (not built)"
+          "verdict": "unreachable (built, not mounted: needs a laid-out surface on a route, E12-Q07 record section 3.7)"
         },
         "3.3.7": {
-          "verdict": "unreachable (not built)"
+          "verdict": "unreachable (built, not mounted: needs a laid-out surface on a route, E12-Q07 record section 3.7)"
         },
         "3.3.8": {
-          "verdict": "unreachable (not built)"
+          "verdict": "unreachable (built, not mounted: needs a laid-out surface on a route, E12-Q07 record section 3.7)"
         }
       },
-      "noFindings": false
+      "noFindings": false,
+      "scope": "built part (the E47-S01 shell, ChartDataTable and ChartTablePanel, and its polite writer, audited offline on jsdom by E12-Q07 PR 1; not mounted on a route; the per-mode rows are #521's)"
     },
     {
       "id": "SCR-046",
@@ -13393,6 +13399,28 @@
         "docs/qa/a11y/e10-q03-shell-v1.md#3-findings-and-fixes",
         "tracked: apps/web/e2e/shell-reflow.spec.ts (strict test.fail pair)"
       ]
+    },
+    {
+      "id": "A11Y-F-0036",
+      "screenId": "SCR-045",
+      "state": "time-bar rows without footprint (synthetic fixture rows, jsdom)",
+      "componentId": "CMP-049",
+      "wcagSc": "1.3.1",
+      "level": "A",
+      "severity": "moderate",
+      "reproduction": "Environment: apps/web at the audited tree, vitest with React Testing Library on jsdom, the synthetic fixture apps/web/test/chart/a11y/fixture.ts (no live feed). Render ChartDataTable with makeSeries({ bars: 120, levels: 0 }) and read the last two gridcells of each bar row (committed test apps/web/test/chart/a11y/e12Q07Audit.test.tsx, the parity case).",
+      "detection": {
+        "source": "manual",
+        "tool": "E12-Q07 offline leg (RTL on jsdom; code reading of apps/web/src/chart/a11y/copy.ts)",
+        "heuristic": true
+      },
+      "owningTicket": "E11-S14 #521",
+      "status": "open",
+      "title": "The chart's table alternative (SCR-045) gives an absent delta or CVD value as the bare glyph \"—\"",
+      "observed": "Every delta and CVD cell of a series without footprint reads only \"—\" (NOT_AVAILABLE); a screen reader at its default punctuation level may say nothing after the column header, so the absence is not conveyed as text. Severity provisional until the owner's NVDA + Chromium pass (E12-Q07 OR-3).",
+      "expected": "The absent value carries E12-D07's named form (\"no delta: bar from exchange klines\") as its accessible text, landing with the per-mode rows of E11-S14 #521.",
+      "priority": "P1",
+      "evidence": ["docs/qa/a11y/e12-q07-bars-v1.md#4-findings"]
     }
   ]
 }

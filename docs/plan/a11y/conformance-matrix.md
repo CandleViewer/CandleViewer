@@ -6,11 +6,11 @@ Generated, do not edit: regenerate with `python3 docs/plan/a11y/_tools/register.
 
 - Audited sha: `a6ec967627b74737c6b462691cab8262a7176877`
 - Environment: vite preview build of apps/web at the audited sha on <loopback>, API stubbed at the network layer with apps/web/e2e/support, WS harness; Playwright Chromium headless. Not the demo environment, not Electron, no live exchange, no real credentials. Screen reader: proxies only (NVDA / JAWS / VoiceOver not run). Rater: an agent.
-- Screens: 159 rows; 27 reachable (20 covered, 7 partial); 122 unreachable (5 built, not mounted; 117 not built; 0 need a state the harness cannot induce); 10 reserved.
-- States: 812 (145 on reachable screens); 63 covered, 704 unreachable, 45 not run.
-- Deep pass: 12 of 33 listed ids auditable; 8 run.
+- Screens: 159 rows; 28 reachable (20 covered, 8 partial); 121 unreachable (5 built, not mounted; 116 not built; 0 need a state the harness cannot induce); 10 reserved.
+- States: 812 (147 on reachable screens); 64 covered, 702 unreachable, 46 not run.
+- Deep pass: 13 of 33 listed ids auditable; 8 run.
 - WCAG 2.2 cells (6 per non-reserved row): n/a 109, pass 41, pass (exception) 12, unreachable 732 (unreachable counted apart from n/a).
-- Findings: 34 in all, 15 open (Level A 5, AA 10; P0 0, P1 9, P2 6, P3 0; needs filing go 0); explicit no-findings rows: 5 (no finding recorded in this run's checks; not a conformance claim; 0 of them have second-rater disagreements pending adjudication, record §10.5).
+- Findings: 35 in all, 16 open (Level A 6, AA 10; P0 0, P1 10, P2 6, P3 0; needs filing go 0); explicit no-findings rows: 5 (no finding recorded in this run's checks; not a conformance claim; 0 of them have second-rater disagreements pending adjudication, record §10.5).
 - Patterns: A11Y-P-01 (2), A11Y-P-02 (4), A11Y-P-03 (1), A11Y-P-04 (3), A11Y-P-05 (2), A11Y-P-06 (3), A11Y-P-07 (1).
 - Screen reader: the sign-off passes are E47-T04's; this sweep records proxies only.
 - Sign-off: 0 of 159 rows carry a `signOff` record (E47-T05); the column reads it from the register.
@@ -21,7 +21,7 @@ Generated, do not edit: regenerate with `python3 docs/plan/a11y/_tools/register.
 | ------------ | ------------------------------------------ | --------- | ---- | ------------- |
 | SCR-001..019 | Auth, app shell, global chrome, onboarding | 14        | 19   | 12            |
 | SCR-020..029 | Workspaces, dockable panel system, layouts | 0         | 10   | 0             |
-| SCR-030..049 | Charting                                   | 0         | 20   | 0             |
+| SCR-030..049 | Charting                                   | 1         | 20   | 1             |
 | SCR-050..059 | Order flow                                 | 0         | 10   | 0             |
 | SCR-060..079 | Trading                                    | 1         | 20   | 0             |
 | SCR-080..089 | Rule engine                                | 0         | 10   | 0             |
@@ -82,7 +82,7 @@ Automated `pass (0 violations; N unresolved)`: axe found no violation, but N col
 | SCR-042 | Interval / bar-mode menu                          | unreachable: not built          | 0 / 10         | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | not signed off | 0 / 0           | E18-S04 #588   |
 | SCR-043 | Price-scale / time-scale context menus            | unreachable: not built          | 0 / 1          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | not signed off | 0 / 0           | E11 (epic) #38 |
 | SCR-044 | "Go to date" dialog                               | unreachable: not built          | 0 / 2          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | not signed off | 0 / 0           | E26-S06 #811   |
-| SCR-045 | Chart data-table alternative (a11y)               | unreachable: not built          | 0 / 2          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | deferred       | E47-T04 | not signed off | 0 / 0           | E11-S14 #521   |
+| SCR-045 | Chart data-table alternative (a11y)               | partial                         | 1 / 2          | not run                            | not run               | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | deferred       | E47-T04 | not signed off | 1 / 0           | E11-S14 #521   |
 | SCR-046 | Chart engine diagnostics overlay                  | unreachable: not built          | 0 / 1          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | not signed off | 0 / 0           | E46-S01 #1345  |
 | SCR-047 | Chart empty / no-data state                       | unreachable: not built          | 0 / 9          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | not signed off | 0 / 0           | E16-S05 #487   |
 | SCR-048 | Chart error state                                 | unreachable: built, not mounted | 0 / 5          | unreachable                        | unreachable           | unreachable | unreachable | unreachable      | unreachable | unreachable      | unreachable | unreachable    | E47-T04 | not signed off | 0 / 0           | E11-S02 #334   |
