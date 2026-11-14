@@ -130,6 +130,11 @@ OMS_CONSUMER_STOP_S: Final = 2.0
 OMS_PRICE_BAND_DEFAULT: Final = Decimal("0.05")
 OMS_PRICE_BAND_MIN: Final = Decimal("0.005")
 OMS_PRICE_BAND_MAX: Final = Decimal("0.20")
+#: E29-S06 (#981, 20 Sec.7.2): the closed-PnL comparison's detection settings, relative and an
+#: absolute floor in USDT (PROPOSED), each above 0 and at most its maximum (`oms.closed_pnl_compare`
+#: checks them again; M1 may not import `oms`, so they are spelled out).
+OMS_CLOSED_PNL_TOLERANCE_REL_MAX: Final = Decimal("0.001")
+OMS_CLOSED_PNL_TOLERANCE_ABS_MAX: Final = Decimal(1)
 #: The OMS stores' per-statement cap in ms (#845; 20 Sec.7.2, 21 Sec.3.3.5, 24 Sec.8.2 S7): the
 #: default every OMS store holds when built without the setting, and the setting's bounds, above
 #: `CV_PERSIST_TIMEOUT` (1 s) and at most the default submit bound.
@@ -933,6 +938,16 @@ class Settings(BaseSettings):
         le=OMS_PRICE_BAND_MAX,
         allow_inf_nan=False,
     )
+    # E29-S06 (#981, 24 Sec.8.13): a settled closed-PnL record is divergent past both, the
+    # relative bound (`1e-8`, unvalidated until #843) and the absolute floor (0.01 USDT, PROPOSED).
+    # Detection settings: parsed from their text as `Decimal`s, never through a float, no NaN or
+    # infinity, above 0, and logged once at start (`ClosedPnlComparer`).
+    oms_closed_pnl_tolerance_rel: Decimal = Field(
+        default=Decimal("1e-8"), gt=0, le=OMS_CLOSED_PNL_TOLERANCE_REL_MAX, allow_inf_nan=False
+    )
+    oms_closed_pnl_tolerance_abs: Decimal = Field(
+        default=Decimal("0.01"), gt=0, le=OMS_CLOSED_PNL_TOLERANCE_ABS_MAX, allow_inf_nan=False
+    )
     # #845, #913 S4-G2: the OMS stores' per-statement cap, lock waits included, so a blocked order
     # write fails within it and order entry is refused (20 Sec.7.2); every store the runtime builds
     # that caps its statements reads it (`oms_wiring.pg_stores`), but the startup sweep, which keeps
@@ -1400,6 +1415,15 @@ class Settings(BaseSettings):
                 "with the api service's stop_grace_period (infra/compose)"
             )
         return drain_s
+
+    @field_validator("oms_closed_pnl_tolerance_rel", "oms_closed_pnl_tolerance_abs", mode="before")
+    @classmethod
+    def _refuse_a_float_tolerance(cls, value: object) -> object:
+        """A float would reach the `Decimal` with its binary error (`1e-7` lands just below):
+        only text or a `Decimal` is parsed (20 Sec.7.2)."""
+        if not isinstance(value, str | Decimal):
+            raise ValueError("a closed-PnL tolerance is given as text, never a float")
+        return value
 
     @field_validator("oms_inflight_stuck_s")
     @classmethod

@@ -153,6 +153,16 @@ def test_settings_oms_runtime_defaults_are_the_20_7_2_rows() -> None:
     )
     assert (s.oms_drain_s, s.trading_live_enabled) == (10.0, False)
     assert s.oms_price_band_pct == Decimal("0.05")
+    assert (s.oms_closed_pnl_tolerance_rel, s.oms_closed_pnl_tolerance_abs) == (
+        Decimal("1e-8"), Decimal("0.01"),
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize("field", ["oms_closed_pnl_tolerance_rel", "oms_closed_pnl_tolerance_abs"])
+def test_settings_refuse_a_closed_pnl_tolerance_given_as_a_float(field: str) -> None:
+    """20 Sec.7.2: parsed from its text, never through a float (`1e-7` lands just below)."""
+    with pytest.raises(ValidationError, match="never a float"):
+        Settings.model_validate({field: 1e-7})
 
 
 def test_settings_oms_statement_cap_defaults_to_the_stores_constant() -> None:
@@ -179,6 +189,19 @@ _OMS_ACCEPTED = [
     ({"CV_OMS_PRICE_BAND_PCT": "0.20"}, "oms_price_band_pct", Decimal("0.20")),
     ({"CV_OMS_STATEMENT_TIMEOUT_MS": "1500"}, "oms_statement_timeout_ms", 1500),
     ({"CV_OMS_STATEMENT_TIMEOUT_MS": "5000"}, "oms_statement_timeout_ms", 5000),
+    # E29-S06 (#981, 20 Sec.7.2): the tolerances from their text, every digit kept (no float)
+    ({"CV_OMS_CLOSED_PNL_TOLERANCE_REL": "0.001"}, "oms_closed_pnl_tolerance_rel", Decimal("1e-3")),
+    (
+        {"CV_OMS_CLOSED_PNL_TOLERANCE_REL": "0.0000000123456789012345678901"},
+        "oms_closed_pnl_tolerance_rel",
+        Decimal("1.23456789012345678901E-8"),
+    ),
+    ({"CV_OMS_CLOSED_PNL_TOLERANCE_ABS": "1"}, "oms_closed_pnl_tolerance_abs", Decimal(1)),
+    (
+        {"CV_OMS_CLOSED_PNL_TOLERANCE_ABS": "1e-18"},
+        "oms_closed_pnl_tolerance_abs",
+        Decimal("1e-18"),
+    ),
 ]
 
 
@@ -217,6 +240,18 @@ def test_settings_oms_runtime_bounds_take_each_value_in_range(
         ({"CV_OMS_STATEMENT_TIMEOUT_MS": "5001"}, "oms_statement_timeout_ms"),
         ({"CV_OMS_STATEMENT_TIMEOUT_MS": "0"}, "oms_statement_timeout_ms"),
         ({"CV_OMS_STATEMENT_TIMEOUT_MS": "2000.5"}, "oms_statement_timeout_ms"),
+        # E29-S06 (#981): detection settings, above 0 and at most their maxima, finite
+        *(
+            (
+                {f"CV_OMS_CLOSED_PNL_TOLERANCE_{n.upper()}": text},
+                f"oms_closed_pnl_tolerance_{n}",
+            )
+            for n, texts in (
+                ("rel", ("0", "-1e-8", "0.0010000001", "nan", "inf", "-infinity")),
+                ("abs", ("0", "-0.01", "1.0000001", "NaN", "Infinity")),
+            )
+            for text in texts
+        ),
     ],
 )
 def test_settings_oms_runtime_bounds_refuse_each_value_out_of_range(
