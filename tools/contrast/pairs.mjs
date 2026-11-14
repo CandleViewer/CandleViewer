@@ -362,6 +362,13 @@ export const PAIRS = [
   // rule and the rows' border.subtle hairline are decorative, as CMP-049's own header rule is.
   { fg: "color.text.tertiary", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
 
+  // --- CMP-011's toggle chip, the Fills tab's Type chips (E29-D04 §2.9; E29-S04) ---------------------------------
+  // Its rest label, and its pressed ring on a toolbar on surface.canvas. label-on-fill.json holds the rest: its
+  // `selected` role the pressed fill, its label and the ring against the other surfaces, and its `secondary` role the
+  // hover fill under its label. packages/ui/test/contrast/blotter-pairs.test.ts holds the toggle's pairs per theme.
+  { fg: "color.text.secondary", bg: "color.neutral.subtle", threshold: THRESHOLD.TEXT },
+  { fg: "color.border.selected", bg: "color.surface.canvas", threshold: THRESHOLD.NON_TEXT },
+
   // --- Dock sync-group edges (E15-D13 §6 P-1 … P-6) --------------------
   // The tile edge sits on the panel header (`raised`) or a grid cell's header (`canvas`);
   // the group letter always carries the group, the hue only repeats it.

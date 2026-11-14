@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
-import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
+import { act, useState, type JSX } from "react";
+import { expect, fireEvent, fn, userEvent, waitFor, within } from "storybook/test";
 import { describe, it } from "vitest";
-import { Tag } from "../src/components/index.js";
+import { Tag, Tooltip } from "../src/components/index.js";
 import * as stories from "../src/components/Tag.stories.js";
+import { seriousViolations } from "./axe.js";
 import { mount } from "./theme/mount.js";
 
 const REASON = "Owner only";
@@ -150,6 +152,181 @@ describe("Tag (CMP-011)", () => {
     );
     expect(chip(host).dataset["density"]).toBe("comfortable");
     expect(within(host).getByRole("button").dataset["density"]).toBe("comfortable");
+  });
+});
+
+/**
+ * A host that holds a toggle's state, as the Fills tab holds its Type chips (E29-D02:299: all on by default, so
+ * `initial` defaults to pressed).
+ */
+function Held({
+  label,
+  onChange,
+  initial = true,
+}: {
+  label: string;
+  onChange?: (p: boolean) => void;
+  initial?: boolean;
+}): JSX.Element {
+  const [pressed, setPressed] = useState(initial);
+  return (
+    <Tag
+      variant="toggle"
+      label={label}
+      pressed={pressed}
+      onPressedChange={(next) => {
+        onChange?.(next);
+        setPressed(next);
+      }}
+    />
+  );
+}
+
+describe("Tag toggle (CMP-011 `toggle`, E29-S04; E29-D04 §2.9, E29-D02:299)", () => {
+  it("is a native button named by its word, its state in aria-pressed, at the control height", async () => {
+    const host = await mount(
+      <Tag variant="toggle" label="Trade" pressed onPressedChange={fn()} density="compact" />,
+    );
+    const button = within(host).getByRole("button", { name: "Trade", pressed: true });
+    expect(button.tagName).toBe("BUTTON");
+    expect(button).toHaveAttribute("type", "button");
+    expect(button).toHaveAttribute("aria-pressed", "true");
+    expect(button).toHaveClass("cv-tag", "cv-control", "cv-focus-ring");
+    expect([button.dataset["cmp"], button.dataset["variant"], button.dataset["density"]]).toEqual([
+      "CMP-011",
+      "toggle",
+      "compact",
+    ]);
+    expect(button.querySelector("svg")).toBeNull();
+  });
+
+  it("an off chip says so in aria-pressed, never through its name", async () => {
+    const host = await mount(
+      <Tag variant="toggle" label="Funding" pressed={false} onPressedChange={fn()} />,
+    );
+    expect(within(host).getByRole("button", { name: "Funding", pressed: false })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("Tab reaches it; Space and Enter flip it through its host; the name never changes", async () => {
+    const onChange = fn();
+    const host = await mount(<Held label="ADL" onChange={onChange} />);
+    await userEvent.tab();
+    const button = within(host).getByRole("button", { name: "ADL" });
+    expect(button).toHaveFocus();
+    await userEvent.keyboard(" ");
+    expect(button).toHaveAttribute("aria-pressed", "false");
+    await userEvent.keyboard("{Enter}");
+    expect(button).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(button);
+    expect(onChange.mock.calls).toEqual([[false], [true], [false]]);
+    expect(button).toHaveAccessibleName("ADL");
+    expect(button).toHaveFocus();
+  });
+
+  it("keeps the toggle a view choice at the type level: no icon, no removal, never gated or disabled", () => {
+    // @ts-expect-error a toggle needs its state and its handler
+    const stateless = <Tag variant="toggle" label="x" />;
+    // @ts-expect-error a toggle takes no icon (E29-D02:299)
+    const withIcon = <Tag variant="toggle" label="x" pressed onPressedChange={fn()} icon="lock" />;
+    const removable = (
+      // @ts-expect-error a toggle has no remove control (only a neutral chip is removable)
+      <Tag variant="toggle" label="x" pressed onPressedChange={fn()} removable />
+    );
+    const gated = (
+      // @ts-expect-error a view choice is never gated (E29-D04:390)
+      <Tag variant="toggle" label="x" pressed onPressedChange={fn()} disabledReason="r" />
+    );
+    expect([stateless, withIcon, removable, gated]).toHaveLength(4);
+  });
+
+  it("passes the button's attributes through: a CMP-016 Tooltip describes the chip and keeps its name", async () => {
+    const host = await mount(
+      <Tooltip content="ADL — auto-deleveraged" delay={0}>
+        <Tag variant="toggle" label="ADL" pressed onPressedChange={fn()} />
+      </Tooltip>,
+    );
+    const button = within(host).getByRole("button", { name: "ADL", pressed: true });
+    const tip = document.querySelector<HTMLElement>('[data-cmp="CMP-016"]');
+    expect(tip).not.toBeNull();
+    expect(button).toHaveAttribute("aria-describedby", tip?.id);
+    expect(button).toHaveAccessibleDescription("ADL — auto-deleveraged");
+    expect(button).toHaveAccessibleName("ADL");
+    // The Tooltip's focus handler reaches the chip: keyboard focus shows the description at once.
+    await act(async () => button.focus());
+    expect(tip?.hidden).toBe(false);
+    // So does its blur handler: leaving the chip hides it again.
+    await act(async () => button.blur());
+    expect(tip?.hidden).toBe(true);
+    // And its pointer handlers: a hover shows the description, and leaving hides it after the grace.
+    await act(async () => {
+      fireEvent.pointerOver(button);
+    });
+    await waitFor(() => expect(tip?.hidden).toBe(false));
+    await act(async () => {
+      fireEvent.pointerOut(button);
+    });
+    await waitFor(() => expect(tip?.hidden).toBe(true));
+  });
+
+  it("takes the button's other attributes, never a name, a press or a state of its own (type level)", () => {
+    const described = (
+      <Tag variant="toggle" label="x" pressed onPressedChange={fn()} aria-describedby="d" id="i" />
+    );
+    const renamed = (
+      // @ts-expect-error its name is its label, which never changes (E29-D02:299)
+      <Tag variant="toggle" label="x" pressed onPressedChange={fn()} aria-label="y" />
+    );
+    const clicked = (
+      // @ts-expect-error its press is onPressedChange
+      <Tag variant="toggle" label="x" pressed onPressedChange={fn()} onClick={fn()} />
+    );
+    const stated = (
+      // @ts-expect-error its state is pressed
+      <Tag variant="toggle" label="x" pressed onPressedChange={fn()} aria-pressed="mixed" />
+    );
+    // @ts-expect-error a static chip is a span, so a button attribute would be dropped
+    const titled = <Tag label="x" title="t" />;
+    // @ts-expect-error a removable chip is a span too
+    // (a hyphenated attribute is no excess property: only the type, NoButtonAttributes, refuses it)
+    const removableDescribed = <Tag label="x" removable onRemove={fn()} aria-describedby="d" />;
+    // @ts-expect-error a status chip is a span too
+    const statusDescribed = <Tag variant="info" label="x" aria-describedby="d" />;
+    expect([
+      described,
+      renamed,
+      clicked,
+      stated,
+      titled,
+      removableDescribed,
+      statusDescribed,
+    ]).toHaveLength(7);
+  });
+
+  it("the five Type chips have no serious or critical axe violation", async () => {
+    const host = await mount(
+      <div>
+        {["Trade", "ADL", "Liquidation", "Funding", "Settlement"].map((word) => (
+          <Held key={word} label={word} />
+        ))}
+      </div>,
+    );
+    expect(within(host).getAllByRole("button", { pressed: true })).toHaveLength(5);
+    expect(await seriousViolations(host)).toEqual([]);
+  });
+
+  it("unpressed chips beside pressed ones have no serious or critical axe violation either", async () => {
+    const host = await mount(
+      <div>
+        {["Trade", "ADL", "Liquidation", "Funding", "Settlement"].map((word, index) => (
+          <Held key={word} label={word} initial={index < 2} />
+        ))}
+      </div>,
+    );
+    expect(within(host).getAllByRole("button", { pressed: false })).toHaveLength(3);
+    expect(await seriousViolations(host)).toEqual([]);
   });
 });
 
