@@ -602,6 +602,12 @@ const COVERED: Readonly<Record<string, string>> = {
     "ui Dialog row (the mechanism); focus in and back in symbol-search/SymbolSearch.test.tsx",
   "features/recorder/RecordSymbolDialog.tsx": "matrix: RecordSymbolDialog",
   "features/recorder/StopDialog.tsx": "matrix: StopDialog",
+  "features/recorder/PurgeDialog.tsx":
+    "features/recorder/PurgeDialog.test.tsx; ui ConfirmDialog row",
+  "features/recorder/RetentionConfirmDialog.tsx":
+    "features/recorder/RetentionConfirmDialog.test.tsx; ui ConfirmDialog row",
+  "features/recorder/RowDetailDrawer.tsx":
+    "features/recorder/RowDetailDrawer.test.tsx; ui Drawer row",
   "features/alerts/AlertHistoryDialog.tsx": "matrix: AlertHistoryDialog",
   "features/alerts/AlertsScreen.tsx": "matrix: AlertsScreen delete confirm",
   // QuickSwitcher.tsx is not listed on purpose: it only mounts SymbolSearch, which holds the one Dialog.
