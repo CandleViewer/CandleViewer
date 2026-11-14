@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./support/pack";
 import AxeBuilder from "@axe-core/playwright";
 import { json, stubSession } from "./support/api";
 import { AXE_GATE_TAGS } from "./a11y/tags";
@@ -40,7 +41,9 @@ async function signIn(page: Page, role: Role): Promise<void> {
 }
 
 for (const role of ["owner", "manager", "viewer"] as const) {
-  test(`E10-S01 ${role}: sign in, then three routes through the rail`, async ({ page }) => {
+  test(`E10-S01 ${role}: sign in, then three routes through the rail @ga-regression @ga-area-shell`, async ({
+    page,
+  }) => {
     await signIn(page, role);
 
     // Keyboard entry on a freshly loaded route, not after a route change: reload, then nothing
@@ -95,7 +98,7 @@ const THEMES = [
 for (const [name, appearance] of THEMES)
   for (const density of ["compact", "comfortable"] as const)
     for (const role of ["owner", "viewer"] as const)
-      test(`E10-S01 chrome in ${name}/${density} for ${role}: badge visible, no axe violation of any impact`, async ({
+      test(`E10-S01 chrome in ${name}/${density} for ${role}: badge visible, no axe violation of any impact @ga-regression @ga-area-shell`, async ({
         page,
       }) => {
         await stubSession(page, { role });
@@ -132,7 +135,7 @@ for (const [name, appearance] of THEMES)
       });
 
 // E10-Q03 (Gherkin 3): a LIVE session says so, once per route change, politely.
-test("E10-Q03 LIVE session: the badge names Live and each route change announces it once", async ({
+test("E10-Q03 LIVE session: the badge names Live and each route change announces it once @ga-regression @ga-area-shell", async ({
   page,
 }) => {
   await stubSession(page, { role: "owner" });
@@ -161,7 +164,7 @@ test("E10-Q03 LIVE session: the badge names Live and each route change announces
 });
 
 // E10-Q03 (Gherkin 2): each overlay's Esc closes it and returns focus to what opened it.
-test("E10-Q03 Esc closes the cheatsheet and the drawer and returns focus to their trigger", async ({
+test("E10-Q03 Esc closes the cheatsheet and the drawer and returns focus to their trigger @ga-regression @ga-area-shell", async ({
   page,
 }) => {
   await stubSession(page, { role: "owner" });
@@ -194,7 +197,7 @@ test("E10-Q03 Esc closes the cheatsheet and the drawer and returns focus to thei
 
 // E10-Q03 fix 1: the collapsed rail's name, badge and key show on keyboard focus (SC 1.4.13), Esc keeps
 // focus, and nothing is read twice (the echo is aria-hidden; the link keeps its own name).
-test("E10-Q03 collapsed rail: the CMP-016 echo shows on keyboard focus and Esc hides it", async ({
+test("E10-Q03 collapsed rail: the CMP-016 echo shows on keyboard focus and Esc hides it @ga-regression @ga-area-shell", async ({
   page,
 }) => {
   await stubSession(page, { role: "owner" });
@@ -221,7 +224,7 @@ test("E10-Q03 collapsed rail: the CMP-016 echo shows on keyboard focus and Esc h
 
 // #304 S10 (A11Y-F-0016, SC 1.4.10): at 320 CSS px the rail is collapsed by default, and expanded it
 // is an overlay over `main` (the drawer pattern), never a column: `main` keeps its width either way.
-test("E10-S01 reflow at 320 CSS px: the rail collapses, and expands over main", async ({
+test("E10-S01 reflow at 320 CSS px: the rail collapses, and expands over main @ga-regression @ga-area-shell", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 640 });

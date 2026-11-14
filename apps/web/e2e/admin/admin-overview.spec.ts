@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "../support/pack";
 import { json, stubSession } from "../support/api";
 import { ADMIN_OVERVIEW, stubAdminReads } from "../support/admin";
 import { seriousAxe } from "../support/axe";
@@ -28,7 +29,7 @@ async function openOverview(
   return set;
 }
 
-test("E42-S01 AC3 the tiles resolve on their own: the recorder errs, the rest read; one render measure", async ({
+test("E42-S01 AC3 the tiles resolve on their own: the recorder errs, the rest read; one render measure @ga-regression @ga-area-admin @US-ADMIN-011", async ({
   page,
 }) => {
   await openOverview(page);
@@ -70,7 +71,7 @@ test("E42-S01 AC3 the tiles resolve on their own: the recorder errs, the rest re
 });
 
 for (const theme of ["dark", "light"] as const) {
-  test(`E42-S01 the overview has no serious axe violation in the ${theme} theme`, async ({
+  test(`E42-S01 the overview has no serious axe violation in the ${theme} theme @ga-regression @ga-area-admin @US-ADMIN-011`, async ({
     page,
   }) => {
     await openOverview(page, theme);
@@ -79,7 +80,7 @@ for (const theme of ["dark", "light"] as const) {
   });
 }
 
-test("E42-S01 AC5 a 503 keeps the last-known values marked stale with Retry; the shell stays usable", async ({
+test("E42-S01 AC5 a 503 keeps the last-known values marked stale with Retry; the shell stays usable @ga-regression @ga-area-admin @US-ADMIN-011", async ({
   page,
 }) => {
   await page.clock.install({ time: new Date("2026-10-22T12:00:05Z") });
@@ -102,7 +103,7 @@ test("E42-S01 AC5 a 503 keeps the last-known values marked stale with Retry; the
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(/R-180/u);
 });
 
-test("E42-S01 a 403 on an admin read withdraws the area: 'Your access changed', no band", async ({
+test("E42-S01 a 403 on an admin read withdraws the area: 'Your access changed', no band @ga-regression @ga-area-admin @US-ADMIN-011", async ({
   page,
 }) => {
   await stubSession(page, { role: "owner" });

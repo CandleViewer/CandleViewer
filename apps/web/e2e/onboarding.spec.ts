@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./support/pack";
 import AxeBuilder from "@axe-core/playwright";
 import { stubNoViewAs } from "./support/api";
 
@@ -34,7 +34,9 @@ async function signIn(page: import("@playwright/test").Page): Promise<void> {
   await stubNoViewAs(page); // E42-S03: the fourth boot read
 }
 
-test("SCR-019 card renders on first sign-in; axe clean with tour open", async ({ page }) => {
+test("SCR-019 card renders on first sign-in; axe clean with tour open @ga-regression @ga-area-auth @US-ONB-007", async ({
+  page,
+}) => {
   await signIn(page);
   await page.route("**/api/v1/onboarding/checklist", (r) =>
     r.fulfill({
@@ -54,7 +56,9 @@ test("SCR-019 card renders on first sign-in; axe clean with tour open", async ({
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
-test("no tour auto-offer once the checklist is complete", async ({ page }) => {
+test("no tour auto-offer once the checklist is complete @ga-regression @ga-area-auth @US-ONB-007", async ({
+  page,
+}) => {
   await signIn(page);
   await page.route("**/api/v1/onboarding/checklist", (r) =>
     r.fulfill({

@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "../support/pack";
 import { json, stubSession } from "../support/api";
 import { stubAdminReads } from "../support/admin";
 import { seriousAxe } from "../support/axe";
@@ -22,7 +23,7 @@ function watchPaths(page: Page): () => string[] {
 
 const band = (page: Page) => page.getByRole("region", { name: "Admin area" });
 
-test("E42-S01 an owner enters the admin area: the band on each page, no gate and no step-up", async ({
+test("E42-S01 an owner enters the admin area: the band on each page, no gate and no step-up @ga-regression @ga-area-admin", async ({
   page,
 }) => {
   const paths = watchPaths(page);
@@ -50,7 +51,9 @@ test("E42-S01 an owner enters the admin area: the band on each page, no gate and
   expect(paths()).toContain("/api/v1/admin/overview"); // and the owner's admin reads
 });
 
-test("E42-S01 focus moves to the page h1 when the admin area's code arrives", async ({ page }) => {
+test("E42-S01 focus moves to the page h1 when the admin area's code arrives @ga-regression @ga-area-admin", async ({
+  page,
+}) => {
   await stubSession(page, { role: "owner" });
   await page.goto("/journal");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(/R-180/u);
@@ -61,7 +64,7 @@ test("E42-S01 focus moves to the page h1 when the admin area's code arrives", as
 });
 
 for (const role of ["manager", "viewer"] as const) {
-  test(`E42-S01 a ${role}'s admin route is the 404: no admin code loaded, no admin request`, async ({
+  test(`E42-S01 a ${role}'s admin route is the 404: no admin code loaded, no admin request @ga-regression @ga-area-admin`, async ({
     page,
   }) => {
     const paths = watchPaths(page);
@@ -81,7 +84,7 @@ for (const role of ["manager", "viewer"] as const) {
   });
 }
 
-test("E42-S01 /admin/audit is framed for an owner only: a manager keeps the plain shell", async ({
+test("E42-S01 /admin/audit is framed for an owner only: a manager keeps the plain shell @ga-regression @ga-area-admin", async ({
   page,
 }) => {
   const paths = watchPaths(page);
@@ -141,7 +144,7 @@ async function challengedInvite(page: Page): Promise<{ creates: string[]; stepUp
   return wire;
 }
 
-test("E42-S01 (failure) a challenged invite inside the admin area: the page stays, re-sent once", async ({
+test("E42-S01 (failure) a challenged invite inside the admin area: the page stays, re-sent once @ga-regression @ga-area-admin", async ({
   page,
 }) => {
   const wire = await challengedInvite(page);

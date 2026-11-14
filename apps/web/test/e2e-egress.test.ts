@@ -13,7 +13,7 @@ import { isLocal } from "@candleviewer/fixtures/e2e";
  *    local by `isLocal`, the one pattern rule (`egress.ts`); there is no second host list. A host
  *    built by concatenation fails like a templated one. A URL the test never fetches may carry
  *    `// e2e-egress: <reason>` alone on the line above it, and the marker only passes a reserved
- *    name that can never resolve (RFC 2606 / RFC 6761, `RESERVED_HOST`): it is no second
+ *    name (RFC 2606 / RFC 6761, `RESERVED_HOST`): it is no second
  *    allowlist. `bybit.com` and `bytick.com` are refused in a URL or in a host-shaped string (a
  *    route glob), with or without a marker and whatever the allowlist holds.
  * 2. A pack spec (one whose source carries the pack's title tag, in any file a Playwright config
@@ -31,7 +31,7 @@ const REFUSED_DOMAINS = ["bybit.com", "bytick.com"] as const;
 const PACK_TAG = "@ga-regression";
 /** A marker counts only on a line that holds nothing but the comment. */
 const MARKER = /^\/\/\s*e2e-egress:\s*(\S.{9,})$/u;
-/** Names that can never resolve: the only hosts a marker may pass (RFC 2606, RFC 6761). */
+/** Reserved names: the only hosts a marker may pass (RFC 2606, RFC 6761). */
 const RESERVED_HOST =
   /(?:^|\.)(?:invalid|test|example|local|localhost|example\.(?:com|net|org))$/iu;
 
@@ -84,8 +84,11 @@ const CONCAT_HOST = /\b(?:https?|wss?):\/\/["'`]\s*\+/giu;
 /** An exchange domain outside a URL literal but placed as a host: after `/` or `*`, before `/` or `:`. */
 const BARE_REFUSED =
   /(?<=[/*])(?:[\w-]+\.)*(?:bybit|bytick)\.com\b|(?<![\w.-])(?:[\w-]+\.)*(?:bybit|bytick)\.com(?=[/:])/giu;
-/** Files a Playwright config matches (`testMatch` across both suites): the ones a pack tag can enlist. */
-const SPEC_FILE = /\.(?:spec|real|perf|collect|nightly|flagged)\.[cm]?[jt]sx?$/u;
+/**
+ * Files a Playwright config matches (`testMatch` across both suites, Playwright's default `.spec.` and
+ * `.test.`, and the exploratory `.explore.ts`): the ones a pack tag can enlist.
+ */
+const SPEC_FILE = /\.(?:spec|test|real|perf|collect|nightly|flagged|explore)\.[cm]?[jt]sx?$/u;
 
 /** A literal as `isLocal` reads it: each `${...}` part becomes `0`, so a templated host fails. */
 const untemplated = (literal: string): string => literal.replace(/\$\{[^}]*(?:\}|$)/gu, "0");
@@ -241,7 +244,7 @@ describe("remoteUrls", () => {
     expect(remoteUrls('throw new Error("must be an http:// loopback origin");')).toEqual([]);
   });
 
-  it("fails a marked real host: the marker passes only names that never resolve", () => {
+  it("fails a marked real host: the marker passes only reserved names", () => {
     const src = [
       "// e2e-egress: a stylesheet probe the CSP refuses",
       'link.href = "https://cdn.jsdelivr.net/x.css";',
@@ -365,7 +368,14 @@ describe("packImportFindings", () => {
   });
 
   it("reads every file a Playwright config matches, and no support module", () => {
-    for (const f of ["a.spec.ts", "b.real.ts", "perf/cold-start.perf.ts", "a11y/x.collect.ts"])
+    for (const f of [
+      "a.spec.ts",
+      "b.real.ts",
+      "perf/cold-start.perf.ts",
+      "a11y/x.collect.ts",
+      "c.test.ts",
+      "exploratory/run-1.explore.ts",
+    ])
       expect(SPEC_FILE.test(f), f).toBe(true);
     for (const f of ["support/pack.ts", "support/shell.ts", "playwright.config.ts"])
       expect(SPEC_FILE.test(f), f).toBe(false);

@@ -6,7 +6,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "../support/pack";
 // eslint-disable-next-line no-restricted-imports -- `ajv/dist/2020` is Ajv's documented entry point for draft 2020-12 (it has no `exports` map)
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { AXE_GATE_TAGS } from "../a11y/tags";
@@ -56,7 +57,7 @@ async function signedIn(page: Page, tokenTtlMs = 600_000): Promise<WsHarness> {
   return harness;
 }
 
-test("SR-023: the first auth_ok's notice shows once and assertively; a re-auth repeats nothing", async ({
+test("SR-023: the first auth_ok's notice shows once and assertively; a re-auth repeats nothing @ga-regression @ga-area-shell", async ({
   page,
 }) => {
   const harness = await signedIn(page, 61_000); // the client re-auths in place 5 s on (4.1)
@@ -89,7 +90,7 @@ test("SR-023: the first auth_ok's notice shows once and assertively; a re-auth r
   await expect(alert(page)).toHaveAttribute("data-e2e-said", "1");
 });
 
-test("SR-023: a keyboard dismissal holds until a reconnect's notice re-asserts the row", async ({
+test("SR-023: a keyboard dismissal holds until a reconnect's notice re-asserts the row @ga-regression @ga-area-shell", async ({
   page,
 }) => {
   const harness = await signedIn(page);

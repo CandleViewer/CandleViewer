@@ -3,7 +3,8 @@
 // The manual half (NVDA, VoiceOver, the focus-order walk) is the pack's section E, owner-run; nothing here claims a
 // screen-reader result. Each check has one owner in the pack's section D (`Q04 automated` or `D04 manual`).
 // Dark theme, the default; the light theme's pass is a D04 row.
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { type Locator, type Page } from "@playwright/test";
+import { expect, test } from "../support/pack";
 import type { WsHarness } from "../support/wsHarness";
 import {
   BYE_FATAL,
@@ -108,7 +109,9 @@ const FORCED: readonly Forced[] = [
 ];
 
 for (const forced of FORCED) {
-  test(`Q04-X01 axe: zero violations of any impact, ${forced.state} ${PACK}`, async ({ page }) => {
+  test(`Q04-X01 axe: zero violations of any impact, ${forced.state} @ga-regression @ga-area-shell ${PACK}`, async ({
+    page,
+  }) => {
     covers("C-14.1", forced.row, "AC-4");
     const harness = await openWorkspace(page, forced.hold === true ? { hold: true } : {});
     forced.drive(harness);
@@ -128,7 +131,7 @@ async function tabTo(page: Page, target: Locator, presses = 80): Promise<void> {
 }
 
 for (const key of ["Enter", "Space"] as const) {
-  test(`Q04-X02 keyboard: Retry now by Tab and ${key}; a state change never moves focus ${PACK}`, async ({
+  test(`Q04-X02 keyboard: Retry now by Tab and ${key}; a state change never moves focus @ga-regression @ga-area-shell ${PACK}`, async ({
     page,
   }) => {
     covers("C-14.1", "D02-row-6", "AC-4");
@@ -151,7 +154,7 @@ for (const key of ["Enter", "Space"] as const) {
   });
 }
 
-test(`Q04-X03 reduced motion: the chip changes state with no cross-fade ${PACK}`, async ({
+test(`Q04-X03 reduced motion: the chip changes state with no cross-fade @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("C-14.1", "D02-row-3", "AC-4");
@@ -164,7 +167,9 @@ test(`Q04-X03 reduced motion: the chip changes state with no cross-fade ${PACK}`
   await expect(fade).toHaveCSS("opacity", "1");
 });
 
-test(`Q04-X04 full motion, the control: the same change does fade ${PACK}`, async ({ page }) => {
+test(`Q04-X04 full motion, the control: the same change does fade @ga-regression @ga-area-shell ${PACK}`, async ({
+  page,
+}) => {
   covers("C-14.1", "D02-row-3", "AC-4");
   const harness = await openWorkspace(page);
   harness.kill();
@@ -174,7 +179,7 @@ test(`Q04-X04 full motion, the control: the same change does fade ${PACK}`, asyn
   await expect(chip(page).locator("[data-fade]")).toHaveCSS("transition-property", "opacity");
 });
 
-test(`Q04-X05 200% zoom: the offline region reflows at 640 px, Retry now in view ${PACK}`, async ({
+test(`Q04-X05 200% zoom: the offline region reflows at 640 px, Retry now in view @ga-regression @ga-area-shell ${PACK}`, async ({
   page,
 }) => {
   covers("C-14.1", "D02-row-6", "AC-4");

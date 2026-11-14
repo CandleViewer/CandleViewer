@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "../support/pack";
 import { json } from "../support/api";
 
 // E09-Q02 (#293) enrolment.spec. SCR-003 (QR + secret + recovery codes) has no standalone screen
@@ -24,7 +24,7 @@ const CHANGED = {
   },
 };
 
-test("E09-TC-B06 forced password change succeeds and this device stays signed in", async ({
+test("E09-TC-B06 forced password change succeeds and this device stays signed in @ga-regression @ga-area-auth", async ({
   page,
 }) => {
   let body = "";
@@ -42,7 +42,7 @@ test("E09-TC-B06 forced password change succeeds and this device stays signed in
   await expect(page.getByRole("button", { name: "Continue" })).toBeVisible();
 });
 
-test("E09-TC-B07 a 13-character password is refused client-side, no request sent", async ({
+test("E09-TC-B07 a 13-character password is refused client-side, no request sent @ga-regression @ga-area-auth", async ({
   page,
 }) => {
   let calls = 0;
@@ -58,7 +58,7 @@ test("E09-TC-B07 a 13-character password is refused client-side, no request sent
   expect(calls).toBe(0);
 });
 
-test("E09-TC-B08 breached password refused by the server clears both new fields", async ({
+test("E09-TC-B08 breached password refused by the server clears both new fields @ga-regression @ga-area-auth", async ({
   page,
 }) => {
   await page.route("**/api/v1/auth/password", (r) =>
@@ -74,7 +74,9 @@ test("E09-TC-B08 breached password refused by the server clears both new fields"
   await expect(page.getByLabel("Confirm new password")).toHaveValue("");
 });
 
-test("E09-TC-B09 wrong current password is refused and the form stays put", async ({ page }) => {
+test("E09-TC-B09 wrong current password is refused and the form stays put @ga-regression @ga-area-auth", async ({
+  page,
+}) => {
   await page.route("**/api/v1/auth/password", (r) =>
     r.fulfill(json({ status: 403, code: "current_password_invalid" }, 403)),
   );
@@ -86,7 +88,9 @@ test("E09-TC-B09 wrong current password is refused and the form stays put", asyn
   await expect(page.getByRole("heading", { name: "Choose a new password" })).toBeVisible();
 });
 
-test("E09-TC-B06 mismatched confirmation is caught; keyboard submit works", async ({ page }) => {
+test("E09-TC-B06 mismatched confirmation is caught; keyboard submit works @ga-regression @ga-area-auth", async ({
+  page,
+}) => {
   await page.goto("/login/change-password");
   await page.getByLabel("Current password").fill("pw-old");
   await page.getByLabel("New password", { exact: true }).fill(NEW_PW);
