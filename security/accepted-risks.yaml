@@ -182,11 +182,25 @@ entries:
     approver: "basiltt"
     expires: "2026-12-14"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/5997"
+  - id: "GHSA-vvf4-9x63-8xvv"
+    tool: dependabot
+    severity: HIGH
+    reason: "dnspython 2.9.0 WKS record CPU/memory exhaustion in from_text(). CandleViewer does not parse DNS zone files. Fix in dnspython 2.9.2, tracking in #5997"
+    approver: "basiltt"
+    expires: "2026-12-14"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/5997"
   # #5997: CVE-2026-126360 in opentelemetry-api (ReDoS in TraceContextTextMapPropagator).
   # Upgraded to 1.45.2 in PR #5997.
   - id: "CVE-2026-126360"
     tool: pip-audit
     severity: HIGH
+    reason: "opentelemetry-api 1.45.1 ReDoS in TraceContextTextMapPropagator. HTTP header validation bounds header size; upgraded to 1.45.2 in PR #5997"
+    approver: "basiltt"
+    expires: "2026-12-14"
+    ticket: "https://github.com/CandleViewer/CandleViewer/issues/5997"
+  - id: "GHSA-mf5v-w3w3-f6cg"
+    tool: dependabot
+    severity: MEDIUM
     reason: "opentelemetry-api 1.45.1 ReDoS in TraceContextTextMapPropagator. HTTP header validation bounds header size; upgraded to 1.45.2 in PR #5997"
     approver: "basiltt"
     expires: "2026-12-14"
