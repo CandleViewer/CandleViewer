@@ -14,6 +14,7 @@ import { announcePolite } from "../theme/a11y.js";
 import { IconButton } from "./IconButton.js";
 import { Popover } from "./Popover.js";
 import { NumericText } from "./Typography.js";
+import { formatDisplayNumber } from "./internal/numberDisplay.js";
 import { useFocusRing } from "./FocusRing.js";
 import { cx } from "./internal/cx.js";
 import { useGateNotice, useGatedAnnounce } from "./internal/disabledReason.js";
@@ -104,6 +105,30 @@ function Swatch(props: { readonly color: SlotToken; readonly marker: LegendMarke
 const num = (value: number | null): ReactNode =>
   value === null ? DASH : <NumericText value={value} format="price" size="sm" />;
 
+const numText = (value: number | null): string =>
+  value === null ? DASH : formatDisplayNumber(value, "price").text;
+
+function valueTextOf(item: ChartLegendItem): string {
+  if (!item.visible) return DASH;
+  if (item.error !== undefined) return `error ${DASH}`;
+  if (item.warmup !== undefined) return `${item.warmup.needed} more bars needed`;
+  const base =
+    item.outputs === undefined
+      ? numText(item.value)
+      : item.outputs.map((output) => numText(output.value)).join(" ");
+  const frozen =
+    item.stale !== undefined
+      ? `Stale ${item.stale.ageS}s`
+      : item.rebuilding === true
+        ? "rebuilding…"
+        : null;
+  const word =
+    frozen ??
+    (item.provisional === true ? "provisional" : null);
+  if (word === null) return base;
+  return `${base} ${word}`;
+}
+
 function valueOf(item: ChartLegendItem): ReactNode {
   if (!item.visible) return DASH;
   if (item.error !== undefined) {
@@ -120,8 +145,9 @@ function valueOf(item: ChartLegendItem): ReactNode {
   const base =
     item.outputs === undefined
       ? num(item.value)
-      : item.outputs.map((output) => (
+      : item.outputs.map((output, i) => (
           <span key={output.name} className="cv-chart-legend__output">
+            {i > 0 ? " " : null}
             <Swatch color={item.colorToken} marker={output.marker} />
             <span className="cv-visually-hidden">{output.name} </span>
             {num(output.value)}
@@ -426,6 +452,9 @@ export function ChartLegend({
     const detail = detailOf(item);
     const editing = editable(item, child) && (editingId === item.id || item.editing !== undefined);
     const value = valueOf(item);
+    const valText = valueTextOf(item);
+    const editAction = `Edit ${item.editing?.param ?? PRIMARY_PARAM} for ${item.label}`;
+    const valueButtonName = valText === DASH ? editAction : `${valText} — ${editAction}`;
     return [
       <li
         key={item.id}
@@ -471,7 +500,7 @@ export function ChartLegend({
               "cv-chart-legend__value-button",
               ring.className,
             )}
-            aria-label={`Edit ${item.editing?.param ?? PRIMARY_PARAM} for ${item.label}`}
+            aria-label={valueButtonName}
             onClick={() => setEditingId(item.id)}
             {...nav("value")}
           >
