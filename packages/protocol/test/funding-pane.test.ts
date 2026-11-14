@@ -32,9 +32,14 @@ const estimate = {
 } satisfies Estimate;
 
 const deriv = {
+  oi_mode: "absolute",
+  oi_quadrant_colouring: true,
   funding_style: "bars",
   funding_annualised: false,
   basis_source: "last",
+  liq_mode: "heatmap",
+  liq_min_notional_usd: "50000",
+  zones_enabled: false,
 } satisfies Deriv;
 
 describe("funding pane contract (consumer side, 22 getFundingHistory, Position, Settings)", () => {
@@ -47,6 +52,11 @@ describe("funding pane contract (consumer side, 22 getFundingHistory, Position, 
       Schemas["Decimal"] | null | undefined
     >();
     expectTypeOf<NonNullable<Funding["meta"]>["coverage"]>().toEqualTypeOf<Coverage | undefined>();
+  });
+
+  it("displays the server's annualised_pct on every item, never computing it", () => {
+    type Item = NonNullable<Funding["items"]>[number];
+    expectTypeOf<Item["annualised_pct"]>().toEqualTypeOf<Schemas["Decimal"] | undefined>();
   });
 
   it("tells not recorded from none settled through meta.coverage", () => {
@@ -67,8 +77,18 @@ describe("funding pane contract (consumer side, 22 getFundingHistory, Position, 
     expectTypeOf<Deriv["funding_style"]>().toEqualTypeOf<"line" | "bars" | undefined>();
     expectTypeOf<Deriv["basis_source"]>().toEqualTypeOf<"last" | "mark" | undefined>();
     expectTypeOf<keyof Deriv>().toEqualTypeOf<
-      "funding_style" | "funding_annualised" | "basis_source"
+      | "oi_mode"
+      | "oi_quadrant_colouring"
+      | "funding_style"
+      | "funding_annualised"
+      | "basis_source"
+      | "liq_mode"
+      | "liq_min_notional_usd"
+      | "zones_enabled"
     >();
-    expect(Object.keys(deriv)).toHaveLength(3);
+    expectTypeOf<Deriv["liq_mode"]>().toEqualTypeOf<"bars" | "heatmap" | undefined>();
+    expectTypeOf<Deriv["zones_enabled"]>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<Deriv["oi_mode"]>().toEqualTypeOf<"absolute" | "delta" | undefined>();
+    expect(Object.keys(deriv)).toHaveLength(8);
   });
 });
