@@ -33,6 +33,7 @@ import {
   type DegradedFacts,
 } from "../../features/system-states/degradedIssues.js";
 import { toLatencyIndicator, type LatencyIndicator } from "../../lib/telemetry/latencyIndicator.js";
+import { shellAccountSignals } from "../accountState/index.js";
 import { SHELL_PERF_MARKS, markShellStage } from "../perfMarks.js";
 import type { GpuCrash } from "../ShellPort.js";
 import { REACHABLE, type Reachability } from "./reachability.js";
@@ -203,16 +204,25 @@ export function setShellState(patch: Partial<ShellState>): void {
   for (const listener of listeners) listener();
 }
 
-/** Merges one `SystemUpdate` frame into `systemByKind`, keyed by its `kind`, and folds it into `degraded`. */
+/**
+ * Merges one `SystemUpdate` frame into `systemByKind`, keyed by its `kind`, and folds it into `degraded`.
+ * Every `account_notice` also reaches the shell's account-state store as it arrives, since
+ * `systemByKind` keeps only the last of a kind (E29-S07 #1028, BQ-5; `23` §15.9's replay included).
+ */
 export function applySystemUpdate(update: SystemUpdate): void {
+  if (update.kind === "account_notice") shellAccountSignals.applyNotice(update, Date.now());
   const degraded = reduceDegraded(state.degraded, update);
   setShellState({ systemByKind: { ...state.systemByKind, [update.kind]: update }, degraded });
   syncHandover(degraded);
 }
 
-/** Drops the degraded facts and row 9's hand-over timer, so a stopped shell leaves neither behind. */
+/**
+ * Drops the degraded facts and row 9's hand-over timer, so a stopped shell leaves neither behind;
+ * the account states go too (a stopped shell's client; the next connection replays, `23` §15.9).
+ */
 export function clearDegraded(): void {
   clearHandover();
+  shellAccountSignals.clear();
   setShellState({ degraded: INITIAL_DEGRADED_FACTS });
 }
 
@@ -258,6 +268,7 @@ export function continueReadOnly(build: string): void {
 export function resetShellState(): void {
   clearHandover();
   newestGpuCrash = undefined;
+  shellAccountSignals.clear();
   state = INITIAL_SHELL_STATE;
   for (const listener of listeners) listener();
 }

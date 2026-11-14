@@ -223,6 +223,9 @@ export {
 } from "./FreshnessMarker.js";
 export type { DataConfidenceState, FreshnessMarkerProps } from "./FreshnessMarker.js";
 
+export { StaleDataShade, staleAsOf, staleDataRowClassName } from "./StaleDataShade.js";
+export type { StaleDataShadeProps, StaleDataShadeState } from "./StaleDataShade.js";
+
 export { FuzzyList, fuzzyOptionId } from "./FuzzyList.js";
 export type { FuzzyListColumns, FuzzyListItem, FuzzyListProps, FuzzyListTag } from "./FuzzyList.js";
 
