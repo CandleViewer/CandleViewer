@@ -31,7 +31,6 @@ from candleviewer.bars.metrics import bars_tape_read_degraded_total
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.rows import (
     BUILD_VERSIONS,
-    PROVENANCE_CUTOVER_US,
     BarPersistError,
     bar_param_for,
     check_generation,
@@ -493,7 +492,8 @@ class BarReader:
                 continue
             try:
                 got = _tail_bar(row, spec)
-                built = max(1, int(str(row.get("build_version") or 0)))  # NULL: a pre-0003 v1 row
+                # NULL build_version (source present) is still reachable: it reads as v1
+                built = max(1, int(str(row.get("build_version") or 0)))
             except (ArithmeticError, ValueError, TypeError, BarPersistError) as exc:
                 malformed, error = malformed + 1, error or type(exc).__name__
                 continue
@@ -633,7 +633,8 @@ def _num(v: object) -> str:
 def stored_bar(row: dict[str, object]) -> StoredBar:
     close_ts = row.get("close_ts")
     vwap, volume = Decimal(str(row.get("vwap") or 0)), Decimal(str(row.get("volume") or 0))
-    source = str(row.get("source") or "tape")  # NULL = pre-0003 legacy row, tape-built
+    # Defensive default only: a NULL source is withheld on read (BR-05) before it gets here.
+    source = str(row.get("source") or "tape")
     flow = source != "kline"
     idx, gen = row.get("index"), row.get("generation")
     return StoredBar(
@@ -729,21 +730,12 @@ def _tape_over_kline(
 
 
 def _integrity_failure(row: dict[str, object]) -> str | None:
-    """None if trustworthy. A NULL checksum is untrusted unless the row is legacy: both `source`
-    and `row_checksum` NULL (0003 is their first writer) AND it opens before
-    `PROVENANCE_CUTOVER_US` (BR-05). A later row without provenance is "missing"."""
+    """None if trustworthy. A row without provenance (NULL `source` or NULL `row_checksum`) is
+    "missing" at any open time (BR-05): the one bar writer stamps both on every row."""
     checksum = row.get("row_checksum")
-    if checksum is None:
-        return None if _legacy(row) else "missing"
+    if checksum is None or row.get("source") is None:
+        return "missing"
     return None if checksum == row_checksum(row) else "mismatch"
-
-
-def _legacy(row: dict[str, object]) -> bool:
-    """A row that predates provenance: no `source`, and a `ts` before the cutover."""
-    ts = row.get("ts")
-    if row.get("source") is not None or ts is None:
-        return False
-    return ts_us_from_row(ts) < PROVENANCE_CUTOVER_US
 
 
 def _untrusted(row: dict[str, object], spec: BarSpec) -> bool:
