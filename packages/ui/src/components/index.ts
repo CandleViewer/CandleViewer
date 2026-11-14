@@ -522,3 +522,6 @@ export type {
 
 export { TreeView } from "./TreeView.js";
 export type { TreeItemActionsContext, TreeNode, TreeViewProps } from "./TreeView.js";
+
+export { BulkActionBar } from "./BulkActionBar.js";
+export type { BulkAction, BulkActionBarProps } from "./BulkActionBar.js";
