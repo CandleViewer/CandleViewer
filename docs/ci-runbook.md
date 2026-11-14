@@ -951,10 +951,23 @@ ms/cell or 600 s)`. The rule is the same on `merge_group` and `pull_request`. A 
   PR pass.
   Gitleaks and trufflehog findings never get an accepted-risk exception (see the gate's own
   comment) — rotate the secret per `SECURITY.md` / IR-02 (§5 below) instead.
-- **CI-SEC-002** (licence violation): a new dependency's licence is not on
-  `tools/ci/licenses-allowlist.json`. Either drop the dependency, find an
-  allowlisted alternative, or add the licence to the allowlist in its own
-  reviewed PR with a justification comment — never in the PR that needs it.
+- **CI-SEC-002** (licence violation): the licence gate checks production *and*
+  development dependencies (npm via `pnpm licenses list --json`; Python via the venv)
+  against the same allowlist, then the production npm set again
+  (`pnpm licenses list --json --prod`) with `dev_only_exceptions` disabled
+  (`security_gate.py --no-dev-only-exceptions`), so a package reachable from production
+  cannot ride a dev-only exemption. The production re-check covers npm only: the Python
+  venv is gated once, with the dev exceptions on. An empty production report fails the
+  step (`collect_licenses.py --require-nonempty`) instead of passing.
+  "Production" here is pnpm's `dependencies` graph; whether a package ends up in a shipped Vite or Electron bundle is not derivable from
+  the dependency/devDependency split, and that bundle-level reachability check belongs to
+  the SBOM work (E03-T08). Dev-only-ness of a new `dev_only_exceptions` entry is
+  established by `pnpm why -r` at review time. The check fails when a new
+  dependency's licence is not on `tools/ci/licenses-allowlist.json`. Either drop the
+  dependency, find an allowlisted alternative, add a dated `dev_only_exceptions` entry
+  for a package that is dev-only, or add the licence to the allowlist; each of the last
+  two goes in its own reviewed PR with a justification comment — never in the PR that
+  needs it.
 - **CI-SEC-003** (LGPL needs approval): an LGPL-licensed dependency needs an
   explicit CODEOWNER approval recorded in the PR description before the
   gate will pass; tag the relevant CODEOWNER and wait for their review.
