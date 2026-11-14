@@ -4,6 +4,24 @@ import reactHooksPlugin from "eslint-plugin-react-hooks";
 import security from "eslint-plugin-security";
 import noUnsanitized from "eslint-plugin-no-unsanitized";
 import baseConfig from "@candleviewer/config/eslint";
+import { noRestrictedImportsRuleSet } from "@candleviewer/config/no-restricted-imports";
+
+const PURE_GRAPH =
+  "E37-S01: rule-builder-graph's a11y/ and model/ are pure (no React, graph library, DOM, timers, clock or console).";
+/**
+ * The globals a pure core never reads, by family. The clock, task and log ones are closed as
+ * packages/rule-graph closes them: ids and replays stay deterministic.
+ */
+const IMPURE_GLOBALS = {
+  page: ["window", "document", "navigator", "location", "self", "globalThis"],
+  storage: ["localStorage", "sessionStorage", "indexedDB"],
+  network: ["fetch", "XMLHttpRequest", "WebSocket"],
+  rendering: ["requestAnimationFrame", "cancelAnimationFrame", "matchMedia", "getComputedStyle"],
+  observers: ["ResizeObserver", "MutationObserver", "IntersectionObserver"],
+  elements: ["HTMLElement", "Element", "Event", "CustomEvent"],
+  clock: ["setTimeout", "setInterval", "queueMicrotask", "performance"],
+  log: ["console"],
+};
 
 /** @type {import("eslint").Linter.Config[]} */
 export default tseslint.config(
@@ -85,6 +103,34 @@ export default tseslint.config(
             message: "The shared worker's code runs in a worker, which has no page (ADR-0005).",
           }),
         ),
+      ],
+    },
+  },
+  // E37-S01 (BQ-1): the rule editor's keyboard core (E47-S03) and its graph model hold no React,
+  // React DOM or graph-library import and read none of IMPURE_GLOBALS, as packages/rule-graph's
+  // own rule says; the canvas and the screen around them hold those. This rule set replaces the shared one
+  // for these files, so the shared paths and patterns (§9 #18's deep-import ban) are merged in.
+  {
+    files: ["src/features/rule-builder-graph/{a11y,model}/**/*.{ts,tsx,mts,cts}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            ...(noRestrictedImportsRuleSet.paths ?? []),
+            ...["react", "react-dom"].map((name) => ({ name, message: PURE_GRAPH })),
+          ],
+          patterns: [
+            ...(noRestrictedImportsRuleSet.patterns ?? []),
+            { group: ["react/*", "react-dom/*", "@xyflow/*"], message: PURE_GRAPH },
+          ],
+        },
+      ],
+      "no-restricted-globals": [
+        "error",
+        ...Object.values(IMPURE_GLOBALS)
+          .flat()
+          .map((name) => ({ name, message: PURE_GRAPH })),
       ],
     },
   },
