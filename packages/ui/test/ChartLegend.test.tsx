@@ -119,7 +119,9 @@ describe("ChartLegend (CMP-199)", () => {
   it("names the value button by what it edits", async () => {
     await mount(<ChartLegend {...props({ items: [row("ema-21", { label: "EMA 21" })] })} />);
     expect(
-      page.getByRole("button", { name: "Edit primary parameter (per descriptor) for EMA 21" }),
+      page.getByRole("button", {
+        name: "3,398.12 — Edit primary parameter (per descriptor) for EMA 21",
+      }),
     ).toBeTruthy();
   });
 

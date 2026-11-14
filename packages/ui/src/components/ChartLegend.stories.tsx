@@ -93,7 +93,7 @@ export const Collapsed: Story = { args: { items: patch({ visible: false }), coll
 export const PaneLabelRowFocused: Story = {
   play: async ({ canvasElement }) => {
     within(canvasElement).getByRole("button", { name: "Collapse Price" }).focus();
-    await expect(canvasElement.querySelector("[aria-current]")).not.toBeNull();
+    await waitFor(() => expect(canvasElement.querySelector("[aria-current]")).not.toBeNull());
   },
 };
 export const Comfortable: Story = { globals: { density: "comfortable" } };
