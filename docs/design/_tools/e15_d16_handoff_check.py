@@ -21,7 +21,9 @@ key. Option 2 of the orchestrator's ruling on the BQ list: four gates, no ruled-
   fragment of a longer string fails; a bare string as a whole table cell); every concept group lists existing entries and is
   named in the pack; the pack's entry count equals the deck's.
 
-Exit 0 when every gate passes, 1 otherwise. `--json` prints the findings as JSON.
+`--check` exits 1 on any finding (without it the run only reports). `--self-test` applies one
+mutation per gate to in-memory copies and passes only when each adds exactly one new finding of its
+gate, a re-run reproduces the base result and no file on disk changed. `--json` prints the findings.
 """
 
 from __future__ import annotations
@@ -254,6 +256,60 @@ def fill(root: Path = ROOT) -> int:
     return changed
 
 
+def _mut_link(pack: str, deck: str) -> tuple[str, str]:
+    return pack + "\n`D15`:999999\n", deck
+
+
+def _mut_hash(pack: str, deck: str) -> tuple[str, str]:
+    value, lift_id = HASH.findall(pack)[0]
+    old = f"{value}<!--=HASH:{lift_id}-->"
+    return pack.replace(old, f"000000000000<!--=HASH:{lift_id}-->", 1), deck
+
+
+def _mut_index(pack: str, deck: str) -> tuple[str, str]:
+    kept = [line for line in pack.split("\n") if not line.startswith("| US-LAY-008 ")]
+    return "\n".join(kept), deck
+
+
+def _mut_deck(pack: str, deck: str) -> tuple[str, str]:
+    data = json.loads(deck)
+    key = next(iter(data["entries"]))
+    data["entries"][key] += " (mutated)"
+    return pack, json.dumps(data)
+
+
+MUTATIONS = (
+    ("G-LINK", _mut_link),
+    ("G-HASH", _mut_hash),
+    ("G-INDEX", _mut_index),
+    ("G-DECK", _mut_deck),
+)
+
+
+def self_test(root: Path = ROOT) -> list[str]:
+    """One mutation per gate on in-memory copies; each must add exactly one finding of its gate."""
+    paths = [root / PACK_REL, root / DECK_REL]
+    before = [hashlib.sha256(p.read_bytes()).hexdigest() for p in paths]
+    pack, deck = (p.read_text(encoding="utf-8") for p in paths)
+    base = check(root, pack=pack, deck=deck)
+    bad: list[str] = []
+    for gate, mutate in MUTATIONS:
+        m_pack, m_deck = mutate(pack, deck)
+        if (m_pack, m_deck) == (pack, deck):
+            bad.append(f"self-test {gate}: the mutation did not apply")
+            continue
+        new = [f for f in check(root, pack=m_pack, deck=m_deck) if f not in base]
+        if len(new) != 1 or not new[0].startswith(f"{gate} "):
+            bad.append(
+                f"self-test {gate}: expected one new {gate} finding, got {new[:3]}"
+            )
+    if check(root, pack=pack, deck=deck) != base:
+        bad.append("self-test: a re-run does not reproduce the base result")
+    if [hashlib.sha256(p.read_bytes()).hexdigest() for p in paths] != before:
+        bad.append("self-test: a file on disk changed")
+    return bad
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         description="E15-D16 hand-off pack check (module docstring)"
@@ -262,19 +318,31 @@ def main(argv: list[str]) -> int:
         "--fill", action="store_true", help="rewrite the HASH values and the count"
     )
     ap.add_argument("--json", action="store_true", help="print the findings as JSON")
+    ap.add_argument("--check", action="store_true", help="exit 1 on any finding")
+    ap.add_argument("--self-test", action="store_true", help="one mutation per gate")
     args = ap.parse_args(argv)
     if args.fill:
         print(f"filled: {fill()} line(s) changed")
     bad = check()
+    st = self_test() if args.self_test else []
     if args.json:
-        print(json.dumps({"ok": not bad, "findings": bad}, indent=2))
+        payload: dict[str, Any] = {"ok": not bad, "findings": bad}
+        if args.self_test:
+            payload["self_test"] = st
+        print(json.dumps(payload, indent=2))
     else:
-        for finding in bad:
+        for finding in bad + st:
             print(finding)
         print(
             f"e15_d16_handoff_check: {'PASS' if not bad else 'FAIL'} ({len(bad)} finding(s))"
         )
-    return 0 if not bad else 1
+        if args.self_test:
+            print(
+                f"self-test: {'ok' if not st else 'FAILED'}: {len(MUTATIONS)} mutations, one per "
+                "gate, each one new finding; a re-run reproduces; files on disk unchanged"
+            )
+    failed = (bool(bad) and args.check) or bool(st)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
