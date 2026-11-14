@@ -152,9 +152,11 @@ export const RibbonExpanded: Story = {
     });
     chevron.focus();
     await userEvent.keyboard("{ArrowRight}");
-    await expect(
-      within(canvasElement).getByRole("button", { name: "EMA 55 visible" }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        within(canvasElement).getByRole("button", { name: "EMA 55 visible" }),
+      ).toBeVisible(),
+    );
   },
 };
 export const UsedByRules: Story = { args: { items: patch({ usedByRules: true }) } };
@@ -191,9 +193,11 @@ export const RowAdd: Story = {
   render: () => <AddHost />,
   play: async ({ canvasElement }) => {
     await userEvent.click(within(canvasElement).getByRole("button", { name: "Add EMA 100" }));
-    await expect(
-      within(canvasElement).getByRole("button", { name: "EMA 100 visible" }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        within(canvasElement).getByRole("button", { name: "EMA 100 visible" }),
+      ).toBeVisible(),
+    );
   },
 };
 /** The same add under reduced motion: instant (E13-D04 M7). */
