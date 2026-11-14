@@ -5964,6 +5964,16 @@
         }
       }
     },
+    "/market/liquidations/by-price": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
     "/market/metrics": {
       "get": {
         "x-rbac": {
