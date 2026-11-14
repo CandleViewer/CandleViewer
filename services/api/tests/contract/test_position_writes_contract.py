@@ -15,6 +15,8 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.idempotency import StoredResponse
+from candleviewer.api.order_admission import replay_key
 from candleviewer.api.position_close import CLOSE_ALL_PATH, CLOSE_PATH
 from candleviewer.api.position_reverse import REVERSE_PATH
 from candleviewer.oms.errors import (
@@ -34,6 +36,7 @@ from tests.unit.api.position_writes_world import (
     ON_A,
     ON_B,
     ON_LIVE,
+    USERS,
     World,
     headers,
     on,
@@ -93,6 +96,12 @@ def _venue_changed(world: World) -> None:
     world.pipeline.close = PositionChanged(shrunk.message, errors=(shrunk,))
 
 
+def _key_reused(world: World) -> None:
+    """The key's 24 h record holds the fingerprint of another body (a first request under it)."""
+    held = replay_key(USERS["owner"], "closeAllPositions", _KEY)
+    world.cache.put(*held, StoredResponse("0" * 64, 200, b"{}", None))
+
+
 #: (case, method path template, status, world, caller, position, body, header changes)
 _CASES: list[tuple[str, str, int, Callable[[World], None], str, str, Any, dict[str, Any]]] = [
     ("close_ok", CLOSE_PATH, 202, _keep, "owner", ON_A, _FULL, {}),
@@ -142,6 +151,7 @@ _CASES: list[tuple[str, str, int, Callable[[World], None], str, str, Any, dict[s
     ("all_forbidden", CLOSE_ALL_PATH, 403, _keep, "viewer", "", {}, {}),
     ("all_scope", CLOSE_ALL_PATH, 403, _keep, "manager", "",
      {"exchange_account_ids": [str(MISSING)]}, {}),
+    ("all_key_reuse", CLOSE_ALL_PATH, 409, _key_reused, "owner", "", {}, {}),
     ("all_body", CLOSE_ALL_PATH, 422, _keep, "owner", "", {"symbol": "btc"}, {}),
     ("all_rate", CLOSE_ALL_PATH, 429, World.exhaust, "owner", "", {}, {}),
     ("all_no_oms", CLOSE_ALL_PATH, 501, _set("composed", False), "owner", "", {}, {}),
