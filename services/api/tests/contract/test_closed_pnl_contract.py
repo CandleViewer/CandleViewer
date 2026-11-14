@@ -26,6 +26,10 @@ The orchestrator's ruling of 2026-11-03 (08:03Z), as the four plan documents sta
   waits for its record, a record written after its fill's poll ends is a check for #843, a record no
   walk composes is in no group, row 55 keeps the window, row 59 bounds its sort by the named groups,
   and Sec.9.3 rule 3 cites C-5.6.
+- Slice 3b and its fold: the sync's composition in the OMS runtime, a refused account's poll
+  ended, an empty or absent `orderId` alike, and the orchestrator's ruling of 2026-11-04 (22:19Z),
+  the sync's task's end paged and a fourth readiness condition in 24 Sec.8.12 and 20 Sec.6.2;
+  logged once, as Sec.19.134.
 
 Nothing serves the new members yet: E29-S06's later slices implement them against this contract.
 """
@@ -269,8 +273,8 @@ def test_contract_24_composes_the_record_and_bounds_the_comparison() -> None:
     for claim in (
         f'`CLOSED_PNL_NAMESPACE = UUID("{namespace}")`',
         'f"{account_id}:order:{exchange_order_id}"',
-        "**The empty-orderId rule:** a record the venue writes with an empty `orderId` has "
-        '`exchange_order_id` None, never `""`',
+        "**The empty-orderId rule:** a record the venue writes with an empty or absent `orderId` "
+        'has `exchange_order_id` None, never `""`',
         "`local_net_pnl = gross_pnl + fee_pnl + funding_pnl`, present when all three are",
         "`|local_net_pnl \N{MINUS SIGN} closed_pnl| > "
         "CV_OMS_CLOSED_PNL_TOLERANCE_REL \N{MULTIPLICATION SIGN} |closed_pnl|`: "
@@ -487,7 +491,8 @@ def test_contract_24_counts_one_window_and_one_lookback_for_the_cap_and_the_view
     the item settles, and an offset change never moves the day in progress. The delta (m-D, Nit
     2): the offset and bounds the resolver answers that day, as 22 serves them, and no poll for a
     record whose order has no row. Fold r3 (the review's Major 2): a failed read and each stored
-    fill keep the poll running, and a close not yet read is served, counted provisional."""
+    fill keep the poll running, and a close not yet read is served, counted provisional. Slice
+    3b's fold (n2): a read the account binding refuses outright ends both."""
     text = _s813()
     for overclaim in ("takes effect at the next read", "[day_start, now)", "never count a record"):
         assert overclaim not in text, overclaim
@@ -524,12 +529,15 @@ def test_contract_24_counts_one_window_and_one_lookback_for_the_cap_and_the_view
         "while the account holds an item with an `exchange_order_id` that is not final and whose "
         "order has a row, and runs at startup and after a private-stream reconnect: a record whose "
         "order has no row, such as a liquidation's, is never final, so it keeps no poll running, "
-        "as one with no `orderId` keeps none.",
+        "as one with an empty or absent `orderId` keeps none.",
         "A read that fails keeps the poll running until one succeeds, and each stored fill of a "
         "trade type keeps it running, within the reach, until a read that starts `SETTLE_POLL_S` "
         "or more after the fill was stored succeeds, so a close is read again once its record is "
         "due, never left to the one read its fill set off, which can fail or come before the "
-        "venue writes the record.",
+        "venue writes the record; but a read the account binding refuses outright (the account "
+        "missing, deleted, another environment's or holding no active key) ends both, so such an "
+        "account is not resolved again every `SETTLE_POLL_S`, and its next stored fill or "
+        "`resyncing` asks again.",
         "A close not yet read shows in the window as soon as its fill is stored: the composition "
         "writes a provisional item for each order with a row whose stored fill closes (one "
         "stating a `closedSize` above 0, or one the walk gives a `c` above 0), dated by its last "
@@ -871,3 +879,52 @@ def test_contract_24_states_the_final_rule_as_the_sync_builds_it_and_21_its_read
     )
     log = _between(_doc("24-internal-schemas.md"), "### 19.129 ", "\n### 19.")
     assert "which 21 §13.1's new row 60 reads over `ix_exec_order`" in log
+
+
+def test_contract_24_and_20_state_the_syncs_composition_and_its_fourth_readiness_line() -> None:
+    """E29-S06 slice 3b (#981): 24 Sec.8.13 "Its composition" as built, and the orchestrator's
+    ruling of 2026-11-04 (22:19Z): a sync task that ended unasked is paged once and is a fourth
+    condition of Sec.8.12 "Readiness", which 20 Sec.6.2's consumer paragraph states too, never a
+    gate on order entry. Its fold's change log is Sec.19.134, which occurs once."""
+    internal = _doc("24-internal-schemas.md")
+    assert not _missing(
+        _s813(),
+        "A start the lane does not confirm (one that fails, or one whose answer the bound cuts "
+        "off, which may still have run) is logged CRITICAL and paged as unconfirmed, and `ready` "
+        "stands.",
+        "and, with reconciliation composed, each `resyncing` the consumer answers goes to "
+        "`reconnected` ahead of reconciliation's request.",
+        "once it has ended unasked, its end is paged once and the `oms` check of `/readyz` reads "
+        '`degraded` (§8.12 "Readiness"), and what `placeOrder` and the exits read is unchanged; '
+        "a stop it was asked for pages nothing.",
+    )
+    readiness = _between(internal, "**Readiness (the orchestrator's ruling of 2026-10-25).**", "\n")
+    assert not _missing(
+        readiness,
+        "The orchestrator's ruling of 2026-11-04 (22:19Z) adds a fourth condition: the check is "
+        "`degraded` too once the closed-PnL sync's task has ended unasked (§8.13 \"Its "
+        'composition"), as that task never restarts itself, and its end is paged once. That '
+        "condition never gates order entry: `placeOrder` and the exits read neither the check nor "
+        "the sync, whose records no route serves yet.",
+    )
+    consumer = _between(_doc("20-architecture.md"), "**The private-stream consumer (E29-T05", "\n")
+    assert not _missing(
+        consumer,
+        "The check is also `degraded` once the task of E29-S06's closed-PnL sync, which the "
+        "runtime starts after the consumer, has ended unasked: it never restarts itself, and its "
+        "end is paged once (the orchestrator's ruling of 2026-11-04, `24-internal-schemas.md` "
+        "§8.12 and §8.13); that condition never gates order entry either.",
+    )
+    assert internal.count("\n### 19.134 ") == 1
+    log = _between(internal, "### 19.134 ", "\n### 19.")
+    assert not _missing(
+        log,
+        "2026-11-04 — §8.12, §8.13 and 20 §6.2: the OMS runtime runs the closed-PnL sync, whose "
+        "task's end is paged and degrades `/readyz` (E29-S06, #981)",
+        "The orchestrator assigned this number on 2026-11-04 (22:19Z)",
+        "a fourth condition beside the three of the ruling of 2026-10-25",
+        "ends that account's poll, a stored fill's included, until its next stored fill or "
+        "`resyncing` asks again; any other failure keeps the poll.",
+        "the adapter reads a record with no `orderId` field as one with an empty one (§14.2 rule "
+        "12).",
+    )
