@@ -223,6 +223,12 @@ class Rig:
         seen = self.metrics.snapshot([FETCH_SECONDS])
         return {k: seen.get(f"{FETCH_SECONDS}_count{{result={k}}}", 0) for k in ("ok", "failed")}
 
+    def crossed(self) -> float:
+        """The crossings between accounts, counted apart from `failed` (`other_account`)."""
+        return self.metrics.snapshot([FETCH_SECONDS]).get(
+            f"{FETCH_SECONDS}_count{{result=other_account}}", 0
+        )
+
 
 def rig(at: datetime = T0, resolve: Any = None, unresolved: Any = (), **venue: Any) -> Rig:
     v, store, metrics, loop = Venue(**venue), Store(), Metrics("demo"), asyncio.get_running_loop()
@@ -502,7 +508,8 @@ async def test_a_resolve_naming_another_account_fails_the_read_before_any_venue_
     r = rig(resolve=ACCOUNT_B, records=[_record()], readings=[_reading()])
     assert not await r.sync.read(ACCOUNT_A)
     assert (r.venue.lanes, r.venue.reads, r.venue.position_reads) == ([], [], 0)
-    assert r.store.rows == {} and r.store.snapshots == [] and r.counted() == {"ok": 0, "failed": 1}
+    assert r.store.rows == {} and r.store.snapshots == []
+    assert (r.counted(), r.crossed()) == ({"ok": 0, "failed": 0}, 1)  # a crossing, apart
 
 
 @virtual
@@ -510,7 +517,23 @@ async def test_a_record_naming_another_account_fails_the_read_and_keeps_nothing(
     r = rig(records=[_record()], readings=[_reading()], records_of=ACCOUNT_B)
     assert not await r.sync.read(ACCOUNT_A)
     assert r.store.rows == {} and r.store.snapshots == [] and r.venue.position_reads == 0
-    assert r.counted() == {"ok": 0, "failed": 1}
+    assert (r.counted(), r.crossed()) == ({"ok": 0, "failed": 0}, 1)
+
+
+@virtual
+async def test_another_accounts_record_after_the_accounts_own_fails_the_whole_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r = rig(readings=[_reading()])
+    theirs = _record(exchange_order_id="b-order").model_copy(update={"account_id": ACCOUNT_B})
+
+    async def closed_pnl(account: AccountRef, start: int, end: int) -> list[ClosedPnl]:
+        return [_record(), theirs]  # the asked account's own record first
+
+    monkeypatch.setattr(r.venue, "closed_pnl", closed_pnl)
+    assert not await r.sync.read(ACCOUNT_A)
+    assert r.store.rows == {} and r.venue.position_reads == 0
+    assert (r.counted(), r.crossed()) == ({"ok": 0, "failed": 0}, 1)
 
 
 # --- the seed (the orchestrator's ruling, 2026-11-04 15:51Z) --------------------------------------
@@ -587,7 +610,34 @@ async def test_a_seed_reading_of_another_account_fails_the_seed_and_the_records_
     assert r.store.snapshots == [] and r.venue.position_reads == 2
     assert set(r.store.rows) == {record_id(ACCOUNT_A, XID)}
     failed = [e["kind"] for e in logs if e["event"] == "closed_pnl_flat_seed_failed"]
-    assert failed == ["_OtherAccount"] * 2
+    assert failed == ["_OtherAccount"] * 2  # and counted as crossings, never a WARNING alone
+    assert (r.counted(), r.crossed()) == ({"ok": 2, "failed": 0}, 2)
+
+
+@virtual
+async def test_another_accounts_reading_after_the_accounts_own_fails_the_whole_seed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r, walks = rig(records=[_record()]), list[str]()
+    theirs = _reading(symbol="ETHUSDT").model_copy(update={"account_id": ACCOUNT_B})
+    walk = r.store.walk_flats
+
+    async def positions(account: AccountRef) -> list[Position]:
+        return [_reading(), theirs]  # the asked account's own reading first
+
+    async def walk_flats(account_id: UUID, symbol: str, *rest: Any) -> tuple[datetime, ...]:
+        walks.append(symbol)
+        return await walk(account_id, symbol, *rest)
+
+    monkeypatch.setattr(r.venue, "positions", positions)
+    monkeypatch.setattr(r.store, "walk_flats", walk_flats)
+    with capture_logs() as logs:
+        assert await r.sync.read(ACCOUNT_A)
+    assert (r.store.snapshots, walks) == ([], [])
+    assert set(r.store.rows) == {record_id(ACCOUNT_A, XID)}
+    failed = [e["kind"] for e in logs if e["event"] == "closed_pnl_flat_seed_failed"]
+    assert failed == ["_OtherAccount"]
+    assert (r.counted(), r.crossed()) == ({"ok": 1, "failed": 0}, 1)
 
 
 # --- the merge (24 Sec.8.13: several records under one orderId) ---------------------------------

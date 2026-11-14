@@ -286,6 +286,9 @@ _A_DAY_APART = "0+0x5 1+0x1439 2+0x700"
 _ACCOUNT_ROWS = 'bybit_rows_refused_total{env="live",reason="account"}'
 _ENV_ROWS = 'bybit_rows_refused_total{env="live",reason="environment"}'
 _FIRST_ROW = "_x5 1+0x700"
+# #981 (E29-S06): the closed-PnL sync's crossings between accounts, and its failed reads (silent).
+_CROSSINGS = 'oms_closed_pnl_fetch_seconds_count{env="live",result="other_account"}'
+_FAILED_READS = 'oms_closed_pnl_fetch_seconds_count{env="live",result="failed"}'
 
 
 def _closes(fast: int, under_5: int, slow: int) -> dict[str, str]:
@@ -435,6 +438,16 @@ MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
         ("6m", True, {_ACCOUNT_ROWS: _FIRST_ROW}),
         ("6m", False, {_ENV_ROWS: _RISE}),
         ("11h", False, {_ACCOUNT_ROWS: _FLAT}),
+    ),
+    # #981 (E29-S06): as BybitRowsRefusedAccount, on the sync's crossings between accounts; its
+    # failed reads are silent, and so is a count already held an hour before.
+    "OmsClosedPnlAccountCrossing": (
+        ("6m", True, {_CROSSINGS: _RISE}),
+        ("10h", True, {_CROSSINGS: _RISE}),
+        ("11h", False, {_CROSSINGS: _RISE}),
+        ("6m", True, {_CROSSINGS: _FIRST_ROW}),
+        ("6m", False, {_FAILED_READS: _RISE}),
+        ("11h", False, {_CROSSINGS: _FLAT}),
     ),
     # #837: the same; resolved between two daily counts (20 h), fired again by the next (24 h 7 m).
     "KeyRotationOverdue": (

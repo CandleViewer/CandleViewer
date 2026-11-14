@@ -4043,13 +4043,16 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "seconds",
         ("result",),
         "One read of an account's closed-PnL records from the venue, all its pages, in the poll "
-        "lane (E29-S06, 24 Sec.8.13), by result: ok or failed. No account label: the sync's logs "
-        "name the account. Buckets as a reconciliation pass's, whose read has the same 30 s bound.",
+        "lane (E29-S06, 24 Sec.8.13), by result: ok or failed, or other_account for a crossing "
+        "between accounts, which a seed's positions read that meets one counts too. No account "
+        "label: the sync's logs name the account. Buckets as a reconciliation pass's, whose read "
+        "has the same 30 s bound.",
+        "OmsClosedPnlAccountCrossing: other_account rose in 1h (ticket, held 9 h 30 m); else "
         "dashboard",
         _P,
         "E29",
         RECONCILE_BUCKETS,
-        max_series=2,
+        max_series=3,
     ),
     _s(
         "rule_evaluations_total",
