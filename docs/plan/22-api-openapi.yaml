@@ -5618,6 +5618,30 @@ paths:
         interval is instrument-specific (`funding_interval_minutes`; 8 h common, some 1/2/4 h) —
         never assume 8 h. `predicted` marks the current unsettled rate, which Bybit exposes only
         through the ticker (`fundingRate`); it is flagged `estimated: "true`."
+
+        **The interval and the rate bounds come from instrument info** (E24-S03, #778; E24-D02
+        G5), the instruments cache's `fundingInterval`, `upperFundingRate` and
+        `lowerFundingRate` for the symbol, never the ticker and never the spacing of the items:
+        `funding_interval_minutes` is the step of the settled history and the interval a client
+        states (a countdown runs to the ticker's `nextFundingTime`, never to a multiple of the
+        interval), and `upper_funding_rate` / `lower_funding_rate` are the venue's cap and floor
+        on a rate, as fractions per interval like `funding_rate` (`0.005` is 0.5 %). Each bound
+        is `null` when the instrument info carries none; a missing bound is never served as `0`.
+
+        **`meta.coverage`** (E24-S03, #778, BQ 6) states what the store holds for the symbol, in
+        `LiquidationsPageMeta`'s terms plus `gaps[]`: `first_available_ts` is the first stored
+        settlement (`null` when none is), `covered_from` / `covered_to` the part of the requested
+        window the backfilled store answers for, and `no_coverage` is true when the store has not
+        been backfilled over the window (nothing fetched for it yet, or the fetch failed), so an
+        empty page there means "not recorded". An empty page with `no_coverage: false` means the
+        window was covered and no funding settled in it (a symbol listed after the window, or
+        before its first settlement). `gaps[]` lists each span of the covered part longer than
+        one `funding_interval_minutes` between consecutive settlements, so a missing settlement
+        is reported and never filled.
+
+        The two bounds and `meta.coverage` are contract first (C-6.1): optional until the
+        handler serves them, and a client reads an absent member as unknown, never as `0` or as
+        "covered".
       parameters:
         - $ref: "#/components/parameters/SymbolQuery"
         - $ref: "#/components/parameters/From"
@@ -5636,7 +5660,22 @@ paths:
                   - type: object
                     properties:
                       symbol: { $ref: "#/components/schemas/Symbol" }
-                      funding_interval_minutes: { type: integer }
+                      funding_interval_minutes:
+                        type: integer
+                        minimum: 1
+                        description: >-
+                          The symbol's settlement interval in minutes, from instrument info
+                          (`fundingInterval`); 480 is 8 h, 240 is 4 h.
+                      upper_funding_rate:
+                        oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }]
+                        description: >-
+                          The funding cap per interval, from instrument info
+                          (`upperFundingRate`); `null` when it carries none.
+                      lower_funding_rate:
+                        oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }]
+                        description: >-
+                          The funding floor per interval, from instrument info
+                          (`lowerFundingRate`), usually negative; `null` when it carries none.
                       items:
                         type: array
                         items:
@@ -5646,6 +5685,7 @@ paths:
                             funding_rate: { $ref: "#/components/schemas/Decimal" }
                             predicted: { type: boolean, default: false }
                             estimated: { type: boolean, default: false }
+                      meta: { $ref: "#/components/schemas/FundingPageMeta" }
               examples:
                 funding:
                   {
@@ -5653,6 +5693,8 @@ paths:
                       {
                         symbol: BTCUSDT,
                         funding_interval_minutes: 480,
+                        upper_funding_rate: "0.005",
+                        lower_funding_rate: "-0.005",
                         items:
                           [
                             {
@@ -5668,7 +5710,20 @@ paths:
                               estimated: true,
                             },
                           ],
-                        meta: { next_cursor: null, has_more: false, count: 2 },
+                        meta:
+                          {
+                            next_cursor: null,
+                            has_more: false,
+                            count: 2,
+                            coverage:
+                              {
+                                first_available_ts: "2026-01-01T00:00:00Z",
+                                covered_from: "2026-09-14T00:00:00Z",
+                                covered_to: "2026-09-14T08:00:00Z",
+                                no_coverage: false,
+                                gaps: [],
+                              },
+                          },
                       },
                   }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -8187,7 +8242,9 @@ paths:
         `trailing_stop` of `0` is none. An `exchange_account_ids` entry outside the caller's
         grants, or one that does not exist, refuses the whole request alike with
         `403 account_scope_denied`, audited (SR-E29-13); a malformed parameter is
-        `400 validation_failed`.
+        `400 validation_failed`. A position's `funding_estimate` (`FundingEstimate`, E24-S03) is
+        its next funding charge, computed by the server under this same account scope; an
+        aggregate row carries none.
       parameters:
         - $ref: "#/components/parameters/AccountIdsQuery"
         - $ref: "#/components/parameters/SymbolQueryOptional"
@@ -21708,6 +21765,32 @@ components:
                 covered_from: { type: ["string", "null"], format: date-time }
                 covered_to: { type: ["string", "null"], format: date-time }
                 no_coverage: { type: boolean }
+    FundingPageMeta:
+      description: >-
+        `PageMeta` plus the stored coverage of the symbol's settled funding (E24-S03, #778):
+        `LiquidationsPageMeta`'s four members and `OpenInterestPageMeta`'s `gaps[]`, each a span
+        of the covered part longer than one funding interval between consecutive settlements.
+        `coverage` is optional until `getFundingHistory` serves it (contract first, C-6.1).
+      allOf:
+        - $ref: "#/components/schemas/PageMeta"
+        - type: object
+          properties:
+            coverage:
+              type: object
+              required: [first_available_ts, covered_from, covered_to, no_coverage, gaps]
+              properties:
+                first_available_ts: { type: ["string", "null"], format: date-time }
+                covered_from: { type: ["string", "null"], format: date-time }
+                covered_to: { type: ["string", "null"], format: date-time }
+                no_coverage: { type: boolean }
+                gaps:
+                  type: array
+                  items:
+                    type: object
+                    required: [from, to]
+                    properties:
+                      from: { type: string, format: date-time }
+                      to: { type: string, format: date-time }
     OpenInterestPoint:
       type: object
       required: [t, open_interest, open_interest_value, interval, source]
@@ -22813,7 +22896,52 @@ components:
           }
         trade_group_id: { type: ["string", "null"], format: uuid }
         r_multiple: { oneOf: [{ $ref: "#/components/schemas/Decimal" }, { type: "null" }] }
+        funding_estimate:
+          oneOf: [{ $ref: "#/components/schemas/FundingEstimate" }, { type: "null" }]
+          description: >-
+            The charge this position meets at the symbol's next funding settlement, computed by
+            the server (E24-S03, #778; E24-D02 G11). `null` when the position is flat or the
+            server holds no accruing rate for the symbol, so a client shows no charge line,
+            never a zero. Contract first (C-6.1): absent until the read serves it, which a
+            client reads as `null`.
         updated_at: { type: string, format: date-time }
+    FundingEstimate:
+      type: object
+      required: [amount, direction, funding_rate, settles_at, computed_at]
+      description: >-
+        One position's estimated funding charge at the next settlement (E24-S03, #778), the
+        per-account carrier of E24-D02 G11. It is computed server-side only (C-2.12): the
+        position's value at mark times the symbol's accruing rate (the ticker's `fundingRate`,
+        the item `getFundingHistory` flags `predicted`), with `Decimal` arithmetic; a client
+        formats it and never multiplies. A long pays and a short receives when the rate is
+        positive, the reverse when it is negative. A demo position is priced at the live public
+        rate, the only one there is. It rides the position's own read (`listPositions`,
+        `getPosition`), so its scope is the position's: `positions:read` over the caller's
+        granted accounts, every account for the Owner and the assigned ones for a Manager
+        (C-12.4); no operation of its own exists and a market-data read never carries it.
+      properties:
+        amount:
+          $ref: "#/components/schemas/Decimal"
+          description: >-
+            The charge's magnitude in the settle coin (USDT), never negative; its sign is
+            `direction`.
+        direction:
+          type: string
+          enum: [pay, receive, none]
+          description: "`none` when the accruing rate is exactly zero (`amount` is `0`)."
+        funding_rate:
+          $ref: "#/components/schemas/Decimal"
+          description: The accruing rate per interval the estimate used.
+        settles_at:
+          type: string
+          format: date-time
+          description: The settlement the estimate is for (the ticker's `nextFundingTime`).
+        computed_at:
+          type: string
+          format: date-time
+          description: >-
+            When the server read the mark and the rate; a client compares it with its stale
+            threshold and marks the charge stale, never recomputing it.
     AggregatePosition:
       type: object
       properties:
@@ -24797,6 +24925,37 @@ components:
             default_depth: { type: integer }
             stale_badge_after_ms: { type: integer }
             max_history_bars: { type: integer }
+        deriv:
+          type: object
+          description: >-
+            The derivatives sub-panes' display preferences (E24-D02 §10, gap G1; E24-S03, #778),
+            presentation only: no key changes what the server computes or what a rule sees. A
+            leaf's dotted key is `deriv.<leaf>` (`deriv.funding_style` is E24-D02's
+            `deriv.funding.style`), one level as every group's leaves are. With no deployment
+            default set, an unset leaf takes the client's built-in default, named on each leaf.
+            The liquidation keys (`deriv.liq.*` in E24-D02 §10) are not here yet.
+          properties:
+            oi_mode:
+              type: string
+              enum: [absolute, delta]
+              description: "The OI sub-pane's mode; client default `absolute`."
+            oi_quadrant_colouring:
+              type: boolean
+              description: "The OI price/OI quadrant classification; client default `true`."
+            funding_style:
+              type: string
+              enum: [line, bars]
+              description: "The settled-history rendering, stepped line or bars; client default `line` (PROPOSED in E24-D02)."
+            funding_annualised:
+              type: boolean
+              description: "Annualised funding display (E24-S04); client default `false`."
+            basis_source:
+              type: string
+              enum: [mark, last]
+              description: "The basis readout's price, `mark − index` or `last − index`; client default `mark`."
+            basis_annualised:
+              type: boolean
+              description: "Annualised basis display; client default `false` (PROPOSED in E24-D02)."
         _meta:
           type: object
           properties:
