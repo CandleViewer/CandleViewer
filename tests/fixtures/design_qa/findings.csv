@@ -1,0 +1,3 @@
+finding_id,severity,status,component,opened
+DQA-0001,P2,open,SCR-002,2026-11-04
+DQA-0002,P3,accepted,SCR-003,2026-11-04

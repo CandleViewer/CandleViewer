@@ -1,0 +1,6 @@
+screen_id,screen_name,owning_epic,auditor,audit_date,verdict,p0,p1,p2,p3,bug_keys,notes,e47_verdict,e47_ref
+SCR-001,Login,E09,agent-run,2026-11-04,passed,0,0,0,0,,,findings,a6ec96762
+SCR-002,Two-factor (TOTP) challenge,E09,agent-run,2026-11-04,findings,0,0,1,0,DQA-0001,,no findings at sha,a6ec96762
+SCR-003,TOTP enrolment (first login / re-enrol),E10;E15,agent-run,2026-11-04,accepted-exception,0,0,0,1,DQA-0002;E49-D05,owner: the owner; reason: deferred to the post-GA polish pass,findings,a6ec96762
+SCR-004,Forced password change,E09,agent-run,2026-11-04,not-applicable,0,0,0,0,,reason: no visual surface of its own,not auditable at sha,a6ec96762
+SCR-010,App shell (global chrome),E05,,,,,,,,,,not auditable at sha,a6ec96762
