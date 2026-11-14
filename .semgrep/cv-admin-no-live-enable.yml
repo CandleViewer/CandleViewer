@@ -1,0 +1,253 @@
+# E42-Q06 (C5): no path that turns the live gate on ships outside E44, and no admin component
+# reads a posture verdict before E43. One fixture tree serves the three rules:
+# tools/ci/check_semgrep_rule_tests.py scans .semgrep/tests/cv-admin-no-live-enable/ with all of
+# them at once, so its lines carry this file's name. The key, the paths and the exclusions are
+# held by services/api/tests/unit/admin/test_live_enable_rule.py, and the modules whose code names
+# the key by services/api/tests/unit/admin/test_live_gate_guard.py. An exclusion (E44-T04's gate
+# module, E44-S01's gate UI, E43-S02's posture panel) lands in its owner's PR with this directory's
+# Security review.
+rules:
+  - id: cv-admin-no-live-enable-py
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A write that may turn `trading.live_enabled` on outside the flag service, or the key under
+      another name. Live enablement is E44-T04's evidence-bound gate (US-ADMIN-012): no other
+      server module sets the flag to true, and no flag, setting or toggle bypasses the gate
+      (C-15.9).
+    metadata:
+      rule-id: cv-admin-no-live-enable-py
+      ticket: E42-Q06
+      threats: [AD-E02, AD-E03]
+    # Every pattern names the key in one of three spellings: the literal (or a constant Semgrep
+    # folds to it), the catalogue's constant, or that constant through its module. Anchoring on
+    # the key, instead of binding any argument and testing it, keeps the rule within CI's
+    # per-file budget on the largest modules. The key keeps those spellings: another name for it
+    # is itself a finding here, and test_live_gate_guard.py pins the modules whose code names it.
+    pattern-either:
+      # a call naming the key, by position or by keyword, with a keyword argument that is anything
+      # but a literal off: any keyword may carry the value (`user_overrides` included), so only
+      # `key=` and the named keywords that carry none (the flag writer's `principal`, `reason`,
+      # `evidence_url`, `fingerprint` and `expected_updated_at`, a write's `actor`, a spec's
+      # `requires_evidence`) are left out
+      - patterns:
+          - pattern-either:
+              - pattern: $F(..., "trading.live_enabled", ..., $KW=$V, ...)
+              - pattern: $F(..., LIVE_ENABLED, ..., $KW=$V, ...)
+              - pattern: $F(..., $M.LIVE_ENABLED, ..., $KW=$V, ...)
+              - pattern: $F(..., $KK="trading.live_enabled", ..., $KW=$V, ...)
+              - pattern: $F(..., $KK=LIVE_ENABLED, ..., $KW=$V, ...)
+              - pattern: $F(..., $KK=$M.LIVE_ENABLED, ..., $KW=$V, ...)
+          - metavariable-regex:
+              metavariable: $KW
+              regex: ^(?!(key|principal|actor|reason|evidence_url|fingerprint|expected_updated_at|requires_evidence)$)
+          - metavariable-regex:
+              metavariable: $V
+              regex: &off ^(?!(False|None|"false"|'false'|StoredFlag\((value=)?False\b.*)$)
+      # the key passed by a keyword other than `key=`
+      - patterns:
+          - pattern-either:
+              - pattern: $F(..., $KK="trading.live_enabled", ...)
+              - pattern: $F(..., $KK=LIVE_ENABLED, ...)
+              - pattern: $F(..., $KK=$M.LIVE_ENABLED, ...)
+          - metavariable-regex:
+              metavariable: $KK
+              regex: ^(?!key$)
+      # a mapping entry, a row naming `key` and its value, or a subscript assignment, whose value
+      # is anything but a literal off
+      - patterns:
+          - pattern-either:
+              - pattern: '{..., "trading.live_enabled": $V, ...}'
+              - pattern: "{..., LIVE_ENABLED: $V, ...}"
+              - pattern: "{..., $M.LIVE_ENABLED: $V, ...}"
+              - pattern: $X["trading.live_enabled"] = $V
+              - pattern: $X[LIVE_ENABLED] = $V
+              - pattern: $X[$M.LIVE_ENABLED] = $V
+              - patterns:
+                  - pattern-either:
+                      - pattern: '{..., "key": "trading.live_enabled", ..., $NAME: $V, ...}'
+                      - pattern: '{..., "key": LIVE_ENABLED, ..., $NAME: $V, ...}'
+                      - pattern: '{..., "key": $M.LIVE_ENABLED, ..., $NAME: $V, ...}'
+                  - metavariable-regex:
+                      metavariable: $NAME
+                      regex: ^["'](value|default_value)["']$
+          - metavariable-regex:
+              metavariable: $V
+              regex: *off
+      # a positional value on either side of the key, anything but a literal off, unless the call
+      # carries `value=` (judged above) or is a view of the flag; a change hook is a write (it
+      # applies its after to the view the OMS reads), so it is judged like any call; a true value
+      # is a finding on any call
+      - patterns:
+          - pattern-either: &positional
+              - pattern: $F(..., "trading.live_enabled", ..., $T, ...)
+              - pattern: $F(..., LIVE_ENABLED, ..., $T, ...)
+              - pattern: $F(..., $M.LIVE_ENABLED, ..., $T, ...)
+              - pattern: $F(..., $T, ..., "trading.live_enabled", ...)
+              - pattern: $F(..., $T, ..., LIVE_ENABLED, ...)
+              - pattern: $F(..., $T, ..., $M.LIVE_ENABLED, ...)
+          - metavariable-regex:
+              metavariable: $T
+              regex: *off
+          - pattern-not: $F(..., value=$W, ...)
+          - pattern-not: FlagView(...)
+          - pattern-not: $O.FlagView(...)
+      - patterns:
+          - pattern-either: *positional
+          - metavariable-pattern:
+              metavariable: $T
+              pattern-either:
+                - pattern: "True"
+                - pattern: '"true"'
+                - pattern: StoredFlag(True, ...)
+                - pattern: StoredFlag(..., value=True, ...)
+      # the key under another name: a binding, an aliased import, or a container holding it (a
+      # tuple pattern also meets a mapping's entries; a mapping keyed by it is a write form above,
+      # and a row naming it as `key` is a write only with its value)
+      - pattern: $N = "trading.live_enabled"
+      - pattern: $N = LIVE_ENABLED
+      - pattern: $N = $M.LIVE_ENABLED
+      - patterns:
+          - pattern: from $MODULE import LIVE_ENABLED as $ALIAS
+          - pattern-not: from $MODULE import LIVE_ENABLED as LIVE_ENABLED
+      - patterns:
+          - pattern-either:
+              - pattern: (..., "trading.live_enabled", ...)
+              - pattern: (..., LIVE_ENABLED, ...)
+              - pattern: (..., $M.LIVE_ENABLED, ...)
+              - pattern: '[..., "trading.live_enabled", ...]'
+              - pattern: "[..., LIVE_ENABLED, ...]"
+              - pattern: "[..., $M.LIVE_ENABLED, ...]"
+          - pattern-not-inside: '{..., "key": "trading.live_enabled", ...}'
+          - pattern-not-inside: '{..., "key": LIVE_ENABLED, ...}'
+          - pattern-not-inside: '{..., "key": $M.LIVE_ENABLED, ...}'
+          - pattern-not-inside: '{..., "trading.live_enabled": $VALUE, ...}'
+          - pattern-not-inside: "{..., LIVE_ENABLED: $VALUE, ...}"
+          - pattern-not-inside: "{..., $M.LIVE_ENABLED: $VALUE, ...}"
+    paths:
+      include:
+        - "services/api/candleviewer/**"
+      exclude:
+        # the flag service's modules that hold the key as request data or declare it off
+        - "services/api/candleviewer/admin/flags/catalogue.py"
+        - "services/api/candleviewer/admin/flags/registry.py"
+        - "services/api/candleviewer/admin/flags/service.py"
+        - "services/api/candleviewer/admin/flags/store.py"
+        - "services/api/candleviewer/admin/flags/writes.py"
+
+  - id: cv-admin-no-live-enable-ts
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      A client write of `trading.live_enabled` that may turn it on, or the key under another
+      name. The web app holds no path to the live gate: E44-S01 builds the gate's UI on E44-T04's
+      evidence-bound API (US-ADMIN-012, C-15.9), and until then the flag console renders the row
+      blocked.
+    metadata:
+      rule-id: cv-admin-no-live-enable-ts
+      ticket: E42-Q06
+      threats: [AD-E02, AD-E03]
+    pattern-either:
+      # a flag write naming the key, unless its value is the literal `false`, or a map of values
+      # turning it on
+      - patterns:
+          - pattern-either:
+              - pattern: "{..., key: $KEY, ..., value: $V, ...}"
+              - pattern: "{..., value: $V, ..., key: $KEY, ...}"
+              - pattern: "{..., [$KEY]: true, ...}"
+          - pattern-not: "{..., value: false, ...}"
+          - metavariable-pattern:
+              metavariable: $KEY
+              pattern-either:
+                - pattern: '"trading.live_enabled"'
+                - pattern: LIVE_GATE_FLAG
+                - pattern: $MODULE.LIVE_GATE_FLAG
+      - pattern: '{..., "trading.live_enabled": true, ...}'
+      # a write request (any method but a literal GET or HEAD) to a URL naming the key, or a request
+      # to it whose options are not written in place (their method cannot be read)
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern: "$F($URL, {..., method: $M, ...})"
+                      - pattern: "new $C($URL, {..., method: $M, ...})"
+                      - pattern: holdRequest($M, $URL, ...)
+                      - pattern: "{..., method: $M, ..., url: $URL, ...}"
+                      - pattern: "{..., url: $URL, ..., method: $M, ...}"
+                  - metavariable-regex:
+                      metavariable: $M
+                      regex: ^(?!["'`](?i:get|head)["'`]$)
+              - patterns:
+                  - pattern-either:
+                      - pattern: $F($URL, $INIT)
+                      - pattern: new $C($URL, $INIT)
+                  - pattern-not: "$F($URL, {...})"
+                  - pattern-not: "new $C($URL, {...})"
+          - metavariable-pattern:
+              metavariable: $URL
+              pattern-either:
+                - pattern: '"=~/trading\.live_enabled/"'
+                # a URL built from the key in place (the bare key is the positional form below)
+                - patterns:
+                    - pattern-either:
+                        - pattern: <... LIVE_GATE_FLAG ...>
+                        - pattern: <... $MODULE.LIVE_GATE_FLAG ...>
+                    - pattern-not: LIVE_GATE_FLAG
+                    - pattern-not: $MODULE.LIVE_GATE_FLAG
+      # the key under another name, which the patterns above would not know: a binding (`const`,
+      # `let`, `var` or an assignment) of any expression holding it, so a URL, a values map or a
+      # write built from it is reported where it is bound; an aliased import, a destructuring
+      # rename, an array holding it (a map's entries), an object keyed by it, a subscript
+      # assignment by it, and a call
+      # passing it beside any value but a literal `false` (the literal is bound only as
+      # `LIVE_GATE_FLAG`: test_live_enable_rule.py holds that over apps/web/src)
+      - pattern: import { LIVE_GATE_FLAG as $ALIAS } from "$MODULE"
+      - pattern: "const { LIVE_GATE_FLAG: $ALIAS } = $OBJ"
+      - pattern: "let { LIVE_GATE_FLAG: $ALIAS } = $OBJ"
+      - pattern: const $ALIAS = <... LIVE_GATE_FLAG ...>
+      - pattern: const $ALIAS = <... $MODULE.LIVE_GATE_FLAG ...>
+      - pattern: let $ALIAS = <... LIVE_GATE_FLAG ...>
+      - pattern: let $ALIAS = <... $MODULE.LIVE_GATE_FLAG ...>
+      - pattern: var $ALIAS = <... LIVE_GATE_FLAG ...>
+      - pattern: var $ALIAS = <... $MODULE.LIVE_GATE_FLAG ...>
+      - pattern: $ALIAS = <... LIVE_GATE_FLAG ...>
+      - pattern: $ALIAS = <... $MODULE.LIVE_GATE_FLAG ...>
+      - pattern: "[..., LIVE_GATE_FLAG, ...]"
+      - pattern: "[..., $MODULE.LIVE_GATE_FLAG, ...]"
+      - pattern: "{..., [LIVE_GATE_FLAG]: $X, ...}"
+      - pattern: "{..., [$MODULE.LIVE_GATE_FLAG]: $X, ...}"
+      - patterns:
+          - pattern-either:
+              - pattern: $X[LIVE_GATE_FLAG] = $V
+              - pattern: $X[$MODULE.LIVE_GATE_FLAG] = $V
+              - pattern: $F(..., LIVE_GATE_FLAG, ..., $V, ...)
+              - pattern: $F(..., $V, ..., LIVE_GATE_FLAG, ...)
+              - pattern: $F(..., $MODULE.LIVE_GATE_FLAG, ..., $V, ...)
+              - pattern: $F(..., $V, ..., $MODULE.LIVE_GATE_FLAG, ...)
+          - metavariable-regex:
+              metavariable: $V
+              regex: ^(?!false$)
+    paths:
+      include:
+        - "apps/web/src/**"
+
+  - id: cv-admin-no-posture-verdict-ts
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      A read of the security posture summary in the admin feature. Posture verdicts are
+      E43-S02's (US-ADMIN-010): until SCR-137 mounts, `/admin/security` is the R4 placeholder and
+      no admin component renders a pass or fail.
+    metadata:
+      rule-id: cv-admin-no-posture-verdict-ts
+      ticket: E42-Q06
+      story: US-ADMIN-010
+    # code, never comments: the summary's path, its schema or operation name, or a call to it
+    pattern-either:
+      - pattern: '"=~/\/admin\/security\/summary/"'
+      - pattern: '"=~/^(get)?SecuritySummary$/"'
+      - pattern: getSecuritySummary
+      - pattern: $CLIENT.getSecuritySummary
+    paths:
+      include:
+        - "apps/web/src/features/admin/**"
