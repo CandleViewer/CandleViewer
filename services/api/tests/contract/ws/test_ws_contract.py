@@ -19,6 +19,7 @@ from typing import Any, Protocol, cast
 
 import pytest
 import yaml
+from jsonschema import Draft202012Validator
 
 from candleviewer.auth.scopes import AccountGrant
 from candleviewer.ws._generated.error_codes import WS_ERROR_CODES
@@ -168,6 +169,103 @@ def test_contract_a_corrupted_structured_twin_fails_schema_validation() -> None:
     twin["trades"][0]["price"] = 100.5  # a JSON number, never a decimal string (§13 common)
     with pytest.raises(AssertionError, match="violates"):
         check_schema("cv://ws/v1/trades.schema.json", twin, "corrupted")
+
+
+_CAPPED = {
+    "cap_active": True,
+    "flagged_fraction": "0.27",
+    "suggested_value": "34723",
+    "threshold_abs": "30000",
+}
+
+
+@pytest.mark.parametrize(
+    ("cap", "valid"),
+    [
+        ({}, True),  # a server that does not fill the fields yet reads as uncapped (C-6.3)
+        ({"cap_active": False}, True),
+        (_CAPPED, True),
+        ({k: v for k, v in _CAPPED.items() if k != "suggested_value"}, False),  # all four
+        ({"cap_active": False, "suggested_value": "34723"}, False),  # uncapped carries none
+        ({"threshold_abs": "30000"}, False),
+        ({**_CAPPED, "flagged_fraction": 0.27}, False),  # a decimal string, never a number
+        ({**_CAPPED, "flagged_fraction": "1"}, True),
+        ({**_CAPPED, "flagged_fraction": "1.5"}, False),  # a fraction, 0 to 1
+        ({**_CAPPED, "flagged_fraction": "-0.27"}, False),
+        ({**_CAPPED, "suggested_value": "-34723"}, False),  # thresholds are non-negative
+        ({**_CAPPED, "threshold_abs": "-30000"}, False),
+    ],
+)  # fmt: skip
+def test_contract_a_trades_frame_carries_the_big_trade_cap_as_level_state(
+    cap: dict[str, object], valid: bool
+) -> None:
+    """E22-S02 (#715, BQ-02): `cap_active` with `flagged_fraction`, `suggested_value` and the
+    configured `threshold_abs` on every `TradesBatch` while capped, none of them otherwise
+    (23 section 6.1, section 14.2)."""
+    frame = {**topic_fields("trades.BTCUSDT"), **kept_fields("trades.BTCUSDT")}
+    frame |= structured(_FRAMES["trades"]) | cap
+    if valid:
+        check_schema("cv://ws/v1/trades.schema.json", frame, "trades frame")
+    else:
+        with pytest.raises(AssertionError, match="violates"):
+            check_schema("cv://ws/v1/trades.schema.json", frame, "trades frame")
+
+
+_CAP_FIELDS = sorted(set(_CAPPED) - {"cap_active"})
+
+
+@pytest.mark.parametrize("field", _CAP_FIELDS)
+@pytest.mark.parametrize("case", ["capped_missing", "uncapped_false", "uncapped_absent"])
+def test_contract_a_trades_frame_needs_each_cap_field_while_capped_and_none_otherwise(
+    field: str, case: str
+) -> None:
+    """E22-S02 (#715, BQ-02): the all-or-none rule holds field by field. A capped frame missing
+    any one of the three is invalid (`then.required`), and an uncapped one, `cap_active: false`
+    or no `cap_active`, carrying any one of them is invalid (`else`)."""
+    if case == "capped_missing":
+        cap: dict[str, object] = {k: v for k, v in _CAPPED.items() if k != field}
+    else:
+        cap = {field: _CAPPED[field]}
+        if case == "uncapped_false":
+            cap["cap_active"] = False
+    frame = {**topic_fields("trades.BTCUSDT"), **kept_fields("trades.BTCUSDT")}
+    frame |= structured(_FRAMES["trades"]) | cap
+    with pytest.raises(AssertionError, match="violates"):
+        check_schema("cv://ws/v1/trades.schema.json", frame, "trades frame")
+
+
+#: The cap fields and their rule as `TradesBatch` declares them, which `sub_ok.effective` echoes
+#: by the same rule (23 section 6.1): `effective` is an open object, so the rule is read off the
+#: trades schema rather than off `sub_ok`'s.
+_TRADES = SCHEMAS["cv://ws/v1/trades.schema.json"]
+_CAP_RULE = {
+    "type": "object",
+    "properties": {key: _TRADES["properties"][key] for key in _CAPPED},
+    **{key: _TRADES[key] for key in ("if", "then", "else")},
+}
+
+
+@pytest.mark.parametrize(
+    ("cap", "valid"),
+    [
+        ({}, True),
+        (_CAPPED, True),
+        ({"cap_active": True, "flagged_fraction": "0.27"}, False),
+        ({"cap_active": False, "threshold_abs": "30000"}, False),
+    ],
+)
+def test_contract_sub_ok_effective_echoes_the_big_trade_cap_by_the_trades_rule(
+    cap: dict[str, object], valid: bool
+) -> None:
+    """E22-S02 (#715, BQ-02): a late subscriber starts from the cap state `sub_ok.effective`
+    echoes; the echo is a valid `sub_ok` and keeps `TradesBatch`'s all-or-none rule. The server
+    fills it, and sends a cap change structured, never as kind 3 (23 section 3.4), in #715's
+    publisher slice, whose tests land with it."""
+    effective = {"big_trade_threshold": "30000", "big_trade_mode": "notional"} | cap
+    result = {"ch": "trades.BTCUSDT", "ok": True, "sub_id": "s1", "effective": effective}
+    check_schema("cv://ws/v1/sub_ok.schema.json", {"results": [result]}, "sub_ok")
+    errors = list(Draft202012Validator(_CAP_RULE).iter_errors(effective))
+    assert not errors if valid else errors
 
 
 @pytest.mark.parametrize("family", ["trades", "bars", "footprint", "heatmap"])
