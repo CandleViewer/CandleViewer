@@ -12,6 +12,8 @@ route's `401`, asserted here in the declared shape."""
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -21,8 +23,11 @@ from jsonschema import Draft202012Validator
 
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.user_settings_models import MAX_BODY_BYTES
 from candleviewer.auth.csrf import CSRF_HEADER
 from candleviewer.auth.errors import SessionNotFound
+from candleviewer.orderflow import limits as L
+from tests.contract._admin_support import ROOT
 from tests.contract.rbac.rbac_harness import (
     ACTORS,
     World,
@@ -40,6 +45,37 @@ from tests.unit.storage.user_settings_contract import noop
 _SPEC: Any = load_openapi_spec()
 _PATH = "/settings"
 _ROLES = ACTORS[:4]
+#: E22-S02 (#715): 22 `Settings.bigtrade`'s three leaves, each a symbol-keyed map.
+_BIGTRADE: Any = deref(_SPEC, _SPEC["components"]["schemas"]["Settings"]["properties"]["bigtrade"])
+_LEAF: Any = {name: deref(_SPEC, leaf) for name, leaf in _BIGTRADE["properties"].items()}
+
+
+def _upper_bounds(pattern: str) -> list[int]:
+    """Each `{m,n}` quantifier's `n`, in order: the longest run the pattern lets through."""
+    return [int(n) for n in re.findall(r"\{\d+,(\d+)\}", pattern)]
+
+
+def _worst_symbols() -> list[str]:
+    """`maxProperties` distinct keys of the longest `Symbol` each leaf's `then` admits."""
+    (count,) = {leaf["maxProperties"] for leaf in _LEAF.values()}
+    (pattern,) = {leaf["then"]["propertyNames"]["pattern"] for leaf in _LEAF.values()}
+    (width,) = _upper_bounds(pattern)
+    return [f"{i:0{width}d}USDT" for i in range(count)]
+
+
+def _worst_value(name: str) -> object:
+    """The longest JSON value the leaf's `additionalProperties` admits, read off 22."""
+    member = _LEAF[name]["additionalProperties"]
+    if "enum" in member:
+        return max(member["enum"], key=len)
+    if member["type"] == "integer":
+        return max(member["minimum"], member["maximum"], key=lambda n: len(str(n)))
+    whole, fraction = _upper_bounds(member["pattern"])
+    return f"{'9' * whole}.{'9' * fraction}"
+
+
+_WORST_SYMBOLS = _worst_symbols()
+_WORST_VALUE: dict[str, object] = {name: _worst_value(name) for name in _LEAF}
 #: Every status the routes answer in this world, per operation.
 _ANSWERED = {
     "get": {"200", "401", "403", "422", "503"},
@@ -144,6 +180,72 @@ async def test_patch_settings_refuses_an_invalid_patch_422_in_the_problem_shape(
     body = _conforms("patch", _patch(world, {"appearance": {"theme": "neon"}}, bearer("owner")))
     assert body["code"] == "validation_failed"
     assert _values(store, "owner") == {"appearance.theme": "dark"}
+
+
+def test_the_worst_case_bigtrade_map_is_the_largest_22_admits_at_limits_cap() -> None:
+    """The worst case below is read off 22, never typed in: `maxProperties` keys, each the longest
+    `Symbol`, and each leaf's longest value, the decimal one at its `maxLength`, so a looser
+    pattern or a larger cap grows it. The cap is `limits.py`'s (SR-E22-11)."""
+    (pattern,) = {leaf["then"]["propertyNames"]["pattern"] for leaf in _LEAF.values()}
+    assert len(set(_WORST_SYMBOLS)) == len(_WORST_SYMBOLS) == L.THRESHOLD_SYMBOLS_PER_USER_MAX
+    assert all(re.fullmatch(pattern, key) for key in _WORST_SYMBOLS)
+    value = _LEAF["threshold_value"]["additionalProperties"]
+    assert re.fullmatch(value["pattern"], str(_WORST_VALUE["threshold_value"]))
+    assert len(str(_WORST_VALUE["threshold_value"])) == value["maxLength"]
+
+
+@pytest.mark.parametrize("leaf", sorted(_WORST_VALUE))
+async def test_patch_settings_a_worst_case_200_symbol_bigtrade_leaf_fits_the_16_kib_body(
+    world: World, store: FakeUserSettings, leaf: str
+) -> None:
+    """The client sends a `bigtrade` leaf's full symbol map (22 `Settings.bigtrade`): at the
+    200-symbol cap and the longest key and value, with JSON's default spacing, it fits under the
+    body cap, is stored whole, and 22's `maxProperties` refuses a 201st symbol."""
+    worst = dict.fromkeys(_WORST_SYMBOLS, _WORST_VALUE[leaf])
+    raw = json.dumps({"bigtrade": {leaf: worst}}).encode()
+    assert MAX_BODY_BYTES == 16 * 1024  # the 16 KiB 22's `Settings.bigtrade` promises
+    assert len(raw) <= MAX_BODY_BYTES
+    headers = {**bearer("owner"), "content-type": "application/json"}
+    body = _conforms("patch", world.client.patch(_PATH, content=raw, headers=headers))
+    assert body["bigtrade"] == {leaf: worst}
+    assert _values(store, "owner") == {f"bigtrade.{leaf}": worst}
+    over = {**worst, "BTCUSDT": _WORST_VALUE[leaf]}
+    refused = _conforms("patch", _patch(world, {"bigtrade": {leaf: over}}, bearer("owner")))
+    assert refused["code"] == "validation_failed"
+    assert _values(store, "owner") == {f"bigtrade.{leaf}": worst}
+
+
+@pytest.mark.parametrize("key", ["btcusdt", "", "A" * 2044 + "USDT", "BTCUSDT\r\nX: 1"])
+async def test_patch_settings_refuses_a_bigtrade_key_that_is_no_symbol_and_stores_nothing(
+    world: World, store: FakeUserSettings, key: str
+) -> None:
+    """22 `Settings.bigtrade`: each key a `Symbol`, checked by the server (E22-S02, #715)."""
+    await _seed(store, "owner", {"bigtrade.threshold_mode": {"BTCUSDT": "notional"}})
+    sent = {"bigtrade": {"threshold_mode": {"ETHUSDT": "notional", key: "percentile"}}}
+    body = _conforms("patch", _patch(world, sent, bearer("owner")))
+    assert body["code"] == "validation_failed"
+    assert [(e["field"], e["rule"]) for e in body["errors"]] == [
+        ("bigtrade.threshold_mode", "string_pattern_mismatch")  # the key is never echoed
+    ]
+    assert _values(store, "owner") == {"bigtrade.threshold_mode": {"BTCUSDT": "notional"}}
+
+
+async def test_patch_settings_a_bigtrade_leaf_replaces_its_whole_symbol_map(
+    world: World, store: FakeUserSettings
+) -> None:
+    """A `PATCH` of an object leaf replaces the object, never merges into it (E02-T13): a symbol
+    the client leaves out of the map is gone, so the client sends the full map, one leaf a patch."""
+    held = {"BTCUSDT": "250000", "ETHUSDT": "100000"}
+    await _seed(store, "owner", {"bigtrade.threshold_value": held})
+    sent = {"bigtrade": {"threshold_value": {"SOLUSDT": "5000"}}}
+    body = _conforms("patch", _patch(world, sent, bearer("owner")))
+    assert body["bigtrade"] == {"threshold_value": {"SOLUSDT": "5000"}}
+    assert body == _conforms("get", _get(world, bearer("owner")))
+    (record,) = [r for r in world.audit.records if r["action"] == "settings.change"]
+    assert (record["before_state"], record["after_state"]) == (
+        {"bigtrade.threshold_value": held},
+        {"bigtrade.threshold_value": {"SOLUSDT": "5000"}},
+    )
 
 
 async def test_settings_a_viewer_reads_and_its_write_is_403_and_changes_nothing(
@@ -297,3 +399,18 @@ async def test_settings_answer_503_store_unavailable_while_no_store_is_wired(
         world.client.get("/me/preferences", headers=bearer("owner")),
     ):  # fmt: skip
         assert resp.status_code == 503 and resp.json()["code"] == "store_unavailable"
+
+
+def test_the_change_log_records_the_bigtrade_settings_and_the_cap_state_as_19_136() -> None:
+    """E22-S02 (#715): 24 section 19 logs the contract slice once, under the number the
+    orchestrator assigned, and names the deferrals and the web's generated bounds."""
+    doc = (ROOT / "docs/plan/24-internal-schemas.md").read_text(encoding="utf-8")
+    numbers = [int(n) for n in re.findall(r"^### 19\.(\d+) ", doc, re.MULTILINE)]
+    assert numbers.count(136) == 1
+    title = r"^### 19\.136 2026-11-04 — .*: the per-symbol big-trade threshold settings .*$"
+    heading = re.search(title, doc, re.MULTILINE)
+    assert heading is not None and "(E22-S02, #715)" in heading.group(0)
+    entry = doc[heading.start() :].split("\n### ", 1)[0]
+    assert "This is the number the orchestrator assigned on 2026-11-04 (23:02Z)" in entry
+    assert "deferred to #715's store slice" in entry
+    assert "a bounds module generated from 22, never from literals" in entry

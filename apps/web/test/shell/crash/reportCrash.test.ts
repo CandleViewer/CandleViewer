@@ -230,9 +230,11 @@ describe("the allowed settings groups (L5)", () => {
   // `deriv` (#778, 24 §19.110) is display-only and is not in `SETTINGS_ALLOWED`, so diagnostics never carries it.
   type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
   type SchemaKeys<K> = K extends keyof Settings ? keyof NonNullable<Settings[K]> : never;
+  // `bigtrade` (E22-S02, #715) is not an allowed group, and the case below feeds it to prove it is
+  // dropped: carrying it in diagnostics would be its own reviewed change.
   const groupsPinned: Same<
     keyof Pinned,
-    Exclude<keyof Settings, "notifications" | "_meta" | "deriv">
+    Exclude<keyof Settings, "notifications" | "_meta" | "deriv" | "bigtrade">
   > = true;
   const keysPinned: { [K in keyof Pinned]: Same<Pinned[K][number], SchemaKeys<K>> } = {
     accessibility: true,
@@ -251,7 +253,11 @@ describe("the allowed settings groups (L5)", () => {
       Object.entries(GROUP_KEYS).map(([name, keys]) => [name, group(keys)]),
     );
     setShellState({
-      preferences: { ...preferences, notifications: { webhook_url: "x" } } as unknown as Settings,
+      preferences: {
+        ...preferences,
+        notifications: { webhook_url: "x" },
+        bigtrade: { notional: { value: "250000" } },
+      } as unknown as Settings,
     });
     const settings = C.buildDiagnostics().settings as Record<string, Record<string, unknown>>;
     expect(Object.keys(settings).sort()).toEqual(Object.keys(GROUP_KEYS).sort());

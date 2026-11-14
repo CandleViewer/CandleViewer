@@ -7,7 +7,14 @@ The leaves are read off the generated `Settings` model (`api/_generated`), so th
 `notifications.quiet_hours` is one leaf, its whole object the value. `_meta` is computed from the
 caller's rows and never stored, and `trading.one_click_armed` is set only through
 `armOneClickTrading` (SR-043), so a patch naming either is refused, as is a leaf 22's `Settings`
-does not declare (E22-S02's `bigtrade` block included, until its contract lands).
+does not declare. E22-S02's `bigtrade` leaves are symbol-keyed objects, each one leaf, so a patch
+of one replaces its whole map. Their key pattern is 22's `then`, which no generated model carries,
+so `SYMBOL_KEYED` checks it here: a key that is no `Symbol` refuses the leaf before its model reads
+it (so the key is never echoed), and a stored map holding one is never served. These are the
+rules of shape, which need no store or catalogue: `maxProperties` caps each leaf at 200 symbols, and
+`SYMBOL` checks a key's shape only. SR-E22-11's other two rules are deferred to #715's store slice:
+an unknown symbol (one the instrument catalogue does not list) is `400`, and the 200-symbol cap is
+per user, across the three leaves.
 
 A patch is a JSON object of groups, each a JSON object of leaves. A leaf's value is checked by its
 generated model (type, enum, range) and stored as that model writes it; `null` resets the leaf to
@@ -68,6 +75,13 @@ _DNS_NAME: Final = re.compile(r"[a-z0-9-]+(?:\.[a-z0-9-]+)*")
 #: What `urlsplit` deletes wherever it stands, joining the text either side of it into one host.
 _DELETED: Final = ("\t", "\r", "\n")
 _NAME: Final = re.compile(r"[a-z0-9_]{1,64}")
+#: The leaves whose value is a map keyed by 22's `Symbol`: the `propertyNames` pattern in each
+#: leaf's `then`, pinned equal to this one by the unit tests (E22-S02, #715). A key's shape only:
+#: SR-E22-11's unknown symbol `400` and its 200-per-user cap are the store slice's (module doc).
+SYMBOL_KEYED: Final = frozenset(
+    {"bigtrade.threshold_mode", "bigtrade.threshold_value", "bigtrade.percentile_window_ms"}
+)
+SYMBOL: Final = re.compile(r"[A-Z0-9]{2,20}USDT")
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +166,17 @@ def _no_constant(name: str) -> object:
     raise ValueError(name)  # NaN, Infinity and -Infinity are not JSON (RFC 8259)
 
 
+def _keys_ok(key: str, value: object) -> bool:
+    """Whether every key of a `SYMBOL_KEYED` leaf's map is a `Symbol`; any other value passes,
+    for its model to judge. Per leaf and by shape only: whether the catalogue lists the symbol, and
+    the 200-symbol cap across the leaves, are deferred to #715's store slice (module doc)."""
+    return (
+        key not in SYMBOL_KEYED
+        or not isinstance(value, dict)
+        or all(isinstance(name, str) and SYMBOL.fullmatch(name) for name in value)
+    )
+
+
 def canonical(leaf: Leaf, value: object) -> object:
     """`value` as the leaf's generated model writes it; `ValidationError` when it refuses it."""
     return leaf.model.model_validate({leaf.field: value}).model_dump(mode="json")[leaf.field]
@@ -167,6 +192,8 @@ def _judge_group(group: str, members: dict[str, object], out: dict[str, object])
             errors.append(_error(key, "read_only", "Set through POST /settings/arm only."))
         elif value is None:
             out[key] = None  # reset to the deployment default
+        elif not _keys_ok(key, value):
+            errors.append(_error(key, "string_pattern_mismatch", "Each key must be a symbol."))
         else:
             try:
                 out[key] = canonical(leaf, value)
@@ -248,7 +275,7 @@ def effective(rows: Iterable[UserSetting], *, viewing: bool) -> dict[str, Any]:
     for row in rows:
         leaf = LEAVES.get(row.key)
         try:
-            if leaf is None or row.value is None:
+            if leaf is None or row.value is None or not _keys_ok(row.key, row.value):
                 raise LookupError(row.key)
             value = canonical(leaf, row.value)
         except (LookupError, ValidationError):

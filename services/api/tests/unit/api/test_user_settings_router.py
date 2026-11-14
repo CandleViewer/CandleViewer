@@ -240,12 +240,17 @@ async def test_patch_settings_that_changes_nothing_writes_no_record(env: _Env) -
     ("body", "field", "rule"),
     [
         ({"appearance": {"glow": True}}, "appearance.glow", "extra_forbidden"),
-        ({"bigtrade": {"k": 3}}, "bigtrade", "extra_forbidden"),
+        ({"big_trade": {"k": 3}}, "big_trade", "extra_forbidden"),
+        (
+            {"bigtrade": {"percentile_window_ms": {"BTCUSDT": 1000}}},
+            "bigtrade.percentile_window_ms.BTCUSDT",
+            "greater_than_equal",
+        ),
         ({"appearance": {"theme": "neon"}}, "appearance.theme", "literal_error"),
         ({"appearance": {"font_scale": 0.5}}, "appearance.font_scale", "greater_than_equal"),
         ({"trading": {"one_click_armed": True}}, "trading.one_click_armed", "read_only"),
     ],
-    ids=["undeclared", "bigtrade", "enum", "range", "one-click-armed"],
+    ids=["undeclared", "undeclared-group", "bigtrade-bound", "enum", "range", "one-click-armed"],
 )
 async def test_patch_settings_an_invalid_patch_is_422_and_nothing_changes(
     env: _Env, body: dict[str, Any], field: str, rule: str
