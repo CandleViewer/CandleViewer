@@ -519,3 +519,12 @@ export type {
   IndicatorSuffix,
   IndicatorSuffixKind,
 } from "./IndicatorChips.js";
+
+export { ChartLegend } from "./ChartLegend.js";
+export type {
+  ChartLegendItem,
+  ChartLegendOutput,
+  ChartLegendProps,
+  LegendMarker,
+  SlotToken,
+} from "./ChartLegend.js";
