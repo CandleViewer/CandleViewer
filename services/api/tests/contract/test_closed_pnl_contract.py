@@ -34,6 +34,9 @@ The orchestrator's ruling of 2026-11-03 (08:03Z), as the four plan documents sta
   Sec.19.134.
 - Slice 4's lens fold: the sync's day is the resolver's and Sec.9.3.6 drops the cap's UTC instant;
   logged once, as Sec.19.135, with the two layers of the ruling of 2026-11-05 (02:37Z).
+- Slice 5b, on the rulings of 2026-11-04 (23:45Z): the composition before the read and after the
+  settle, one walk per key per pass, the final rule completed by the walk's `c`, step 3's three
+  readings and 21 Sec.13.1's rows 61 and 62; logged once, as Sec.19.137.
 
 Nothing serves the new members yet: E29-S06's later slices implement them against this contract.
 """
@@ -605,9 +608,9 @@ def test_contract_24_defines_a_provisional_item_and_when_a_settled_one_is_compar
         "a later comparison within the bound clears the flag and writes no record. A composition "
         "that compares nothing, as when it loses its local figures, leaves the flag, and the pair "
         "it recorded, until a later comparison clears it.",
-        "which each sync pass makes again for the settled items its read covers",
-        "each pass compares again the settled items its read covers, idempotent by the recorded "
-        "pair.",
+        "which each sync pass makes again for the settled items of its delta set (below),",
+        "each pass compares again the settled items of its delta set (below), idempotent by the "
+        "recorded pair.",
         "shipped **unvalidated** until #843, whose captures also judge the two cases where it "
         "falls below the 8-decimal rounding step, with no floor added (the ruling fixed `1e-8`): "
         "a record under 1 USDT (|`closed_pnl`| < 1), where the rounding of the opening share "
@@ -870,22 +873,30 @@ def test_contract_24_change_log_records_this_slice(claim: str) -> None:
     assert claim in _between(_doc("24-internal-schemas.md"), "### 19.105 ", "\n### 19.")
 
 
-def test_contract_24_states_the_final_rule_as_the_sync_builds_it_and_21_its_read() -> None:
-    """The S3 security review's m2: the rule as built sums the stated `closed_size` of the order's
-    trade fills (21 §13.1 row 60), and E29-S06's composition slice completes it with the walk."""
-    assert _row(_doc("21-database-schema.md"), 60) == [
-        "60", "Closed-PnL final rule",
+def test_contract_24_states_the_final_rule_as_the_composition_builds_it_and_21_its_reads() -> None:
+    """Slice 5b (Q4, option 3): the walk's `c` completes the final rule, decided per record from
+    its own closes; the stated sum (21 §13.1 row 60), the S3 review's m2, is the sync's without
+    its composition (rows 58, 61 and 62, the composition's reads, are pinned on their own)."""
+    assert _row(_doc("21-database-schema.md"), 60)[1:4] == [
+        "Closed-PnL stated final rule",
         "the order's trade `executions` in its account: `sum(closed_size)`, NULL if one is NULL",
-        "`ix_exec_order`, the account and the trade types filtered on its rows",
-        "< 2 ms for an order's fills",
-    ]  # fmt: skip
+        "`ix_exec_order`; read by a sync built without its composition alone",
+    ]
+    text = _s813()
+    assert "until E29-S06's composition slice gives such a fill the walk's `c`" not in text
     assert not _missing(
-        _s813(),
-        "As the sync builds it, that size is the sum of the `closed_size` its order's stored fills "
-        "of a trade type state (21 §13.1 row 60), so the record is final when the order's row is "
-        "terminal and that sum is its `qty`; a fill that states none, such as a REST-recovered "
-        "one, keeps it open, polled within the reach, until E29-S06's composition slice gives "
-        "such a fill the walk's `c` (step 3).",
+        text,
+        "that size is the sum of the `c` the walk gives the record's closing fills, and the record "
+        "is final only when it is settled, its order's row is terminal, its walk has a start and "
+        "stopped at no cap, the walk is sure of its count of sizes at each of those closes, and "
+        "that sum is its `qty`.",
+        "A fill with no closed PnL, such as a REST-recovered one, leaves the walk sure of its "
+        "count, so its record can be final with no local figures;",
+        "Each record is decided from its own closes, never the whole walk's: a span after them "
+        "does not touch them.",
+        "The sync built without its composition keeps the stated rule, the sum of the "
+        "`closed_size` the order's stored trade fills state (21 §13.1 row 60), which a fill "
+        "stating none leaves open.",
     )
     log = _between(_doc("24-internal-schemas.md"), "### 19.129 ", "\n### 19.")
     assert "which 21 §13.1's new row 60 reads over `ix_exec_order`" in log
@@ -913,6 +924,93 @@ def test_contract_21_states_the_compositions_reads() -> None:
         readers,
         "and its upsert by order (`ux_cpr_order`), by which its composition also reads whether an "
         "order's record is stored (row 61).",
+    )
+
+
+def test_contract_24_composes_in_each_pass_and_logs_slice_5b_once() -> None:
+    """The orchestrator's rulings of 2026-11-04 (23:45Z): the named orders before the read (Q2),
+    the delta set after the settle with one walk per key per pass (Q3); step 3's three readings
+    (the S5a review's m2), funding absent with no interval, a group read through the account's
+    own legs; Sec.19.137, which occurs once."""
+    internal = _doc("24-internal-schemas.md")
+    assert not _missing(
+        _s813(),
+        "Three readings of these sentences, as the walk takes them (§19.137): a fill the walk "
+        "cannot read that reverses the position goes flat within itself, and its remainder opens "
+        "the other side unreadable, as the walk read none of it; a disagreeing fill itself closes "
+        "`min(exec_qty, open size)`, never the size it states; and a key at `position_idx` 1 or 2 "
+        "is walked in hedge mode whatever the account's positions show",
+        "With no interval cached (the cache not loaded, the symbol not listed, or an interval "
+        "outside 1 to 1,440 minutes) funding is absent, never `0`;",
+        "A leg of another account names none either: the walk reads the legs of the fill's own "
+        "account alone (21 §13.1 row 58, C-12.4).",
+        "Before it reads the venue it composes the orders whose stored trade fills `stored` named "
+        "since its last pass (at most 256 an account;",
+        "After the records settle it composes the pass's delta set (Q3): the records the read "
+        "inserted, settled or replaced (every record it read at the account's first composition, "
+        "as after a restart), those the poll reads (21 §13.1 row 56) and the named orders,",
+        "One walk per key per pass: the orders of a key that share a start share one walk up to "
+        "their last fill, which the second step reuses,",
+        "A walk takes at most 500 fills and 32 flats and runs on a worker thread, and a pass "
+        "spends about 5 s composing, checked before each order; past the cap an order's figures "
+        "are absent, and past the budget it waits for the next pass, each logged at WARNING with "
+        "the account and the record, never a figure (C-12.6).",
+        "The figures are quantized once, `ROUND_HALF_UP` to 8 dp (§1.5), from the walk's exact "
+        "outputs, `local_net_pnl` being their exact sum,",
+        "No cap reads a composed figure: `DayRiskFigures` sums the venue's records alone.",
+    )
+    assert internal.count("\n### 19.137 ") == 1
+    log = _between(internal, "### 19.137 ", "\n### 19.")
+    assert not _missing(
+        log,
+        "2026-11-05 — §8.13: the composition writes the provisional items and completes the final "
+        "rule with the walk's `c` (E29-S06, #981)",
+        "The orchestrator assigned this number on 2026-11-04 (23:45Z)",
+        "the literal re-walk of the whole reach set aside (C-2.18)",
+        "decided per record, never from the whole walk; a REST-recovered close can be final.",
+        "No REST operation, WS frame, table, column, migration, chart or `machine_hash` changes.",
+    )
+
+
+def test_contract_24_states_the_fold_of_slice_5bs_review() -> None:
+    """The S5b review and the orchestrator's rulings of 2026-11-05 (06:36Z, 07:47Z): the delta
+    set's order and carry (m1), the figures a later pass leaves (m2), the reason step 5's window
+    ends at the last closing fill (ruling 3), the pass's comparison over its delta set and the
+    pieces' overlap (m4), logged under Sec.19.137."""
+    text = _s813()
+    for gone in (
+        "so no fill is walked twice",
+        "each pass compares again the settled items its read covers",
+        "makes again for the settled items its read covers",
+        "a pass spends at most 5 s composing",
+    ):
+        assert gone not in text, gone
+    assert not _missing(
+        text,
+        "the composition's `closed_at` here is the record's last closing fill's time, never the "
+        "record's, as the venue's `updatedTime` may move after the close.",
+        "each pass compares again the settled items of its delta set (below), idempotent by the "
+        "recorded pair.",
+        "That step takes the named orders first, then the venue ids an earlier step left, then the "
+        "records the read changed, then the poll's page less those, so a full page starves no "
+        "fresh settle; what it leaves past its 256 orders or its budget, but the page's, which the "
+        "poll reads again, is carried to the next pass, which it asks for, at most 1,024 an "
+        "account, any past that dropped and logged at WARNING with the account and their count.",
+        "and the pieces overlap only where an order's own fills straddle a flat, with the same "
+        "closes. A shared walk that a later order's fills cap is taken again for each earlier "
+        "order, to its own last fill.",
+        "A later pass that cannot walk a held record leaves the figures it composed, as when its "
+        "walk's start is pruned past the 90-day reach (21 §3.3.7) or its walk is past the cap, "
+        "and such a record is never final;",
+        "keeps the poll, the named orders and what it was to carry; the read goes on.",
+    )
+    log = _between(_doc("24-internal-schemas.md"), "### 19.137 ", "\n### 19.")
+    assert not _missing(
+        log,
+        "Folded on the slice's review and the orchestrator's rulings of 2026-11-05 (06:36Z and "
+        "07:47Z)",
+        "a later pass that cannot walk a held record leaves the figures it composed",
+        "as the venue's `updatedTime` may move after the close;",
     )
 
 
