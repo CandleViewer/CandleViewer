@@ -259,6 +259,12 @@
       "reason": "recorded rule (latency_budget.yml) over the e2e_tick_to_paint_seconds histogram; it has no absent() guard and the source's emission was not traced; routed to the latency owner"
     },
     {
+      "alert": "OmsClosedPnlAccountCrossing",
+      "series": "oms_closed_pnl_fetch_seconds_count",
+      "class": "lazy-series",
+      "reason": "labelled (result) histogram of the closed-PnL sync: no other_account sample until its first crossing between accounts, and none where no sync runs (a live process fails closed first)"
+    },
+    {
       "alert": "RecorderAnchorSkipped",
       "series": "recorder_anchor_skipped_total",
       "class": "lazy-series",

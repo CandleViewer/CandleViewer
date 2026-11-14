@@ -1297,6 +1297,29 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 2h api | grep -i 'reconcil' | tail -20
 ```
 
+<a id="alert-omsclosedpnlaccountcrossing"></a>
+
+### OmsClosedPnlAccountCrossing
+
+| Element               | Detail                                                                                                                                                                                                                                                                                         |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | The closed-PnL sync met a crossing between accounts: its account resolve, a record of its read or a position reading of its seed named another of our accounts (`oms_closed_pnl_fetch_seconds{result="other_account"}`, `24-internal-schemas.md` §8.13). Ticket, held through the quiet hours. |
+| 2. User impact        | None directly: the sync keeps nothing of that read or seed, so no closed-PnL record or confirmed flat is stored from it. An account read or a venue answer that names another account means an account and its key or its row do not match (C-2.11).                                           |
+| 3. What is still safe | Order entry, the exits and every stop: the sync only reads, in the `poll` lane, and gates no order. Every other account's reads, and the account's records already stored.                                                                                                                     |
+| 5. Remediation        | Find the account in the logs (`closed_pnl_read_failed` or `closed_pnl_flat_seed_failed`, kind `_OtherAccount`), check at the exchange that its key is its own and that its account row names its own exchange account, and replace the key if not (Owner; audited).                            |
+| 6. Escalation         | Owner immediately: a key or an account row that names the wrong account can read, and trade on, that account.                                                                                                                                                                                  |
+| 7. Verify recovery    | No further increase for an hour after the fix, and the account's next read counts `ok`.                                                                                                                                                                                                        |
+
+A page inhibits its own component's tickets, so while `KekUnavailable` pages (component `secrets`) this ticket is held, not lost, and goes out once the page clears.
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: increase 0.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=increase(oms_closed_pnl_fetch_seconds_count{result="other_account"}[1h])'
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 2h api | grep -E 'closed_pnl_read_failed|closed_pnl_flat_seed_failed' | grep '_OtherAccount' | tail -20
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 2h api | grep 'bybit_row_refused' | grep '"account"' | tail -20
+```
+
 <a id="alert-omsraterejects"></a>
 
 ### OmsRateRejects
