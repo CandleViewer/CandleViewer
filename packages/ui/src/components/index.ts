@@ -519,3 +519,6 @@ export type {
   IndicatorSuffix,
   IndicatorSuffixKind,
 } from "./IndicatorChips.js";
+
+export { TreeView } from "./TreeView.js";
+export type { TreeItemActionsContext, TreeNode, TreeViewProps } from "./TreeView.js";
