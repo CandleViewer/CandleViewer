@@ -3,17 +3,19 @@ and additive (C-6.3) in `22-api-openapi.yaml` and `23-ws-protocol.md`.
 
 - 22 `Bar` and the 23 §14.3 bar item declare `gap_before`, `partial` and `tape_gap`: booleans,
   default `false`, never required.
-- 22 `KlineResponse.meta` is `BarsMeta`, `DataMeta` plus `spec_hash` and `build_version` (named and
-  bounded as the WS `bars` snapshot's `meta`, 23 §13 `snapMeta`) and REST's own `stale_build`, none
-  required. REST has no `stale`: one key, one meaning (WS `meta.stale` is a feed behind).
+- 22 `KlineResponse.meta` is `BarsMeta`, `DataMeta` plus `spec_hash`, `build_version` and
+  `stale_build` (named and bounded as the WS `bars` snapshot's `meta`, 23 §13 `snapMeta`, which
+  declares `stale_build` with the same shape since step 2 of #5396), none required. REST has no
+  `stale`: one key, one meaning (WS `meta.stale` is a feed behind).
 - An answer without any of them (a server that predates them) still validates, and the generated
   models read it as unflagged and not stale_build.
 - 23 §13 `snapMeta` declares `coverage_holes` for bars snapshots, optional, with REST's shape.
 - CVWB kind 4 carries the flags in `flags` bits 1-3 with no stride change: the reference decoders
-  read `confirm` from bit0 alone, so a frame with them set decodes as before.
+  read `confirm` from bit0 alone, so a frame with them set decodes as before, and name each set
+  flag in the item form (PR B of #5396); reserved bits 4-7 name none.
 
-The server does not send these members yet; the E12-Q04 drift guards list them as declared and not
-yet sent until #5396's follow-up serves them.
+The server sends these members since PR B (`tests/unit/bars/test_bar_flags_served.py`); the E12-Q04
+drift guards hold them as sent.
 """
 
 from __future__ import annotations
@@ -34,8 +36,8 @@ from tests.contract._generated_contract import _REGISTRY, _URI, SPEC, _members
 _SCHEMAS: Final = SPEC["components"]["schemas"]
 _FLAGS: Final = ("gap_before", "partial", "tape_gap")
 #: Shared with the WS snapshot meta, by name and shape; `stale_build` is REST's own.
-_SHARED: Final = ("spec_hash", "build_version")
-_PROVENANCE: Final = (*_SHARED, "stale_build")
+_SHARED: Final = ("spec_hash", "build_version", "stale_build")
+_PROVENANCE: Final = _SHARED
 _WS_BUNDLE: Final = Path(__file__).resolve().parents[4] / "docs" / "plan" / "ws-schema.json"
 _WS: Final[dict[str, Any]] = json.loads(_WS_BUNDLE.read_text(encoding="utf-8"))["schemas"]
 _WS_REGISTRY: Final = Registry().with_resources(
@@ -117,22 +119,24 @@ def test_contract_kline_response_meta_is_bars_meta_over_data_meta() -> None:
 
 
 def test_contract_bars_meta_provenance_matches_the_ws_snapshot_meta() -> None:
-    """`spec_hash` and `build_version`: same names, types and bounds as 23 §13 `snapMeta`."""
+    """`spec_hash`, `build_version` and `stale_build`: same names, types and bounds as 23 §13
+    `snapMeta`."""
     rest, ws = _bars_meta_own()["properties"], _snap_meta()
     for name in _SHARED:
         shape = {k: v for k, v in rest[name].items() if k != "description"}
         assert shape == {k: v for k, v in ws[name].items() if k != "description"}, name
 
 
-def test_contract_bars_meta_stale_build_is_rest_only_and_rest_has_no_stale() -> None:
-    """One key, one meaning: REST's `stale_build` is an optional boolean defaulting to false, the
-    WS snapshot meta has no `stale_build`, and REST declares no `stale` (WS's feed-behind key)."""
-    rest = _bars_meta_own()["properties"]
-    assert {k: v for k, v in rest["stale_build"].items() if k != "description"} == {
-        "type": "boolean",
-        "default": False,
-    }
-    assert "stale_build" not in _snap_meta()
+def test_contract_bars_meta_stale_build_is_shared_and_rest_has_no_stale() -> None:
+    """One key, one meaning: `stale_build` is an optional boolean defaulting to false on REST and
+    on the WS snapshot meta alike (step 2 of #5396), and REST declares no `stale` (WS's
+    feed-behind key)."""
+    rest, ws = _bars_meta_own()["properties"], _snap_meta()
+    for meta in (rest, ws):
+        assert {k: v for k, v in meta["stale_build"].items() if k != "description"} == {
+            "type": "boolean",
+            "default": False,
+        }
     assert "stale" not in _members("/components/schemas/BarsMeta")
 
 
@@ -217,16 +221,25 @@ def test_contract_generated_models_read_an_old_answer_as_unflagged_and_not_stale
     assert (meta.spec_hash, meta.build_version, meta.stale_build) == (None, None, False)
 
 
+_SET: Final = {"gap_before": True, "partial": True, "tape_gap": True}
+
+
 @pytest.mark.parametrize(
-    ("name", "flags", "confirm"),
-    [("bars_flags_gap_partial", 0b0000_1110, False), ("bars_flags_reserved_bits", 0xF1, True)],
+    ("name", "flags", "confirm", "named"),
+    [
+        ("bars_flags_gap_partial", 0b0000_1110, False, _SET),
+        ("bars_flags_reserved_bits", 0xF1, True, {}),
+    ],
 )
 def test_contract_kind4_flag_vectors_leave_confirm_on_bit0(
-    name: str, flags: int, confirm: bool
+    name: str, flags: int, confirm: bool, named: dict[str, bool]
 ) -> None:
     """The shared golden vectors (`cvwb_vectors`, read by the TS decoder too): bits 1-3
     (`gap_before`, `partial`, `tape_gap`) and reserved bits 4-7 decode as before, same 85-byte
-    stride, no `format_version` change (23 §3.4); `confirm` stays bit0."""
+    stride, no `format_version` change (23 §3.4); `confirm` stays bit0, bits 1-3 are each named
+    in the item when set, and bits 4-7 name nothing."""
     frame = decode(encode(dict(vector_frames())[name]))
     assert frame.records[0][-1] == flags
-    assert [b["confirm"] for b in structured(frame)["bars"]] == [confirm]
+    (bar,) = structured(frame)["bars"]
+    assert bar["confirm"] is confirm
+    assert {k: bar[k] for k in _SET if k in bar} == named

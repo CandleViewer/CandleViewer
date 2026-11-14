@@ -90,8 +90,9 @@ def test_row_golden_ilp_line() -> None:
         "bars_time,symbol=BTCUSDT,bar_param=5m,source=tape "
         "close_ts=1700000299999999t,open=100.1,high=101.0,"
         "low=99.5,close=100.5,volume=10.0,buy_volume=6.0,sell_volume=4.0,delta=2.0,min_delta=-1.0,"
-        "max_delta=3.0,delta_pct=20.0,trade_count=7i,vwap=100.3,is_closed=true,build_version=1i,"
-        "generation=0i,index=3i,row_checksum=0i 1700000000000000000"
+        "max_delta=3.0,delta_pct=20.0,trade_count=7i,vwap=100.3,is_closed=true,gap_before=false,"
+        "partial=false,tape_gap=false,build_version=1i,generation=0i,index=3i,row_checksum=0i "
+        "1700000000000000000"
     )
 
 

@@ -53,6 +53,7 @@ from fastapi.responses import JSONResponse, Response
 from candleviewer.api.market_refusal import note_refused
 from candleviewer.api.market_response import (
     InvalidCursor,
+    bars_provenance,
     build_meta,
     cursor_scope,
     decode_cursor,
@@ -82,6 +83,7 @@ from candleviewer.bars.metrics import (
 )
 from candleviewer.bars.models import BarSpec
 from candleviewer.bars.reader import BarKey, BarPage, StoredBar, row_key, stored_bar
+from candleviewer.bars.rows import BUILD_VERSIONS
 from candleviewer.bars.spec import PARAM_MAX_LEN, check_param_bounds, from_wire, qty_step_for
 from candleviewer.bars.write_holes import Present, WriteHoleLedger
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -416,9 +418,11 @@ def make_market_bars_router(
             holes = merge_coverage_holes(write_holes.holes_for(
                 symbol, spec.spec_hash, page_from, page_to, _present(spec, rows),
             )) or None  # fmt: skip
+        provenance = bars_provenance(rows, spec_hash=spec.spec_hash,
+                                     running=BUILD_VERSIONS[spec.kind])  # fmt: skip
         meta = build_meta(count=len(rows), next_cursor=next_cursor, sources=sources,
                           recording_started_at_us=started, generated_at_us=now_us(),
-                          coverage_holes=holes)  # fmt: skip
+                          coverage_holes=holes, provenance=provenance)  # fmt: skip
         return kline_response(
             symbol=symbol, interval=param, bar_type=bar_type,
             bars=[serialize_bar(r, include_delta=include_delta) for r in rows], meta=meta,

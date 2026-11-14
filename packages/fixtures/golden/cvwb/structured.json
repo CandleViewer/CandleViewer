@@ -246,7 +246,10 @@
           "turnover": "9000000000.000",
           "trades": 321,
           "delta": "-4.567",
-          "confirm": false
+          "confirm": false,
+          "gap_before": true,
+          "partial": true,
+          "tape_gap": true
         }
       ],
       "coalesced": false

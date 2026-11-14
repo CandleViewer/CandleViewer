@@ -494,8 +494,10 @@ async def test_a_slow_reader_mostly_bars_keeps_book_and_trades_and_resnapshots_b
 
 #: What `bar_item` emits for a snapshot item of a non-time kind (no `amended`): the keys of every
 #: item, `close_t_ms` and `_DELTA_KEYS`. A time kind has no `close_t_ms`, and the delta keys are
-#: there only with `include_delta`.
+#: there only with `include_delta`. A `_FLAG_KEYS` key is there only when its `Bar` flag is true
+#: (#5396, §14.3: absent reads false).
 _DELTA_KEYS = {*"delta min_delta max_delta".split()}
+_FLAG_KEYS = {*"gap_before partial tape_gap".split()}
 _ITEM_KEYS = {
     *"generation index t_ms o h l c v turnover trades confirm close_t_ms".split(),
     *_DELTA_KEYS,
@@ -564,6 +566,7 @@ def _widest_item_bytes() -> int:
             bar = _bar(**state).model_copy(update=wide)
             item = bar_item(bar, generation=gen, bar_kind=kind, include_delta=flow)
             keys = _ITEM_KEYS - {"close_t_ms"} if kind in TIME_KINDS else _ITEM_KEYS
+            keys = keys | {name for name in _FLAG_KEYS if state[name]}
             assert set(item) == (keys if flow else keys - _DELTA_KEYS), _KEYS_MSG
             # a listed key is not a widened one: every decimal and integer takes the set's value
             assert {v for v in item.values() if isinstance(v, str)} == {format(decimal, "f")}

@@ -310,10 +310,11 @@ def test_item_max_bytes_bounds_the_widest_item() -> None:
         "max_delta",
     )
     wide = {**dict.fromkeys(fields, nines), "index": 2**64 - 1, "trade_count": 2**32 - 1,
-            "open_time": 2**63 - 1, "close_time": 2**63 - 1}  # fmt: skip
+            "open_time": 2**63 - 1, "close_time": 2**63 - 1,
+            **dict.fromkeys(("gap_before", "partial", "tape_gap"), True)}  # fmt: skip
     item = bar_item(_bar().model_copy(update=wide), generation=2**64 - 1, bar_kind="tick",
                     include_delta=True, amended=True)  # fmt: skip
-    assert 900 < len(json.dumps(item, separators=(",", ":"))) <= ITEM_MAX_BYTES  # 969 B today
+    assert 900 < len(json.dumps(item, separators=(",", ":"))) <= ITEM_MAX_BYTES  # 1018 B today
 
 
 @settings(max_examples=400, deadline=None, derandomize=True)

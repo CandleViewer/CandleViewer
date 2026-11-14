@@ -104,6 +104,37 @@ async def test_build_version_is_the_lowest_build_among_the_bars_sent(
     assert _build(src, _sub(history=2)).meta["build_version"] == 3
 
 
+@pytest.mark.parametrize(
+    ("builds", "history", "want"),
+    [
+        ({}, 3, (1, None)),  # every bar current: no key
+        ({(GEN, 0, T0): None}, 3, (1, True)),  # a NULL build: stale, out of the minimum
+        ({(GEN, 1, T0 + STEP): None}, 1, (1, None)),  # that bar not sent: no key
+        ({(GEN, 0, T0): 2, (GEN, 1, T0 + STEP): None}, 3, (2, True)),  # an old and a NULL build
+    ],
+    ids=["current", "null", "null-not-sent", "old-and-null"],
+)
+async def test_snapshot_meta_stale_build_names_an_old_or_unknown_build_sent(
+    monkeypatch: pytest.MonkeyPatch,
+    builds: dict[tuple[int, int, int], int | None],
+    history: int,
+    want: tuple[int, bool | None],
+) -> None:
+    """§6.1 `meta.stale_build` (#5396): true when a closed bar sent was built below the running
+    version or has no recorded one; that one stays out of the `build_version` minimum. The
+    forming bar is the running build; absent reads false. Both encodings carry it in `meta`."""
+    monkeypatch.setitem(BUILD_VERSIONS, "time", 3 if any(builds.values()) else 1)
+
+    async def tail(symbol: str, spec: BarSpec, limit: int) -> BarTail:
+        return BarTail([(GEN, _bar(i)) for i in range(3)], builds=dict(builds))
+
+    store = SeriesStore(tail)
+    await store.ensure(SYM, SPEC)
+    for encoding in ("structured", "binary"):
+        meta = _build(_src(store), _sub(history=history, encoding=encoding)).meta
+        assert (meta["build_version"], meta.get("stale_build")) == want, encoding
+
+
 async def test_an_empty_series_sends_no_bars_with_the_running_build_in_either_encoding() -> None:
     seeds: list[tuple[str, BarSpec, int]] = []
     src = _src(await _store(forming=False), seed=lambda *a: seeds.append(a))

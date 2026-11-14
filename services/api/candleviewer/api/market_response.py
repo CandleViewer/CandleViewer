@@ -18,6 +18,12 @@ materialised beyond that before the check.
 `delta`/`min_delta`/`max_delta`/`cvd` are `null` when `include_delta=true`; a zero would be a lie
 that reaches CVD and rules. Tape-built bars carry their stored values; `cvd` is not persisted
 per bar, so it is `null` there too.
+
+**Flags and provenance (#5396, 24 §19.81).** A stored bar carries `gap_before`, `partial` and
+`tape_gap` as its row holds them, each sent only when true: absent reads `false` (22 `Bar`), so a
+page with no flag set is the bytes it was before and a kline row never carries one. `meta` names
+the series' `spec_hash`, the lowest `build_version` among the stored bars served (NULL rows out of
+the minimum, the running version when none is served) and `stale_build` (`bars_provenance`).
 """
 
 from __future__ import annotations
@@ -25,7 +31,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from itertools import repeat
 from operator import attrgetter
@@ -49,6 +55,8 @@ _DELTA_FIELDS: Final = ("delta", "min_delta", "max_delta")
 _BAR_KEYS: Final = ("t", "o", "h", "l", "c", "v", "turnover", "confirm")
 _BAR_ATTRS: Final = ("open", "high", "low", "close", "volume", "turnover", "confirmed")
 _NULL_DELTA_KEYS: Final = (*_DELTA_FIELDS, "cvd")
+#: 22 `Bar` flags (#5396): a stored bar sends each only when true.
+_FLAG_FIELDS: Final = ("gap_before", "partial", "tape_gap")
 #: `iso_us` divides by 1e6 in float: exact to the µs while that double's half-ulp stays under
 #: 0.5 µs, i.e. below 2**32 s (year 2106). Outside [0, this) `iso_us_many` defers to `iso_us`.
 _ISO_VECTOR_MAX_US: Final = 2**32 * 1_000_000
@@ -232,6 +240,9 @@ def serialize_bar(row: BarRowLike, *, include_delta: bool) -> dict[str, object]:
     close_ts = getattr(row, "close_ts_us", None)
     if isinstance(close_ts, int):
         bar["close_time"] = iso_us(close_ts)
+    for name in _FLAG_FIELDS:  # stored bars only; absent means false (22 `Bar`)
+        if getattr(row, name, None) is True:
+            bar[name] = True
     if include_delta:
         trades = getattr(row, "trades", None)
         if isinstance(trades, int):
@@ -247,11 +258,12 @@ def serialize_bars(rows: Sequence[BarRowLike], *, include_delta: bool) -> list[d
     """`[serialize_bar(r, include_delta=...) for r in rows]`, column-wise (#2523).
 
     A page whose rows carry none of the optional attributes (`index`, `generation`,
-    `close_ts_us`; with `include_delta`, `trades` and the delta fields), the kline case, is
-    built by C-level `map`s: one column per attribute, `iso_us_many` for `t`, `dict(zip())`
-    per bar. Any other page goes through `serialize_bar` row by row. Equal dicts in equal key
-    order either way, so the response bytes are identical (golden + property tests)."""
-    optional = ["index", "generation", "close_ts_us"]
+    `close_ts_us`, the flags; with `include_delta`, `trades` and the delta fields), the kline
+    case, is built by C-level `map`s: one column per attribute, `iso_us_many` for `t`,
+    `dict(zip())` per bar. Any other page goes through `serialize_bar` row by row. Equal dicts
+    in equal key order either way, so the response bytes are identical (golden + property
+    tests)."""
+    optional = ["index", "generation", "close_ts_us", *_FLAG_FIELDS]
     if include_delta:
         optional += ["trades", *_DELTA_FIELDS]
     n = len(rows)
@@ -317,6 +329,10 @@ class BarSegments:
             left -= len(part)
         self._segs, self._n = kept, sum(map(len, kept))
 
+    def rows(self) -> list[BarRowLike]:
+        """The bars held as rows, oldest first (an emitted-JSON page exposes none)."""
+        return [r for seg in self._segs if isinstance(seg, list) for r in seg]
+
     def row_versions(self) -> list[tuple[int, str | None, int | None]]:
         """`(open time, source, row checksum)` of each bar held as a row (an emitted-JSON page
         exposes none); a row without a field reads None for it."""
@@ -348,7 +364,9 @@ def build_meta(
     recording_started_at_us: int | None,
     generated_at_us: int,
     coverage_holes: list[dict[str, int]] | None = None,
+    provenance: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
+    """22 `DataMeta`, plus `BarsMeta`'s `provenance` (`bars_provenance`) when given."""
     meta: dict[str, object] = {
         "next_cursor": next_cursor,
         "has_more": next_cursor is not None,
@@ -361,6 +379,25 @@ def build_meta(
     }
     if coverage_holes is not None:
         meta["coverage_holes"] = coverage_holes
+    if provenance is not None:
+        meta.update(provenance)
+    return meta
+
+
+def bars_provenance(rows: Iterable[object], *, spec_hash: str, running: int) -> dict[str, object]:
+    """22 `BarsMeta`'s members for the built bars among `rows` (#5396, 24 §3.1): `spec_hash`;
+    `build_version`, the lowest recorded among them (a row with none is left out of the minimum;
+    absent when none of them records one; `running` when no built bar is served); and
+    `stale_build`, true when one was built below `running` or records no version. An exchange
+    kline is no built bar and counts for none: a row counts only when it says `tape_built` is true
+    (a stored built bar does; a hot-cache `KlineRow` has no such attribute)."""
+    built = [r for r in rows if getattr(r, "tape_built", False) is True]
+    versions = [getattr(r, "build_version", None) for r in built]
+    known = [v for v in versions if isinstance(v, int)]
+    meta: dict[str, object] = {"spec_hash": spec_hash}
+    if known or not versions:
+        meta["build_version"] = min(known, default=running)
+    meta["stale_build"] = len(known) < len(versions) or any(v < running for v in known)
     return meta
 
 
@@ -414,6 +451,7 @@ __all__ = [
     "BarSegments",
     "EmittedBars",
     "InvalidCursor",
+    "bars_provenance",
     "build_meta",
     "cursor_scope",
     "decode_cursor",

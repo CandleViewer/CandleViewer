@@ -72,7 +72,10 @@ def _reference_ohlcv(spec: BarSpec, tape: list[TradeEvent]) -> list[tuple[str, .
 
 
 def _row(b: Bar) -> dict[str, object]:
-    return {k: (str(v) if isinstance(v, Decimal) else v) for k, v in b.model_dump().items()}
+    """Every field; `tape_gap` (#5396) only when true, as the wires send it, so a golden written
+    before the field existed stays byte-identical and a bar that sets it shows as a diff."""
+    dumped = b.model_dump(exclude=None if b.tape_gap else {"tape_gap"})
+    return {k: (str(v) if isinstance(v, Decimal) else v) for k, v in dumped.items()}
 
 
 @pytest.mark.parametrize("label", list(SPECS))

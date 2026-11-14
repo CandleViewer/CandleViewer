@@ -28,7 +28,7 @@ import pytest
 
 from candleviewer.bars.activity_builders import TickBarBuilder
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
-from candleviewer.bars.rows import BUILD_VERSIONS, bar_row
+from candleviewer.bars.rows import BUILD_VERSIONS, bar_row, row_checksum
 from candleviewer.bars.series_store import Hold
 from candleviewer.bars.spec import from_wire
 from candleviewer.bars.time_builder import TimeBarBuilder
@@ -61,17 +61,6 @@ _DEAD_ALLOWED: Final = {
         "never sent per bar: the client sums `delta` (23 §6.1 include_delta); dropping it from "
         "the schema would break cv.v1 (C-6.3)"
     ),
-    **{
-        member: (
-            "#5396 contract first (C-6.1): declared before the server sends it; #5396's "
-            "follow-up serves it and removes this row"
-        )
-        for member in (
-            "BarsBatch.bars[].gap_before",
-            "BarsBatch.bars[].partial",
-            "BarsBatch.bars[].tape_gap",
-        )
-    },
 }
 
 
@@ -81,6 +70,12 @@ def _emissions(spec: BarSpec, start: int, stop: int) -> list[list[BarUpdate]]:
     builder: Any = (TimeBarBuilder if spec.kind == "time" else TickBarBuilder)(spec, "BTCUSDT")
     out = [[*builder.on_trade(t), *builder.on_clock(t.ts_event)] for t in _TAPE[:stop]]
     return [emission for emission in out[start:] if emission]
+
+
+def _marked(update: BarUpdate) -> BarUpdate:
+    """`update` with its bar marked `gap_before` and `tape_gap` (#5396, §14.3)."""
+    flags = {"gap_before": True, "tape_gap": True}
+    return update.model_copy(update={"bar": update.bar.model_copy(update=flags)})
 
 
 def _hydrate(rig: _Rig, spec: BarSpec) -> Hold:
@@ -287,7 +282,9 @@ def _declared() -> set[str]:
 
 #: The `snapMeta` members a `bars` frame can carry (§13, §6.1), guarded with `BarsBatch`. `stale`
 #: is left out: it is sent only for a quarantined series, which `test_sequencing.py` drives (§7.2).
-_BARS_META: Final = ("spec_hash", "build_version", "include_delta", "coverage_holes")
+_BARS_META: Final = (
+    "spec_hash", "build_version", "include_delta", "coverage_holes", "stale_build",
+)  # fmt: skip
 #: One run: the structured payloads it counts and the envelope `meta` of every frame it received.
 Run = tuple[list[dict[str, Any]], list[dict[str, Any]]]
 
@@ -307,14 +304,17 @@ def _sent(payload: dict[str, Any]) -> set[str]:
 
 def _holed_snapshot(root: Path) -> dict[str, Any]:
     """The snapshot of the tick-100 series' two stored bars when its third closed bar was not
-    stored (#5396): `meta.coverage_holes` names it (23 §13)."""
+    stored (#5396): `meta.coverage_holes` names it (23 §13). The first stored row records no
+    `build_version` (unknown provenance), so `meta.stale_build` is true (§6.1)."""
     lost = _closed("tick", "100")[2]
     ledger = WriteHoleLedger(root)
     key = HoleKey("BTCUSDT", _TICK.spec_hash, "tick", "tick:100", 0, lost.index, lost.open_time,
                   lost.close_time + 1)  # fmt: skip
     ledger.lost([key], "refused")
-    rig = _Rig({"tick:100": [bar_row(b, _TICK, generation=0) for b in _closed("tick", "100")[:2]]},
-               holes=ledger)  # fmt: skip
+    rows = [bar_row(b, _TICK, generation=0) for b in _closed("tick", "100")[:2]]
+    rows[0]["build_version"] = None
+    rows[0]["row_checksum"] = row_checksum(rows[0])
+    rig = _Rig({"tick:100": rows}, holes=ledger)
     with h.connect(rig.w) as c:
         hold = _hydrate(rig, _TICK)
         try:
@@ -324,6 +324,7 @@ def _holed_snapshot(root: Path) -> dict[str, Any]:
             hold.release()
     holes = [{"start_us": key.open_us, "end_us": key.end_us}]
     assert snap["meta"]["coverage_holes"] == holes
+    assert snap["meta"]["stale_build"] is True
     return snap
 
 
@@ -337,7 +338,9 @@ def _member_run(root: Path) -> Run:
     with h.connect(rig.w) as c:
         c.sub({"ch": CH, "opts": {"encoding": "structured", "include_delta": True}})
         frames.append(c.next_of("snap"))
-        for emission in _emissions(_MINUTE, 0, 5):
+        emissions = _emissions(_MINUTE, 0, 5)
+        emissions[-1] = [_marked(u) for u in emissions[-1]]  # #5396: the tape records no gap
+        for emission in emissions:
             rig.emit(_MINUTE, *emission)
             frames.append(c.next_of("d"))
     binary: list[dict[str, Any]] = []

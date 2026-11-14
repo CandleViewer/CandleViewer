@@ -59,6 +59,7 @@ export interface Bar {
   spec_hash: string;
   symbol: string;
   synthetic?: boolean;
+  tape_gap?: boolean;
   trade_count: number;
   turnover: Notional;
   volume: Qty;
