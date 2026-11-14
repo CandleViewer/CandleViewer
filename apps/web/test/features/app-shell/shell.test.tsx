@@ -42,13 +42,13 @@ describe("E10-S01 S1: ShellLayout landmarks and one main per route", () => {
   it("renders the banner, Primary navigation, main, complementary and contentinfo landmarks", async () => {
     signIn("owner");
     renderAt("/risk");
-    await screen.findByRole("heading", { name: /R-150/ });
+    await screen.findByRole("heading", { name: /R-150/ }, { timeout: 10_000 }); // a cold first render
     expect(screen.getByRole("banner")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
     expect(screen.getByRole("main")).toHaveAttribute("tabindex", "-1");
     expect(screen.getByRole("complementary")).toBeInTheDocument();
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
-  });
+  }, 30_000); // the 10 s wait above needs a test limit above vitest's 5 s default
 
   it("every non-public manifest route an owner can open renders exactly one main, holding the screen", async () => {
     signIn("owner");
@@ -62,7 +62,9 @@ describe("E10-S01 S1: ShellLayout landmarks and one main per route", () => {
           <RouterProvider router={router} />
         </PreferencesProvider>,
       );
-      const [heading] = await screen.findAllByRole("heading");
+      // R-300..R-360 mount a React.lazy chunk (AdminRouteElement, E42-S01 BQ-7): its first, cold
+      // load outlasts findAllByRole's 1 s default on a loaded runner, so wait longer for it
+      const [heading] = await screen.findAllByRole("heading", {}, { timeout: 10_000 });
       // the screen itself, never the route error fallback
       expect(screen.queryByRole("heading", { name: /Something went wrong/ }), entry.id).toBeNull();
       const mains = screen.getAllByRole("main");
