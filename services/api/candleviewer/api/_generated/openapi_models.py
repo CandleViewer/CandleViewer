@@ -2282,12 +2282,64 @@ class LiquidationsPageMeta(PageMeta):
     coverage: Coverage
 
 
+class LiquidationPriceBucket(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    price_lo: Annotated[
+        str,
+        Field(
+            description="Inclusive lower edge, a whole multiple of the bucket width.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+    price_hi: Annotated[
+        str,
+        Field(
+            description="Exclusive upper edge, `price_lo` + the bucket width.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+    long_notional_usd: Annotated[
+        str,
+        Field(
+            description="The summed `notional_usd` of the prints that closed longs; `0` when none did.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+    short_notional_usd: Annotated[
+        str,
+        Field(
+            description="The summed `notional_usd` of the prints that closed shorts; `0` when none did.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+    prints: Annotated[
+        JsonInt,
+        Field(
+            description="The stored prints in the bucket, both sides; a lower bound on distinct liquidation events, as the venue batches them (`getLiquidations`).",
+            ge=1,
+        ),
+    ]
+
+
+class LiquidationsByPriceMeta(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    coverage: Coverage
+
+
 class Gap(BaseModel):
     from_: Annotated[AwareDatetime, Field(alias="from")]
     to: AwareDatetime
 
 
-class Coverage1(BaseModel):
+class Coverage2(BaseModel):
     first_available_ts: AwareDatetime | None
     covered_from: AwareDatetime | None
     covered_to: AwareDatetime | None
@@ -2296,7 +2348,7 @@ class Coverage1(BaseModel):
 
 
 class FundingPageMeta(PageMeta):
-    coverage: Coverage1 | None = None
+    coverage: Coverage2 | None = None
     __null_refused = field_validator("coverage", mode="before")(_refuse_null)
 
 
@@ -2318,7 +2370,7 @@ class OpenInterestPoint(BaseModel):
     source: Literal["ws_ticker", "rest"]
 
 
-class Coverage2(BaseModel):
+class Coverage3(BaseModel):
     from_: Annotated[AwareDatetime | None, Field(alias="from")]
     to: AwareDatetime | None
     native_interval: Literal["1s", "5min", "15min", "30min", "1h", "4h", "1d"]
@@ -2327,7 +2379,7 @@ class Coverage2(BaseModel):
 
 
 class OpenInterestPageMeta(PageMeta):
-    coverage: Coverage2
+    coverage: Coverage3
 
 
 class Interval(BaseModel):
@@ -5572,10 +5624,16 @@ class Deriv(BaseModel):
     zones_enabled: Annotated[
         StrictBool | None,
         Field(
-            description="The estimated liquidation zones (E24-S07, with its acknowledgement); client default `false` (6612964585 Q1)."
+            description="Reserved for the estimated liquidation zones, K01's method (a), which v1 does not build (24 §6.4): no client reads or writes it until the K01 real-data re-run reopens (a), and the recorded histogram has its own leaf, `liq_by_price` (24 §19.123); client default `false` (6612964585 Q1)."
         ),
     ] = None
-    __null_refused = field_validator("oi_mode", "oi_quadrant_colouring", "funding_style", "funding_annualised", "basis_source", "liq_mode", "liq_min_notional_usd", "zones_enabled", mode="before")(_refuse_null)
+    liq_by_price: Annotated[
+        StrictBool | None,
+        Field(
+            description="The recorded liquidations by price on the price pane (E24-S07, K01's method (b)), read from `getLiquidationsByPrice`; exact recorded data, so no acknowledgement and no estimated badge (the ruling of 06:52Z 2026-11-04 on #782); audited as `settings.change` like the other `deriv` keys; client default `false`."
+        ),
+    ] = None
+    __null_refused = field_validator("oi_mode", "oi_quadrant_colouring", "funding_style", "funding_annualised", "basis_source", "liq_mode", "liq_min_notional_usd", "zones_enabled", "liq_by_price", mode="before")(_refuse_null)
 
 
 class FieldMeta(BaseModel):
@@ -7843,6 +7901,56 @@ class HeatmapResponse(BaseModel):
         ),
     ] = None
     __null_refused = field_validator("symbol", "from_", "to", "time_bucket_ms", "price_grouping", "times", "prices", "bid_matrix", "ask_matrix", "max_value", "normalize", "history", "samples", "estimated_columns", "effective_time_bucket_ms", "segments", mode="before")(_refuse_null)
+
+
+class LiquidationsByPrice(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    symbol: Annotated[
+        str,
+        Field(
+            description="Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
+            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            pattern="^[A-Z0-9]{2,20}USDT$",
+        ),
+    ]
+    from_: Annotated[
+        AwareDatetime,
+        Field(
+            alias="from",
+            description="The window's inclusive start, as requested or defaulted (00:00 UTC today).",
+        ),
+    ]
+    to: Annotated[
+        AwareDatetime,
+        Field(
+            description="The window's exclusive end: the end of the UTC day that contains `from`, or the server's now when it read the store if that is earlier."
+        ),
+    ]
+    bucket_ticks: Annotated[JsonInt, Field(ge=1, le=1000)]
+    tick_size: Annotated[
+        str,
+        Field(
+            description="The symbol's tick size from instrument info; a bucket is `bucket_ticks` × it wide.",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+    estimated: Annotated[
+        StrictBool,
+        Field(
+            description="Required, and `false` on every answer of this read: the buckets are exact sums of recorded prints, not an estimate (K01 §6a). A client renders the estimated badge from this flag alone, never from a constant, and draws nothing from an answer without it."
+        ),
+    ]
+    items: Annotated[
+        list[LiquidationPriceBucket],
+        Field(
+            description="At most `top` buckets, the largest total notional first, a tie to the lower `price_lo`.",
+            max_length=20,
+        ),
+    ]
+    meta: LiquidationsByPriceMeta
 
 
 class RecordingStatus(BaseModel):

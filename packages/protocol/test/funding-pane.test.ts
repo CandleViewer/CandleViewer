@@ -85,6 +85,7 @@ describe("funding pane contract (consumer side, 22 getFundingHistory, Position, 
       | "liq_mode"
       | "liq_min_notional_usd"
       | "zones_enabled"
+      | "liq_by_price" // #782 (24 §19.123); its own test: liquidations-by-price.test.ts
     >();
     expectTypeOf<Deriv["liq_mode"]>().toEqualTypeOf<"bars" | "heatmap" | undefined>();
     expectTypeOf<Deriv["zones_enabled"]>().toEqualTypeOf<boolean | undefined>();
