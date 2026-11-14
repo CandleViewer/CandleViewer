@@ -2,14 +2,13 @@
 
 `components.headers.CsrfTokenIssued` is the `X-CSRF-Token` response header that gives the SR-041
 token to a page that cannot read the backend's cookie. The contract (C-6.1) declares it on the
-`200` of the seven operations that issue the token in code: `POST /auth/login` (its enrolment-only
+`200` of the eight operations that issue the token: `POST /auth/login` (its enrolment-only
 answer), `POST /auth/mfa/verify`, `POST /auth/mfa/recovery`, `POST /auth/mfa/enroll/confirm`,
-`POST /auth/refresh`, `PUT /auth/password` (#5292) and `GET /auth/session`. `POST /auth/step-up`,
-which the contract says rotates both cookies, issues none in code yet; it gains the header in the
-change that makes it issue one (ADR-0038 F5). `POST /auth/logout` expires the cookie and carries
-none (ADR-0038 3b). A flag can withhold the header, and only a request whose `Origin` is listed
-can get it, so it is never `required`; it takes the request header's schema and is sensitive in
-logs (SR-006).
+`POST /auth/refresh`, `PUT /auth/password` (#5292), `POST /auth/step-up` (which rotates the
+session, SR-013; #2101 closed ADR-0038 F5) and `GET /auth/session`. `POST /auth/logout`
+expires the cookie and carries none (ADR-0038 3b).
+A flag can withhold the header, and only a request whose `Origin` is listed can get it, so it is
+never `required`; it takes the request header's schema and is sensitive in logs (SR-006).
 """
 
 from __future__ import annotations
@@ -29,14 +28,14 @@ _ISSUING = {
     ("post", "/auth/mfa/enroll/confirm", "200"),
     ("post", "/auth/refresh", "200"),
     ("put", "/auth/password", "200"),
+    ("post", "/auth/step-up", "200"),
     ("get", "/auth/session", "200"),
 }
 _AUDIENCE = "a request whose `Origin` is listed"
 #: The `200`/`204` responses that declare the SR-041 cookie but not the header: an expiry carries
-#: no token, and step-up's route does not rotate the session yet (#2101, ADR-0038 F5).
+#: no token. Step-up left this set when its route began to rotate the session (#2101, ADR-0038 F5).
 _COOKIE_WITHOUT_HEADER = {
     ("post", "/auth/logout", "204"),
-    ("post", "/auth/step-up", "200"),
 }
 
 
@@ -110,18 +109,17 @@ def test_csrf_token_header_audience_is_a_listed_origin_in_the_prose_and_the_comp
     assert _AUDIENCE in _flat(spec["components"]["headers"]["CsrfTokenIssued"]["description"])
 
 
-def test_csrf_token_header_prose_names_every_issuing_operation_and_the_step_up_gap(
-    spec: dict[str, Any],
-) -> None:
+def test_csrf_token_header_prose_names_every_issuing_operation(spec: dict[str, Any]) -> None:
     prose = _token_header_prose(spec)
     for method, path, _status in sorted(_ISSUING):
         assert f"`{method.upper()} {path}`" in prose
-    assert "`POST /auth/step-up`" in prose
-    assert "Today the seven operations" in prose  # the count the set above pins
+    assert "The eight operations that issue the token declare it" in prose  # the set above
     assert "(its enrolment-only answer" in prose  # which of login's two `200`s issues it
+    assert "(which rotates the session, SR-013, #2101; ADR-0038 F5)" in prose
+    assert "issues none in code yet" not in prose  # F5's gap is closed
 
 
-def test_csrf_token_header_is_declared_on_every_cookie_issuing_response_but_logout_and_step_up(
+def test_csrf_token_header_is_declared_on_every_cookie_issuing_response_but_logout(
     spec: dict[str, Any],
 ) -> None:
     cookie = {

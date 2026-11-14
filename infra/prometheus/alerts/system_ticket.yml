@@ -390,7 +390,10 @@ groups:
         # and the permission readers refuse a user who is not active (O5). E42-T09 (#2649): or
         # the live-socket push of a committed role change failed (`roles_push`, logged
         # `users.update.step`): the new roles hold for every new request, but the user's open
-        # sockets may keep their earlier permissions. The grants push has its own ticket below.
+        # sockets may keep their earlier permissions. #2101 (SR-013): or the session revoke that
+        # comes first (`session_revoke`, same log line): the new roles stand, but the user's
+        # sessions stay live until each is revoked with `DELETE /users/{userId}/sessions/{id}`.
+        # The grants push has its own ticket below.
         # Held past the quiet-hours mute as the WS any-event tickets are
         # (ws_gateway.yml header, with its two preconditions); every series is bound at import
         # (admin/lifecycle_metrics.py), so the first failure after a restart is an increase.

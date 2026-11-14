@@ -19,7 +19,8 @@ the context a record carries (a refresh carries it to the successor row), and th
 the start's unit of work, which locks the row first (`start_view_as_unit`). The
 insert also writes the step-up strikes and read-only window a refresh carries from the
 claim's row (#4051): a new row, from a revoked source row whose step-up columns no writer
-can change (`_STEP_UP_SQL` needs `revoked_at IS NULL`). A signed-in insert (MFA satisfied)
+can change (`_STEP_UP_SQL` needs `revoked_at IS NULL`), and the step-up grants a step-up's
+rotation carries from that row (#2101, `step_up_elevations`). A signed-in insert (MFA satisfied)
 resolves its user's critical `auth`/`owner_bootstrapped` event in the same transaction (#4479).
 Every record read also carries the row's lock by request and its last unlock (#4743,
 `0056_sessions_lock_state`): the insert writes the lock a refresh carries, extend's write refuses a
@@ -77,21 +78,22 @@ _LOCK_USER_SQL = sa.text(
 )
 # #3085: a record's view-as context goes in with it (eight NULLs when it holds none), so the
 # successor a refresh mints carries the context as the claim returned it (SR-013). #4743: so does
-# its lock by request (`locked_at`); a new row has no unlock (`unlocked_at` stays NULL).
+# its lock by request (`locked_at`); a new row has no unlock (`unlocked_at` stays NULL). #2101: and
+# its step-up grants (`step_up_elevations`, `{}` unless a step-up's rotation carries some).
 _INSERT_SQL = sa.text("""
     INSERT INTO sessions (id, user_id, refresh_token_hash, access_token_jti, issued_at,
         last_seen_at, expires_at, revoked_at, revoked_reason, ip, user_agent, device_label,
         is_electron, mfa_satisfied_at, idle_timeout_s, view_as_context_id,
         view_as_target_user_id, view_as_started_at, view_as_expires_at, view_as_ended_at,
         view_as_end_recorded_at, view_as_cleared_at, view_as_end_reason, step_up_failures,
-        readonly_until, locked_at)
+        readonly_until, locked_at, step_up_elevations)
     VALUES (CAST(:id AS uuid), CAST(:user_id AS uuid), :refresh_token_hash,
         CAST(:access_token_jti AS uuid), :issued_at, :last_seen_at, :expires_at, NULL, NULL,
         CAST(:ip AS inet), :user_agent, :device_label, :is_electron, :mfa_satisfied_at,
         :idle_timeout_s, CAST(:view_as_context_id AS uuid),
         CAST(:view_as_target_user_id AS uuid), :view_as_started_at, :view_as_expires_at,
         :view_as_ended_at, :view_as_end_recorded_at, :view_as_cleared_at, :view_as_end_reason,
-        :step_up_failures, :readonly_until, :locked_at)
+        :step_up_failures, :readonly_until, :locked_at, CAST(:step_up_elevations AS jsonb))
     """)
 
 
@@ -500,6 +502,11 @@ def _elevations(stored: str | None) -> dict[str, datetime]:
     return {k: datetime.fromisoformat(v) for k, v in json.loads(stored or "{}").items()}
 
 
+def _elevations_param(elevations: dict[str, datetime]) -> str:
+    """`step_up_elevations` as written (`CAST(... AS jsonb)`): the inverse of `_elevations`."""
+    return json.dumps({k: v.isoformat() for k, v in elevations.items()})
+
+
 def _view_as(m: Any) -> dict[str, Any] | None:
     """The `view_as_*` columns as `ViewAsState`'s fields, which `SessionRecord` validates, or
     `None` while the row holds no context (storage never imports `auth`, C-3.1). Every column
@@ -642,6 +649,8 @@ class SqlAlchemySessionRepository:
                     "readonly_until": session.readonly_until,
                     # #4743: a refresh carries a lock by request to the successor.
                     "locked_at": session.locked_at,
+                    # #2101: a step-up's rotation carries its grants (C-5); never the default.
+                    "step_up_elevations": _elevations_param(session.step_up_elevations),
                     **_view_as_params(session.view_as),
                 },
             )
@@ -754,10 +763,9 @@ class SqlAlchemySessionRepository:
             elevations, failures, readonly_until = change(
                 (_elevations(m["step_up_elevations"]), m["step_up_failures"], m["readonly_until"])
             )
-            payload = json.dumps({k: v.isoformat() for k, v in elevations.items()})
             params = {
                 "id": session_id,
-                "elevations": payload,
+                "elevations": _elevations_param(elevations),
                 "failures": failures,
                 "readonly_until": readonly_until,
             }

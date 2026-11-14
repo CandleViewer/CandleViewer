@@ -767,9 +767,10 @@ def test_exported_audit_query_metrics_served_with_env_and_closed_labels() -> Non
 def test_user_lifecycle_caps_and_help_cover_the_writers_closed_sets() -> None:
     """E42-T04 (#965 R7): the label values are closed sets fixed by their writers: the cascade's
     steps (`admin/user_disable.py`, its closing record too), the grants push
-    (`admin/account_access.py`, #2648: `pushed`, `timeout`, `failed`) and the role push of a
-    committed role change (`api/users.py`, E42-T09 #2649: `ok`, `failed`). Each cap is the size
-    of its sets and each help names every value, for the dashboard and alert authors who read it."""
+    (`admin/account_access.py`, #2648: `pushed`, `timeout`, `failed`), and the role push of a
+    committed role change and its session revoke (`api/users.py`, E42-T09 #2649 and #2101: `ok`,
+    `failed`). Each cap is the size of its sets and each help names every value, for the dashboard
+    and alert authors who read it."""
     from candleviewer.admin import account_access, user_disable
     from candleviewer.admin import lifecycle_metrics as lm
     from candleviewer.api import users
@@ -780,7 +781,10 @@ def test_user_lifecycle_caps_and_help_cover_the_writers_closed_sets() -> None:
     roles = lm.STEP_OUTCOMES[users.ROLES_PUSH_STEP]
     assert roles == ("ok", "failed")
     assert typing.get_args(typing.get_type_hints(users._roles_pushed)["outcome"]) == roles
-    pushes = (account_access.PUSH_STEP, users.ROLES_PUSH_STEP)
+    ended = lm.STEP_OUTCOMES[users.SESSION_REVOKE_STEP]
+    assert ended == ("ok", "failed")
+    assert typing.get_args(typing.get_type_hints(users._sessions_revoked)["outcome"]) == ended
+    pushes = (account_access.PUSH_STEP, users.ROLES_PUSH_STEP, users.SESSION_REVOKE_STEP)
     cascade = [step for step in lm.STEP_OUTCOMES if step not in pushes]
     assert cascade == [*user_disable.STEPS, "closing_record"]
     specs = {s.name: s for s in CATALOGUE}
@@ -791,6 +795,21 @@ def test_user_lifecycle_caps_and_help_cover_the_writers_closed_sets() -> None:
         assert specs[name].max_series == sum(map(len, sets.values())), name
         named = {*sets, *(value for values in sets.values() for value in values)}
         assert named <= set(re.findall(r"\w+", specs[name].help)), name
+
+
+def test_auth_label_caps_are_their_closed_sets_and_other() -> None:
+    """#2101: `auth_session_revocations_total{reason}` and `auth_audit_outcome_lost_total{action}`
+    clamp their label to a closed set, else `other` (`normalise_reason`,
+    `normalise_outcome_action`), so each cap is that set plus one: a value added to a set without
+    its cap (`role_changed`, once) would be refused at the cap."""
+    from candleviewer.auth import metrics as auth_metrics
+
+    bounds = {
+        "auth_session_revocations_total": len(auth_metrics._KNOWN_REASONS) + 1,
+        "auth_audit_outcome_lost_total": len(auth_metrics.AUDIT_OUTCOME_ACTIONS) + 1,
+    }
+    caps = {s.name: s.max_series for s in CATALOGUE}
+    assert {name: caps[name] for name in bounds} == bounds
 
 
 def test_user_lifecycle_series_are_bound_at_import_and_served_with_env() -> None:

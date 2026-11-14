@@ -172,11 +172,31 @@ class Stack:
         return {"Authorization": f"Bearer {minted.access_token}", **csrf}, seed
 
     def step_up(self, headers: dict[str, str], seed: bytes, challenge_id: str | None = None) -> Any:
-        """`POST /auth/step-up`, naming the live challenge the client was refused with (#2725)."""
+        """`POST /auth/step-up`, naming the live challenge the client was refused with (#2725).
+        A granted step-up rotates the session (SR-013, #2101), so *headers* move in place to the
+        new access token and its SR-041 pair, as the client does, and the new token keeps the
+        principal the old one had on the owner routes."""
         body = {"code": self.code(seed), "password": PW}
         if challenge_id is not None:
             body["challenge_id"] = challenge_id
-        return self.client.post("/auth/step-up", headers=headers, json=body)
+        answered = self.client.post("/auth/step-up", headers=headers, json=body)
+        if answered.status_code == 200:
+            self.adopt(headers, answered.json()["tokens"]["access_token"])
+        return answered
+
+    def adopt(self, headers: dict[str, str], token: str) -> None:
+        """Move *headers* to the session *token* names, as a client does with a rotated bundle."""
+        old = headers.get("Authorization", "").removeprefix("Bearer ")
+        if old in self.resolver.by_token:
+            self.resolver.by_token[token] = self.resolver.by_token[old]
+        session = self.call(self.auth.sessions.peek_access_token, token)
+        assert session is not None, "the step-up's new token names no session"
+        headers.update(
+            {
+                "Authorization": f"Bearer {token}",
+                **csrf_headers(self.state.csrf_codec, session.id),
+            }
+        )
 
     def scraped(self, name: str, **labels: str) -> float:
         """Sum of the samples of *name* on the app's scraped registry whose labels include

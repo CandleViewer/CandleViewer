@@ -154,6 +154,17 @@ class _Elevated:
     async def require_elevation(self, session_id: str, action_class: str) -> None:
         return None
 
+    # SR-013 (#2101): a role change ends its target's sessions; these callers hold none in a store
+    # (`test_role_change_revocation` and `test_session_rotation_sr013` end real ones).
+    async def live_sessions(self, user_id: str) -> tuple[Any, ...]:
+        return ()
+
+    def now(self) -> datetime:
+        return _NOW
+
+    async def revoke_all(self, user_id: str, **_: Any) -> tuple[Any, ...]:
+        return ()
+
 
 class _Pushes:
     async def roles_changed(self, user_id: uuid.UUID) -> None:

@@ -16,7 +16,7 @@ from candleviewer.audit.models import AuditOutcome
 from candleviewer.auth.errors import StepUpMismatch
 from tests.contract.test_step_up_challenge_contract import _PROBLEM, _SPEC, _ref, _validator
 from tests.unit.api.test_step_up_challenge_router import _RELEASE, _KillSwitch, _world
-from tests.unit.api.test_step_up_router import _PW, _code
+from tests.unit.api.test_step_up_router import _PW, _adopt, _code
 
 
 def _fingerprint(body: dict[str, Any], target: bytes = b"/trading/kill-switch") -> str:
@@ -143,7 +143,9 @@ async def test_binding_writes_no_password_code_or_body_to_logs_or_audit(
     held = _RELEASE | {"reason": "private-note-7731"}
     code = _code(w.seed, w.clock)
     payload = {"code": code, "password": _PW, "challenge_id": w.send(held).json()["challenge_id"]}
-    assert w.client.post("/auth/step-up", headers=w.h(), json=payload).status_code == 200
+    granted = w.client.post("/auth/step-up", headers=w.h(), json=payload)
+    assert granted.status_code == 200
+    _adopt(w.rows, w.sessions, "tok", granted)  # SR-013 (#2101): `tok` follows the rotation
     w.send(held | {"scope": "account"})  # mismatch
     assert w.send(held).status_code == 200
     recorded = repr(w.audit.calls)

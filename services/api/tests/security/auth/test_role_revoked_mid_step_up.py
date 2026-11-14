@@ -20,8 +20,13 @@ committed first stands, the revoke ordered after its effect. The stores' fakes m
 Postgres re-read (`require_active_owner`); the real locks are
 `tests/integration/auth/test_owner_actor_recheck_pg.py`'s, in CI.
 
-Not asserted here: whether a role change also rotates the session id (SR-013, #2101). These tests
-pin authority and audit order, so they keep the session the step-up started on.
+SR-013 (#2101): a role change ends every live session of its target, and a step-up rotates the
+caller's session. So A's requests after B's revoke are refused `401` on A's ended session (as
+`SessionSnapshotResolver` refuses one, which the resolver here mirrors), never `403`; A signs in
+again to see the entry refusal of a demoted owner. A step-up hands its caller the new bearer
+(`World.step_up`). The #2593 re-check at the effect is reached by parking the action past its
+step-up gate, at its effect, where B's revoke lands before the actor's re-read; the coordination
+with #2593's own changes to this module is noted on #2101.
 """
 
 from __future__ import annotations
@@ -45,6 +50,7 @@ from fastapi import Request
 import candleviewer.app as appmod
 import candleviewer.auth as auth_pkg
 from candleviewer.audit.actions import validate_action
+from candleviewer.auth.errors import AuthError
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, MfaMethodRecord
@@ -128,6 +134,13 @@ class _Directory(UserStore):
         self.roles = dict(self.initial_roles)
         self.disabled: set[uuid.UUID] = set()
         self.hold: _Hold | None = None
+        #: Parks a role change at its effect, past the step-up gate, before the actor's re-read.
+        self.effect_hold: _Hold | None = None
+
+    async def apply_roles(self, user_id: uuid.UUID, roles: frozenset[str], **kw: Any) -> bool:
+        if self.effect_hold is not None:
+            await self.effect_hold.pause(user_id)
+        return await super().apply_roles(user_id, roles, **kw)
 
     async def get_roles(self, user_id: uuid.UUID) -> frozenset[str] | None:
         if self.hold is not None:
@@ -162,17 +175,23 @@ def _permissions(roles: frozenset[str]) -> frozenset[Permission]:
 
 
 class _Resolver:
-    """Bearer -> principal, re-derived from the live role directory on every request (C-12.4)."""
+    """Bearer -> principal, re-derived from the live role directory on every request (C-12.4),
+    for a live session only, as `SessionSnapshotResolver` resolves it: an ended session (#2101: a
+    role change ends its target's) has no principal, so the route answers `401`."""
 
-    def __init__(self, directory: _Directory) -> None:
-        self._directory = directory
+    def __init__(self, directory: _Directory, sessions: Callable[[], Any]) -> None:
+        self._directory, self._sessions = directory, sessions
         self.by_token: dict[str, uuid.UUID] = {}
 
-    def resolve(self, request: Request) -> PrincipalSnapshot | None:
+    async def resolve(self, request: Request) -> PrincipalSnapshot | None:
         scheme, _, token = request.headers.get("authorization", "").partition(" ")
         user_id = self.by_token.get(token.strip()) if scheme.lower() == "bearer" else None
         roles = None if user_id is None else self._directory.roles.get(user_id)
         if user_id is None or roles is None or user_id in self._directory.disabled:
+            return None
+        try:
+            await self._sessions().authenticate_access_token(token.strip())
+        except AuthError:
             return None
         return PrincipalSnapshot(user_id, roles, _permissions(roles))
 
@@ -214,8 +233,24 @@ class _AuditLog:
         ]
 
 
-@dataclass(frozen=True)
+class _ParkedReset:
+    """The owner TOTP reset's unit of work, which can park at its start, before the actor's
+    re-read (#2593), as `_Directory.effect_hold` parks a role change."""
+
+    def __init__(self, inner: InMemoryOwnerReset) -> None:
+        self._inner = inner
+        self.hold: _Hold | None = None
+
+    async def reset_totp(self, target_user_id: str, **kw: Any) -> Any:
+        if self.hold is not None:
+            await self.hold.pause(target_user_id)
+        return await self._inner.reset_totp(target_user_id, **kw)
+
+
+@dataclass
 class _Actor:
+    """One user and the bearer it holds now: a granted step-up moves it (#2101)."""
+
     user_id: uuid.UUID
     token: str
     session_id: uuid.UUID
@@ -235,11 +270,13 @@ class World:
         ids = (uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
         self.directory = _Directory((ids[0], ids[1]), ids[2])
         # #2593: the reset's actor re-read, against the same directory the role store keeps
-        owner_reset = InMemoryOwnerReset(
-            self.users,
-            self.mfa_repo,
-            self.sessions_repo,
-            active_owner=lambda actor: self.directory.is_active_owner(uuid.UUID(actor)),
+        self.reset = _ParkedReset(
+            InMemoryOwnerReset(
+                self.users,
+                self.mfa_repo,
+                self.sessions_repo,
+                active_owner=lambda actor: self.directory.is_active_owner(uuid.UUID(actor)),
+            )
         )
         self.auth = AuthService(
             self.users,
@@ -248,9 +285,9 @@ class World:
             session_repository=self.sessions_repo,
             pepper=_PEPPER,
             clock=_Clock(),
-            owner_reset=owner_reset,
+            owner_reset=self.reset,
         )
-        self.resolver = _Resolver(self.directory)
+        self.resolver = _Resolver(self.directory, lambda: self.auth.sessions)
         self.client: httpx.AsyncClient
         self.owner_a: _Actor
         self.owner_b: _Actor
@@ -321,7 +358,26 @@ class World:
             body["action_class"] = action_class
         if challenge_id is not None:
             body["challenge_id"] = challenge_id
-        return await self.call(actor, "POST", "/auth/step-up", json=body)
+        answered = await self.call(actor, "POST", "/auth/step-up", json=body)
+        if answered.status_code == 200:  # SR-013 (#2101): the client holds the rotated bundle
+            await self._hold_bearer(actor, answered.json()["tokens"]["access_token"])
+        return answered
+
+    async def _hold_bearer(self, actor: _Actor, token: str) -> None:
+        """*actor* moves, in place, to *token* and its SR-041 pair, as the client does."""
+        session = await self.auth.sessions.peek_access_token(token)
+        assert session is not None, "the bearer names no session"
+        self.resolver.by_token[token] = actor.user_id
+        actor.token, actor.session_id = token, session.id
+        actor.headers.update(
+            {"Authorization": f"Bearer {token}", **csrf_headers(self._codec, session.id)}
+        )
+
+    async def sign_in_again(self, actor: _Actor) -> None:
+        """*actor* signs in again, after a role change ended its sessions (#2101)."""
+        await self._hold_bearer(
+            actor, (await self.auth.sessions.mint(str(actor.user_id))).access_token
+        )
 
     async def elevate(self, actor: _Actor) -> None:
         """Hold a live `users` elevation, as after a completed step-up."""
@@ -425,12 +481,23 @@ def _revocation_rows(w: World) -> list[dict[str, Any]]:
     return rows
 
 
-def _assert_refused_without_effect(w: World, action: _Action, response: httpx.Response) -> None:
-    assert response.status_code == 403
-    assert response.json()["code"] == "forbidden"
+def _assert_refused_without_effect(
+    w: World, action: _Action, response: httpx.Response, status: int = 403
+) -> None:
+    """Refused with nothing of the effect: `403 forbidden` at the effect (#2593), or `401
+    unauthenticated` on a session the role change ended (SR-013, #2101)."""
+    code = {403: "forbidden", 401: "unauthenticated"}[status]
+    assert (response.status_code, response.json()["code"]) == (status, code)
     assert action.untouched(w)
     for effect in action.effect_audit:
         assert not w.audit.find(effect, actor=w.owner_a.user_id)
+
+
+def _ended(w: World, actor: _Actor) -> list[dict[str, Any]]:
+    """#2101: the `auth.session_revoked` rows (B16, the session's own user as actor) of the
+    role change that ended *actor*'s sessions."""
+    rows = w.audit.find("auth.session_revoked", actor=actor.user_id)
+    return [r for r in rows if r.get("reason") == "role_changed"]
 
 
 async def _challenge(w: World, action: _Action) -> str:
@@ -455,24 +522,27 @@ async def test_role_revoked_between_step_up_challenge_and_completion_refuses_the
     revoked = await world.revoke_owner_role(b, a)
     assert revoked.status_code == 200, revoked.text
 
-    # A's very next request already reports the new role set.
+    # SR-013 (#2101): the role change ended every session of A, so A's next request is 401.
     session = await world.call(a, "GET", "/auth/session")
-    assert session.status_code == 200
-    assert session.json()["user"]["roles"] == ["viewer"]
-    assert Permission.USERS_WRITE.value not in session.json()["permissions"]
+    assert session.status_code == 401
 
-    # The step-up modal A had open still completes: password and code are right.
+    # The step-up modal A had open cannot complete on the ended session, nor can the retry.
     completed = await world.step_up(a, challenge_id=challenge_id)
-    assert completed.status_code == 200, completed.text
+    assert (completed.status_code, completed.json()["code"]) == (401, "unauthenticated")
     retried = await world.act(a, action)
 
-    _assert_refused_without_effect(world, action, retried)
+    _assert_refused_without_effect(world, action, retried, status=401)
+    assert not log.find("auth.step_up_granted", actor=a.user_id)
     _in_order(
         log.find("auth.step_up_required", actor=a.user_id),
         _revocation_rows(world),
-        log.find("auth.step_up_granted", actor=a.user_id),
-        log.find("rbac.denied", actor=a.user_id),
+        _ended(world, a),
     )
+    # A signs in again: the new session carries the new role set.
+    await world.sign_in_again(a)
+    fresh = await world.call(a, "GET", "/auth/session")
+    assert fresh.json()["user"]["roles"] == ["viewer"]
+    assert Permission.USERS_WRITE.value not in fresh.json()["permissions"]
 
 
 @pytest.mark.parametrize("action", ACTIONS, ids=lambda a: a.id)
@@ -492,17 +562,18 @@ async def test_role_revoked_while_the_step_up_is_verifying_refuses_the_retry(
     assert revoked.status_code == 200, revoked.text
     hold.release()
 
-    # The step-up proves who A is; it grants no authority, so it may complete after the revoke.
+    # SR-013 (#2101): the revoke ended A's session under the step-up, so its grant has no row
+    # to land on: refused 401, nothing granted, and the retry is refused the same way.
     completed = await stepping
-    assert completed.status_code == 200, completed.text
+    assert (completed.status_code, completed.json()["code"]) == (401, "unauthenticated")
     retried = await world.act(a, action)
 
-    _assert_refused_without_effect(world, action, retried)
+    _assert_refused_without_effect(world, action, retried, status=401)
+    assert not log.find("auth.step_up_granted", actor=a.user_id)
     _in_order(
         log.find("auth.step_up_required", actor=a.user_id),
         _revocation_rows(world),
-        log.find("auth.step_up_granted", actor=a.user_id),
-        log.find("rbac.denied", actor=a.user_id),
+        _ended(world, a),
     )
 
 
@@ -525,24 +596,27 @@ async def test_role_revoked_while_the_action_awaits_authorisation_is_refused(
     hold.release()
     response = await acting
 
-    _assert_refused_without_effect(world, action, response)
+    # SR-013 (#2101): its session ended while it waited: 401, never authorised.
+    _assert_refused_without_effect(world, action, response, status=401)
+    assert not log.find("rbac.denied", actor=a.user_id)
     _in_order(
         log.find("auth.step_up_granted", actor=a.user_id),
         _revocation_rows(world),
-        log.find("rbac.denied", actor=a.user_id),
+        _ended(world, a),
     )
 
 
-async def _park_past_authorisation(
+async def _park_at_the_effect(
     w: World, action: _Action
 ) -> tuple[asyncio.Task[httpx.Response], _Hold]:
-    """A's request, parked in the handler's first role-store read: RBAC has authorised it and the
-    step-up gate has let it in, but nothing has been changed yet. Released by the caller."""
+    """A's request, parked at its effect: RBAC has authorised it and its step-up gate has let it
+    in, but the change's own unit of work (the role store's, the reset's) has not re-read the
+    actor yet (#2593), nor changed anything. Released by the caller."""
     hold = _Hold(w.target.user_id)
-    w.directory.hold = hold
+    w.directory.effect_hold = w.reset.hold = hold
     acting = asyncio.create_task(w.act(w.owner_a, action))
     await _until_parked(hold, acting)
-    w.directory.hold = None
+    w.directory.effect_hold = w.reset.hold = None
     return acting, hold
 
 
@@ -565,7 +639,7 @@ async def test_role_revoked_after_the_action_was_authorised_is_refused_at_the_ef
     await world.elevate(b)
     await world.elevate(a)
 
-    acting, parked = await _park_past_authorisation(world, action)
+    acting, parked = await _park_at_the_effect(world, action)
     revoked = await world.revoke_owner_role(b, a)
     assert revoked.status_code == 200, revoked.text
     parked.release()
@@ -577,6 +651,8 @@ async def test_role_revoked_after_the_action_was_authorised_is_refused_at_the_ef
     assert [r["reason"] for r in denied] == ["actor_role_revoked"]
     assert denied[0]["object_id"] == str(world.target.user_id)
     _in_order(log.find("auth.step_up_granted", actor=a.user_id), _revocation_rows(world), denied)
+    # #2101: the revoke ended A's sessions, so the demoted A's fresh request needs a new one.
+    await world.sign_in_again(a)
     assert response.json() == await _entry_refusal(world, action)
 
 
@@ -590,7 +666,7 @@ async def test_owner_disabled_after_the_action_was_authorised_is_refused_at_the_
     await world.elevate(b)
     await world.elevate(a)
 
-    acting, parked = await _park_past_authorisation(world, action)
+    acting, parked = await _park_at_the_effect(world, action)
     world.directory.disabled.add(a.user_id)  # B's disable committed: A's grant row untouched
     parked.release()
     response = await acting

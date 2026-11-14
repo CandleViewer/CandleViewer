@@ -188,7 +188,7 @@ def set_csrf_cookie(request: Request, response: Response, token: str, *, max_age
     """`__Host-` prefix: Secure, Path=/, no Domain. Deliberately NOT HttpOnly: the client
     must read it (contract `csrfCookie`, SR-041). The value is a session-bound MAC, not a
     credential, so it is the one documented exception to SR-012's HttpOnly rule. A response that
-    sets the token is `no-store` whatever the flag (ADR-0038 F8): five of the six issuing
+    sets the token is `no-store` whatever the flag (ADR-0038 F8): seven of the eight issuing
     operations carry the access token or recovery codes. `expose_csrf_token` runs here, so no
     issuing path misses the header (3b)."""
     response.set_cookie(CSRF_COOKIE, token, max_age=max_age, path="/", secure=True, httponly=False, samesite="strict")  # nosem: cookie-flags reason=SR-041-double-submit-cookie-must-be-script-readable owner=@CandleViewer/security review=2027-03-31  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip

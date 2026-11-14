@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
@@ -14,12 +14,14 @@ from candleviewer.api.step_up import make_read_only_guard, make_step_up_router, 
 from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.audit.models import Severity
 from candleviewer.audit.writer import AuditUnavailable
-from candleviewer.auth.errors import SessionNotFound
+from candleviewer.auth.csrf import CsrfCodec
+from candleviewer.auth.errors import SessionNotFound, SessionRevoked
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, SessionRecord
 from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.auth.session_service import SessionService, hash_access_token
 from candleviewer.auth.step_up import StepUpService
 from candleviewer.auth.totp import generate_code, time_step_for
 from candleviewer.statechart.bindings import b16_session
@@ -53,14 +55,44 @@ class _Emitter:
         return [c["action"] for c in self.calls]
 
 
+#: The SR-041 codec of the step-up's rotated session (#2101): a fixed test key, never a secret.
+CSRF = CsrfCodec(b"\x0b" * 32)
+
+
 class _Sessions:
-    def __init__(self, records: dict[str, SessionRecord]) -> None:
+    """The seeded test bearers, each naming its session. With *service* and *rows* (#2101), the
+    real `SessionService` behind them: a seeded bearer names its session while the row is live,
+    so a step-up's rotation (SR-013) ends it as it ends a real token, and a minted token
+    authenticates as in production."""
+
+    def __init__(
+        self,
+        records: dict[str, SessionRecord],
+        service: SessionService | None = None,
+        rows: FakeSessionRepository | None = None,
+    ) -> None:
         self.records = records
+        self._service, self._rows = service, rows
 
     async def authenticate_access_token(self, token: str) -> SessionRecord:
         if token not in self.records:
-            raise SessionNotFound("x")
-        return self.records[token]
+            if self._service is None:
+                raise SessionNotFound("x")
+            return await self._service.authenticate_access_token(token)
+        if self._rows is None:
+            return self.records[token]
+        row = await self._rows.find_by_id(str(self.records[token].id))
+        if row is None or row.is_revoked:
+            raise SessionRevoked("rotated")
+        return row
+
+    def now(self) -> datetime:
+        assert self._service is not None, "a rotation needs the session service"
+        return self._service.now()
+
+    async def rotate(self, session_id: str, **kwargs: Any) -> Any:
+        assert self._service is not None, "a rotation needs the session service"
+        return await self._service.rotate(session_id, **kwargs)
 
 
 class _Auth:
@@ -156,7 +188,8 @@ async def _build(
         sleep=no_wait,
         owner_reset=owner_reset if reset_store else None,
     )
-    auth = _Auth(svc, _Sessions({"tok": record}))
+    sessions = _Sessions({"tok": record}, SessionService(rows, hasher, clock=clock), rows)
+    auth = _Auth(svc, sessions)
     emitter = _Emitter()
     b16_session.set_audit_sink(emitter)  # B16 chart audits land with the router's
     snap = PrincipalSnapshot(
@@ -166,6 +199,8 @@ async def _build(
     )
     app = FastAPI()
     app.state.step_up_auth = auth  # a handler-gated route's `request_elevation` (#2304)
+    app.state.audit_ok = audit_ok  # a test may flip it after a step-up (#2101: both read it)
+    app.state.rows, app.state.user = rows, users  # the rotation tests read the rows (#2101)
     app.include_router(
         make_step_up_router(
             auth,
@@ -173,7 +208,8 @@ async def _build(
             principal_resolver=_Resolver(snap),
             positions=positions or _Positions(),
             users=_Users(),
-            audit_ready=lambda: audit_ok,
+            audit_ready=lambda: bool(app.state.audit_ok),
+            csrf=CSRF,
         )
     )
     app.middleware("http")(make_read_only_guard(auth, emitter))
@@ -212,6 +248,33 @@ def _code(seed: bytes, clock: _Clock) -> str:
     return generate_code(seed, time_step_for(clock.now.timestamp()))
 
 
+def _rotated(ok: Any) -> dict[str, str]:
+    """The bearer a granted step-up hands over (SR-013, #2101); `_H` is refused from then on."""
+    assert ok.status_code == 200, ok.text
+    return {"Authorization": f"Bearer {ok.json()['tokens']['access_token']}"}
+
+
+def _hold(c: TestClient, ok: Any, who: str = "tok") -> None:
+    """A granted step-up's client keeps its seeded bearer *who*, which from then on names the
+    rotated session (SR-013, #2101), as a client that holds the new bundle; refused, nothing."""
+    if ok.status_code == 200:
+        state = cast(FastAPI, c.app).state
+        _adopt(state.rows, state.step_up_auth.sessions.records, who, ok)
+
+
+def _adopt(
+    rows: FakeSessionRepository, sessions: dict[str, SessionRecord], who: str, ok: Any
+) -> None:
+    """The client *who* holds a granted step-up's bundle (SR-013, #2101): from then on its seeded
+    bearer, and every other bearer naming the same session, names the rotated session, as the
+    client sends the new access token."""
+    jti = hash_access_token(ok.json()["tokens"]["access_token"])
+    (row,) = [s for s in rows.sessions.values() if s.access_token_jti == jti]
+    rotated_out = sessions[who].id
+    for name in [n for n, held in sessions.items() if held.id == rotated_out]:
+        sessions[name] = row
+
+
 async def test_reset_without_step_up_is_403_and_audited() -> None:
     c, em, *_ = await _build()
     r = c.post(f"/users/{uuid.uuid4()}/mfa/reset", headers=_H)
@@ -227,10 +290,10 @@ async def test_step_up_then_owner_reset_reveals_nothing_and_audits() -> None:
         json={"code": _code(seed, clock), "password": _PW, "action_class": "users"},
     )
     assert ok.status_code == 200 and ok.json()["single_use"] is False
-    target = uuid.uuid4()
-    prev = c.get(f"/users/{target}/mfa/reset-preview", headers=_H)
+    h, target = _rotated(ok), uuid.uuid4()
+    prev = c.get(f"/users/{target}/mfa/reset-preview", headers=h)
     assert prev.json()["open_position_count"] == 2
-    r = c.post(f"/users/{target}/mfa/reset", headers=_H)
+    r = c.post(f"/users/{target}/mfa/reset", headers=h)
     assert r.status_code == 200
     assert set(r.json()) == {"target_user_id", "methods_revoked", "sessions_revoked"}
     assert "auth.step_up_granted" in em.actions() and "auth.mfa_reset_by_owner" in em.actions()
@@ -244,10 +307,11 @@ async def test_non_owner_cannot_reset() -> None:
 
 
 async def test_owner_reset_refused_with_503_before_any_change_when_audit_unavailable() -> None:
-    c, em, seed, clock, _ = await _build(audit_ok=False)
+    c, em, seed, clock, _ = await _build()
     body = {"code": _code(seed, clock), "password": _PW, "action_class": "users"}
-    assert c.post("/auth/step-up", headers=_H, json=body).status_code == 200
-    r = c.post(f"/users/{uuid.uuid4()}/mfa/reset", headers=_H)
+    h = _rotated(c.post("/auth/step-up", headers=_H, json=body))
+    cast(FastAPI, c.app).state.audit_ok = False  # the writer fails after the grant
+    r = c.post(f"/users/{uuid.uuid4()}/mfa/reset", headers=h)
     assert r.status_code == 503 and "auth.mfa_reset_by_owner" not in em.actions()
 
 
@@ -286,41 +350,41 @@ async def test_dangerous_route_is_403_without_elevation_then_passes() -> None:
     r = c.post(f"/users/{uid}/invite", headers=_H)
     assert r.status_code == 403 and r.json()["code"] == "step_up_required"
     assert "auth.step_up_required" in em.actions()
-    c.post("/auth/step-up", headers=_H, json=_modal_body(_code(seed, clock), r))
-    assert c.post(f"/users/{uid}/invite", headers=_H).status_code == 200
+    h = _rotated(c.post("/auth/step-up", headers=_H, json=_modal_body(_code(seed, clock), r)))
+    assert c.post(f"/users/{uid}/invite", headers=h).status_code == 200
     clock.now += timedelta(minutes=5, seconds=1)
-    assert c.post(f"/users/{uid}/invite", headers=_H).status_code == 403
+    assert c.post(f"/users/{uid}/invite", headers=h).status_code == 403
 
 
 async def test_preview_without_position_store_is_unavailable_and_reset_needs_ack() -> None:
     c, em, seed, clock, _ = await _build(positions=_NoStore())
-    c.post(
+    ok = c.post(
         "/auth/step-up",
         headers=_H,
         json={"code": _code(seed, clock), "password": _PW, "action_class": "users"},
     )
-    target = uuid.uuid4()
-    prev = c.get(f"/users/{target}/mfa/reset-preview", headers=_H).json()
+    h, target = _rotated(ok), uuid.uuid4()
+    prev = c.get(f"/users/{target}/mfa/reset-preview", headers=h).json()
     assert prev["open_position_count"] is None and prev["positions"] == "unavailable"
     assert prev["position_source"] == "not_deployed"
     assert prev["requires_acknowledge_unknown_positions"] is True
-    r = c.post(f"/users/{target}/mfa/reset", headers=_H)
+    r = c.post(f"/users/{target}/mfa/reset", headers=h)
     assert r.status_code == 409 and r.json()["code"] == "positions_unknown"
     assert "auth.mfa_reset_by_owner" not in em.actions()
     ok = c.post(
-        f"/users/{target}/mfa/reset", headers=_H, json={"acknowledge_unknown_positions": True}
+        f"/users/{target}/mfa/reset", headers=h, json={"acknowledge_unknown_positions": True}
     )
     assert ok.status_code == 200 and "auth.mfa_reset_by_owner" in em.actions()
 
 
 async def test_preview_with_position_store_needs_no_ack() -> None:
     c, _em, seed, clock, _ = await _build()
-    c.post(
+    ok = c.post(
         "/auth/step-up",
         headers=_H,
         json={"code": _code(seed, clock), "password": _PW, "action_class": "users"},
     )
-    prev = c.get(f"/users/{uuid.uuid4()}/mfa/reset-preview", headers=_H).json()
+    prev = c.get(f"/users/{uuid.uuid4()}/mfa/reset-preview", headers=_rotated(ok)).json()
     assert prev["positions"] == "known" and prev["position_source"] == "oms"
     assert prev["requires_acknowledge_unknown_positions"] is False
 
@@ -343,7 +407,7 @@ async def test_real_modal_payload_elevates_challenged_class_end_to_end() -> None
     assert ok.status_code == 200 and ok.json()["action_class"] == "users"
     expires = datetime.fromisoformat(ok.json()["step_up_expires_at"])
     assert expires == clock.now + timedelta(minutes=5)
-    assert c.post(f"/users/{uid}/invite", headers=_H).status_code == 200
+    assert c.post(f"/users/{uid}/invite", headers=_rotated(ok)).status_code == 200
     assert "auth.step_up_granted" in em.actions()
 
 
@@ -370,17 +434,19 @@ async def test_client_action_class_mismatching_challenge_is_400() -> None:
 
 async def test_reset_unknown_user_is_404_not_200() -> None:
     c, em, seed, clock, _ = await _build()
-    c.post(
-        "/auth/step-up",
-        headers=_H,
-        json={"code": _code(seed, clock), "password": _PW, "action_class": "users"},
+    h = _rotated(
+        c.post(
+            "/auth/step-up",
+            headers=_H,
+            json={"code": _code(seed, clock), "password": _PW, "action_class": "users"},
+        )
     )
     r = c.post(
-        f"/users/{_MISSING}/mfa/reset", headers=_H, json={"acknowledge_unknown_positions": True}
+        f"/users/{_MISSING}/mfa/reset", headers=h, json={"acknowledge_unknown_positions": True}
     )
     assert r.status_code == 404 and r.json()["code"] == "not_found"
     assert "auth.mfa_reset_by_owner" not in em.actions()
-    assert c.get(f"/users/{_MISSING}/mfa/reset-preview", headers=_H).status_code == 404
+    assert c.get(f"/users/{_MISSING}/mfa/reset-preview", headers=h).status_code == 404
 
 
 #: revokeApiKey is handler-gated (`keys` and `accounts`, E27-S04 #898), not a path row: its
@@ -401,11 +467,12 @@ async def test_keys_actions_need_step_up_then_share_grace_window() -> None:
         assert r.json()["action_class"] == "keys"
     ok = c.post("/auth/step-up", headers=_H, json=_modal_body(_code(seed, clock), r))
     assert ok.status_code == 200 and ok.json()["step_up_expires_at"] is not None
+    h = _rotated(ok)
     clock.now += timedelta(minutes=3)
     for method, path in _KEY_ACTIONS:
-        assert c.request(method, path, headers=_H).status_code == 200, path
+        assert c.request(method, path, headers=h).status_code == 200, path
     clock.now += timedelta(minutes=3)
-    assert c.post(_KEY_ACTIONS[0][1], headers=_H).status_code == 403
+    assert c.post(_KEY_ACTIONS[0][1], headers=h).status_code == 403
 
 
 async def test_reset_never_calls_oms_cancel_or_flatten() -> None:
@@ -420,16 +487,14 @@ async def test_reset_never_calls_oms_cancel_or_flatten() -> None:
         oms = _StrictOms()
 
     c, _em, seed, clock, _ = await _build(positions=_CountOnly())
-    c.post(
+    ok = c.post(
         "/auth/step-up",
         headers=_H,
         json={"code": _code(seed, clock), "password": _PW, "action_class": "users"},
     )
-    target = uuid.uuid4()
-    assert (
-        c.get(f"/users/{target}/mfa/reset-preview", headers=_H).json()["open_position_count"] == 2
-    )
-    assert c.post(f"/users/{target}/mfa/reset", headers=_H).status_code == 200
+    h, target = _rotated(ok), uuid.uuid4()
+    assert c.get(f"/users/{target}/mfa/reset-preview", headers=h).json()["open_position_count"] == 2
+    assert c.post(f"/users/{target}/mfa/reset", headers=h).status_code == 200
 
 
 # -- #1778 AE (D-2): step-up requires password + TOTP -----------------------------
@@ -484,9 +549,9 @@ async def test_step_up_failure_is_audited() -> None:
 # -- #2593: the actor re-read at the effect, in the reset's unit of work ----------------------
 
 
-def _elevate(c: TestClient, seed: bytes, clock: _Clock) -> None:
+def _elevate(c: TestClient, seed: bytes, clock: _Clock) -> dict[str, str]:
     body = {"code": _code(seed, clock), "password": _PW, "action_class": "users"}
-    assert c.post("/auth/step-up", headers=_H, json=body).status_code == 200
+    return _rotated(c.post("/auth/step-up", headers=_H, json=body))
 
 
 async def test_reset_by_an_owner_demoted_since_entry_is_the_entry_403_with_nothing_reset() -> None:
@@ -495,8 +560,7 @@ async def test_reset_by_an_owner_demoted_since_entry_is_the_entry_403_with_nothi
     `_owner`'s 403, never a challenge."""
     target = uuid.uuid4()
     c, em, seed, clock, _ = await _build(target=target, actor_owner=False)
-    _elevate(c, seed, clock)
-    r = c.post(f"/users/{target}/mfa/reset", headers=_H)
+    r = c.post(f"/users/{target}/mfa/reset", headers=_elevate(c, seed, clock))
     entry, *_ = await _build(owner_role=False)
     fresh = entry.post(f"/users/{target}/mfa/reset", headers=_H)
     assert (r.status_code, fresh.status_code) == (403, 403) and r.json() == fresh.json()
@@ -510,14 +574,29 @@ async def test_reset_by_an_owner_demoted_since_entry_is_the_entry_403_with_nothi
 async def test_reset_refused_at_the_effect_unrecorded_is_503() -> None:
     target = uuid.uuid4()
     c, em, seed, clock, _ = await _build(target=target, actor_owner=False)
-    _elevate(c, seed, clock)
+    h = _elevate(c, seed, clock)
     em.fail_on = frozenset({"rbac.denied"})
-    r = c.post(f"/users/{target}/mfa/reset", headers=_H)
+    r = c.post(f"/users/{target}/mfa/reset", headers=h)
     assert r.status_code == 503 and r.json()["code"] == "audit_unavailable"
 
 
 async def test_reset_with_no_reset_store_wired_fails_closed_with_503() -> None:
     c, em, seed, clock, _ = await _build(reset_store=False)
-    _elevate(c, seed, clock)
-    r = c.post(f"/users/{uuid.uuid4()}/mfa/reset", headers=_H)
+    r = c.post(f"/users/{uuid.uuid4()}/mfa/reset", headers=_elevate(c, seed, clock))
     assert r.status_code == 503 and "auth.mfa_reset_by_owner" not in em.actions()
+
+
+# -- SR-013 (#2101): a granted step-up rotates the session ----------------------------------
+
+
+async def test_pre_step_up_tokens_are_refused_after_step_up() -> None:
+    """Fails on `main`: its `200` carried no `tokens`, and the bearer from before the step-up kept
+    authenticating, elevated. Now the old bearer is refused and the new one holds the grant."""
+    c, _em, seed, clock, _ = await _build()
+    uid = uuid.uuid4()
+    denied = c.post(f"/users/{uid}/invite", headers=_H)
+    ok = c.post("/auth/step-up", headers=_H, json=_modal_body(_code(seed, clock), denied))
+    assert ok.status_code == 200 and ok.json()["tokens"]["refresh_token"] is None
+    stale = c.post(f"/users/{uid}/invite", headers=_H)
+    assert (stale.status_code, stale.json()["code"]) == (401, "unauthenticated")
+    assert c.post(f"/users/{uid}/invite", headers=_rotated(ok)).status_code == 200

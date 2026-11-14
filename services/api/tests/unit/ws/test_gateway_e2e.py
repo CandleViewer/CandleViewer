@@ -29,6 +29,8 @@ ACC = uuid.uuid4()
 OTHER_ACC = uuid.uuid4()
 #: Far-future token expiry: this module does not test expiry (test_token_expiry.py does).
 _EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
+#: The session store's clock (#2101): a fixed instant, never compared here (C-13.7).
+_NOW = datetime(2026, 10, 31, 12, 0, tzinfo=UTC)
 ORIGIN = "http://testserver"  # §2.5: in CV_ALLOWED_ORIGINS and sent on every upgrade
 _PERMS = {
     "owner": frozenset(Permission),
@@ -121,6 +123,18 @@ class _Sessions:
         return SimpleNamespace(
             view_as=None, id=_ADMIN_SID, user_id=ADMIN, mfa_satisfied_at=MFA_PROVED_AT
         )
+
+    # SR-013 (#2101): a role change ends its target's store sessions first. The manager's socket
+    # here runs on the gateway's own fake session (`ws_authenticate`), which no store holds, so it
+    # takes the change in place (23 section 9.5); `test_session_rotation_sr013` ends real ones.
+    async def live_sessions(self, user_id: str) -> tuple[Any, ...]:
+        return ()
+
+    def now(self) -> datetime:
+        return _NOW
+
+    async def revoke_all(self, user_id: str, **_kw: Any) -> tuple[Any, ...]:
+        return ()
 
 
 async def _authenticate(presented: str) -> tuple[str, uuid.UUID, datetime]:

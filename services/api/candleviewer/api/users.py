@@ -5,6 +5,11 @@ API level, audits the change write-ahead inside the store's transaction (C-2.9),
 and notifies the WS layer so a downgrade takes effect on live sockets. A refusal
 whose record cannot be written is 503 `audit_unavailable`; a push that fails after
 the commit is counted and logged (`roles_push`, R7), never a 500.
+SR-013 (#2101): a change to the role set, here or by `PATCH` with `roles`, revokes every
+live session of the target. Each one's `auth.session_revoked` (B16 `REVOKE`, reason
+`role_changed`) is written in the change's write-ahead hook; after the commit the rows are
+revoked, each with its rotation family published, before the role push. A store failure
+there answers 503 `store_unavailable`, counted (`session_revoke`).
 `principal_resolver=None` / `store=None` fail closed with 501 (the fake backend;
 the real backend wires both, #2492); the audit emitter and notifier are
 required (TypeError at wiring time).
@@ -67,6 +72,7 @@ answers the 403 a fresh request from the demoted actor gets at entry, never a ch
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import json
@@ -75,7 +81,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from functools import partial
-from typing import Annotated, Any, Final, Literal, Protocol
+from typing import Annotated, Any, Final, Literal, Protocol, cast
 
 import structlog
 from fastapi import APIRouter, Path, Request
@@ -120,11 +126,13 @@ from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import AuthError
 from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.metrics import auth_audit_outcome_lost_total, normalise_outcome_action
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
 from candleviewer.auth.scopes import DenyReason, ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.auth.session_chart import SessionChartError
 from candleviewer.observability.context import current_request_id, current_request_uuid
+from candleviewer.statechart.gateway import GatewayError
 from candleviewer.storage.errors import (
     ACTOR_ROLE_REVOKED,
     ActorNotAuthorised,
@@ -578,6 +586,114 @@ async def _push_roles(notifier: PermissionChangeNotifier, user_id: uuid.UUID) ->
         _roles_pushed(user_id, "ok")
 
 
+#: SR-013 (#2101): `sessions.revoked_reason` of every session a change to its user's role set
+#: revokes, and the reason of its B16 `REVOKE` record (`auth.session_revoked`).
+ROLE_CHANGED_REASON: Final = "role_changed"
+#: #2101 (C-7): the `step` of `cv_user_lifecycle_steps_total` for the session revoke of a
+#: committed role change.
+SESSION_REVOKE_STEP: Final = "session_revoke"
+_UNREVOKED: Final = (
+    "the roles changed, but the user's sessions could not be revoked; revoke each one with "
+    "DELETE /users/{userId}/sessions/{sessionId}"
+)
+#: #2101: the bound (s) on dropping the chart of a session whose `REVOKE` was cut short. The
+#: change's row locks are still held then, and its own write-ahead bound may have passed.
+CHART_DROP_TIMEOUT_S: Final = 1.0
+
+
+def _sessions_revoked(
+    user_id: uuid.UUID, outcome: Literal["ok", "failed"], error: str | None = None
+) -> None:
+    """One count and one line per session revoke of a committed role change (C-7); `failed`
+    raises the `UserLifecycleStepFailed` ticket, as a failed role push does."""
+    user_lifecycle_steps_total.labels(step=SESSION_REVOKE_STEP, outcome=outcome).inc()
+    (_log().error if outcome == "failed" else _log().info)(
+        "users.update.step",
+        step=SESSION_REVOKE_STEP,
+        outcome=outcome,
+        error=error,
+        target_user_id=str(user_id),
+        request_id=current_request_id(),
+    )
+
+
+async def _revocations_ahead(auth: _AuthLike, user_id: uuid.UUID) -> list[SessionRecord]:
+    """SR-013 (#2101, C-7), in a role change's write-ahead hook: B16 `REVOKE` (reason
+    `role_changed`) on each live session of the user, whose `revoked` entry writes its one
+    `auth.session_revoked` ahead of the commit (#965 R5). A record that cannot be written (the
+    chart failed or the gateway refused the send) raises `_AuditRefused`, so the change rolls back
+    (`503`) with nothing revoked, and the session's chart is dropped, to be rebuilt from its row;
+    a record written for a change that then rolls back over-reports, never under-reports. A
+    `REVOKE` cut short (the store's write-ahead bound expired, or the request was cancelled) drops
+    the session's chart too (`_drop_chart`), then lets the interruption go on. The rows are
+    revoked once the change commits (`_end_sessions`); the sessions recorded here are returned
+    for that step."""
+    sessions = auth.sessions
+    live: list[SessionRecord] = list(await sessions.live_sessions(str(user_id)))
+    now = sessions.now()
+    for record in live:
+        try:
+            await auth.step_up.chart.revoke(record, now, ROLE_CHANGED_REASON)
+        except (SessionChartError, GatewayError) as exc:
+            await auth.step_up.chart.forget(str(record.id))  # the row stays live
+            raise _AuditRefused from exc
+        except BaseException:  # cut short part-way: the chart is dropped, never kept
+            await _drop_chart(auth, str(record.id))
+            raise
+    return live
+
+
+async def _drop_chart(auth: _AuthLike, session_id: str) -> None:
+    """Drop the chart of a session whose `REVOKE` was cut short (`SessionChart.forget`): its next
+    use rebuilds it from the row, which stays live. Bounded by `CHART_DROP_TIMEOUT_S`; a drop that
+    fails or overruns is logged (the error class only, C-12.6), and never replaces what the caller
+    re-raises."""
+    try:
+        async with asyncio.timeout(CHART_DROP_TIMEOUT_S):
+            await auth.step_up.chart.forget(session_id)
+    except Exception as exc:
+        failed = type(exc).__name__
+        _log().error("users.role_change.chart_not_dropped", session_id=session_id, error=failed)
+
+
+async def _end_sessions(
+    auth: _AuthLike, user_id: uuid.UUID, recorded: list[SessionRecord]
+) -> JSONResponse | None:
+    """After a committed role change (C-1, C-3, C-7), before the role push (C-6): every live
+    session of the user revoked as `role_changed`, each one and every member of its rotation
+    family published (`bye session_revoked`, `4401`; 23 section 9.5). A session the hook did not
+    record (a refresh or a sign-in minted it since) gets its record now, after the fact; one that
+    cannot be written is counted lost (`auth_audit_outcome_lost_total`, 04 section 8.3 rule 2) and
+    logged, and the revocation stands. A store failure is counted and logged, and answers
+    `503 store_unavailable`: the roles stay changed, and the repair is the per-session `DELETE`.
+    `None` once every session is revoked."""
+    try:
+        revoked: tuple[SessionRecord, ...] = await auth.sessions.revoke_all(
+            str(user_id), reason=ROLE_CHANGED_REASON, families=True
+        )
+    except Exception as exc:  # a store outage is the 503; anything else is a defect (a 500)
+        if not is_storage_outage(exc):
+            raise
+        _sessions_revoked(user_id, "failed", type(exc).__name__)
+        return _registered(ErrorCode.STORE_UNAVAILABLE, 503, _UNREVOKED)
+    _sessions_revoked(user_id, "ok")
+    seen, now = {row.id for row in recorded}, auth.sessions.now()
+    for late in (row for row in revoked if row.id not in seen):
+        try:
+            await auth.step_up.chart.revoke(late, now, ROLE_CHANGED_REASON)
+        except (SessionChartError, GatewayError) as exc:
+            await auth.step_up.chart.forget(str(late.id))
+            action = "auth.session_revoked"
+            auth_audit_outcome_lost_total.labels(action=normalise_outcome_action(action)).inc()
+            _log().error(
+                "users.role_change.revocation_unrecorded",
+                action=action,
+                session_id=str(late.id),
+                error=type(exc).__name__,
+            )
+    return None
+
+
 async def _schedule_purge(
     purge: UserPurge,
     emitter: _Emitter,
@@ -715,10 +831,14 @@ def make_users_router(
         gate = await require_elevation_for(auth, str(record.id), "users", text=restated)
         if gate is not None:
             return gate
+        #: SR-013 (#2101, C-1): the sessions the hook recorded, set when the role set changes.
+        recorded: list[SessionRecord] | None = None
 
         async def write_ahead(before: frozenset[str]) -> None:
             """C-2.9: written inside the store's transaction, before commit, with the
-            role set read under lock; a failed write rolls the change back."""
+            role set read under lock; a failed write rolls the change back. A change to the
+            role set also records the revocation of each of the target's live sessions (C-7)."""
+            nonlocal recorded
             try:
                 for action, changed in (
                     ("roles.grant", sorted(new_roles - before)),
@@ -738,6 +858,8 @@ def make_users_router(
                         )
             except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started
                 raise _AuditRefused from exc
+            if before != new_roles:
+                recorded = await _revocations_ahead(auth, user_id)
 
         # Endpoint-level owner floor (defence in depth; `apply_roles` re-checks
         # atomically under lock, so a concurrent demotion still cannot slip by). As the
@@ -775,7 +897,11 @@ def make_users_router(
             return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
         if not found:
             return _registered(ErrorCode.NOT_FOUND, 404, "user not found")
+        # #2101 (C-6): the target's sessions end first, so its sockets close on the revocation.
+        ended = None if recorded is None else await _end_sessions(auth, user_id, recorded)
         await _push_roles(notifier, user_id)  # committed: a failed push is no 500 (R7)
+        if ended is not None:  # committed, but sessions may still be live: 503, counted
+            return ended
         return JSONResponse(
             status_code=200, content={"id": str(user_id), "roles": sorted(new_roles)}
         )
@@ -1350,12 +1476,22 @@ def make_user_admin_router(
             if (refused := _status_refusal(current["status"], body.status)) is not None:
                 raise _StatusRefused(refused)
 
+        # `_elevated` answered 501 or 503 unless sessions and step-up are wired (#2304).
+        wired = cast("_AuthLike", auth)
+        #: SR-013 (#2101, C-1): the sessions the hook recorded, set when the role set changes.
+        recorded: list[SessionRecord] | None = None
+
         async def write_ahead(change: UserUpdate) -> None:
-            """C-2.9: every record of the change, read under the locks, before the commit."""
+            """C-2.9: every record of the change, read under the locks, before the commit; a
+            change to the role set also records the revocation of each of the user's live
+            sessions (C-7)."""
+            nonlocal recorded
             try:
                 await audit_user_update(emitter, change, base)
             except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started
                 raise _AuditRefused from exc
+            if frozenset(change.before["roles"]) != frozenset(change.after["roles"]):
+                recorded = await _revocations_ahead(wired, user_id)
 
         try:
             change = await store.update_user(
@@ -1404,9 +1540,12 @@ def make_user_admin_router(
             return _registered(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is unavailable")
         if change is None:
             return _registered(ErrorCode.NOT_FOUND, 404, "user not found")
-        if frozenset(change.before["roles"]) != frozenset(change.after["roles"]):
-            await _push_roles(notifier, user_id)  # after the commit: counted, never rolled back
-        return _answer(representation(change.after))
+        if frozenset(change.before["roles"]) == frozenset(change.after["roles"]):
+            return _answer(representation(change.after))  # no role change: no session ends
+        # #2101 (C-6): the user's sessions end first, so its sockets close on the revocation.
+        ended = await _end_sessions(wired, user_id, recorded or [])
+        await _push_roles(notifier, user_id)  # after the commit: counted, never rolled back
+        return ended if ended is not None else _answer(representation(change.after))
 
     @router.get("/users/{userId}/sessions")
     async def list_user_sessions(
