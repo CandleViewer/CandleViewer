@@ -91,6 +91,7 @@ import "../src/components/themeswitcher.css";
 import "../src/components/toast.css";
 import "../src/components/toggle.css";
 import "../src/components/tooltip.css";
+import "../src/components/treeview.css";
 import "../src/components/typography.css";
 import "../src/components/watchlistrow.css";
 import "../src/components/watchlisttabs.css";
