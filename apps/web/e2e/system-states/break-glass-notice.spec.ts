@@ -108,7 +108,9 @@ test("SR-023: a keyboard dismissal holds until a reconnect's notice re-asserts t
   await expect.poll(() => harness.authenticated(), { timeout: 15_000 }).toBe(2);
   expect(notices(harness)).toHaveLength(2);
   await expect(dismiss(page)).toHaveCount(1);
-  // its turn in the shell announcer comes 5 s after CMP-077's "Disconnected" sentence (E17-D02 §11)
-  await expect(alert(page)).toHaveText(`${NOTICE.message} ${STILL_WORKS}`, { timeout: 15_000 });
+  // E29-S07 (#1028): the shell's one assertive region may end on SR-03's "Reconnected." after a
+  // reconnect, so the re-asserted notice is read in its own row (CMP-092's region), same window
+  const row = page.getByRole("region", { name: "System notices" });
+  await expect(row).toContainText(`${NOTICE.message} ${STILL_WORKS}`, { timeout: 15_000 });
   await expect(anchor).toBeFocused(); // the notice never takes focus
 });

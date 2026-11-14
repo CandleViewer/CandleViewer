@@ -16,6 +16,7 @@ import {
   CONNECTION_PREFIX,
   forget,
 } from "./announcer";
+import { RecoveredRegionSlot } from "../reconciliation/RecoveredRegion";
 import { ConnectionRegion } from "./ConnectionRegion";
 
 /**
@@ -49,7 +50,7 @@ const retryNow = (): void => void getActiveClient()?.retryNow();
  * holding that context (`bye` `view_as_expired`, `23` §9.6), never "Session ended": the region
  * shows nothing and says nothing for it, and SCR-124's banner speaks (V-8).
  */
-export function ConnectionRegionSlot(): JSX.Element | null {
+export function ConnectionRegionSlot(): JSX.Element {
   const ws = useWsState();
   const privateFeedDown = useShellSelector((s) => s.degraded.privateHandedOver);
   const viewing = useShellSelector((s) => s.viewAs.kind === "held");
@@ -88,12 +89,18 @@ export function ConnectionRegionSlot(): JSX.Element | null {
     return () => clearInterval(id);
   }, [clocked]);
 
-  return view === null ? null : (
-    <ConnectionRegion
-      view={view}
-      onSignIn={signIn}
-      onRetryNow={retryNow}
-      retrying={ws.link.kind === "connecting"}
-    />
+  // E29-S07 (#1028): `recovered` is kept mounted beside the other states, to see the outage begin.
+  return (
+    <>
+      {view === null ? null : (
+        <ConnectionRegion
+          view={view}
+          onSignIn={signIn}
+          onRetryNow={retryNow}
+          retrying={ws.link.kind === "connecting"}
+        />
+      )}
+      <RecoveredRegionSlot ws={ws} privateFeedDown={privateFeedDown} visible={view === null} />
+    </>
   );
 }

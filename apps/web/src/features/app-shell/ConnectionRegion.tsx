@@ -67,8 +67,10 @@ function look(view: ConnectionRegionView): CSSProperties {
  * a native button (Enter / Space), busy while a handshake is under way so focus never drops, and
  * never drawn for `session-ended` (4403: sign in again).
  * Deferred (carried to E17-Q04 #569): `Details` and its Owner / Viewer split (no diagnostics copy
- * spec yet) and `recovered`. Also deferred: `unstable`, "Back in ~N s" on R1 (`WsState` keeps no
- * notice time), and the long-outage outlined pill (the button keeps its secondary look).
+ * spec yet). `recovered` is E29-S07's (#1028; BQ-2 of the ruling of record 6575172489):
+ * `features/reconciliation/RecoveredRegion.tsx`, in the same slot. Also deferred: `unstable`,
+ * "Back in ~N s" on R1 (`WsState` keeps no notice time), and the long-outage outlined pill (the
+ * button keeps its secondary look).
  * Gap: the fatal L1 keeps §10 F's verbatim "Copy details and report a bug.", but no Details / Copy
  * details control exists until `Details` lands.
  * Visual deviations, deferred: the left border is `border.thick` (2 px),
