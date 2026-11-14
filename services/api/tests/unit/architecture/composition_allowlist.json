@@ -99,7 +99,7 @@
       "ticket": "E49-K01-F4-baseline"
     },
     "GET /market/liquidations/by-price": {
-      "reason": "contract-first (24 §19.123); served by #782's backend slice from the E24-T03 liquidation store",
+      "reason": "contract-first (24 §19.132); served by #782's backend slice from the E24-T03 liquidation store",
       "ticket": "#782"
     },
     "GET /market/metrics": {

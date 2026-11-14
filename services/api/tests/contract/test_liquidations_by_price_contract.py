@@ -87,12 +87,12 @@ def test_by_price_states_the_x01_g1_bounds() -> None:
         "`bucket_ticks` is 1\u20131000, default 20, and `top` is 1\u201320, default 5, both 400 "
         "`validation_failed` when outside",
         "a well-formed symbol that is not listed is 422 `validation_failed`",
-        "The defaults are K01's (§1 item 3); the two ranges are PROPOSED (24 §19.123), as no "
+        "The defaults are K01's (§1 item 3); the two ranges are PROPOSED (24 §19.132), as no "
         "X01 G1 row names them.",
     ):
         assert phrase in _DOC, phrase
     for name in ("bucket_ticks", "top"):  # no ruled row names the ranges (the lens minor)
-        assert "PROPOSED (24 §19.123)" in _params()[name]["description"], name
+        assert "PROPOSED (24 §19.132)" in _params()[name]["description"], name
     codes = {entry["code"] for entry in SPEC["x-error-codes"]}
     assert {"invalid_time_range", "validation_failed"} <= codes
 
@@ -250,7 +250,7 @@ def test_the_operation_is_pending_under_782_until_its_backend_slice() -> None:
 def test_24_carries_the_section_6_4_addendum_and_the_change_log_entry() -> None:
     section = _RAW_24.split("### 6.4 Liquidation heatmap (realized)", 1)[1].split("\n### ", 1)[0]
     for phrase in (
-        "**Recorded liquidations by price (E24-S07, #782; §19.123).**",
+        "**Recorded liquidations by price (E24-S07, #782; §19.132).**",
         "`w = bucket_ticks \u00d7 tick_size`",
         "`[⌊p / w⌋ \u00d7 w, ⌊p / w⌋ \u00d7 w + w)`",
         "`deriv.zones_enabled` stays reserved for (a)",
@@ -259,14 +259,14 @@ def test_24_carries_the_section_6_4_addendum_and_the_change_log_entry() -> None:
     ):
         assert phrase in section, phrase
     title = (
-        "### 19.123 2026-11-04 — §6.4, 22 `getLiquidationsByPrice` / `LiquidationsByPrice` / "
+        "### 19.132 2026-11-04 — §6.4, 22 `getLiquidationsByPrice` / `LiquidationsByPrice` / "
         "`LiquidationPriceBucket` / `LiquidationsByPriceMeta`, `Settings.deriv.liq_by_price`: "
         "the recorded liquidations by price, contract first (E24-S07, #782)"
     )
     assert _RAW_24.count(title) == 1
     entry = text(_RAW_24.split(title, 1)[1].split("\n### ", 1)[0])
     for phrase in (
-        "Provisional: the orchestrator assigns the number",
+        "This is the number the orchestrator assigned on #5812 (6640566578",
         "The orchestrator's ruling of 06:52Z 2026-11-04 on #782, on its BQ list (6624070740)",
         "none of method (a) is built",
         "`x-rbac` `marketdata:read`",
@@ -282,5 +282,5 @@ def test_24_carries_the_section_6_4_addendum_and_the_change_log_entry() -> None:
         assert phrase in entry, phrase
     numbered = [int(n) for n in re.findall(r"^### 19\.(\d+) ", _RAW_24, re.MULTILINE)]
     # Unique, increasing, and this entry present: survives later entries and a renumbering's
-    # placement (the number itself is provisional; the title pin above moves with it).
-    assert numbered == sorted(set(numbered)) and numbered.count(123) == 1
+    # placement (the number is assigned, 6640566578; the title pin above carries it).
+    assert numbered == sorted(set(numbered)) and numbered.count(132) == 1
