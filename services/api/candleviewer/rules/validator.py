@@ -26,7 +26,7 @@ from candleviewer.rules.ir import (
     TemporalNode,
 )
 from candleviewer.rules.ir.models import MAX_NUMBER_TEXT
-from candleviewer.rules.issues import Issue
+from candleviewer.rules.issues import MAX_RETURNED_ISSUES, Issue
 from candleviewer.rules.limits import above_cap, cap_message
 from candleviewer.rules.vocabulary.catalogue import ACTIONS, OPERATORS, RETIRED_ACTIONS
 from candleviewer.rules.vocabulary.params_check import param_defects
@@ -73,10 +73,15 @@ class RuleValidationResult:
         return bool(self.errors) or any(w.klass == "safety" for w in self.warnings)
 
     def to_dict(self) -> dict[str, Any]:
+        """22 `RuleValidationResult`: at most `MAX_RETURNED_ISSUES` issues, the errors first, and
+        `issues_total` counting every one; `valid` and `blocks_arming` read them all."""
+        errors = self.errors[:MAX_RETURNED_ISSUES]
+        warnings = self.warnings[: MAX_RETURNED_ISSUES - len(errors)]
         return {
             "valid": self.valid,
-            "errors": [i.to_dict() for i in self.errors],
-            "warnings": [i.to_dict() for i in self.warnings],
+            "errors": [i.to_dict() for i in errors],
+            "warnings": [i.to_dict() for i in warnings],
+            "issues_total": len(self.errors) + len(self.warnings),
             "referenced_variables": self.referenced_variables,
             "referenced_actions": self.referenced_actions,
             "estimated_evaluations_per_minute": self.estimated_evaluations_per_minute,

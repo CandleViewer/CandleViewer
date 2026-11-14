@@ -295,6 +295,7 @@ def test_validate_over_the_node_cap_is_200_invalid_schema_error_at_conditions(sh
         "valid": False,
         "errors": [ISSUE],
         "warnings": [],
+        "issues_total": 1,
         "referenced_variables": [],
         "referenced_actions": [],
         "estimated_evaluations_per_minute": 0,
