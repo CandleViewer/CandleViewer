@@ -4106,7 +4106,7 @@ export interface paths {
      *     **Bounds** (E24-X01 G1), checked before the store is read: `from` must be before the
      *     server's now and at most 31 days before it (400 `invalid_time_range`); `bucket_ticks` is
      *     1–1000, default 20, and `top` is 1–20, default 5, both 400 `validation_failed` when
-     *     outside. The defaults are K01's (§1 item 3); the two ranges are PROPOSED (24 §19.123),
+     *     outside. The defaults are K01's (§1 item 3); the two ranges are PROPOSED (24 §19.132),
      *     as no X01 G1 row names them. A malformed `symbol` is 400 `validation_failed`; a well-formed symbol that is
      *     not listed is 422 `validation_failed`, as on `/market/data-coverage`.
      */
@@ -12662,7 +12662,7 @@ export interface components {
         oi_mode?: "absolute" | "delta";
         /** @description The OI bars' price/OI quadrant classification; client default `true` (6618708569). */
         oi_quadrant_colouring?: boolean;
-        /** @description Reserved for the estimated liquidation zones, K01's method (a), which v1 does not build (24 §6.4): no client reads or writes it until the K01 real-data re-run reopens (a), and the recorded histogram has its own leaf, `liq_by_price` (24 §19.123); client default `false` (6612964585 Q1). */
+        /** @description Reserved for the estimated liquidation zones, K01's method (a), which v1 does not build (24 §6.4): no client reads or writes it until the K01 real-data re-run reopens (a), and the recorded histogram has its own leaf, `liq_by_price` (24 §19.132); client default `false` (6612964585 Q1). */
         zones_enabled?: boolean;
       };
       notifications?: {
@@ -19894,12 +19894,12 @@ export interface operations {
   getLiquidationsByPrice: {
     parameters: {
       query: {
-        /** @description The bucket width in ticks of the symbol's `tick_size`; default 20 (K01), range 1–1000 PROPOSED (24 §19.123). */
+        /** @description The bucket width in ticks of the symbol's `tick_size`; default 20 (K01), range 1–1000 PROPOSED (24 §19.132). */
         bucket_ticks?: number;
         /** @description Inclusive start of the window (RFC 3339 UTC), at most 31 days before the server's now; default 00:00 UTC of the current UTC day. The window ends at the end of the UTC day that contains `from`, or at the server's now when that is earlier. */
         from?: string;
         symbol: components["parameters"]["SymbolQuery"];
-        /** @description How many of the largest buckets to return; default 5 (K01), range 1–20 PROPOSED (24 §19.123). */
+        /** @description How many of the largest buckets to return; default 5 (K01), range 1–20 PROPOSED (24 §19.132). */
         top?: number;
       };
       header?: never;
