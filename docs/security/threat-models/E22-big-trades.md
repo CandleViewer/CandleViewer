@@ -1,6 +1,6 @@
 # E22 — STRIDE threat model: Big trades and bubbles (tape, BigTradeEngine, clustering)
 
-- Ticket: E22-X01 (issue #609). Owner: Security engineer (CODEOWNER). Status: Draft for Security + Architect review.
+- Ticket: E22-X01 (issue #609). Owner: Security engineer (CODEOWNER). Status: In review under E22-X02 (#756); Approved only after both lens records (review log).
 - Method: `docs/plan/04-security-program.md` §5 template (L x I = risk), STRIDE per epic (C-12.1). Reuses the
   exchange-boundary trust model of E08 (`e08-exchange-boundary.md`, W1-W11) and the adversarial register
   `services/api/tests/security/ingestion/E08_X02_FINDINGS.md`; those threats are **referenced, not duplicated**.
@@ -88,7 +88,7 @@ clustering is on (SR-E22-12).
 ## 4. STRIDE table
 
 Risk = L x I (Low/Med/High). Disposition: **M** mitigated by named ticket, **A** accepted (Owner
-sign-off recorded in §9), **R** referenced (owned and mitigated by another epic's model).
+sign-off recorded in §12), **R** referenced (owned and mitigated by another epic's model).
 
 | T   | STRIDE | Threat                                                                                                                                                                                                   | Flow     | L   | I   | Risk     | Mitigation / owner ticket                                                                                                                                                                                                                                                                                                                                                                                       | Disp.               |
 | --- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | --- | --- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
@@ -205,13 +205,13 @@ response, ack, error or metric depends on another user's options).
 | ID   | Abuse case                                                                               | Expected result                                                                                                                                         | Threat   | Owner    |
 | ---- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------- |
 | AC1  | `GET /market/trades` with `from`=epoch 0, `to`=now                                       | 400 `invalid_time_range`, no DB query                                                                                                                   | D14      | X02, Q01 |
-| AC2  | `limit=501`, `0`, `-1`, non-integer; tampered or >512 B `cursor`                         | 400, no query                                                                                                                                           | D14      | Q01      |
+| AC2  | `limit=501`, `0`, `-1`, non-integer; tampered or >512 B `cursor`                         | `limit` 501, 0, -1, 1.5 and a cursor past 512: `422 validation_failed`; a cursor that does not decode: `400`; no query; expiry and edits: C-CURSOR      | D14      | Q01      |
 | AC3  | Window exactly 6 h (accepted) and 6 h + 1 ms (rejected); `from` > `to`                   | boundary honoured                                                                                                                                       | D14      | Q01      |
 | AC4  | Subscribe `trades.BTCUSDT` with `min_size=0`, negative, `NaN`, `1e-30`, below floor      | rejected with `ws_subscribe_rejected_total{reason}`; first subscription unaffected                                                                      | D15      | X02      |
 | AC5  | Same symbol with 3+ distinct option sets on one connection                               | third rejected                                                                                                                                          | D17      | X02      |
 | AC6  | 41st distinct symbol on one connection; 201st subscription; 51 topics in one request     | rejected, first 40 unaffected                                                                                                                           | D17      | X02      |
 | AC7  | 9 connections for one user; 61 subscriptions over 3 connections                          | 9th connection closes the oldest idle one with `bye` (23-ws cap); 61st sub rejected                                                                     | D17      | X02      |
-| AC8  | `cluster_window_ms` 5001, 2001 on WS, `-1`, non-integer; tolerance 21                    | 400 / reject                                                                                                                                            | D16      | Q01, X02 |
+| AC8  | `cluster_window_ms` 5001, 2001 on WS, `-1`, non-integer; tolerance 21                    | REST: `422 validation_failed` naming the field (as `22` answers); WS: refused `invalid_options`, counted `cluster_range`, nothing held                  | D16      | Q01, X02 |
 | AC9  | Hostile 5 000-prints/s burst of adversarial same-price/same-side keys at window 2000 ms  | cluster keys <= 4096, `bigtrade_state_truncated_total` increments, CPU in budget, no OOM                                                                | D16, D19 | Q03      |
 | AC10 | Slow consumer stops reading while 2 000 prints/s flow                                    | connection within 8 MiB / 2 000 frames, `gap` marker + REST backfill (`reason=backpressure`), `4429` if still over, engine and other clients unaffected | D18      | Q03      |
 | AC11 | Upstream NaN, off-tick, zero or extreme-size print reaching the engine                   | rejected and counted at E08; engine assert holds; percentile unmoved beyond trim                                                                        | D3       | X02      |
@@ -263,8 +263,8 @@ Every E22-* ticket appears here; a missing row is a model defect (enforced by GO
 | E22-D04             | Motion spec: flash cap <= 3 Hz and `prefers-reduced-motion` (SR-E22-10; D21)                                                                                                                                                                                                                                                                                                                                                                                                              |
 | E22-D05 / D06       | Design handoff and QA sweep: no control; verify the estimated badge (SR-E22-12) and trimmed/`gap` states are designed and built                                                                                                                                                                                                                                                                                                                                                           |
 
-SR-E22-nn are epic-local requirement ids (convention of `E16-FR-nn` / `E35-FR-nn`), to be promoted into
-`04-security-program.md` numbering when E22-T02 lands. Interface-first gaps: **G1** window cap, **G2**
+SR-E22-nn are epic-local requirement ids (convention of `E16-FR-nn` / `E35-FR-nn`), and stay epic-local
+as SR-E36-nn do; `04` and `32` cite them by these ids. Interface-first gaps: **G1** window cap, **G2**
 `min_size` floor (22-api), **G3** state caps (24-internal-schemas), **G4** per-user budget (23-ws `limits`),
 **G5** option-set cap, **G6** frame-level `estimated` flag (23-ws §14.2), **G7** error code `invalid_min_size` for the `min_size` floor (22-api problem-code registry), **G8** the `trades` `gap` marker frame emitted on §8.4 backpressure with the REST backfill hint (23-ws §8.4 / §14.2). The `trades.*` fair share is a named constant `TRADES_BUDGET_SHARE = 0.5` in `orderflow/limits.py` (frames and bytes derived from it; revisit after the E22-Q03 k6 run). Note: 23-ws already caps connections at 8 per user — SR-E22-06 adopts that cap rather than introducing it, and the 9th connection follows the contract (oldest idle closed with `bye`), which AC7 asserts.
 
@@ -280,6 +280,7 @@ SR-E22-nn are epic-local requirement ids (convention of `E16-FR-nn` / `E35-FR-nn
 
 ### Review log
 
-| Date       | Reviewer               | Result          |
-| ---------- | ---------------------- | --------------- |
-| 2026-10-06 | author (E22-X01 agent) | Draft submitted |
+| Date       | Reviewer                         | Result                                                                                                                                               |
+| ---------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-10-06 | author (E22-X01 agent)           | Draft submitted                                                                                                                                      |
+| 2026-11-04 | E22-X02 (#756), at `origin/main` | In review: verdicts in `docs/security/reviews/e22-big-trades-review.md`, cases in `docs/security/abuse-cases/e22-big-trades.md`; lens rounds pending |
