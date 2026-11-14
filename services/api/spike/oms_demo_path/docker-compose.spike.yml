@@ -1,0 +1,80 @@
+# services/api/spike/oms_demo_path/docker-compose.spike.yml — #843 (E29-K01) A4, throwaway.
+#
+# The harness as a one-off container of the stack's own `api` image, on the spike branch only and
+# never merged. Used with the stack's files (README "Host runbook"), never `compose run api`:
+# a run of `api` inherits CV_AUDIT_WAL_PATH and the cv-audit-data volume, so it would open
+# cv-api's own audit WAL (no lock: two writers truncate each other's frames), the lane-key secret
+# and the static IP. This service has none of them:
+# - its own audit volume (cv-spike-audit) at the image's audit mount point (so Docker gives the
+#   empty volume uid 10001 and 0700), its WAL one level down (CV_AUDIT_WAL_PATH below), never
+#   the stack's path; the harness refuses to start on the stack's path, a directory holding
+#   lane/ or another writer's WAL, or a mount of cv-audit-data;
+# - no cv_audit_lane_key secret and no lane/ directory: the harness loads no lane key;
+# - only the KEK, as the compose secret cv_kek from CV_KEK_FILE (#3180's name), never in
+#   `environment:` or a file of this checkout, read as a file source as #4522's api reads it and
+#   mounted as #4522's KEK services mount it (uid and gid 10001, mode 0400);
+# - the runtime DSN CV_PG_DSN, never the owner role's DSN;
+# - the harness code bind-mounted read-only from the spike checkout, PYTHONPATH /app;
+# - no core dumps (it holds the KEK for the run: SR-009, as #4522 sets for every service that
+#   loads it), no healthcheck (a one-shot, as #4522's bootstrap-owner), and no pull: the image the
+#   host built, or the one #4522's digest path verified (CV_SPIKE_API_IMAGE=$IMAGE@$DIGEST,
+#   README "Host runbook").
+# CHECK WHEN #3180 MERGES: its overlay's file name, the api image name it builds (default
+# `<project>-api`, so cv-demo-api), and its `cv_kek` secret (declared the same way here).
+# Every variable below is required; compose refuses to start without it.
+services:
+  spike:
+    image: ${CV_SPIKE_API_IMAGE:-cv-demo-api}
+    pull_policy: never
+    profiles: ["spike"]
+    init: true
+    entrypoint: ["python", "-m", "spike.oms_demo_path"]
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      CV_ENVIRONMENT: demo
+      CV_STORAGE_BACKEND: real
+      CV_PG_DSN: ${CV_PG_DSN:?the runtime DSN, from the host's infra/compose/.env}
+      # Demo only: live refuses a file KEK; demo logs secrets.kek_file_source (expected, #4522).
+      CV_KEK_SOURCE: file
+      CV_KEK_HANDLE: /run/secrets/cv_kek
+      CV_KEK_VERSION: ${CV_KEK_VERSION:?from the host's infra/compose/.env (#3180)}
+      CV_AUDIT_WAL_PATH: /var/lib/candleviewer/audit/spike/audit.wal
+      PYTHONPATH: /app
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - type: bind
+        source: ${CV_SPIKE_SRC:?the spike checkout's services/api/spike directory}
+        target: /app/spike
+        read_only: true
+      - cv-spike-audit:/var/lib/candleviewer/audit
+      - type: bind
+        source: ${CV_SPIKE_OUT:?a host directory owned by 10001:10001, mode 0700}
+        target: /var/lib/candleviewer/spike-out
+    secrets:
+      # As #4522's api and bootstrap-owner mount it, line for line. Compose ignores uid, gid and
+      # mode outside Swarm and bind-mounts the host file as it is: the host file carries them.
+      - source: cv_kek
+        target: cv_kek
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+    # SR-009: no core dumps of a process that holds the KEK (M2 also sets RLIMIT_CORE itself).
+    ulimits:
+      core: 0
+    # A one-shot, as #4522's bootstrap-owner: its exit status is its result.
+    healthcheck:
+      disable: true
+    # The flatten after SIGTERM needs M2 and audit up: give it time before Docker kills.
+    stop_grace_period: 60s
+    networks: [cv-internal]
+
+volumes:
+  # Never `down -v` or delete it before its WAL drained into Postgres (summary `audit`, C-2.9).
+  cv-spike-audit:
+
+secrets:
+  cv_kek:
+    file: ${CV_KEK_FILE:?the KEK host file, from the host's infra/compose/.env (#3180)}
