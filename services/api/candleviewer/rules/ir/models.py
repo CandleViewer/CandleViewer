@@ -207,7 +207,10 @@ class Literal_(BaseModel):
         it was copied from (the copy takes the instance's ``__dict__``, the cached read in it)."""
         copied = super().model_copy(update=update, deep=deep)
         if update and "const" in update:
-            copied.__dict__.pop("value", None)
+            try:
+                del copied.value
+            except AttributeError:
+                pass
         return copied
 
 
