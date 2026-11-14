@@ -43,6 +43,11 @@
   border-color: var(--color-focus-ring);
   background: var(--color-surface-app);
   padding-inline: var(--space-inset-xs);
+  /* The input's own outline stays off (below). The well's ring is an outline laid over its 2 px border
+     (E29-D02: the editor is the cell, with a 2 px focus-ring border), so it looks the same and stays
+     a ring in forced colours (E47-S05). */
+  outline: var(--cv-cell-editor-bw) solid var(--color-focus-ring);
+  outline-offset: calc(-1 * var(--cv-cell-editor-bw));
 }
 
 .cv-cell-editor[data-editing] .cv-cell-editor__input {
