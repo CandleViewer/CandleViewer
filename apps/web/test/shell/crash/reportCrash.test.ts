@@ -227,9 +227,13 @@ describe("the allowed settings groups (L5)", () => {
     trading: ["arm_timeout_seconds", "confirm_flatten", "confirm_market_orders", "default_environment", "default_qty_presets", "one_click_armed"],
   } as const; // prettier-ignore
   type Pinned = typeof GROUP_KEYS;
+  // `deriv` (#778, 24 §19.110) is display-only and is not in `SETTINGS_ALLOWED`, so diagnostics never carries it.
   type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
   type SchemaKeys<K> = K extends keyof Settings ? keyof NonNullable<Settings[K]> : never;
-  const groupsPinned: Same<keyof Pinned, Exclude<keyof Settings, "notifications" | "_meta">> = true;
+  const groupsPinned: Same<
+    keyof Pinned,
+    Exclude<keyof Settings, "notifications" | "_meta" | "deriv">
+  > = true;
   const keysPinned: { [K in keyof Pinned]: Same<Pinned[K][number], SchemaKeys<K>> } = {
     accessibility: true,
     appearance: true,
