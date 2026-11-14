@@ -86,7 +86,12 @@ export const PopoverOpen: Story = {
   args: { items: MANY },
   play: async ({ canvasElement }) => {
     await userEvent.click(within(canvasElement).getByRole("button", { name: /more series/ }));
-    await waitFor(() => expect(within(document.body).getByRole("dialog")).toBeVisible());
+    const dialog = await waitFor(() => {
+      const el = within(document.body).getByRole("dialog");
+      expect(el).toBeVisible();
+      return el;
+    });
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
   },
 };
 export const Collapsed: Story = { args: { items: patch({ visible: false }), collapsed: true } };
