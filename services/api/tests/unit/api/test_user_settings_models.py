@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, get_args
 
 import jsonschema
 import pytest
@@ -15,6 +15,8 @@ from structlog.testing import capture_logs
 from candleviewer.api import user_settings_models as m
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.audit.redact import REDACTION_MARKER, redact
+from candleviewer.orderflow import limits as L
+from candleviewer.orderflow.bigtrade_models import Mode
 from candleviewer.storage.repositories.user_settings import UserSetting
 from tests.openapi_helpers import deref
 
@@ -46,7 +48,11 @@ def test_leaves_are_exactly_the_leaves_22s_settings_declares() -> None:
         for leaf in deref(_SPEC, schema)["properties"]
     }
     assert set(m.LEAVES) == declared
-    assert "bigtrade" not in m.GROUPS  # E22-S02's contract-first PR brings it, never this one
+    assert {key for key in m.LEAVES if key.startswith("bigtrade.")} == {
+        "bigtrade.threshold_mode",
+        "bigtrade.threshold_value",
+        "bigtrade.percentile_window_ms",
+    }  # E22-D05 section 5's S02 keys (#715), each one leaf
 
 
 def test_judge_patch_keeps_only_the_named_leaves() -> None:
@@ -80,11 +86,95 @@ def test_judge_patch_an_empty_body_object_changes_nothing() -> None:
     assert _judge({}) == {} and _judge({"appearance": {}}) == {}
 
 
+def test_judge_patch_takes_each_bigtrade_leaf_as_its_whole_symbol_map() -> None:
+    """E22-S02 (#715): the symbol sits inside the value, one leaf per key (E22-D05 section 5)."""
+    patch = _judge(
+        {
+            "bigtrade": {
+                "threshold_mode": {"BTCUSDT": "notional", "ETHUSDT": "percentile"},
+                "threshold_value": {"BTCUSDT": "250000", "ETHUSDT": "99.5"},
+                "percentile_window_ms": {"ETHUSDT": 3_600_000},
+            }
+        }
+    )
+    assert patch == {
+        "bigtrade.threshold_mode": {"BTCUSDT": "notional", "ETHUSDT": "percentile"},
+        "bigtrade.threshold_value": {"BTCUSDT": "250000", "ETHUSDT": "99.5"},  # strings (C6)
+        "bigtrade.percentile_window_ms": {"ETHUSDT": 3_600_000},
+    }
+
+
+def _many(count: int, value: object) -> dict[str, object]:
+    return {f"{i:020d}USDT": value for i in range(count)}
+
+
+@pytest.mark.parametrize(
+    ("leaf", "value", "symbol", "rule"),
+    [
+        ("threshold_mode", {"BTCUSDT": "absolute"}, "BTCUSDT", "literal_error"),
+        ("threshold_mode", _many(201, "notional"), "", "too_long"),
+        ("threshold_value", {"BTCUSDT": "-1"}, "BTCUSDT", "string_pattern_mismatch"),
+        ("threshold_value", {"BTCUSDT": 250000}, "BTCUSDT", "string_type"),
+        ("threshold_value", {"BTCUSDT": "1e6"}, "BTCUSDT", "string_pattern_mismatch"),
+        ("percentile_window_ms", {"BTCUSDT": 59_999}, "BTCUSDT", "greater_than_equal"),
+        ("percentile_window_ms", {"BTCUSDT": 86_400_001}, "BTCUSDT", "less_than_equal"),
+    ],
+)  # fmt: skip
+def test_judge_patch_refuses_a_bigtrade_value_outside_the_engines_bounds(
+    leaf: str, value: object, symbol: str, rule: str
+) -> None:
+    field = f"bigtrade.{leaf}.{symbol}" if symbol else f"bigtrade.{leaf}"
+    assert _rules({"bigtrade": {leaf: value}}) == [(field, rule)]
+
+
+def test_symbol_keyed_leaves_are_22s_with_their_symbol_pattern_and_200_cap() -> None:
+    """22's `then.propertyNames` is the key pattern no generated model carries (E22-S02, #715):
+    the server's `SYMBOL_KEYED` and `SYMBOL` are pinned to it, so dropping the `then` fails here."""
+    keyed: dict[str, Any] = {}
+    for group, schema in _SETTINGS["properties"].items():
+        for leaf, member in deref(_SPEC, schema).get("properties", {}).items():
+            if "propertyNames" in member.get("then", {}):
+                keyed[f"{group}.{leaf}"] = member
+    assert set(keyed) == m.SYMBOL_KEYED
+    assert _SPEC["components"]["schemas"]["Symbol"]["pattern"] == f"^{m.SYMBOL.pattern}$"
+    for member in keyed.values():
+        assert member["maxProperties"] == L.THRESHOLD_SYMBOLS_PER_USER_MAX  # SR-E22-11
+        assert member["then"]["propertyNames"]["pattern"] == f"^{m.SYMBOL.pattern}$"
+
+
+def test_bigtrade_leaves_carry_the_engines_vocabulary_and_limits_bounds() -> None:
+    """22's `bigtrade` values are `BigTradeConfig`'s mode enum and `limits.py`'s window bounds,
+    never a copy that drifts from them (E22 threat model section 7, E22-S02 #715)."""
+    leaves = deref(_SPEC, _SETTINGS["properties"]["bigtrade"])["properties"]
+    values = {name: deref(_SPEC, leaf)["additionalProperties"] for name, leaf in leaves.items()}
+    assert values["threshold_mode"]["enum"] == list(get_args(Mode))
+    window = values["percentile_window_ms"]
+    assert (window["minimum"], window["maximum"]) == (
+        L.PERCENTILE_WINDOW_MS_MIN,
+        L.PERCENTILE_WINDOW_MS_MAX,
+    )
+
+
+@pytest.mark.parametrize("key", ["btcusdt", "", "A" * 2044 + "USDT", "BTCUSDT\r\nX: 1", "<b>"])
+@pytest.mark.parametrize("leaf", sorted(m.SYMBOL_KEYED))
+def test_judge_patch_refuses_a_bigtrade_map_keyed_by_anything_but_a_symbol(
+    leaf: str, key: str
+) -> None:
+    """The key is refused before the leaf's model reads it, so it is never echoed (E22-S02)."""
+    good = {"bigtrade.threshold_mode": "notional", "bigtrade.threshold_value": "250000"}
+    value = good.get(leaf, 3_600_000)
+    group, _, name = leaf.partition(".")
+    assert _rules({group: {name: {"BTCUSDT": value, key: value}}}) == [
+        (leaf, "string_pattern_mismatch")
+    ]
+
+
 @pytest.mark.parametrize(
     ("doc", "expected"),
     [
         ({"appearance": {"glow": True}}, [("appearance.glow", "extra_forbidden")]),
-        ({"bigtrade": {"k": 3}}, [("bigtrade", "extra_forbidden")]),
+        ({"bigtrade": {"k": 3}}, [("bigtrade.k", "extra_forbidden")]),
+        ({"big_trade": {"k": 3}}, [("big_trade", "extra_forbidden")]),
         ({"appearance": {"theme": "neon"}}, [("appearance.theme", "literal_error")]),
         ({"appearance": {"font_scale": 3}}, [("appearance.font_scale", "less_than_equal")]),
         ({"appearance": {"reduce_motion": 1}}, [("appearance.reduce_motion", "bool_type")]),
@@ -107,12 +197,12 @@ def test_judge_patch_refuses_the_whole_patch_and_lists_every_refusal() -> None:
     doc = {
         "appearance": {"theme": "light", "font_scale": 9},  # one good leaf, one bad
         "trading": {"one_click_armed": False},
-        "bigtrade": {},
+        "big_trade": {},
     }
     assert _rules(doc) == [
         ("appearance.font_scale", "less_than_equal"),
         ("trading.one_click_armed", "read_only"),
-        ("bigtrade", "extra_forbidden"),
+        ("big_trade", "extra_forbidden"),
     ]
 
 
@@ -189,8 +279,9 @@ def test_effective_overlays_the_rows_and_meta_names_them_with_the_latest_write()
         _row("bigtrade.k", 3),  # a leaf 22 does not declare
         _row("appearance.theme", "neon"),  # a value 22 no longer accepts
         _row("appearance.density", None),  # a JSON null is no value
+        _row("bigtrade.threshold_mode", {"btcusdt": "notional"}),  # a key that is no `Symbol`
     ],
-    ids=["undeclared", "refused", "null"],
+    ids=["undeclared", "refused", "null", "unsymbolled"],
 )
 def test_effective_never_serves_a_row_22s_settings_refuses_and_logs_only_its_key(
     row: UserSetting,
