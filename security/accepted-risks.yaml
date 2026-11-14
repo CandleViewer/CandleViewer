@@ -173,22 +173,7 @@ entries:
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-12-14"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/3672"
-  # #5997: CVE-2026-128089 / GHSA-vvf4-9x63-8xvv in dnspython (WKS record DoS in zone parser).
-  # CandleViewer does not parse DNS zone files. Fixed in dnspython 2.9.2.
-  - id: "CVE-2026-128089"
-    tool: pip-audit
-    severity: HIGH
-    reason: "dnspython 2.9.0 WKS record CPU/memory exhaustion in from_text(). CandleViewer does not parse DNS zone files. Fix in dnspython 2.9.2, tracking in #5997"
-    approver: "basiltt"
-    expires: "2026-12-14"
-    ticket: "https://github.com/CandleViewer/CandleViewer/issues/5997"
-  - id: "GHSA-vvf4-9x63-8xvv"
-    tool: pip-audit
-    severity: HIGH
-    reason: "dnspython 2.9.0 WKS record CPU/memory exhaustion in from_text(). CandleViewer does not parse DNS zone files. Fix in dnspython 2.9.2, tracking in #5997"
-    approver: "basiltt"
-    expires: "2026-12-14"
-    ticket: "https://github.com/CandleViewer/CandleViewer/issues/5997"
+  # #5997: dnspython upgraded to 2.9.2 (resolves CVE-2026-128089 / GHSA-vvf4-9x63-8xvv).
   # #5997: CVE-2026-126360 / GHSA-mf5v-w3w3-f6cg in opentelemetry-api (ReDoS in TraceContextTextMapPropagator).
   # Upgraded to 1.45.2 in PR #5997.
   - id: "CVE-2026-126360"
