@@ -29,6 +29,7 @@ from candleviewer.rules.service import RulesService
 from candleviewer.rules.vocabulary import default_registry
 from candleviewer.settings import RULES_REFUSAL_BUDGET_PER_HOUR
 from tests.rules.test_rule_check_limit import BURST, RATE, _Resolver
+from tests.rules.test_rule_ownership import _ROUTES
 from tests.rules.test_rules_routes import BASE, _ir
 from tests.rules.test_scope_crud import A as GRANTED
 from tests.rules.test_scope_crud import C as UNGRANTED
@@ -39,6 +40,9 @@ CAP = RULES_REFUSAL_BUDGET_PER_HOUR
 REG = default_registry()
 OWNER_ID, MANAGER_ID = UUID(int=1), UUID(int=2)
 FOREIGN = {"level": "account", "account_ids": [str(UNGRANTED)]}
+WRITES = [route for route, spec in _ROUTES.items() if spec[3]]  # the routes that change a rule
+#: The version id of the calls that name one; a write on a rule out of reach never looks it up.
+_VERSION = "00000000-0000-4000-8000-000000000002"
 
 
 class _Stack:
@@ -147,6 +151,59 @@ def test_the_refusal_is_still_answered_403_or_404_over_the_cap() -> None:
         assert (made.status_code, made.json()["code"]) == (403, "forbidden")
     assert len(s.records(SCOPE_DENIED)) == 2 and s.suppressed == 4
     assert [v.version for v in s._row(rid).versions] == [1]
+
+
+def _owners_rule(s: _Stack) -> str:
+    """A rule the Owner saved, which the Manager cannot reach."""
+    owner = s.as_user(OWNER_ID, owner=True)
+    return str(s.c.post("/rules", json={"ir": _ir()}, headers=owner).json()["id"])
+
+
+def _owners_deleted_rule(s: _Stack) -> str:
+    """A rule the Owner saved and then deleted."""
+    rid = _owners_rule(s)
+    assert s.c.delete(f"/rules/{rid}", headers=s.as_user(OWNER_ID, owner=True)).status_code == 204
+    return rid
+
+
+def _never_stored(_s: _Stack) -> str:
+    """The id of a rule no store holds."""
+    return "00000000-0000-4000-8000-000000002626"
+
+
+#: The three ways a write names a rule the Manager does not reach: a rule outside their scope, one
+#: no store holds and a deleted one (04 §7.3).
+_UNREACHED = {"hidden": _owners_rule, "missing": _never_stored, "deleted": _owners_deleted_rule}
+
+
+def _write(s: _Stack, route: str, rid: str, n: int) -> Any:
+    """The Manager's `n`th call of `route` on `rid`, each under a new idempotency key."""
+    method, path, body, _ = _ROUTES[route]
+    headers = s.as_user(MANAGER_ID) | {"Idempotency-Key": f"k{n}"}
+    url = path.format(rid=rid, vid=_VERSION)
+    return s.c.request(method, url, json=body(_VERSION), headers=headers)
+
+
+@pytest.mark.parametrize("route", WRITES)
+def test_over_budget_refusals_of_a_hidden_and_a_missing_rule_answer_alike(route: str) -> None:
+    """AC-8 (BQ-10, #2626): a write refused for a rule outside the caller's scope, a missing rule
+    or a deleted one is one record in one budget. Past it each answers the same 404 as before and
+    writes nothing, and once the hour has rolled the next record carries the count held."""
+    transcripts = {}
+    for case, make in _UNREACHED.items():
+        s = _Stack(per_hour=2)
+        rid = make(s)
+        sent = [_write(s, route, rid, n) for n in range(3)]
+        written = [r["after_state"]["rule_id"] for r in s.records(SCOPE_DENIED)]
+        assert written == [rid] * 2, f"{case}: two records, then none past the budget"
+        s.clock.now += 3600.0  # the hour has rolled: the next record carries the count
+        _write(s, route, rid, 3)
+        carried = s.records(SCOPE_DENIED)[-1]["after_state"]["suppressed"]
+        transcripts[case] = ([(r.status_code, r.content) for r in sent], s.suppressed, carried)
+    answers, suppressed, carried = transcripts["hidden"]
+    assert [status for status, _ in answers] == [404] * 3
+    assert (suppressed, carried) == (1, 1)
+    assert transcripts["missing"] == transcripts["hidden"] == transcripts["deleted"]
 
 
 def test_the_owner_and_a_manager_share_the_same_cap() -> None:

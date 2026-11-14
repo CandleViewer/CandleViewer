@@ -157,6 +157,20 @@ _ROUTES: dict[str, tuple[str, str, Callable[[str], Any], str | None]] = {
     "disarm": ("put", "/rules/{rid}/mode", lambda _v: {"mode": "disabled"}, "set_mode"),
     "delete": ("delete", "/rules/{rid}", lambda _v: None, "delete"),
 }
+#: Route -> the refusals a request for a rule the caller cannot reach leaves: one naming the `op`
+#: for a write, none for a read, which is scoping and not a refusal. Written out, not derived
+#: from `_ROUTES`, so a wrong `op` there is caught here.
+_REFUSED: dict[str, list[tuple[str, str]]] = {
+    "get": [],
+    "list_versions": [],
+    "get_version": [],
+    "update": [("update", "rule_not_visible")],
+    "set_active_version": [("set_active_version", "rule_not_visible")],
+    "set_mode": [("set_mode", "rule_not_visible")],
+    "arm": [("set_mode", "rule_not_visible")],
+    "disarm": [("set_mode", "rule_not_visible")],
+    "delete": [("delete", "rule_not_visible")],
+}
 
 
 @_KIND
@@ -166,15 +180,54 @@ def test_route_of_a_rule_the_manager_does_not_own_is_the_unseen_404(kind: str, r
     manager = _Env(set(PERMS), owner=False, granted=frozenset({A1}), mgr=owner.mgr, uid="mgr")
     rid = owner.create(scope=KINDS[kind])
     vid = owner.c.get(f"/rules/{rid}/versions").json()["items"][0]["id"]
-    method, path, body, op = _ROUTES[route]
+    method, path, body, _ = _ROUTES[route]
     owner.audits.clear()
     resp = manager.c.request(
         method, path.format(rid=rid, vid=vid), json=body(vid), headers={"Idempotency-Key": "k"}
     )
     assert (resp.status_code, resp.json()["code"]) == (404, "not_found"), resp.text
     refused = [(p["op"], p["reason"]) for a, p in owner.audits if a == "rule.scope_refused"]
-    assert refused == ([(op, "rule_not_visible")] if op else [])
+    assert refused == _REFUSED[route]
     assert owner.c.get(f"/rules/{rid}").json()["mode"] == "disabled"
+
+
+def _never_stored(_manager: _Env, _rid: str) -> str:
+    """The id of a rule no store holds."""
+    return "00000000-0000-4000-8000-000000002626"
+
+
+def _deleted(manager: _Env, rid: str) -> str:
+    """`rid`, deleted by the Manager who owns it."""
+    assert manager.c.delete(f"/rules/{rid}").status_code == 204
+    return rid
+
+
+#: How a rule the Manager asks for comes to be missing: the id of a rule never stored, or of one
+#: the Manager's own rule, once deleted.
+_GONE = {"never_stored": _never_stored, "deleted": _deleted}
+
+
+@pytest.mark.parametrize("gone", _GONE.values(), ids=list(_GONE))
+@pytest.mark.parametrize("route", _ROUTES)
+def test_route_of_a_missing_rule_answers_and_records_as_an_unseen_rule(
+    gone: Callable[[_Env, str], str], route: str
+) -> None:
+    """#2626: a rule no store holds, or one the Manager deleted, answers every route as a rule they
+    do not own does: the same 404, with no record on a plain read, and on a write one
+    `rule.scope_refused` naming the id asked for."""
+    owner = _Env()
+    manager = _Env(set(PERMS), owner=False, granted=frozenset({A1}), mgr=owner.mgr, uid="mgr")
+    made = manager.create(scope=KINDS["fully_granted"])
+    vid = manager.c.get(f"/rules/{made}/versions").json()["items"][0]["id"]
+    rid = gone(manager, made)
+    method, path, body, _ = _ROUTES[route]
+    owner.audits.clear()
+    resp = manager.c.request(
+        method, path.format(rid=rid, vid=vid), json=body(vid), headers={"Idempotency-Key": "k"}
+    )
+    assert (resp.status_code, resp.json()["code"]) == (404, "not_found"), resp.text
+    refused = [(a, p["rule_id"], p["op"], p["reason"]) for a, p in owner.audits]
+    assert refused == [("rule.scope_refused", rid, op, why) for op, why in _REFUSED[route]]
 
 
 @pytest.mark.parametrize("shape", ["tight", None, ["a"]], ids=["str", "none", "list"])
