@@ -173,38 +173,6 @@ entries:
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2026-12-14"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/3672"
-  # #5997: CVE-2026-128089 / GHSA-vvf4-9x63-8xvv in dnspython (WKS record DoS in zone parser).
-  # CandleViewer does not parse DNS zone files. Fixed in dnspython 2.9.2.
-  - id: "CVE-2026-128089"
-    tool: pip-audit
-    severity: HIGH
-    reason: "dnspython 2.9.0 WKS record CPU/memory exhaustion in from_text(). CandleViewer does not parse DNS zone files. Fix in dnspython 2.9.2, tracking in #5997"
-    approver: "basiltt"
-    expires: "2026-12-14"
-    ticket: "https://github.com/CandleViewer/CandleViewer/issues/5997"
-  - id: "GHSA-vvf4-9x63-8xvv"
-    tool: pip-audit
-    severity: HIGH
-    reason: "dnspython 2.9.0 WKS record CPU/memory exhaustion in from_text(). CandleViewer does not parse DNS zone files. Fix in dnspython 2.9.2, tracking in #5997"
-    approver: "basiltt"
-    expires: "2026-12-14"
-    ticket: "https://github.com/CandleViewer/CandleViewer/issues/5997"
-  # #5997: CVE-2026-126360 / GHSA-mf5v-w3w3-f6cg in opentelemetry-api (ReDoS in TraceContextTextMapPropagator).
-  # Upgraded to 1.45.2 in PR #5997.
-  - id: "CVE-2026-126360"
-    tool: pip-audit
-    severity: HIGH
-    reason: "opentelemetry-api 1.45.1 ReDoS in TraceContextTextMapPropagator. HTTP header validation bounds header size; upgraded to 1.45.2 in PR #5997"
-    approver: "basiltt"
-    expires: "2026-12-14"
-    ticket: "https://github.com/CandleViewer/CandleViewer/issues/5997"
-  - id: "GHSA-mf5v-w3w3-f6cg"
-    tool: pip-audit
-    severity: HIGH
-    reason: "opentelemetry-api 1.45.1 ReDoS in TraceContextTextMapPropagator. HTTP header validation bounds header size; upgraded to 1.45.2 in PR #5997"
-    approver: "basiltt"
-    expires: "2026-12-14"
-    ticket: "https://github.com/CandleViewer/CandleViewer/issues/5997"
   # #4215: the same venv's opentelemetry-api (alert 68). Every Semgrep release from 1.80.0 to
   # 1.182.1 (the newest) caps opentelemetry-api below 1.45.1 (~=1.37.0 since 1.137.0), and 1.173.0
   # onward pin mcp==1.29.0. The newest release without the cap is 1.79.0, which cannot parse
