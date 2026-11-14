@@ -8,8 +8,11 @@ control (nothing may be smuggled into a stored IR). The IR is data, never code (
 from __future__ import annotations
 
 import math
+import re
+from collections.abc import Mapping
 from decimal import Decimal, DecimalException
-from typing import Annotated, Any, Literal
+from functools import cached_property
+from typing import Annotated, Any, Final, Literal, Self
 
 from pydantic import (
     AfterValidator,
@@ -72,6 +75,29 @@ def _plain_decimal(d: Decimal) -> str:
         return plain_decimal(d)
     except (PlainWidthError, DecimalException):
         return str(d)
+
+
+#: The longest text a constant's read looks at: longer text is never read as a number, so no read
+#: scans more. A number's stored text is far shorter (a fractional JSON number reaches the IR as a
+#: float, at most 17 digits, and ``plain_decimal`` bounds a number's plain form at 64 characters).
+MAX_NUMBER_TEXT: Final = 128
+#: Decimal text: ASCII digits with an optional sign, point and exponent. ``str(Decimal)`` writes
+#: every finite number so, and a stored version holds the IR's JSON-mode dump, where a ``Decimal``
+#: const is that text (``"0.2"``, ``"-5E-7"``). Possessive: a failed match never backtracks.
+DECIMAL_TEXT: Final = re.compile(r"[+-]?+(?:\d++(?:\.\d*+)?+|\.\d++)(?:[eE][+-]?+\d++)?+", re.ASCII)
+
+
+def decimal_text(text: str) -> Decimal | None:
+    """The number ``text`` spells, exactly (never through a float), when it is decimal text whose
+    number the IR can hold (``plain_decimal``'s range); else None."""
+    if len(text) > MAX_NUMBER_TEXT or DECIMAL_TEXT.fullmatch(text) is None:
+        return None
+    try:
+        number = Decimal(text)
+        plain_decimal(number)
+    except (PlainWidthError, ArithmeticError):  # wider than the bound, or past the exponent range
+        return None
+    return number
 
 
 def _one_refusal(v: Any) -> Any:
@@ -144,11 +170,48 @@ class MetricRef(BaseModel):
     timeframe: str | None = None
 
 
+def _text_bound(schema: dict[str, Any]) -> None:
+    """Publish a text constant's bound (``MAX_NUMBER_TEXT``, ``22`` ``RuleOperand``) on both text
+    members of the constant's schema, the decimal text and the plain text. Only the published
+    schema carries it: the model reads text of any length, so a stored version holding text past
+    the bound keeps loading, and a save, validate and compile refuse it (the semantic validator)."""
+    for member in schema["anyOf"]:
+        if member.get("type") == "string":
+            member["maxLength"] = MAX_NUMBER_TEXT
+
+
 class Literal_(BaseModel):
     """Constant operand; ``{"const": ...}`` in JSON."""
 
     model_config = _CFG
-    const: bool | int | Decimal | str
+    const: Annotated[bool | int | Decimal | str, Field(json_schema_extra=_text_bound)]
+
+    @cached_property
+    def value(self) -> bool | Decimal | str:
+        """The constant as the evaluator reads it (#5807): true or false as a bool, a number as a
+        ``Decimal``, decimal text too (a stored version holds a ``Decimal`` const as its text), and
+        other text as itself, an enum value. Read once per instance, so once per load. ``const``
+        itself is never re-typed, and the cached read sits outside the fields: equality, hashing,
+        the dumps and the content hash read ``const`` alone, so every hash stays as it is.
+        The cached read belongs to its instance: never assign ``value``."""
+        c = self.const
+        if isinstance(c, bool | Decimal):
+            return c
+        if isinstance(c, int):
+            return Decimal(c)
+        number = decimal_text(c)
+        return c if number is None else number
+
+    def model_copy(self, *, update: Mapping[str, object] | None = None, deep: bool = False) -> Self:
+        """A copy; one that sets ``const`` reads that constant, not the cached read of the literal
+        it was copied from (the copy takes the instance's ``__dict__``, the cached read in it)."""
+        copied = super().model_copy(update=update, deep=deep)
+        if update and "const" in update:
+            try:
+                del copied.value
+            except AttributeError:
+                pass
+        return copied
 
 
 class ArithmeticNode(BaseModel):

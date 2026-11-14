@@ -13,8 +13,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
+from typing import Any, Final
 
+from candleviewer.rules.errors import ConstantTypeError
+from candleviewer.rules.evaluator.nodes import check_constants
 from candleviewer.rules.ir import (
     BooleanNode,
     Comparison,
@@ -23,10 +25,15 @@ from candleviewer.rules.ir import (
     Rule,
     TemporalNode,
 )
+from candleviewer.rules.ir.models import MAX_NUMBER_TEXT
 from candleviewer.rules.issues import Issue
 from candleviewer.rules.limits import above_cap, cap_message
 from candleviewer.rules.vocabulary.catalogue import ACTIONS, OPERATORS, RETIRED_ACTIONS
 from candleviewer.rules.vocabulary.registry import MetricRegistry
+
+#: What a save, validate and compile say to a text constant past the bound (`22-api-openapi.yaml`
+#: `RuleOperand`): a validation limit, for every role, found with the unit checks.
+TEXT_TOO_LONG: Final = f"A text constant holds at most {MAX_NUMBER_TEXT} characters."
 
 #: The issue a rule that could loosen a stop is refused with (`22-api-openapi.yaml`
 #: `RuleValidationIssue.code`), and the reason it gives.
@@ -128,6 +135,9 @@ class _Validator:
                 return _UNKNOWN
             return d.unit
         if isinstance(op, Literal_):
+            if isinstance(op.const, str) and len(op.const) > MAX_NUMBER_TEXT:
+                self.err(path, "schema_error", TEXT_TOO_LONG, "syntax")  # a validation limit
+                return _UNKNOWN  # refused for its length alone: the text is not read past the bound
             return _const_unit(op)
         units = [self.unit_of(o, f"{path}.operands[{i}]") for i, o in enumerate(op.operands)]
         known = [u for u in units if u != _UNKNOWN]
@@ -175,6 +185,16 @@ class _Validator:
                 self.err(path, "unreachable_branch", f"Node {n.node_id} needs {n.n} of {len(n.children)} conditions, which can never hold.")  # fmt: skip
             for i, ch in enumerate(n.children):
                 self.condition(ch, f"{path}.children[{i}]")
+
+    def constants(self, conditions: Any) -> None:
+        """#5807: a constant the evaluator cannot read for its place (`check_constants`, which the
+        load runs too) is refused here, past the unit checks that read `5%`, `NaN` or `1_000` as
+        numbers and a product or a quotient as any unit."""
+        try:
+            check_constants(conditions)
+        except ConstantTypeError as exc:
+            path = "".join(f"[{p}]" if isinstance(p, int) else f".{p}" for p in exc.loc[1:-1])
+            self.err(f"{exc.loc[0]}{path}", "type_mismatch", exc.reason)
 
     # ----- actions and safety ---------------------------------------------------------------
     def actions(self) -> None:
@@ -239,6 +259,8 @@ class _Validator:
             if self.registry.get(r.trigger.metric) is None:
                 self.err("trigger.metric", "unknown_metric", f"Trigger metric '{r.trigger.metric}' is not in the vocabulary.")  # fmt: skip
         self.condition(r.conditions, "conditions")
+        if not self.out.errors:
+            self.constants(r.conditions)
         self.actions()
         self.out.estimated_evaluations_per_minute = estimate_evaluations_per_minute(r)
         self.guards()

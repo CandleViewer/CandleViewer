@@ -4192,11 +4192,17 @@ class ClosedPnlAccountTotals(BaseModel):
     provisional: StrictBool
 
 
+class Const(RootModel[str]):
+    root: Annotated[
+        str, Field(description="A text constant holds at most 128 characters.", max_length=128)
+    ]
+
+
 class RuleOperand1(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    const: str | StrictFloat | StrictBool
+    const: Const | StrictFloat | StrictBool
 
 
 class RuleMetricRef(BaseModel):
