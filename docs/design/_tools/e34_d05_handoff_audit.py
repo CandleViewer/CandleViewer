@@ -98,7 +98,7 @@ PINS = {
 }
 BOARDS = {
     "D02": "54ea8c9522e61335454373a0715e9b685d8e755d",  # #5728, if it merges as is
-    "D03": "ce852b1ceb0daba0a25102a006555ea6f6714aa5",  # #5729, if it merges as is
+    "D03": "9ce17a3df302dbfe24e912faaa1f10b14cac0b6f",  # #5729, if it merges as is
 }
 PARENT = {
     "D02": "docs/design/E34/E34-D02.md",
