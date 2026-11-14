@@ -74,6 +74,7 @@ _SUFFIX_EXCEPTIONS = frozenset(
         "book_subscriptions_active",  # named by the E21-T01 ruling (BQ-6, #604)
         "heatmap_subscriptions_active",  # named by the E21-T02 ticket's Observability (#605)
         "heatmap_pinned_symbols",  # named by the E21-T04 PR 2 ruling (#710, LANE-116)
+        "rule_metrics_in_warmup",  # a gauge of demanded refs, BQ-T15-01 (#5745)
     }
 )
 
@@ -261,6 +262,9 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
     r["rule_dispatch_reread_failed_total"].labels("timeout").inc()
     r["rule_records_shed_total"].labels("refused_fire").inc()
     r["cv_alert_write_refused_total"].labels("rate_limited").inc()  # #5696
+    r["rule_metric_pushes_total"].labels("price").inc()  # E35-T15 (#5745)
+    r["rule_metric_producer_errors_total"].labels("ticker").inc()
+    r["rule_metric_refused_total"].labels("undemanded").inc()
     text = generate_latest(m.registry).decode()
     families = {f.name: f for f in text_string_to_metric_families(text)}
     for spec in registered_specs():
