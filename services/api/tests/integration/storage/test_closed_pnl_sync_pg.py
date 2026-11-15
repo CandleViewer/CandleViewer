@@ -18,6 +18,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.closed_pnl_sync import ClosedPnlSync
+from candleviewer.risk.day_boundary import DayBoundary
 from candleviewer.storage.repositories.closed_pnl import record_id
 from candleviewer.storage.repositories.closed_pnl_sqlalchemy import SqlAlchemyClosedPnlStore
 from candleviewer.storage.repositories.executions import NewExecution
@@ -25,6 +26,7 @@ from candleviewer.storage.repositories.executions_sqlalchemy import SqlAlchemyEx
 from candleviewer.storage.repositories.positions import NewPositionSnapshot
 from candleviewer.storage.repositories.positions_sqlalchemy import SqlAlchemyPositionStore
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
+from candleviewer.storage.repositories.risk_policy_sqlalchemy import SqlAlchemyRiskPolicyReads
 from tests.integration.storage.test_closed_pnl_records_migration import _T0, _conn, _put, pg_dsn
 from tests.unit.oms.test_closed_pnl_sync import T0, Accounts, Venue, _at, _reading, _record
 
@@ -88,7 +90,7 @@ async def test_the_sync_keeps_records_until_final_and_seeds_a_key_once(pg_dsn: s
         return ClosedPnlSync(
             accounts=Accounts(), router=venue, records=store, closes=SqlAlchemyExecutionStore(rel),
             snapshots=SqlAlchemyPositionStore(rel), metrics=Metrics("demo"), now=lambda: T0,
-            on_ended=lambda: None,
+            on_ended=lambda: None, day_start=DayBoundary(SqlAlchemyRiskPolicyReads(rel)).day_start,
         )  # fmt: skip
 
     first, second = (record_id(a, x) for x in ("o-1", "o-2"))

@@ -2,9 +2,10 @@
 
 `DayRiskFigures` serves demo and testnet only and refuses `live` at construction, and answers
 None for an account of another environment than its own; it reads the wallet, the day's closed
-P&L since 00:00 UTC, the positions and open orders (committed risk from the recorded stop, else
-the profile's fallback distance) and the taker fee from the venue, concurrently, each kept
-`FIGURES_TTL_S` on a fake monotonic clock and bounded by `FIGURES_READ_TIMEOUT_S` and
+P&L in the resolver's day (24 Sec.8.13: each record on its own `updatedTime`, read from the
+lookback before `day_start`), the positions and open orders (committed risk from the recorded
+stop, else the profile's fallback distance) and the taker fee from the venue, concurrently, each
+kept `FIGURES_TTL_S` on a fake monotonic clock and bounded by `FIGURES_READ_TIMEOUT_S` and
 `FIGURES_BUDGET_S`; a read that fails or times out is None for its figures only and is logged by
 figure and error type alone. `invalidate` drops the account's book, day's loss and wallet, and a
 read in flight across it keeps nothing. `peek` (E28-T05 S3b, #909) answers only what is kept,
@@ -16,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
@@ -40,6 +41,7 @@ from candleviewer.exchange.base.ports import TradingPort
 from candleviewer.exchange.bybit.trading import ENDPOINTS
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms import day_figures
+from candleviewer.oms.closed_pnl_sync import CLOSED_PNL_LOOKBACK
 from candleviewer.oms.day_figures import FIGURES_TTL_S, DayRiskFigures, committed_risk
 from candleviewer.oms.ports import (
     INTERIM_PORT_LABELS,
@@ -50,12 +52,15 @@ from candleviewer.oms.ports import (
     SymbolRates,
     announce_interim_port,
 )
+from candleviewer.risk.day_boundary import DayBoundary
+from tests.unit.risk.test_day_boundary import Policy
 
 ACCOUNT = AccountId(UUID("7d3c9a10-28a1-4c1e-9e01-0000000000b3"))
 REF = AccountRef(account_id=ACCOUNT, uid="100001", environment="demo", key_ref="kref-1")
 NOW = datetime(2026, 10, 26, 9, 30, tzinfo=UTC)
 MIDNIGHT_US = int(datetime(2026, 10, 26, tzinfo=UTC).timestamp()) * 1_000_000
 NOW_US = MIDNIGHT_US + (9 * 3600 + 30 * 60) * 1_000_000
+LOOKBACK_US = CLOSED_PNL_LOOKBACK // timedelta(microseconds=1)
 FALLBACK = Decimal("0.02")
 
 
@@ -190,12 +195,15 @@ def _figures(
     clock: Clock | None = None,
     tiers: dict[str, Any] | None = None,
     environment: Environment = "demo",
+    *,
+    policy: Policy | None = None,
+    now: Any = lambda: NOW,
 ) -> DayRiskFigures:
     known = {"BTCUSDT": [_tier(1, "2000000", "0.01"), _tier(7, "1000", "0.005")]}
     tiers = known if tiers is None else tiers
     return DayRiskFigures(
         environment, port_for=lambda _env: cast(TradingPort, venue), tiers=tiers.get,
-        now=lambda: NOW, monotonic=clock or Clock(),
+        days=DayBoundary(policy or Policy()), now=now, monotonic=clock or Clock(),
     )  # fmt: skip
 
 
@@ -210,7 +218,7 @@ def test_day_figures_live_or_unknown_environment_refused_at_construction(
     with pytest.raises(ValueError, match="demo and testnet only"):
         DayRiskFigures(
             cast(Environment, environment), port_for=lambda _e: cast(TradingPort, Venue()),
-            tiers=lambda _s: None, now=lambda: NOW, monotonic=Clock(),
+            tiers=lambda _s: None, days=DayBoundary(Policy()), now=lambda: NOW, monotonic=Clock(),
         )  # fmt: skip
 
 
@@ -228,7 +236,7 @@ async def test_day_figures_each_figure_read_from_the_venue() -> None:
         )
     }
     assert account.taker_fee_rate is None and account.maintenance_margin_rate is None
-    assert venue.windows == [(MIDNIGHT_US, NOW_US)]  # since 00:00 UTC
+    assert venue.windows == [(MIDNIGHT_US - LOOKBACK_US, NOW_US)]  # the lookback before 00:00 UTC
 
 
 async def test_day_figures_net_gain_today_gives_zero_loss() -> None:
@@ -294,8 +302,9 @@ async def test_peek_never_reads_the_venue() -> None:
         return cast(TradingPort, venue)
 
     figures = DayRiskFigures(
-        "demo", port_for=port_for, tiers=lambda _s: None, now=lambda: NOW, monotonic=Clock()
-    )
+        "demo", port_for=port_for, tiers=lambda _s: None, days=DayBoundary(Policy()),
+        now=lambda: NOW, monotonic=Clock(),
+    )  # fmt: skip
     assert not inspect.iscoroutinefunction(DayRiskFigures.peek)
     assert _peek(figures) is None and _peek(NoDayFigures()) is None
     await asyncio.sleep(0)  # a read the peek started would have asked for its port by now
@@ -541,7 +550,7 @@ async def test_day_figures_unknown_or_unreadable_tiers_give_none() -> None:
     ].maintenance_margin_rate is None
     figures = DayRiskFigures(
         "demo", port_for=lambda _e: cast(TradingPort, venue), tiers=broken,
-        now=lambda: NOW, monotonic=Clock(),
+        days=DayBoundary(Policy()), now=lambda: NOW, monotonic=Clock(),
     )  # fmt: skip
     assert (await _read(figures)).symbols["BTCUSDT"].maintenance_margin_rate is None
 
@@ -573,3 +582,114 @@ def test_risk_figures_interim_label_counted() -> None:
     assert announce_interim_port("risk_figures", port, metrics=metrics) is True
     line = 'oms_interim_ports{env="demo",port="risk_figures"} 1.0'
     assert line in generate_latest(metrics.registry).decode()
+
+
+# --- the day's loss in the resolver's day (E29-S06 #981 slice 4; 24 Sec.8.13) --------------------
+
+MIDNIGHT = datetime(2026, 10, 26, tzinfo=UTC)  # NOW's day at the default offset 0
+PLUS_180 = datetime(2026, 10, 25, 21, tzinfo=UTC)  # NOW's day at +180 (UTC+3) starts here
+DAY, H, US = timedelta(hours=24), timedelta(hours=1), timedelta(microseconds=1)
+OTHER = AccountId(UUID("7d3c9a10-28a1-4c1e-9e01-0000000000c4"))
+
+
+def _us(at: datetime) -> int:
+    return (at - datetime(1970, 1, 1, tzinfo=UTC)) // US
+
+
+def _closed(amount: str, at: datetime, *, order: str | None = None, made: Any = None) -> ClosedPnl:
+    """A record of `amount` the venue last updated at `at` (its `closed_at`), made at `made`."""
+    made_us = _us(at if made is None else made)
+    return _pnl(amount).model_copy(
+        update={"closed_at": _us(at), "created_at": made_us, "exchange_order_id": order}
+    )
+
+
+async def test_day_loss_sums_the_records_closed_in_the_resolvers_day_after_its_lookback() -> None:
+    """+180: the day runs from 21:00Z of the previous UTC date; the read starts the lookback
+    before it, and a record counts in the day of its own `updatedTime`, half-open, whenever the
+    venue made it."""
+    venue = Venue()
+    venue.records = [
+        _closed("-1000", PLUS_180 - US),  # the day before: read, never counted
+        _closed("-40", PLUS_180),  # the day's first instant
+        _closed("-7", NOW, made=PLUS_180 - 2 * DAY),  # made before the day, closed in it
+        _closed("5", NOW),
+        _closed("-900", PLUS_180 + DAY),  # `next_start`: the next day's
+    ]
+    reading = await _read(_figures(venue, policy=Policy(180)))
+    assert reading.account.realised_loss_today == Decimal(42)  # 40 + 7 - 5
+    assert venue.windows == [(_us(PLUS_180 - CLOSED_PNL_LOOKBACK), NOW_US)]
+
+
+async def test_day_loss_counts_each_record_of_one_order_in_its_own_day() -> None:
+    """Two records of one closing order either side of `day_start`: the day counts the one
+    closed in it, never both at the order's latest `updatedTime` (the sync's `merged`)."""
+    venue = Venue()
+    venue.records = [_closed("-50", MIDNIGHT - H, order="o-1"), _closed("-30", NOW, order="o-1")]
+    assert (await _read(_figures(venue))).account.realised_loss_today == Decimal(30)
+
+
+async def test_day_loss_is_unknown_when_the_day_cannot_be_resolved_never_at_utc_midnight() -> None:
+    venue = Venue()
+    reading = await _read(_figures(venue, policy=Policy(failure=OSError("postgres unreachable"))))
+    assert reading.account.realised_loss_today is None and "closed_pnl" not in venue.calls
+    assert reading.account.equity == Decimal(1000)  # the other figures still stand
+
+
+async def test_day_loss_is_unknown_when_a_record_names_another_account() -> None:
+    venue = Venue()
+    venue.records = [_pnl("-30"), _pnl("10").model_copy(update={"account_id": OTHER})]
+    assert (await _read(_figures(venue))).account.realised_loss_today is None
+
+
+async def test_a_kept_loss_is_never_served_past_its_days_next_start() -> None:
+    """Kept at the day's last instant, the loss is stale at its `next_start`, inside
+    `FIGURES_TTL_S`: `peek` answers None and `read` sums the new day, from its own lookback."""
+    venue, clock, wall = Venue(), Clock(), [MIDNIGHT + DAY - US]
+    figures = _figures(venue, clock, now=lambda: wall[0])
+    assert (await _read(figures)).account.realised_loss_today == Decimal(20)
+    assert _peek(figures) is not None
+    wall[0], clock.t = MIDNIGHT + DAY, clock.t + 1
+    assert _peek(figures) is None
+    venue.records = [_closed("-30", MIDNIGHT + DAY)]
+    assert (await _read(figures)).account.realised_loss_today == Decimal(30)
+    assert venue.windows[-1] == (_us(MIDNIGHT + DAY - CLOSED_PNL_LOOKBACK), _us(MIDNIGHT + DAY))
+
+
+@pytest.mark.parametrize("crossing", ["closed_pnl", "fee_rate"], ids=["its_own_read", "kept"])
+async def test_a_read_across_its_days_next_start_answers_the_loss_unknown(crossing: str) -> None:
+    """Begun at the day's last instant, a read whose venue read completes at the day's
+    `next_start` answers the loss unknown, never the ended day's: one its own read summed, or one
+    kept inside `FIGURES_TTL_S` while the fee read of a symbol not yet read crossed it."""
+    venue, clock, wall = Venue(), Clock(), [MIDNIGHT + DAY - US]
+    figures = _figures(venue, clock, now=lambda: wall[0])
+    symbol: Symbol = "BTCUSDT"
+    if crossing == "fee_rate":
+        assert (await _read(figures)).account.realised_loss_today == Decimal(20)  # kept
+        symbol = "ETHUSDT"
+    venue.paused = {crossing}
+    async with asyncio.TaskGroup() as group:
+        read = group.create_task(figures.read(REF, [symbol], fallback_sl_offset_pct=FALLBACK))
+        await venue.entered.wait()
+        wall[0] = MIDNIGHT + DAY  # the day ends while the venue read is in flight
+        venue.release.set()
+    assert read.result().account.realised_loss_today is None
+    assert venue.calls.count("closed_pnl") == 1  # the kept loss was not read again
+
+
+async def test_a_kept_loss_is_never_served_before_its_days_day_start() -> None:
+    """Kept at its day's first instant, the loss is served there and stale an instant before it,
+    inside `FIGURES_TTL_S` (a wall clock stepped back): `peek` answers None and `read` sums the
+    day before again, which the resolver keeps as served."""
+    venue, clock, wall = Venue(), Clock(), [MIDNIGHT - H]
+    venue.records = [_closed("-40", MIDNIGHT - H), _closed("-30", MIDNIGHT)]
+    figures = _figures(venue, clock, now=lambda: wall[0])
+    assert (await _read(figures)).account.realised_loss_today == Decimal(40)  # the day before
+    wall[0], clock.t = MIDNIGHT, clock.t + 1
+    assert (await _read(figures)).account.realised_loss_today == Decimal(30)  # kept at day_start
+    assert _peek(figures) is not None
+    wall[0], clock.t = MIDNIGHT - US, clock.t + 1
+    assert _peek(figures) is None
+    assert (await _read(figures)).account.realised_loss_today == Decimal(40)
+    assert venue.calls.count("closed_pnl") == 3
+    assert venue.windows[-1] == (_us(MIDNIGHT - DAY - CLOSED_PNL_LOOKBACK), _us(MIDNIGHT - US))

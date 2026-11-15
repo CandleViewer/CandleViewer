@@ -32,6 +32,8 @@ The orchestrator's ruling of 2026-11-03 (08:03Z), as the four plan documents sta
   with its review of 2026-11-05 (04:05Z), an unasked cancel paged too and a start the lane did
   not confirm a fault as well, in the same words there and in `_oms_state`; logged once, as
   Sec.19.134.
+- Slice 4's lens fold: the sync's day is the resolver's and Sec.9.3.6 drops the cap's UTC instant;
+  logged once, as Sec.19.135, with the two layers of the ruling of 2026-11-05 (02:37Z).
 
 Nothing serves the new members yet: E29-S06's later slices implement them against this contract.
 """
@@ -971,4 +973,36 @@ def test_contract_24_and_20_count_a_crossing_between_accounts_apart_and_ticket_i
         "raises the ticket `OmsClosedPnlAccountCrossing`, modelled on `BybitRowsRefusedAccount`; "
         "the histogram's `max_series` is 3.",
         "No REST operation, WS frame, table, column, migration, chart or `machine_hash` changes.",
+    )
+
+
+def test_contract_24_gives_the_cap_and_the_sync_the_one_resolver_and_logs_it_once() -> None:
+    """Slice 4's lens fold (M1): Sec.8.13 "Its composition" gives the sync the resolver's day and
+    Sec.9.3.6 drops the UTC instant the cap read until this slice. Sec.19.135, which occurs once,
+    logs the one resolver on one clock, a kept day's loss served only inside its day and its TTL,
+    and the two layers of the orchestrator's ruling of 2026-11-05 (02:37Z)."""
+    internal = _doc("24-internal-schemas.md")
+    for stale in ("Its day is the UTC day until", "the instant read until E29-S06 rewires it)"):
+        assert stale not in internal, stale
+    assert not _missing(
+        _s813(),
+        "and the exchange-synced clock the position store reads, so the seed's 5 s skew is "
+        "measured on the server's time. Its day is the resolver's (§8.13 "
+        '"The day boundary"). It starts where the runtime sets `ready`',
+    )
+    assert internal.count("\n### 19.135 ") == 1
+    log = _between(internal, "### 19.135 ", "\n### 19.")
+    assert not _missing(
+        log,
+        "2026-11-05 — §8.13 and §9.3.6: the cap and the sync take the one day resolver, and a kept "
+        "day's loss is served only inside its day (E29-S06, #981)",
+        "The orchestrator assigned this number on 2026-11-05",
+        "the order path's daily-loss figure (`DayRiskFigures`, the cap) and the closed-PnL sync "
+        "take the one resolver and hand it instants from one clock, the exchange-synced one",
+        "A kept day's loss is unknown from its day's `next_start` and before its `day_start`, and "
+        "also past `FIGURES_TTL_S` (§9.3.6's few seconds), for `DayRiskFigures.read` and `peek` "
+        "alike, and a failed re-read never serves it",
+        "on the order path the fail-closed answer is the size step's `figure_unknown` (`503 "
+        "sizing_unavailable` with `Retry-After`), as §8.4 reads the figures before the risk gate, "
+        "while the gate's own `risk_state_unavailable` stays for held costs (#881 addendum 3).",
     )

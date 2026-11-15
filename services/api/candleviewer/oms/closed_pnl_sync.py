@@ -140,12 +140,6 @@ class _OtherAccount(Exception):
     """The resolve, a record or a position reading names another account (C-2.11)."""
 
 
-def utc_day_start(at: datetime) -> datetime:
-    """00:00 UTC of `at`'s day: offset 0, the instant the order path reads until E29-S06's resolver
-    slice wires `risk_policy.day_boundary_utc_offset_minutes` (24 Sec.8.13, Sec.9.3.6)."""
-    return at.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-
-
 def _refused(error: Exception) -> bool:
     """The account binding's refusal outright (`TradingAccountsBinding`): the account missing,
     soft-deleted or another environment's (`AccountScopeDenied`), or holding no active key."""
@@ -245,8 +239,9 @@ class _Account:
 
 
 class ClosedPnlSync:
-    """`now` is the wall clock a read's window takes; `day_start` the day's start for an instant,
-    00:00 UTC until E29-S06's resolver slice passes its own; `on_ended` what is told, once, on the
+    """`now` is the wall clock a read's window takes; `day_start` the start of the day holding an
+    instant, from the one resolver the cap takes too (`risk.day_boundary`, 24 Sec.8.13), whose
+    failure fails the read, so the poll keeps running; `on_ended` what is told, once, on the
     task's loop, that the task ended other than by `stop()` (the runtime's page): it must not
     raise."""
 
@@ -254,7 +249,7 @@ class ClosedPnlSync:
         self, *, accounts: TradingAccounts, router: ReadRouter, records: ClosedPnlRecords,
         closes: StoredCloses, snapshots: SnapshotWrites, metrics: Metrics,
         now: Callable[[], datetime], on_ended: Callable[[], None],
-        day_start: Callable[[datetime], datetime] = utc_day_start,
+        day_start: Callable[[datetime], Awaitable[datetime]],
     ) -> None:  # fmt: skip
         self._accounts, self._router, self._records = accounts, router, records
         self._closes, self._snapshots = closes, snapshots
@@ -386,7 +381,7 @@ class ClosedPnlSync:
         """The read, the records' writes and row 56's poll, then the seed, last so a slow one
         delays none of them: whether a record is left to poll."""
         now = self._now()
-        reach = self._day_start(now) - CLOSED_PNL_LOOKBACK
+        reach = await _bounded(self._day_start(now), PORT_TIMEOUT_S) - CLOSED_PNL_LOOKBACK
         account, records = await self._fetch(account_id, reach, now)
         for record in merged(records):
             await self._settle(record)
