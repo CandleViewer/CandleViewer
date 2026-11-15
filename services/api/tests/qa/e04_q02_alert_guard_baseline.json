@@ -265,6 +265,12 @@
       "reason": "labelled (result) histogram of the closed-PnL sync: no other_account sample until its first crossing between accounts, and none where no sync runs (a live process fails closed first)"
     },
     {
+      "alert": "OmsClosedPnlDivergence",
+      "series": "oms_closed_pnl_divergence_total",
+      "class": "lazy-series",
+      "reason": "unlabelled counter of the closed-PnL comparison (oms/closed_pnl_compare.py): bound when the sync comparer is initialized; no sample where closed-PnL sync is not wired"
+    },
+    {
       "alert": "RecorderAnchorSkipped",
       "series": "recorder_anchor_skipped_total",
       "class": "lazy-series",

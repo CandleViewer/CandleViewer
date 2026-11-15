@@ -63,6 +63,7 @@ def producer_job(name: str) -> str | None:
 _PLANNED_BUT_EMITTED: Final = {
     "cv_outbox_dead_total": "app.py",  # bound at start by the alert.deliver dispatcher
     "cv_outbox_depth": "app.py",
+    "oms_closed_pnl_divergence_total": "oms/closed_pnl_compare.py",
     "oms_closed_pnl_fetch_seconds": "oms/closed_pnl_sync.py",
     "oms_position_reading_owed_age_seconds": "oms_stream_wiring.py",
     "oms_unknown_orders": "oms/order_machine.py",
