@@ -612,6 +612,8 @@ const COVERED: Readonly<Record<string, string>> = {
   "features/alerts/AlertsScreen.tsx": "matrix: AlertsScreen delete confirm",
   "features/reconciliation/ResolveDialog.tsx":
     "features/reconciliation/ResolveDialog.test.tsx; ui Dialog row",
+  "features/indicators/settings/IndicatorSettingsDialog.tsx":
+    "features/indicators/settingsDialog.test.tsx; ui Dialog row",
   // QuickSwitcher.tsx is not listed on purpose: it only mounts SymbolSearch, which holds the one Dialog.
 };
 const DIALOG_SOURCE =
