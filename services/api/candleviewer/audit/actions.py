@@ -211,6 +211,11 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # order no row takes, recorded `untracked` with the venue's identity, written ahead of the
         # row (system actor). The only adoption v1 has: no human adopt action exists (D6, BQ-17).
         "order.adopted_untracked",
+        # E29-S06 (#981, 24 Sec.15.5, Sec.8.13; registered before its first emitter): a
+        # closed-PnL record whose local composition differs from the venue's figure, or whose
+        # venue figure is still missing at the end of the reach, written ahead of the record's
+        # flag (system actor), the record its object, the figures in its after-state.
+        "pnl.divergence_detected",
         # E29-T04 (#913, 24 Sec.15.5, 21 Sec.3.3.11 "Audit"): a stop request the OMS records for a
         # position, written ahead with its row (`sl.attached`; `tp.modified` for a take-profit
         # side), and a void of one (`sl.modified`, `tp.modified`). Keyed (`writer.KEYED_ACTIONS`):
