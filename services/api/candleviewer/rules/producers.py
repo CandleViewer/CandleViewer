@@ -5,9 +5,11 @@ never see the source. Each is attached to its own `PushSink`, which pushes only 
 `MetricDemand` holds, the bound refs (`bound_ref`, the evaluator's own helper, so the key a
 producer writes is the key an instance reads) of every evaluable rule, rebuilt on a rule change
 (`poke`) and on a `REFRESH_S` fallback timer. A name outside the registry or the producer's own
-set, a ref outside the demand, or a key past `MAX_DEMAND_REFS` is refused and counted, never
-written (C-2.18). Every producer callback runs inside the sink's guard: an exception is counted
-and logged once per episode, with the producer's name and the exception class only (C-12.6).
+set, a ref outside the demand, a key past `MAX_DEMAND_REFS`, or a value whose event time lies
+past the injected wall clock (beyond `MAX_FUTURE_SKEW_MS`) or whose cadence is not positive or
+past `MAX_CADENCE_MS` is refused and counted, never written (C-2.18). Every producer callback
+runs inside the sink's guard: an exception is counted and logged once per episode, with the
+producer's name and the exception class only (C-12.6).
 
 Only market-scope metrics are demanded (registry scope ``symbol`` or ``global``, no account in
 the ref): the account- and position-scope rows are blocked by #1204 Part B's binding rule.
@@ -68,8 +70,15 @@ SOURCE_DEGRADED: Final = "source_degraded"
 ANY_SYMBOL: Final = "*"
 #: Registry scopes the bridge serves: the market ones (#1204 Part B's binding rule).
 MARKET_SCOPES: Final = frozenset({"symbol", "global"})
+#: How far past the injected wall clock a value's event time may lie (exchange clock lead); a
+#: later stamp is refused (``stamp``), so a mis-scaled time never reads fresh for ever.
+MAX_FUTURE_SKEW_MS: Final = 5_000
+#: The longest cadence a value may carry (a weekly bar); zero, negative or longer is ``stamp``.
+MAX_CADENCE_MS: Final = 7 * 86_400_000
 
-Refusal = Literal["unregistered", "undemanded", "demand_cap", "lease", "lease_timeout", "params"]
+Refusal = Literal[
+    "unregistered", "undemanded", "demand_cap", "lease", "lease_timeout", "params", "stamp"
+]
 _REFUSALS: Final = frozenset(get_args(Refusal))
 _SERIES: Final = (
     "rule_metric_pushes_total", "rule_metric_producer_errors_total",
@@ -321,7 +330,9 @@ class PushSink:
         self, want: Want, symbol: str | None, value: Value, ts_ms: int, cadence_ms: int
     ) -> bool:
         """Write `value` (exchange event time `ts_ms`, the producer's real cadence) under the key
-        `want` is read by for `symbol`. A None value is not pushed (never defaulted, E3)."""
+        `want` is read by for `symbol`. A None value is not pushed (never defaulted, E3); a time
+        past the wall clock's `MAX_FUTURE_SKEW_MS`, or a cadence not in ``(0, MAX_CADENCE_MS]``,
+        is refused (``stamp``)."""
         bridge = self._bridge
         source = bridge.source
         if source is None or value is None:
@@ -331,6 +342,9 @@ class PushSink:
             return False
         if not bridge.demand.current(want):
             bridge.metrics.refused("undemanded")
+            return False
+        if not 0 < cadence_ms <= MAX_CADENCE_MS or ts_ms > bridge.wall_ms() + MAX_FUTURE_SKEW_MS:
+            bridge.metrics.refused("stamp")  # staleness and the watchdog trust both
             return False
         live = want.lives.get(symbol)
         if live is None and (live := bridge.live_for(want, symbol, self)) is None:
@@ -429,9 +443,11 @@ class ProducerBridge:
         *,
         metrics: Metrics | None = None,
         clock: Callable[[], float] = time.monotonic,
+        wall_ms: Callable[[], int] = lambda: time.time_ns() // 1_000_000,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._rules, self._scopes = rules, scopes
+        self.wall_ms = wall_ms  # UTC epoch ms: the bound on a pushed value's event time
         self.registered = frozenset(scopes)
         self.metrics = ProducerMetrics(metrics)
         self.clock, self._sleep = clock, sleep
@@ -472,8 +488,10 @@ class ProducerBridge:
             sink.guard(producer.attach, sink)
 
     async def detach(self) -> None:
-        """Stop the producers, then the timers; forget the demand. Call before the runner stops."""
-        if self.source is None:
+        """Stop the producers, then the timers; discard every key written and forget the demand.
+        Call before the runner stops."""
+        source = self.source
+        if source is None:
             return
         self.submit = None
         try:
@@ -490,6 +508,9 @@ class ProducerBridge:
             if tasks:
                 await asyncio.wait(tasks)
             self.flush(self.demand.wants.values())
+            for want in self.demand.wants.values():  # what was written leaves with the bridge
+                for live in want.lives.values():
+                    source.discard(live.key)
             self._sinks, self.source = [], None
             self.demand, self.lives, self.any_lives = MetricDemand(), 0, 0
             self.version += 1
@@ -581,12 +602,16 @@ class ProducerBridge:
         return evicted
 
     def live_for(self, want: Want, symbol: str | None, sink: PushSink) -> _Live | None:
-        """The bookkeeping of the first push of `want` for `symbol`, or None (refused, counted).
-        A key of a rule that lists no symbol fits only in what the explicit refs leave."""
+        """The `_Live` record of the first push of `want` for `symbol`, or None (refused and
+        counted). A listed symbol takes its bound ref; a rule that lists no symbol binds its
+        template to `symbol`, which must name one (never None, ``""`` or ``*``: that key is the
+        symbol-less readers'), and fits only in what the explicit refs leave."""
         ref = want.bound.get(symbol)
         any_symbol = ref is None
         if any_symbol and want.any_symbol and want.template is not None and symbol is not None:
             ref = bound_ref(want.template, symbol, None, self._scopes)
+            if not ref.symbol or ref.symbol == ANY_SYMBOL:
+                ref = None  # nothing bound: never written under the unbound key
         if ref is None:
             self.metrics.refused("undemanded")
             return None
