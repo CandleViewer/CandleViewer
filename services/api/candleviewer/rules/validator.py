@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Final
 
+from candleviewer.rules.compiler.common import value_issues
 from candleviewer.rules.errors import ConstantTypeError
 from candleviewer.rules.evaluator.nodes import check_constants
 from candleviewer.rules.ir import (
@@ -25,6 +26,7 @@ from candleviewer.rules.ir import (
     Rule,
     TemporalNode,
 )
+from candleviewer.rules.ir.canonical import IrValueError, ir_hash
 from candleviewer.rules.ir.models import MAX_NUMBER_TEXT
 from candleviewer.rules.issues import MAX_RETURNED_ISSUES, Issue
 from candleviewer.rules.limits import above_cap, cap_message
@@ -304,4 +306,33 @@ def validate_rule(
     return _Validator(rule, registry, limit_caps).run()
 
 
-__all__ = ["RuleValidationResult", "estimate_evaluations_per_minute", "validate_rule"]
+def validate_and_hash(
+    rule: Rule, registry: MetricRegistry, *, limit_caps: bool = False
+) -> tuple[RuleValidationResult, str | None, IrValueError | None]:
+    """Validate one rule in isolation, consulting the validator before the content hash in the
+    canonical saves' order (#5992).
+
+    1. Semantic and vocabulary validation runs first.
+    2. If the validator reports errors, they take precedence; the content hash is attempted, but
+       if it fails, the validator's errors are answered.
+    3. If the validator reports no errors, any content hash failure (IrValueError) is recorded as a
+       `schema_error` (syntax class).
+    """
+    res = validate_rule(rule, registry, limit_caps=limit_caps)
+    h: str | None = None
+    hash_exc: IrValueError | None = None
+    try:
+        h = ir_hash(rule)
+    except IrValueError as exc:
+        hash_exc = exc
+        if not res.errors:
+            res.errors.append(value_issues(exc)[0])
+    return res, h, hash_exc
+
+
+__all__ = [
+    "RuleValidationResult",
+    "estimate_evaluations_per_minute",
+    "validate_and_hash",
+    "validate_rule",
+]

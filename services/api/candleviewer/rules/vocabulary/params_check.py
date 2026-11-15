@@ -13,9 +13,9 @@ anything else, so no bound is published that this does not read.
   constant's text and as 22's `Decimal` carries a number (convention C6): ASCII digits with an
   optional sign, point and exponent, nothing around them, at most `MAX_NUMBER_TEXT` characters.
   `NaN`, an infinity, a number past that range in either spelling, and any other text are no
-  number. An integer is a number without a fraction. Validate and compile hash a document before
-  they validate it (#4185), so there a number no rule can hold is the content hash's refusal; a
-  save validates first, so there it is this check's.
+  number. An integer is a number without a fraction. Validate, compile and the saves validate a
+  document before they hash it, so a number no rule can hold is this check's refusal across all
+  routes (#5992).
 - `maxLength` counts a text's characters (code points).
 - A property holding `null` is absent, as the validator's `required` check has always read it.
 - A defect's text is `_TEXT`'s, from the schema alone: it names the parameter and the bound it
