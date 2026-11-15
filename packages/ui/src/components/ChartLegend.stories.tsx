@@ -89,8 +89,10 @@ export const PopoverOpen: Story = {
     const dialog = await waitFor(() => {
       const el = within(document.body).getByRole("dialog");
       expect(el).toBeVisible();
+      expect(el).toHaveAttribute("data-positioned");
       return el;
     });
+    dialog.querySelector<HTMLElement>("button")?.focus();
     await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
   },
 };
