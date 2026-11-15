@@ -528,3 +528,6 @@ export type {
   LegendMarker,
   SlotToken,
 } from "./ChartLegend.js";
+
+export { TreeView } from "./TreeView.js";
+export type { TreeItemActionsContext, TreeNode, TreeViewProps } from "./TreeView.js";
