@@ -138,9 +138,12 @@ def test_metric_param_ir_returned_or_stored_rehashes_alike_and_resaves_as_no_ver
     made = c.post("/rules", content=_raw({"ir": _ir()}, spelling), headers=_JSON)
     assert made.status_code == 201, made.text
     rid, version = made.json()["id"], made.json()["version"]
-    stored = c.get(f"/rules/{rid}/versions/{version['id']}").json()["ir"]
-    assert ir_hash(Rule.model_validate(stored)) == version["ir_hash"]
-    same = c.put(f"/rules/{rid}", json={"ir": stored}, headers={"If-Match": "1"})
+    ver = c.get(f"/rules/{rid}/versions/{version['id']}").json()
+    stored = ver["ir"]
+    assert ver["ir_hash"] == version["ir_hash"]
+    same = c.put(
+        f"/rules/{rid}", json={"name": made.json()["name"], "ir": stored}, headers={"If-Match": "1"}
+    )
     assert same.status_code == 200, same.text
     assert (same.json()["version"], same.json()["ir_hash"]) == (1, version["ir_hash"])
 

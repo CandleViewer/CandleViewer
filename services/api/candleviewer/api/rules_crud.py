@@ -96,6 +96,8 @@ def _doc(body: dict[str, Any]) -> dict[str, Any] | None:
     doc = dict(ir)
     if isinstance(body.get("name"), str):
         doc["name"] = body["name"]
+    if "graph_layout" in body:
+        doc["graph_layout"] = body["graph_layout"]
     if "scope" not in doc and isinstance(body.get("scope"), str):
         doc["scope"] = {"level": body["scope"]}
     return doc

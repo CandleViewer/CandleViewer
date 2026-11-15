@@ -126,7 +126,7 @@ class _Env:
 
     def stored(self, rid: str) -> tuple[list[Any], list[Any], str]:
         """The rule's version notes, every rule's names and its mode."""
-        notes = [v["notes"] for v in self.c.get(f"/rules/{rid}/versions").json()["items"]]
+        notes = [v.get("note") for v in self.c.get(f"/rules/{rid}/versions").json()["items"]]
         names = [r["name"] for r in self.c.get("/rules").json()["items"]]
         return notes, names, self.c.get(f"/rules/{rid}").json()["mode"]
 
