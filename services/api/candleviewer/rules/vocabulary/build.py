@@ -47,7 +47,13 @@ def undescribed_metrics(registry: MetricRegistry) -> list[str]:
     return [n for n in registry.names() if n not in DEFAULT_DOCS]
 
 
-def _signal(d: Any, symbol: str | None, recorded: Collection[str] | None) -> dict[str, Any]:
+#: A metric no producer feeds while the bridge runs (E35-T15): public wording, one sentence.
+PRODUCER_GAP_REASON = "No live data source yet."
+
+
+def _signal(
+    d: Any, symbol: str | None, recorded: Collection[str] | None, gaps: Collection[str] | None
+) -> dict[str, Any]:
     desc, rng = DEFAULT_DOCS.get(d.name, ("", ""))
     needs = sorted(set(d.inputs) & RECORDED_INPUTS)
     schema = kernel_params_schema(d.name)  # a kernel-bound metric: its indicator's schema
@@ -71,7 +77,11 @@ def _signal(d: Any, symbol: str | None, recorded: Collection[str] | None) -> dic
         "when_unavailable": d.nullable_when,
         "available": True,
     }
-    if needs and symbol is not None and symbol not in (recorded or ()):
+    if gaps is not None and d.name in gaps:  # a producer gap wins over a recording one
+        entry["available"] = False
+        entry["unavailable_reason"] = PRODUCER_GAP_REASON
+        entry["missing_dependency"] = {"kind": "producer"}
+    elif needs and symbol is not None and symbol not in (recorded or ()):
         entry["available"] = False
         entry["unavailable_reason"] = f"{symbol} is not on the recorded-symbol list"
         entry["missing_dependency"] = {"kind": "recording", "symbol": symbol, "inputs": needs}
@@ -107,7 +117,10 @@ def build_vocabulary(
     permissions: Collection[str] = (),
     symbol: str | None = None,
     recorded_symbols: Collection[str] | None = None,
+    producer_gaps: Collection[str] | None = None,
 ) -> dict[str, Any]:
+    """`producer_gaps` names the metrics no live producer feeds; None (the evaluator off, and
+    `content_hash`) marks nothing."""
     if len(registry) == 0:
         raise VocabularyUnavailableError("metric registry is empty")
     for name in undescribed_metrics(registry):
@@ -124,7 +137,7 @@ def build_vocabulary(
     return {
         "ir_version": "1",
         "vocabulary_version": VOCABULARY_VERSION,
-        "signals": [_signal(d, symbol, recorded_symbols) for d in registry],
+        "signals": [_signal(d, symbol, recorded_symbols, producer_gaps) for d in registry],
         "operators": ops,
         "actions": [_action(a, permissions) for a in ACTIONS],
         "triggers": triggers,

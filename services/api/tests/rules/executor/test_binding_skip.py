@@ -18,7 +18,8 @@ import pytest
 from candleviewer.rules.executor.dispatch import Fire
 from candleviewer.rules.ir.models import MetricRef
 from candleviewer.rules.scope import BINDING_CAUSE
-from tests.rules.executor.test_dispatch import DispatchRig, Start, rig, start
+from tests.rules.executor.test_dispatch import DispatchRig, Start, _actions, rig, start
+from tests.rules.executor.test_mode_split import ACTOR
 from tests.rules.test_scope_wiring import OWNER, A, B
 
 __all__ = ["rig", "start"]  # the fixtures, imported
@@ -134,3 +135,52 @@ async def test_gate_denial_still_writes_its_record_beside_a_binding_skip(
     denials = sorted((d["reason"], d["account"]) for e, d in rig.audits)
     assert denials == [("grant_revoked", str(B)), (BINDING_CAUSE, str(A))]
     assert rig.simulated == []
+
+
+# --- #5784 Minors carried to PR 2 -----------------------------------------------------------------
+
+
+async def test_binding_episode_of_a_two_action_rule_writes_one_record(
+    rig: DispatchRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    jobs = _jobs(rig, monkeypatch)
+    rid = await rig.add("simulate", accounts=(A, B), actions=_actions("a1", "a2"))
+    _pin(await rig.row(rid), B)
+    await _tick(rig)
+    await _tick(rig)
+    assert [(j.rule_id, j.kind, len(j.requests)) for j in jobs] == [(rid, "scope_denial", 1)]
+    assert len(_binding_records(rig)) == 1  # one per episode, not one per action
+    assert rig.counted.blocked() == {}
+
+
+async def test_binding_episode_survives_a_debounce_window(rig: DispatchRig) -> None:
+    """A debounce skip is decided before the refs are bound (`_UNBOUND_SKIPS`): it neither ends
+    the open episode nor starts one, so the next binding skip writes no second record."""
+    rid = await _pinned_rule(rig)
+    (await rig.row(rid)).versions[0].ir["trigger"]["debounce_ms"] = 3_000
+    await _tick(rig)  # A: binding skip, the episode's record; B fires
+    await _tick(rig)  # 2 s on: both instances inside the debounce window
+    await _tick(rig)  # 4 s on: A's binding skip again, the same episode
+    assert len(_binding_records(rig)) == 1
+    assert [r.instance.account_id for r in rig.simulated] == [B, B]  # B debounced once
+
+
+async def test_binding_episodes_drop_a_deleted_rule(rig: DispatchRig) -> None:
+    rid = await _pinned_rule(rig)
+    await _tick(rig)
+    assert set(rig.svc.binding_episodes) == {rid}
+    await rig.mgr.delete(rid, ACTOR)
+    await _tick(rig)
+    assert rig.svc.binding_episodes == {}
+
+
+async def test_binding_episodes_never_outgrow_the_live_rules(rig: DispatchRig) -> None:
+    rids = [await _pinned_rule(rig) for _ in range(3)]
+    await _tick(rig)
+    assert set(rig.svc.binding_episodes) == set(rids)
+    for rid in rids[1:]:
+        await rig.mgr.delete(rid, ACTOR)
+    (await rig.row(rids[0])).versions[0].ir["version"] = 2
+    await _tick(rig)
+    [(rid, (version, instances))] = rig.svc.binding_episodes.items()
+    assert (rid, version, len(instances)) == (rids[0], 2, 1)  # the new version's episode only
