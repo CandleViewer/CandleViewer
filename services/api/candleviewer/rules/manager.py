@@ -29,13 +29,13 @@ from candleviewer.rules.compiler.common import ConditionNodeBoundError, check_bo
 from candleviewer.rules.errors import ConstantTypeError
 from candleviewer.rules.evaluator.engine import EvaluationResult
 from candleviewer.rules.evaluator.nodes import check_constants
-from candleviewer.rules.ir import Rule, RuleScope, ir_hash
+from candleviewer.rules.ir import Rule, RuleScope
 from candleviewer.rules.ir.accounts import (
     collect_account_ids,
     holds_account_key,
     redact_account_ids,
 )
-from candleviewer.rules.ir.canonical import METADATA_KEYS, IrValueError
+from candleviewer.rules.ir.canonical import METADATA_KEYS
 from candleviewer.rules.issues import Issue, RuleCompileError
 from candleviewer.rules.lifecycle import MODES, LifecycleError, RuleLifecycle, mode_of
 from candleviewer.rules.limits import (
@@ -51,7 +51,7 @@ from candleviewer.rules.limits import (
     stored_rules_message,
 )
 from candleviewer.rules.scope import EvaluableMode
-from candleviewer.rules.validator import validate_rule
+from candleviewer.rules.validator import validate_and_hash, validate_rule
 from candleviewer.rules.vocabulary import MetricRegistry
 
 COMPILER_VERSION = "1.0.0"
@@ -1039,18 +1039,21 @@ class RulesManager:
             rule = Rule.model_validate({**ir, "rule_id": rule_id})
         except ValidationError as exc:
             raise _not_valid(exc.errors()[0]) from exc
-        res = validate_rule(rule, self._reg, limit_caps=True)
-        if res.errors:
+        res, h, hash_exc = validate_and_hash(rule, self._reg, limit_caps=True)
+        if res.errors and hash_exc is None:
             raise _ir_invalid(res.errors)
-        try:
-            return rule, ir_hash(rule)
-        except IrValueError as exc:  # a value the hash cannot hold: 422, never a 500
+        if h is not None:
+            return rule, h
+        if res.errors and any(e.code != "schema_error" for e in res.errors):
+            raise _ir_invalid([e for e in res.errors if e.code != "schema_error"])
+        if hash_exc is not None:
             raise RuleError(
                 422,
                 "rule_ir_invalid",
-                f"The rule document is not valid: {exc.reason}",
-                path="/" + "/".join(str(p) for p in exc.loc),
-            ) from exc
+                f"The rule document is not valid: {hash_exc.reason}",
+                path="/" + "/".join(str(p) for p in hash_exc.loc),
+            ) from hash_exc
+        raise _ir_invalid(res.errors)
 
     def _new_version(
         self, row: RuleRow, rule: Rule, h: str, notes: str, actor: Actor

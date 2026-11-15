@@ -7,8 +7,8 @@ its bound, never the value. A number parameter takes a number the content hash c
 text read as its number, as #5876 reads a rule constant's text and as 22's `Decimal` carries one.
 `place_order`'s `stop_loss` is the native stop (C-2.6) and mirrors 22's `Offset`: one off that
 shape, or whose value is not a number above zero, is refused as `native_stop_violation`, as an
-empty one is. Validate and compile hash a document before they validate it (#4185), so a stop
-value no rule can hold is the content hash's refusal there, and `native_stop_violation` at a save.
+empty one is. Validate, compile and the saves validate a document before they hash it, so a stop
+value no rule can hold is native_stop_violation across all four routes (#5992).
 """
 
 from __future__ import annotations
@@ -475,18 +475,20 @@ def test_update_refuses_a_refused_param_as_the_validator_does_and_adds_no_versio
 
 @pytest.mark.parametrize("held", sorted(NO_RULE_HOLDS))
 def test_validate_answers_a_stop_value_no_rule_can_hold_as_the_content_hash(held: str) -> None:
-    """Validate hashes the document before it validates it (#4185)."""
+    """Validate validates the document before it hashes it (#5992)."""
     body = _validate(_ir(actions=[NO_HOLD_STOPS[held]]))
-    assert body["errors"] == [_issue(_STOP_VALUE, NO_RULE_HOLDS[held][1])]
+    assert body["errors"] == [_validator_issue(NO_HOLD_STOPS[held], "actions[0]")]
 
 
 @pytest.mark.parametrize("held", sorted(NO_RULE_HOLDS))
 def test_compile_refuses_a_stop_value_no_rule_can_hold_as_the_content_hash(held: str) -> None:
-    """Compile hashes the rule before it validates it."""
+    """Compile validates the rule before it hashes it (#5992)."""
     compiled = _compile(_ir(actions=[NO_HOLD_STOPS[held]]))
     assert (compiled.status_code, compiled.json()["code"]) == (422, "rule_ir_invalid")
-    refusal = {"rule": "schema_error", "message": NO_RULE_HOLDS[held][1], "node_ids": []}
-    assert compiled.json()["errors"] == [{"field": _STOP_VALUE, **refusal}]
+    issue = _validator_issue(NO_HOLD_STOPS[held], "actions[0]")
+    refusal = {"rule": issue["code"], "message": issue["message"], "node_ids": []}
+    assert compiled.json()["errors"] == [{"field": "actions[0]", **refusal}]
+    assert "ir_hash" not in compiled.json()
 
 
 def test_routes_keep_their_forbidden_role_and_cross_account_refusals() -> None:

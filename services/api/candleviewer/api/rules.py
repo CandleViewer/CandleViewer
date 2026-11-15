@@ -34,12 +34,15 @@ from candleviewer.rules.compiler.common import (
     value_issues,
 )
 from candleviewer.rules.errors import ScopeForbiddenError
-from candleviewer.rules.ir import Rule, canonicalize, ir_hash
+from candleviewer.rules.ir import Rule, canonicalize
 from candleviewer.rules.ir.canonical import IrValueError
 from candleviewer.rules.ir.schema import to_json_schema
 from candleviewer.rules.issues import MAX_RETURNED_ISSUES, RuleCompileError
 from candleviewer.rules.scope import ScopeResolver
-from candleviewer.rules.validator import RuleValidationResult, validate_rule
+from candleviewer.rules.validator import (
+    RuleValidationResult,
+    validate_and_hash,
+)
 from candleviewer.rules.vocabulary import (
     MetricRegistry,
     VocabularyUnavailableError,
@@ -96,21 +99,19 @@ def _compile_error(exc: RuleCompileError | IrValueError) -> RuleCompileError:
 
 
 def _parsed(ir: dict[str, Any]) -> Rule:
-    """`validateRule`'s document as a rule: its bounds, its schema, then what compile hashes, so
-    a value the hash cannot hold is not valid."""
+    """`validateRule`'s document as a rule: its bounds and its schema (#5992)."""
     check_bounds(ir, "rule")
-    rule = build_rule(ir)
-    canonicalize(rule)
-    return rule
+    return build_rule(ir)
 
 
-def _validated(rule: Rule, registry: MetricRegistry) -> RuleValidationResult:
-    return validate_rule(rule, registry, limit_caps=True)
+def _validated(
+    rule: Rule, registry: MetricRegistry
+) -> tuple[RuleValidationResult, str | None, IrValueError | None]:
+    return validate_and_hash(rule, registry, limit_caps=True)
 
 
-def _compiled(compile_fn: _Compiler, model: dict[str, Any], rule_id: UUID) -> tuple[Rule, str]:
-    rule = compile_fn(model, rule_id)
-    return rule, ir_hash(rule)
+def _compiled(compile_fn: _Compiler, model: dict[str, Any], rule_id: UUID) -> Rule:
+    return compile_fn(model, rule_id)
 
 
 def _round_trip(
@@ -427,7 +428,7 @@ def make_rules_router(
         forbidden = await _authorize_scope(principal, rule)
         if forbidden is not None:
             return forbidden
-        result = await run(_validated, rule, registry)
+        result, _, _ = await run(_validated, rule, registry)
         return JSONResponse(result.to_dict())
 
     @router.post("/rules/{ruleId}/compile")
@@ -461,14 +462,17 @@ def make_rules_router(
     ) -> Response:
         compile_fn = compile_form if editor == "form" else compile_graph
         try:
-            rule, rule_hash = await run(_compiled, compile_fn, model, ruleId)
+            rule = await run(_compiled, compile_fn, model, ruleId)
         except (RuleCompileError, IrValueError) as exc:
             on_compile(editor, "invalid")
             return _invalid(_counted(exc))
         forbidden = await _authorize_scope(principal, rule)
         if forbidden is not None:
             return forbidden
-        result = await run(_validated, rule, registry)
+        result, rule_hash, _ = await run(_validated, rule, registry)
+        if rule_hash is None:
+            on_compile(editor, "invalid")
+            return _invalid(RuleCompileError(result.errors))
         on_compile(editor, "ok" if result.valid else "issues")
         issues = [*result.errors, *result.warnings]
         payload: dict[str, Any] = {
