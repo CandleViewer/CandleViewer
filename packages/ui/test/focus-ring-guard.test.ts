@@ -177,6 +177,15 @@ const SITES: Readonly<Record<string, Site>> = {
     reason:
       "the input sits in the editing well; the well draws the ring over its 2 px focus-ring border while open (E29-D02)",
   },
+  [`${UI}/treeview.css|.cv-tree__item`]: {
+    kind: "container-focus",
+    ring: {
+      file: `${UI}/treeview.css`,
+      selector: ".cv-tree__item:focus-visible > .cv-tree__row",
+    },
+    reason:
+      "the tree item holds focus; its row draws the inset ring so the scroll box never clips it",
+  },
   [`${UI}/popover.css|.cv-popover:focus`]: {
     kind: "programmatic-target",
     reason: "tabindex -1 fallback target (conventions 32); not a control, never reached by Tab",
