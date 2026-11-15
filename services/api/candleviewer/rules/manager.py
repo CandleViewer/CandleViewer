@@ -935,18 +935,57 @@ class RulesManager:
                 await self._bc({"topic": "rules", **payload})
         return row
 
-    @staticmethod
-    def _version_view(v: VersionRow, full: bool = False) -> dict[str, Any]:
-        out: dict[str, Any] = {
+    @classmethod
+    def _version_view(
+        cls,
+        v: VersionRow,
+        row: RuleRow | None = None,
+        full: bool = False,
+        contract: bool = False,
+    ) -> dict[str, Any]:
+        if not contract:
+            out: dict[str, Any] = {
+                "id": v.id,
+                "version": v.version,
+                "ir_hash": v.ir_hash,
+                "compiler_version": v.compiler_version,
+                "notes": v.notes,
+                "author": v.author,
+            }
+            if full:
+                out["ir"] = copy.deepcopy(v.ir)
+            return out
+
+        rule_id = row.id if row is not None else v.rule_id
+        is_active = bool(row is not None and row.active_version_id == v.id)
+        out = {
             "id": v.id,
+            "rule_id": rule_id,
             "version": v.version,
             "ir_hash": v.ir_hash,
-            "compiler_version": v.compiler_version,
-            "notes": v.notes,
-            "author": v.author,
+            "is_active": is_active,
         }
+        author = v.author or (v.ir.get("created_by") if isinstance(v.ir, dict) else None)
+        if author:
+            try:
+                out["created_by"] = str(uuid.UUID(str(author)))
+            except (ValueError, TypeError, AttributeError):
+                pass
+        saved_at = _saved_at(v.ir)
+        if saved_at is not None:
+            out["created_at"] = saved_at
+        if v.notes:
+            out["note"] = v.notes
+
         if full:
-            out["ir"] = copy.deepcopy(v.ir)
+            bad = quarantine_path(v.ir) if isinstance(v.ir, dict) else "/"
+            if bad is not None:
+                out["graph_layout"] = None
+            else:
+                try:
+                    out["ir"], out["graph_layout"] = _ir_and_layout(v.ir)
+                except Exception:
+                    out["graph_layout"] = None
         return out
 
     async def check_save_body(
@@ -1144,9 +1183,15 @@ class RulesManager:
                 updated_at=_saved_at(saved),
                 title="If-Match / ETag precondition failed",  # 22's `PreconditionFailed` (#4674)
             )
-        rule, h = self._validated(
-            {**ir, "mode": row.mode, "enabled": row.mode != "disabled"}, rule_id
-        )
+        doc = {
+            **ir,
+            "version": ir.get("version", 1),
+            "mode": row.mode,
+            "enabled": row.mode != "disabled",
+        }
+        if "name" not in doc:
+            doc["name"] = row.name
+        rule, h = self._validated(doc, rule_id)
         await self._require_grants(rule, actor, "update", rule_id)
         await self._require_owner_for_raised_limits(rule, actor, "update", rule_id)
         if rule.name != row.name:
@@ -1213,14 +1258,14 @@ class RulesManager:
         A rule outside the caller's scope is the 404 of a missing rule."""
         row = await self._visible_row(rule_id, actor)
         await self._present(row)
-        return [self._version_view(v) for v in reversed(row.versions)]
+        return [self._version_view(v, row=row, contract=True) for v in reversed(row.versions)]
 
     async def version_for(self, rule_id: str, version_id: str, actor: Actor) -> dict[str, Any]:
         """`GET /rules/{ruleId}/versions/{versionId}` from one scoped read, as `versions_for`: on a
         rule outside the caller's scope a real version and a missing one are the same 404."""
         row = await self._visible_row(rule_id, actor)
         await self._present(row)
-        return self._pick_version(row, version_id)
+        return self._pick_version(row, version_id, contract=True)
 
     async def visible_version(
         self, rule_id: str, version_id: str, actor: Actor, op: str
@@ -1230,10 +1275,12 @@ class RulesManager:
         (no existence oracle, 04 §7.3)."""
         return self._pick_version(await self._visible_row(rule_id, actor, op), version_id)
 
-    def _pick_version(self, row: RuleRow, version_id: str) -> dict[str, Any]:
+    def _pick_version(
+        self, row: RuleRow, version_id: str, *, contract: bool = False
+    ) -> dict[str, Any]:
         for v in row.versions:
             if v.id == version_id:
-                return self._version_view(v, full=True)
+                return self._version_view(v, row=row, full=True, contract=contract)
         raise RuleError(404, "not_found", "That version does not exist.")
 
     async def set_active_version(

@@ -270,11 +270,18 @@ async def test_quirk_save_hashes_the_sent_version_and_stores_latest_version() ->
         made = await client.post("/rules", json={"ir": sent})
         assert made.status_code == 201, made.text
         rid, version = made.json()["id"], made.json()["version"]
-        stored = (await client.get(f"/rules/{rid}/versions/{version['id']}")).json()["ir"]
+        ver = (await client.get(f"/rules/{rid}/versions/{version['id']}")).json()
     hashed = {**sent, "rule_id": rid, "mode": "disabled", "enabled": False}
     assert sent["version"] == 7 and version["ir_hash"] == ir_hash(hashed)
     # recorded quirk: pinned, not fixed (#951)
-    assert stored["version"] == 1 and ir_hash(Rule.model_validate(stored)) != version["ir_hash"]
+    row = await mgr._s.get(rid)
+    assert row is not None
+    stored = row.versions[0].ir
+    assert (
+        ver["version"] == 1
+        and stored["version"] == 1
+        and ir_hash(Rule.model_validate(stored)) != version["ir_hash"]
+    )
 
 
 def test_refused_vectors_are_refused_where_they_say() -> None:
