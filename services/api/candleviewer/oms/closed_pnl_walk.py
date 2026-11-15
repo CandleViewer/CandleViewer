@@ -33,10 +33,11 @@ pure: no I/O, no log and no clock. Nothing imports it yet: the composition slice
 - **Bounds (C-2.18).** A walk handed more fills or flats than its `WalkBudget` is `capped`: it
   gives nothing, never a part, and is never `clean`. Its caller reads one row past each budget,
   so a capped walk knows more are stored, and logs.
-- **Rounding.** Every sum, difference and product is exact, and a division alone rounds, at its
-  80th digit, so the shares a position's closes take sum to what it held to the last digit, and
-  nothing is quantized. The composition quantizes each local figure once, `ROUND_HALF_UP` to
-  8 dp (24 Sec.1.5).
+- **Rounding.** Every sum, difference and product is exact, which the walk's context enforces by
+  trapping `Inexact`: one that would round raises instead. A division alone rounds, half-even at
+  its 80th significant digit, so the shares a position's closes take sum to what it held to the
+  last digit, and nothing is quantized. The composition quantizes each local figure once,
+  `ROUND_HALF_UP` to 8 dp (24 Sec.1.5).
 """
 
 from __future__ import annotations
@@ -44,7 +45,16 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from decimal import Context, Decimal, localcontext
+from decimal import (
+    ROUND_HALF_EVEN,
+    Context,
+    Decimal,
+    DivisionByZero,
+    Inexact,
+    InvalidOperation,
+    Overflow,
+    localcontext,
+)
 from types import MappingProxyType
 from typing import Final, Literal
 from uuid import UUID
@@ -52,10 +62,11 @@ from uuid import UUID
 from candleviewer.storage.repositories.closed_pnl import WalkFill
 
 #: Exact for every sum, difference and product the walk takes: from `numeric(38,18)` values and
-#: 80-digit quotients, they span about 200 digits.
-_EXACT: Final = Context(prec=400)
-#: A division rounds at its 80th digit, as the sync's merge does.
-_WIDE: Final = Context(prec=80)
+#: 80-digit quotients, they span about 200 digits. `Inexact` is trapped beside the default traps,
+#: so one that would need more than 400 digits raises rather than rounds.
+_EXACT: Final = Context(prec=400, traps=[InvalidOperation, DivisionByZero, Overflow, Inexact])
+#: A division rounds half-even at its 80th significant digit, as the sync's merge does.
+_WIDE: Final = Context(prec=80, rounding=ROUND_HALF_EVEN)
 _ZERO: Final = Decimal(0)
 _NO_GROUPS: Final[Mapping[UUID, UUID]] = MappingProxyType({})
 _Mode = Literal["read", "no_pnl", "unreadable", "disagreeing"]  # each graver than the last

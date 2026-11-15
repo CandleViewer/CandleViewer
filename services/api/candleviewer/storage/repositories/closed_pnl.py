@@ -8,14 +8,15 @@ row once and replacing the venue's columns until the record is final (`settle_ou
 `finalize` freezes them. A record refuses, before any statement and naming the rule, never a
 value, what the table would: an order id of 1 to 64 characters, `long` or `short`, a
 `position_idx` of 0, 1 or 2, a `qty` above 0, money numeric(38,18) holds exactly (`leverage`
-numeric(10,2)); every time is aware. The reads are 21 Sec.13.1 rows 55 to 59, each bounded by its
-caller's limit, and the totals by their window, which a query must name (`TotalsUnbounded`)
-(C-2.18). `closed_pnl_sqlalchemy.py` is the Postgres side; the sync, the walk, the composition
-and the route are E29-S06's later slices.
+numeric(10,2)); every time is aware. The reads are 21 Sec.13.1 rows 55 to 59, 61 and 62, each
+bounded by its caller's limit or the names it is given, and the totals by their window, which a
+query must name (`TotalsUnbounded`) (C-2.18). `closed_pnl_sqlalchemy.py` is the Postgres side; the
+route is E29-S06's later slice.
 """
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -266,7 +267,8 @@ class FillKey:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class WalkFill:
     """A fill the walk reads (row 58) with its order row's `position_idx` and venue order id, both
-    None when it has no order row."""
+    None when it has no order row, and the trade group its order row's leg names, through a leg
+    of the fill's own account alone (None: no row, no leg, or another account's)."""
 
     exec_id: str
     exec_ts: datetime
@@ -280,6 +282,27 @@ class WalkFill:
     closed_size: Decimal | None
     order_position_idx: int | None
     order_exchange_id: str | None
+    order_group_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OrderAnchor:
+    """An order row the composition reads (row 61), with its stored trade fills' first and last
+    times and the last of those stating a `closedSize` above 0 (all None with none stored), its
+    key's last confirmed flat before the first, where its walk starts (None: no start), and
+    whether its record is stored (`held`)."""
+
+    order_id: UUID
+    exchange_order_id: str | None
+    symbol: str
+    side: OrderSide
+    position_idx: int
+    state: OrderState
+    first_fill: datetime | None
+    last_fill: datetime | None
+    last_close: datetime | None
+    start: datetime | None
+    held: bool
 
 
 class ClosedPnlStore(Protocol):
@@ -309,3 +332,10 @@ class ClosedPnlStore(Protocol):
     async def walk_fills(
         self, account_id: UUID, symbol: str, position_idx: int, after: FillKey, limit: int
     ) -> tuple[WalkFill, ...]: ...
+    async def anchors(
+        self, account_id: UUID, orders: Collection[UUID], exchange_order_ids: Collection[str]
+    ) -> tuple[OrderAnchor, ...]:
+        """The account's order rows named by id or by venue id, each once, by id."""
+
+    async def hedged(self, account_id: UUID, symbol: str) -> bool:
+        """Whether the account holds a position of the symbol at `position_idx` 1 or 2."""
