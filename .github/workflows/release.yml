@@ -214,7 +214,7 @@ jobs:
       - name: Build the Electron installer (packaging config owned by E10)
         run: pnpm --filter @candleviewer/desktop run build:installer
 
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       - name: Sign installer artefacts (keyless cosign, CI-REL-003 parity for release binaries)
         run: |
