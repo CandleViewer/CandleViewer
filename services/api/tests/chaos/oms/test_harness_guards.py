@@ -1,21 +1,23 @@
 """E29-Q04's harness guards (#1148; C-13.5, C-13.7). Demo accounts only, under the load scripts'
 own guard (the ticket's Security notes): the suite trades a demo account on one demo port, in
 memory, with no transport and so no socket; a live account or port is refused; every venue host is
-one the load scripts' guard refuses (`tests/load/accounts/guard.py`, as `_e27_stack.py` loads it),
+one the load scripts' guard refuses (`tests/load/accounts/guard.py`, loaded here by its path),
 and a dial to the live host is refused. A clean run with the account's stream pushing each fill
 ends with the book equal to the venue (the oracle's positive control); a world the oracle never
 checked is one the suite fails (`conftest.py`); the outage switch refuses every store call while it
 is on, and a door faults the one step it names, once, through the store's own `fail_next`; a submit
 the store refuses, by the `commit` door or the outage, sends nothing and leaves the book equal to
-the venue (S7), through the real runtime; and the venue counts each create request that reached it,
-not each link."""
+the venue (S7), through the real runtime; the venue counts each create request that reached it,
+not each link; and the hand-over store reads back what it was given, as the pass reads it."""
 
 from __future__ import annotations
 
+import importlib.util
 import socket
 from datetime import UTC, datetime
 from decimal import Decimal
-from types import SimpleNamespace
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -24,17 +26,41 @@ from candleviewer.exchange.base.models import PlaceOrderRequest
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS, SIGNED_REST_BASES
 from candleviewer.oms.errors import StoreUnavailable
 from candleviewer.oms.fakes import InMemoryOrderStore
+from candleviewer.oms.handovers import StoreHandovers
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.executions import NewExecution
 from tests._ci_network_guard import NetworkGuardViolation, Refusal, expected_refusals
-from tests.chaos.accounts._e27_stack import guard as load_guard
 from tests.chaos.oms._oracle import check
 from tests.chaos.oms._venue import Venue, VenuePort
-from tests.chaos.oms._world import ACCOUNT, PRICE, REF, Outage, World, opened, unchecked
+from tests.chaos.oms._world import (
+    ACCOUNT,
+    PRICE,
+    REF,
+    Handovers,
+    Outage,
+    World,
+    opened,
+    unchecked,
+)
 from tests.unit.audit.audit_waits import virtual
+from tests.unit.oms import reconcile_rig as rr
 from tests.unit.oms.command_rig import link
 
 pytestmark = pytest.mark.chaos
+
+
+def _load_guard() -> ModuleType:
+    """The load scripts' guard, a repo file outside any package, loaded by its path as the
+    account suite loads it (`_e27_stack.load_module`): no other suite's module is imported."""
+    path = Path(__file__).resolve().parents[5] / "tests/load/accounts/guard.py"
+    spec = importlib.util.spec_from_file_location("q04_load_guard", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+load_guard = _load_guard()
 
 
 def test_live_exchange_host_is_unreachable_from_the_suite() -> None:
@@ -142,3 +168,19 @@ async def test_the_venue_counts_each_create_request_that_reached_it_not_each_lin
         await venue.port.place_order(a)
     await venue.port.place_batch([b, c])  # one request each, in one call
     assert venue.creates() == {a.order_link_id: 2, b.order_link_id: 1, c.order_link_id: 1}
+
+
+async def test_the_hand_over_store_reads_back_what_it_was_given() -> None:
+    store, fill = Handovers(clock=lambda: datetime(2026, 10, 23, tzinfo=UTC)), rr.fill("e1")
+    kept = StoreHandovers(store, source="ws_private")
+    for empty_read in (False, True, False):  # kept once; an empty read counted, a repeat held
+        await kept.hand_over_execution(fill.account_id, fill, empty_read=empty_read)
+    [row] = await store.pending(fill.account_id, "execution")
+    assert (row.exec_id, row.empty_reads, row.first_empty_read_at) == ("e1", 1, store.clock())
+    [waiting] = (await kept.waiting_executions(fill.account_id)).entries
+    assert waiting.execution == fill  # as the pass reads it
+    assert await store.decide(fill.account_id, "e1") and not await store.decide(
+        fill.account_id, "e1"
+    )
+    assert await store.prune(fill.account_id, [row.id]) == 1
+    assert await store.pending(fill.account_id, "execution") == ()
