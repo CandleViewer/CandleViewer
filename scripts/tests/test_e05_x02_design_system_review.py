@@ -192,3 +192,48 @@ def test_the_storybook_dev_server_binds_loopback() -> None:
 def test_the_vr_static_server_binds_loopback() -> None:
     (command,) = re.findall(r"command:\s*`([^`]*)`", VR_CONFIG.read_text(encoding="utf-8"))
     assert re.search(r"--bind 127\.0\.0\.1(?:\s|$)", command), command
+
+
+#: The global `[[allowlists]]` table's paths and regexes, frozen: widening it must be a reviewed change.
+GLOBAL_ALLOWLIST_PATHS = [
+    r"docs/research/xstate/.*",
+    r"packages/fixtures/test/.*\.test\.mjs",
+    r"docs/plan/backlog/all-tickets\.json",
+    r"services/api/tests/unit/observability/test_redaction\.py",
+    r"services/api/tests/unit/observability/test_redaction_filter\.py",
+    r"services/api/tests/integration/observability/test_request_logging_no_secret_leak\.py",
+    r"services/api/tests/unit/observability/test_secret_escape_paths\.py",
+    r"docs/plan/threat-models/E05-design-system\.md",
+    r"scripts/tests/test_check_secrets_hygiene\.py",
+    r"docs/design/_tools/e11_d07_sr_reserved_keys\.json",
+]
+GLOBAL_ALLOWLIST_REGEXES = [
+    r"REDACTED",
+    r"<[^>]*example placeholder>",
+    r"^oms\.[a-z0-9_.]+=[a-z0-9_.]+$",
+]
+E28_D06_DECK_PATH = r"(?:^|/)docs/design/E28/E28-D06-copy-deck\.jsonl$"
+
+
+def test_gitleaks_e28_d06_entry_is_one_anchored_path_for_one_rule() -> None:
+    config = tomllib.loads(GITLEAKS.read_text(encoding="utf-8"))
+    entries = [a for a in config["allowlists"] if a.get("targetRules")]
+    assert len(entries) == 1, entries
+    entry = entries[0]
+    assert entry["targetRules"] == ["generic-api-key"]
+    assert entry["paths"] == [E28_D06_DECK_PATH]
+    assert set(entry) <= {"description", "targetRules", "paths"}
+    assert re.search(E28_D06_DECK_PATH, "docs/design/E28/E28-D06-copy-deck.jsonl")
+    assert re.search(E28_D06_DECK_PATH, "src/docs/design/E28/E28-D06-copy-deck.jsonl")
+    assert not re.search(E28_D06_DECK_PATH, "docs/design/E28/E28-D06-copy-deck.jsonl.bak")
+    assert not re.search(E28_D06_DECK_PATH, "x/docs/design/E28/E28-D06-copy-deck.jsonl.bak")
+    assert not re.search(E28_D06_DECK_PATH, "xdocs/design/E28/E28-D06-copy-deck.jsonl")
+
+
+def test_gitleaks_global_allowlist_is_frozen() -> None:
+    config = tomllib.loads(GITLEAKS.read_text(encoding="utf-8"))
+    globals_ = [a for a in config["allowlists"] if not a.get("targetRules")]
+    assert len(globals_) == 1, globals_
+    assert globals_[0]["paths"] == GLOBAL_ALLOWLIST_PATHS
+    assert globals_[0]["regexes"] == GLOBAL_ALLOWLIST_REGEXES
+    assert "allowlist" not in config
