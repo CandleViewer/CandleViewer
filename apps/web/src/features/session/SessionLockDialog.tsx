@@ -1,15 +1,23 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type JSX } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type JSX,
+  type RefObject,
+} from "react";
 import {
   actions,
   card,
   hidden,
   primary,
-  scrim,
   secondary,
   title,
   useFocusReturn,
   useModalKeys,
 } from "./chrome";
+import { ModalLayer } from "./ModalLayer";
 
 /** E09-D06 frames `locked-default`, `verifying`, `wrong-password` (and the other refusals). */
 export type LockPhase = "locked" | "verifying" | "error";
@@ -30,6 +38,8 @@ export interface SessionLockDialogProps {
   readonly onUnlock: (password: string) => void;
   /** "Sign out instead": opens the confirm sub-dialog (E09-D06 `sign-out-instead`). */
   readonly onSignOut?: () => void;
+  /** Where the focus goes on unlock when the opener cannot take it (the host's record, #5561). */
+  readonly returnTo?: RefObject<HTMLElement | null>;
 }
 
 const field = {
@@ -51,6 +61,7 @@ export function SessionLockDialog({
   failure = null,
   onUnlock,
   onSignOut,
+  returnTo,
 }: SessionLockDialogProps): JSX.Element {
   const id = useId();
   const dialog = useRef<HTMLDivElement>(null);
@@ -61,7 +72,7 @@ export function SessionLockDialog({
   const refused = failure !== null && failure.credentials !== false;
   // order matters: on unmount the focus guard goes before focus returns to the opener
   useModalKeys(dialog, undefined, true);
-  useFocusReturn();
+  useFocusReturn(returnTo);
 
   useEffect(() => passwordField.current?.focus(), []);
   useEffect(() => {
@@ -83,7 +94,7 @@ export function SessionLockDialog({
         : "Sign in again to continue.";
   return (
     // `data-keymap-context="Locked"` stops global hotkeys (KeymapHost)
-    <div style={scrim} data-keymap-context="Locked">
+    <ModalLayer data-keymap-context="Locked">
       <div
         ref={dialog}
         role="alertdialog"
@@ -147,6 +158,6 @@ export function SessionLockDialog({
           </div>
         </form>
       </div>
-    </div>
+    </ModalLayer>
   );
 }

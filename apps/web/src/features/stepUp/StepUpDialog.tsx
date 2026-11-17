@@ -7,6 +7,8 @@ import {
   type FormEvent,
   type JSX,
 } from "react";
+import { claimEscape, useInertModalsBelow } from "../session/chrome";
+import { ModalLayer } from "../session/ModalLayer";
 
 /** What the user enters in the step-up dialog: the `{password, code}` of the step-up request. */
 export interface StepUpCredentials {
@@ -88,16 +90,6 @@ type Missing = "password" | "code" | "typed";
 const CODE = /^[0-9]{6}$/;
 const FOCUSABLE = "input:not([disabled]), button:not([disabled])";
 
-const scrim: CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  // A stacking level of its own: rendered inline inside a host dialog (a recorder confirm's notes), the scrim and the
-  // gate otherwise paint, and take the pointer, under the host's later footer (A-5347-01).
-  zIndex: 1,
-  display: "grid",
-  placeItems: "center",
-  background: "var(--color-surface-overlay)",
-};
 const card: CSSProperties = {
   inlineSize: "calc(var(--space-64) + var(--space-48))",
   maxInlineSize: "100%",
@@ -140,7 +132,10 @@ const primary: CSSProperties = {
 };
 
 /**
- * Temporary feature component (#2725): re-base on CMP-043 / CMP-044 (#266) when they land.
+ * Temporary feature component (#2725): re-base on CMP-043 / CMP-044 (#266) when they land. Until
+ * then it shares the stack with CMP-043's layers as the session dialogs do (#5561): it paints last
+ * (`ModalLayer`; raised while an SCR-005 card is up, just under that card) and the modals below it
+ * are inert while it is up.
  *
  * SCR-006 step-up dialog (E09-D06): `role="alertdialog"`, password + authenticator code, plus a
  * typed confirmation when the challenge names a `target`. Focus starts on the password, Tab is
@@ -169,6 +164,7 @@ export function StepUpDialog({
   const [typed, setTyped] = useState("");
   const seq = failure?.seq;
   const refused = failure !== null && failure.credentials !== false;
+  useInertModalsBelow(dialog);
 
   useEffect(() => {
     const opener = document.activeElement;
@@ -216,10 +212,17 @@ export function StepUpDialog({
     const onScrimDown = (event: MouseEvent): void => {
       if (event.target === scrimEl) event.preventDefault();
     };
+    // Esc with the focus outside the card (a press on its own text) is still SCR-006's: no modal
+    // below takes it while SCR-006 is on top (capture phase, before CMP-043's stack)
+    const onEscapeOutside = (event: KeyboardEvent): void => {
+      if (claimEscape(node, event)) cancel.current();
+    };
     node.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onEscapeOutside, true);
     scrimEl?.addEventListener("mousedown", onScrimDown);
     return () => {
       node.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keydown", onEscapeOutside, true);
       scrimEl?.removeEventListener("mousedown", onScrimDown);
     };
   }, []);
@@ -276,7 +279,7 @@ export function StepUpDialog({
 
   const describedBy = actionSummary === null ? undefined : `${id}-summary`;
   return (
-    <div style={scrim}>
+    <ModalLayer>
       <div
         ref={dialog}
         role="alertdialog"
@@ -395,7 +398,7 @@ export function StepUpDialog({
           </div>
         </form>
       </div>
-    </div>
+    </ModalLayer>
   );
 }
 

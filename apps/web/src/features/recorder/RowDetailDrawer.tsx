@@ -6,9 +6,9 @@
  * controls), Health and Cost read the newest frame; the gaps of the last 24 h are a static CMP-049 table. The
  * row's action carries its T2 reason inline (2a, D02 §6.3), busy while its add is on the wire, and Purge… is busy
  * while this client's purge runs. The drawer decides no write: the grid confirms and sends (C-12.4), and SCR-006 for
- * the drawer's own writes opens inside it, the page being inert under it (A-5347-d01). Focus never falls to `body`
- * (A-5347-03): a control that held it and goes with its row's controls hands it to the heading, and a close whose
- * opener is gone lands on the host's fallback.
+ * the drawer's own writes is the drawer's, raised over it with the drawer inert under it (A-5347-d01). Focus never
+ * falls to `body` (A-5347-03): a control that held it and goes with its row's controls hands it to the heading, and a
+ * close whose opener is gone lands on the host's fallback.
  */
 import { useLayoutEffect, useRef, type JSX, type ReactNode, type RefObject } from "react";
 import {
@@ -107,8 +107,8 @@ export interface RowDetailDrawerProps {
   /** Where focus lands when the drawer closes and its opener is gone (its row left, FM-02, FM-07). */
   readonly fallbackFocusRef?: RefObject<HTMLElement | null> | undefined;
   /**
-   * SCR-006 for the drawer's own writes (its action, Depth), drawn inside the drawer's layer: a modal drawer makes
-   * the page inert, so a gate there could not be reached (A-5347-d01).
+   * SCR-006 for the drawer's own writes (its action, Depth), rendered from the drawer: its dialog goes to a layer of
+   * its own over the drawer (#5561), and its notices stay in the drawer, outside the inert page (A-5347-d01).
    */
   readonly gate?: ReactNode;
   /** The action's add is on the wire: CMP-001 `loading`, focusable, a press sends nothing (A-5347-d04). */

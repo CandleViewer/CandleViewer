@@ -1,15 +1,15 @@
-import { useEffect, useId, useRef, type JSX } from "react";
+import { useEffect, useId, useRef, type JSX, type RefObject } from "react";
 import {
   actions,
   card,
   hidden,
   primary,
-  scrim,
   secondary,
   title,
   useFocusReturn,
   useModalKeys,
 } from "./chrome";
+import { ModalLayer } from "./ModalLayer";
 import { SIGN_OUT_FAILED } from "./sessionApi";
 
 export interface SignOutConfirmProps {
@@ -38,7 +38,7 @@ export function SignOutConfirm({
   // while both actions wait, focus rests on the dialog itself, never on a disabled button
   useEffect(() => (busy ? dialog : back).current?.focus(), [busy]);
   return (
-    <div style={scrim} data-keymap-context="Locked">
+    <ModalLayer data-keymap-context="Locked">
       <div
         ref={dialog}
         role="alertdialog"
@@ -70,7 +70,7 @@ export function SignOutConfirm({
           </button>
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }
 
@@ -88,15 +88,22 @@ const badge = {
  * SCR-005 `absolute-expiry-signed-out` (E09-D06): the unlock found the 12 h lifetime elapsed
  * (`session_revoked`, `revoked_reason: expired`). Announced once (§6); the one action is SCR-001.
  */
-export function SessionExpiredCard({ onSignIn }: { readonly onSignIn: () => void }): JSX.Element {
+export function SessionExpiredCard({
+  onSignIn,
+  returnTo,
+}: {
+  readonly onSignIn: () => void;
+  /** As `SessionLockDialog`'s: the host's record of where the focus was (#5561). */
+  readonly returnTo?: RefObject<HTMLElement | null>;
+}): JSX.Element {
   const id = useId();
   const dialog = useRef<HTMLDivElement>(null);
   const signIn = useRef<HTMLButtonElement>(null);
   useModalKeys(dialog, undefined, true);
-  useFocusReturn();
+  useFocusReturn(returnTo);
   useEffect(() => signIn.current?.focus(), []);
   return (
-    <div style={scrim} data-keymap-context="Locked">
+    <ModalLayer data-keymap-context="Locked">
       <div
         ref={dialog}
         role="alertdialog"
@@ -122,6 +129,6 @@ export function SessionExpiredCard({ onSignIn }: { readonly onSignIn: () => void
           </button>
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }

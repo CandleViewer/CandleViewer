@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef, type JSX } from "react";
+import { useEffect, useId, useRef, type JSX, type RefObject } from "react";
 import { formatRemaining } from "../auth/authApi";
-import { actions, card, primary, scrim, title, useModalKeys } from "./chrome";
+import { actions, card, primary, title, useFocusReturn, useModalKeys } from "./chrome";
+import { ModalLayer } from "./ModalLayer";
 
 export interface SessionTimeoutWarningProps {
   /** Seconds to the server's idle deadline. Shown, never announced per tick (E09-D06 §6). */
@@ -9,6 +10,8 @@ export interface SessionTimeoutWarningProps {
   readonly onExtend: () => void;
   /** Esc: dismiss, does NOT extend (15 CMP-098). */
   readonly onDismiss: () => void;
+  /** Where the focus goes back when the opener cannot take it (the host's record, #5561). */
+  readonly returnTo?: RefObject<HTMLElement | null>;
 }
 
 /**
@@ -20,20 +23,17 @@ export function SessionTimeoutWarning({
   expiresInSec,
   onExtend,
   onDismiss,
+  returnTo,
 }: SessionTimeoutWarningProps): JSX.Element {
   const id = useId();
   const dialog = useRef<HTMLDivElement>(null);
   const extend = useRef<HTMLButtonElement>(null);
   useModalKeys(dialog, onDismiss);
-  useEffect(() => {
-    const opener = document.activeElement;
-    extend.current?.focus();
-    return () => {
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
-    };
-  }, []);
+  // order matters: the opener is read before the focus moves to Stay signed in
+  useFocusReturn(returnTo);
+  useEffect(() => extend.current?.focus(), []);
   return (
-    <div style={scrim}>
+    <ModalLayer>
       <div
         ref={dialog}
         role="alertdialog"
@@ -64,6 +64,6 @@ export function SessionTimeoutWarning({
           </button>
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }
